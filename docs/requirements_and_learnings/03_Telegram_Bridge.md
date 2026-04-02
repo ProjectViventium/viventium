@@ -32,6 +32,17 @@ stream back to Telegram through the existing bridge.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
   explicitly known-good for the current deployment.
 
+## Telegram Media Prerequisites
+- Telegram voice notes and video notes are part of the supported bridge surface, so their media
+  decoding requirements must be treated as first-class installer/runtime prerequisites.
+- When Telegram is enabled, `ffmpeg` must be available on the host:
+  - local `pywhispercpp` transcription needs it to decode Telegram's non-WAV voice-note media
+  - Telegram video-note extraction already depends on it before transcription
+- Public install flows must detect and install `ffmpeg` automatically through preflight when
+  Telegram is enabled.
+- Telegram startup must fail honestly instead of reporting a healthy bridge when `ffmpeg` is still
+  unavailable.
+
 ## Telegram Attachments
 
 Any file generated in LibreChat must be sent to the Telegram user as a Telegram photo/document,

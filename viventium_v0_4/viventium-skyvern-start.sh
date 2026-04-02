@@ -68,7 +68,7 @@ docker() {
     return 127
   fi
 
-  local timeout_seconds="${VIVENTIUM_DOCKER_TIMEOUT_SECONDS:-20}"
+  local timeout_seconds="${VIVENTIUM_DOCKER_TIMEOUT_SECONDS:-180}"
   "$PYTHON_BIN" - "$timeout_seconds" "$DOCKER_BIN" "$@" <<'PY'
 import subprocess
 import sys

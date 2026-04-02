@@ -114,8 +114,21 @@ This is the shared troubleshooting index. For stack-specific detail, see:
 - Fix:
   - Pull latest `feature/viventium_alpha_18`.
   - Restart launcher: `./viventium_v0_4/viventium-librechat-start.sh --modern-playground --restart --skip-skyvern`
-  - Ensure only one Telegram bot process is running (`pgrep -af 'TelegramVivBot.*bot.py'`).
+- Ensure only one Telegram bot process is running (`pgrep -af 'TelegramVivBot.*bot.py'`).
 - Current status: fixed with regression tests in `viventium_v0_4/telegram-viventium/tests/test_bot_stream_preview.py`.
+
+### Telegram voice note says `FFMPEG is not installed or not in PATH`
+- Root cause: Telegram voice notes arrive as non-WAV media, and the local `pywhispercpp` STT path
+  uses `ffmpeg` to decode them before transcription. Telegram video-note extraction also requires
+  `ffmpeg`.
+- Symptom: Telegram returns `error: Error processing audio file: FFMPEG is not installed or not in PATH...`
+- Fix:
+  - Run `bin/viventium install` or `bin/viventium upgrade` so preflight can install Telegram media prerequisites.
+  - If you are starting directly from an older install, restart through `bin/viventium start` or
+    `./viventium_v0_4/viventium-librechat-start.sh` so the Telegram launcher can self-heal the missing
+    `ffmpeg` dependency.
+- Current status: when Telegram is enabled, preflight now installs `ffmpeg` automatically and the
+  Telegram launcher refuses to start a partially broken bridge without it.
 
 ### Modern LiveKit says `I'm having trouble reaching the service right now. Please try again.`
 - Root cause: the voice call was reaching LibreChat, but a dedicated voice override could still rewrite the run onto a different provider with no server-side credential configured. That produced downstream `no_user_key` initialization failures even though the main agent model was healthy.

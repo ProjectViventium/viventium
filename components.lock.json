@@ -38,6 +38,13 @@
       "ref": "a791a46b81525948091886690907938bbe3c6f4f"
     },
     {
+      "name": "GlassHive",
+      "path": "viventium_v0_4/GlassHive",
+      "origin": "https://github.com/ProjectViventium/GlassHive.git",
+      "upstream": "",
+      "ref": "f3b00e20fb3a459ee931a2a246e58ca10a2ad2af"
+    },
+    {
       "name": "ms-365-mcp-server",
       "path": "viventium_v0_4/MCPs/ms-365-mcp-server",
       "origin": "https://github.com/ProjectViventium/ms-365-mcp-server.git",

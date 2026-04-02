@@ -5756,6 +5756,59 @@ resolve_telegram_codex_dir() {
   return 1
 }
 
+ensure_telegram_media_prereqs() {
+  if command -v ffmpeg >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    log_error "Telegram voice/video media requires ffmpeg in PATH on this host"
+    return 1
+  fi
+
+  if ! command -v brew >/dev/null 2>&1; then
+    if [[ "${VIVENTIUM_AUTO_INSTALL_BREW:-true}" != "true" ]] || ! command -v curl >/dev/null 2>&1; then
+      log_error "Telegram voice/video media requires ffmpeg. Run bin/viventium install or install ffmpeg manually."
+      return 1
+    fi
+
+    local brew_bootstrap_log="$LOG_DIR/telegram_bot_homebrew_install.log"
+    log_warn "Homebrew missing; attempting automatic install for Telegram media prerequisites"
+    NONINTERACTIVE=1 CI=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >"$brew_bootstrap_log" 2>&1 || {
+      log_error "Failed to install Homebrew automatically for Telegram media prerequisites"
+      tail -20 "$brew_bootstrap_log" 2>/dev/null || true
+      return 1
+    }
+  fi
+
+  local brew_prefix=""
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  if [[ -n "$brew_prefix" && -d "$brew_prefix/bin" ]]; then
+    export PATH="$brew_prefix/bin:$brew_prefix/sbin:${PATH}"
+  fi
+
+  if [[ "${VIVENTIUM_AUTO_INSTALL_FFMPEG:-true}" != "true" ]]; then
+    log_error "Telegram voice/video media requires ffmpeg. Install it or rerun the installer with auto-install enabled."
+    return 1
+  fi
+
+  local ffmpeg_log="$LOG_DIR/telegram_bot_ffmpeg_install.log"
+  log_warn "ffmpeg missing; attempting automatic install for Telegram media support"
+  if ! HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg >"$ffmpeg_log" 2>&1; then
+    log_error "Failed to install ffmpeg for Telegram media support"
+    tail -20 "$ffmpeg_log" 2>/dev/null || true
+    return 1
+  fi
+
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    log_error "ffmpeg install finished but the binary is still unavailable to Telegram"
+    return 1
+  fi
+
+  log_success "ffmpeg is ready for Telegram media support"
+  return 0
+}
+
 start_google_workspace_mcp() {
   if [[ "$START_GOOGLE_MCP" != "true" ]]; then
     log_info "Skipping Google Workspace MCP startup"
@@ -6958,6 +7011,12 @@ start_telegram_bot() {
   fi
   if ! telegram_bot_token_looks_valid "${BOT_TOKEN:-}"; then
     log_warn "BOT_TOKEN does not look like a BotFather token - skipping Telegram bot startup"
+    restore_telegram_env
+    popd >/dev/null
+    return 1
+  fi
+  if ! ensure_telegram_media_prereqs; then
+    log_error "Telegram bot cannot start without ffmpeg for supported voice/video media"
     restore_telegram_env
     popd >/dev/null
     return 1

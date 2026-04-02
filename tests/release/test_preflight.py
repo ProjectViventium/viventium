@@ -62,6 +62,7 @@ integrations:
     assert "node@20" in completed.stdout
     assert "pnpm" in completed.stdout
     assert "uv" in completed.stdout
+    assert "ffmpeg" in completed.stdout
     assert "python@3.12" in completed.stdout
     assert "mongodb-community@8.0" in completed.stdout
     assert "meilisearch" in completed.stdout
@@ -142,7 +143,49 @@ voice:
     )
 
     assert completed.returncode == 1
+    assert "ffmpeg" not in completed.stdout
     assert "python@3.12" not in completed.stdout
+
+
+def test_preflight_voice_local_without_telegram_does_not_require_ffmpeg(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+version: 1
+install:
+  mode: native
+runtime:
+  profile: isolated
+voice:
+  mode: local
+  stt_provider: whisper_local
+integrations:
+  telegram:
+    enabled: false
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
+        cwd=REPO_ROOT,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "TERM": "xterm-256color",
+            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
+            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
+        },
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "python@3.12" in completed.stdout
+    assert "livekit" in completed.stdout
+    assert "ffmpeg" not in completed.stdout
 
 
 def test_preflight_native_ms365_requires_docker_desktop(tmp_path: Path) -> None:

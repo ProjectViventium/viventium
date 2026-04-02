@@ -37,6 +37,13 @@
       "upstream_branch": "main"
     },
     {
+      "name": "GlassHive",
+      "path": "viventium_v0_4/GlassHive",
+      "origin": "https://github.com/ProjectViventium/GlassHive.git",
+      "upstream": "",
+      "upstream_branch": "main"
+    },
+    {
       "name": "livekit-playground",
       "path": "viventium_v0_3_py/interfaces/livekit-playground",
       "origin": "https://github.com/ProjectViventium/livekit-playground.git",

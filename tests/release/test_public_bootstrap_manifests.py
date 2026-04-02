@@ -54,3 +54,17 @@ def test_components_lock_uses_full_commit_shas_for_public_components() -> None:
     }
 
     assert invalid == {}
+
+
+def test_components_lock_covers_all_public_v0_4_manifest_components() -> None:
+    repos_payload = load_json(REPO_ROOT / "devops" / "git" / "repos.json")
+    lock_payload = load_json(REPO_ROOT / "components.lock.json")
+
+    expected_paths = {
+        entry["path"]
+        for entry in repos_payload["repos"]
+        if str(entry.get("path", "")).startswith("viventium_v0_4/")
+    }
+    locked_paths = {entry["path"] for entry in lock_payload["components"]}
+
+    assert expected_paths == locked_paths

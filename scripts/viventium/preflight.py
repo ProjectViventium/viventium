@@ -505,6 +505,22 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
             command="uv",
         )
     )
+    if ctx["telegram"]:
+        items.append(
+            PreflightItem(
+                key="ffmpeg",
+                label="ffmpeg",
+                category="telegram media",
+                reason=(
+                    "Telegram voice notes and video notes need ffmpeg so local transcription and "
+                    "video-audio extraction work on a clean Mac"
+                ),
+                status="ok" if command_exists("ffmpeg") else "missing",
+                install_kind="brew_formula" if not command_exists("ffmpeg") else "none",
+                formula="ffmpeg" if not command_exists("ffmpeg") else "",
+                command="ffmpeg",
+            )
+        )
 
     install_mode = ctx["install_mode"]
     voice_enabled = ctx["voice_mode"] != "disabled"
@@ -834,6 +850,7 @@ def formula_usable(formula: str) -> bool:
         "node@20": node_runtime_supported,
         "pnpm": lambda: command_exists("pnpm"),
         "uv": lambda: command_exists("uv"),
+        "ffmpeg": lambda: command_exists("ffmpeg"),
         "mongodb/brew/mongodb-community@8.0": lambda: command_exists("mongod"),
         "meilisearch": lambda: command_exists("meilisearch"),
         "python@3.12": modern_voice_python_ready,
