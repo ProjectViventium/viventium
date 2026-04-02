@@ -1,0 +1,8 @@
+{
+  "name": "viventium-channel-bridge",
+  "version": "0.2.0",
+  "description": "OpenClaw plugin that bridges channel messages to Viventium LibreChat gateway API",
+  "main": "index.ts",
+  "type": "module",
+  "dependencies": {}
+}

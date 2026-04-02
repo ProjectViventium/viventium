@@ -1,0 +1,8 @@
+Viventium coordinates multiple upstream open-source projects and private release surfaces.
+
+Before public release:
+
+- preserve all upstream notices
+- publish a license matrix for the full product surface
+- keep AGPL components in their own repos
+- do not publish live secrets, backups, snapshots, or personal data

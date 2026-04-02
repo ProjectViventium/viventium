@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "repos": [
+    {
+      "name": "LibreChat",
+      "path": "viventium_v0_4/LibreChat",
+      "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
+      "upstream": "https://github.com/danny-avila/LibreChat.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "agents-playground",
+      "path": "viventium_v0_4/agents-playground",
+      "origin": "https://github.com/ProjectViventium/agents-playground.git",
+      "upstream": "https://github.com/livekit/agents-playground.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "livekit",
+      "path": "viventium_v0_4/livekit",
+      "origin": "https://github.com/ProjectViventium/livekit.git",
+      "upstream": "https://github.com/livekit/livekit.git",
+      "upstream_branch": "master"
+    },
+    {
+      "name": "cartesia-voice-agent",
+      "path": "viventium_v0_4/cartesia-voice-agent",
+      "origin": "https://github.com/ProjectViventium/cartesia-voice-agent.git",
+      "upstream": "https://github.com/livekit-examples/cartesia-voice-agent.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "agent-starter-react",
+      "path": "viventium_v0_4/agent-starter-react",
+      "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
+      "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "livekit-playground",
+      "path": "viventium_v0_3_py/interfaces/livekit-playground",
+      "origin": "https://github.com/ProjectViventium/livekit-playground.git",
+      "upstream": "https://github.com/livekit/agents-playground.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "ms-365-mcp-server",
+      "path": "viventium_v0_4/MCPs/ms-365-mcp-server",
+      "origin": "https://github.com/ProjectViventium/ms-365-mcp-server.git",
+      "upstream": "https://github.com/softeria/ms-365-mcp-server.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "google_workspace_mcp",
+      "path": "viventium_v0_4/MCPs/google_workspace_mcp",
+      "origin": "https://github.com/ProjectViventium/google_workspace_mcp.git",
+      "upstream": "https://github.com/taylorwilsdon/google_workspace_mcp.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "mcp-youtube-transcript",
+      "path": "viventium_v0_4/MCPs/yt_transcript",
+      "origin": "https://github.com/ProjectViventium/mcp-youtube-transcript.git",
+      "upstream": "https://github.com/jkawamoto/mcp-youtube-transcript.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "openclaw",
+      "path": "viventium_v0_4/openclaw",
+      "origin": "https://github.com/ProjectViventium/viventium-openclaw.git",
+      "upstream": "https://github.com/openclaw/openclaw.git",
+      "upstream_branch": "main"
+    },
+    {
+      "name": "skyvern-source",
+      "path": "viventium_v0_4/skyvern-source",
+      "origin": "https://github.com/ProjectViventium/skyvern-source.git",
+      "upstream": "https://github.com/Skyvern-AI/skyvern.git",
+      "upstream_branch": "main"
+    }
+  ]
+}

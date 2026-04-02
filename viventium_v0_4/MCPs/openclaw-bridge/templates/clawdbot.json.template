@@ -1,0 +1,7 @@
+This file is no longer used. Config is generated programmatically
+in openclaw_manager.py._generate_config() to match the OpenClawConfig
+type exactly (see openclaw/src/config/types.openclaw.ts).
+
+The template approach was replaced because OpenClawConfig has strict
+validation and $VAR substitution in JSON values (especially numeric
+port fields) is error-prone.

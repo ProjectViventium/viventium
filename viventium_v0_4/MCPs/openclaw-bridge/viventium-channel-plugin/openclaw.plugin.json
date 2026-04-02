@@ -1,0 +1,32 @@
+{
+  "id": "viventium-channel-bridge",
+  "name": "Viventium Channel Bridge",
+  "description": "Routes OpenClaw channel messages to Viventium LibreChat gateway API",
+  "version": "0.2.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "librechatUrl": {
+        "type": "string",
+        "description": "LibreChat base URL (e.g., http://localhost:3080)"
+      },
+      "gatewaySecret": {
+        "type": "string",
+        "description": "Shared secret for /api/viventium/gateway auth + signature"
+      },
+      "gatewayHmacSecret": {
+        "type": "string",
+        "description": "Optional HMAC secret override (defaults to gatewaySecret)"
+      },
+      "agentId": {
+        "type": "string",
+        "description": "Optional LibreChat agent ID to route messages to"
+      },
+      "requestTimeoutMs": {
+        "type": "number",
+        "description": "HTTP timeout for gateway requests (milliseconds)"
+      }
+    },
+    "required": ["librechatUrl", "gatewaySecret"]
+  }
+}

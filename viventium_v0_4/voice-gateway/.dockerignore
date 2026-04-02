@@ -1,0 +1,18 @@
+# Keep the Docker build context small and deterministic.
+
+# Local virtualenv (hundreds of MB)
+.venv
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Local editor / OS files
+.DS_Store
+
+# Test files are not needed in the runtime image
+tests/
+

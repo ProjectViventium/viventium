@@ -1,0 +1,9 @@
+default_project: "telegram_codex"
+projects:
+  telegram_codex:
+    path: ".."
+    description: "This telegram-codex service"
+  viventium_core:
+    path: "../../.."
+    description: "The Viventium monorepo root from this service directory"
+

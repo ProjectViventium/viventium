@@ -1,0 +1,192 @@
+version: 1
+type: object
+required:
+  - version
+  - install
+  - llm
+properties:
+  version:
+    type: integer
+    const: 1
+  install:
+    type: object
+    required:
+      - mode
+    properties:
+      mode:
+        type: string
+        enum: [docker, native]
+  runtime:
+    type: object
+    properties:
+      log_level:
+        type: string
+      profile:
+        type: string
+      playground_variant:
+        type: string
+        enum: [modern, classic]
+      call_session_secret:
+        type: object
+      extra_env:
+        type: object
+      personalization:
+        type: object
+        properties:
+          default_conversation_recall:
+            type: boolean
+      network:
+        type: object
+        properties:
+          remote_call_mode:
+            type: string
+            enum: [auto, disabled, cloudflare_quick_tunnel]
+          public_client_origin:
+            type: string
+          public_api_origin:
+            type: string
+          public_playground_origin:
+            type: string
+          public_livekit_url:
+            type: string
+      ports:
+        type: object
+        properties:
+          lc_api_port:
+            type: integer
+          lc_frontend_port:
+            type: integer
+          playground_port:
+            type: integer
+          voice_gateway_health_port:
+            type: integer
+          mongo_port:
+            type: integer
+          meili_port:
+            type: integer
+          google_mcp_port:
+            type: integer
+          scheduling_mcp_port:
+            type: integer
+          rag_api_port:
+            type: integer
+          code_interpreter_port:
+            type: integer
+          skyvern_api_port:
+            type: integer
+          skyvern_ui_port:
+            type: integer
+          livekit_http_port:
+            type: integer
+          livekit_tcp_port:
+            type: integer
+          livekit_udp_port:
+            type: integer
+  agents:
+    type: object
+    properties:
+      default_main_agent_id:
+        type: string
+  llm:
+    type: object
+    required:
+      - activation
+      - primary
+    properties:
+      activation:
+        type: object
+        required:
+          - provider
+          - auth_mode
+          - secret_ref
+      primary:
+        type: object
+        required:
+          - provider
+          - auth_mode
+      secondary:
+        type: object
+      extra_provider_keys:
+        type: object
+  voice:
+    type: object
+    properties:
+      mode:
+        type: string
+        enum: [disabled, local, hosted]
+      stt_provider:
+        type: string
+      tts_provider:
+        type: string
+      tts_provider_fallback:
+        type: string
+      fast_llm_provider:
+        type: string
+      stt:
+        type: object
+      tts:
+        type: object
+        properties:
+          voice:
+            type: string
+          speed:
+            type: number
+          instructions:
+            type: string
+      wing_mode:
+        type: object
+        properties:
+          default_enabled:
+            type: boolean
+          prompt:
+            type: string
+      shadow_mode:
+        type: object
+        properties:
+          default_enabled:
+            type: boolean
+          prompt:
+            type: string
+  integrations:
+    type: object
+    properties:
+      code_interpreter:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+      web_search:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+      telegram:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          secret_ref:
+            type: string
+          secret_value:
+            type: string
+      telegram_codex:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          secret_ref:
+            type: string
+          secret_value:
+            type: string
+          bot_username:
+            type: string
+          private_chat_only:
+            type: boolean
+      google_workspace:
+        type: object
+      ms365:
+        type: object
+      skyvern:
+        type: object
+      openclaw:
+        type: object

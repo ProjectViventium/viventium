@@ -1,0 +1,16 @@
+services:
+  ms365-mcp:
+    container_name: viventium_ms365_mcp
+    build:
+      context: ../../MCPs/ms-365-mcp-server
+    command:
+      - "--http"
+      - "6274"
+      - "--org-mode"
+    ports:
+      - "${MS365_MCP_PORT:-6274}:6274"
+    environment:
+      MS365_MCP_CLIENT_ID: ${MS365_MCP_CLIENT_ID}
+      MS365_MCP_CLIENT_SECRET: ${MS365_MCP_CLIENT_SECRET}
+      MS365_MCP_TENANT_ID: ${MS365_MCP_TENANT_ID}
+      MS365_MCP_ORG_MODE: "true"

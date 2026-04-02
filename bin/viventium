@@ -1,0 +1,2437 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+resolve_script_source() {
+  local source_path="${BASH_SOURCE[0]}"
+  while [[ -L "$source_path" ]]; do
+    local source_dir
+    source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    source_path="$(readlink "$source_path")"
+    if [[ "$source_path" != /* ]]; then
+      source_path="${source_dir}/${source_path}"
+    fi
+  done
+  printf '%s\n' "$source_path"
+}
+
+SCRIPT_SOURCE="$(resolve_script_source)"
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=/dev/null
+source "$REPO_ROOT/scripts/viventium/common.sh"
+ensure_brew_paths_on_path
+
+refresh_repo_python() {
+  ensure_brew_paths_on_path
+  PYTHON_BIN="$(resolve_repo_python)"
+  export PYTHON_BIN
+  if declare -F ensure_python_requirements_file >/dev/null 2>&1; then
+    local prepared_python=""
+    prepared_python="$(ensure_python_requirements_file "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/requirements-installer.txt")"
+    if [[ -n "$prepared_python" ]]; then
+      PYTHON_BIN="$prepared_python"
+      export PYTHON_BIN
+    fi
+  fi
+}
+
+APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
+CONFIG_FILE="${VIVENTIUM_CONFIG_FILE:-$APP_SUPPORT_DIR/config.yaml}"
+RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
+GENERATED_ENV="$RUNTIME_DIR/runtime.env"
+GENERATED_LOCAL_ENV="$RUNTIME_DIR/runtime.local.env"
+GENERATED_LIBRECHAT_YAML="$RUNTIME_DIR/librechat.yaml"
+LOCK_FILE="${VIVENTIUM_COMPONENTS_LOCK_FILE:-$REPO_ROOT/components.lock.json}"
+CLI_LOCK_DIR="${VIVENTIUM_CLI_LOCK_DIR:-$APP_SUPPORT_DIR/state/cli-operation.lock}"
+CLI_LOCK_OWNER=0
+DETACHED_START_PID=""
+INSTALL_WAIT_PROGRESS_ACTIVE=0
+INSTALL_WAIT_LAST_MESSAGE=""
+INSTALL_WAIT_LAST_MESSAGE_ELAPSED=0
+
+PRIVATE_REPO_DIR_DEFAULT=""
+PRIVATE_CURATED_DIR_DEFAULT=""
+
+helper_config_file() {
+  printf '%s\n' "$APP_SUPPORT_DIR/helper-config.json"
+}
+
+refresh_runtime_paths() {
+  CONFIG_FILE="${VIVENTIUM_CONFIG_FILE:-$APP_SUPPORT_DIR/config.yaml}"
+  RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
+  GENERATED_ENV="$RUNTIME_DIR/runtime.env"
+  GENERATED_LOCAL_ENV="$RUNTIME_DIR/runtime.local.env"
+  GENERATED_LIBRECHAT_YAML="$RUNTIME_DIR/librechat.yaml"
+  CLI_LOCK_DIR="${VIVENTIUM_CLI_LOCK_DIR:-$APP_SUPPORT_DIR/state/cli-operation.lock}"
+}
+
+run_shell_init() {
+  refresh_repo_python
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/shell_init.py" --target "$REPO_ROOT/bin/viventium" "$@"
+}
+
+parse_global_options() {
+  local original_args=("$@")
+  PARSED_ARGS=()
+  local index=0
+  local arg=""
+
+  while [[ $index -lt ${#original_args[@]} ]]; do
+    arg="${original_args[$index]}"
+    case "$arg" in
+      --app-support-dir)
+        if [[ $((index + 1)) -ge ${#original_args[@]} ]]; then
+          echo "Missing value for $arg" >&2
+          exit 1
+        fi
+        APP_SUPPORT_DIR="${original_args[$((index + 1))]}"
+        export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
+        refresh_runtime_paths
+        index=$((index + 2))
+        ;;
+      --config-file)
+        if [[ $((index + 1)) -ge ${#original_args[@]} ]]; then
+          echo "Missing value for $arg" >&2
+          exit 1
+        fi
+        CONFIG_FILE="${original_args[$((index + 1))]}"
+        export VIVENTIUM_CONFIG_FILE="$CONFIG_FILE"
+        index=$((index + 2))
+        ;;
+      --runtime-dir)
+        if [[ $((index + 1)) -ge ${#original_args[@]} ]]; then
+          echo "Missing value for $arg" >&2
+          exit 1
+        fi
+        RUNTIME_DIR="${original_args[$((index + 1))]}"
+        export VIVENTIUM_RUNTIME_DIR="$RUNTIME_DIR"
+        refresh_runtime_paths
+        index=$((index + 2))
+        ;;
+      --lock-file)
+        if [[ $((index + 1)) -ge ${#original_args[@]} ]]; then
+          echo "Missing value for $arg" >&2
+          exit 1
+        fi
+        LOCK_FILE="${original_args[$((index + 1))]}"
+        export VIVENTIUM_COMPONENTS_LOCK_FILE="$LOCK_FILE"
+        index=$((index + 2))
+        ;;
+      *)
+        PARSED_ARGS+=("$arg")
+        index=$((index + 1))
+        ;;
+    esac
+  done
+}
+
+bootstrap_components() {
+  refresh_repo_python
+  local args=(
+    --repo-root "$REPO_ROOT"
+    --lock-file "$LOCK_FILE"
+  )
+  if [[ -f "$CONFIG_FILE" ]]; then
+    args+=(--config "$CONFIG_FILE")
+  fi
+  VIVENTIUM_DISABLE_PRIVATE_SNAPSHOTS=1 "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/bootstrap_components.py" \
+    "${args[@]}" \
+    "$@"
+}
+
+cleanup_cli_lock() {
+  if [[ "${CLI_LOCK_OWNER:-0}" != "1" ]]; then
+    return 0
+  fi
+  rm -f "$CLI_LOCK_DIR/pid" "$CLI_LOCK_DIR/command" >/dev/null 2>&1 || true
+  rmdir "$CLI_LOCK_DIR" >/dev/null 2>&1 || true
+  CLI_LOCK_OWNER=0
+  export VIVENTIUM_CLI_LOCK_HELD=0
+  unset VIVENTIUM_CLI_LOCK_DIR
+}
+
+stack_owner_state_file() {
+  local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/stack-owner.json"
+}
+
+write_stack_owner_state() {
+  local command_name="${1:-unknown}"
+  local owner_file=""
+  owner_file="$(stack_owner_state_file)"
+  mkdir -p "$(dirname "$owner_file")"
+  "$PYTHON_BIN" - "$owner_file" "$REPO_ROOT" "$APP_SUPPORT_DIR" "${VIVENTIUM_RUNTIME_PROFILE:-isolated}" "$command_name" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+owner_file, repo_root, app_support_dir, runtime_profile, command_name = sys.argv[1:]
+payload = {
+    "repoRoot": repo_root,
+    "appSupportDir": app_support_dir,
+    "runtimeProfile": runtime_profile,
+    "command": command_name,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+}
+Path(owner_file).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+set_helper_status_bar_visibility() {
+  local enabled="${1:-1}"
+  local helper_config=""
+  helper_config="$(helper_config_file)"
+  refresh_repo_python
+  "$PYTHON_BIN" - "$helper_config" "$REPO_ROOT" "$APP_SUPPORT_DIR" "$enabled" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+helper_config, repo_root, app_support_dir, enabled = sys.argv[1:]
+path = Path(helper_config)
+payload = {}
+if path.exists():
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        payload = {}
+
+payload["repoRoot"] = repo_root
+payload["appSupportDir"] = app_support_dir
+payload["showInStatusBar"] = enabled == "1"
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+helper_status_bar_enabled() {
+  local helper_config=""
+  helper_config="$(helper_config_file)"
+  if [[ ! -f "$helper_config" ]]; then
+    return 0
+  fi
+
+  refresh_repo_python
+  local status=""
+  status="$("$PYTHON_BIN" - "$helper_config" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    print("on")
+    raise SystemExit(0)
+
+print("on" if payload.get("showInStatusBar", True) else "off")
+PY
+)"
+  [[ "$status" == "on" ]]
+}
+
+read_cli_lock_metadata() {
+  local pid_file="$CLI_LOCK_DIR/pid"
+  local command_file="$CLI_LOCK_DIR/command"
+  local pid=""
+  local command=""
+  if [[ -f "$pid_file" ]]; then
+    pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
+  fi
+  if [[ -f "$command_file" ]]; then
+    command="$(tr -d '\r\n' <"$command_file" 2>/dev/null || true)"
+  fi
+  printf '%s\n%s\n' "$pid" "$command"
+}
+
+cli_lock_active() {
+  local pid="$1"
+  if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+  kill -0 "$pid" >/dev/null 2>&1
+}
+
+acquire_cli_lock() {
+  local command_name="${1:-unknown}"
+
+  if [[ "${VIVENTIUM_CLI_LOCK_HELD:-0}" == "1" && "${VIVENTIUM_CLI_LOCK_DIR:-}" == "$CLI_LOCK_DIR" ]]; then
+    return 0
+  fi
+
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  mkdir -p "$(dirname "$CLI_LOCK_DIR")"
+
+  while ! mkdir "$CLI_LOCK_DIR" 2>/dev/null; do
+    local existing_pid existing_command
+    local lock_metadata
+    lock_metadata="$(read_cli_lock_metadata)"
+    existing_pid="$(printf '%s\n' "$lock_metadata" | sed -n '1p')"
+    existing_command="$(printf '%s\n' "$lock_metadata" | sed -n '2p')"
+    if [[ -z "$existing_command" ]]; then
+      existing_command="unknown"
+    fi
+    if ! cli_lock_active "$existing_pid"; then
+      rm -f "$CLI_LOCK_DIR/pid" "$CLI_LOCK_DIR/command" >/dev/null 2>&1 || true
+      rmdir "$CLI_LOCK_DIR" >/dev/null 2>&1 || true
+      continue
+    fi
+    echo "Another Viventium CLI operation is already running (${existing_command}, pid ${existing_pid})." >&2
+    echo "Wait for it to finish or stop the current run before retrying." >&2
+    exit 1
+  done
+
+  printf '%s\n' "$$" >"$CLI_LOCK_DIR/pid"
+  printf '%s\n' "$command_name" >"$CLI_LOCK_DIR/command"
+  export VIVENTIUM_CLI_LOCK_HELD=1
+  export VIVENTIUM_CLI_LOCK_DIR="$CLI_LOCK_DIR"
+  CLI_LOCK_OWNER=1
+  trap cleanup_cli_lock EXIT INT TERM
+}
+
+run_preflight() {
+  refresh_repo_python
+  local apply_mode="${1:-check}"
+  local args=(
+    --config "$CONFIG_FILE"
+  )
+  if [[ "$apply_mode" == "apply" ]]; then
+    args+=(--apply)
+    if [[ "${VIVENTIUM_AUTO_APPROVE_PREREQS:-false}" == "true" || "${HEADLESS:-0}" == "1" ]]; then
+      args+=(--non-interactive)
+    fi
+  fi
+  ensure_brew_paths_on_path
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/preflight.py" "${args[@]}"
+  refresh_repo_python
+  ensure_brew_paths_on_path
+}
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  bin/viventium <command> [options]
+
+Commands:
+  install           Run the first-run wizard, compile config, and print next steps.
+                    Supports --preset/--config/--config-input <file> and --headless.
+  upgrade           Pull the current branch, refresh prerequisites/components, and recompile config.
+  update            Alias for upgrade.
+  configure         Re-run the wizard and overwrite the generated config file.
+                    Supports --preset/--config/--config-input <file> and --headless.
+  shell-init        Print or apply the optional shell setup for global `viventium` / `viv` commands.
+  launch            Start the current Viventium stack in the background.
+  bootstrap-components
+                    Fetch pinned public component repos from components.lock.json.
+  compile-config    Render runtime env/yaml files from config.yaml.
+  doctor            Run preflight checks against the current config.
+  install-helper    Install or refresh the macOS Viventium status-bar helper.
+  uninstall-helper  Remove the macOS Viventium status-bar helper.
+  status-bar        Turn the macOS Viventium status-bar helper on or off.
+  preflight         Detect and optionally install missing system prerequisites.
+  reset             Factory-reset the local Viventium install state under App Support.
+  start             Start the current Viventium stack using generated runtime env.
+  status            Show live service health and access URLs.
+  stop              Stop the current Viventium stack.
+  snapshot          Capture a local state snapshot into App Support.
+  restore           Inspect a snapshot and print or apply restore actions.
+  uninstall         Remove the local Viventium install state and helper app.
+  help              Show this help.
+USAGE
+}
+
+subcommand_usage() {
+  local command="${1:-}"
+  case "$command" in
+    start)
+      cat <<'USAGE'
+Usage:
+  bin/viventium start [launcher options]
+
+Starts the current Viventium stack using the generated config/runtime files.
+Additional arguments are forwarded to:
+  viventium_v0_4/viventium-librechat-start.sh
+
+Examples:
+  bin/viventium start
+  bin/viventium start --skip-voice-gateway
+  bin/viventium start --profile=compat
+USAGE
+      ;;
+    stop)
+      cat <<'USAGE'
+Usage:
+  bin/viventium stop [launcher options]
+
+Stops the current Viventium stack and, for native installs, the local support services.
+USAGE
+      ;;
+    install|bootstrap)
+      cat <<'USAGE'
+Usage:
+  bin/viventium install [--headless --config-input <file>] [--no-start]
+
+Runs the first-run setup flow, bootstraps components, compiles config, runs doctor,
+and optionally starts the stack.
+USAGE
+      ;;
+    configure|wizard)
+      cat <<'USAGE'
+Usage:
+  bin/viventium configure [--headless --config-input <file>]
+
+Re-runs the setup wizard and rewrites the generated config file.
+USAGE
+      ;;
+    upgrade|update)
+      cat <<'USAGE'
+Usage:
+  bin/viventium upgrade [--restart] [--skip-pull] [--allow-dirty]
+  bin/viventium update [--restart] [--skip-pull] [--allow-dirty]
+
+Refreshes the current branch, reruns aggregated preflight, refreshes pinned components,
+recompiles the runtime files, reruns doctor, and optionally restarts the stack.
+USAGE
+      ;;
+    status)
+      cat <<'USAGE'
+Usage:
+  bin/viventium status
+
+Shows the current live Viventium service health, including localhost and LAN URLs when available.
+USAGE
+      ;;
+    doctor)
+      cat <<'USAGE'
+Usage:
+  bin/viventium doctor
+
+Runs preflight checks against the current config and generated runtime files.
+USAGE
+      ;;
+    launch)
+      cat <<'USAGE'
+Usage:
+  bin/viventium launch [launcher options]
+
+Starts the current Viventium stack in the background and returns immediately.
+USAGE
+      ;;
+    install-helper)
+      cat <<'USAGE'
+Usage:
+  bin/viventium install-helper
+
+Installs or refreshes the macOS Viventium status-bar helper.
+USAGE
+      ;;
+    status-bar)
+      cat <<'USAGE'
+Usage:
+  bin/viventium status-bar on
+  bin/viventium status-bar off
+  bin/viventium status-bar status
+
+Turns the macOS Viventium status-bar helper on or off without touching the rest
+of the local App Support state.
+USAGE
+      ;;
+    shell-init)
+      cat <<'USAGE'
+Usage:
+  bin/viventium shell-init [--print-command] [--apply] [--shell <name>] [--profile <path>]
+
+Prints or applies the optional shell setup that makes `viventium` and `viv`
+available from any folder by linking this checkout into `~/.local/bin` and
+ensuring that directory is on your shell PATH.
+USAGE
+      ;;
+    uninstall-helper)
+      cat <<'USAGE'
+Usage:
+  bin/viventium uninstall-helper
+
+Removes the macOS Viventium status-bar helper.
+USAGE
+      ;;
+    preflight)
+      cat <<'USAGE'
+Usage:
+  bin/viventium preflight [--apply]
+
+Aggregates missing system prerequisites for the current config and optionally
+installs them in one batch.
+USAGE
+      ;;
+    reset)
+      cat <<'USAGE'
+Usage:
+  bin/viventium reset [--yes]
+
+Stops the current stack and removes the local Viventium install state under App Support so you
+can run a clean install again from this checkout.
+USAGE
+      ;;
+    compile-config)
+      cat <<'USAGE'
+Usage:
+  bin/viventium compile-config
+
+Renders runtime env and YAML files from the canonical config.yaml.
+USAGE
+      ;;
+    bootstrap-components)
+      cat <<'USAGE'
+Usage:
+  bin/viventium bootstrap-components
+
+Fetches or updates the pinned component repos from components.lock.json.
+USAGE
+      ;;
+    snapshot)
+      cat <<'USAGE'
+Usage:
+  bin/viventium snapshot
+
+Captures a local state snapshot under the current App Support directory.
+USAGE
+      ;;
+    restore)
+      cat <<'USAGE'
+Usage:
+  bin/viventium restore [options]
+
+Inspects or restores a snapshot using the current App Support directory.
+USAGE
+      ;;
+    uninstall)
+      cat <<'USAGE'
+Usage:
+  bin/viventium uninstall [--yes]
+
+Stops the current stack, removes the Viventium App Support footprint, and uninstalls the macOS
+status-bar helper. The repo checkout is left untouched.
+USAGE
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+compile_config() {
+  refresh_repo_python
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  export VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"
+  prepare_runtime_exports
+  unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
+    --config "$CONFIG_FILE" \
+    --output-dir "$RUNTIME_DIR" \
+    "$@"
+  if [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
+    export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
+  fi
+}
+
+run_macos_helper_installer() {
+  local mode="${1:-install}"
+  shift || true
+  "$REPO_ROOT/scripts/viventium/install_macos_helper.sh" \
+    "$mode" \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    "$@"
+}
+
+run_macos_helper_install_command() {
+  local skip_login_item="${1:-0}"
+  shift || true
+
+  if [[ "$skip_login_item" == "1" ]]; then
+    if [[ "$#" -gt 0 ]]; then
+      VIVENTIUM_HELPER_SKIP_LOGIN_ITEM=1 run_macos_helper_installer install "$@"
+    else
+      VIVENTIUM_HELPER_SKIP_LOGIN_ITEM=1 run_macos_helper_installer install
+    fi
+    return $?
+  fi
+
+  if [[ "$#" -gt 0 ]]; then
+    run_macos_helper_installer install "$@"
+  else
+    run_macos_helper_installer install
+  fi
+}
+
+maybe_install_macos_helper() {
+  [[ "${VIVENTIUM_SKIP_HELPER_INSTALL:-0}" == "1" ]] && return 0
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local helper_args=()
+  local defer_launch=0
+
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      --no-launch)
+        defer_launch=1
+        shift
+        ;;
+      *)
+        echo "Unknown helper install option: $1" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  if [[ "$defer_launch" == "1" || "${HEADLESS:-0}" == "1" || "${AUTO_START:-1}" != "1" ]]; then
+    helper_args+=(--no-launch)
+  fi
+
+  if [[ "${HEADLESS:-0}" == "1" ]]; then
+    if [[ ${#helper_args[@]} -gt 0 ]]; then
+      if ! run_macos_helper_install_command 1 "${helper_args[@]}"; then
+        echo "Warning: Viventium installed, but the macOS status-bar helper failed to install." >&2
+      fi
+    elif ! run_macos_helper_install_command 1; then
+      echo "Warning: Viventium installed, but the macOS status-bar helper failed to install." >&2
+    fi
+    return 0
+  fi
+
+  if [[ ${#helper_args[@]} -gt 0 ]]; then
+    if ! run_macos_helper_install_command 0 "${helper_args[@]}"; then
+      echo "Warning: Viventium installed, but the macOS status-bar helper failed to install." >&2
+    fi
+  elif ! run_macos_helper_install_command 0; then
+    echo "Warning: Viventium installed, but the macOS status-bar helper failed to install." >&2
+  fi
+}
+
+launch_macos_helper_app() {
+  [[ "${VIVENTIUM_SKIP_HELPER_INSTALL:-0}" == "1" ]] && return 0
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ "${HEADLESS:-0}" == "1" ]] && return 0
+
+  local helper_app_bundle="${VIVENTIUM_HELPER_APP_BUNDLE:-$HOME/Applications/Viventium.app}"
+  [[ -d "$helper_app_bundle" ]] || return 0
+
+  /usr/bin/open -g "$helper_app_bundle" >/dev/null 2>&1 || true
+}
+
+run_status_bar_command() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "The Viventium status-bar helper is only available on macOS." >&2
+    exit 1
+  fi
+
+  local action="${1:-status}"
+  shift || true
+  if [[ "$#" -gt 0 ]]; then
+    echo "Unknown status-bar option: $1" >&2
+    exit 1
+  fi
+
+  case "$action" in
+    on)
+      set_helper_status_bar_visibility 1
+      run_macos_helper_install_command 0 --no-launch
+      echo "Viventium status-bar helper is enabled."
+      echo "Launch ~/Applications/Viventium.app to show it immediately."
+      ;;
+    off)
+      set_helper_status_bar_visibility 0
+      pkill -x ViventiumHelper >/dev/null 2>&1 || true
+      echo "Viventium status-bar helper is hidden."
+      echo "Run bin/viventium status-bar on to bring it back."
+      ;;
+    status)
+      if helper_status_bar_enabled; then
+        echo "Viventium status-bar helper: on"
+      else
+        echo "Viventium status-bar helper: off"
+      fi
+      ;;
+    *)
+      echo "Unknown status-bar action: $action" >&2
+      subcommand_usage status-bar >&2
+      exit 1
+      ;;
+  esac
+}
+
+yaml_file_has_unique_mapping_keys() {
+  local yaml_file="$1"
+  local timeout_seconds="${VIVENTIUM_PRIVATE_YAML_VALIDATE_TIMEOUT_SECONDS:-3}"
+  [[ -f "$yaml_file" ]] || return 1
+  "$PYTHON_BIN" - "$yaml_file" "$timeout_seconds" <<'PY'
+import math
+import signal
+import sys
+import yaml
+from yaml.constructor import ConstructorError
+from yaml.resolver import BaseResolver
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    pass
+
+
+def construct_mapping(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key ({key})",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+UniqueKeyLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping)
+
+def timeout_handler(signum, frame):
+    raise TimeoutError("timed out while reading YAML")
+
+
+timeout_seconds = max(1, int(math.ceil(float(sys.argv[2]))))
+signal.signal(signal.SIGALRM, timeout_handler)
+signal.alarm(timeout_seconds)
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        yaml.load(handle, Loader=UniqueKeyLoader)
+finally:
+    signal.alarm(0)
+PY
+}
+
+prepare_runtime_exports() {
+  export VIVENTIUM_ENV_FILE="$GENERATED_ENV"
+  export VIVENTIUM_ENV_LOCAL_FILE="$GENERATED_LOCAL_ENV"
+  export VIVENTIUM_CANONICAL_ENV_LOCK_EXISTING_KEYS="1"
+  export VIVENTIUM_BASE_STATE_DIR="$APP_SUPPORT_DIR/state"
+  export VIVENTIUM_STATE_ROOT="${VIVENTIUM_STATE_ROOT:-$APP_SUPPORT_DIR/state/runtime/${VIVENTIUM_RUNTIME_PROFILE:-isolated}}"
+  export VIVENTIUM_PUBLIC_NETWORK_STATE_FILE="${VIVENTIUM_PUBLIC_NETWORK_STATE_FILE:-$VIVENTIUM_STATE_ROOT/public-network.json}"
+  export VIVENTIUM_CALL_TUNNEL_LOG_DIR="${VIVENTIUM_CALL_TUNNEL_LOG_DIR:-$VIVENTIUM_STATE_ROOT/logs}"
+  export VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT="${VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT:-$REPO_ROOT/scripts/viventium/remote_call_tunnel.py}"
+  export VIVENTIUM_PRIVATE_REPO_DIR="${VIVENTIUM_PRIVATE_REPO_DIR:-$PRIVATE_REPO_DIR_DEFAULT}"
+  export VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$PRIVATE_CURATED_DIR_DEFAULT}"
+
+  local source_phase="${VIVENTIUM_LIBRECHAT_SOURCE_PHASE:-runtime}"
+  local private_root_env_local=""
+  local private_librechat_env=""
+  local private_source_of_truth=""
+  local private_agents_bundle=""
+  local private_telegram_env=""
+  local generated_telegram_codex_env="$RUNTIME_DIR/service-env/telegram-codex.env"
+  local generated_telegram_codex_settings="$RUNTIME_DIR/telegram-codex/settings.yaml"
+  local generated_telegram_codex_projects="$RUNTIME_DIR/telegram-codex/projects.yaml"
+  local private_source_valid=0
+
+  if [[ -n "$VIVENTIUM_PRIVATE_CURATED_DIR" ]]; then
+    private_root_env_local="$VIVENTIUM_PRIVATE_CURATED_DIR/configs/root.env.local"
+    private_librechat_env="$VIVENTIUM_PRIVATE_CURATED_DIR/configs/librechat/librechat.env"
+    private_source_of_truth="$VIVENTIUM_PRIVATE_CURATED_DIR/configs/librechat/source_of_truth/local.librechat.yaml"
+    private_agents_bundle="$VIVENTIUM_PRIVATE_CURATED_DIR/configs/librechat/source_of_truth/local.viventium-agents.yaml"
+    private_telegram_env="$VIVENTIUM_PRIVATE_CURATED_DIR/configs/telegram/config.env"
+  fi
+
+  if [[ -f "$private_root_env_local" ]]; then
+    export VIVENTIUM_ENV_LOCAL_FILE="$private_root_env_local"
+  fi
+  if [[ -f "$private_librechat_env" ]]; then
+    export VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="$private_librechat_env"
+  fi
+  if [[ -f "$private_source_of_truth" ]]; then
+    if yaml_file_has_unique_mapping_keys "$private_source_of_truth"; then
+      export VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH="$private_source_of_truth"
+      private_source_valid=1
+    else
+      echo "Warning: ignoring unreadable or invalid private LibreChat source-of-truth YAML at $private_source_of_truth" >&2
+      unset VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH
+    fi
+  else
+    unset VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH
+  fi
+  if [[ "$source_phase" == "compile" && "$private_source_valid" == "1" ]]; then
+    export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$private_source_of_truth"
+  elif [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
+    export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
+  elif [[ "$private_source_valid" == "1" ]]; then
+    export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$private_source_of_truth"
+  else
+    unset VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH
+  fi
+  if [[ -f "$private_agents_bundle" ]]; then
+    if yaml_file_has_unique_mapping_keys "$private_agents_bundle"; then
+      export LIBRECHAT_AGENTS_BUNDLE_FILE="$private_agents_bundle"
+    else
+      echo "Warning: ignoring unreadable or invalid private Viventium agents bundle at $private_agents_bundle" >&2
+      unset LIBRECHAT_AGENTS_BUNDLE_FILE
+    fi
+  fi
+  if [[ -f "$private_telegram_env" ]]; then
+    export VIVENTIUM_TELEGRAM_ENV_FILE="$private_telegram_env"
+  fi
+  if [[ -f "$generated_telegram_codex_env" ]]; then
+    export VIVENTIUM_TELEGRAM_CODEX_ENV_FILE="$generated_telegram_codex_env"
+  fi
+  if [[ -f "$generated_telegram_codex_settings" ]]; then
+    export VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE="$generated_telegram_codex_settings"
+  fi
+  if [[ -f "$generated_telegram_codex_projects" ]]; then
+    export VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE="$generated_telegram_codex_projects"
+  fi
+}
+
+install_progress_dir() {
+  printf '%s\n' "$APP_SUPPORT_DIR/state/install"
+}
+
+write_install_stage() {
+  local stage="$1"
+  local progress_dir
+  progress_dir="$(install_progress_dir)"
+  mkdir -p "$progress_dir"
+  printf '%s\n' "$stage" >"$progress_dir/stage.txt"
+}
+
+read_install_stage() {
+  local progress_dir
+  progress_dir="$(install_progress_dir)"
+  if [[ -f "$progress_dir/stage.txt" ]]; then
+    tr -d '\r\n' <"$progress_dir/stage.txt"
+  fi
+}
+
+clear_install_stage() {
+  local progress_dir
+  progress_dir="$(install_progress_dir)"
+  rm -f "$progress_dir/stage.txt" >/dev/null 2>&1 || true
+  rmdir "$progress_dir" >/dev/null 2>&1 || true
+}
+
+backup_existing_install_config() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    return 0
+  fi
+  local progress_dir backup_dir timestamp backup_path
+  progress_dir="$(install_progress_dir)"
+  backup_dir="$progress_dir/backups"
+  mkdir -p "$backup_dir"
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_path="$backup_dir/config-$timestamp.yaml"
+  cp "$CONFIG_FILE" "$backup_path"
+  printf '%s\n' "$backup_path"
+}
+
+prompt_install_recovery_action() {
+  local prior_stage="${1:-}"
+  if [[ -z "$prior_stage" ]]; then
+    printf 'resume\n'
+    return 0
+  fi
+
+  echo "A previous install stopped during: $prior_stage" >&2
+  if [[ ! -t 0 ]]; then
+    printf 'resume\n'
+    return 0
+  fi
+
+  local response=""
+  printf 'Choose recovery action [resume/reconfigure/start-over] (default: resume): ' >&2
+  IFS= read -r response || true
+  response="$(printf '%s' "${response:-resume}" | tr '[:upper:]' '[:lower:]')"
+  case "$response" in
+    ""|resume|r)
+      printf 'resume\n'
+      ;;
+    reconfigure|config|c)
+      printf 'reconfigure\n'
+      ;;
+    start-over|startover|reset|s)
+      printf 'start-over\n'
+      ;;
+    *)
+      echo "Unknown recovery choice '$response'; resuming with the current config." >&2
+      printf 'resume\n'
+      ;;
+  esac
+}
+
+print_install_recovery_guidance() {
+  local failed_stage="${1:-unknown}"
+  echo
+  echo "Install stopped during stage: $failed_stage" >&2
+  echo "Resume after fixing the blocker: bin/viventium install" >&2
+  echo "Change installer choices first:  bin/viventium configure" >&2
+}
+
+print_install_summary() {
+  local stack_started="${1:-0}"
+  local args=(--config "$CONFIG_FILE" --runtime-dir "$RUNTIME_DIR")
+  if [[ "$stack_started" == "1" ]]; then
+    args+=(--probe-live)
+  fi
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/install_summary.py" "${args[@]}"
+}
+
+needs_connected_accounts_guidance() {
+  refresh_repo_python
+  "$PYTHON_BIN" - "$CONFIG_FILE" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def configured(node):
+    return isinstance(node, dict) and bool(
+        str(node.get("secret_ref") or "").strip() or str(node.get("secret_value") or "").strip()
+    )
+
+
+config_path = Path(sys.argv[1])
+config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+llm = config.get("llm", {}) or {}
+primary = llm.get("primary", {}) or {}
+secondary = llm.get("secondary", {}) or {}
+extra_provider_keys = llm.get("extra_provider_keys", {}) or {}
+
+foundation_present = any(
+    provider in {"openai", "anthropic"} and auth_mode == "api_key" and configured(node)
+    for provider, auth_mode, node in (
+        (
+            str(primary.get("provider") or "").strip().lower(),
+            str(primary.get("auth_mode") or "").strip().lower(),
+            primary,
+        ),
+        (
+            str(secondary.get("provider") or "").strip().lower(),
+            str(secondary.get("auth_mode") or "").strip().lower(),
+            secondary,
+        ),
+    )
+) or any(
+    provider_name in {"openai", "anthropic"} and configured(node)
+    for provider_name, node in extra_provider_keys.items()
+)
+
+print("0" if foundation_present else "1")
+PY
+}
+
+print_connected_accounts_browser_reminder() {
+  [[ "${HEADLESS:-0}" == "1" ]] && return 0
+  if [[ "$(needs_connected_accounts_guidance)" != "1" ]]; then
+    return 0
+  fi
+
+  echo
+  echo "Important: after you create your account in the browser, click your account in the left sidebar,"
+  echo "open Settings -> Connected Accounts, and connect OpenAI or Anthropic so the shipped Viventium agents can run."
+}
+
+open_default_browser() {
+  [[ "${HEADLESS:-0}" == "1" ]] && return 0
+
+  local _api_port _frontend_port _playground_port
+  assign_runtime_ports _api_port _frontend_port _playground_port
+  local url="http://localhost:${_frontend_port}"
+
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v open >/dev/null 2>&1; then
+    open "$url" >/dev/null 2>&1 || true
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 || true
+  fi
+}
+
+removal_backup_root() {
+  printf '%s\n' "${VIVENTIUM_REMOVAL_BACKUP_ROOT:-$HOME/Library/Application Support/Viventium Removed}"
+}
+
+backup_install_state_for_removal() {
+  local reason="${1:-reset}"
+  local backup_root backup_dir timestamp
+  backup_root="$(removal_backup_root)"
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_dir="$backup_root/${timestamp}-${reason}"
+  mkdir -p "$backup_dir"
+
+  if [[ -f "$CONFIG_FILE" ]]; then
+    cp "$CONFIG_FILE" "$backup_dir/config.yaml"
+  fi
+  if [[ -f "$APP_SUPPORT_DIR/helper-config.json" ]]; then
+    cp "$APP_SUPPORT_DIR/helper-config.json" "$backup_dir/helper-config.json"
+  fi
+  if [[ -f "$GENERATED_ENV" ]]; then
+    cp "$GENERATED_ENV" "$backup_dir/runtime.env"
+  fi
+  if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+    cp "$GENERATED_LOCAL_ENV" "$backup_dir/runtime.local.env"
+  fi
+
+  printf '%s\n' "$backup_dir"
+}
+
+confirm_destructive_action() {
+  local action_label="$1"
+  local yes_flag="${2:-0}"
+  local confirm_token="$3"
+
+  if [[ "$yes_flag" == "1" ]]; then
+    return 0
+  fi
+
+  if [[ ! -t 0 ]]; then
+    echo "${action_label} requires --yes in non-interactive mode." >&2
+    exit 1
+  fi
+
+  echo "${action_label} will only affect this Viventium install under:" >&2
+  echo "  $APP_SUPPORT_DIR" >&2
+  echo "It will not delete this git checkout." >&2
+  printf 'Type %s to continue: ' "$confirm_token" >&2
+  local response=""
+  IFS= read -r response || true
+  if [[ "$response" != "$confirm_token" ]]; then
+    echo "${action_label} cancelled." >&2
+    exit 1
+  fi
+}
+
+reset_local_install_state() {
+  local backup_dir=""
+  if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
+    backup_dir="$(backup_install_state_for_removal "reset")"
+  fi
+
+  if is_stack_running; then
+    echo "Stopping the current Viventium stack before reset..."
+    stop_stack_for_upgrade
+  fi
+
+  rm -rf "$APP_SUPPORT_DIR"
+  if [[ -n "$backup_dir" ]]; then
+    echo "Backed up the previous local install state to $backup_dir"
+  fi
+  echo "Factory reset complete. Next: bin/viventium install"
+}
+
+uninstall_local_installation() {
+  local backup_dir=""
+  if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
+    backup_dir="$(backup_install_state_for_removal "uninstall")"
+  fi
+
+  if is_stack_running; then
+    echo "Stopping the current Viventium stack before uninstall..."
+    stop_stack_for_upgrade
+  fi
+
+  run_macos_helper_installer uninstall || true
+  rm -rf "$APP_SUPPORT_DIR"
+  if [[ -n "$backup_dir" ]]; then
+    echo "Backed up the previous local install state to $backup_dir"
+  fi
+  echo "Viventium has been removed from this Mac. The repo checkout was left in place."
+}
+
+read_runtime_ports() {
+  local api_port="3180"
+  local frontend_port="3190"
+  local playground_port="3300"
+
+  if [[ -f "$GENERATED_ENV" ]]; then
+    local loaded_ports
+    loaded_ports="$(
+      set +u
+      # shellcheck disable=SC1090
+      source "$GENERATED_ENV"
+      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LOCAL_ENV"
+      fi
+      printf '%s %s %s\n' \
+        "${VIVENTIUM_LC_API_PORT:-3180}" \
+        "${VIVENTIUM_LC_FRONTEND_PORT:-3190}" \
+        "${VIVENTIUM_PLAYGROUND_PORT:-3300}"
+    )"
+    read -r api_port frontend_port playground_port <<<"$loaded_ports"
+  fi
+
+  printf '%s %s %s\n' "$api_port" "$frontend_port" "$playground_port"
+}
+
+assign_runtime_ports() {
+  local api_var="${1:-}"
+  local frontend_var="${2:-}"
+  local playground_var="${3:-}"
+  local loaded_ports=""
+  local resolved_api_port="3180"
+  local resolved_frontend_port="3190"
+  local resolved_playground_port="3300"
+
+  loaded_ports="$(read_runtime_ports 2>/dev/null || printf '3180 3190 3300\n')"
+  # shellcheck disable=SC2086
+  set -- $loaded_ports
+  resolved_api_port="${1:-3180}"
+  resolved_frontend_port="${2:-3190}"
+  resolved_playground_port="${3:-3300}"
+
+  if [[ -n "$api_var" ]]; then
+    printf -v "$api_var" '%s' "$resolved_api_port"
+  fi
+  if [[ -n "$frontend_var" ]]; then
+    printf -v "$frontend_var" '%s' "$resolved_frontend_port"
+  fi
+  if [[ -n "$playground_var" ]]; then
+    printf -v "$playground_var" '%s' "$resolved_playground_port"
+  fi
+}
+
+read_generated_env_value() {
+  local key="${1:-}"
+  local default_value="${2:-}"
+  [[ -n "$key" ]] || {
+    printf '%s\n' "$default_value"
+    return 0
+  }
+
+  if [[ ! -f "$GENERATED_ENV" && ! -f "$GENERATED_LOCAL_ENV" ]]; then
+    printf '%s\n' "$default_value"
+    return 0
+  fi
+
+  local value=""
+  value="$(
+    set +u
+    if [[ -f "$GENERATED_ENV" ]]; then
+      # shellcheck disable=SC1090
+      source "$GENERATED_ENV"
+    fi
+    if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+      # shellcheck disable=SC1090
+      source "$GENERATED_LOCAL_ENV"
+    fi
+    printf '%s\n' "${!key:-}"
+  )"
+
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$default_value"
+  fi
+}
+
+runtime_env_true() {
+  local key="${1:-}"
+  local default_value="${2:-false}"
+  local value=""
+  value="$(read_generated_env_value "$key" "$default_value")"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
+}
+
+runtime_port_listening() {
+  local port="${1:-}"
+  [[ -n "$port" ]] || return 1
+  lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+http_url_healthy() {
+  local url="${1:-}"
+  [[ -n "$url" ]] || return 1
+
+  local code=""
+  if command -v curl >/dev/null 2>&1; then
+    code="$(curl -sS -L -o /dev/null --max-time 2 -w '%{http_code}' "$url" 2>/dev/null || true)"
+  else
+    code="$(
+      "$PYTHON_BIN" - "$url" <<'PY'
+import sys
+import urllib.error
+import urllib.request
+
+url = sys.argv[1]
+request = urllib.request.Request(url, method="GET")
+try:
+    with urllib.request.urlopen(request, timeout=2) as response:
+        print(getattr(response, "status", 200))
+except urllib.error.HTTPError as error:
+    print(error.code)
+except Exception:
+    print("000")
+PY
+    )"
+  fi
+
+  [[ "$code" =~ ^(2|3)[0-9][0-9]$ ]]
+}
+
+local_http_surface_healthy() {
+  local port="${1:-}"
+  local path_suffix="${2:-/}"
+  [[ -n "$port" ]] || return 1
+  [[ -n "$path_suffix" ]] || path_suffix="/"
+
+  http_url_healthy "http://localhost:${port}${path_suffix}" ||
+    http_url_healthy "http://127.0.0.1:${port}${path_suffix}"
+}
+
+api_surface_healthy() {
+  local port="${1:-}"
+  local_http_surface_healthy "$port" "/api/health"
+}
+
+frontend_surface_healthy() {
+  local port="${1:-}"
+  local_http_surface_healthy "$port" "/"
+}
+
+searxng_surface_healthy() {
+  local base_url=""
+  base_url="$(read_generated_env_value "SEARXNG_INSTANCE_URL" "http://localhost:8082")"
+  base_url="${base_url%/}"
+  http_url_healthy "${base_url}/search?q=ping&format=json"
+}
+
+firecrawl_surface_healthy() {
+  local base_url=""
+  base_url="$(read_generated_env_value "FIRECRAWL_BASE_URL" "")"
+  if [[ -z "$base_url" ]]; then
+    base_url="$(read_generated_env_value "FIRECRAWL_API_URL" "http://localhost:3003")"
+  fi
+  base_url="${base_url%/}"
+
+  if http_url_healthy "${base_url}/health"; then
+    return 0
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -s --max-time 3 "${base_url}/" 2>/dev/null | grep -q "Firecrawl API"
+    return $?
+  fi
+
+  return 1
+}
+
+optional_install_surfaces_healthy() {
+  if runtime_env_true "START_SEARXNG" "false" && ! searxng_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "START_FIRECRAWL" "false" && ! firecrawl_surface_healthy; then
+    return 1
+  fi
+  return 0
+}
+
+pid_matches_repo_scope() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] || return 1
+
+  local cmd
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  if [[ -n "$cmd" ]]; then
+    case "$cmd" in
+      "$REPO_ROOT"|"$REPO_ROOT"/*|*" $REPO_ROOT"|*" $REPO_ROOT"/*)
+        return 0
+        ;;
+    esac
+  fi
+
+  if command -v lsof >/dev/null 2>&1; then
+    local cwd
+    local python_bin="${PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
+    if [[ -z "$python_bin" ]]; then
+      return 1
+    fi
+    cwd="$("$python_bin" - "$pid" <<'PY' 2>/dev/null || true
+import subprocess
+import sys
+
+pid = str(sys.argv[1]).strip()
+if not pid:
+    raise SystemExit(0)
+
+try:
+    result = subprocess.run(
+        ["lsof", "-a", "-p", pid, "-d", "cwd", "-F", "n"],
+        capture_output=True,
+        text=True,
+        timeout=2,
+        check=False,
+    )
+except Exception:
+    raise SystemExit(0)
+
+for line in result.stdout.splitlines():
+    if line.startswith("n") and line[1:]:
+        print(line[1:])
+        break
+PY
+)"
+    if [[ -n "$cwd" && "$cwd" == *"$REPO_ROOT"* ]]; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+pattern_running_in_repo() {
+  local pattern="${1:-}"
+  [[ -n "$pattern" ]] || return 1
+  local pids
+  pids="$(pgrep -f "$pattern" 2>/dev/null || true)"
+  [[ -n "$pids" ]] || return 1
+
+  local pid
+  for pid in $pids; do
+    if pid_matches_repo_scope "$pid"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+managed_process_running() {
+  pattern_running_in_repo "npm ci" ||
+    pattern_running_in_repo "npm install" ||
+    pattern_running_in_repo "npm run build" ||
+    pattern_running_in_repo "vite build" ||
+    pattern_running_in_repo "node.*api/server" ||
+    pattern_running_in_repo "next dev" ||
+    pattern_running_in_repo "TelegramVivBot.*bot.py" ||
+    pattern_running_in_repo "worker.py start" ||
+    pattern_running_in_repo "main.py --transport"
+}
+
+is_stack_running() {
+  local api_port=""
+  local frontend_port=""
+  local playground_port=""
+  assign_runtime_ports api_port frontend_port playground_port
+  runtime_port_listening "$api_port" ||
+    runtime_port_listening "$frontend_port" ||
+    runtime_port_listening "$playground_port" ||
+    managed_process_running
+}
+
+all_user_surfaces_healthy() {
+  local api_port=""
+  local frontend_port=""
+  local playground_port=""
+  assign_runtime_ports api_port frontend_port playground_port
+  api_surface_healthy "$api_port" &&
+    frontend_surface_healthy "$frontend_port" &&
+    frontend_surface_healthy "$playground_port"
+}
+
+install_surfaces_healthy() {
+  # The installer should unblock as soon as the user-facing surfaces are ready.
+  # Docker-backed web-search sidecars can keep warming in the background via the
+  # launcher's late optional recovery worker without holding first-run success.
+  all_user_surfaces_healthy
+}
+
+user_surface_healthy() {
+  all_user_surfaces_healthy
+}
+
+launch_stack_detached() {
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Missing config: $CONFIG_FILE" >&2
+    echo "Run: bin/viventium install" >&2
+    exit 1
+  fi
+  if user_surface_healthy; then
+    echo "Viventium is already running."
+    return 0
+  fi
+  if is_stack_running; then
+    echo "Detected Viventium processes, but no healthy user-facing surface. Restarting the local stack..."
+    stop_stack_for_upgrade
+  fi
+
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  mkdir -p "$(dirname "$launch_log")"
+  local child_pid
+  child_pid="$(
+    "$PYTHON_BIN" - "$launch_log" "$REPO_ROOT" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$LOCK_FILE" "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+launch_log, repo_root, app_support_dir, config_file, runtime_dir, lock_file, *extra_args = sys.argv[1:]
+env = os.environ.copy()
+env.pop("VIVENTIUM_CLI_LOCK_HELD", None)
+env.pop("VIVENTIUM_CLI_LOCK_DIR", None)
+env["VIVENTIUM_DETACHED_START"] = "1"
+
+cmd = [
+    os.path.join(repo_root, "bin", "viventium"),
+    "--app-support-dir",
+    app_support_dir,
+    "--config-file",
+    config_file,
+    "--runtime-dir",
+    runtime_dir,
+    "--lock-file",
+    lock_file,
+    "start",
+    "--restart",
+    *extra_args,
+]
+
+with open(launch_log, "ab", buffering=0) as log:
+    proc = subprocess.Popen(
+        cmd,
+        cwd=repo_root,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+        env=env,
+    )
+    print(proc.pid)
+PY
+  )"
+  DETACHED_START_PID="$child_pid"
+  echo "Launched Viventium in the background (pid $child_pid)."
+}
+
+format_install_wait_elapsed() {
+  local total_seconds="${1:-0}"
+  printf '%dm%02ds' "$((total_seconds / 60))" "$((total_seconds % 60))"
+}
+
+pid_is_running() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  ps -p "$pid" >/dev/null 2>&1
+}
+
+docker_container_name_matches() {
+  local pattern="${1:-}"
+  [[ -n "$pattern" ]] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -Eq "$pattern"
+}
+
+docker_container_running_matches() {
+  local pattern="${1:-}"
+  [[ -n "$pattern" ]] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -Eq "$pattern"
+}
+
+docker_install_prewarm_running() {
+  local service="${1:-}"
+  local pid_file="$APP_SUPPORT_DIR/state/install/docker-prewarm-${service}.pid"
+  local pid=""
+
+  [[ -f "$pid_file" ]] || return 1
+  pid="$(tr -d '\r\n' <"$pid_file" 2>/dev/null || true)"
+  pid_is_running "$pid"
+}
+
+searxng_install_wait_label() {
+  if docker_install_prewarm_running "searxng"; then
+    printf '%s\n' "SearXNG local search (Docker image warmup)"
+    return 0
+  fi
+  if docker_container_running_matches '^viventium_searxng(_redis)?$'; then
+    printf '%s\n' "SearXNG local search (Docker container starting)"
+    return 0
+  fi
+  if docker_container_name_matches '^viventium_searxng(_redis)?$'; then
+    printf '%s\n' "SearXNG local search (Docker container created)"
+    return 0
+  fi
+  printf '%s\n' "SearXNG local search"
+}
+
+firecrawl_install_wait_label() {
+  if docker_install_prewarm_running "firecrawl"; then
+    printf '%s\n' "Firecrawl local scraper (Docker image warmup)"
+    return 0
+  fi
+  if docker_container_running_matches '^viventium_firecrawl_'; then
+    printf '%s\n' "Firecrawl local scraper (Docker container starting)"
+    return 0
+  fi
+  if docker_container_name_matches '^viventium_firecrawl_'; then
+    printf '%s\n' "Firecrawl local scraper (Docker container created)"
+    return 0
+  fi
+  printf '%s\n' "Firecrawl local scraper"
+}
+
+launch_log_indicates_startup_failure() {
+  local launch_log="${1:-}"
+  [[ -f "$launch_log" ]] || return 1
+
+  local tail_output=""
+  tail_output="$(tail -n 160 "$launch_log" 2>/dev/null || true)"
+  [[ -n "$tail_output" ]] || return 1
+
+  if printf '%s\n' "$tail_output" | grep -Eq \
+    '(\[viventium\].*(Failed|failed|ERROR|Error|Docker is not running)|Failed to switch pnpm|spawnSync .*pnpm.* ENOENT|ERR_PNPM|Shutting down\.\.\.)'
+  then
+    return 0
+  fi
+
+  printf '%s\n' "$tail_output" | grep -Eq \
+    '(\[viventium\].*(LibreChat ports? .*skipping startup|LibreChat port [0-9]+.*skipping startup|Port [0-9]+ in use - skipping LibreChat startup|Playground port [0-9]+.*skipping playground startup))'
+}
+
+detached_start_failed_early() {
+  local launch_log="${1:-}"
+
+  if [[ -n "$DETACHED_START_PID" ]]; then
+    if pid_is_running "$DETACHED_START_PID"; then
+      return 1
+    fi
+    if is_stack_running || user_surface_healthy; then
+      return 1
+    fi
+    return 0
+  fi
+
+  if is_stack_running || user_surface_healthy; then
+    return 1
+  fi
+  launch_log_indicates_startup_failure "$launch_log"
+}
+
+install_waiting_on_surfaces() {
+  local display_mode="${1:-verbose}"
+  local api_port=""
+  local frontend_port=""
+  local playground_port=""
+  local waiting_on=()
+  assign_runtime_ports api_port frontend_port playground_port
+
+  if ! api_surface_healthy "$api_port"; then
+    if [[ "$display_mode" == "compact" ]]; then
+      waiting_on+=("API :$api_port")
+    else
+      waiting_on+=("LibreChat API :$api_port")
+    fi
+  fi
+  if ! frontend_surface_healthy "$frontend_port"; then
+    if [[ "$display_mode" == "compact" ]]; then
+      waiting_on+=("Web :$frontend_port")
+    else
+      waiting_on+=("LibreChat Frontend :$frontend_port")
+    fi
+  fi
+  if ! frontend_surface_healthy "$playground_port"; then
+    if [[ "$display_mode" == "compact" ]]; then
+      waiting_on+=("Playground :$playground_port")
+    else
+      waiting_on+=("Modern Playground :$playground_port")
+    fi
+  fi
+  if runtime_env_true "START_SEARXNG" "false" && ! searxng_surface_healthy; then
+    if [[ "$display_mode" == "compact" ]]; then
+      waiting_on+=("SearXNG")
+    else
+      waiting_on+=("$(searxng_install_wait_label)")
+    fi
+  fi
+  if runtime_env_true "START_FIRECRAWL" "false" && ! firecrawl_surface_healthy; then
+    if [[ "$display_mode" == "compact" ]]; then
+      waiting_on+=("Firecrawl")
+    else
+      waiting_on+=("$(firecrawl_install_wait_label)")
+    fi
+  fi
+
+  if (( ${#waiting_on[@]} == 0 )); then
+    printf '%s\n' "final health confirmation"
+    return 0
+  fi
+
+  local formatted=""
+  printf -v formatted '%s, ' "${waiting_on[@]}"
+  printf '%s\n' "${formatted%, }"
+}
+
+install_wait_log_activity_summary() {
+  local launch_log="${1:-}"
+  [[ -f "$launch_log" ]] || return 0
+
+  local cleaned_tail=""
+  cleaned_tail="$(
+    tail -n 240 "$launch_log" 2>/dev/null | \
+      sed $'s/\033\\[[0-9;]*[[:alpha:]]//g'
+  )"
+  [[ -n "$cleaned_tail" ]] || return 0
+
+  printf '%s\n' "$cleaned_tail" | awk '
+    /Installing LibreChat dependencies/ { msg = "Installing LibreChat dependencies" }
+    /Building LibreChat server packages for installer-managed runtime tasks/ { msg = "Preparing LibreChat runtime packages" }
+    /Building LibreChat server packages/ { msg = "Building LibreChat server packages" }
+    /Building LibreChat client package/ { msg = "Building LibreChat client package" }
+    /Building LibreChat client bundle/ { msg = "Building LibreChat web app" }
+    /Ensuring local conversation search is fully indexed/ { msg = "Indexing local conversation search" }
+    /Starting LibreChat \(backend\+frontend\)/ { msg = "Starting LibreChat services" }
+    /Server listening at http:\/\/localhost:[0-9]+/ { msg = "LibreChat API is responding" }
+    /VITE v[0-9].*ready/ { msg = "LibreChat frontend is responding" }
+    /Installing playground dependencies/ { msg = "Installing modern playground dependencies" }
+    /Starting .*Playground/ { msg = "Starting modern playground" }
+    /Playground pid:/ { msg = "Modern playground is starting" }
+    /Installing voice gateway dependencies/ { msg = "Installing voice gateway dependencies" }
+    /Starting Voice Gateway worker/ { msg = "Starting voice services" }
+    /Detached launch is still waiting for parallel optional sidecars before exiting/ { msg = "Finalizing optional local sidecars" }
+    END { print msg }
+  '
+}
+
+install_wait_inline_enabled() {
+  [[ "${HEADLESS:-0}" != "1" ]] || return 1
+  [[ -t 1 ]] || return 1
+  [[ "${TERM:-}" != "dumb" ]] || return 1
+}
+
+install_wait_spinner_frame() {
+  local tick="${1:-0}"
+  case $((tick % 4)) in
+    0) printf '%s\n' '-' ;;
+    1) printf '%s\n' '\\' ;;
+    2) printf '%s\n' '|' ;;
+    *) printf '%s\n' '/' ;;
+  esac
+}
+
+render_install_wait_progress() {
+  local elapsed="${1:-0}"
+  local waiting_on="${2:-}"
+  local launch_log="${3:-}"
+  local current_step=""
+  current_step="$(install_wait_log_activity_summary "$launch_log" || true)"
+  if [[ -z "$current_step" ]]; then
+    current_step="Starting local services"
+  fi
+
+  if install_wait_inline_enabled; then
+    local spinner=""
+    spinner="$(install_wait_spinner_frame "$elapsed")"
+    printf '\r\033[2K[%s] Starting Viventium %s | %s' \
+      "$spinner" \
+      "$(format_install_wait_elapsed "$elapsed")" \
+      "$current_step"
+    if [[ -n "$waiting_on" ]]; then
+      printf ' | Waiting for: %s' "$waiting_on"
+    fi
+    INSTALL_WAIT_PROGRESS_ACTIVE=1
+    return 0
+  fi
+
+  local progress_message=""
+  if [[ -n "$waiting_on" ]]; then
+    progress_message="Still waiting for Viventium to finish starting ($(format_install_wait_elapsed "$elapsed") elapsed; current step: $current_step; waiting on: $waiting_on)."
+  else
+    progress_message="Still waiting for Viventium to finish starting ($(format_install_wait_elapsed "$elapsed") elapsed; current step: $current_step)."
+  fi
+
+  local repeat_interval="${VIVENTIUM_INSTALL_START_LOG_REPEAT_SECONDS:-60}"
+  if [[ "$progress_message" != "$INSTALL_WAIT_LAST_MESSAGE" ]] ||
+    (( elapsed - INSTALL_WAIT_LAST_MESSAGE_ELAPSED >= repeat_interval ))
+  then
+    echo "$progress_message"
+    INSTALL_WAIT_LAST_MESSAGE="$progress_message"
+    INSTALL_WAIT_LAST_MESSAGE_ELAPSED="$elapsed"
+  fi
+}
+
+finish_install_wait_progress() {
+  if install_wait_inline_enabled && [[ "$INSTALL_WAIT_PROGRESS_ACTIVE" == "1" ]]; then
+    printf '\r\033[2K'
+    printf '\n'
+  fi
+  INSTALL_WAIT_PROGRESS_ACTIVE=0
+  INSTALL_WAIT_LAST_MESSAGE=""
+  INSTALL_WAIT_LAST_MESSAGE_ELAPSED=0
+}
+
+install_first_run_build_expected() {
+  local librechat_dir="$REPO_ROOT/viventium_v0_4/LibreChat"
+  local playground_dir="$REPO_ROOT/viventium_v0_4/agent-starter-react"
+
+  [[ -f "$librechat_dir/packages/api/dist/index.js" ]] || return 0
+  [[ -f "$librechat_dir/packages/client/dist/index.js" ]] || return 0
+  [[ -f "$librechat_dir/client/dist/index.html" ]] || return 0
+  [[ -d "$playground_dir/node_modules" ]] || return 0
+  return 1
+}
+
+print_install_start_expectations() {
+  local build_note_needed=0
+  local docker_note_needed=0
+
+  if install_first_run_build_expected; then
+    build_note_needed=1
+  fi
+  if runtime_env_true "START_SEARXNG" "false" || runtime_env_true "START_FIRECRAWL" "false"; then
+    docker_note_needed=1
+  fi
+  if [[ "$build_note_needed" != "1" && "$docker_note_needed" != "1" ]]; then
+    return 0
+  fi
+
+  echo "Preparing first-run startup..."
+  if [[ "$build_note_needed" == "1" ]]; then
+    echo "  - Building LibreChat and playground assets locally. On a clean Mac this can take around 10-15 minutes."
+  fi
+  if [[ "$docker_note_needed" == "1" ]]; then
+    echo "  - Starting local web-search services in parallel through Docker Desktop."
+  fi
+}
+
+print_install_timeout_log_excerpt() {
+  local launch_log="${1:-}"
+  local line_count="${2:-20}"
+  [[ -f "$launch_log" ]] || return 0
+
+  echo "Last lines from the detached start log:" >&2
+  while IFS= read -r line; do
+    echo "  $line" >&2
+  done < <(tail -n "$line_count" "$launch_log")
+}
+
+wait_for_install_stack_health() {
+  local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
+  local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
+  local progress_interval="${VIVENTIUM_INSTALL_START_PROGRESS_SECONDS:-15}"
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local deadline=$((SECONDS + timeout_seconds))
+  local started_at="$SECONDS"
+  local next_progress=$((SECONDS + progress_interval))
+  local inline_progress=0
+
+  if install_wait_inline_enabled; then
+    inline_progress=1
+  fi
+
+  while (( SECONDS < deadline )); do
+    if install_surfaces_healthy; then
+      finish_install_wait_progress
+      return 0
+    fi
+    if detached_start_failed_early "$launch_log"; then
+      finish_install_wait_progress
+      return 2
+    fi
+    if [[ "$inline_progress" == "1" || SECONDS -ge next_progress ]]; then
+      local elapsed="$((SECONDS - started_at))"
+      local waiting_on=""
+      if [[ "$inline_progress" == "1" ]]; then
+        waiting_on="$(install_waiting_on_surfaces compact || true)"
+      else
+        waiting_on="$(install_waiting_on_surfaces verbose || true)"
+      fi
+      if [[ -z "$waiting_on" ]]; then
+        waiting_on="core service readiness"
+      fi
+      render_install_wait_progress "$elapsed" "$waiting_on" "$launch_log"
+      next_progress=$((SECONDS + progress_interval))
+    fi
+    sleep "$poll_interval"
+  done
+
+  finish_install_wait_progress
+  return 1
+}
+
+start_stack_for_install() {
+  local helper_grace_seconds="${VIVENTIUM_INSTALL_HELPER_GRACE_SECONDS:-8}"
+  local helper_deadline=$((SECONDS + helper_grace_seconds))
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local wait_status=0
+
+  # Detached helper/launcher paths need their own CLI lock. Release the install
+  # lock before we wait for helper auto-start or submit a detached launch.
+  cleanup_cli_lock
+  DETACHED_START_PID=""
+
+  if install_surfaces_healthy; then
+    return 0
+  fi
+
+  print_install_start_expectations
+
+  # Interactive macOS installs may have already launched the helper, which
+  # auto-starts the stack. Give that path a brief window to claim startup
+  # before submitting a detached launch ourselves.
+  if [[ "$(uname -s)" == "Darwin" && "${HEADLESS:-0}" != "1" ]]; then
+    while (( SECONDS < helper_deadline )); do
+      if user_surface_healthy || is_stack_running; then
+        break
+      fi
+      sleep 1
+    done
+  fi
+
+  if ! user_surface_healthy && ! is_stack_running; then
+    launch_stack_detached
+  fi
+
+  wait_for_install_stack_health
+  wait_status=$?
+  if [[ "$wait_status" == "0" ]]; then
+    return 0
+  fi
+
+  local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
+  local waiting_on=""
+  local frontend_port=""
+  waiting_on="$(install_waiting_on_surfaces || true)"
+  if [[ -z "$waiting_on" ]]; then
+    waiting_on="service readiness checks"
+  fi
+  assign_runtime_ports _ frontend_port _
+
+  if [[ "$wait_status" == "2" ]]; then
+    echo "Viventium stopped during startup before the required surfaces became healthy." >&2
+  else
+    echo "Viventium did not become healthy before the install start timeout (${timeout_seconds}s)." >&2
+  fi
+  echo "Still waiting on: $waiting_on" >&2
+  if [[ -f "$launch_log" ]]; then
+    echo "Check the detached start log: $launch_log" >&2
+  fi
+  print_install_timeout_log_excerpt "$launch_log"
+  if [[ -n "$frontend_port" ]]; then
+    echo "If package builds are still running, try again shortly at http://localhost:${frontend_port}." >&2
+  fi
+  return 1
+}
+
+stop_stack_for_upgrade() {
+  "$REPO_ROOT/bin/viventium" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --config-file "$CONFIG_FILE" \
+    --runtime-dir "$RUNTIME_DIR" \
+    --lock-file "$LOCK_FILE" \
+    stop || true
+}
+
+stop_native_stack_detached() {
+  local stop_log="$APP_SUPPORT_DIR/logs/native-stop.log"
+  mkdir -p "$(dirname "$stop_log")"
+  local child_pid=""
+  child_pid="$(
+    "$PYTHON_BIN" - "$stop_log" "$REPO_ROOT" <<'PY'
+import os
+import subprocess
+import sys
+
+stop_log, repo_root = sys.argv[1:]
+env = os.environ.copy()
+
+cmd = [
+    os.path.join(repo_root, "scripts", "viventium", "native_stack.sh"),
+    "stop",
+]
+
+with open(stop_log, "ab", buffering=0) as log:
+    proc = subprocess.Popen(
+        cmd,
+        cwd=repo_root,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+        env=env,
+    )
+    print(proc.pid)
+PY
+  )"
+  echo "[viventium] Native runtime cleanup continuing in background (pid ${child_pid}, log: ${stop_log})"
+}
+
+ensure_upgradeable_git_state() {
+  local allow_dirty="${1:-0}"
+  local git_root
+  git_root="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -z "$git_root" ]]; then
+    echo "Upgrade requires a git checkout: $REPO_ROOT" >&2
+    exit 1
+  fi
+
+  local current_branch
+  current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  if [[ -z "$current_branch" || "$current_branch" == "HEAD" ]]; then
+    echo "Upgrade requires a named branch checkout, not detached HEAD." >&2
+    exit 1
+  fi
+
+  if [[ "$allow_dirty" != "1" ]]; then
+    local tracked_changes
+    tracked_changes="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)"
+    if [[ -n "$tracked_changes" ]]; then
+      echo "Upgrade refused because the main repo has local tracked changes." >&2
+      echo "Commit/stash them first, or rerun with --allow-dirty --skip-pull to refresh locally without pulling." >&2
+      exit 1
+    fi
+  fi
+}
+
+pull_current_branch_ff_only() {
+  local current_branch
+  current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  git -C "$REPO_ROOT" fetch origin "$current_branch"
+  git -C "$REPO_ROOT" pull --ff-only origin "$current_branch"
+}
+
+if [[ $# -gt 0 ]]; then
+  PARSED_ARGS=()
+  parse_global_options "$@"
+  set -- "${PARSED_ARGS[@]}"
+fi
+
+refresh_repo_python
+
+COMMAND="${1:-help}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$COMMAND" in
+  install|bootstrap)
+    acquire_cli_lock "$COMMAND"
+    AUTO_START=1
+    CONFIG_INPUT=""
+    HEADLESS=0
+    INSTALL_ARGS=()
+    CURRENT_INSTALL_STAGE="configure"
+    INSTALL_TRAP_ACTIVE=1
+    trap 'install_status=$?; if [[ "${INSTALL_TRAP_ACTIVE:-0}" == "1" && "$install_status" -ne 0 ]]; then write_install_stage "$CURRENT_INSTALL_STAGE"; print_install_recovery_guidance "$CURRENT_INSTALL_STAGE"; fi' EXIT
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage install
+      exit 0
+    fi
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --no-start)
+          AUTO_START=0
+          shift
+          ;;
+        --headless|--non-interactive)
+          HEADLESS=1
+          shift
+          ;;
+        --config-input|--preset|--config)
+          if [[ $# -lt 2 ]]; then
+            echo "Missing value for $1" >&2
+            exit 1
+          fi
+          CONFIG_INPUT="$2"
+          shift 2
+          ;;
+        *)
+          INSTALL_ARGS+=("$1")
+          shift
+          ;;
+      esac
+    done
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    RECOVERY_ACTION="resume"
+    if [[ -z "$CONFIG_INPUT" ]]; then
+      PRIOR_INSTALL_STAGE="$(read_install_stage)"
+      if [[ -n "$PRIOR_INSTALL_STAGE" && -f "$CONFIG_FILE" ]]; then
+        RECOVERY_ACTION="$(prompt_install_recovery_action "$PRIOR_INSTALL_STAGE")"
+        case "$RECOVERY_ACTION" in
+          reconfigure)
+            echo "Re-running installer setup with the current app support location." >&2
+            ;;
+          start-over)
+            BACKUP_CONFIG_PATH="$(backup_existing_install_config)"
+            if [[ -n "$BACKUP_CONFIG_PATH" ]]; then
+              echo "Backed up the previous config to $BACKUP_CONFIG_PATH" >&2
+            fi
+            rm -f "$CONFIG_FILE"
+            rm -rf "$RUNTIME_DIR"
+            clear_install_stage
+            ;;
+          *)
+            echo "Resuming with the current installer choices." >&2
+            ;;
+        esac
+      fi
+    fi
+    if [[ ! -f "$CONFIG_FILE" || -n "$CONFIG_INPUT" || "$RECOVERY_ACTION" == "reconfigure" ]]; then
+      write_install_stage "configure"
+      WIZARD_ARGS=(--output "$CONFIG_FILE")
+      if [[ -n "$CONFIG_INPUT" ]]; then
+        WIZARD_ARGS+=(--preset "$CONFIG_INPUT" --non-interactive)
+      elif [[ "$HEADLESS" == "1" ]]; then
+        echo "install --headless requires --preset/--config-input/--config <file>" >&2
+        exit 1
+      fi
+      "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
+    fi
+    CURRENT_INSTALL_STAGE="preflight"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
+    run_preflight apply
+    CURRENT_INSTALL_STAGE="bootstrap-components"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
+    bootstrap_components
+    CURRENT_INSTALL_STAGE="compile-config"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
+    if [[ ${#INSTALL_ARGS[@]} -gt 0 ]]; then
+      compile_config "${INSTALL_ARGS[@]}"
+    else
+      compile_config
+    fi
+    echo "Config written to $CONFIG_FILE"
+    echo "Generated runtime files in $RUNTIME_DIR"
+    CURRENT_INSTALL_STAGE="doctor"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
+    "$REPO_ROOT/scripts/viventium/doctor.sh" \
+      --config "$CONFIG_FILE" \
+      --runtime-dir "$RUNTIME_DIR" \
+      --repo-root "$REPO_ROOT" \
+      --lock-file "$LOCK_FILE"
+    CURRENT_INSTALL_STAGE="install-helper"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
+    maybe_install_macos_helper --no-launch
+    if [[ "$AUTO_START" == "1" ]]; then
+      echo "Starting Viventium..."
+      CURRENT_INSTALL_STAGE="start"
+      write_install_stage "$CURRENT_INSTALL_STAGE"
+      if ! start_stack_for_install; then
+        print_install_summary 0
+        exit 1
+      fi
+      INSTALL_TRAP_ACTIVE=0
+      trap - EXIT
+      clear_install_stage
+      launch_macos_helper_app
+      print_install_summary 1
+      open_default_browser
+      print_connected_accounts_browser_reminder
+      exit 0
+    fi
+    INSTALL_TRAP_ACTIVE=0
+    trap - EXIT
+    clear_install_stage
+    print_install_summary 0
+    ;;
+  upgrade|update)
+    acquire_cli_lock "$COMMAND"
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    AUTO_RESTART=0
+    SKIP_PULL=0
+    ALLOW_DIRTY=0
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --restart)
+          AUTO_RESTART=1
+          shift
+          ;;
+        --skip-pull)
+          SKIP_PULL=1
+          shift
+          ;;
+        --allow-dirty)
+          ALLOW_DIRTY=1
+          shift
+          ;;
+        *)
+          echo "Unknown upgrade option: $1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+      echo "Missing config: $CONFIG_FILE" >&2
+      echo "Run: bin/viventium install" >&2
+      exit 1
+    fi
+    ensure_upgradeable_git_state "$ALLOW_DIRTY"
+    if [[ "$SKIP_PULL" != "1" ]]; then
+      pull_current_branch_ff_only
+    fi
+    if is_stack_running; then
+      if [[ "$AUTO_RESTART" == "1" ]]; then
+        echo "Running Viventium stack detected. Stopping before component refresh..."
+        stop_stack_for_upgrade
+      else
+        echo "Upgrade refused because the Viventium stack is currently running." >&2
+        echo "Run: bin/viventium stop first, or rerun with --restart." >&2
+        exit 1
+      fi
+    fi
+    run_preflight apply
+    bootstrap_components
+    compile_config
+    "$REPO_ROOT/scripts/viventium/doctor.sh" \
+      --config "$CONFIG_FILE" \
+      --runtime-dir "$RUNTIME_DIR" \
+      --repo-root "$REPO_ROOT" \
+      --lock-file "$LOCK_FILE"
+    maybe_install_macos_helper
+    if [[ "$AUTO_RESTART" == "1" ]]; then
+      "$REPO_ROOT/bin/viventium" \
+        --app-support-dir "$APP_SUPPORT_DIR" \
+        --config-file "$CONFIG_FILE" \
+        --runtime-dir "$RUNTIME_DIR" \
+        --lock-file "$LOCK_FILE" \
+        start
+      exit $?
+    fi
+    echo "Upgrade complete. Next: bin/viventium start"
+    ;;
+  configure|wizard)
+    acquire_cli_lock "$COMMAND"
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    CONFIG_INPUT=""
+    HEADLESS=0
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --headless|--non-interactive)
+          HEADLESS=1
+          shift
+          ;;
+        --config-input|--preset|--config)
+          if [[ $# -lt 2 ]]; then
+            echo "Missing value for $1" >&2
+            exit 1
+          fi
+          CONFIG_INPUT="$2"
+          shift 2
+          ;;
+        *)
+          echo "Unknown configure option: $1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    WIZARD_ARGS=(--output "$CONFIG_FILE")
+    if [[ -n "$CONFIG_INPUT" ]]; then
+      WIZARD_ARGS+=(--preset "$CONFIG_INPUT" --non-interactive)
+    elif [[ "$HEADLESS" == "1" ]]; then
+      echo "configure --headless requires --preset/--config-input/--config <file>" >&2
+      exit 1
+    fi
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
+    compile_config
+    ;;
+  bootstrap-components)
+    acquire_cli_lock "$COMMAND"
+    bootstrap_components "$@"
+    ;;
+  compile-config)
+    acquire_cli_lock "$COMMAND"
+    compile_config "$@"
+    ;;
+  doctor)
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    prepare_runtime_exports
+    run_preflight check
+    exec "$REPO_ROOT/scripts/viventium/doctor.sh" \
+      --config "$CONFIG_FILE" \
+      --runtime-dir "$RUNTIME_DIR" \
+      --repo-root "$REPO_ROOT" \
+      --lock-file "$LOCK_FILE" \
+      --prefer-existing-checkout-head \
+      "$@"
+    ;;
+  status)
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+      echo "Missing config: $CONFIG_FILE" >&2
+      echo "Run: bin/viventium install" >&2
+      exit 1
+    fi
+    refresh_repo_python
+    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/install_summary.py" \
+      --config "$CONFIG_FILE" \
+      --runtime-dir "$RUNTIME_DIR" \
+      --probe-live
+    ;;
+  launch)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage launch
+      exit 0
+    fi
+    launch_stack_detached "$@"
+    ;;
+  install-helper)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage install-helper
+      exit 0
+    fi
+    run_macos_helper_installer install "$@"
+    ;;
+  shell-init)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage shell-init
+      exit 0
+    fi
+    run_shell_init "$@"
+    ;;
+  status-bar)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage status-bar
+      exit 0
+    fi
+    run_status_bar_command "$@"
+    ;;
+  uninstall-helper)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage uninstall-helper
+      exit 0
+    fi
+    run_macos_helper_installer uninstall "$@"
+    ;;
+  start)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage start
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+      echo "Missing config: $CONFIG_FILE" >&2
+      echo "Run: bin/viventium install" >&2
+      exit 1
+    fi
+    bootstrap_components --prefer-existing-checkout-head
+    # === VIVENTIUM START ===
+    # Feature: Canonical runtime regeneration on every start.
+    # Purpose: prevent stale generated runtime files from surviving across installer/compiler
+    # fixes and silently leaving the machine in an older behavior state than the current branch.
+    # compile_config is cheap relative to stack startup and keeps start deterministic.
+    # === VIVENTIUM END ===
+    compile_config
+    prepare_runtime_exports
+
+    EXTRA_ARGS=()
+    if [[ -f "$GENERATED_ENV" ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      source "$GENERATED_ENV"
+      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LOCAL_ENV"
+      fi
+      set +a
+      if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
+        write_stack_owner_state "$COMMAND"
+        "$REPO_ROOT/scripts/viventium/native_stack.sh" start
+      else
+        write_stack_owner_state "$COMMAND"
+      fi
+      if [[ "${VIVENTIUM_VOICE_ENABLED:-true}" != "true" ]]; then
+        EXTRA_ARGS+=(--skip-voice-gateway --skip-livekit)
+      fi
+    fi
+
+    if [[ -z "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
+      echo "Missing VIVENTIUM_CALL_SESSION_SECRET in generated runtime env: $GENERATED_ENV" >&2
+      echo "Run: bin/viventium compile-config or bin/viventium configure" >&2
+      exit 1
+    fi
+
+    USER_SELECTED_PLAYGROUND=0
+    NORMALIZED_ARGS=()
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --runtime-profile)
+          if [[ $# -lt 2 ]]; then
+            echo "Missing value for --runtime-profile" >&2
+            exit 1
+          fi
+          NORMALIZED_ARGS+=("--profile=$2")
+          shift 2
+          ;;
+        --profile)
+          if [[ $# -lt 2 ]]; then
+            echo "Missing value for --profile" >&2
+            exit 1
+          fi
+          NORMALIZED_ARGS+=("--profile=$2")
+          shift 2
+          ;;
+        --profile=*|--modern-playground|--classic-playground)
+          if [[ "${1:-}" == "--modern-playground" || "${1:-}" == "--classic-playground" ]]; then
+            USER_SELECTED_PLAYGROUND=1
+          fi
+          NORMALIZED_ARGS+=("$1")
+          shift
+          ;;
+        *)
+          NORMALIZED_ARGS+=("$1")
+          shift
+          ;;
+      esac
+    done
+
+    START_CMD=("$REPO_ROOT/viventium_v0_4/viventium-librechat-start.sh")
+    if [[ "$USER_SELECTED_PLAYGROUND" != "1" ]]; then
+      if [[ "${PLAYGROUND_VARIANT:-modern}" == "classic" ]]; then
+        START_CMD+=(--classic-playground)
+      else
+        START_CMD+=(--modern-playground)
+      fi
+    fi
+    if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+      START_CMD+=("${EXTRA_ARGS[@]}")
+    fi
+    if [[ ${#NORMALIZED_ARGS[@]} -gt 0 ]]; then
+      START_CMD+=("${NORMALIZED_ARGS[@]}")
+    fi
+    if [[ "${VIVENTIUM_DETACHED_START:-false}" == "1" || "${VIVENTIUM_DETACHED_START:-false}" == "true" ]]; then
+      # Detached helper/app launches hand control off to the background runtime.
+      # Releasing the CLI lock here keeps Stop/Quit usable while optional sidecars
+      # continue warming and prevents stale "start" lock holders from blocking shutdown.
+      cleanup_cli_lock
+    fi
+    "${START_CMD[@]}"
+    exit $?
+    ;;
+  stop)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage stop
+      exit 0
+    fi
+    stop_status=0
+    prepare_runtime_exports
+    if [[ -f "$GENERATED_ENV" ]]; then
+      # shellcheck disable=SC1090
+      source "$GENERATED_ENV"
+    fi
+    write_stack_owner_state "$COMMAND"
+    "$REPO_ROOT/viventium_v0_4/viventium-librechat-start.sh" --stop "$@" || stop_status=$?
+    # Native state can linger across mode switches or older runs. Stop cleanup
+    # should drain owned native services whenever they exist, not only when the
+    # current config still says "native".
+    if [[ "${VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE:-0}" == "1" ]]; then
+      stop_native_stack_detached
+    else
+      "$REPO_ROOT/scripts/viventium/native_stack.sh" stop || stop_status=$?
+    fi
+    exit "$stop_status"
+    ;;
+  snapshot)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage snapshot
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    exec "$REPO_ROOT/viventium_v0_4/viventium-local-state-snapshot.sh" \
+      --output-root "$APP_SUPPORT_DIR/snapshots" \
+      "$@"
+    ;;
+  restore)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage restore
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    exec "$REPO_ROOT/scripts/viventium/restore.sh" \
+      --config-home "$APP_SUPPORT_DIR" \
+      "$@"
+    ;;
+  uninstall)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage uninstall
+      exit 0
+    fi
+    UNINSTALL_YES=0
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --yes)
+          UNINSTALL_YES=1
+          shift
+          ;;
+        *)
+          echo "Unknown uninstall option: $1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    confirm_destructive_action "Uninstall" "$UNINSTALL_YES" "UNINSTALL"
+    uninstall_local_installation
+    ;;
+  preflight)
+    acquire_cli_lock "$COMMAND"
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    APPLY_PREFLIGHT=0
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --apply)
+          APPLY_PREFLIGHT=1
+          shift
+          ;;
+        *)
+          echo "Unknown preflight option: $1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    if [[ "$APPLY_PREFLIGHT" == "1" ]]; then
+      run_preflight apply
+    else
+      run_preflight check
+    fi
+    ;;
+  reset)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage reset
+      exit 0
+    fi
+    RESET_YES=0
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --yes)
+          RESET_YES=1
+          shift
+          ;;
+        *)
+          echo "Unknown reset option: $1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    confirm_destructive_action "Factory reset" "$RESET_YES" "RESET"
+    reset_local_install_state
+    ;;
+  help|-h|--help)
+    if [[ $# -gt 0 ]]; then
+      subcommand_usage "$1"
+    else
+      usage
+    fi
+    ;;
+  *)
+    echo "Unknown command: $COMMAND" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

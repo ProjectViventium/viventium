@@ -1,0 +1,2112 @@
+from __future__ import annotations
+
+import json
+import os
+import platform
+import subprocess
+import sys
+import importlib.util
+from pathlib import Path
+
+import pytest
+import yaml
+
+
+VALID_TELEGRAM_TOKEN = "123456789:Valid_botfather_token_value_ABCDEFGH"
+VALID_TELEGRAM_CODEX_TOKEN = "987654321:Valid_botfather_token_value_HGFEDCBA"
+VALID_TELEGRAM_EXISTING_TOKEN = "246813579:Valid_botfather_token_value_QRSTUVWX"
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_OF_TRUTH_AGENTS_BUNDLE = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "viventium"
+    / "source_of_truth"
+    / "local.viventium-agents.yaml"
+)
+CONFIG_COMPILER_SPEC = importlib.util.spec_from_file_location(
+    "viventium_config_compiler",
+    REPO_ROOT / "scripts/viventium/config_compiler.py",
+)
+assert CONFIG_COMPILER_SPEC and CONFIG_COMPILER_SPEC.loader
+config_compiler = importlib.util.module_from_spec(CONFIG_COMPILER_SPEC)
+CONFIG_COMPILER_SPEC.loader.exec_module(config_compiler)
+
+
+def write_config(path: Path, payload: dict) -> None:
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def load_source_of_truth_agents_bundle() -> dict:
+    return yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+
+
+def source_of_truth_built_in_agent_map() -> dict[str, str]:
+    bundle = load_source_of_truth_agents_bundle()
+    agents = [bundle.get("mainAgent", {})] + list(bundle.get("backgroundAgents", []))
+    return {
+        str(agent.get("name") or "").strip(): str(agent.get("id") or "").strip()
+        for agent in agents
+        if isinstance(agent, dict)
+        and agent.get("missing") is not True
+        and str(agent.get("name") or "").strip()
+        and str(agent.get("id") or "").strip()
+    }
+
+
+def test_config_compiler_minimal(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "docker"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "disabled",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+            "wing_mode": {
+                "default_enabled": True,
+                "prompt": "Custom wing prompt from config.",
+            },
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert "GROQ_API_KEY=groq-test" in runtime_env
+    assert "OPENAI_API_KEY=openai-test" in runtime_env
+    assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
+    assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
+    assert "VIVENTIUM_CALL_SESSION_SECRET=call-session-test" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_SECRET=call-session-test" in runtime_env
+    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
+    assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
+    assert "VIVENTIUM_MAIN_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
+    assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
+    assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
+    assert "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE=owner" in runtime_env
+    assert "START_RAG_API=false" in runtime_env
+    assert "START_CODE_INTERPRETER=false" in runtime_env
+    assert "START_SEARXNG=false" in runtime_env
+    assert "START_FIRECRAWL=false" in runtime_env
+    assert "VIVENTIUM_WEB_SEARCH_ENABLED=false" in runtime_env
+    assert "LIBRECHAT_CODE_BASEURL=" not in runtime_env
+    assert "LIBRECHAT_CODE_API_KEY=" not in runtime_env
+    assert "CODE_API_KEY=" not in runtime_env
+    assert "SEARXNG_INSTANCE_URL=" not in runtime_env
+    assert "FIRECRAWL_API_KEY=" not in runtime_env
+    assert "FIRECRAWL_API_URL=" not in runtime_env
+    assert "VIVENTIUM_WING_MODE_DEFAULT_ENABLED=true" in runtime_env
+    assert "VIVENTIUM_SHADOW_MODE_DEFAULT_ENABLED=true" in runtime_env
+    assert "VIVENTIUM_WING_MODE_PROMPT='Custom wing prompt from config.'" in runtime_env
+    assert "VIVENTIUM_SHADOW_MODE_PROMPT='Custom wing prompt from config.'" in runtime_env
+    assert "ANTHROPIC_API_KEY=user_provided" in runtime_env
+    assert "GOOGLE_API_KEY=user_provided" in runtime_env
+    assert "GOOGLE_KEY=user_provided" in runtime_env
+    assert "OPENROUTER_API_KEY=user_provided" in runtime_env
+    assert "PERPLEXITY_API_KEY=user_provided" in runtime_env
+    assert "XAI_API_KEY=user_provided" in runtime_env
+    assert 'SCHEDULING_MCP_URL=http://localhost:7110/mcp' in runtime_env
+    assert librechat_yaml["interface"]["defaultAgent"] == "agent_viventium_main_95aeb3"
+    assert librechat_yaml["endpoints"]["agents"]["defaultId"] == "agent_viventium_main_95aeb3"
+    assert librechat_yaml["endpoints"]["agents"]["capabilities"]
+    assert "execute_code" not in librechat_yaml["endpoints"]["agents"]["capabilities"]
+    assert librechat_yaml["endpoints"]["agents"]["recursionLimit"] == 2000
+    assert librechat_yaml["interface"]["runCode"] is False
+    assert librechat_yaml["memory"]["disabled"] is False
+    assert librechat_yaml["memory"]["personalize"] is True
+    assert librechat_yaml["balance"]["enabled"] is False
+    assert librechat_yaml["speech"]["tts"] == {}
+    assert librechat_yaml["speech"]["stt"] == {}
+    assert librechat_yaml["modelSpecs"]["list"][0]["name"] == "viventium"
+    assert librechat_yaml["modelSpecs"]["list"][0]["default"] is True
+    assert librechat_yaml["modelSpecs"]["list"][0]["preset"]["agent_id"] == "agent_viventium_main_95aeb3"
+    assert librechat_yaml["modelSpecs"]["list"][0]["iconURL"] == "/assets/logo.svg"
+    built_in_agents = {
+        item["label"]: item["preset"]["agent_id"]
+        for item in librechat_yaml["modelSpecs"]["list"]
+        if item.get("preset", {}).get("endpoint") == "agents"
+    }
+    assert built_in_agents == source_of_truth_built_in_agent_map()
+    assert "azureOpenAI" not in librechat_yaml["endpoints"]
+    assert all(
+        item.get("preset", {}).get("endpoint") != "azureOpenAI"
+        for item in librechat_yaml["modelSpecs"]["list"]
+    )
+    assert any(item["name"] == "viventium" for item in librechat_yaml["modelSpecs"]["list"])
+    assert set(librechat_yaml["modelSpecs"]["addedEndpoints"]) >= {
+        "agents",
+        "anthropic",
+        "google",
+        "groq",
+        "xai",
+        "perplexity",
+        "openrouter",
+        "openAI",
+        "custom",
+    }
+    custom_names = [endpoint["name"] for endpoint in librechat_yaml["endpoints"]["custom"]]
+    assert custom_names == ["perplexity", "xai", "openrouter", "groq"]
+    assert librechat_yaml["version"] == "1.3.6"
+    assert "webSearch" not in librechat_yaml
+    assert librechat_yaml["mcpServers"]["scheduling-cortex"]["url"] == "${SCHEDULING_MCP_URL}"
+    assert librechat_yaml["mcpServers"]["sequential-thinking"]["command"] == "npx"
+    assert summary["primary_provider"] == "openai"
+
+
+def test_render_librechat_yaml_preserves_source_of_truth_defaults() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    yaml_text = config_compiler.render_librechat_yaml(config, assignments, env)
+    librechat_yaml = yaml.safe_load(yaml_text)
+
+    assert librechat_yaml["memory"]["disabled"] is False
+    assert librechat_yaml["memory"]["agent"]["provider"] == "xai"
+    assert librechat_yaml["viventium"]["background_cortices"]["activation_format"]["brew_begin_tag"]
+    assert librechat_yaml["balance"]["enabled"] is False
+    assert librechat_yaml["balance"]["startBalance"] == 200000
+    assert "webSearch" not in librechat_yaml
+
+
+def test_build_agent_assignments_openai_only_uses_current_gpt5_profile() -> None:
+    config = {
+        "llm": {
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        }
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+
+    assert assignments["conscious"] == ("openai", "gpt-5.4")
+    assert assignments["background_analysis"] == ("openai", "gpt-5.4")
+    assert assignments["red_team"] == ("openai", "gpt-5.4")
+    assert assignments["productivity"] == ("openai", "gpt-5.4")
+    assert assignments["support"] == ("openai", "gpt-5.4")
+
+
+def test_build_agent_assignments_anthropic_only_uses_current_claude46_profile() -> None:
+    config = {
+        "llm": {
+            "primary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "anthropic-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        }
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+
+    assert assignments["conscious"] == ("anthropic", "claude-opus-4-6")
+    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["red_team"] == ("anthropic", "claude-opus-4-6")
+    assert assignments["productivity"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-6")
+
+
+def test_build_agent_assignments_requires_openai_or_anthropic_foundation() -> None:
+    config = {
+        "llm": {
+            "primary": {
+                "provider": "x_ai",
+                "auth_mode": "api_key",
+                "secret_value": "xai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        }
+    }
+
+    with pytest.raises(SystemExit, match="At least one of OpenAI or Anthropic"):
+        config_compiler.build_agent_assignments(config)
+
+
+def test_config_compiler_full_run_requires_openai_or_anthropic_foundation(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "x_ai",
+                "auth_mode": "api_key",
+                "secret_value": "xai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "At least one of OpenAI or Anthropic must be configured" in completed.stderr
+
+
+def test_config_compiler_full_run_requires_groq_credential(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "Missing required Groq credential." in completed.stderr
+
+
+def test_render_runtime_env_exports_explicit_background_role_assignments() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "anthropic", "auth_mode": "api_key", "secret_value": "anthropic-test"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"] == "anthropic"
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "claude-sonnet-4-6"
+    assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_PROVIDER"] == "openai"
+    assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_MODEL"] == "gpt-5.4"
+    assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_PROVIDER"] == "openai"
+    assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_MODEL"] == "gpt-5.4"
+    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_PROVIDER"] == "anthropic"
+    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] == "claude-sonnet-4-6"
+    assert env["VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER"] == "groq"
+    assert env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] == "meta-llama/llama-4-scout-17b-16e-instruct"
+
+
+def test_build_agent_assignments_use_current_generation_models() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "anthropic-test",
+            },
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+
+    assert assignments["conscious"] == ("anthropic", "claude-opus-4-6")
+    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["confirmation_bias"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["red_team"] == ("openai", "gpt-5.4")
+    assert assignments["deep_research"] == ("openai", "gpt-5.4")
+    assert assignments["productivity"] == ("openai", "gpt-5.4")
+    assert assignments["parietal"] == ("openai", "gpt-5.4")
+    assert assignments["pattern_recognition"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-4-6")
+    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-6")
+    assert assignments["support"] == ("anthropic", "claude-sonnet-4-6")
+
+
+def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundation_exists() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "x_ai",
+                "auth_mode": "api_key",
+                "secret_value": "xai-test",
+            },
+            "secondary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+
+    assert assignments["conscious"] == ("openai", "gpt-5.4")
+
+
+def test_render_runtime_env_uses_llama_4_scout_for_background_activation_defaults() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+
+    assert env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_ACTIVATION_LLM_MODEL"] == (
+        "meta-llama/llama-4-scout-17b-16e-instruct"
+    )
+    assert env["VIVENTIUM_CORTEX_DEEP_RESEARCH_ACTIVATION_LLM_MODEL"] == (
+        "meta-llama/llama-4-scout-17b-16e-instruct"
+    )
+    assert env["VIVENTIUM_CORTEX_PARIETAL_CORTEX_ACTIVATION_LLM_MODEL"] == (
+        "meta-llama/llama-4-scout-17b-16e-instruct"
+    )
+    assert env["OTUC_ACTIVATION_LLM"] == "meta-llama/llama-4-scout-17b-16e-instruct"
+
+
+def test_config_compiler_enables_code_interpreter_when_requested(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "code_interpreter": {"enabled": True},
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+
+    assert "START_CODE_INTERPRETER=true" in runtime_env
+    assert "LIBRECHAT_CODE_BASEURL=http://localhost:8101" in runtime_env
+    assert "LIBRECHAT_CODE_API_KEY=viventium-local-code-access" in runtime_env
+    assert "CODE_API_KEY=viventium-local-code-access" in runtime_env
+    assert librechat_yaml["interface"]["runCode"] is True
+    assert "execute_code" in librechat_yaml["endpoints"]["agents"]["capabilities"]
+    assert "webSearch" not in librechat_yaml
+    assert "azureOpenAI" not in librechat_yaml["endpoints"]
+    assert "azureOpenAI" not in librechat_yaml["speech"]["tts"]
+    assert "azureOpenAI" not in librechat_yaml["speech"]["stt"]
+
+
+def test_build_model_specs_includes_the_shipped_built_in_agent_roster() -> None:
+    model_specs = config_compiler.build_model_specs("agent_viventium_main_95aeb3")
+    built_in_agents = {
+        entry["label"]: entry["preset"]["agent_id"]
+        for entry in model_specs.get("list", [])
+        if entry.get("preset", {}).get("endpoint") == "agents"
+    }
+    assert built_in_agents == source_of_truth_built_in_agent_map()
+    assert set(model_specs["addedEndpoints"]) >= {
+        "agents",
+        "anthropic",
+        "google",
+        "groq",
+        "xai",
+        "perplexity",
+        "openrouter",
+        "openAI",
+    }
+
+
+def test_merge_model_specs_injects_viventium_fallback_when_missing() -> None:
+    merged = config_compiler.merge_model_specs(
+        existing={"list": [{"name": "gpt-4o", "preset": {"endpoint": "openAI", "model": "gpt-4o"}}]},
+        generated={"prioritize": False, "addedEndpoints": ["agents"]},
+        default_main_agent_id="agent_viventium_main_95aeb3",
+    )
+    entries = merged.get("list", [])
+    assert entries[0]["name"] == "viventium"
+    assert entries[0]["default"] is True
+    assert entries[0]["iconURL"] == "/assets/logo.svg"
+    assert entries[0]["preset"]["endpoint"] == "agents"
+    assert entries[0]["preset"]["agent_id"] == "agent_viventium_main_95aeb3"
+
+
+def test_prune_unavailable_source_defaults_preserves_anthropic_for_connected_accounts() -> None:
+    payload = {
+        "modelSpecs": {
+            "list": [
+                {
+                    "name": "claude-sonnet-4-6",
+                    "label": "Claude Sonnet 4 6",
+                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-6"},
+                },
+                {
+                    "name": "viventium",
+                    "preset": {"endpoint": "agents", "agent_id": "agent_viventium_main_95aeb3"},
+                },
+            ],
+            "addedEndpoints": ["agents", "anthropic", "openAI"],
+        },
+        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-6"}},
+    }
+    preserved = config_compiler.prune_unavailable_source_defaults(
+        payload,
+        {
+            "ANTHROPIC_API_KEY": "user_provided",
+            "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        },
+    )
+    assert "anthropic" in preserved["modelSpecs"]["addedEndpoints"]
+    assert any(
+        entry.get("preset", {}).get("endpoint") == "anthropic"
+        for entry in preserved["modelSpecs"]["list"]
+    )
+    assert "anthropic" in preserved["endpoints"]
+
+
+def test_prune_unavailable_source_defaults_prunes_unusable_anthropic_direct_entries() -> None:
+    payload = {
+        "modelSpecs": {
+            "list": [
+                {
+                    "name": "claude-sonnet-4-6",
+                    "label": "Claude Sonnet 4 6",
+                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-6"},
+                },
+                {
+                    "name": "viventium",
+                    "preset": {"endpoint": "agents", "agent_id": "agent_viventium_main_95aeb3"},
+                },
+            ],
+            "addedEndpoints": ["agents", "anthropic", "openAI"],
+        },
+        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-6"}},
+    }
+    pruned = config_compiler.prune_unavailable_source_defaults(
+        payload,
+        {"ANTHROPIC_API_KEY": ""},
+    )
+    assert "anthropic" not in pruned["modelSpecs"]["addedEndpoints"]
+    assert all(
+        entry.get("preset", {}).get("endpoint") != "anthropic"
+        for entry in pruned["modelSpecs"]["list"]
+    )
+    assert "anthropic" not in pruned["endpoints"]
+
+
+def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_models() -> None:
+    payload = {
+        "modelSpecs": {
+            "list": [
+                {
+                    "name": "claude-sonnet-4-6",
+                    "label": "Claude Sonnet 4 6",
+                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-6"},
+                },
+                {
+                    "name": "claude-opus-4-6",
+                    "label": "Claude Opus 4 6",
+                    "preset": {"endpoint": "anthropic", "model": "claude-opus-4-6"},
+                },
+            ]
+        },
+        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-6"}},
+    }
+    normalized = config_compiler.prune_unavailable_source_defaults(
+        payload,
+        {"ANTHROPIC_API_KEY": "anthropic-test"},
+    )
+    assert [entry["name"] for entry in normalized["modelSpecs"]["list"]] == [
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+    ]
+    assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Sonnet 4 6"
+    assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4 6"
+    assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-sonnet-4-6"
+
+
+def test_source_of_truth_built_in_agent_avatars_use_portable_asset_paths() -> None:
+    bundle = load_source_of_truth_agents_bundle()
+    avatar_paths = [
+        bundle.get("mainAgent", {}).get("avatar", {}).get("filepath"),
+        *[
+            agent.get("avatar", {}).get("filepath")
+            for agent in bundle.get("backgroundAgents", [])
+        ],
+    ]
+    avatar_paths = [path for path in avatar_paths if path]
+
+    if avatar_paths:
+        assert all(not path.startswith("/images/") for path in avatar_paths)
+        assert all(
+            not path.startswith("/") or path.startswith("/assets/")
+            for path in avatar_paths
+        )
+
+
+def test_config_compiler_preserves_explicit_cloudflare_quick_tunnel(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "cloudflare_quick_tunnel"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_REMOTE_CALL_MODE=cloudflare_quick_tunnel" in runtime_env
+
+
+def test_resolve_voice_settings_keeps_local_first_stt_on_intel_even_when_openai_key_exists(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_compiler.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(config_compiler.platform, "machine", lambda: "x86_64")
+
+    config = {
+        "llm": {
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+        },
+    }
+
+    result = config_compiler.resolve_voice_settings(config)
+    assert result["stt_provider"] == "whisper_local"
+
+
+def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "docker"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-2"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "anthropic-test",
+            },
+            "extra_provider_keys": {
+                "x_ai": "xai-test",
+            },
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "assemblyai",
+            "stt": {"secret_value": "assemblyai-test"},
+            "tts_provider": "elevenlabs",
+            "tts": {"secret_value": "elevenlabs-test"},
+            "fast_llm_provider": "x_ai",
+        },
+        "integrations": {
+            "telegram": {"enabled": True, "secret_value": VALID_TELEGRAM_TOKEN},
+            "telegram_codex": {
+                "enabled": True,
+                "secret_value": VALID_TELEGRAM_CODEX_TOKEN,
+                "bot_username": "viv_codex_bot",
+                "private_chat_only": True,
+            },
+            "google_workspace": {
+                "enabled": True,
+                "client_id": "google-client-id",
+                "client_secret": {"secret_value": "google-secret"},
+                "refresh_token": {"secret_value": "google-refresh"},
+            },
+            "ms365": {
+                "enabled": True,
+                "client_id": "ms365-client-id",
+                "tenant_id": "ms365-tenant-id",
+                "business_email": "ops@example.com",
+                "client_secret": {"secret_value": "ms365-secret"},
+            },
+            "skyvern": {
+                "enabled": True,
+                "api_key": {"secret_value": "skyvern-secret"},
+                "base_url": "http://localhost:8200",
+            },
+            "openclaw": {"enabled": True},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+
+    assert "ASSEMBLYAI_API_KEY=assemblyai-test" in runtime_env
+    assert "ELEVENLABS_API_KEY=elevenlabs-test" in runtime_env
+    assert "ELEVEN_API_KEY=elevenlabs-test" in runtime_env
+    assert "XAI_API_KEY=xai-test" in runtime_env
+    assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_SECRET=call-secret-2" in runtime_env
+    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
+    assert "START_TELEGRAM_CODEX=true" in runtime_env
+    assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in runtime_env
+    assert "TELEGRAM_CODEX_BOT_USERNAME=viv_codex_bot" in runtime_env
+    assert "GOOGLE_CLIENT_ID=google-client-id" in runtime_env
+    assert "GOOGLE_CLIENT_SECRET=google-secret" in runtime_env
+    assert "GOOGLE_REFRESH_TOKEN=google-refresh" in runtime_env
+    assert "MS365_MCP_CLIENT_ID=ms365-client-id" in runtime_env
+    assert "MS365_MCP_CLIENT_SECRET=ms365-secret" in runtime_env
+    assert "MS365_MCP_TENANT_ID=ms365-tenant-id" in runtime_env
+    assert "MS365_BUSINESS_EMAIL=ops@example.com" in runtime_env
+    assert "SKYVERN_API_KEY=skyvern-secret" in runtime_env
+    assert "SKYVERN_BASE_URL=http://localhost:8200" in runtime_env
+    assert any(endpoint["name"] == "xai" for endpoint in librechat_yaml["endpoints"]["custom"])
+    assert librechat_yaml["mcpServers"]["google_workspace"]["url"] == "${GOOGLE_WORKSPACE_MCP_URL}"
+    assert librechat_yaml["mcpServers"]["ms-365"]["url"] == "${MS365_MCP_SERVER_URL}"
+
+    telegram_codex_settings = yaml.safe_load(
+        (output_dir / "telegram-codex" / "settings.yaml").read_text(encoding="utf-8")
+    )
+    telegram_codex_projects = yaml.safe_load(
+        (output_dir / "telegram-codex" / "projects.yaml").read_text(encoding="utf-8")
+    )
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
+    telegram_codex_env = (output_dir / "service-env" / "telegram-codex.env").read_text(encoding="utf-8")
+
+    assert telegram_codex_settings["bot"]["private_chat_only"] is True
+    assert telegram_codex_settings["transcription"]["language"] == "en"
+    assert telegram_codex_settings["runtime"]["stable_pairing_root"].endswith("state/telegram-codex/paired-users")
+    assert telegram_codex_settings["runtime"]["legacy_paired_users_path"].endswith(
+        "state/runtime/isolated/telegram-codex/state/paired_users.json"
+    )
+    assert telegram_codex_projects["default_project"] == "viventium_core"
+    assert "telegram_codex" in telegram_codex_projects["projects"]
+    assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in telegram_env
+    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_SECRET=call-secret-2" in telegram_env
+    assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in telegram_codex_env
+
+
+def test_config_compiler_rejects_invalid_enabled_telegram_token(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-2"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {
+                "provider": "none",
+                "auth_mode": "disabled",
+            },
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "local_chatterbox_turbo_mlx_8bit",
+        },
+        "integrations": {
+            "telegram": {"enabled": True, "secret_value": "not-a-telegram-token"},
+            "telegram_codex": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    combined_output = f"{completed.stdout}\n{completed.stderr}"
+    assert "integrations.telegram is enabled" in combined_output
+    assert "BotFather format" in combined_output
+
+
+def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selection(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "anthropic-test",
+            },
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "local_chatterbox_turbo_mlx_8bit",
+            "tts_provider_fallback": "openai",
+            "provider_keys": {
+                "assemblyai": {"secret_value": "assemblyai-dormant"},
+                "cartesia": {"secret_value": "cartesia-dormant"},
+                "elevenlabs": {"secret_value": "elevenlabs-dormant"},
+            },
+        },
+        "integrations": {},
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_STT_PROVIDER=whisper_local" in runtime_env
+    assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+    assert "ASSEMBLYAI_API_KEY=assemblyai-dormant" in runtime_env
+    assert "CARTESIA_API_KEY=cartesia-dormant" in runtime_env
+    assert "ELEVENLABS_API_KEY=elevenlabs-dormant" in runtime_env
+    assert "ELEVEN_API_KEY=elevenlabs-dormant" in runtime_env
+
+
+def test_config_compiler_disables_rag_bootstrap_when_conversation_recall_default_is_off(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-off"},
+            "personalization": {"default_conversation_recall": False},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
+    assert "START_RAG_API=false" in runtime_env
+
+
+def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropic(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-connected"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "connected_account",
+            },
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "anthropic-test",
+            },
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
+    assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
+    assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
+    assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
+
+
+def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret_is_missing(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_ref": "keychain://viventium/call_session_secret"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_ref": "keychain://viventium/groq_api_key",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_ref": "keychain://viventium/openai_api_key",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": True, "secret_ref": "keychain://viventium/telegram_bot_token"},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    existing_runtime_env = tmp_path / "runtime.env"
+    bin_dir = tmp_path / "bin"
+    write_config(config_path, config)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    existing_runtime_env.write_text(
+        "\n".join(
+            [
+                "GROQ_API_KEY=groq-existing",
+                "OPENAI_API_KEY=openai-existing",
+                f"BOT_TOKEN={VALID_TELEGRAM_EXISTING_TOKEN}",
+                "VIVENTIUM_CALL_SESSION_SECRET=call-secret-existing",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (bin_dir / "security").write_text(
+        "#!/usr/bin/env bash\nexit 44\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "security").chmod(0o755)
+
+    env = os.environ.copy()
+    env["VIVENTIUM_ENV_FILE"] = str(existing_runtime_env)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    for key in ("GROQ_API_KEY", "OPENAI_API_KEY", "BOT_TOKEN"):
+        env.pop(key, None)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "GROQ_API_KEY=groq-existing" in runtime_env
+    assert "OPENAI_API_KEY=openai-existing" in runtime_env
+    assert f"BOT_TOKEN={VALID_TELEGRAM_EXISTING_TOKEN}" in runtime_env
+    assert "VIVENTIUM_CALL_SESSION_SECRET=call-secret-existing" in runtime_env
+
+
+def test_config_compiler_prefers_real_optional_provider_keys_over_placeholders(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-optional"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {
+                "google": "google-key-real",
+                "openrouter": "openrouter-real",
+                "perplexity": "perplexity-real",
+                "x_ai": "xai-real",
+            },
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "GOOGLE_API_KEY=google-key-real" in runtime_env
+    assert "GOOGLE_KEY=google-key-real" in runtime_env
+    assert "OPENROUTER_API_KEY=openrouter-real" in runtime_env
+    assert "PERPLEXITY_API_KEY=perplexity-real" in runtime_env
+    assert "XAI_API_KEY=xai-real" in runtime_env
+
+
+def test_config_compiler_omits_websearch_bundle_when_feature_is_disabled(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-websearch"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    generated_path = output_dir / "librechat.generated.yaml"
+    if not generated_path.is_file():
+        generated_path = output_dir / "librechat.yaml"
+    generated = generated_path.read_text(encoding="utf-8")
+    assert "${SEARXNG_INSTANCE_URL}" not in generated
+    assert "${SERPER_API_KEY}" not in generated
+    assert "${FIRECRAWL_API_KEY}" not in generated
+    assert "${COHERE_API_KEY}" not in generated
+
+
+def test_config_compiler_emits_websearch_bundle_when_feature_is_enabled(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-websearch-enabled"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "web_search": {"enabled": True},
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+
+    assert "START_SEARXNG=true" in runtime_env
+    assert "START_FIRECRAWL=true" in runtime_env
+    assert "VIVENTIUM_WEB_SEARCH_ENABLED=true" in runtime_env
+    assert "SEARXNG_INSTANCE_URL=http://localhost:8082" in runtime_env
+    assert "FIRECRAWL_API_KEY=viventium-local-firecrawl-access" in runtime_env
+    assert librechat_yaml["webSearch"]["searchProvider"] == "searxng"
+    assert librechat_yaml["webSearch"]["scraperProvider"] == "firecrawl"
+
+
+def test_config_compiler_supports_serper_and_firecrawl_api_web_search(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "web_search": {
+                "enabled": True,
+                "search_provider": "serper",
+                "serper_api_key": {"secret_value": "serper-test"},
+                "scraper_provider": "firecrawl_api",
+                "firecrawl_api_key": {"secret_value": "firecrawl-test"},
+                "firecrawl_api_url": "https://api.firecrawl.dev",
+            },
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+
+    assert "START_SEARXNG=false" in runtime_env
+    assert "START_FIRECRAWL=false" in runtime_env
+    assert "VIVENTIUM_WEB_SEARCH_ENABLED=true" in runtime_env
+    assert "SERPER_API_KEY=serper-test" in runtime_env
+    assert "FIRECRAWL_API_KEY=firecrawl-test" in runtime_env
+    assert "FIRECRAWL_API_URL=https://api.firecrawl.dev" in runtime_env
+    assert "SEARXNG_INSTANCE_URL=" not in runtime_env
+    assert librechat_yaml["webSearch"]["searchProvider"] == "serper"
+    assert librechat_yaml["webSearch"]["scraperProvider"] == "firecrawl"
+
+
+def test_config_compiler_runtime_port_overrides(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-ports"},
+            "ports": {
+                "lc_api_port": 5180,
+                "lc_frontend_port": 5190,
+                "playground_port": 5300,
+                "mongo_port": 29117,
+                "meili_port": 7901,
+                "google_mcp_port": 9111,
+                "scheduling_mcp_port": 8110,
+                "rag_api_port": 9310,
+                "skyvern_api_port": 9400,
+                "skyvern_ui_port": 9480,
+                "livekit_http_port": 8988,
+                "livekit_tcp_port": 8989,
+                "livekit_udp_port": 8990,
+            },
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": True, "client_id": "google-client-id"},
+            "ms365": {"enabled": True, "client_id": "ms365-client-id"},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+
+    assert "VIVENTIUM_LC_API_PORT=5180" in runtime_env
+    assert "VIVENTIUM_LC_FRONTEND_PORT=5190" in runtime_env
+    assert "VIVENTIUM_PLAYGROUND_PORT=5300" in runtime_env
+    assert "VIVENTIUM_PLAYGROUND_URL=http://localhost:5300" in runtime_env
+    assert "VIVENTIUM_LOCAL_MONGO_PORT=29117" in runtime_env
+    assert "VIVENTIUM_LOCAL_MEILI_PORT=7901" in runtime_env
+    assert "LIVEKIT_HTTP_PORT=8988" in runtime_env
+    assert "LIVEKIT_TCP_PORT=8989" in runtime_env
+    assert "LIVEKIT_UDP_PORT=8990" in runtime_env
+    assert "SCHEDULING_MCP_URL=http://localhost:8110/mcp" in runtime_env
+    assert "GOOGLE_WORKSPACE_MCP_URL=http://localhost:9111/mcp" in runtime_env
+    assert librechat_yaml["mcpServers"]["google_workspace"]["oauth"]["redirect_uri"] == (
+        "http://localhost:5180/api/mcp/google_workspace/oauth/callback"
+    )
+    assert librechat_yaml["mcpServers"]["ms-365"]["oauth"]["redirect_uri"] == (
+        "http://localhost:5180/api/mcp/ms-365/oauth/callback"
+    )
+
+
+def test_config_compiler_imports_legacy_private_env_passthrough(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret"},
+            "extra_env": {
+                "AZURE_OPENAI_API_INSTANCE_NAME": "explicit-instance",
+            },
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    canonical_env = tmp_path / "librechat.env"
+    write_config(config_path, config)
+    canonical_env.write_text(
+        "\n".join(
+            [
+                "AZURE_AI_FOUNDRY_API_KEY=foundry-test",
+                "AZURE_OPENAI_API_INSTANCE_NAME=canonical-instance",
+                "AZURE_OPENAI_API_KEY=azure-openai-test",
+                "VIVENTIUM_FOUNDRY_ANTHROPIC_REVERSE_PROXY=https://example.invalid/anthropic/v1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE"] = str(canonical_env)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "AZURE_AI_FOUNDRY_API_KEY=foundry-test" in runtime_env
+    assert "AZURE_OPENAI_API_KEY=azure-openai-test" in runtime_env
+    assert "VIVENTIUM_FOUNDRY_ANTHROPIC_REVERSE_PROXY=https://example.invalid/anthropic/v1" in runtime_env
+    assert "AZURE_OPENAI_API_INSTANCE_NAME=explicit-instance" in runtime_env
+
+
+def test_config_compiler_local_voice_browser_maps_to_stable_gateway_tts(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "compat",
+            "call_session_secret": {"secret_value": "call-secret-local"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+            "fast_llm_provider": "x_ai",
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
+    assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_MODEL=gpt-4o-mini-tts" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_VOICE=coral" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_SPEED=1.12" in runtime_env
+    assert "TTS_MODEL=gpt-4o-mini-tts" in runtime_env
+
+
+def test_config_compiler_local_voice_local_automatic_uses_local_tts_when_supported(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "compat",
+            "call_session_secret": {"secret_value": "call-secret-local-auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "local_automatic",
+            "fast_llm_provider": "x_ai",
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=openai" in runtime_env
+        assert "TTS_PROVIDER_PRIMARY=local_chatterbox_turbo_mlx_8bit" in runtime_env
+        assert "TTS_PROVIDER_FALLBACK=openai" in runtime_env
+    else:
+        assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
+        assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_MODEL=gpt-4o-mini-tts" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_VOICE=coral" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_SPEED=1.12" in runtime_env
+    assert "TTS_MODEL=gpt-4o-mini-tts" in runtime_env
+
+
+def test_config_compiler_allows_custom_openai_tts_voice_and_speed(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "compat",
+            "call_session_secret": {"secret_value": "call-secret-local-custom-openai-tts"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+            "fast_llm_provider": "x_ai",
+            "tts": {
+                "voice": "alloy",
+                "speed": 1.22,
+            },
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_OPENAI_TTS_VOICE=alloy" in runtime_env
+    assert "VIVENTIUM_OPENAI_TTS_SPEED=1.22" in runtime_env
+
+
+def test_config_compiler_explicit_local_chatterbox_provider_falls_back_on_unsupported_hosts(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "compat",
+            "call_session_secret": {"secret_value": "call-secret-explicit-local-chatterbox"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "local_chatterbox_turbo_mlx_8bit",
+            "tts_provider_fallback": "openai",
+            "fast_llm_provider": "x_ai",
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=openai" in runtime_env
+    else:
+        assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
+        assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
+        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=" not in runtime_env
+
+
+def test_config_compiler_resolves_string_telegram_enablement_consistently(tmp_path: Path) -> None:
+    base_config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": "false", "secret_value": VALID_TELEGRAM_TOKEN},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    config_false = tmp_path / "config-false.yaml"
+    output_false = tmp_path / "out-false"
+    write_config(config_false, base_config)
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_false),
+            "--output-dir",
+            str(output_false),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    runtime_env_false = (output_false / "runtime.env").read_text(encoding="utf-8")
+    assert "START_TELEGRAM=false" in runtime_env_false
+    assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" not in runtime_env_false
+
+    base_config["integrations"]["telegram"]["enabled"] = "true"
+    config_true = tmp_path / "config-true.yaml"
+    output_true = tmp_path / "out-true"
+    write_config(config_true, base_config)
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_true),
+            "--output-dir",
+            str(output_true),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    runtime_env_true = (output_true / "runtime.env").read_text(encoding="utf-8")
+    assert "START_TELEGRAM=true" in runtime_env_true
+    assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in runtime_env_true

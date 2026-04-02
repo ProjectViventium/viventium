@@ -1,0 +1,31 @@
+# VIVENTIUM START
+# Purpose: Dockerfile for the Power Agent MCP Server.
+# This is a lightweight container that manages the per-user sandbox containers.
+# Uses FastMCP for proper MCP protocol support.
+# VIVENTIUM END
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Docker CLI for managing containers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && curl -fsSL https://get.docker.com | sh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    fastmcp \
+    httpx \
+    docker \
+    pydantic
+
+# Copy server code
+COPY mcp_server.py .
+
+# Expose MCP port
+EXPOSE 8080
+
+# Run the MCP server with streamable-http transport
+CMD ["python", "mcp_server.py", "--transport", "streamable-http", "--port", "8080"]

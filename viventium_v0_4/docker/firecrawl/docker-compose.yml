@@ -1,0 +1,98 @@
+# VIVENTIUM START
+# Purpose: Self-hosted Firecrawl stack for LibreChat v0.4.
+# VIVENTIUM END
+services:
+  firecrawl-api:
+    image: ghcr.io/firecrawl/firecrawl:latest
+    container_name: viventium_firecrawl_api
+    restart: unless-stopped
+    mem_limit: 1536m
+    networks:
+      - firecrawl
+    ports:
+      - "127.0.0.1:${FIRECRAWL_PORT:-3003}:3002"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3002
+      - USE_DB_AUTHENTICATION=false
+      - POSTGRES_HOST=firecrawl-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - REDIS_URL=redis://firecrawl-redis:6379
+      - REDIS_EVICT_URL=redis://firecrawl-redis:6379
+      - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
+      - NUQ_RABBITMQ_URL=amqp://firecrawl:firecrawl@firecrawl-rabbitmq:5672
+      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3003/scrape
+      - BULL_AUTH_KEY=${FIRECRAWL_API_KEY}
+      - TEST_API_KEY=${FIRECRAWL_API_KEY}
+      - LOGGING_LEVEL=${FIRECRAWL_LOG_LEVEL:-warn}
+      - NUM_WORKERS_PER_QUEUE=${FIRECRAWL_NUM_WORKERS_PER_QUEUE:-1}
+      - CRAWL_CONCURRENT_REQUESTS=${FIRECRAWL_CRAWL_CONCURRENT_REQUESTS:-2}
+      - MAX_CONCURRENT_JOBS=${FIRECRAWL_MAX_CONCURRENT_JOBS:-1}
+      - BROWSER_POOL_SIZE=${FIRECRAWL_BROWSER_POOL_SIZE:-1}
+      - NUQ_WORKER_COUNT=${FIRECRAWL_NUQ_WORKER_COUNT:-1}
+      - MAX_CPU=${FIRECRAWL_MAX_CPU:-0.65}
+      - MAX_RAM=${FIRECRAWL_MAX_RAM:-0.65}
+    depends_on:
+      - firecrawl-redis
+      - firecrawl-rabbitmq
+      - firecrawl-postgres
+      - firecrawl-playwright
+
+  firecrawl-playwright:
+    image: ghcr.io/firecrawl/playwright-service:latest
+    container_name: viventium_firecrawl_playwright
+    restart: unless-stopped
+    mem_limit: 768m
+    networks:
+      - firecrawl
+    environment:
+      - PORT=3003
+    shm_size: "256m"
+
+  firecrawl-redis:
+    image: redis:7-alpine
+    container_name: viventium_firecrawl_redis
+    restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      - firecrawl
+    volumes:
+      - firecrawl-redis:/data
+
+  firecrawl-rabbitmq:
+    image: rabbitmq:3-alpine
+    container_name: viventium_firecrawl_rabbitmq
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      - firecrawl
+    environment:
+      - RABBITMQ_DEFAULT_USER=firecrawl
+      - RABBITMQ_DEFAULT_PASS=firecrawl
+    volumes:
+      - firecrawl-rabbitmq:/var/lib/rabbitmq
+
+  firecrawl-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    container_name: viventium_firecrawl_postgres
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      - firecrawl
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - firecrawl-postgres:/var/lib/postgresql/data
+
+networks:
+  firecrawl:
+
+volumes:
+  firecrawl-postgres:
+  firecrawl-rabbitmq:
+  firecrawl-redis:

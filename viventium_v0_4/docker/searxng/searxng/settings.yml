@@ -1,0 +1,12 @@
+use_default_settings: true
+
+server:
+  secret_key: "change-me"  # replace for shared or public instances
+  limiter: false
+  image_proxy: true
+
+search:
+  formats:
+    - html
+    - json
+  safe_search: 1

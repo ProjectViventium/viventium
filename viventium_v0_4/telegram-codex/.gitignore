@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
+config/settings.yaml
+config/projects.yaml
+runtime/
+.telegram_codex/

@@ -1,0 +1,62 @@
+# VIVENTIUM START
+# Purpose: Docker Compose for Power Agent VM in Azure.
+# This runs the VM Agent Manager which handles Docker-in-Docker container management.
+#
+# Runs on:
+# - Power Agent VM (Azure VM with Docker)
+# - Manages per-user sandbox containers
+# - Mounts Azure File Share for persistent workspaces
+#
+# Usage:
+#   docker compose -f docker-compose.azure.yml up -d
+#
+# Environment Variables (set in .env or via cloud-init):
+#   POWER_SANDBOX_IMAGE - ACR image for user containers
+#   WORKSPACE_BASE - Mount point for Azure File Share
+#   ANTHROPIC_FOUNDRY_API_KEY - Azure Foundry API key
+#   ANTHROPIC_FOUNDRY_RESOURCE - Azure Foundry resource name
+#   ANTHROPIC_MODEL - Model to use (default: claude-opus-4-5)
+# VIVENTIUM END
+
+services:
+  agent-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.vm-manager
+    container_name: power-agent-vm-manager
+    restart: unless-stopped
+    network_mode: "host"
+    volumes:
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Azure File Share mounted at /workspaces
+      - ${WORKSPACE_BASE:-/mnt/power-agents-workspaces}:/workspaces
+    environment:
+      # Container image from ACR
+      - POWER_SANDBOX_IMAGE=${POWER_SANDBOX_IMAGE:-viventium/power-sandbox:latest}
+      # Workspace configuration
+      - WORKSPACE_BASE=/workspaces
+      # Port range for user containers
+      - CONTAINER_PORT_START=${CONTAINER_PORT_START:-9100}
+      - CONTAINER_PORT_END=${CONTAINER_PORT_END:-9199}
+      - IDLE_TIMEOUT_HOURS=${IDLE_TIMEOUT_HOURS:-2}
+      - IDLE_TIMEOUT_MINUTES=${IDLE_TIMEOUT_MINUTES:-20}
+      - MAX_LIFETIME_MINUTES=${MAX_LIFETIME_MINUTES:-20}
+      - CLEANUP_INTERVAL_SECONDS=${CLEANUP_INTERVAL_SECONDS:-60}
+      - CONTAINER_MEMORY=${CONTAINER_MEMORY:-4g}
+      - CONTAINER_CPUS=${CONTAINER_CPUS:-2}
+      - VM_PUBLIC_IP=${VM_PUBLIC_IP:-}
+      # Azure AI Foundry configuration
+      - CLAUDE_CODE_USE_FOUNDRY=${CLAUDE_CODE_USE_FOUNDRY:-1}
+      - ANTHROPIC_FOUNDRY_API_KEY=${ANTHROPIC_FOUNDRY_API_KEY:-}
+      - ANTHROPIC_FOUNDRY_RESOURCE=${ANTHROPIC_FOUNDRY_RESOURCE:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-opus-4-5}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "viventium.stack=viventium_v0_4"
+      - "viventium.service=power-agent-vm-manager"

@@ -1,0 +1,54 @@
+# VIVENTIUM START
+# Purpose: Docker Compose for the OpenClaw Bridge MCP Server.
+# Runs the MCP server that manages per-user OpenClaw Gateway instances.
+# Follows the same pattern as power-agents-beta/docker-compose.yml.
+# VIVENTIUM END
+
+services:
+  openclaw-bridge-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: viventium-openclaw-bridge-mcp
+    labels:
+      - "viventium.stack=viventium_v0_4"
+      - "viventium.service=openclaw-bridge-mcp"
+    ports:
+      - "${OPENCLAW_BRIDGE_PORT:-8086}:8086"
+    environment:
+      - OPENCLAW_BRIDGE_PORT=8086
+      - OPENCLAW_BRIDGE_SECRET=${OPENCLAW_BRIDGE_SECRET:-}
+      - OPENCLAW_BRIDGE_AUTH_TOKEN=${OPENCLAW_BRIDGE_AUTH_TOKEN:-viventium-bridge-local}
+      - OPENCLAW_DATA_DIR=${OPENCLAW_DATA_DIR:-/data/openclaw/users}
+      - OPENCLAW_PORT_START=${OPENCLAW_PORT_START:-18789}
+      - OPENCLAW_PORT_END=${OPENCLAW_PORT_END:-18999}
+      - OPENCLAW_IDLE_TIMEOUT_HOURS=${OPENCLAW_IDLE_TIMEOUT_HOURS:-2}
+      - OPENCLAW_ISOLATION_TIER=${OPENCLAW_ISOLATION_TIER:-direct}
+      - OPENCLAW_MODEL=${OPENCLAW_MODEL:-anthropic/claude-sonnet-4-20250514}
+      # VIVENTIUM START: Channel bridge plugin wiring env.
+      - OPENCLAW_CHANNEL_BRIDGE_ENABLED=${OPENCLAW_CHANNEL_BRIDGE_ENABLED:-false}
+      - OPENCLAW_CHANNEL_PLUGIN_PATH=${OPENCLAW_CHANNEL_PLUGIN_PATH:-/app/viventium-channel-bridge}
+      - OPENCLAW_CHANNEL_LIBRECHAT_URL=${OPENCLAW_CHANNEL_LIBRECHAT_URL:-http://host.docker.internal:3080}
+      - VIVENTIUM_GATEWAY_SECRET=${VIVENTIUM_GATEWAY_SECRET:-}
+      - VIVENTIUM_GATEWAY_HMAC_SECRET=${VIVENTIUM_GATEWAY_HMAC_SECRET:-}
+      - VIVENTIUM_AGENT_ID=${VIVENTIUM_AGENT_ID:-}
+      # VIVENTIUM END
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - openclaw-user-data:/data/openclaw/users
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - viventium-openclaw
+
+volumes:
+  openclaw-user-data:
+
+networks:
+  viventium-openclaw:
+    driver: bridge

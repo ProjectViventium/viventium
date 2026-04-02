@@ -1,0 +1,96 @@
+# VIVENTIUM START
+# Purpose: Skyvern AI browser agent for advanced browser automation (85%+ success rate)
+# Source: Based on official Skyvern docker-compose.yml from https://github.com/Skyvern-AI/skyvern
+# Added: 2026-01-28
+# Documentation: docs/requirements_and_learnings/19_Browser_Agent_Skyvern.md
+#
+# Services:
+#   - postgres: Database for Skyvern task state
+#   - skyvern: Main browser automation service (API :8000, CDP :9222)
+#   - skyvern-ui: Web UI for watching tasks live (:8080, artifacts :9090)
+#
+# Usage:
+#   docker compose up -d    # Start services
+#   docker compose down     # Stop services
+#   docker compose logs -f  # View logs
+#
+# After first start:
+#   1. Open http://localhost:8080
+#   2. Go to Settings to get your local API key
+#   3. Add SKYVERN_API_KEY to .env.local
+# VIVENTIUM END
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: viventium-skyvern-postgres
+    restart: always
+    volumes:
+      - ${SKYVERN_POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_USER=skyvern
+      - POSTGRES_PASSWORD=skyvern
+      - POSTGRES_DB=skyvern
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skyvern"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  skyvern:
+    image: public.ecr.aws/skyvern/skyvern:latest
+    container_name: viventium-skyvern
+    restart: on-failure
+    env_file:
+      - ${SKYVERN_ENV_FILE:-.env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${SKYVERN_API_PORT:-8000}:8000"
+      - "9222:9222"  # CDP browser forwarding
+    volumes:
+      - ${SKYVERN_ARTIFACTS_DIR:-./artifacts}:/data/artifacts
+      - ${SKYVERN_VIDEOS_DIR:-./videos}:/data/videos
+      - ${SKYVERN_HAR_DIR:-./har}:/data/har
+      - ${SKYVERN_LOG_DIR:-./log}:/data/log
+      - ${SKYVERN_STREAMLIT_DIR:-./.streamlit}:/app/.streamlit
+    environment:
+      - DATABASE_STRING=postgresql+psycopg://skyvern:skyvern@postgres:5432/skyvern
+      - BROWSER_TYPE=chromium-headful
+      - ENABLE_CODE_BLOCK=true
+      # Video recording for debugging and playback
+      - ENABLE_VIDEO_RECORDING=true
+      - VIDEO_PATH=/data/videos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "sh", "-lc", "file=/app/.streamlit/secret; file=${file}s.toml; test -f \"$file\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  skyvern-ui:
+    image: public.ecr.aws/skyvern/skyvern-ui:latest
+    container_name: viventium-skyvern-ui
+    restart: on-failure
+    ports:
+      - "${SKYVERN_UI_PORT:-8080}:8080"
+      - "9090:9090"  # Artifact API
+    volumes:
+      - ${SKYVERN_ARTIFACTS_DIR:-./artifacts}:/data/artifacts
+      - ${SKYVERN_VIDEOS_DIR:-./videos}:/data/videos
+      - ${SKYVERN_HAR_DIR:-./har}:/data/har
+      - ${SKYVERN_STREAMLIT_DIR:-./.streamlit}:/app/.streamlit
+    environment:
+      # For local setup, these URLs use localhost
+      # For remote setup, change to your server IP or use SKYVERN_PUBLIC_HOST
+      # NOTE: VITE_WSS_BASE_URL must point to the Skyvern API's WebSocket endpoint
+      # The /api/v1 path provides the streaming endpoint for live task updates
+      - VITE_WSS_BASE_URL=${SKYVERN_WSS_URL:-ws://localhost:${SKYVERN_API_PORT:-8000}/api/v1}
+      - VITE_ARTIFACT_API_BASE_URL=${SKYVERN_ARTIFACT_URL:-http://localhost:9090}
+      - VITE_API_BASE_URL=${SKYVERN_API_URL:-http://localhost:${SKYVERN_API_PORT:-8000}/api/v1}
+    depends_on:
+      skyvern:
+        condition: service_healthy

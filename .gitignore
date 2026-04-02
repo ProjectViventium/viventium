@@ -1,0 +1,137 @@
+# Python
+__pycache__/
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.pyc
+
+# Virtual environments
+.venv/
+.venv
+venv/
+# Build and distribution
+build/
+dist/
+node_modules/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+# IDE / system
+.vscode/
+.idea/
+.DS_Store
+.claude/
+.codex/
+.codex-artifacts/
+.codex_worktrees/
+# Jupyter / temp
+.ipynb_checkpoints/
+*.tmp
+# Local scratch clones/sandboxes (must never be tracked in main repo)
+tmp/LibreChat-build/
+tmp/google_workspace_mcp_upstream_v1_9_0/
+tmp/hello-world-test/
+tmp/
+# Large data / model files
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.dylib
+*.bin
+# Test files
+tests/unit/__pycache__/
+tests/unit/*.pyc
+# Cache
+.cache/
+.pytest_cache/
+dumps/
+# Environment files (secrets) - never commit real keys/tokens
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.*
+config.env
+**/config.env
+**/.env.bridge
+devops/full_azure_deployment/viv_full_final_deploy/config.yaml
+devops/full_azure_deployment/viv_full_final_deploy/exports/
+devops/full_azure_deployment/viv_full_final_deploy/state/
+devops/full_azure_deployment/viv_full_final_deploy/tmp/
+devops/full_azure_deployment/full_deploy_v2/config.yaml
+devops/full_azure_deployment/full_deploy_v2/exports/
+devops/full_azure_deployment/full_deploy_v2/state/
+devops/full_azure_deployment/full_deploy_v2/tmp/
+devops/full_azure_deployment/full_deploy_v2/logs/
+devops/full_azure_deployment/full_deploy_v2/.terraform/
+devops/full_azure_deployment/full_deploy_v2/terraform/**/.terraform/
+# Runtime artifacts / local user data
+.viventium/
+apps/macos/ViventiumHelper/.build/
+viventium_v0_4/.viventium/
+viventium_v0_4/.viventium-livekit.yaml
+tmp/release-prep/
+tmp/release-staging/
+tmp/open-release-stage/
+tmp/open-release-verify/
+build/generated-config/
+viventium_v0_3_py/viventium_v1/storage/memory/**/transcripts/
+viventium_v0_3_py/viventium_v1/storage/memory/**/summaries/
+viventium_v0_3_py/viventium_v1/storage/memory/**/vectors/
+viventium_v0_3_py/viventium_v1/storage/memory/**/cortices/
+viventium_v0_3_py/viventium_v1/storage/memory/**/raw/
+viventium_v0_3_py/viventium_v1/storage/memory/**/secret/
+viventium_v0_3_py/viventium_v1/storage/memory/**/snapshots/
+# Log files
+*.log
+**/logs/
+**/mcp_server_debug.log
+output/
+.playwright-cli/
+# Archive and deprecated code (excluded from repo)
+viventium_v0_3_py/archive/*
+viventium_v0_3_py/archive/**/*
+
+# Nested git repositories (managed independently as forks via devops/git/repos.json)
+# These repos have their own git history and are pushed separately by git-helper.sh.
+# List each repo individually so that any NEW directory added alongside them
+# (e.g. power-agents-beta) is tracked by the main repo by default.
+/viventium-private-user/
+/viventium-private/
+/viventium-enterprise-deploy/
+viventium_v0_4/LibreChat/
+viventium_v0_4/agents-playground/
+viventium_v0_4/livekit/
+viventium_v0_4/cartesia-voice-agent/
+viventium_v0_4/agent-starter-react/
+viventium_v0_4/MCPs/ms-365-mcp-server/
+viventium_v0_4/MCPs/google_workspace_mcp/
+viventium_v0_4/MCPs/yt_transcript/
+viventium_v0_4/openclaw/
+viventium_v0_4/skyvern-source/
+viventium_v0_4/GlassHive/
+viventium_v0_3_py/interfaces/livekit-playground/
+
+# Private/stateful paths that must not be added again
+viventium_v0_4/docker/skyvern/postgres-data/
+viventium_v0_4/telegram-viventium/user_configs/
+viventium_v0_4/credentials/
+viventium_v0_4/LibreChat/viventium/source_of_truth/d21*
+viventium_v0_4/LibreChat/viventium/source_of_truth/local*
+viventium_v0_4/viventium-private/
+azure_configs/
+backups/
+devops/snapshots/
+project_prompts/
+docs/business/
+docs/plans/
+docs/reports/
+docs/prompt_design/
+docs/research/
+docs/archive/
+projects/
+qa/results/
+qa/repo_cleanup_audit/

@@ -1,0 +1,66 @@
+version: 1
+install:
+  mode: native
+runtime:
+  log_level: info
+  profile: isolated
+  network:
+    remote_call_mode: disabled
+    public_client_origin: ""
+    public_api_origin: ""
+    public_playground_origin: ""
+    public_livekit_url: ""
+  personalization:
+    default_conversation_recall: false
+  ports:
+    lc_api_port: 3180
+    lc_frontend_port: 3190
+    playground_port: 3300
+    mongo_port: 27117
+    meili_port: 7700
+    livekit_http_port: 7888
+    livekit_tcp_port: 7889
+    livekit_udp_port: 7890
+  playground_variant: modern
+  call_session_secret:
+    secret_ref: keychain://viventium/call_session_secret
+agents:
+  default_main_agent_id: agent_viventium_main_95aeb3
+llm:
+  activation:
+    provider: groq
+    auth_mode: api_key
+    secret_ref: keychain://viventium/groq_api_key
+  primary:
+    provider: openai
+    auth_mode: connected_account
+  secondary:
+    provider: none
+    auth_mode: disabled
+voice:
+  mode: local
+  stt_provider: whisper_local
+  tts_provider: browser
+  fast_llm_provider: x_ai
+  tts:
+    voice: coral
+    speed: 1.12
+  wing_mode:
+    default_enabled: false
+integrations:
+  code_interpreter:
+    enabled: false
+  web_search:
+    enabled: false
+  telegram:
+    enabled: false
+  telegram_codex:
+    enabled: false
+  google_workspace:
+    enabled: false
+  ms365:
+    enabled: false
+  skyvern:
+    enabled: false
+  openclaw:
+    enabled: false

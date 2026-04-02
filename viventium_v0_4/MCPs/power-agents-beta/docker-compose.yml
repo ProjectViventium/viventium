@@ -1,0 +1,63 @@
+# VIVENTIUM START
+# Purpose: Docker Compose for the Power Agent MCP Server.
+# This runs the MCP server that manages per-user sandbox containers.
+# VIVENTIUM END
+
+# VIVENTIUM START
+# Purpose: Docker Compose for the Power Agent MCP Server.
+# Note: version is deprecated in docker compose v2+
+#
+# IMPORTANT: The MCP server creates user containers that mount volumes.
+# For this to work, the DATA_DIR must be an absolute host path that:
+# 1. Is accessible to Docker Desktop (in File Sharing settings)
+# 2. Is passed as POWER_AGENT_DATA_DIR environment variable
+# VIVENTIUM END
+
+services:
+  power-agent-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: viventium-power-agent-mcp
+    labels:
+      - "viventium.stack=viventium_v0_4"
+      - "viventium.service=power-agent-mcp"
+    ports:
+      - "${POWER_AGENT_MCP_PORT:-8085}:8080"
+    volumes:
+      # Docker socket for managing containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - POWER_AGENT_IMAGE=${POWER_AGENT_IMAGE:-viventium/power-sandbox:latest}
+      # CRITICAL: This must be an absolute host path for docker-in-docker to work
+      # The viventium-power-agents-beta-start.sh script sets this to the actual host path
+      - POWER_AGENT_DATA_DIR=${POWER_AGENT_DATA_DIR}
+      # Port range for user containers
+      # IMPORTANT: Starts at 9100 to avoid conflicts with port 9000 (MinIO, etc.)
+      - POWER_AGENT_PORT_START=${POWER_AGENT_PORT_START:-9100}
+      - POWER_AGENT_PORT_END=${POWER_AGENT_PORT_END:-9199}
+      - POWER_AGENT_IDLE_HOURS=${POWER_AGENT_IDLE_HOURS:-2}
+      - POWER_AGENT_MEMORY=${POWER_AGENT_MEMORY:-4g}
+      - POWER_AGENT_CPUS=${POWER_AGENT_CPUS:-2}
+      # API keys passed from host
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Azure Foundry support for Claude Code
+      - CLAUDE_CODE_USE_FOUNDRY=${CLAUDE_CODE_USE_FOUNDRY:-}
+      - ANTHROPIC_FOUNDRY_API_KEY=${ANTHROPIC_FOUNDRY_API_KEY:-}
+      - ANTHROPIC_FOUNDRY_RESOURCE=${ANTHROPIC_FOUNDRY_RESOURCE:-}
+      - ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - viventium-agents
+
+networks:
+  viventium-agents:
+    driver: bridge

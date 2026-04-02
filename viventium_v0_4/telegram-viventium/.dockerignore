@@ -1,0 +1,16 @@
+# === VIVENTIUM START ===
+# Feature: Reduce Telegram bot build context size for faster, more reliable Docker builds.
+# === VIVENTIUM END ===
+.git
+.gitignore
+.pytest_cache
+__pycache__
+tests
+docs
+config.env
+config.env.example
+start_telegram_viv.sh
+README.md
+LICENSE
+*.md
+*.log

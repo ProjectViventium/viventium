@@ -1,0 +1,13 @@
+# Secrets — never commit
+.env.e2e
+.env.bridge
+tests/.env.e2e
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Node (channel plugin)
+node_modules/

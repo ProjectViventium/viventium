@@ -1,0 +1,19 @@
+name: Release Policy
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 scripts/release/build_release_manifests.py --output-dir tmp/release-prep/ci
+      - run: test -f tmp/release-prep/ci/public-retain-manifest.csv
+      - run: test -f tmp/release-prep/ci/private-export-manifest.csv
+      - run: test -f tmp/release-prep/ci/enterprise-export-manifest.csv
+      - run: test -f tmp/release-prep/ci/docs-visibility-matrix.md

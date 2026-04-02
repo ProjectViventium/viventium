@@ -1,0 +1,119 @@
+"""Viventium Cartesia TTS normalization tests."""
+
+# === VIVENTIUM START ===
+# Feature: Cartesia emotion + nonverbal normalization tests
+# Added: 2026-01-10
+# Updated: 2026-02-22 - Added SSML preservation tests, break tag tests
+# === VIVENTIUM END ===
+
+import os
+import sys
+import unittest
+
+# Ensure voice-gateway root is on sys.path so `import cartesia_tts` works
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from cartesia_tts import _STAGE_PROMPTS, _normalize_nonverbal_tokens, _split_emotion_segments
+
+
+class TestCartesiaNormalization(unittest.TestCase):
+    def test_laughter_stage_prompt_uses_cartesia_token(self) -> None:
+        # Cartesia docs: the token `[laughter]` triggers actual laughter. We should not
+        # approximate it as spoken "ha ha ha" text.
+        prompt, _emotion = _STAGE_PROMPTS.get("laughter", ("", None))
+        self.assertEqual(prompt, "[laughter]")
+
+    def test_normalizes_laughter_variants(self) -> None:
+        text = "Hi [laugh] there [gentle laugh] wow [giggle]!"
+        normalized = _normalize_nonverbal_tokens(text)
+        self.assertIn("[laughter]", normalized)
+        self.assertNotIn("[laugh]", normalized)
+        self.assertNotIn("[gentle laugh]", normalized)
+        self.assertNotIn("[giggle]", normalized)
+
+    def test_normalizes_sigh_variants(self) -> None:
+        text = "Hmm [sigh] okay [gentle sigh] noted"
+        normalized = _normalize_nonverbal_tokens(text)
+        self.assertIn("[sigh]", normalized)
+        self.assertNotIn("[gentle sigh]", normalized)
+
+    def test_removes_unknown_tokens(self) -> None:
+        text = "[whisper] hello [snort] world"
+        normalized = _normalize_nonverbal_tokens(text)
+        self.assertNotIn("[whisper]", normalized)
+        self.assertNotIn("[snort]", normalized)
+        self.assertIn("hello", normalized)
+
+    # === VIVENTIUM START ===
+    # Feature: Verify Cartesia SSML tags are preserved through normalization.
+    # Added: 2026-02-22
+    def test_preserves_break_tags(self) -> None:
+        text = 'Hello <break time="1s"/> world'
+        normalized = _normalize_nonverbal_tokens(text)
+        self.assertIn('<break time="1s"/>', normalized)
+        self.assertIn("Hello", normalized)
+        self.assertIn("world", normalized)
+
+    def test_preserves_speed_tags(self) -> None:
+        text = 'Hello <speed ratio="1.2"/> world'
+        normalized = _normalize_nonverbal_tokens(text)
+        self.assertIn('<speed ratio="1.2"/>', normalized)
+
+    def test_preserves_volume_tags(self) -> None:
+        text = 'Hello <volume ratio="0.8"/> world'
+        normalized = _normalize_nonverbal_tokens(text)
+        self.assertIn('<volume ratio="0.8"/>', normalized)
+
+    def test_strips_non_cartesia_html_tags(self) -> None:
+        text = "Hello <b>bold</b> <div>block</div> world"
+        normalized = _normalize_nonverbal_tokens(text)
+        self.assertNotIn("<b>", normalized)
+        self.assertNotIn("<div>", normalized)
+        self.assertIn("Hello", normalized)
+        self.assertIn("bold", normalized)
+        self.assertIn("world", normalized)
+    # === VIVENTIUM END ===
+
+
+class TestCartesiaEmotionSegments(unittest.TestCase):
+    def test_splits_emotion_segments(self) -> None:
+        text = "Hi <emotion value=\"happy\">Great</emotion> there"
+        segments = _split_emotion_segments(text)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data[0], ("Hi", None, None))
+        self.assertEqual(data[1], ("Great", "happy", None))
+        self.assertEqual(data[2], ("there", None, None))
+
+    def test_self_closing_emotion_applies_to_following_text(self) -> None:
+        text = "<emotion value=\"excited\"/>Hello there. <emotion value=\"sad\"/>Oops."
+        segments = _split_emotion_segments(text)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data[0], ("Hello there.", "excited", None))
+        self.assertEqual(data[1], ("Oops.", "sad", None))
+
+    def test_self_closing_state_persists_across_wrapper_emotion(self) -> None:
+        text = "<emotion value=\"excited\"/>Hello <emotion value=\"sad\">inner</emotion> world"
+        segments = _split_emotion_segments(text)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data[0], ("Hello", "excited", None))
+        self.assertEqual(data[1], ("inner", "sad", None))
+        self.assertEqual(data[2], ("world", "excited", None))
+
+    def test_ignores_speak_wrapper(self) -> None:
+        text = "<speak>Hello <emotion value='sad'>oops</emotion></speak>"
+        segments = _split_emotion_segments(text)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data[0], ("Hello", None, None))
+        self.assertEqual(data[1], ("oops", "sad", None))
+
+    def test_splits_stage_segments(self) -> None:
+        text = "Hi [gentle laugh] there"
+        segments = _split_emotion_segments(text)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data[0], ("Hi", None, None))
+        self.assertEqual(data[1], ("", None, "laughter"))
+        self.assertEqual(data[2], ("there", None, None))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,141 @@
+version: "1.3.6"
+cache: true
+registration:
+  socialLogins: []
+interface:
+  customWelcome: Welcome to Viventium
+  endpointsMenu: true
+  modelSelect: true
+  parameters: true
+  sidePanel: true
+  presets: true
+  runCode: true
+  prompts:
+    use: true
+    create: true
+    share: false
+    public: false
+  bookmarks: true
+  multiConvo: true
+  memories: true
+  temporaryChat: true
+  temporaryChatRetention: 24
+  agents:
+    use: true
+    create: true
+    share: false
+    public: false
+  peoplePicker:
+    users: false
+    groups: false
+    roles: false
+  marketplace:
+    use: false
+  fileCitations: true
+  webSearch: true
+  fileSearch: true
+  defaultAgent: agent_viventium_main_95aeb3
+  remoteAgents:
+    use: false
+    create: false
+    share: false
+    public: false
+  mcpServers:
+    placeholder: Integrations
+    use: true
+    create: true
+    share: false
+    public: false
+    trustCheckbox:
+      label:
+        en: I understand and want to continue
+      subLabel:
+        en: Only connect MCP servers you trust. Unreviewed servers can expose data or trigger unintended actions.
+viventium:
+  configVersion: 1
+  installMode: docker
+  primaryProvider: openai
+  consciousAgent:
+    provider: x_ai
+    model: grok-4-1-fast-non-reasoning
+mcpSettings:
+  allowedDomains:
+    - localhost
+    - 127.0.0.1
+    - host.docker.internal
+mcpServers:
+  sequential-thinking:
+    type: stdio
+    command: npx
+    args:
+      - -y
+      - '@modelcontextprotocol/server-sequential-thinking'
+    timeout: 300000
+    chatMenu: true
+  scheduling-cortex:
+    type: streamable-http
+    url: ${SCHEDULING_MCP_URL}
+    headers:
+      X-Viventium-User-Id: '{{LIBRECHAT_USER_ID}}'
+      X-Viventium-Agent-Id: agent_viventium_main_95aeb3
+    startup: false
+    chatMenu: true
+    timeout: 120000
+    serverInstructions: Scheduling Cortex MCP for reminders, recurring jobs, and schedule management.
+  google_workspace:
+    type: streamable-http
+    url: ${GOOGLE_WORKSPACE_MCP_URL}
+    startup: false
+    chatMenu: true
+    timeout: 120000
+    requiresOAuth: true
+    oauth:
+      authorization_url: ${GOOGLE_WORKSPACE_MCP_AUTH_URL}
+      token_url: ${GOOGLE_WORKSPACE_MCP_TOKEN_URL}
+      redirect_uri: http://localhost:3180/api/mcp/google_workspace/oauth/callback
+      scope: ${GOOGLE_WORKSPACE_MCP_SCOPE}
+    serverInstructions: Google Workspace MCP for Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, Forms, and Chat.
+  ms-365:
+    type: streamable-http
+    url: ${MS365_MCP_SERVER_URL}
+    startup: false
+    chatMenu: true
+    timeout: 120000
+    requiresOAuth: true
+    oauth:
+      authorization_url: ${MS365_MCP_AUTH_URL}
+      token_url: ${MS365_MCP_TOKEN_URL}
+      redirect_uri: http://localhost:3180/api/mcp/ms-365/oauth/callback
+      client_id: ${MS365_MCP_CLIENT_ID}
+      client_secret: ${MS365_MCP_CLIENT_SECRET}
+      scope: ${MS365_MCP_SCOPE}
+    serverInstructions: Microsoft 365 MCP for mail, calendar, files, teams, contacts, tasks, and notes.
+endpoints:
+  agents:
+    defaultId: agent_viventium_main_95aeb3
+  custom:
+    - name: OpenAI
+      apiKey: ${OPENAI_API_KEY}
+      baseURL: https://api.openai.com/v1
+      models:
+        default:
+          - gpt-4o
+          - gpt-4o-mini
+      titleConvo: true
+      summaryModel: gpt-4o-mini
+    - name: Anthropic
+      apiKey: ${ANTHROPIC_API_KEY}
+      baseURL: https://api.anthropic.com/v1
+      models:
+        default:
+          - claude-3-5-sonnet-20241022
+      titleConvo: true
+      summaryModel: claude-3-5-sonnet-20241022
+    - name: xAI
+      apiKey: ${XAI_API_KEY}
+      baseURL: https://api.x.ai/v1
+      models:
+        default:
+          - grok-4-1-fast-non-reasoning
+      titleConvo: true
+      summaryModel: grok-4-1-fast-non-reasoning

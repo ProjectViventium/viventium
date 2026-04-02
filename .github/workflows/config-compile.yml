@@ -1,0 +1,16 @@
+name: Config Compile
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  python:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install -r scripts/viventium/requirements.txt
+      - run: python3 -m pytest tests/release/test_config_compiler.py -q

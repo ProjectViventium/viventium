@@ -1,0 +1,38 @@
+bot:
+  env_file: ".env"
+  private_chat_only: true
+
+pairing:
+  host: "127.0.0.1"
+  port: 8765
+  link_ttl_minutes: 15
+  bootstrap_if_empty: true
+
+codex:
+  command: "codex"
+  model: "gpt-5.4"
+  sandbox: "workspace-write"
+  approval_policy: "never"
+  skip_git_repo_check: false
+
+transcription:
+  whisper_mode: "pywhispercpp"
+  language: "en"
+  model_name: "large-v3-turbo"
+  model_path: ""
+  threads: 8
+
+runtime:
+  logs_dir: "runtime/logs"
+  sessions_path: "runtime/state/chat_sessions.json"
+  pending_pairs_path: "runtime/state/pair_tokens.json"
+  # Optional: override the durable machine-local pairing store root.
+  # By default telegram-codex uses an OS-appropriate app-state directory and
+  # namespaces pairings by bot identity, so approved accounts survive restarts
+  # and runtime-profile changes.
+  # stable_pairing_root: "~/Library/Application Support/Viventium/state/telegram-codex/paired-users"
+  # Optional: migrate an older runtime-local pairing file on first boot.
+  # legacy_paired_users_path: "runtime/state/paired_users.json"
+
+projects:
+  registry_file: "config/projects.yaml"

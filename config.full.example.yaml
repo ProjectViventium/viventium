@@ -1,0 +1,117 @@
+version: 1
+install:
+  mode: native
+runtime:
+  log_level: info
+  profile: isolated
+  playground_variant: modern
+  call_session_secret:
+    secret_ref: keychain://viventium/call_session_secret
+  network:
+    # Remote browser voice calls from other devices need a real HTTPS/WSS deployment path for the
+    # web UI and LiveKit media plane. Local installs should default to disabled until the operator
+    # deliberately configures a supported public topology.
+    remote_call_mode: disabled
+    # Optional browser-facing origins for remote-device access.
+    # Set these when you have a real public deployment or reverse proxy.
+    public_client_origin: ""
+    public_api_origin: ""
+    public_playground_origin: ""
+    public_livekit_url: ""
+  personalization:
+    # New installs should ship with "Recall all conversations" enabled so
+    # runtime recall and vector recall can activate without extra manual toggles.
+    default_conversation_recall: true
+  extra_env:
+    # Advanced/private local carry-over for legacy provider settings that still need
+    # environment-based LibreChat runtime wiring. Public installs can usually leave this empty.
+    AZURE_AI_FOUNDRY_API_KEY: keychain://viventium/azure_ai_foundry_api_key
+    AZURE_OPENAI_API_INSTANCE_NAME: aoai-example-instance
+    AZURE_OPENAI_API_KEY: keychain://viventium/azure_openai_api_key
+    VIVENTIUM_FOUNDRY_ANTHROPIC_REVERSE_PROXY: https://example.services.ai.azure.com/anthropic/v1
+  ports:
+    lc_api_port: 3180
+    lc_frontend_port: 3190
+    playground_port: 3300
+    voice_gateway_health_port: 8301
+    mongo_port: 27117
+    meili_port: 7700
+    google_mcp_port: 8111
+    scheduling_mcp_port: 7110
+    rag_api_port: 8110
+    code_interpreter_port: 8101
+    skyvern_api_port: 8200
+    skyvern_ui_port: 8280
+    livekit_http_port: 7888
+    livekit_tcp_port: 7889
+    livekit_udp_port: 7890
+agents:
+  default_main_agent_id: agent_viventium_main_95aeb3
+llm:
+  activation:
+    provider: groq
+    auth_mode: api_key
+    secret_ref: keychain://viventium/groq_api_key
+  primary:
+    provider: openai
+    auth_mode: connected_account
+  secondary:
+    provider: anthropic
+    auth_mode: api_key
+    secret_ref: keychain://viventium/anthropic_api_key
+  extra_provider_keys:
+    openrouter: keychain://viventium/openrouter_api_key
+voice:
+  mode: local
+  stt_provider: whisper_local
+  # For Intel Macs or other machines where local STT is not desired, explicitly switch to a hosted
+  # provider instead of relying on silent installer rewrites:
+  # stt_provider: assemblyai
+  # stt:
+  #   secret_ref: keychain://viventium/assemblyai_api_key
+  tts_provider: browser
+  fast_llm_provider: x_ai
+  wing_mode:
+    default_enabled: false
+    prompt: |-
+      WING MODE:
+      - You are in Wing Mode during a live voice call: quietly aware, helpful, and unobtrusive.
+      - Treat TV, podcasts, videos, songs, meetings, and nearby chatter as background context unless the user is clearly talking to you.
+      - If you are not sure the user is addressing you, output exactly {NTA}.
+      - Err aggressively on the side of silence.
+  tts:
+    voice: coral
+    speed: 1.12
+    instructions: Speak naturally and warmly with clear pacing. Keep the delivery conversational and human.
+integrations:
+  code_interpreter:
+    enabled: false
+  telegram:
+    enabled: true
+    secret_ref: keychain://viventium/telegram_bot_token
+  telegram_codex:
+    enabled: false
+    secret_ref: keychain://viventium/telegram_codex_bot_token
+    bot_username: your_codex_bot_username
+    private_chat_only: true
+  google_workspace:
+    enabled: true
+    client_id: your-google-client-id.apps.googleusercontent.com
+    client_secret:
+      secret_ref: keychain://viventium/google_client_secret
+    refresh_token:
+      secret_ref: keychain://viventium/google_refresh_token
+  ms365:
+    enabled: true
+    client_id: your-ms365-client-id
+    tenant_id: your-ms365-tenant-id
+    business_email: you@example.com
+    client_secret:
+      secret_ref: keychain://viventium/ms365_client_secret
+  skyvern:
+    enabled: true
+    api_key:
+      secret_ref: keychain://viventium/skyvern_api_key
+    base_url: http://localhost:8200
+  openclaw:
+    enabled: true
