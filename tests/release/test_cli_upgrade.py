@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,10 @@ def extract_shell_function(text: str, name: str) -> str:
     return "\n".join(collected) + "\n"
 
 
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+
+
 def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     install_section = cli_source.split('if [[ "$AUTO_START" == "1" ]]; then', 1)[1].split(
@@ -55,6 +60,9 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert "render_install_wait_progress() {" in cli_source
     assert "install_wait_log_activity_summary() {" in cli_source
     assert "print_install_start_expectations() {" in cli_source
+    assert "install_wait_pick_next_tagline() {" in cli_source
+    assert "install_wait_current_tagline() {" in cli_source
+    assert "clear_install_wait_progress_frame() {" in cli_source
     assert "assign_runtime_ports() {" in cli_source
     assert "detached_start_failed_early() {" in cli_source
     assert "needs_connected_accounts_guidance() {" in cli_source
@@ -82,8 +90,14 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert "is_stack_running" in detached_section
     assert 'local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"' in detached_section
     assert 'local progress_interval="${VIVENTIUM_INSTALL_START_PROGRESS_SECONDS:-15}"' in cli_source
+    assert 'local inline_render_interval="${VIVENTIUM_INSTALL_START_INLINE_PROGRESS_SECONDS:-0.2}"' in cli_source
     assert 'local repeat_interval="${VIVENTIUM_INSTALL_START_LOG_REPEAT_SECONDS:-60}"' in cli_source
     assert 'render_install_wait_progress "$elapsed" "$waiting_on" "$launch_log"' in cli_source
+    assert 'INSTALL_WAIT_PROGRESS_LINES=2' in cli_source
+    assert 'Go scroll some reels while I take care of this for you.' in cli_source
+    assert "Failed.......................... JK, it's going well ;)" in cli_source
+    assert 'Extracting pure epicness...' in cli_source
+    assert "What's your favorite political party? I'm pro AI." in cli_source
     assert 'Preparing first-run startup...' in cli_source
     assert 'Building LibreChat and playground assets locally. On a clean Mac this can take around 10-15 minutes.' in cli_source
     assert 'Starting local web-search services in parallel through Docker Desktop.' in cli_source
@@ -265,6 +279,170 @@ def test_install_wait_log_activity_summary_reports_current_build_phase(tmp_path:
     )
 
     assert completed.stdout.strip() == "Building LibreChat web app"
+
+
+def test_install_wait_current_tagline_types_text_quickly() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    pick_def = extract_shell_function(cli_source, "install_wait_pick_next_tagline")
+    current_def = extract_shell_function(cli_source, "install_wait_current_tagline")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                'INSTALL_WAIT_TAGLINES=("abcdefghij")\n'
+                "INSTALL_WAIT_TAGLINE_INDEX=-1\n"
+                'INSTALL_WAIT_TAGLINE=""\n'
+                "INSTALL_WAIT_TAGLINE_STARTED_TICK=0\n"
+                "VIVENTIUM_INSTALL_TAGLINE_CHARS_PER_TICK=3\n"
+                "VIVENTIUM_INSTALL_TAGLINE_HOLD_TICKS=2\n"
+                f"{pick_def}"
+                f"{current_def}"
+                "install_wait_current_tagline 0\n"
+                "install_wait_current_tagline 1\n"
+                "install_wait_current_tagline 2\n"
+                "install_wait_current_tagline 3\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "abc_",
+        "abcdef_",
+        "abcdefghi_",
+        "abcdefghij",
+    ]
+
+
+def test_install_wait_current_tagline_can_be_disabled() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    pick_def = extract_shell_function(cli_source, "install_wait_pick_next_tagline")
+    current_def = extract_shell_function(cli_source, "install_wait_current_tagline")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                'INSTALL_WAIT_TAGLINES=("abcdefghij")\n'
+                "INSTALL_WAIT_TAGLINE_INDEX=-1\n"
+                'INSTALL_WAIT_TAGLINE=""\n'
+                "INSTALL_WAIT_TAGLINE_STARTED_TICK=0\n"
+                "VIVENTIUM_INSTALL_FUN_TAGLINES=0\n"
+                f"{pick_def}"
+                f"{current_def}"
+                "install_wait_current_tagline 0\n"
+                "printf 'INDEX=%s\\n' \"$INSTALL_WAIT_TAGLINE_INDEX\"\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == ["INDEX=-1"]
+
+
+def test_install_wait_pick_next_tagline_never_repeats_back_to_back() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "install_wait_pick_next_tagline")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                'INSTALL_WAIT_TAGLINES=("alpha" "beta")\n'
+                "INSTALL_WAIT_TAGLINE_INDEX=-1\n"
+                'INSTALL_WAIT_TAGLINE=""\n'
+                "INSTALL_WAIT_TAGLINE_STARTED_TICK=0\n"
+                f"{function_def}"
+                "for tick in 0 1 2 3 4 5 6 7; do\n"
+                "  previous=\"$INSTALL_WAIT_TAGLINE_INDEX\"\n"
+                "  install_wait_pick_next_tagline \"$tick\"\n"
+                "  if [[ \"$previous\" == \"$INSTALL_WAIT_TAGLINE_INDEX\" ]]; then\n"
+                "    printf 'repeat\\n'\n"
+                "    exit 1\n"
+                "  fi\n"
+                "done\n"
+                "printf 'ok\\n'\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "ok"
+
+
+def test_render_install_wait_progress_prints_progress_line_and_tagline() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "render_install_wait_progress")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "INSTALL_WAIT_PROGRESS_ACTIVE=0\n"
+                "INSTALL_WAIT_PROGRESS_LINES=0\n"
+                "INSTALL_WAIT_INLINE_TICK=7\n"
+                'INSTALL_WAIT_CURRENT_STEP="Building LibreChat web app"\n'
+                "install_wait_inline_enabled() { return 0; }\n"
+                "install_wait_spinner_frame() { printf '>\\n'; }\n"
+                "install_wait_current_tagline() { printf -v \"$2\" '%s' 'Extracting pure epicness...'; }\n"
+                "clear_install_wait_progress_frame() { :; }\n"
+                "format_install_wait_elapsed() { printf '0m07s\\n'; }\n"
+                f"{function_def}"
+                "render_install_wait_progress 7 'Web :3080' '/tmp/missing'\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "\x1b[38;5;208m" in completed.stdout
+    rendered = strip_ansi(completed.stdout)
+
+    assert "[>] Starting Viventium 0m07s | Building LibreChat web app | Waiting for: Web :3080" in rendered
+    assert "While you wait: Extracting pure epicness..." in rendered
+
+
+def test_install_wait_spinner_frame_uses_single_width_backslash() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "install_wait_spinner_frame")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "install_wait_spinner_frame 1 | awk '{ print length($0) \":\" $0 }'\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "1:\\"
 
 
 def init_git_repo(path: Path) -> None:

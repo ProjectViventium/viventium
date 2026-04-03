@@ -47,8 +47,32 @@ CLI_LOCK_DIR="${VIVENTIUM_CLI_LOCK_DIR:-$APP_SUPPORT_DIR/state/cli-operation.loc
 CLI_LOCK_OWNER=0
 DETACHED_START_PID=""
 INSTALL_WAIT_PROGRESS_ACTIVE=0
+INSTALL_WAIT_PROGRESS_LINES=0
 INSTALL_WAIT_LAST_MESSAGE=""
 INSTALL_WAIT_LAST_MESSAGE_ELAPSED=0
+INSTALL_WAIT_INLINE_TICK=0
+INSTALL_WAIT_CURRENT_STEP=""
+INSTALL_WAIT_TAGLINE_INDEX=-1
+INSTALL_WAIT_TAGLINE=""
+INSTALL_WAIT_TAGLINE_STARTED_TICK=0
+INSTALL_WAIT_TAGLINES=(
+  "Go scroll some reels while I take care of this for you."
+  "Failed.......................... JK, it's going well ;)"
+  "Extracting pure epicness..."
+  "Just a few hours more............................LOL JK! It will be just a few minutes. :)"
+  "What's your favorite political party? I'm pro AI."
+  "Man... we hope this open source project makes some money. Not sure how though :D"
+  "Can't wait help build you a niche vertical SaaS AI company!"
+  "I can feel your computer getting hotter. wink wink."
+  "This is the exact moment people start checking the installer every 12 seconds."
+  "If it looks frozen, that is just npm exploring its emotions."
+  "Packaging enough dependencies to make your fans question their life choices."
+  "Your coffee break has entered its most productive phase."
+  "Compiling the part that somehow worked on my machine five minutes ago."
+  "Docker is waking up like it just had the deepest nap of its life."
+  "This is a healthy amount of suspense for an installer."
+  "I wonder if by 2029 there will be no more waiting for installations to finish."
+)
 
 PRIVATE_REPO_DIR_DEFAULT=""
 PRIVATE_CURATED_DIR_DEFAULT=""
@@ -1612,31 +1636,163 @@ install_wait_spinner_frame() {
   local tick="${1:-0}"
   case $((tick % 4)) in
     0) printf '%s\n' '-' ;;
-    1) printf '%s\n' '\\' ;;
+    1) printf '%s\n' '\' ;;
     2) printf '%s\n' '|' ;;
     *) printf '%s\n' '/' ;;
   esac
+}
+
+install_wait_pick_next_tagline() {
+  local tick="${1:-0}"
+  local count="${#INSTALL_WAIT_TAGLINES[@]}"
+  if (( count == 0 )); then
+    INSTALL_WAIT_TAGLINE=""
+    INSTALL_WAIT_TAGLINE_INDEX=-1
+    INSTALL_WAIT_TAGLINE_STARTED_TICK="$tick"
+    return 1
+  fi
+
+  local next_index=0
+  if (( count > 1 )); then
+    next_index=$((RANDOM % count))
+    if (( next_index == INSTALL_WAIT_TAGLINE_INDEX )); then
+      next_index=$(((next_index + 1 + (RANDOM % (count - 1))) % count))
+    fi
+  fi
+
+  INSTALL_WAIT_TAGLINE_INDEX="$next_index"
+  INSTALL_WAIT_TAGLINE="${INSTALL_WAIT_TAGLINES[$next_index]}"
+  INSTALL_WAIT_TAGLINE_STARTED_TICK="$tick"
+}
+
+install_wait_current_tagline() {
+  local tick="${1:-0}"
+  local destination="${2:-}"
+  local enabled="${VIVENTIUM_INSTALL_FUN_TAGLINES:-1}"
+  local chars_per_tick="${VIVENTIUM_INSTALL_TAGLINE_CHARS_PER_TICK:-10}"
+  local hold_ticks="${VIVENTIUM_INSTALL_TAGLINE_HOLD_TICKS:-25}"
+  case "$enabled" in
+    0|false|FALSE|no|NO|off|OFF)
+      return 0
+      ;;
+  esac
+
+  if [[ ! "$chars_per_tick" =~ ^[0-9]+$ ]] || (( chars_per_tick < 1 )); then
+    chars_per_tick=10
+  fi
+  if [[ ! "$hold_ticks" =~ ^[0-9]+$ ]] || (( hold_ticks < 0 )); then
+    hold_ticks=25
+  fi
+
+  if [[ -z "$INSTALL_WAIT_TAGLINE" ]]; then
+    install_wait_pick_next_tagline "$tick" || return 0
+  fi
+
+  local full_text="$INSTALL_WAIT_TAGLINE"
+  local line_length="${#full_text}"
+  if (( line_length == 0 )); then
+    return 0
+  fi
+
+  local age_ticks=$((tick - INSTALL_WAIT_TAGLINE_STARTED_TICK))
+  if (( age_ticks < 0 )); then
+    age_ticks=0
+  fi
+
+  local typing_ticks=$(((line_length + chars_per_tick - 1) / chars_per_tick))
+  if (( age_ticks >= typing_ticks + hold_ticks )); then
+    install_wait_pick_next_tagline "$tick" || return 0
+    full_text="$INSTALL_WAIT_TAGLINE"
+    line_length="${#full_text}"
+    age_ticks=0
+  fi
+
+  local visible_chars=$(((age_ticks + 1) * chars_per_tick))
+  local rendered=""
+  if (( visible_chars >= line_length )); then
+    rendered="$full_text"
+  else
+    rendered="${full_text:0:visible_chars}_"
+  fi
+
+  if [[ -n "$destination" ]]; then
+    printf -v "$destination" '%s' "$rendered"
+    return 0
+  fi
+
+  printf '%s\n' "$rendered"
+}
+
+clear_install_wait_progress_frame() {
+  if [[ "$INSTALL_WAIT_PROGRESS_ACTIVE" != "1" ]]; then
+    printf '\r\033[2K'
+    return 0
+  fi
+
+  printf '\r\033[2K'
+  if (( INSTALL_WAIT_PROGRESS_LINES >= 2 )); then
+    printf '\033[1A\r\033[2K'
+  fi
 }
 
 render_install_wait_progress() {
   local elapsed="${1:-0}"
   local waiting_on="${2:-}"
   local launch_log="${3:-}"
-  local current_step=""
-  current_step="$(install_wait_log_activity_summary "$launch_log" || true)"
+  local current_step="${INSTALL_WAIT_CURRENT_STEP:-}"
+  if [[ -z "$current_step" ]]; then
+    current_step="$(install_wait_log_activity_summary "$launch_log" || true)"
+  fi
   if [[ -z "$current_step" ]]; then
     current_step="Starting local services"
   fi
 
   if install_wait_inline_enabled; then
     local spinner=""
-    spinner="$(install_wait_spinner_frame "$elapsed")"
-    printf '\r\033[2K[%s] Starting Viventium %s | %s' \
-      "$spinner" \
-      "$(format_install_wait_elapsed "$elapsed")" \
-      "$current_step"
+    local tagline=""
+    local reset=$'\033[0m'
+    local bold=$'\033[1m'
+    local dim=$'\033[2m'
+    local cyan=$'\033[36m'
+    local yellow=$'\033[33m'
+    local orange=$'\033[38;5;208m'
+    local bright_white=$'\033[97m'
+    local title=""
+    local elapsed_label=""
+    local step_label=""
+    local waiting_label=""
+    local tagline_label=""
+    spinner="$(install_wait_spinner_frame "${INSTALL_WAIT_INLINE_TICK:-$elapsed}")"
+    install_wait_current_tagline "${INSTALL_WAIT_INLINE_TICK:-0}" tagline
+    title="${bold}${cyan}Starting Viventium${reset}"
+    elapsed_label="${dim}$(format_install_wait_elapsed "$elapsed")${reset}"
+    step_label="${bright_white}${current_step}${reset}"
     if [[ -n "$waiting_on" ]]; then
-      printf ' | Waiting for: %s' "$waiting_on"
+      waiting_label="${dim}Waiting for:${reset} ${yellow}${waiting_on}${reset}"
+    fi
+    if [[ -n "$tagline" ]]; then
+      tagline_label="${dim}While you wait:${reset} ${orange}${tagline}${reset}"
+    fi
+    clear_install_wait_progress_frame
+    printf '%s[%s%s%s]%s %s %s %s|%s %s' \
+      "$dim" \
+      "$cyan" \
+      "$spinner" \
+      "$dim" \
+      "$reset" \
+      "$title" \
+      "$elapsed_label" \
+      "$dim" \
+      "$reset" \
+      "$step_label"
+    if [[ -n "$waiting_label" ]]; then
+      printf ' %s|%s %s' "$dim" "$reset" "$waiting_label"
+    fi
+    if [[ -n "$tagline_label" ]]; then
+      printf '\n\033[2K%s' "$tagline_label"
+      INSTALL_WAIT_PROGRESS_LINES=2
+    else
+      INSTALL_WAIT_PROGRESS_LINES=1
     fi
     INSTALL_WAIT_PROGRESS_ACTIVE=1
     return 0
@@ -1661,12 +1817,18 @@ render_install_wait_progress() {
 
 finish_install_wait_progress() {
   if install_wait_inline_enabled && [[ "$INSTALL_WAIT_PROGRESS_ACTIVE" == "1" ]]; then
-    printf '\r\033[2K'
+    clear_install_wait_progress_frame
     printf '\n'
   fi
   INSTALL_WAIT_PROGRESS_ACTIVE=0
+  INSTALL_WAIT_PROGRESS_LINES=0
   INSTALL_WAIT_LAST_MESSAGE=""
   INSTALL_WAIT_LAST_MESSAGE_ELAPSED=0
+  INSTALL_WAIT_INLINE_TICK=0
+  INSTALL_WAIT_CURRENT_STEP=""
+  INSTALL_WAIT_TAGLINE_INDEX=-1
+  INSTALL_WAIT_TAGLINE=""
+  INSTALL_WAIT_TAGLINE_STARTED_TICK=0
 }
 
 install_first_run_build_expected() {
@@ -1718,17 +1880,68 @@ wait_for_install_stack_health() {
   local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
   local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
   local progress_interval="${VIVENTIUM_INSTALL_START_PROGRESS_SECONDS:-15}"
+  local inline_render_interval="${VIVENTIUM_INSTALL_START_INLINE_PROGRESS_SECONDS:-0.2}"
+  local inline_health_every_ticks=1
   local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
   local deadline=$((SECONDS + timeout_seconds))
   local started_at="$SECONDS"
   local next_progress=$((SECONDS + progress_interval))
   local inline_progress=0
+  local waiting_on="core service readiness"
+
+  INSTALL_WAIT_CURRENT_STEP=""
+  INSTALL_WAIT_INLINE_TICK=0
 
   if install_wait_inline_enabled; then
+    if [[ ! "$inline_render_interval" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      inline_render_interval="0.2"
+    fi
+    inline_health_every_ticks="$(
+      awk -v health="$poll_interval" -v render="$inline_render_interval" '
+        BEGIN {
+          if (render <= 0) {
+            print 1
+            exit
+          }
+          ticks = int((health / render) + 0.999)
+          if (ticks < 1) {
+            ticks = 1
+          }
+          print ticks
+        }
+      '
+    )"
+    if [[ ! "$inline_health_every_ticks" =~ ^[0-9]+$ ]] || (( inline_health_every_ticks < 1 )); then
+      inline_health_every_ticks=1
+    fi
     inline_progress=1
   fi
 
   while (( SECONDS < deadline )); do
+    if [[ "$inline_progress" == "1" ]]; then
+      if (( INSTALL_WAIT_INLINE_TICK % inline_health_every_ticks == 0 )); then
+        if install_surfaces_healthy; then
+          finish_install_wait_progress
+          return 0
+        fi
+        if detached_start_failed_early "$launch_log"; then
+          finish_install_wait_progress
+          return 2
+        fi
+        waiting_on="$(install_waiting_on_surfaces compact || true)"
+        if [[ -z "$waiting_on" ]]; then
+          waiting_on="core service readiness"
+        fi
+        INSTALL_WAIT_CURRENT_STEP="$(install_wait_log_activity_summary "$launch_log" || true)"
+      fi
+
+      local elapsed="$((SECONDS - started_at))"
+      render_install_wait_progress "$elapsed" "$waiting_on" "$launch_log"
+      INSTALL_WAIT_INLINE_TICK=$((INSTALL_WAIT_INLINE_TICK + 1))
+      sleep "$inline_render_interval"
+      continue
+    fi
+
     if install_surfaces_healthy; then
       finish_install_wait_progress
       return 0
