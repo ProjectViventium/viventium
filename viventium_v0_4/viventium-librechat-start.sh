@@ -7882,11 +7882,18 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
         node scripts/viventium-sync-local-search.js
       fi
 
-      # Start backend
+      # Keep detached/direct launches supervised by this shell so a later
+      # frontend exit cannot strand Telegram behind a dead LibreChat API.
       npm run backend:dev &
+      BACKEND_PID=$!
       sleep 5
-      # Start frontend
-      exec env PORT="$LC_FRONTEND_PORT" npm run frontend:dev
+      local librechat_dev_host="${HOST:-::}"
+      (
+        cd client
+        BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"
+      ) &
+      FRONTEND_PID=$!
+      wait "$BACKEND_PID" "$FRONTEND_PID"
     ) &
     LIBRECHAT_PID=$!
   fi

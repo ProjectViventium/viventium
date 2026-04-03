@@ -16,6 +16,8 @@ stream back to Telegram through the existing bridge.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
+- Detached/local launches must not leave Telegram pointed at a dead LibreChat localhost origin after
+  frontend dev-server exits or launcher-side supervision gaps.
 
 ## Public-Safe Implementation Notes
 

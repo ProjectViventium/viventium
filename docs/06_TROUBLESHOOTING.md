@@ -94,19 +94,24 @@ This is the shared troubleshooting index. For stack-specific detail, see:
 - Symptom: the modern playground on `3300` responds, but the LibreChat API/frontend on `3180` / `3190` never bind.
 - Fix:
   - use the launcher-managed direct LibreChat startup path for detached launches and first-run package rebuilds
+  - in that direct fallback, keep backend and frontend supervised by the same shell instead of
+    `exec`-ing the frontend dev server
   - confirm `http://localhost:3180/health` and `http://localhost:3190` both return `200` before treating the install as healthy
 - Cold-start note:
   - the installer now waits up to `1800s` for first-run health and prints periodic progress while LibreChat builds
   - if that budget still expires, it prints the recent `helper-start.log` tail plus the configured service summary so the user can tell whether the stack is still compiling or actually stuck
-- Current status: `viventium_v0_4/viventium-librechat-start.sh` now prefers the direct-managed fallback for detached/helper launches and rebuild-required runs.
+- Current status: `viventium_v0_4/viventium-librechat-start.sh` now prefers the direct-managed fallback for detached/helper launches and rebuild-required runs, and that fallback now backgrounds both backend and frontend so the shell continues supervising LibreChat after startup.
 
 ### Telegram says `Failed to reach Viventium. Please retry.`
-- Root cause: the Telegram bridge was starting before a LibreChat-backed install had actually finished bringing up `3180`, so early Telegram requests were racing the cold-start LibreChat health check instead of waiting for it.
-- Symptom: Telegram auth is fine, but the bot returns the generic connection fallback during cold start or first-run rebuilds.
+- Root cause:
+  - early-start case: the Telegram bridge was starting before a LibreChat-backed install had actually finished bringing up `3180`, so early Telegram requests were racing the cold-start LibreChat health check instead of waiting for it
+  - detached-runtime case: a detached direct LibreChat launch could later lose API supervision after a frontend dev-server exit, leaving Telegram alive but `localhost:3180` unreachable
+- Symptom: Telegram auth is fine, but the bot returns the generic connection fallback during cold start, first-run rebuilds, or after the local LibreChat API silently drops out of a detached run.
 - Fix:
   - start the LibreChat-backed Telegram bridge only after `http://localhost:3180/health` is healthy
+  - keep the detached direct LibreChat fallback supervising both backend and frontend processes instead of turning the launcher shell into the frontend process
   - if the stack is still warming, confirm LibreChat health first instead of rotating Telegram tokens
-- Current status: the launcher now defers `VIVENTIUM_TELEGRAM_BACKEND=librechat` startup until LibreChat API health is up.
+- Current status: the launcher now defers `VIVENTIUM_TELEGRAM_BACKEND=librechat` startup until LibreChat API health is up, and detached direct LibreChat launches no longer `exec` the frontend in a way that can strand Telegram behind a dead `3180` listener.
 
 ### Telegram replies include `stream_preview_task ... not associated with a value`
 - Root cause: nested stream flush helper in `TelegramVivBot/bot.py` wrote to `stream_preview_task` without declaring it `nonlocal` under async flush paths.

@@ -25,6 +25,7 @@
 | Document | Status | Summary |
 |----------|--------|---------|
 | `01_Deep_Research_APIs.md` | Research Complete | OpenAI, Google, Perplexity deep research API analysis and LibreChat integration feasibility |
+| `02_Codex_Channel_Control_Spike.md` | Research Complete | Best architecture for combining Viventium's multi-channel agent UX with Codex-based maintenance and control |
 
 ---
 
