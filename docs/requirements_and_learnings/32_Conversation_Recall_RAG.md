@@ -1,7 +1,7 @@
 # Conversation Recall RAG
 
-**Document Version:** 1.8
-**Date:** 2026-02-19
+**Document Version:** 1.9
+**Date:** 2026-04-04
 **Owner:** Viventium Core
 **Status:** Implemented in `viventium_v0_4`
 
@@ -29,6 +29,12 @@ This feature adds two user-facing controls:
 - Embed them via the existing vector pipeline.
 - Persist as file records with a recall context.
 - Inject these files into runtime file-search resources when policy allows.
+- For OpenAI embeddings, prefer a user-scoped OpenAI auth override when the current user has a
+  connected OpenAI account or stored OpenAI user key available through LibreChat.
+- OpenAI connected-account subscription tokens must target the platform embeddings endpoint rather
+  than the Codex chat/replies base URL.
+- Preserve the existing environment-key embeddings path as the fallback when no user-scoped OpenAI
+  override exists or when the request-scoped override is rejected for auth/config reasons.
 
 ### Runtime resilience fallback
 - If vector uploads are degraded, perform a scoped lexical retrieval over the user’s past messages.
@@ -48,3 +54,6 @@ This feature adds two user-facing controls:
 - Record the visible answer.
 - Record the persisted truth or runtime log.
 - Keep result folders and samples free of private identity data.
+- 2026-04-04 live validation confirmed that a connected-account OpenAI override can drive the RAG
+  embed path against the platform embeddings API while leaving the no-user-key env fallback path
+  unchanged in request shape.
