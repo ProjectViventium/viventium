@@ -3207,6 +3207,8 @@ ensure_librechat_env() {
   local allow_social_registration="${ALLOW_SOCIAL_REGISTRATION:-false}"
   local allow_unverified_email_login="${ALLOW_UNVERIFIED_EMAIL_LOGIN:-true}"
   local registration_approval="${VIVENTIUM_REGISTRATION_APPROVAL:-false}"
+  local effective_client_url="${VIVENTIUM_PUBLIC_CLIENT_URL:-$LC_FRONTEND_URL}"
+  local effective_server_url="${VIVENTIUM_PUBLIC_SERVER_URL:-$LC_API_URL}"
   # === VIVENTIUM START ===
   local default_openai_models="$DEFAULT_VIVENTIUM_OPENAI_MODELS"
   local default_assistants_models="$DEFAULT_VIVENTIUM_ASSISTANTS_MODELS"
@@ -3223,9 +3225,9 @@ ensure_librechat_env() {
 HOST=localhost
 PORT=${LC_API_PORT}
 MONGO_URI=${default_mongo_uri}
-DOMAIN_CLIENT=${LC_FRONTEND_URL}
-DOMAIN_SERVER=${LC_API_URL}
-CLIENT_URL=${LC_FRONTEND_URL}
+DOMAIN_CLIENT=${effective_client_url}
+DOMAIN_SERVER=${effective_server_url}
+CLIENT_URL=${effective_client_url}
 RAG_API_URL=${rag_api_url}
 SEARCH=${search_enabled}
 MEILI_NO_ANALYTICS=${meili_no_analytics}
@@ -3312,11 +3314,11 @@ EOF
   upsert_env_kv "$env_file" "MONGO_URI" "$mongo_uri"
   upsert_env_kv "$env_file" "PORT" "$LC_API_PORT"
   # === VIVENTIUM START ===
-  # Keep the launcher's client/server origins aligned with the documented local topology:
-  # frontend/UI on LC_FRONTEND_URL, API/OAuth callbacks on LC_API_URL.
-  upsert_env_kv "$env_file" "DOMAIN_CLIENT" "$LC_FRONTEND_URL"
-  upsert_env_kv "$env_file" "DOMAIN_SERVER" "$LC_API_URL"
-  upsert_env_kv "$env_file" "CLIENT_URL" "$LC_FRONTEND_URL"
+  # Keep the browser-facing origins aligned with the resolved topology for this run.
+  upsert_env_kv "$env_file" "DOMAIN_CLIENT" "$effective_client_url"
+  upsert_env_kv "$env_file" "DOMAIN_SERVER" "$effective_server_url"
+  upsert_env_kv "$env_file" "CLIENT_URL" "$effective_client_url"
+  upsert_env_kv "$env_file" "VIVENTIUM_FRONTEND_PROXY_TARGET" "$LC_API_URL"
   # === VIVENTIUM END ===
   upsert_env_kv "$env_file" "RAG_API_URL" "$rag_api_url"
   upsert_env_kv "$env_file" "SEARCH" "$search_enabled"
@@ -3351,9 +3353,10 @@ EOF
 
   export MONGO_URI="$mongo_uri"
   export PORT="$LC_API_PORT"
-  export DOMAIN_CLIENT="$LC_FRONTEND_URL"
-  export DOMAIN_SERVER="$LC_API_URL"
-  export CLIENT_URL="$LC_FRONTEND_URL"
+  export DOMAIN_CLIENT="$effective_client_url"
+  export DOMAIN_SERVER="$effective_server_url"
+  export CLIENT_URL="$effective_client_url"
+  export VIVENTIUM_FRONTEND_PROXY_TARGET="$LC_API_URL"
   export RAG_API_URL="$rag_api_url"
   export SEARCH="$search_enabled"
   export MEILI_NO_ANALYTICS="$meili_no_analytics"
@@ -4346,6 +4349,14 @@ get_playground_port() {
   echo "$port"
 }
 
+get_client_port() {
+  echo "$LC_FRONTEND_PORT"
+}
+
+get_api_port() {
+  echo "$LC_API_PORT"
+}
+
 get_livekit_port() {
   local candidate="${LIVEKIT_URL##*:}"
   candidate="${candidate%%/*}"
@@ -4362,7 +4373,139 @@ remote_call_mode_enabled() {
       return 1
       ;;
   esac
-  [[ "${VIVENTIUM_REMOTE_CALL_MODE}" == "cloudflare_quick_tunnel" ]]
+  return 0
+}
+
+json_state_value() {
+  local json_payload="$1"
+  local key="$2"
+  printf '%s' "$json_payload" | "$PYTHON_BIN" - "$key" <<'PY'
+import json
+import sys
+
+key = sys.argv[1]
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data = {}
+print(str(data.get(key, "")).strip())
+PY
+}
+
+prepare_remote_call_access() {
+  if ! remote_call_mode_enabled; then
+    return 0
+  fi
+  if [[ ! -f "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" ]]; then
+    return 0
+  fi
+
+  local prewarm_timeout="${VIVENTIUM_REMOTE_CALL_PREWARM_TIMEOUT_SECONDS:-60}"
+  local client_port
+  local api_port
+  local playground_port=""
+  local livekit_port=""
+  local voice_enabled="false"
+  local remote_provider
+  local auto_install_args=()
+  local helper_args=()
+  local state_json=""
+  local public_client_url=""
+  local public_api_url=""
+  local public_playground_url=""
+  local public_livekit_url=""
+  local livekit_node_ip=""
+  local trust_note=""
+
+  remote_provider="${VIVENTIUM_REMOTE_CALL_MODE:-cloudflare_quick_tunnel}"
+  client_port="$(get_client_port)"
+  api_port="$(get_api_port)"
+  if is_truthy "${VIVENTIUM_VOICE_ENABLED:-false}"; then
+    voice_enabled="true"
+  fi
+  if [[ "$voice_enabled" == "true" && "$SKIP_PLAYGROUND" != "true" ]]; then
+    playground_port="$(get_playground_port)"
+  fi
+  if [[ "$voice_enabled" == "true" && "$SKIP_LIVEKIT" != "true" ]]; then
+    livekit_port="$(get_livekit_port)"
+  fi
+  if [[ "$remote_provider" == "cloudflare_quick_tunnel" && ( -z "$playground_port" || -z "$livekit_port" ) ]]; then
+    log_warn "cloudflare_quick_tunnel only supports the voice playground surfaces; skipping remote access setup because voice is not active for this run"
+    return 0
+  fi
+
+  if [[ "${VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL:-true}" == "true" ]]; then
+    auto_install_args+=(--auto-install)
+  fi
+
+  helper_args=(
+    start
+    --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
+    --log-dir "$VIVENTIUM_CALL_TUNNEL_LOG_DIR"
+    --provider "$remote_provider"
+    --timeout-seconds "$prewarm_timeout"
+    --client-port "$client_port"
+    --api-port "$api_port"
+  )
+  if [[ -n "$playground_port" ]]; then
+    helper_args+=(--playground-port "$playground_port")
+  fi
+  if [[ -n "$livekit_port" ]]; then
+    helper_args+=(--livekit-port "$livekit_port")
+  fi
+  if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" ]]; then
+    helper_args+=(--public-client-origin "$VIVENTIUM_PUBLIC_CLIENT_URL")
+  fi
+  if [[ -n "${VIVENTIUM_PUBLIC_SERVER_URL:-}" ]]; then
+    helper_args+=(--public-api-origin "$VIVENTIUM_PUBLIC_SERVER_URL")
+  fi
+  if [[ -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" ]]; then
+    helper_args+=(--public-playground-origin "$VIVENTIUM_PUBLIC_PLAYGROUND_URL")
+  fi
+  if [[ -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
+    helper_args+=(--public-livekit-url "$VIVENTIUM_PUBLIC_LIVEKIT_URL")
+  fi
+  if [[ -n "${LIVEKIT_NODE_IP:-}" ]]; then
+    helper_args+=(--livekit-node-ip "$LIVEKIT_NODE_IP")
+  fi
+  if [[ -n "${VIVENTIUM_REMOTE_CALL_CADDY_DATA_DIR:-}" ]]; then
+    helper_args+=(--caddy-data-dir "$VIVENTIUM_REMOTE_CALL_CADDY_DATA_DIR")
+  fi
+
+  log_info "Preparing secure remote access topology"
+  if ! state_json="$("$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" \
+    "${helper_args[@]}" \
+    "${auto_install_args[@]}" 2>&1)"; then
+    log_error "Remote access setup failed: $state_json"
+    return 1
+  fi
+
+  public_client_url="$(json_state_value "$state_json" "public_client_url")"
+  public_api_url="$(json_state_value "$state_json" "public_api_url")"
+  public_playground_url="$(json_state_value "$state_json" "public_playground_url")"
+  public_livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
+  livekit_node_ip="$(json_state_value "$state_json" "livekit_node_ip")"
+  trust_note="$(json_state_value "$state_json" "trust_note")"
+
+  if [[ -n "$public_client_url" ]]; then
+    export VIVENTIUM_PUBLIC_CLIENT_URL="$public_client_url"
+  fi
+  if [[ -n "$public_api_url" ]]; then
+    export VIVENTIUM_PUBLIC_SERVER_URL="$public_api_url"
+  fi
+  if [[ -n "$public_playground_url" ]]; then
+    export VIVENTIUM_PUBLIC_PLAYGROUND_URL="$public_playground_url"
+  fi
+  if [[ -n "$public_livekit_url" ]]; then
+    export VIVENTIUM_PUBLIC_LIVEKIT_URL="$public_livekit_url"
+    export NEXT_PUBLIC_LIVEKIT_URL="$public_livekit_url"
+  fi
+  if [[ -n "$livekit_node_ip" ]]; then
+    export LIVEKIT_NODE_IP="$livekit_node_ip"
+  fi
+  if [[ -n "$trust_note" ]]; then
+    log_warn "$trust_note"
+  fi
 }
 
 prewarm_remote_call_access() {
@@ -4376,59 +4519,29 @@ prewarm_remote_call_access() {
     return 0
   fi
 
-  local prewarm_timeout="${VIVENTIUM_REMOTE_CALL_PREWARM_TIMEOUT_SECONDS:-60}"
-  local playground_port
-  local livekit_port
-  local state_json
-  local playground_url
-  local livekit_url
-  local remote_provider
-  local auto_install_args=()
-  playground_port="$(get_playground_port)"
-  livekit_port="$(get_livekit_port)"
-  remote_provider="${VIVENTIUM_REMOTE_CALL_MODE:-cloudflare_quick_tunnel}"
-  if [[ "${VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL:-true}" == "true" ]]; then
-    auto_install_args+=(--auto-install)
-  fi
+  local state_json=""
+  local command_status=0
+  local client_url=""
+  local api_url=""
+  local playground_url=""
+  local livekit_url=""
+  state_json="$("$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" status \
+    --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" 2>&1)" || command_status=$?
 
-  log_info "Prewarming secure remote call access"
-  if ! state_json="$("$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" start \
-    --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
-    --log-dir "$VIVENTIUM_CALL_TUNNEL_LOG_DIR" \
-    --playground-port "$playground_port" \
-    --livekit-port "$livekit_port" \
-    --provider "$remote_provider" \
-    --timeout-seconds "$prewarm_timeout" \
-    "${auto_install_args[@]}" 2>&1)"; then
-    log_warn "Remote call access prewarm failed - phone/LAN voice links may need a retry: $state_json"
+  client_url="$(json_state_value "$state_json" "public_client_url")"
+  api_url="$(json_state_value "$state_json" "public_api_url")"
+  playground_url="$(json_state_value "$state_json" "public_playground_url")"
+  livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
+
+  if [[ "$command_status" -ne 0 ]]; then
+    log_warn "Remote access verification failed - browser links may need a retry: $state_json"
     return 0
   fi
 
-  playground_url="$(printf '%s' "$state_json" | "$PYTHON_BIN" - <<'PY'
-import json
-import sys
-try:
-    data = json.loads(sys.stdin.read() or "{}")
-except Exception:
-    data = {}
-print(str(data.get("public_playground_url", "")).strip())
-PY
-)"
-  livekit_url="$(printf '%s' "$state_json" | "$PYTHON_BIN" - <<'PY'
-import json
-import sys
-try:
-    data = json.loads(sys.stdin.read() or "{}")
-except Exception:
-    data = {}
-print(str(data.get("public_livekit_url", "")).strip())
-PY
-)"
-
-  if [[ -n "$playground_url" || -n "$livekit_url" ]]; then
-    log_success "Remote call access ready${playground_url:+ (playground: $playground_url)}${livekit_url:+, livekit: $livekit_url}"
+  if [[ -n "$client_url" || -n "$api_url" || -n "$playground_url" || -n "$livekit_url" ]]; then
+    log_success "Remote access ready${client_url:+ (app: $client_url)}${api_url:+, api: $api_url}${playground_url:+, playground: $playground_url}${livekit_url:+, livekit: $livekit_url}"
   else
-    log_success "Remote call access ready"
+    log_success "Remote access ready"
   fi
 }
 
@@ -7478,6 +7591,10 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
   fi
 fi
 
+if ! prepare_remote_call_access; then
+  exit 1
+fi
+
 # ----------------------------
 # LiveKit server (Docker)
 # ----------------------------
@@ -7887,7 +8004,7 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
       npm run backend:dev &
       BACKEND_PID=$!
       sleep 5
-      local librechat_dev_host="${HOST:-::}"
+      librechat_dev_host="${HOST:-::}"
       (
         cd client
         BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"

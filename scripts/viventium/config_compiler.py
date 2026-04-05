@@ -1323,6 +1323,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
     public_playground_origin = str(network.get("public_playground_origin", "") or "").strip()
     public_livekit_url = str(network.get("public_livekit_url", "") or "").strip()
+    livekit_node_ip = str(network.get("livekit_node_ip", "") or "").strip()
     remote_call_mode = normalize_remote_call_mode(network)
 
     if remote_call_mode:
@@ -1337,6 +1338,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["VIVENTIUM_PUBLIC_PLAYGROUND_URL"] = public_playground_origin
     if public_livekit_url:
         env["VIVENTIUM_PUBLIC_LIVEKIT_URL"] = public_livekit_url
+    if livekit_node_ip:
+        env["LIVEKIT_NODE_IP"] = livekit_node_ip
 
     primary = llm["primary"]
     secondary = llm.get("secondary", {})

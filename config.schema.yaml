@@ -40,7 +40,7 @@ properties:
         properties:
           remote_call_mode:
             type: string
-            enum: [auto, disabled, cloudflare_quick_tunnel]
+            enum: [auto, disabled, cloudflare_quick_tunnel, tailscale_tailnet_https, netbird_selfhosted_mesh]
           public_client_origin:
             type: string
           public_api_origin:
@@ -48,6 +48,8 @@ properties:
           public_playground_origin:
             type: string
           public_livekit_url:
+            type: string
+          livekit_node_ip:
             type: string
       ports:
         type: object

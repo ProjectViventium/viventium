@@ -1,15 +1,31 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT_PATH = REPO_ROOT / "scripts/viventium/preflight.py"
+YAML_SITE_PACKAGES = str(Path(yaml.__file__).resolve().parents[1])
+
+
+def preflight_subprocess_env(tmp_path: Path, *, path: str = "/usr/bin:/bin") -> dict[str, str]:
+    return {
+        "PATH": path,
+        "HOME": str(tmp_path),
+        "TERM": "xterm-256color",
+        "PYTHONPATH": os.pathsep.join(
+            entry for entry in [YAML_SITE_PACKAGES, os.environ.get("PYTHONPATH", "")] if entry
+        ),
+        "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
+        "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
+    }
 
 
 def load_preflight_module():
@@ -45,13 +61,7 @@ integrations:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-        },
+        env=preflight_subprocess_env(tmp_path),
         check=False,
         text=True,
         capture_output=True,
@@ -94,13 +104,7 @@ voice:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-        },
+        env=preflight_subprocess_env(tmp_path),
         check=False,
         text=True,
         capture_output=True,
@@ -109,6 +113,74 @@ voice:
     assert completed.returncode == 1
     assert "Remote calls: disabled" in completed.stdout
     assert "cloudflared" not in completed.stdout
+
+
+def test_preflight_tailscale_mode_requires_tailscale_even_without_voice(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+version: 1
+install:
+  mode: native
+runtime:
+  profile: isolated
+  network:
+    remote_call_mode: tailscale_tailnet_https
+voice:
+  mode: disabled
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
+        cwd=REPO_ROOT,
+        env=preflight_subprocess_env(tmp_path),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Remote calls: tailscale_tailnet_https" in completed.stdout
+    assert "tailscale" in completed.stdout
+    assert "cloudflared" not in completed.stdout
+
+
+def test_preflight_netbird_mode_requires_netbird_and_caddy(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+version: 1
+install:
+  mode: native
+runtime:
+  profile: isolated
+  network:
+    remote_call_mode: netbird_selfhosted_mesh
+voice:
+  mode: disabled
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
+        cwd=REPO_ROOT,
+        env=preflight_subprocess_env(tmp_path),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Remote calls: netbird_selfhosted_mesh" in completed.stdout
+    assert "NetBird client" in completed.stdout
+    assert "caddy" in completed.stdout
+    assert "NetBird remote origins" in completed.stdout
+    assert "public_client_origin" in completed.stdout
 
 
 def test_preflight_native_without_voice_does_not_require_python312(tmp_path: Path) -> None:
@@ -130,13 +202,7 @@ voice:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-        },
+        env=preflight_subprocess_env(tmp_path),
         check=False,
         text=True,
         capture_output=True,
@@ -170,13 +236,7 @@ integrations:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-        },
+        env=preflight_subprocess_env(tmp_path),
         check=False,
         text=True,
         capture_output=True,
@@ -210,13 +270,7 @@ integrations:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-        },
+        env=preflight_subprocess_env(tmp_path),
         check=False,
         text=True,
         capture_output=True,
@@ -252,13 +306,7 @@ integrations:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-        },
+        env=preflight_subprocess_env(tmp_path),
         check=False,
         text=True,
         capture_output=True,
@@ -303,13 +351,7 @@ voice:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": str(bin_dir),
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-        },
+        env=preflight_subprocess_env(tmp_path, path=str(bin_dir)),
         check=False,
         text=True,
         capture_output=True,
@@ -355,13 +397,7 @@ integrations:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
         cwd=REPO_ROOT,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": str(tmp_path),
-            "TERM": "xterm-256color",
-            "VIVENTIUM_DOCKER_APP_DIRS": str(tmp_path / "Applications"),
-            "VIVENTIUM_PREFLIGHT_DISABLE_HOST_PATH_DISCOVERY": "1",
-        },
+        env=preflight_subprocess_env(tmp_path),
         check=False,
         text=True,
         capture_output=True,

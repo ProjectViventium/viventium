@@ -5,11 +5,15 @@ runtime:
   log_level: info
   profile: isolated
   network:
+    # Supported modes: disabled, cloudflare_quick_tunnel, tailscale_tailnet_https, netbird_selfhosted_mesh
     remote_call_mode: disabled
+    # Leave these blank for automatic Tailscale mode.
+    # Set them explicitly for NetBird or another manually managed HTTPS/WSS topology.
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""
     public_livekit_url: ""
+    livekit_node_ip: ""
   personalization:
     default_conversation_recall: false
   ports:

@@ -10,14 +10,24 @@ runtime:
   network:
     # Remote browser voice calls from other devices need a real HTTPS/WSS deployment path for the
     # web UI and LiveKit media plane. Local installs should default to disabled until the operator
-    # deliberately configures a supported public topology.
+    # deliberately configures a supported topology.
+    # Supported modes:
+    # - disabled
+    # - cloudflare_quick_tunnel (experimental voice-only path)
+    # - tailscale_tailnet_https (recommended for your own devices)
+    # - netbird_selfhosted_mesh (OSS private-mesh path)
     remote_call_mode: disabled
     # Optional browser-facing origins for remote-device access.
-    # Set these when you have a real public deployment or reverse proxy.
+    # Leave them blank for automatic Tailscale mode.
+    # Set them explicitly for NetBird or any manually managed reverse-proxy topology.
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""
     public_livekit_url: ""
+    # Optional explicit mesh IP for LiveKit media when the public_livekit_url hostname does not
+    # resolve to this Mac's private mesh address on startup. Most Tailscale installs can leave this
+    # blank; NetBird operators may want to set it deliberately.
+    livekit_node_ip: ""
   personalization:
     # New installs should ship with "Recall all conversations" enabled so
     # runtime recall and vector recall can activate without extra manual toggles.

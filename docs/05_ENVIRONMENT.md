@@ -78,6 +78,7 @@ also supports:
 - `runtime.network.public_api_origin`
 - `runtime.network.public_playground_origin`
 - `runtime.network.public_livekit_url`
+- `runtime.network.livekit_node_ip`
 - `runtime.network.remote_call_mode`
 
 Recommended local default:
@@ -92,6 +93,23 @@ With `disabled`, local installs stay honest by default:
 - remote-device/browser voice only becomes supported after the operator deliberately configures a
   real public `HTTPS/WSS` topology
 - `cloudflare_quick_tunnel` remains an explicit experiment, not the default install story
+
+Supported private-mesh modes:
+
+- `tailscale_tailnet_https`
+  - no manual public origins required
+  - Viventium auto-publishes tailnet-only HTTPS URLs on this node's `*.ts.net` hostname
+  - `LIVEKIT_NODE_IP` is derived automatically from the node's Tailscale IPv4
+- `netbird_selfhosted_mesh`
+  - requires explicit `public_client_origin` and `public_api_origin`
+  - when voice is enabled, also requires `public_playground_origin` and `public_livekit_url`
+  - `livekit_node_ip` is the explicit mesh IP override when the configured LiveKit hostname does not
+    already resolve to this Mac's private mesh address during startup
+
+Runtime note:
+
+- browser-facing public origins are separate from the local LibreChat frontend dev proxy target
+- secure-origin browser URLs must not be fed back into the local Vite proxy as the backend target
 
 See `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` for the supported tunnel
 and reverse-proxy patterns.

@@ -864,6 +864,80 @@ def test_config_compiler_preserves_explicit_cloudflare_quick_tunnel(tmp_path: Pa
     assert "VIVENTIUM_REMOTE_CALL_MODE=cloudflare_quick_tunnel" in runtime_env
 
 
+@pytest.mark.parametrize(
+    ("remote_call_mode", "expected"),
+    [
+        ("tailscale_tailnet_https", "VIVENTIUM_REMOTE_CALL_MODE=tailscale_tailnet_https"),
+        ("netbird_selfhosted_mesh", "VIVENTIUM_REMOTE_CALL_MODE=netbird_selfhosted_mesh"),
+    ],
+)
+def test_config_compiler_preserves_supported_remote_mesh_modes(
+    tmp_path: Path, remote_call_mode: str, expected: str
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {
+                "remote_call_mode": remote_call_mode,
+                "public_client_origin": "https://app.example.test",
+                "public_api_origin": "https://app.example.test:8443",
+                "public_playground_origin": "https://app.example.test:3443",
+                "public_livekit_url": "wss://app.example.test:7443",
+                "livekit_node_ip": "100.80.40.20",
+            },
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert expected in runtime_env
+    assert "VIVENTIUM_PUBLIC_CLIENT_URL=https://app.example.test" in runtime_env
+    assert "VIVENTIUM_PUBLIC_SERVER_URL=https://app.example.test:8443" in runtime_env
+    assert "VIVENTIUM_PUBLIC_PLAYGROUND_URL=https://app.example.test:3443" in runtime_env
+    assert "VIVENTIUM_PUBLIC_LIVEKIT_URL=wss://app.example.test:7443" in runtime_env
+    assert "LIVEKIT_NODE_IP=100.80.40.20" in runtime_env
+
+
 def test_resolve_voice_settings_keeps_local_first_stt_on_intel_even_when_openai_key_exists(
     monkeypatch,
 ) -> None:
