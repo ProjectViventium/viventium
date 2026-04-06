@@ -67,3 +67,43 @@ def test_canonical_payload_stays_stable() -> None:
             "issuedAt=2026-04-05T03:00:00Z",
         ]
     )
+
+
+def test_parse_args_accepts_positional_username(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_directory_link_module()
+
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "directory_link.py",
+            "--state-file",
+            "/tmp/public-network.json",
+            "qa-user",
+        ],
+    )
+
+    args = module.parse_args()
+
+    assert args.state_file == "/tmp/public-network.json"
+    assert args.username == "qa-user"
+
+
+def test_parse_args_accepts_explicit_username_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_directory_link_module()
+
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "directory_link.py",
+            "--state-file",
+            "/tmp/public-network.json",
+            "--username",
+            "qa-user",
+        ],
+    )
+
+    args = module.parse_args()
+
+    assert args.username == "qa-user"

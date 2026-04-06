@@ -374,6 +374,15 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
         ),
     )
     monkeypatch.setattr(module, "start_caddy_process", lambda *_args, **_kwargs: 777)
+    written_configs: dict[str, str] = {}
+
+    original_write_text = Path.write_text
+
+    def capture_write_text(self: Path, text: str, encoding: str | None = None):
+        written_configs[str(self)] = text
+        return original_write_text(self, text, encoding=encoding)
+
+    monkeypatch.setattr(Path, "write_text", capture_write_text)
     waited: list[tuple[list[str], int, int]] = []
     monkeypatch.setattr(
         module,
@@ -452,6 +461,10 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
         saved["directory_well_known_url"]
         == "https://app.199.7.147.132.sslip.io/.well-known/viventium-instance.json"
     )
+    config_path = str((tmp_path / "public-network.Caddyfile"))
+    assert "handle /.well-known/viventium-instance.json" in written_configs[config_path]
+    assert "instance-123" in written_configs[config_path]
+    assert "PUBLIC-KEY" in written_configs[config_path]
     assert saved["livekit_turn_domain"] == "livekit.199.7.147.132.sslip.io"
     assert saved["livekit_turn_tls_port"] == 5349
     assert saved["livekit_turn_cert_file"] == "/tmp/livekit-turn.crt"

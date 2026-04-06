@@ -4,6 +4,7 @@
 
 - 2026-04-04
 - 2026-04-05
+- 2026-04-06
 
 ## Build Under Test
 
@@ -59,7 +60,7 @@
 9. Directory-helper regression tests.
    - Command:
      `python3 -m pytest tests/release/test_directory_link.py tests/release/test_remote_call_tunnel.py -q`
-   - Result: `17 passed`
+   - Result: `19 passed`
 10. Website directory layer static validation.
    - Commands:
      - `pnpm --dir /Users/adri/Documents/Viventium/website --filter @workspace/database generate`
@@ -89,6 +90,58 @@
    - Result: browser-level check through Playwright hit the redirect route and stopped on the
      synthetic target's self-signed certificate, proving the redirect left the website and reached
      the target origin
+14. Expanded release-suite validation.
+   - Command:
+     `python3 -m pytest tests/release/ -q`
+   - Result: `192 passed, 7 failed`
+   - Result: the 7 failures are outside the directory/remote-access slice and match current
+     unrelated repo drift:
+     - background-agent governance docs
+     - detached LibreChat supervision contract
+     - local Firecrawl compose defaults
+     - native stack LiveKit helper contract
+     - voice playground dispatch contract
+15. Real wrapper UX validation.
+   - Command:
+     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-alice --directory-base-url http://localhost:3001`
+   - Result: positional CLI syntax worked and returned success JSON through the real shell wrapper
+16. Shared-state rate-limit validation.
+   - Result: the website now persists rate-limit buckets in Postgres instead of per-process memory
+   - Result: repeated wrapper registrations returned:
+     - attempts `1-8` => success
+     - attempts `9-10` => wrapper exit `1` with `{"error":"Too many requests. Please try again in a minute."}`
+   - Result: database evidence from `ViventiumDirectoryRateLimitBucket` showed persisted bucket rows
+     and request counts, proving shared-state throttling
+17. Real Caddy-served well-known validation.
+   - Setup:
+     - local upstream server on `http://127.0.0.1:39190`
+     - live Caddy process using the helper-generated directory document in its Caddyfile
+   - Result:
+     - `curl --resolve app.qa.test:40443:127.0.0.1 https://app.qa.test:40443/.well-known/viventium-instance.json -k`
+       returned the runtime-generated Viventium JSON document
+     - `curl --resolve app.qa.test:40443:127.0.0.1 https://app.qa.test:40443/ -k`
+       still returned upstream content `upstream-ok`
+   - Finding:
+     - the earlier claim that public-edge Caddy keying was broken was not reproduced; the helper
+       emits the well-known route correctly for the public-edge host key it actually uses
+18. Hosted-mode SSRF validation.
+   - Setup:
+     - marketing app built and started in production mode on `http://localhost:3003`
+   - Command:
+     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-prod-ssrf --directory-base-url http://localhost:3003`
+   - Result:
+     - command failed with `{"error":"Target origin must resolve to a public internet address."}`
+     - this proves the private-IP verification guard is active in hosted/production mode
+19. Explicit local-override validation.
+   - Setup:
+     - marketing app started on `http://localhost:3004` with
+       `VIVENTIUM_DIRECTORY_ALLOW_PRIVATE_TARGETS=true`
+   - Command:
+     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-alice --directory-base-url http://localhost:3004`
+   - Result:
+     - registration succeeded
+     - this proves private-target registration is now an explicit QA-only override rather than a
+       default non-production bypass
 
 ## Findings
 
@@ -117,7 +170,8 @@
 - The redirect-only website directory layer now exists and is functioning locally.
   - the self-hosted runtime publishes a signed verification document at
     `/.well-known/viventium-instance.json`
-  - `bin/viventium register-link <username>` signs the registration with the local instance key
+  - `bin/viventium register-link <username>` now works through the documented positional CLI syntax
+    and signs the registration with the local instance key
   - the website verifies the signature and target before saving `username -> public_client_origin`
   - `viventium.ai/u/<username>` can therefore stay a phonebook rather than a relay
 - The current safety posture for the directory layer is materially better than a naive open redirect.
@@ -127,10 +181,15 @@
   - throttled responses carry `Retry-After: 60`
   - verification fetches refuse redirect chains and time out quickly
   - production verification now rejects target origins that resolve to non-public/private IP ranges
+  - local private-target registration is now opt-in via `VIVENTIUM_DIRECTORY_ALLOW_PRIVATE_TARGETS=true`
   - the website username validation now matches the CLI contract for 1-32 character public names
+  - the rate-limit state now lives in the shared website database rather than per-process memory
 - This design keeps Vercel exposure low.
   - the website only handles redirect and registration requests
   - actual LibreChat, LiveKit signaling, media, and TURN traffic never flow through the website layer
+- The runtime-to-directory integration path is now proven at the Caddy layer too.
+  - a live Caddy instance served the runtime-generated well-known document
+  - normal non-well-known requests still flowed to the upstream app
 - For the owner deployment, the preferred stable custom-domain layout is now:
   - `app.viventium.ai`
   - `api.app.viventium.ai`
@@ -161,10 +220,14 @@
     - external public playground reachability
     - local successful voice session after remote-edge enablement
     - correct origin-based public-vs-local LiveKit routing
-- The directory-layer rate limits are implemented in-process in the website app.
-  - they are effective for the single-instance local validation performed here
-  - they are not a full replacement for provider-level firewall/rate-limit controls when the website
-    is publicly deployed on hosted infrastructure such as Vercel
+ - The directory-layer rate limits now use the shared website database, which materially improves
+   hosted correctness over the earlier in-memory prototype.
+  - this removes the per-process cold-start reset issue for normal hosted multi-instance execution
+  - provider-level firewall/rate-limit controls are still recommended as defense in depth, but they
+    are no longer the only thing preventing hosted rate-limit bypass
 - Directory entries are still write-verified, not continuously revalidated.
   - `lastVerifiedAt` is stored and indexed
   - this branch does not yet include a cron/TTL cleanup pass for dead or lapsed target origins
+- Username recovery/release remains an operator policy question.
+  - if an operator loses the local private key and needs to reclaim the same vanity name, this
+    branch does not yet include an automated release or transfer workflow

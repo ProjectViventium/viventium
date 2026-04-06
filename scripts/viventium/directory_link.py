@@ -19,10 +19,15 @@ def parse_args() -> argparse.Namespace:
         description="Register a public Viventium instance under the viventium.ai vanity directory."
     )
     parser.add_argument("--state-file", required=True)
-    parser.add_argument("--username", required=True)
+    parser.add_argument("username", nargs="?")
+    parser.add_argument("--username", dest="username_flag")
     parser.add_argument("--directory-base-url", default="https://viventium.ai")
     parser.add_argument("--timeout-seconds", type=int, default=15)
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.username = args.username_flag or args.username
+    if not args.username:
+        parser.error("username is required")
+    return args
 
 
 def load_state(path: Path) -> dict[str, object]:

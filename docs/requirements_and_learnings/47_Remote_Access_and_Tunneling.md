@@ -261,7 +261,8 @@ Security and abuse constraints:
 - registration is accepted only when the local instance signs the registration payload with the
   instance private key and the website verifies that signature against the public key in the
   well-known document
-- registration must be rate-limited and return a short `Retry-After` contract when throttled
+- registration must be rate-limited with shared hosted state and return a short `Retry-After`
+  contract when throttled
 - redirect targets must come only from the verified registry table; no arbitrary redirect passthrough
 - the redirect route itself may be cached briefly and separately rate-limited, but it must remain a
   plain redirect rather than a fetch/proxy layer
@@ -269,9 +270,13 @@ Security and abuse constraints:
   directory cannot be turned into an expensive generic fetcher
 - the hosted directory verifier must reject target origins that resolve to private, loopback,
   link-local, or otherwise non-public IP ranges
+- local/private target registration is allowed only as an explicit QA/development override via
+  `VIVENTIUM_DIRECTORY_ALLOW_PRIVATE_TARGETS=true`; it must not be the default behavior
 - if the website is deployed on Vercel or another hosted edge, platform firewall/rate-limit
   controls are recommended as defense in depth, but the product-level safety contract must still
   hold without proxying user traffic
+- the public runtime-to-directory handoff must be verifiable through the actual Caddy-served
+  `/.well-known/viventium-instance.json` path, not only through synthetic side servers
 
 Operator contract:
 
@@ -377,6 +382,7 @@ Minimum acceptance expectations:
 - directory registration only accepts verified HTTPS origins with valid signatures
 - the directory redirect remains redirect-only, preserves query strings, and rejects unknown users
 - rate-limit and throttling behavior for the directory layer are validated with real requests
+- hosted-mode SSRF rejection for private/non-public targets is validated under production settings
 - private-mesh validation must state clearly whether it is provider-compatible or provider-native
 - Tailscale live validation when a real tailnet is available on the test machine
 

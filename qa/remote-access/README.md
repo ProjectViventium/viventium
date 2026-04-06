@@ -28,8 +28,12 @@ honest separation between:
   `/.well-known/viventium-instance.json`
 - hosted directory verification rejects target origins that resolve to private or otherwise
   non-public network ranges
+- local/private target registration for QA is only allowed when the website is started with
+  `VIVENTIUM_DIRECTORY_ALLOW_PRIVATE_TARGETS=true`
 - the directory redirect preserves query strings, returns `404` for unknown usernames, and returns
   `429` with throttling under burst traffic
+- the directory throttling path must use shared state that survives hosted multi-instance execution;
+  per-process-only limits are not sufficient for Vercel-style serverless deployment
 - Secure-origin browser access does not break the local Vite dev proxy path when `DOMAIN_SERVER`
   becomes a public API origin.
 - A fresh local voice session still connects, opens transcript mode, and returns a typed assistant
@@ -92,3 +96,9 @@ honest separation between:
     - tampered signature
     - unknown username
     - burst traffic that must produce throttling
+14. Fetch the runtime-generated `/.well-known/viventium-instance.json` through a live Caddy process,
+    not only through a synthetic side server.
+15. Validate the hosted-mode SSRF guard under `NODE_ENV=production` by attempting to register a
+    private/loopback target and confirming rejection.
+16. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
+    from this feature slice.
