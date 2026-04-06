@@ -96,8 +96,8 @@
    - Command:
      `python3 -m pytest tests/release/ -q`
    - Result: `192 passed, 7 failed`
-   - Result: the 7 failures are outside the directory/remote-access slice and match current
-     unrelated repo drift:
+   - Result: the 7 failures are mostly outside the direct directory/remote-access slice, but a
+     subset still touches adjacent launcher and voice-surrounding surfaces:
      - background-agent governance docs
      - detached LibreChat supervision contract
      - local Firecrawl compose defaults
