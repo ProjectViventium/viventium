@@ -40,17 +40,17 @@ def load_preflight_module():
 def test_public_edge_cgnat_details_flags_router_public_ip_mismatch(monkeypatch) -> None:
     module = load_preflight_module()
     monkeypatch.setattr(module, "upnpc_router_external_ipv4", lambda: "100.64.0.5")
-    monkeypatch.setattr(module, "discover_public_ipv4", lambda: "199.7.147.132")
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda: "203.0.113.42")
 
-    assert module.public_edge_cgnat_details() == (True, "100.64.0.5", "199.7.147.132")
+    assert module.public_edge_cgnat_details() == (True, "100.64.0.5", "203.0.113.42")
 
 
 def test_public_edge_cgnat_details_ignores_matching_public_ip(monkeypatch) -> None:
     module = load_preflight_module()
-    monkeypatch.setattr(module, "upnpc_router_external_ipv4", lambda: "199.7.147.132")
-    monkeypatch.setattr(module, "discover_public_ipv4", lambda: "199.7.147.132")
+    monkeypatch.setattr(module, "upnpc_router_external_ipv4", lambda: "203.0.113.42")
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda: "203.0.113.42")
 
-    assert module.public_edge_cgnat_details() == (False, "199.7.147.132", "199.7.147.132")
+    assert module.public_edge_cgnat_details() == (False, "203.0.113.42", "203.0.113.42")
 
 
 def test_preflight_aggregates_missing_native_prereqs(tmp_path: Path) -> None:

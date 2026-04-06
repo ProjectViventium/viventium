@@ -12,7 +12,7 @@
 - Nested LibreChat branch: `codex/remote-modern-playground-access`
 - Runtime profile: `isolated`
 - Live config used for public-edge validation:
-  - `~/Library/Application Support/Viventium/config.yaml`
+  - canonical App Support `config.yaml`
   - `runtime.network.remote_call_mode: public_https_edge`
 
 ## Checks Executed
@@ -27,19 +27,20 @@
    - Result: passed
 3. Public-origin routing contract validation.
    - Result: `Origin: http://localhost:3300` returned `serverUrl=ws://localhost:7888`
-   - Result: `Origin: https://playground.199.7.147.132.sslip.io` returned `serverUrl=wss://livekit.199.7.147.132.sslip.io`
+   - Result: `Origin: https://playground.<public-bootstrap-host>` returned
+     `serverUrl=wss://livekit.<public-bootstrap-host>`
 4. Live public-edge runtime validation.
    - Result: launcher reached `All Services Running`
    - Result: runtime state published:
-     - `https://app.199.7.147.132.sslip.io`
-     - `https://api.199.7.147.132.sslip.io`
-     - `https://playground.199.7.147.132.sslip.io`
-     - `wss://livekit.199.7.147.132.sslip.io`
+     - `https://app.<public-bootstrap-host>`
+     - `https://api.<public-bootstrap-host>`
+     - `https://playground.<public-bootstrap-host>`
+     - `wss://livekit.<public-bootstrap-host>`
    - Result: router mappings included `80/tcp`, `443/tcp`, `7889/tcp`, `7890/udp`, `5349/tcp`
 5. LiveKit TURN/TLS runtime validation.
    - Result: generated `livekit.yaml` contained:
      - `turn.enabled: true`
-     - `domain: livekit.199.7.147.132.sslip.io`
+     - `domain: livekit.<public-bootstrap-host>`
      - `tls_port: 5349`
    - Result: listeners existed on:
      - `7888/tcp`
@@ -53,7 +54,8 @@
    - Result: typed transcript prompt `Reply with exactly REMOTE_QA_OK and nothing else.` returned exact reply `REMOTE_QA_OK`
    - Result: successful voice run had `0` browser console errors
 7. External public fetch sanity check.
-   - Result: independent external fetch reached `https://playground.199.7.147.132.sslip.io/` and returned HTML for the modern playground shell
+   - Result: independent external fetch reached `https://playground.<public-bootstrap-host>/`
+     and returned HTML for the modern playground shell
 8. Provider-prerequisite checks.
    - Result: Tailscale CLI is installed but not running/authenticated on this Mac
    - Result: NetBird CLI is not installed on this Mac
@@ -63,19 +65,19 @@
    - Result: `19 passed`
 10. Website directory layer static validation.
    - Commands:
-     - `pnpm --dir /Users/adri/Documents/Viventium/website --filter @workspace/database generate`
-     - `pnpm --dir /Users/adri/Documents/Viventium/website --filter marketing lint`
-     - `pnpm --dir /Users/adri/Documents/Viventium/website --filter marketing typecheck`
+     - `pnpm --dir <website-repo> --filter @workspace/database generate`
+     - `pnpm --dir <website-repo> --filter marketing lint`
+     - `pnpm --dir <website-repo> --filter marketing typecheck`
    - Result: passed
 11. Local signed directory registration.
    - Setup:
      - synthetic HTTPS Viventium target on `https://localhost:44443`
-     - local website dev server on `http://localhost:3001`
+     - local website dev server on `http://localhost:<directory-dev-port>`
      - isolated Postgres container for website directory state
    - Command:
-     `NODE_TLS_REJECT_UNAUTHORIZED=0 python3 scripts/viventium/directory_link.py --state-file /tmp/viv-directory-qa/public-network.json --username qa-alice --directory-base-url http://localhost:3001`
+     `NODE_TLS_REJECT_UNAUTHORIZED=0 python3 scripts/viventium/directory_link.py --state-file /tmp/viv-directory-qa/public-network.json --username qa-alice --directory-base-url http://localhost:<directory-dev-port>`
    - Result:
-     - `{"success":true,"username":"qa-alice","targetOrigin":"https://localhost:44443","vanityUrl":"http://localhost:3001/u/qa-alice"}`
+     - success JSON returned with the expected username, target origin, and vanity URL
 12. Directory redirect behavior.
    - Result: `GET /u/qa-alice` returned `307` to `https://localhost:44443/`
    - Result: query-string preservation confirmed:
@@ -103,7 +105,7 @@
      - voice playground dispatch contract
 15. Real wrapper UX validation.
    - Command:
-     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-alice --directory-base-url http://localhost:3001`
+     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-alice --directory-base-url http://localhost:<directory-dev-port>`
    - Result: positional CLI syntax worked and returned success JSON through the real shell wrapper
 16. Shared-state rate-limit validation.
    - Result: the website now persists rate-limit buckets in Postgres instead of per-process memory
@@ -126,22 +128,48 @@
        emits the well-known route correctly for the public-edge host key it actually uses
 18. Hosted-mode SSRF validation.
    - Setup:
-     - marketing app built and started in production mode on `http://localhost:3003`
+     - marketing app built and started in production mode on a local test port
    - Command:
-     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-prod-ssrf --directory-base-url http://localhost:3003`
+     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-prod-ssrf --directory-base-url http://localhost:<directory-prod-port>`
    - Result:
      - command failed with `{"error":"Target origin must resolve to a public internet address."}`
      - this proves the private-IP verification guard is active in hosted/production mode
 19. Explicit local-override validation.
    - Setup:
-     - marketing app started on `http://localhost:3004` with
+     - marketing app started on a local test port with
        `VIVENTIUM_DIRECTORY_ALLOW_PRIVATE_TARGETS=true`
    - Command:
-     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-alice --directory-base-url http://localhost:3004`
+     `VIVENTIUM_PUBLIC_NETWORK_STATE_FILE=/tmp/viv-directory-qa/public-network.json NODE_TLS_REJECT_UNAUTHORIZED=0 bin/viventium register-link qa-alice --directory-base-url http://localhost:<directory-dev-override-port>`
    - Result:
      - registration succeeded
      - this proves private-target registration is now an explicit QA-only override rather than a
        default non-production bypass
+20. Live custom-domain activation.
+   - Setup:
+     - operator-controlled DNS delegated for:
+       - `app.<your-domain>`
+       - `api.app.<your-domain>`
+       - `playground.app.<your-domain>`
+       - `livekit.app.<your-domain>`
+     - canonical App Support config switched to:
+       - `runtime.network.remote_call_mode: custom_domain`
+       - explicit `public_*` origins on the chosen `app.<your-domain>` host family
+   - Result:
+     - runtime published `public-network.json` for the custom-domain edge
+     - Caddy obtained real Let's Encrypt certificates for all four custom domains
+     - direct internal host-routed checks through the live Caddy edge returned `200` for:
+       - `app.<your-domain>`
+       - `api.app.<your-domain>`
+       - `playground.app.<your-domain>`
+     - the runtime-generated `/.well-known/viventium-instance.json` returned valid JSON through the live custom-domain edge
+21. Browser and external reachability checks on the custom-domain edge.
+   - Result:
+     - Playwright on `http://localhost:3190` loaded the Viventium login page with `0` console errors
+     - Playwright on `http://localhost:3300` loaded the modern playground shell
+     - same-machine Playwright and `curl` attempts to `https://playground.app.<your-domain>` timed out
+     - an off-box fetch service successfully retrieved `https://playground.app.<your-domain>/` over HTTPS
+   - Finding:
+     - the current evidence is consistent with NAT hairpin failure on the local machine, not a dead public deployment
 
 ## Findings
 
@@ -149,8 +177,8 @@
   - `tailscale_tailnet_https`
   - `netbird_selfhosted_mesh`
 - The real public-browser-capable mode in this repo is `public_https_edge`.
-  - It is live on this Mac with Caddy-managed HTTPS, public-IP-derived `sslip.io` hostnames, router
-    mappings, and TURN/TLS-ready LiveKit state.
+  - It is live on this Mac with Caddy-managed HTTPS, router mappings, and TURN/TLS-ready LiveKit
+    state.
 - The localhost path is preserved even after enabling the remote edge.
   - chat still works on `localhost`
   - a fresh voice launch still works on `localhost`
@@ -161,12 +189,16 @@
   - now `api/connection-details` returns public LiveKit only for requests that originated from the
     configured public playground origin
   - localhost callers keep `ws://localhost:7888`
-- The public `sslip.io` edge is externally reachable.
-  - non-local fetch succeeded for the public playground shell
+- The bootstrap `sslip.io` edge was externally reachable before custom-domain cutover.
+  - non-local fetch succeeded for the public playground shell during bootstrap validation
 - Stable custom-domain access is the remaining operator-facing finish step.
-  - the public edge works now through `sslip.io`
-  - the durable bookmarkable production answer still requires explicit operator-controlled DNS
-    instead of IP-derived fallback hosts
+  - the public edge first worked through `sslip.io`
+  - the operator-controlled custom-domain edge is now live on:
+    - `app.<your-domain>`
+    - `api.app.<your-domain>`
+    - `playground.app.<your-domain>`
+    - `livekit.app.<your-domain>`
+  - the remaining acceptance gate is now a true off-home authenticated browser session and voice call
 - The redirect-only website directory layer now exists and is functioning locally.
   - the self-hosted runtime publishes a signed verification document at
     `/.well-known/viventium-instance.json`
@@ -190,25 +222,20 @@
 - The runtime-to-directory integration path is now proven at the Caddy layer too.
   - a live Caddy instance served the runtime-generated well-known document
   - normal non-well-known requests still flowed to the upstream app
-- For the owner deployment, the preferred stable custom-domain layout is now:
-  - `app.viventium.ai`
-  - `api.app.viventium.ai`
-  - `playground.app.viventium.ai`
-  - `livekit.app.viventium.ai`
-  - this keeps the primary public entrypoint on `app.viventium.ai` without consuming every
-    top-level subdomain on `viventium.ai`
+- The preferred stable custom-domain layout is:
+  - `app.<your-domain>`
+  - `api.app.<your-domain>`
+  - `playground.app.<your-domain>`
+  - `livekit.app.<your-domain>`
+  - this keeps the primary public entrypoint on `app.<your-domain>` without consuming every
+    top-level subdomain on the operator's domain
 
 ## Limitations
 
-- The stable public-domain finish step was not live-validated yet because the required DNS records
-  do not exist today.
-  - `app.viventium.ai`
-  - `api.app.viventium.ai`
-  - `playground.app.viventium.ai`
-  - `livekit.app.viventium.ai`
-- This Mac cannot hairpin cleanly to its own public `sslip.io` hosts with local `curl`/Playwright,
-  so public-surface reachability was validated through an external fetch path instead of a same-host
-  authenticated browser run.
+- The operator custom-domain DNS can be delegated and the custom-domain runtime can be active, but this report
+  still does not include a true off-home authenticated browser session on `https://app.<your-domain>`.
+- This Mac cannot hairpin cleanly to its own public custom-domain hosts with local `curl`/Playwright,
+  so same-machine public URL timeouts are not treated as definitive production failures.
 - Tailscale was not provider-native live-validated end to end on this Mac.
   - `tailscale` CLI is installed, but the local Tailscale service is not running/connected, so the
     tailnet-only URLs could not be exercised in a real tailnet session here.
@@ -217,8 +244,9 @@
 - TURN/TLS is now wired and listening on `5349`, but this report did not include a true external
   phone-on-cellular voice run over the public edge.
   - the strongest proof collected here is:
-    - external public playground reachability
+    - external HTTPS fetch proof for the public playground
     - local successful voice session after remote-edge enablement
+    - live custom-domain certificates and host-routed Caddy responses
     - correct origin-based public-vs-local LiveKit routing
  - The directory-layer rate limits now use the shared website database, which materially improves
    hosted correctness over the earlier in-memory prototype.

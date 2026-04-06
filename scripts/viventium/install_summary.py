@@ -530,6 +530,10 @@ def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> lis
         "Optional: run [cyan]bin/viventium shell-init[/cyan] for the one-line setup that adds "
         "[cyan]viventium[/cyan] and [cyan]viv[/cyan] as global commands."
     )
+    next_steps.append(
+        "Remote access is optional. For private-device or public-browser setup, see "
+        "[cyan]docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md[/cyan]."
+    )
     next_steps.append("Add or change features later with [cyan]bin/viventium configure[/cyan].")
     return next_steps
 

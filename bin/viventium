@@ -2396,11 +2396,13 @@ case "$COMMAND" in
       subcommand_usage register-link
       exit 0
     fi
+    local reg_username="$1"; shift
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     prepare_runtime_exports
     refresh_repo_python
     exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/directory_link.py" \
       --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
+      --username "$reg_username" \
       "$@"
     ;;
   launch)

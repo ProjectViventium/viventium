@@ -13,6 +13,23 @@ This document is the source of truth for:
 - the launcher/runtime contract for stable public-browser access from a self-hosted machine
 - the supported and unsupported remote-access topologies
 
+## User Setup Entry Points
+
+Users configuring remote access should start here:
+
+- `config.minimal.example.yaml`
+- `config.full.example.yaml`
+- `docs/05_ENVIRONMENT.md`
+- this document for choosing the correct remote-access mode
+
+Operator guidance:
+
+- If you do not need remote access, leave `runtime.network.remote_call_mode: disabled`.
+- If you only need your own enrolled devices to reach Viventium privately, choose
+  `tailscale_tailnet_https`.
+- If you need a stable public browser URL for arbitrary devices, choose `custom_domain`
+  / `public_https_edge`.
+
 ## Product Position
 
 The default public-safe local-install story remains:
@@ -48,6 +65,14 @@ Product position:
   - transport stays in the self-hosted runtime
   - discovery can live on the website
   - the website must never proxy chat, voice, or LiveKit media for self-hosted installs
+
+Quick operator choice:
+
+- leave remote access `disabled` if you only use Viventium locally
+- use `tailscale_tailnet_https` if you want your own phone/laptop/tablet to reach Viventium and
+  you are willing to install Tailscale on those devices
+- use `custom_domain` when you want the app and modern playground reachable from any browser
+  anywhere without installing a mesh client
 
 ## Supported Modes
 
@@ -99,6 +124,12 @@ Operational requirements:
 - `tailscale` installed
 - Tailscale daemon running on the Mac
 - the Mac already signed in to the target tailnet before startup
+
+User expectation:
+
+- yes, this mode lets you use Viventium from your phone outside the local network
+- the phone or tablet must also be enrolled in the same tailnet
+- this is the easiest remote-access path when the operator only needs their own devices
 
 ### 4. `netbird_selfhosted_mesh`
 
@@ -231,15 +262,22 @@ Operator recipe for a stable public link:
    - voice launch opens `https://playground.<your-domain>`
    - the call completes a real round-trip
 
-For the current owner deployment, the preferred stable records are:
+User expectation:
 
-- `app.viventium.ai`
-- `api.app.viventium.ai`
-- `playground.app.viventium.ai`
-- `livekit.app.viventium.ai`
+- yes, this mode is the one that lets you use Viventium and the modern playground from a phone
+  outside the local network without installing a mesh client
+- because the browser is public and unmodified, this is also the right mode for sharing your
+  self-hosted Viventium with other people
 
-That keeps the user-facing primary URL on `app.viventium.ai` while avoiding collisions with other
-top-level properties that may already live on `viventium.ai`.
+Recommended stable record pattern:
+
+- `app.<your-domain>`
+- `api.app.<your-domain>`
+- `playground.app.<your-domain>`
+- `livekit.app.<your-domain>`
+
+That keeps the user-facing primary URL on `app.<your-domain>` while avoiding collisions with other
+top-level properties that may already exist on the same domain.
 
 ## Directory Discovery Layer
 
@@ -289,6 +327,24 @@ Operator contract:
 3. The website verifies the instance and stores `username -> public_client_origin`.
 4. `https://viventium.ai/u/<username>` becomes a stable discovery URL that redirects to the real
    self-hosted app.
+
+Where users should look for configuration help:
+
+- `config.minimal.example.yaml`
+- `config.full.example.yaml`
+- `docs/05_ENVIRONMENT.md`
+- this document for the full remote-access topology and acceptance contract
+
+Recommended operator verification checklist:
+
+1. Open the configured app URL from another network.
+2. Log in and confirm LibreChat loads.
+3. Start a voice call.
+4. Confirm the browser opens the configured modern playground URL.
+5. Toggle transcript and send a typed test message.
+6. Confirm a real assistant reply appears.
+7. Complete a short spoken round-trip and confirm audio works both ways.
+8. Only after the public client origin is working, optionally run `bin/viventium register-link <username>`.
 
 Non-goals:
 

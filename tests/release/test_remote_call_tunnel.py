@@ -359,9 +359,9 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     monkeypatch.setattr(
         module,
         "list_upnpc_state",
-        lambda _bin: {"external_ip": "199.7.147.132", "local_ip": "10.88.111.46", "mappings": {}},
+        lambda _bin: {"external_ip": "203.0.113.42", "local_ip": "192.168.50.10", "mappings": {}},
     )
-    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin=None: "199.7.147.132")
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin=None: "203.0.113.42")
     monkeypatch.setattr(module, "pick_caddy_admin_port", lambda: 2019)
     ports = iter([4080, 4443])
     monkeypatch.setattr(module, "pick_free_port", lambda: next(ports))
@@ -441,31 +441,31 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert waited == [
         (
             [
-                "app.199.7.147.132.sslip.io",
-                "api.199.7.147.132.sslip.io",
-                "playground.199.7.147.132.sslip.io",
-                "livekit.199.7.147.132.sslip.io",
+                "app.203.0.113.42.sslip.io",
+                "api.203.0.113.42.sslip.io",
+                "playground.203.0.113.42.sslip.io",
+                "livekit.203.0.113.42.sslip.io",
             ],
             4443,
             5,
         )
     ]
-    assert saved["public_client_url"] == "https://app.199.7.147.132.sslip.io"
-    assert saved["public_api_url"] == "https://api.199.7.147.132.sslip.io"
-    assert saved["public_playground_url"] == "https://playground.199.7.147.132.sslip.io"
-    assert saved["public_livekit_url"] == "wss://livekit.199.7.147.132.sslip.io"
-    assert saved["livekit_node_ip"] == "199.7.147.132"
+    assert saved["public_client_url"] == "https://app.203.0.113.42.sslip.io"
+    assert saved["public_api_url"] == "https://api.203.0.113.42.sslip.io"
+    assert saved["public_playground_url"] == "https://playground.203.0.113.42.sslip.io"
+    assert saved["public_livekit_url"] == "wss://livekit.203.0.113.42.sslip.io"
+    assert saved["livekit_node_ip"] == "203.0.113.42"
     assert saved["directory_instance_id"] == "instance-123"
     assert saved["directory_public_key_fingerprint"] == "sha256:test-fingerprint"
     assert (
         saved["directory_well_known_url"]
-        == "https://app.199.7.147.132.sslip.io/.well-known/viventium-instance.json"
+        == "https://app.203.0.113.42.sslip.io/.well-known/viventium-instance.json"
     )
     config_path = str((tmp_path / "public-network.Caddyfile"))
     assert "handle /.well-known/viventium-instance.json" in written_configs[config_path]
     assert "instance-123" in written_configs[config_path]
     assert "PUBLIC-KEY" in written_configs[config_path]
-    assert saved["livekit_turn_domain"] == "livekit.199.7.147.132.sslip.io"
+    assert saved["livekit_turn_domain"] == "livekit.203.0.113.42.sslip.io"
     assert saved["livekit_turn_tls_port"] == 5349
     assert saved["livekit_turn_cert_file"] == "/tmp/livekit-turn.crt"
     assert saved["livekit_turn_key_file"] == "/tmp/livekit-turn.key"

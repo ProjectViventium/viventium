@@ -69,7 +69,7 @@ to preserve local parity with older setups.
 - `.env.example`
 - `librechat.yaml.example`
 
-## Remote Local-Device Calling
+## Remote Access Modes
 
 For local installs that need phone/tablet access to the modern voice surface, the canonical config
 also supports:
@@ -106,6 +106,21 @@ Supported private-mesh modes:
   - `livekit_node_ip` is the explicit mesh IP override when the configured LiveKit hostname does not
     already resolve to this Mac's private mesh address during startup
 
+Supported public-browser mode:
+
+- `public_https_edge` / `custom_domain`
+  - use this when you want Viventium and the modern playground reachable from any browser anywhere
+  - requires a real public `HTTPS/WSS` path for the web app, API, playground, and LiveKit media
+  - usually means your own domain plus an inbound public path to this Mac
+  - if you only need your own phone or laptop and can install Tailscale, `tailscale_tailnet_https`
+    is simpler than a public-edge deployment
+
+What a normal self-hosted user should do:
+
+- if you do not need remote access yet, leave `remote_call_mode: disabled`
+- if you want access from your own devices outside the house, prefer `tailscale_tailnet_https`
+- if you want access from any browser anywhere, use `custom_domain`
+
 Runtime note:
 
 - browser-facing public origins are separate from the local LibreChat frontend dev proxy target
@@ -113,6 +128,13 @@ Runtime note:
 
 See `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` for the supported tunnel
 and reverse-proxy patterns.
+
+User guidance:
+
+- Start from `config.minimal.example.yaml` or `config.full.example.yaml`.
+- Keep `remote_call_mode: disabled` unless you explicitly need remote access.
+- Choose `tailscale_tailnet_https` for your own enrolled devices.
+- Choose `custom_domain` / `public_https_edge` only when you need public browser access.
 
 ## Wing Mode
 

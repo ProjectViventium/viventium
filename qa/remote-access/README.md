@@ -66,10 +66,10 @@ honest separation between:
   - `~/Library/Application Support/Viventium/state/runtime/isolated/livekit/livekit.yaml`
 - Directory registration CLI:
   - `scripts/viventium/directory_link.py`
-- Website discovery layer:
-  - `/Users/adri/Documents/Viventium/website/apps/marketing/app/api/viventium/directory/register/route.ts`
-  - `/Users/adri/Documents/Viventium/website/apps/marketing/app/u/[username]/route.ts`
-  - `/Users/adri/Documents/Viventium/website/apps/marketing/lib/viventium-directory.ts`
+- Website discovery layer in the sibling website repo:
+  - `website/apps/marketing/app/api/viventium/directory/register/route.ts`
+  - `website/apps/marketing/app/u/[username]/route.ts`
+  - `website/apps/marketing/lib/viventium-directory.ts`
 - Local Playwright artifacts:
   - `output/playwright/remote-access/`
   - `.playwright-cli/`

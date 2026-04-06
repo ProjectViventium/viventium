@@ -8,9 +8,14 @@ runtime:
     # Supported modes: disabled, cloudflare_quick_tunnel, tailscale_tailnet_https,
     # netbird_selfhosted_mesh, public_https_edge.
     # `custom_domain` is accepted as a clearer alias for `public_https_edge`.
+    # Choose one:
+    # - disabled: local-only install, no remote browser access
+    # - tailscale_tailnet_https: easiest for your own devices when they can run Tailscale
+    # - custom_domain/public_https_edge: best for any browser anywhere; requires a real public edge
     remote_call_mode: disabled
     # Leave these blank for automatic Tailscale mode or the temporary public sslip.io fallback.
-    # Set them explicitly for NetBird or your own stable public subdomains.
+    # Set them explicitly for NetBird or your own stable public subdomains when using
+    # custom_domain/public_https_edge.
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""

@@ -16,7 +16,7 @@ public Viventium install and runtime paths.
 
 ## Environments
 
-- Public repo checkout at `/Users/adri/Documents/Viventium/app/public/viventium`
+- Public repo checkout at the repository root
 - Release-style automated tests under `tests/release/`
 - Telegram bridge tests under `viventium_v0_4/telegram-viventium/tests/`
 

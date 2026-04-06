@@ -11,6 +11,10 @@ runtime:
     # Remote browser voice calls from other devices need a real HTTPS/WSS deployment path for the
     # web UI and LiveKit media plane. Local installs should default to disabled until the operator
     # deliberately configures a supported topology.
+    # Quick rule of thumb:
+    # - disabled: keep everything local-only
+    # - tailscale_tailnet_https: easiest path for your own devices when you can install Tailscale
+    # - custom_domain/public_https_edge: best path for any browser anywhere
     # Supported modes:
     # - disabled
     # - cloudflare_quick_tunnel (experimental voice-only path)
@@ -22,6 +26,7 @@ runtime:
     # Optional browser-facing origins for remote-device access.
     # Leave them blank for automatic Tailscale mode or the public sslip.io fallback.
     # Set them explicitly for NetBird or your own stable public subdomains.
+    # Stable public custom-domain access expects all four of these to be set.
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""
