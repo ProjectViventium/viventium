@@ -353,6 +353,7 @@ Commands:
                     Fetch pinned public component repos from components.lock.json.
   compile-config    Render runtime env/yaml files from config.yaml.
   doctor            Run preflight checks against the current config.
+  register-link     Register this public Viventium instance under a viventium.ai vanity link.
   install-helper    Install or refresh the macOS Viventium status-bar helper.
   uninstall-helper  Remove the macOS Viventium status-bar helper.
   status-bar        Turn the macOS Viventium status-bar helper on or off.
@@ -435,6 +436,16 @@ Usage:
   bin/viventium doctor
 
 Runs preflight checks against the current config and generated runtime files.
+USAGE
+      ;;
+    register-link)
+      cat <<'USAGE'
+Usage:
+  bin/viventium register-link <username> [--directory-base-url https://viventium.ai]
+
+Registers the current public Viventium client URL as a vanity redirect under
+viventium.ai/u/<username>. The local instance must already be running with a
+public remote-access mode so the verification document is reachable.
 USAGE
       ;;
     launch)
@@ -2379,6 +2390,18 @@ case "$COMMAND" in
       --config "$CONFIG_FILE" \
       --runtime-dir "$RUNTIME_DIR" \
       --probe-live
+    ;;
+  register-link)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage register-link
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    prepare_runtime_exports
+    refresh_repo_python
+    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/directory_link.py" \
+      --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
+      "$@"
     ;;
   launch)
     acquire_cli_lock "$COMMAND"

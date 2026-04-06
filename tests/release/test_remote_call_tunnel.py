@@ -385,6 +385,16 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
         "resolve_public_edge_livekit_cert_pair",
         lambda _data_dir, _hostname: ("/tmp/livekit-turn.crt", "/tmp/livekit-turn.key"),
     )
+    monkeypatch.setattr(
+        module,
+        "ensure_directory_identity",
+        lambda _state_path: {
+            "instance_id": "instance-123",
+            "public_key_fingerprint": "sha256:test-fingerprint",
+            "public_key_pem": "PUBLIC-KEY",
+            "registration_algorithm": "rsa-sha256",
+        },
+    )
     saved: dict[str, object] = {}
     monkeypatch.setattr(module, "save_state", lambda _path, state: saved.update(state))
 
@@ -436,10 +446,33 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert saved["public_playground_url"] == "https://playground.199.7.147.132.sslip.io"
     assert saved["public_livekit_url"] == "wss://livekit.199.7.147.132.sslip.io"
     assert saved["livekit_node_ip"] == "199.7.147.132"
+    assert saved["directory_instance_id"] == "instance-123"
+    assert saved["directory_public_key_fingerprint"] == "sha256:test-fingerprint"
+    assert (
+        saved["directory_well_known_url"]
+        == "https://app.199.7.147.132.sslip.io/.well-known/viventium-instance.json"
+    )
     assert saved["livekit_turn_domain"] == "livekit.199.7.147.132.sslip.io"
     assert saved["livekit_turn_tls_port"] == 5349
     assert saved["livekit_turn_cert_file"] == "/tmp/livekit-turn.crt"
     assert saved["livekit_turn_key_file"] == "/tmp/livekit-turn.key"
+
+
+def test_render_caddyfile_can_serve_directory_instance_document() -> None:
+    module = load_module()
+
+    caddyfile = module.render_caddyfile(
+        admin_port=2019,
+        surfaces=[("app.example.com", 3190)],
+        tls_internal=False,
+        http_port=4080,
+        https_port=4443,
+        well_known_bodies={"app.example.com": '{"app":"Viventium"}'},
+    )
+
+    assert "handle /.well-known/viventium-instance.json" in caddyfile
+    assert 'header Content-Type application/json' in caddyfile
+    assert 'respond "{\\"app\\":\\"Viventium\\"}" 200' in caddyfile
 
 
 def test_parse_args_uses_remote_tunnel_timeout_env(monkeypatch) -> None:

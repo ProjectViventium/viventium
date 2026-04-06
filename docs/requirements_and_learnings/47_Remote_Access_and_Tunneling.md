@@ -42,8 +42,12 @@ Product position:
 - The automatic `sslip.io` hostnames are a zero-cost bootstrap fallback only. They are useful for
   proof and QA, but they are tied to the current public IP and therefore are not the durable
   operator-facing answer.
-- A future `viventium.ai/u/<user>` or similar discovery layer can exist as an optional
-  redirect-only convenience, but it must not become a shared relay for user traffic.
+- `viventium.ai/u/<user>` or a similar discovery layer is allowed only as an optional
+  redirect-only convenience. It must not become a shared relay for user traffic.
+- Discovery and transport are separate concerns:
+  - transport stays in the self-hosted runtime
+  - discovery can live on the website
+  - the website must never proxy chat, voice, or LiveKit media for self-hosted installs
 
 ## Supported Modes
 
@@ -227,12 +231,66 @@ Operator recipe for a stable public link:
    - voice launch opens `https://playground.<your-domain>`
    - the call completes a real round-trip
 
-For the current owner deployment, the intended stable records are:
+For the current owner deployment, the preferred stable records are:
 
 - `app.viventium.ai`
-- `api.viventium.ai`
-- `playground.viventium.ai`
-- `livekit.viventium.ai`
+- `api.app.viventium.ai`
+- `playground.app.viventium.ai`
+- `livekit.app.viventium.ai`
+
+That keeps the user-facing primary URL on `app.viventium.ai` while avoiding collisions with other
+top-level properties that may already live on `viventium.ai`.
+
+## Directory Discovery Layer
+
+The optional website discovery layer exists to make public self-hosted installs easier to find
+without sacrificing sovereignty.
+
+Supported shape:
+
+- `https://viventium.ai/u/<username>` returns an HTTP redirect to the user's own public
+  `public_client_origin`
+- once the redirect happens, all chat, voice, API, LiveKit, and TURN traffic go directly to the
+  user's self-hosted machine
+- `viventium.ai` is therefore a phonebook, not a relay
+
+Security and abuse constraints:
+
+- only verified `https://` Viventium client origins may be registered
+- the target origin must expose `/.well-known/viventium-instance.json`
+- registration is accepted only when the local instance signs the registration payload with the
+  instance private key and the website verifies that signature against the public key in the
+  well-known document
+- registration must be rate-limited and return a short `Retry-After` contract when throttled
+- redirect targets must come only from the verified registry table; no arbitrary redirect passthrough
+- the redirect route itself may be cached briefly and separately rate-limited, but it must remain a
+  plain redirect rather than a fetch/proxy layer
+- verification fetches should stay direct, refuse redirect chains, and use a short timeout so the
+  directory cannot be turned into an expensive generic fetcher
+- the hosted directory verifier must reject target origins that resolve to private, loopback,
+  link-local, or otherwise non-public IP ranges
+- if the website is deployed on Vercel or another hosted edge, platform firewall/rate-limit
+  controls are recommended as defense in depth, but the product-level safety contract must still
+  hold without proxying user traffic
+
+Operator contract:
+
+1. Start Viventium with a public remote-access mode so the client origin and well-known verification
+   document are live.
+2. Run:
+   ```bash
+   bin/viventium register-link <username>
+   ```
+3. The website verifies the instance and stores `username -> public_client_origin`.
+4. `https://viventium.ai/u/<username>` becomes a stable discovery URL that redirects to the real
+   self-hosted app.
+
+Non-goals:
+
+- no shared `viventium.ai/app/<username>` reverse proxy
+- no shared relay of LiveKit signaling or media
+- no attempt to make path-based single-host self-hosting look like a trivial tweak to the current
+  transport runtime
 
 ## Owning Runtime Path
 
@@ -316,6 +374,9 @@ Minimum acceptance expectations:
 - external public fetch proof for the public app or playground surface when `public_https_edge` is
   active
 - stable custom-domain validation when operator-controlled DNS is available
+- directory registration only accepts verified HTTPS origins with valid signatures
+- the directory redirect remains redirect-only, preserves query strings, and rejects unknown users
+- rate-limit and throttling behavior for the directory layer are validated with real requests
 - private-mesh validation must state clearly whether it is provider-compatible or provider-native
 - Tailscale live validation when a real tailnet is available on the test machine
 

@@ -518,6 +518,9 @@ def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> lis
         next_steps.append(
             f"Open [cyan]{public_client_url}[/cyan] from outside your local network after remote access is enabled."
         )
+        next_steps.append(
+            "Optional: run [cyan]bin/viventium register-link <username>[/cyan] to publish a redirect-only vanity link under [cyan]viventium.ai/u/<username>[/cyan]."
+        )
     install_mode = str(((config.get("install") or {}).get("mode") or "native")).strip().lower()
     if install_mode == "native":
         next_steps.append(

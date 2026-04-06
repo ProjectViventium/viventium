@@ -3,6 +3,7 @@
 ## Date
 
 - 2026-04-04
+- 2026-04-05
 
 ## Build Under Test
 
@@ -55,6 +56,39 @@
 8. Provider-prerequisite checks.
    - Result: Tailscale CLI is installed but not running/authenticated on this Mac
    - Result: NetBird CLI is not installed on this Mac
+9. Directory-helper regression tests.
+   - Command:
+     `python3 -m pytest tests/release/test_directory_link.py tests/release/test_remote_call_tunnel.py -q`
+   - Result: `17 passed`
+10. Website directory layer static validation.
+   - Commands:
+     - `pnpm --dir /Users/adri/Documents/Viventium/website --filter @workspace/database generate`
+     - `pnpm --dir /Users/adri/Documents/Viventium/website --filter marketing lint`
+     - `pnpm --dir /Users/adri/Documents/Viventium/website --filter marketing typecheck`
+   - Result: passed
+11. Local signed directory registration.
+   - Setup:
+     - synthetic HTTPS Viventium target on `https://localhost:44443`
+     - local website dev server on `http://localhost:3001`
+     - isolated Postgres container for website directory state
+   - Command:
+     `NODE_TLS_REJECT_UNAUTHORIZED=0 python3 scripts/viventium/directory_link.py --state-file /tmp/viv-directory-qa/public-network.json --username qa-alice --directory-base-url http://localhost:3001`
+   - Result:
+     - `{"success":true,"username":"qa-alice","targetOrigin":"https://localhost:44443","vanityUrl":"http://localhost:3001/u/qa-alice"}`
+12. Directory redirect behavior.
+   - Result: `GET /u/qa-alice` returned `307` to `https://localhost:44443/`
+   - Result: query-string preservation confirmed:
+     - `GET /u/qa-alice?foo=bar` redirected to `https://localhost:44443/?foo=bar`
+   - Result: `GET /u/does-not-exist` returned `404`
+13. Directory abuse-guard validation.
+   - Result: tampering the signed username after signing returned `400 {"error":"Signature verification failed."}`
+   - Result: repeated valid registration attempts from one client IP produced throttling with an
+     explicit retry contract:
+     - attempts `1-8` returned `200`
+     - attempts `9-10` returned `429` with `Retry-After: 60`
+   - Result: browser-level check through Playwright hit the redirect route and stopped on the
+     synthetic target's self-signed certificate, proving the redirect left the website and reached
+     the target origin
 
 ## Findings
 
@@ -80,15 +114,39 @@
   - the public edge works now through `sslip.io`
   - the durable bookmarkable production answer still requires explicit operator-controlled DNS
     instead of IP-derived fallback hosts
+- The redirect-only website directory layer now exists and is functioning locally.
+  - the self-hosted runtime publishes a signed verification document at
+    `/.well-known/viventium-instance.json`
+  - `bin/viventium register-link <username>` signs the registration with the local instance key
+  - the website verifies the signature and target before saving `username -> public_client_origin`
+  - `viventium.ai/u/<username>` can therefore stay a phonebook rather than a relay
+- The current safety posture for the directory layer is materially better than a naive open redirect.
+  - unknown usernames return `404`
+  - tampered signatures are rejected
+  - registration and redirect endpoints are rate-limited
+  - throttled responses carry `Retry-After: 60`
+  - verification fetches refuse redirect chains and time out quickly
+  - production verification now rejects target origins that resolve to non-public/private IP ranges
+  - the website username validation now matches the CLI contract for 1-32 character public names
+- This design keeps Vercel exposure low.
+  - the website only handles redirect and registration requests
+  - actual LibreChat, LiveKit signaling, media, and TURN traffic never flow through the website layer
+- For the owner deployment, the preferred stable custom-domain layout is now:
+  - `app.viventium.ai`
+  - `api.app.viventium.ai`
+  - `playground.app.viventium.ai`
+  - `livekit.app.viventium.ai`
+  - this keeps the primary public entrypoint on `app.viventium.ai` without consuming every
+    top-level subdomain on `viventium.ai`
 
 ## Limitations
 
 - The stable public-domain finish step was not live-validated yet because the required DNS records
   do not exist today.
   - `app.viventium.ai`
-  - `api.viventium.ai`
-  - `playground.viventium.ai`
-  - `livekit.viventium.ai`
+  - `api.app.viventium.ai`
+  - `playground.app.viventium.ai`
+  - `livekit.app.viventium.ai`
 - This Mac cannot hairpin cleanly to its own public `sslip.io` hosts with local `curl`/Playwright,
   so public-surface reachability was validated through an external fetch path instead of a same-host
   authenticated browser run.
@@ -103,3 +161,10 @@
     - external public playground reachability
     - local successful voice session after remote-edge enablement
     - correct origin-based public-vs-local LiveKit routing
+- The directory-layer rate limits are implemented in-process in the website app.
+  - they are effective for the single-instance local validation performed here
+  - they are not a full replacement for provider-level firewall/rate-limit controls when the website
+    is publicly deployed on hosted infrastructure such as Vercel
+- Directory entries are still write-verified, not continuously revalidated.
+  - `lastVerifiedAt` is stored and indexed
+  - this branch does not yet include a cron/TTL cleanup pass for dead or lapsed target origins

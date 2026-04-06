@@ -22,6 +22,14 @@ honest separation between:
   the local Caddy edge and serve those pages successfully over HTTPS.
 - `public_https_edge` can publish secure app/API/playground/LiveKit signaling origins through the
   local Caddy edge, expose the required router mappings, and generate TURN/TLS-ready LiveKit state.
+- the optional `viventium.ai/u/<username>` directory layer only issues redirects to verified
+  self-hosted origins; it must never proxy user app, API, or media traffic
+- directory registration only succeeds for verified HTTPS targets with a matching signed payload and
+  `/.well-known/viventium-instance.json`
+- hosted directory verification rejects target origins that resolve to private or otherwise
+  non-public network ranges
+- the directory redirect preserves query strings, returns `404` for unknown usernames, and returns
+  `429` with throttling under burst traffic
 - Secure-origin browser access does not break the local Vite dev proxy path when `DOMAIN_SERVER`
   becomes a public API origin.
 - A fresh local voice session still connects, opens transcript mode, and returns a typed assistant
@@ -52,6 +60,12 @@ honest separation between:
   - `~/Library/Application Support/Viventium/state/runtime/isolated/logs/remote-call-public-caddy.log`
 - Generated LiveKit runtime config:
   - `~/Library/Application Support/Viventium/state/runtime/isolated/livekit/livekit.yaml`
+- Directory registration CLI:
+  - `scripts/viventium/directory_link.py`
+- Website discovery layer:
+  - `/Users/adri/Documents/Viventium/website/apps/marketing/app/api/viventium/directory/register/route.ts`
+  - `/Users/adri/Documents/Viventium/website/apps/marketing/app/u/[username]/route.ts`
+  - `/Users/adri/Documents/Viventium/website/apps/marketing/lib/viventium-directory.ts`
 - Local Playwright artifacts:
   - `output/playwright/remote-access/`
   - `.playwright-cli/`
@@ -71,3 +85,10 @@ honest separation between:
    playground surface.
 10. If stable custom-domain DNS is not yet delegated, record that as the remaining external operator action
     instead of overstating acceptance.
+11. Start a safe local directory-test target that exposes `/.well-known/viventium-instance.json`.
+12. Register that target through the real directory CLI and verify the website stores and redirects
+    to the resolved origin.
+13. Probe negative cases for the directory layer:
+    - tampered signature
+    - unknown username
+    - burst traffic that must produce throttling

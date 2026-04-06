@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import fcntl
 import json
 import os
@@ -16,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import ssl
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,8 @@ DEFAULT_PUBLIC_EDGE_HOST_PREFIXES = {
 DEFAULT_PUBLIC_EDGE_HTTP_EXTERNAL_PORT = 80
 DEFAULT_PUBLIC_EDGE_HTTPS_EXTERNAL_PORT = 443
 DEFAULT_PUBLIC_EDGE_TURN_TLS_EXTERNAL_PORT = 5349
+DIRECTORY_INSTANCE_PATH = "/.well-known/viventium-instance.json"
+DIRECTORY_REGISTRATION_ALGORITHM = "rsa-sha256"
 UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
 UPNPC_LOCAL_IP_RE = re.compile(r"Local LAN ip address\s*:\s*([0-9.]+)")
 UPNPC_MAPPING_RE = re.compile(r"^\s*\d+\s+([A-Z]+)\s+(\d+)->([0-9.]+):(\d+)\b")
@@ -62,6 +66,11 @@ COMMON_BINARY_PATHS: dict[str, tuple[str, ...]] = {
     "upnpc": (
         "/opt/homebrew/bin/upnpc",
         "/usr/local/bin/upnpc",
+    ),
+    "openssl": (
+        "/opt/homebrew/opt/openssl@3/bin/openssl",
+        "/usr/local/opt/openssl@3/bin/openssl",
+        "/usr/bin/openssl",
     ),
 }
 
@@ -174,6 +183,13 @@ def ensure_caddy(auto_install: bool) -> str:
 
 def ensure_upnpc(auto_install: bool) -> str:
     return ensure_binary("upnpc", auto_install=auto_install, brew_formula="miniupnpc")
+
+
+def ensure_openssl() -> str:
+    resolved = resolve_binary("openssl")
+    if resolved:
+        return resolved
+    raise RuntimeError("openssl is required to manage Viventium directory verification keys")
 
 
 def ensure_binary(name: str, *, auto_install: bool, brew_formula: str) -> str:
@@ -439,6 +455,99 @@ def build_state(provider: str, surfaces: dict[str, dict[str, Any]], *, livekit_n
     if extras:
         state.update(extras)
     return state
+
+
+def ensure_directory_identity(state_path: Path) -> dict[str, str]:
+    openssl_bin = ensure_openssl()
+    identity_dir = state_path.parent / "directory-identity"
+    identity_dir.mkdir(parents=True, exist_ok=True)
+
+    private_key_path = identity_dir / "private.pem"
+    public_key_path = identity_dir / "public.pem"
+    metadata_path = identity_dir / "identity.json"
+
+    if not private_key_path.exists():
+        result = run_checked(
+            [
+                openssl_bin,
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+                "-out",
+                str(private_key_path),
+            ],
+            timeout_seconds=20,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"Failed to generate the Viventium directory private key: {stderr}".strip())
+
+    if not public_key_path.exists():
+        result = run_checked(
+            [
+                openssl_bin,
+                "pkey",
+                "-in",
+                str(private_key_path),
+                "-pubout",
+                "-out",
+                str(public_key_path),
+            ],
+            timeout_seconds=15,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"Failed to derive the Viventium directory public key: {stderr}".strip())
+
+    metadata: dict[str, Any] = {}
+    if metadata_path.exists():
+        try:
+            raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                metadata = raw
+        except Exception:
+            metadata = {}
+
+    public_key_pem = public_key_path.read_text(encoding="utf-8").strip()
+    instance_id = str(metadata.get("instance_id") or "").strip() or str(uuid.uuid4())
+    fingerprint = "sha256:" + hashlib.sha256(public_key_pem.encode("utf-8")).hexdigest()
+    normalized_metadata = {
+        "instance_id": instance_id,
+        "public_key_fingerprint": fingerprint,
+        "public_key_pem": public_key_pem,
+        "registration_algorithm": DIRECTORY_REGISTRATION_ALGORITHM,
+    }
+    metadata_path.write_text(
+        json.dumps(normalized_metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return normalized_metadata
+
+
+def render_directory_instance_document(
+    *,
+    client_origin: str,
+    provider: str,
+    identity: dict[str, str],
+    public_playground_url: str = "",
+) -> str:
+    payload: dict[str, Any] = {
+        "app": "Viventium",
+        "schemaVersion": 1,
+        "provider": provider,
+        "publicClientOrigin": client_origin,
+        "directory": {
+            "instanceId": str(identity.get("instance_id") or "").strip(),
+            "publicKeyFingerprint": str(identity.get("public_key_fingerprint") or "").strip(),
+            "publicKeyPem": str(identity.get("public_key_pem") or "").strip(),
+            "registrationAlgorithm": str(identity.get("registration_algorithm") or DIRECTORY_REGISTRATION_ALGORITHM),
+        },
+    }
+    if public_playground_url:
+        payload["publicPlaygroundUrl"] = public_playground_url
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
 def require_port(value: int, label: str) -> int:
@@ -872,6 +981,7 @@ def render_caddyfile(
     tls_internal: bool = True,
     http_port: int | None = None,
     https_port: int | None = None,
+    well_known_bodies: dict[str, str] | None = None,
 ) -> str:
     lines = [
         "{",
@@ -891,6 +1001,17 @@ def render_caddyfile(
         lines.append(f"{site_address} {{")
         if tls_internal:
             lines.append("    tls internal")
+        body = (well_known_bodies or {}).get(site_address)
+        if body:
+            lines.extend(
+                [
+                    f"    handle {DIRECTORY_INSTANCE_PATH} {{",
+                    "        header Content-Type application/json",
+                    "        header Cache-Control \"public, max-age=60\"",
+                    f"        respond {json.dumps(body)} 200",
+                    "    }",
+                ]
+            )
         lines.extend(
             [
                 f"    reverse_proxy 127.0.0.1:{upstream_port}",
@@ -1169,6 +1290,9 @@ def start_public_https_edge(
     caddy_sites: list[tuple[str, int]] = []
     caddy_hosts: list[str] = []
     livekit_host = ""
+    client_host = ""
+    public_client_url = ""
+    public_playground_url = ""
 
     if args.client_port > 0:
         host, public_url = resolve_public_https_edge_surface(
@@ -1182,6 +1306,8 @@ def start_public_https_edge(
         )
         caddy_sites.append((host, args.client_port))
         caddy_hosts.append(host)
+        client_host = host
+        public_client_url = public_url
 
     if args.api_port > 0:
         host, public_url = resolve_public_https_edge_surface(
@@ -1208,6 +1334,7 @@ def start_public_https_edge(
         )
         caddy_sites.append((host, args.playground_port))
         caddy_hosts.append(host)
+        public_playground_url = public_url
 
     if args.livekit_port > 0:
         public_https_url, public_wss_url = resolve_public_https_edge_surface(
@@ -1239,6 +1366,16 @@ def start_public_https_edge(
     internal_https_port = pick_free_port()
     data_dir = Path(args.caddy_data_dir).expanduser() if args.caddy_data_dir else state_path.parent / "caddy"
     data_dir.mkdir(parents=True, exist_ok=True)
+    directory_identity: dict[str, str] | None = None
+    well_known_bodies: dict[str, str] = {}
+    if client_host and public_client_url:
+        directory_identity = ensure_directory_identity(state_path)
+        well_known_bodies[client_host] = render_directory_instance_document(
+            client_origin=public_client_url,
+            provider="public_https_edge",
+            identity=directory_identity,
+            public_playground_url=public_playground_url,
+        )
     config_path = state_path.with_suffix(".Caddyfile")
     config_path.write_text(
         render_caddyfile(
@@ -1247,6 +1384,7 @@ def start_public_https_edge(
             tls_internal=False,
             http_port=internal_http_port,
             https_port=internal_https_port,
+            well_known_bodies=well_known_bodies,
         ),
         encoding="utf-8",
     )
@@ -1399,6 +1537,21 @@ def start_public_https_edge(
             },
         },
     )
+    if directory_identity and public_client_url:
+        state["directory_instance_id"] = str(directory_identity.get("instance_id") or "").strip()
+        state["directory_public_key_fingerprint"] = str(
+            directory_identity.get("public_key_fingerprint") or ""
+        ).strip()
+        state["directory_well_known_url"] = public_client_url.rstrip("/") + DIRECTORY_INSTANCE_PATH
+        state["directory"] = {
+            "instance_id": state["directory_instance_id"],
+            "public_key_fingerprint": state["directory_public_key_fingerprint"],
+            "public_key_pem": str(directory_identity.get("public_key_pem") or "").strip(),
+            "registration_algorithm": str(
+                directory_identity.get("registration_algorithm") or DIRECTORY_REGISTRATION_ALGORITHM
+            ),
+            "well_known_url": state["directory_well_known_url"],
+        }
     if livekit_host:
         state["livekit_turn_domain"] = livekit_host
         state["livekit_turn_tls_port"] = args.livekit_turn_tls_port
