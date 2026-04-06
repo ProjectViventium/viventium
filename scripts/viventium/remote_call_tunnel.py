@@ -29,6 +29,18 @@ DEFAULT_TAILSCALE_PUBLIC_PORTS = {
     "playground": 3443,
     "livekit": 7443,
 }
+DEFAULT_PUBLIC_EDGE_HOST_PREFIXES = {
+    "client": "app",
+    "api": "api",
+    "playground": "playground",
+    "livekit": "livekit",
+}
+DEFAULT_PUBLIC_EDGE_HTTP_EXTERNAL_PORT = 80
+DEFAULT_PUBLIC_EDGE_HTTPS_EXTERNAL_PORT = 443
+DEFAULT_PUBLIC_EDGE_TURN_TLS_EXTERNAL_PORT = 5349
+UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
+UPNPC_LOCAL_IP_RE = re.compile(r"Local LAN ip address\s*:\s*([0-9.]+)")
+UPNPC_MAPPING_RE = re.compile(r"^\s*\d+\s+([A-Z]+)\s+(\d+)->([0-9.]+):(\d+)\b")
 SURFACE_KEYS = ("client", "api", "playground", "livekit")
 COMMON_BINARY_PATHS: dict[str, tuple[str, ...]] = {
     "brew": (
@@ -46,6 +58,10 @@ COMMON_BINARY_PATHS: dict[str, tuple[str, ...]] = {
     "tailscale": (
         "/opt/homebrew/bin/tailscale",
         "/usr/local/bin/tailscale",
+    ),
+    "upnpc": (
+        "/opt/homebrew/bin/upnpc",
+        "/usr/local/bin/upnpc",
     ),
 }
 
@@ -85,6 +101,9 @@ def parse_args() -> argparse.Namespace:
     start.add_argument("--api-port", type=int, default=0)
     start.add_argument("--playground-port", type=int, default=0)
     start.add_argument("--livekit-port", type=int, default=0)
+    start.add_argument("--livekit-tcp-port", type=int, default=0)
+    start.add_argument("--livekit-udp-port", type=int, default=0)
+    start.add_argument("--livekit-turn-tls-port", type=int, default=DEFAULT_PUBLIC_EDGE_TURN_TLS_EXTERNAL_PORT)
     start.add_argument("--public-client-origin", default="")
     start.add_argument("--public-api-origin", default="")
     start.add_argument("--public-playground-origin", default="")
@@ -151,6 +170,10 @@ def ensure_tailscale(auto_install: bool) -> str:
 
 def ensure_caddy(auto_install: bool) -> str:
     return ensure_binary("caddy", auto_install=auto_install, brew_formula="caddy")
+
+
+def ensure_upnpc(auto_install: bool) -> str:
+    return ensure_binary("upnpc", auto_install=auto_install, brew_formula="miniupnpc")
 
 
 def ensure_binary(name: str, *, auto_install: bool, brew_formula: str) -> str:
@@ -329,7 +352,7 @@ def format_wss_origin(host: str, port: int) -> str:
 
 
 def surface_target_url(port: int) -> str:
-    return f"http://127.0.0.1:{port}"
+    return f"http://localhost:{port}"
 
 
 def iter_surfaces(state: dict[str, Any]):
@@ -354,6 +377,10 @@ def state_is_healthy(state: dict[str, Any]) -> bool:
         return tailscale_state_ready(state)
 
     if provider == "netbird_selfhosted_mesh":
+        caddy = state.get("caddy") or {}
+        return pid_is_running(caddy.get("pid"))
+
+    if provider == "public_https_edge":
         caddy = state.get("caddy") or {}
         return pid_is_running(caddy.get("pid"))
 
@@ -435,6 +462,22 @@ def require_livekit_public_url(value: str) -> urllib.parse.ParseResult:
         raise RuntimeError("public_livekit_url must be a wss:// or https:// URL")
     if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
         raise RuntimeError("public_livekit_url must not include a path, query, or fragment")
+    return parsed
+
+
+def require_public_https_edge_origin(value: str, label: str) -> urllib.parse.ParseResult:
+    parsed = require_https_url(value, label)
+    port = parsed.port or 443
+    if port != 443:
+        raise RuntimeError(f"{label} must use the default HTTPS port 443")
+    return parsed
+
+
+def require_public_https_edge_livekit_url(value: str) -> urllib.parse.ParseResult:
+    parsed = require_livekit_public_url(value)
+    port = parsed.port or 443
+    if port != 443:
+        raise RuntimeError("public_livekit_url must use the default WSS port 443")
     return parsed
 
 
@@ -551,6 +594,130 @@ def derive_local_ip_from_hostname(hostname: str | None) -> str:
         return socket.gethostbyname(candidate)
     except Exception:
         return ""
+
+
+def detect_lan_ipv4() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            candidate = str(sock.getsockname()[0] or "").strip()
+            if candidate and not candidate.startswith("127."):
+                return candidate
+    except Exception:
+        pass
+    return derive_local_ip_from_hostname(socket.gethostname())
+
+
+def parse_upnpc_listing(output: str) -> dict[str, Any]:
+    external_ip = ""
+    local_ip = ""
+    mappings: dict[tuple[str, int], tuple[str, int]] = {}
+    for raw_line in str(output or "").splitlines():
+        line = raw_line.rstrip()
+        external_match = UPNPC_EXTERNAL_IP_RE.search(line)
+        if external_match:
+            external_ip = external_match.group(1)
+            continue
+        local_match = UPNPC_LOCAL_IP_RE.search(line)
+        if local_match:
+            local_ip = local_match.group(1)
+            continue
+        mapping_match = UPNPC_MAPPING_RE.match(line)
+        if mapping_match:
+            protocol = mapping_match.group(1).upper()
+            external_port = int(mapping_match.group(2))
+            internal_host = mapping_match.group(3)
+            internal_port = int(mapping_match.group(4))
+            mappings[(protocol, external_port)] = (internal_host, internal_port)
+    return {
+        "external_ip": external_ip,
+        "local_ip": local_ip,
+        "mappings": mappings,
+    }
+
+
+def list_upnpc_state(upnpc_bin: str) -> dict[str, Any]:
+    result = run_checked([upnpc_bin, "-l"], timeout_seconds=8)
+    if result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"Unable to inspect router port mappings: {stderr}".strip())
+    return parse_upnpc_listing(result.stdout or "")
+
+
+def discover_public_ipv4(upnpc_bin: str | None = None) -> str:
+    if upnpc_bin:
+        try:
+            state = list_upnpc_state(upnpc_bin)
+            candidate = str(state.get("external_ip") or "").strip()
+            if candidate:
+                return candidate
+        except Exception:
+            pass
+
+    for endpoint in ("https://api.ipify.org", "https://checkip.amazonaws.com"):
+        try:
+            with urllib.request.urlopen(endpoint, timeout=6) as response:
+                candidate = str(response.read().decode("utf-8", errors="ignore")).strip()
+                if candidate and re.fullmatch(r"[0-9.]+", candidate):
+                    return candidate
+        except Exception:
+            continue
+
+    raise RuntimeError("Unable to determine the public IPv4 address for this install")
+
+
+def build_default_public_edge_hostname(key: str, public_ip: str) -> str:
+    prefix = DEFAULT_PUBLIC_EDGE_HOST_PREFIXES[key]
+    return f"{prefix}.{public_ip}.sslip.io"
+
+
+def resolve_public_https_edge_surface(
+    key: str,
+    explicit_value: str,
+    *,
+    public_ip: str,
+) -> tuple[str, str]:
+    if key == "livekit":
+        if explicit_value:
+            parsed = require_public_https_edge_livekit_url(explicit_value)
+            hostname = strip_trailing_dot(parsed.hostname)
+            return format_https_origin(hostname, 443), format_wss_origin(hostname, 443)
+        hostname = build_default_public_edge_hostname(key, public_ip)
+        return format_https_origin(hostname, 443), format_wss_origin(hostname, 443)
+
+    if explicit_value:
+        parsed = require_public_https_edge_origin(explicit_value, f"public_{key}_origin")
+        hostname = strip_trailing_dot(parsed.hostname)
+        return hostname, format_https_origin(hostname, 443)
+
+    hostname = build_default_public_edge_hostname(key, public_ip)
+    return hostname, format_https_origin(hostname, 443)
+
+
+def resolve_public_edge_livekit_cert_pair(data_dir: Path, hostname: str) -> tuple[str, str] | None:
+    normalized_host = strip_trailing_dot(hostname)
+    if not normalized_host:
+        return None
+
+    certificate_dir = (
+        data_dir
+        / "caddy"
+        / "certificates"
+        / "acme-v02.api.letsencrypt.org-directory"
+        / normalized_host
+    )
+    cert_file = certificate_dir / f"{normalized_host}.crt"
+    key_file = certificate_dir / f"{normalized_host}.key"
+    if cert_file.is_file() and key_file.is_file():
+        return str(cert_file), str(key_file)
+    return None
+
+
+def pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
 
 
 def start_cloudflare(args: argparse.Namespace, *, log_dir: Path) -> dict[str, Any]:
@@ -702,18 +869,30 @@ def render_caddyfile(
     *,
     admin_port: int,
     surfaces: list[tuple[str, int]],
+    tls_internal: bool = True,
+    http_port: int | None = None,
+    https_port: int | None = None,
 ) -> str:
     lines = [
         "{",
         f"    admin 127.0.0.1:{admin_port}",
-        "}",
-        "",
     ]
+    if http_port:
+        lines.append(f"    http_port {http_port}")
+    if https_port:
+        lines.append(f"    https_port {https_port}")
+    lines.extend(
+        [
+            "}",
+            "",
+        ]
+    )
     for site_address, upstream_port in surfaces:
+        lines.append(f"{site_address} {{")
+        if tls_internal:
+            lines.append("    tls internal")
         lines.extend(
             [
-                f"{site_address} {{",
-                "    tls internal",
                 f"    reverse_proxy 127.0.0.1:{upstream_port}",
                 "}",
                 "",
@@ -774,6 +953,105 @@ def trust_caddy_root(caddy_bin: str, *, config_path: Path) -> bool:
     return result.returncode == 0
 
 
+def ensure_upnp_mapping(
+    upnpc_bin: str,
+    *,
+    protocol: str,
+    external_port: int,
+    internal_host: str,
+    internal_port: int,
+    description: str,
+    lease_seconds: int = 14400,
+) -> None:
+    protocol = protocol.upper()
+    state = list_upnpc_state(upnpc_bin)
+    existing = (state.get("mappings") or {}).get((protocol, external_port))
+    if existing == (internal_host, internal_port):
+        return
+    if existing and existing != (internal_host, internal_port):
+        raise RuntimeError(
+            f"Router already forwards {protocol} {external_port} to {existing[0]}:{existing[1]}; "
+            f"cannot reuse it for Viventium {description}"
+        )
+
+    result = run_checked(
+        [
+            upnpc_bin,
+            "-a",
+            internal_host,
+            str(internal_port),
+            str(external_port),
+            protocol,
+            "0",
+        ],
+        timeout_seconds=10,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(
+            f"Failed to create router port forward for {description} ({protocol} {external_port}->{internal_host}:{internal_port}): {stderr}".strip()
+        )
+
+
+def remove_upnp_mapping(upnpc_bin: str, *, external_port: int, protocol: str) -> None:
+    result = run_checked(
+        [upnpc_bin, "-d", str(external_port), protocol.upper()],
+        timeout_seconds=8,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip().lower()
+        if "no such port mapping" in stderr or "not found" in stderr:
+            return
+        raise RuntimeError(
+            f"Failed to remove router port forward for {protocol.upper()} {external_port}: {(result.stderr or result.stdout or '').strip()}".strip()
+        )
+
+
+def probe_sni_https_host(
+    hostname: str,
+    *,
+    https_port: int,
+    timeout_seconds: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
+) -> bool:
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    try:
+        with socket.create_connection(("127.0.0.1", https_port), timeout=timeout_seconds) as raw_sock:
+            with ssl_context.wrap_socket(raw_sock, server_hostname=hostname) as tls_sock:
+                request = (
+                    f"HEAD / HTTP/1.1\r\nHost: {hostname}\r\nConnection: close\r\nUser-Agent: viventium\r\n\r\n"
+                )
+                tls_sock.sendall(request.encode("utf-8"))
+                response = tls_sock.recv(1024)
+                return response.startswith(b"HTTP/")
+    except Exception:
+        return False
+
+
+def wait_for_public_caddy_hosts(
+    hostnames: list[str],
+    *,
+    https_port: int,
+    timeout_seconds: int,
+) -> None:
+    remaining = set(hostnames)
+    deadline = time.time() + max(timeout_seconds, 10)
+    while time.time() < deadline:
+        for hostname in list(remaining):
+            if probe_sni_https_host(hostname, https_port=https_port):
+                remaining.discard(hostname)
+        if not remaining:
+            return
+        time.sleep(0.5)
+
+    unresolved = ", ".join(sorted(remaining))
+    raise RuntimeError(
+        f"Timed out waiting for public HTTPS certificates on: {unresolved}. "
+        "Make sure those hostnames resolve to this machine's public IP and ports 80/tcp and 443/tcp are routed to the local Caddy edge."
+    )
+
+
 def start_netbird(args: argparse.Namespace, *, state_path: Path, log_dir: Path) -> dict[str, Any]:
     if args.client_port <= 0 and args.api_port <= 0 and args.playground_port <= 0 and args.livekit_port <= 0:
         raise RuntimeError("At least one local surface port is required for NetBird remote access")
@@ -821,7 +1099,7 @@ def start_netbird(args: argparse.Namespace, *, state_path: Path, log_dir: Path) 
     data_dir.mkdir(parents=True, exist_ok=True)
     config_path = state_path.with_suffix(".Caddyfile")
     config_path.write_text(
-        render_caddyfile(admin_port=admin_port, surfaces=caddy_sites),
+        render_caddyfile(admin_port=admin_port, surfaces=caddy_sites, tls_internal=True),
         encoding="utf-8",
     )
     caddy_pid = start_caddy_process(
@@ -859,6 +1137,277 @@ def start_netbird(args: argparse.Namespace, *, state_path: Path, log_dir: Path) 
     )
 
 
+def start_public_https_edge(
+    args: argparse.Namespace,
+    *,
+    state_path: Path,
+    log_dir: Path,
+) -> dict[str, Any]:
+    if args.client_port <= 0 and args.api_port <= 0 and args.playground_port <= 0 and args.livekit_port <= 0:
+        raise RuntimeError("At least one local surface port is required for public HTTPS edge access")
+
+    caddy_bin = ensure_caddy(args.auto_install)
+    upnpc_bin = resolve_binary("upnpc")
+    if not upnpc_bin and args.auto_install:
+        try:
+            upnpc_bin = ensure_upnpc(True)
+        except Exception:
+            upnpc_bin = ""
+    upnp_state: dict[str, Any] = {}
+    manual_note = ""
+    if upnpc_bin:
+        try:
+            upnp_state = list_upnpc_state(upnpc_bin)
+        except Exception:
+            upnpc_bin = ""
+    lan_ip = str(upnp_state.get("local_ip") or "").strip() or detect_lan_ipv4()
+    if not lan_ip:
+        raise RuntimeError("Unable to determine the local LAN IPv4 address for router port forwarding")
+    public_ip = discover_public_ipv4(upnpc_bin or None)
+
+    surfaces: dict[str, dict[str, Any]] = {}
+    caddy_sites: list[tuple[str, int]] = []
+    caddy_hosts: list[str] = []
+    livekit_host = ""
+
+    if args.client_port > 0:
+        host, public_url = resolve_public_https_edge_surface(
+            "client",
+            args.public_client_origin,
+            public_ip=public_ip,
+        )
+        surfaces["client"] = build_surface(
+            target_url=surface_target_url(args.client_port),
+            public_url=public_url,
+        )
+        caddy_sites.append((host, args.client_port))
+        caddy_hosts.append(host)
+
+    if args.api_port > 0:
+        host, public_url = resolve_public_https_edge_surface(
+            "api",
+            args.public_api_origin,
+            public_ip=public_ip,
+        )
+        surfaces["api"] = build_surface(
+            target_url=surface_target_url(args.api_port),
+            public_url=public_url,
+        )
+        caddy_sites.append((host, args.api_port))
+        caddy_hosts.append(host)
+
+    if args.playground_port > 0:
+        host, public_url = resolve_public_https_edge_surface(
+            "playground",
+            args.public_playground_origin,
+            public_ip=public_ip,
+        )
+        surfaces["playground"] = build_surface(
+            target_url=surface_target_url(args.playground_port),
+            public_url=public_url,
+        )
+        caddy_sites.append((host, args.playground_port))
+        caddy_hosts.append(host)
+
+    if args.livekit_port > 0:
+        public_https_url, public_wss_url = resolve_public_https_edge_surface(
+            "livekit",
+            args.public_livekit_url,
+            public_ip=public_ip,
+        )
+        livekit_host = urllib.parse.urlparse(public_https_url).hostname or ""
+        surfaces["livekit"] = build_surface(
+            target_url=surface_target_url(args.livekit_port),
+            public_url=public_https_url,
+            public_ws_url=public_wss_url,
+        )
+        caddy_sites.append((livekit_host, args.livekit_port))
+        caddy_hosts.append(livekit_host)
+
+    site_targets: dict[str, int] = {}
+    for host, upstream_port in caddy_sites:
+        existing = site_targets.get(host)
+        if existing is not None and existing != upstream_port:
+            raise RuntimeError(
+                "public_https_edge currently requires unique hostnames per surface. "
+                "Use separate subdomains for the app, API, playground, and LiveKit signaling origins."
+            )
+        site_targets[host] = upstream_port
+
+    admin_port = pick_caddy_admin_port()
+    internal_http_port = pick_free_port()
+    internal_https_port = pick_free_port()
+    data_dir = Path(args.caddy_data_dir).expanduser() if args.caddy_data_dir else state_path.parent / "caddy"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    config_path = state_path.with_suffix(".Caddyfile")
+    config_path.write_text(
+        render_caddyfile(
+            admin_port=admin_port,
+            surfaces=caddy_sites,
+            tls_internal=False,
+            http_port=internal_http_port,
+            https_port=internal_https_port,
+        ),
+        encoding="utf-8",
+    )
+
+    port_mappings: list[dict[str, Any]] = []
+    if upnpc_bin:
+        ensure_upnp_mapping(
+            upnpc_bin,
+            protocol="TCP",
+            external_port=DEFAULT_PUBLIC_EDGE_HTTP_EXTERNAL_PORT,
+            internal_host=lan_ip,
+            internal_port=internal_http_port,
+            description="Viventium public HTTP",
+        )
+        port_mappings.append(
+            {
+                "protocol": "TCP",
+                "external_port": DEFAULT_PUBLIC_EDGE_HTTP_EXTERNAL_PORT,
+                "internal_host": lan_ip,
+                "internal_port": internal_http_port,
+            }
+        )
+        ensure_upnp_mapping(
+            upnpc_bin,
+            protocol="TCP",
+            external_port=DEFAULT_PUBLIC_EDGE_HTTPS_EXTERNAL_PORT,
+            internal_host=lan_ip,
+            internal_port=internal_https_port,
+            description="Viventium public HTTPS",
+        )
+        port_mappings.append(
+            {
+                "protocol": "TCP",
+                "external_port": DEFAULT_PUBLIC_EDGE_HTTPS_EXTERNAL_PORT,
+                "internal_host": lan_ip,
+                "internal_port": internal_https_port,
+            }
+        )
+
+        if args.livekit_tcp_port > 0:
+            ensure_upnp_mapping(
+                upnpc_bin,
+                protocol="TCP",
+                external_port=args.livekit_tcp_port,
+                internal_host=lan_ip,
+                internal_port=args.livekit_tcp_port,
+                description="Viventium LiveKit TCP media",
+            )
+            port_mappings.append(
+                {
+                    "protocol": "TCP",
+                    "external_port": args.livekit_tcp_port,
+                    "internal_host": lan_ip,
+                    "internal_port": args.livekit_tcp_port,
+                }
+            )
+
+        if args.livekit_udp_port > 0:
+            ensure_upnp_mapping(
+                upnpc_bin,
+                protocol="UDP",
+                external_port=args.livekit_udp_port,
+                internal_host=lan_ip,
+                internal_port=args.livekit_udp_port,
+                description="Viventium LiveKit UDP media",
+            )
+            port_mappings.append(
+                {
+                    "protocol": "UDP",
+                    "external_port": args.livekit_udp_port,
+                    "internal_host": lan_ip,
+                    "internal_port": args.livekit_udp_port,
+                }
+            )
+
+        if livekit_host and args.livekit_turn_tls_port > 0:
+            ensure_upnp_mapping(
+                upnpc_bin,
+                protocol="TCP",
+                external_port=args.livekit_turn_tls_port,
+                internal_host=lan_ip,
+                internal_port=args.livekit_turn_tls_port,
+                description="Viventium LiveKit TURN/TLS",
+            )
+            port_mappings.append(
+                {
+                    "protocol": "TCP",
+                    "external_port": args.livekit_turn_tls_port,
+                    "internal_host": lan_ip,
+                    "internal_port": args.livekit_turn_tls_port,
+                }
+            )
+    else:
+        manual_note = (
+            "UPnP/NAT-PMP auto-mapping is unavailable, so ports 80/tcp, 443/tcp, "
+            f"{args.livekit_tcp_port or 7889}/tcp, {args.livekit_udp_port or 7890}/udp, "
+            f"and {args.livekit_turn_tls_port or DEFAULT_PUBLIC_EDGE_TURN_TLS_EXTERNAL_PORT}/tcp "
+            "must already be forwarded manually to this Mac."
+        )
+
+    caddy_pid = 0
+    livekit_turn_cert_file = ""
+    livekit_turn_key_file = ""
+    try:
+        caddy_pid = start_caddy_process(
+            caddy_bin,
+            config_path=config_path,
+            data_dir=data_dir,
+            log_file=log_dir / "remote-call-public-caddy.log",
+        )
+        wait_for_public_caddy_hosts(
+            caddy_hosts,
+            https_port=internal_https_port,
+            timeout_seconds=args.timeout_seconds,
+        )
+        cert_pair = resolve_public_edge_livekit_cert_pair(data_dir, livekit_host)
+        if cert_pair:
+            livekit_turn_cert_file, livekit_turn_key_file = cert_pair
+    except Exception:
+        if caddy_pid:
+            stop_pid(caddy_pid)
+        for mapping in port_mappings:
+            try:
+                remove_upnp_mapping(
+                    upnpc_bin,
+                    external_port=int(mapping["external_port"]),
+                    protocol=str(mapping["protocol"]),
+                )
+            except Exception:
+                continue
+        raise
+    state = build_state(
+        "public_https_edge",
+        surfaces,
+        livekit_node_ip=public_ip,
+        extras={
+            "public_ip": public_ip,
+            "trust_note": manual_note,
+            "router": {
+                "local_ip": lan_ip,
+                "mappings": port_mappings,
+            },
+            "caddy": {
+                "pid": caddy_pid,
+                "admin_port": admin_port,
+                "config_path": str(config_path),
+                "data_dir": str(data_dir),
+                "http_port": internal_http_port,
+                "https_port": internal_https_port,
+            },
+        },
+    )
+    if livekit_host:
+        state["livekit_turn_domain"] = livekit_host
+        state["livekit_turn_tls_port"] = args.livekit_turn_tls_port
+        if livekit_turn_cert_file and livekit_turn_key_file:
+            state["livekit_turn_cert_file"] = livekit_turn_cert_file
+            state["livekit_turn_key_file"] = livekit_turn_key_file
+    return state
+
+
 def stop_state(state: dict[str, Any]) -> None:
     provider = str(state.get("provider") or "").strip()
     if not provider:
@@ -885,6 +1434,22 @@ def stop_state(state: dict[str, Any]) -> None:
         stop_pid(((state.get("caddy") or {}).get("pid")))
         return
 
+    if provider == "public_https_edge":
+        stop_pid(((state.get("caddy") or {}).get("pid")))
+        upnpc_bin = resolve_binary("upnpc")
+        if not upnpc_bin:
+            return
+        for mapping in ((state.get("router") or {}).get("mappings") or []):
+            try:
+                remove_upnp_mapping(
+                    upnpc_bin,
+                    external_port=int(mapping.get("external_port") or 0),
+                    protocol=str(mapping.get("protocol") or "TCP"),
+                )
+            except Exception:
+                continue
+        return
+
 
 def cmd_start(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file)
@@ -906,6 +1471,8 @@ def cmd_start(args: argparse.Namespace) -> int:
             state = start_tailscale(args)
         elif provider == "netbird_selfhosted_mesh":
             state = start_netbird(args, state_path=state_path, log_dir=log_dir)
+        elif provider == "public_https_edge":
+            state = start_public_https_edge(args, state_path=state_path, log_dir=log_dir)
         else:
             raise RuntimeError(f"Unsupported remote call provider: {provider}")
 

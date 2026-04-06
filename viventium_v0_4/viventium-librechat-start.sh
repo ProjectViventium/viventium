@@ -3191,6 +3191,59 @@ load_google_oauth_from_librechat_env() {
   return 0
 }
 
+hostname_from_urlish() {
+  local value="${1:-}"
+  value="${value#*://}"
+  value="${value%%/*}"
+  value="${value%%:*}"
+  value="${value#[}"
+  value="${value%]}"
+  printf '%s\n' "$value"
+}
+
+merge_allowed_hosts_csv() {
+  local existing_csv="${1:-}"
+  shift || true
+
+  local -a merged=()
+  local candidate=""
+  local item=""
+  if [[ -n "$existing_csv" ]]; then
+    IFS=',' read -r -a merged <<<"$existing_csv"
+  fi
+
+  if (($#)); then
+    for candidate in "$@"; do
+      candidate="$(hostname_from_urlish "$candidate")"
+      [[ -n "$candidate" ]] || continue
+      local seen="false"
+      if ((${#merged[@]})); then
+        for item in "${merged[@]}"; do
+          if [[ "$item" == "$candidate" ]]; then
+            seen="true"
+            break
+          fi
+        done
+      fi
+      if [[ "$seen" != "true" ]]; then
+        merged+=("$candidate")
+      fi
+    done
+  fi
+
+  local output=""
+  if ((${#merged[@]})); then
+    for item in "${merged[@]}"; do
+      [[ -n "$item" ]] || continue
+      if [[ -n "$output" ]]; then
+        output+=","
+      fi
+      output+="$item"
+    done
+  fi
+  printf '%s\n' "$output"
+}
+
 ensure_librechat_env() {
   local env_file="$LIBRECHAT_RUNTIME_ENV_FILE"
   local default_mongo_uri="mongodb://127.0.0.1:${VIVENTIUM_LOCAL_MONGO_PORT}/${VIVENTIUM_LOCAL_MONGO_DB}"
@@ -3209,6 +3262,15 @@ ensure_librechat_env() {
   local registration_approval="${VIVENTIUM_REGISTRATION_APPROVAL:-false}"
   local effective_client_url="${VIVENTIUM_PUBLIC_CLIENT_URL:-$LC_FRONTEND_URL}"
   local effective_server_url="${VIVENTIUM_PUBLIC_SERVER_URL:-$LC_API_URL}"
+  local vite_allowed_hosts_existing="${VITE_ALLOWED_HOSTS:-}"
+  local vite_allowed_hosts=""
+  vite_allowed_hosts="$(merge_allowed_hosts_csv \
+    "$vite_allowed_hosts_existing" \
+    "$effective_client_url" \
+    "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" \
+    "${VIVENTIUM_PUBLIC_SERVER_URL:-}" \
+    "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" \
+    "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}")"
   # === VIVENTIUM START ===
   local default_openai_models="$DEFAULT_VIVENTIUM_OPENAI_MODELS"
   local default_assistants_models="$DEFAULT_VIVENTIUM_ASSISTANTS_MODELS"
@@ -3319,6 +3381,7 @@ EOF
   upsert_env_kv "$env_file" "DOMAIN_SERVER" "$effective_server_url"
   upsert_env_kv "$env_file" "CLIENT_URL" "$effective_client_url"
   upsert_env_kv "$env_file" "VIVENTIUM_FRONTEND_PROXY_TARGET" "$LC_API_URL"
+  upsert_env_kv "$env_file" "VITE_ALLOWED_HOSTS" "$vite_allowed_hosts"
   # === VIVENTIUM END ===
   upsert_env_kv "$env_file" "RAG_API_URL" "$rag_api_url"
   upsert_env_kv "$env_file" "SEARCH" "$search_enabled"
@@ -3357,6 +3420,7 @@ EOF
   export DOMAIN_SERVER="$effective_server_url"
   export CLIENT_URL="$effective_client_url"
   export VIVENTIUM_FRONTEND_PROXY_TARGET="$LC_API_URL"
+  export VITE_ALLOWED_HOSTS="$vite_allowed_hosts"
   export RAG_API_URL="$rag_api_url"
   export SEARCH="$search_enabled"
   export MEILI_NO_ANALYTICS="$meili_no_analytics"
@@ -4379,13 +4443,14 @@ remote_call_mode_enabled() {
 json_state_value() {
   local json_payload="$1"
   local key="$2"
-  printf '%s' "$json_payload" | "$PYTHON_BIN" - "$key" <<'PY'
+  JSON_STATE_PAYLOAD="$json_payload" "$PYTHON_BIN" - "$key" <<'PY'
 import json
+import os
 import sys
 
 key = sys.argv[1]
 try:
-    data = json.loads(sys.stdin.read() or "{}")
+    data = json.loads(os.environ.get("JSON_STATE_PAYLOAD", "") or "{}")
 except Exception:
     data = {}
 print(str(data.get(key, "")).strip())
@@ -4405,6 +4470,8 @@ prepare_remote_call_access() {
   local api_port
   local playground_port=""
   local livekit_port=""
+  local livekit_tcp_port=""
+  local livekit_udp_port=""
   local voice_enabled="false"
   local remote_provider
   local auto_install_args=()
@@ -4415,6 +4482,10 @@ prepare_remote_call_access() {
   local public_playground_url=""
   local public_livekit_url=""
   local livekit_node_ip=""
+  local livekit_turn_domain=""
+  local livekit_turn_tls_port=""
+  local livekit_turn_cert_file=""
+  local livekit_turn_key_file=""
   local trust_note=""
 
   remote_provider="${VIVENTIUM_REMOTE_CALL_MODE:-cloudflare_quick_tunnel}"
@@ -4428,6 +4499,8 @@ prepare_remote_call_access() {
   fi
   if [[ "$voice_enabled" == "true" && "$SKIP_LIVEKIT" != "true" ]]; then
     livekit_port="$(get_livekit_port)"
+    livekit_tcp_port="${LIVEKIT_TCP_PORT:-}"
+    livekit_udp_port="${LIVEKIT_UDP_PORT:-}"
   fi
   if [[ "$remote_provider" == "cloudflare_quick_tunnel" && ( -z "$playground_port" || -z "$livekit_port" ) ]]; then
     log_warn "cloudflare_quick_tunnel only supports the voice playground surfaces; skipping remote access setup because voice is not active for this run"
@@ -4452,6 +4525,12 @@ prepare_remote_call_access() {
   fi
   if [[ -n "$livekit_port" ]]; then
     helper_args+=(--livekit-port "$livekit_port")
+  fi
+  if [[ -n "$livekit_tcp_port" ]]; then
+    helper_args+=(--livekit-tcp-port "$livekit_tcp_port")
+  fi
+  if [[ -n "$livekit_udp_port" ]]; then
+    helper_args+=(--livekit-udp-port "$livekit_udp_port")
   fi
   if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" ]]; then
     helper_args+=(--public-client-origin "$VIVENTIUM_PUBLIC_CLIENT_URL")
@@ -4485,6 +4564,10 @@ prepare_remote_call_access() {
   public_playground_url="$(json_state_value "$state_json" "public_playground_url")"
   public_livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
   livekit_node_ip="$(json_state_value "$state_json" "livekit_node_ip")"
+  livekit_turn_domain="$(json_state_value "$state_json" "livekit_turn_domain")"
+  livekit_turn_tls_port="$(json_state_value "$state_json" "livekit_turn_tls_port")"
+  livekit_turn_cert_file="$(json_state_value "$state_json" "livekit_turn_cert_file")"
+  livekit_turn_key_file="$(json_state_value "$state_json" "livekit_turn_key_file")"
   trust_note="$(json_state_value "$state_json" "trust_note")"
 
   if [[ -n "$public_client_url" ]]; then
@@ -4498,10 +4581,21 @@ prepare_remote_call_access() {
   fi
   if [[ -n "$public_livekit_url" ]]; then
     export VIVENTIUM_PUBLIC_LIVEKIT_URL="$public_livekit_url"
-    export NEXT_PUBLIC_LIVEKIT_URL="$public_livekit_url"
   fi
   if [[ -n "$livekit_node_ip" ]]; then
     export LIVEKIT_NODE_IP="$livekit_node_ip"
+  fi
+  if [[ -n "$livekit_turn_domain" ]]; then
+    export LIVEKIT_TURN_DOMAIN="$livekit_turn_domain"
+  fi
+  if [[ -n "$livekit_turn_tls_port" ]]; then
+    export LIVEKIT_TURN_TLS_PORT="$livekit_turn_tls_port"
+  fi
+  if [[ -n "$livekit_turn_cert_file" ]]; then
+    export LIVEKIT_TURN_CERT_FILE="$livekit_turn_cert_file"
+  fi
+  if [[ -n "$livekit_turn_key_file" ]]; then
+    export LIVEKIT_TURN_KEY_FILE="$livekit_turn_key_file"
   fi
   if [[ -n "$trust_note" ]]; then
     log_warn "$trust_note"
@@ -4948,20 +5042,17 @@ start_native_livekit_fallback() {
 
   mkdir -p "$native_state_dir" "$native_log_dir" "$native_profile_state_dir" "$native_cfg_dir"
 
-  cat > "$native_cfg_file" <<EOF
-port: ${LIVEKIT_HTTP_PORT}
-rtc:
-  tcp_port: ${LIVEKIT_TCP_PORT}
-  udp_port: ${LIVEKIT_UDP_PORT}
-keys:
-  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
-EOF
+  write_livekit_config "$native_cfg_file" "${LIVEKIT_TURN_CERT_FILE:-}" "${LIVEKIT_TURN_KEY_FILE:-}"
 
   cat > "$native_meta_file" <<EOF
 LIVEKIT_NODE_IP=${LIVEKIT_NODE_IP}
 LIVEKIT_HTTP_PORT=${LIVEKIT_HTTP_PORT}
 LIVEKIT_TCP_PORT=${LIVEKIT_TCP_PORT}
 LIVEKIT_UDP_PORT=${LIVEKIT_UDP_PORT}
+LIVEKIT_TURN_DOMAIN=${LIVEKIT_TURN_DOMAIN:-}
+LIVEKIT_TURN_TLS_PORT=${LIVEKIT_TURN_TLS_PORT:-}
+LIVEKIT_TURN_CERT_FILE=${LIVEKIT_TURN_CERT_FILE:-}
+LIVEKIT_TURN_KEY_FILE=${LIVEKIT_TURN_KEY_FILE:-}
 EOF
 
   echo -e "${YELLOW}[viventium]${NC} LiveKit image is not available locally; using native LiveKit binary ${livekit_bin} for this run"
@@ -4980,6 +5071,35 @@ EOF
 
   log_success "Started native LiveKit fallback (${livekit_bin})"
   return 0
+}
+
+write_livekit_config() {
+  local config_file="$1"
+  local turn_cert_file="$2"
+  local turn_key_file="$3"
+
+  cat > "$config_file" <<EOF
+port: ${LIVEKIT_HTTP_PORT}
+rtc:
+  tcp_port: ${LIVEKIT_TCP_PORT}
+  udp_port: ${LIVEKIT_UDP_PORT}
+EOF
+
+  if [[ -n "${LIVEKIT_TURN_DOMAIN:-}" && -n "${LIVEKIT_TURN_TLS_PORT:-}" && -n "$turn_cert_file" && -n "$turn_key_file" ]]; then
+    cat >> "$config_file" <<EOF
+turn:
+  enabled: true
+  domain: "${LIVEKIT_TURN_DOMAIN}"
+  tls_port: ${LIVEKIT_TURN_TLS_PORT}
+  cert_file: "${turn_cert_file}"
+  key_file: "${turn_key_file}"
+EOF
+  fi
+
+  cat >> "$config_file" <<EOF
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+EOF
 }
 
 PARALLEL_OPTIONAL_START_PIDS=()
@@ -7595,6 +7715,14 @@ if ! prepare_remote_call_access; then
   exit 1
 fi
 
+if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" || -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
+  echo -e "${CYAN}[viventium]${NC} Public remote access:"
+  [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" ]] && echo -e "  App:         ${GREEN}${VIVENTIUM_PUBLIC_CLIENT_URL}${NC}"
+  [[ -n "${VIVENTIUM_PUBLIC_SERVER_URL:-}" ]] && echo -e "  API:         ${GREEN}${VIVENTIUM_PUBLIC_SERVER_URL}${NC}"
+  [[ -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" ]] && echo -e "  Playground:  ${GREEN}${VIVENTIUM_PUBLIC_PLAYGROUND_URL}${NC}"
+  [[ -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]] && echo -e "  LiveKit:     ${GREEN}${VIVENTIUM_PUBLIC_LIVEKIT_URL}${NC}"
+fi
+
 # ----------------------------
 # LiveKit server (Docker)
 # ----------------------------
@@ -7603,6 +7731,10 @@ fi
 # Added: 2026-01-11
 # === VIVENTIUM END ===
 if [[ "$SKIP_LIVEKIT" != "true" ]]; then
+  native_install_mode=false
+  if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
+    native_install_mode=true
+  fi
   if [[ "$SKIP_DOCKER" == "true" ]]; then
     if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
       log_error "LiveKit is not reachable at ${LIVEKIT_API_HOST} and --skip-docker is enabled"
@@ -7614,7 +7746,9 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
       log_success "Using existing/native LiveKit at ${LIVEKIT_API_HOST}"
     else
       native_livekit_bin=""
-      if ! docker image inspect livekit/livekit-server >/dev/null 2>&1; then
+      if [[ "$native_install_mode" == "true" ]]; then
+        native_livekit_bin="$(livekit_native_binary_path || true)"
+      elif ! docker image inspect livekit/livekit-server >/dev/null 2>&1; then
         native_livekit_bin="$(livekit_native_binary_path || true)"
       fi
 
@@ -7686,30 +7820,41 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
             LIVEKIT_CFG_DIR="$VIVENTIUM_STATE_ROOT/livekit"
             mkdir -p "$LIVEKIT_CFG_DIR"
             LIVEKIT_CFG="$LIVEKIT_CFG_DIR/livekit.yaml"
-            cat > "$LIVEKIT_CFG" <<EOF
-port: ${LIVEKIT_HTTP_PORT}
-rtc:
-  tcp_port: ${LIVEKIT_TCP_PORT}
-  udp_port: ${LIVEKIT_UDP_PORT}
-keys:
-  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
-EOF
+            LIVEKIT_TURN_CERT_MOUNT=""
+            LIVEKIT_TURN_KEY_MOUNT=""
+            if [[ -n "${LIVEKIT_TURN_DOMAIN:-}" && -n "${LIVEKIT_TURN_TLS_PORT:-}" && -f "${LIVEKIT_TURN_CERT_FILE:-}" && -f "${LIVEKIT_TURN_KEY_FILE:-}" ]]; then
+              LIVEKIT_TURN_CERT_MOUNT="/etc/viventium-livekit-turn.crt"
+              LIVEKIT_TURN_KEY_MOUNT="/etc/viventium-livekit-turn.key"
+            fi
+            write_livekit_config "$LIVEKIT_CFG" "$LIVEKIT_TURN_CERT_MOUNT" "$LIVEKIT_TURN_KEY_MOUNT"
 
             echo -e "${CYAN}[viventium]${NC} Starting LiveKit server (Docker) ..."
-            LIVEKIT_CONTAINER_ID="$(
-              docker run -d \
-                --name "viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-$$" \
-                --label "viventium.stack=viventium_v0_4" \
-                --label "viventium.service=livekit" \
-                --label "viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}" \
-                -p "${LIVEKIT_HTTP_PORT}:${LIVEKIT_HTTP_PORT}" \
-                -p "${LIVEKIT_TCP_PORT}:${LIVEKIT_TCP_PORT}" \
-                -p "${LIVEKIT_UDP_PORT}:${LIVEKIT_UDP_PORT}/udp" \
-                -v "$LIVEKIT_CFG:/etc/livekit.yaml:ro" \
-                livekit/livekit-server \
-                --config /etc/livekit.yaml \
-                --node-ip "$LIVEKIT_NODE_IP"
-            )"
+            LIVEKIT_DOCKER_ARGS=(
+              docker run -d
+              --name "viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-$$"
+              --label "viventium.stack=viventium_v0_4"
+              --label "viventium.service=livekit"
+              --label "viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}"
+              -p "${LIVEKIT_HTTP_PORT}:${LIVEKIT_HTTP_PORT}"
+              -p "${LIVEKIT_TCP_PORT}:${LIVEKIT_TCP_PORT}"
+              -p "${LIVEKIT_UDP_PORT}:${LIVEKIT_UDP_PORT}/udp"
+              -v "$LIVEKIT_CFG:/etc/livekit.yaml:ro"
+            )
+            if [[ -n "${LIVEKIT_TURN_TLS_PORT:-}" ]]; then
+              LIVEKIT_DOCKER_ARGS+=(-p "${LIVEKIT_TURN_TLS_PORT}:${LIVEKIT_TURN_TLS_PORT}")
+            fi
+            if [[ -n "$LIVEKIT_TURN_CERT_MOUNT" && -n "$LIVEKIT_TURN_KEY_MOUNT" ]]; then
+              LIVEKIT_DOCKER_ARGS+=(
+                -v "${LIVEKIT_TURN_CERT_FILE}:${LIVEKIT_TURN_CERT_MOUNT}:ro"
+                -v "${LIVEKIT_TURN_KEY_FILE}:${LIVEKIT_TURN_KEY_MOUNT}:ro"
+              )
+            fi
+            LIVEKIT_DOCKER_ARGS+=(
+              livekit/livekit-server
+              --config /etc/livekit.yaml
+              --node-ip "$LIVEKIT_NODE_IP"
+            )
+            LIVEKIT_CONTAINER_ID="$("${LIVEKIT_DOCKER_ARGS[@]}")"
             LIVEKIT_STARTED_BY_SCRIPT=true
             echo -e "${GREEN}[viventium]${NC} LiveKit container: ${LIVEKIT_CONTAINER_ID:0:12}"
             echo -e "${CYAN}[viventium]${NC} LiveKit node IP: ${LIVEKIT_NODE_IP}"

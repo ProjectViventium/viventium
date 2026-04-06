@@ -16,10 +16,12 @@ runtime:
     # - cloudflare_quick_tunnel (experimental voice-only path)
     # - tailscale_tailnet_https (recommended for your own devices)
     # - netbird_selfhosted_mesh (OSS private-mesh path)
+    # - public_https_edge (public custom-domain or zero-cost sslip.io path)
+    # `custom_domain` is accepted as a clearer alias for `public_https_edge`.
     remote_call_mode: disabled
     # Optional browser-facing origins for remote-device access.
-    # Leave them blank for automatic Tailscale mode.
-    # Set them explicitly for NetBird or any manually managed reverse-proxy topology.
+    # Leave them blank for automatic Tailscale mode or the public sslip.io fallback.
+    # Set them explicitly for NetBird or your own stable public subdomains.
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""
@@ -80,7 +82,6 @@ voice:
   # stt:
   #   secret_ref: keychain://viventium/assemblyai_api_key
   tts_provider: browser
-  fast_llm_provider: x_ai
   wing_mode:
     default_enabled: false
     prompt: |-

@@ -22,6 +22,16 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - `agentName`: LiveKit dispatch agent name
 - `autoConnect=1`: auto-join on load
 
+## Localhost vs Public Voice Origins
+- Localhost remains the canonical default:
+  - LibreChat launches the playground on `localhost`
+  - the modern playground must keep `ws://localhost:7888` for localhost callers
+- When a configured public playground origin is in use, `api/connection-details` may return the
+  configured public LiveKit WSS URL instead.
+- Public-browser voice access also depends on the non-HTTP media path:
+  - direct LiveKit TCP/UDP media when the network allows it
+  - TURN/TLS fallback when the public HTTPS edge is enabled
+
 ## Key Code Paths
 - Call button: `LibreChat/client/src/components/Viventium/CallButton.tsx`
 - Call session API: `LibreChat/api/server/routes/viventium/calls.js`
@@ -155,6 +165,12 @@ Added: 2026-01-11
 ## Operational Notes
 - Use `./viventium-librechat-start.sh` to keep LibreChat + voice gateway secrets aligned.
 - Call sessions expire; stale sessions will cause auth failures.
+- Live call LLM selection follows the agent primary model by default and only changes when the agent
+  has an explicit Voice Chat Model configured.
+- Voice transport settings such as STT/TTS provider selection do not change the call LLM route.
+- If you previously relied on legacy machine-level `voice.fast_llm_provider`, migrate that choice to
+  the agent `Voice Chat Model` fields instead; the machine-level field is ignored for call LLM
+  selection.
 - Background insights must still be generated in the main system (ensure background agent model/provider config is valid).
 
 ## Known Limitations

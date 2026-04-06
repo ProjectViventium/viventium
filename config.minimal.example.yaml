@@ -5,10 +5,12 @@ runtime:
   log_level: info
   profile: isolated
   network:
-    # Supported modes: disabled, cloudflare_quick_tunnel, tailscale_tailnet_https, netbird_selfhosted_mesh
+    # Supported modes: disabled, cloudflare_quick_tunnel, tailscale_tailnet_https,
+    # netbird_selfhosted_mesh, public_https_edge.
+    # `custom_domain` is accepted as a clearer alias for `public_https_edge`.
     remote_call_mode: disabled
-    # Leave these blank for automatic Tailscale mode.
-    # Set them explicitly for NetBird or another manually managed HTTPS/WSS topology.
+    # Leave these blank for automatic Tailscale mode or the temporary public sslip.io fallback.
+    # Set them explicitly for NetBird or your own stable public subdomains.
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""
@@ -45,7 +47,6 @@ voice:
   mode: local
   stt_provider: whisper_local
   tts_provider: browser
-  fast_llm_provider: x_ai
   tts:
     voice: coral
     speed: 1.12

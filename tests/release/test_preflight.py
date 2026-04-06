@@ -37,6 +37,22 @@ def load_preflight_module():
     return module
 
 
+def test_public_edge_cgnat_details_flags_router_public_ip_mismatch(monkeypatch) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "upnpc_router_external_ipv4", lambda: "100.64.0.5")
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda: "199.7.147.132")
+
+    assert module.public_edge_cgnat_details() == (True, "100.64.0.5", "199.7.147.132")
+
+
+def test_public_edge_cgnat_details_ignores_matching_public_ip(monkeypatch) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "upnpc_router_external_ipv4", lambda: "199.7.147.132")
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda: "199.7.147.132")
+
+    assert module.public_edge_cgnat_details() == (False, "199.7.147.132", "199.7.147.132")
+
+
 def test_preflight_aggregates_missing_native_prereqs(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -181,6 +197,42 @@ voice:
     assert "caddy" in completed.stdout
     assert "NetBird remote origins" in completed.stdout
     assert "public_client_origin" in completed.stdout
+
+
+@pytest.mark.parametrize("remote_call_mode", ["public_https_edge", "custom_domain"])
+def test_preflight_public_https_edge_requires_caddy_and_router_mapping_tools(
+    tmp_path: Path, remote_call_mode: str
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+version: 1
+install:
+  mode: native
+runtime:
+  profile: isolated
+  network:
+    remote_call_mode: {remote_call_mode}
+voice:
+  mode: local
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
+        cwd=REPO_ROOT,
+        env=preflight_subprocess_env(tmp_path),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Remote calls: public_https_edge" in completed.stdout
+    assert "caddy" in completed.stdout
+    assert "miniupnpc" in completed.stdout
 
 
 def test_preflight_native_without_voice_does_not_require_python312(tmp_path: Path) -> None:

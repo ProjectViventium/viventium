@@ -160,6 +160,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["interface"]["runCode"] is False
     assert librechat_yaml["memory"]["disabled"] is False
     assert librechat_yaml["memory"]["personalize"] is True
+    assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
     assert librechat_yaml["balance"]["enabled"] is False
     assert librechat_yaml["speech"]["tts"] == {}
     assert librechat_yaml["speech"]["stt"] == {}
@@ -174,6 +176,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     }
     assert built_in_agents == source_of_truth_built_in_agent_map()
     assert "azureOpenAI" not in librechat_yaml["endpoints"]
+    assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
     assert all(
         item.get("preset", {}).get("endpoint") != "azureOpenAI"
         for item in librechat_yaml["modelSpecs"]["list"]
@@ -199,7 +203,69 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert summary["primary_provider"] == "openai"
 
 
-def test_render_librechat_yaml_preserves_source_of_truth_defaults() -> None:
+def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {
+                "x_ai": "xai-test",
+            },
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+            "fast_llm_provider": "x_ai",
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
+    assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
+
+
+def test_render_librechat_yaml_preserves_defaults_and_overlays_compiled_memory_assignment() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -236,7 +302,10 @@ def test_render_librechat_yaml_preserves_source_of_truth_defaults() -> None:
     librechat_yaml = yaml.safe_load(yaml_text)
 
     assert librechat_yaml["memory"]["disabled"] is False
-    assert librechat_yaml["memory"]["agent"]["provider"] == "xai"
+    assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
     assert librechat_yaml["viventium"]["background_cortices"]["activation_format"]["brew_begin_tag"]
     assert librechat_yaml["balance"]["enabled"] is False
     assert librechat_yaml["balance"]["startBalance"] == 200000
@@ -263,6 +332,7 @@ def test_build_agent_assignments_openai_only_uses_current_gpt5_profile() -> None
     assert assignments["red_team"] == ("openai", "gpt-5.4")
     assert assignments["productivity"] == ("openai", "gpt-5.4")
     assert assignments["support"] == ("openai", "gpt-5.4")
+    assert assignments["memory"] == ("openai", "gpt-5.4")
 
 
 def test_build_agent_assignments_anthropic_only_uses_current_claude46_profile() -> None:
@@ -285,6 +355,7 @@ def test_build_agent_assignments_anthropic_only_uses_current_claude46_profile() 
     assert assignments["red_team"] == ("anthropic", "claude-opus-4-6")
     assert assignments["productivity"] == ("anthropic", "claude-sonnet-4-6")
     assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-6")
+    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-6")
 
 
 def test_build_agent_assignments_requires_openai_or_anthropic_foundation() -> None:
@@ -510,6 +581,48 @@ def test_build_agent_assignments_use_current_generation_models() -> None:
     assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-4-6")
     assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-6")
     assert assignments["support"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["memory"] == ("openai", "gpt-5.4")
+
+
+def test_build_agent_assignments_memory_honors_configured_foundation_order() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "anthropic-test",
+            },
+            "secondary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+
+    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-6")
 
 
 def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundation_exists() -> None:
@@ -551,6 +664,7 @@ def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundat
     assignments = config_compiler.build_agent_assignments(config)
 
     assert assignments["conscious"] == ("openai", "gpt-5.4")
+    assert assignments["memory"] == ("openai", "gpt-5.4")
 
 
 def test_render_runtime_env_uses_llama_4_scout_for_background_activation_defaults() -> None:
@@ -869,6 +983,8 @@ def test_config_compiler_preserves_explicit_cloudflare_quick_tunnel(tmp_path: Pa
     [
         ("tailscale_tailnet_https", "VIVENTIUM_REMOTE_CALL_MODE=tailscale_tailnet_https"),
         ("netbird_selfhosted_mesh", "VIVENTIUM_REMOTE_CALL_MODE=netbird_selfhosted_mesh"),
+        ("public_https_edge", "VIVENTIUM_REMOTE_CALL_MODE=public_https_edge"),
+        ("custom_domain", "VIVENTIUM_REMOTE_CALL_MODE=public_https_edge"),
     ],
 )
 def test_config_compiler_preserves_supported_remote_mesh_modes(
@@ -1336,11 +1452,57 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
 
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
+    assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
+
+
+def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other_foundation_exists() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "anthropic",
+                "auth_mode": "connected_account",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
+    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-6"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
 
 
 def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret_is_missing(

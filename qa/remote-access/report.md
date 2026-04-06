@@ -9,74 +9,97 @@
 - Repo branch: `codex/remote-modern-playground-access`
 - Nested LibreChat branch: `codex/remote-modern-playground-access`
 - Runtime profile: `isolated`
-- Live config used for secure-origin validation: `/tmp/viventium-remote-access-netbird.yaml`
+- Live config used for public-edge validation:
+  - `~/Library/Application Support/Viventium/config.yaml`
+  - `runtime.network.remote_call_mode: public_https_edge`
 
 ## Checks Executed
 
 1. Targeted root regression suite.
    - Command:
      `python3 -m pytest tests/release/test_preflight.py tests/release/test_config_compiler.py tests/release/test_remote_call_tunnel.py -q`
-   - Result: `69 passed`
+   - Result: `73 passed`
 2. Launcher/script syntax validation.
    - Command:
-     `bash -n viventium_v0_4/viventium-librechat-start.sh`
+     `bash -n bin/viventium scripts/viventium/native_stack.sh viventium_v0_4/viventium-librechat-start.sh`
    - Result: passed
-3. Python module syntax validation.
-   - Command:
-     `python3 -m py_compile scripts/viventium/preflight.py scripts/viventium/config_compiler.py scripts/viventium/remote_call_tunnel.py`
-   - Result: passed
-4. LibreChat public-origin call-launch regression tests.
-   - Command:
-     `npm run test:api -- --runInBand server/routes/viventium/__tests__/calls.spec.js`
-   - Result: `8/8` tests passed
-5. LibreChat frontend proxy-target regression tests.
-   - Command:
-     `npx jest --config client/jest.config.cjs --runInBand src/utils/devProxy.spec.ts`
-   - Result: `8/8` tests passed
-6. Live secure-origin NetBird-compatible browser/API validation.
-   - Result: secure app login rendered over `https://app.10.88.111.46.sslip.io:4443/login`
-   - Result: secure modern playground rendered over `https://playground.10.88.111.46.sslip.io:3443/`
-   - Result: secure app API and banner endpoints returned `200`
-7. Localhost regression validation.
-   - Result: `http://127.0.0.1:3190/api/config` returned `200`
-   - Result: `http://localhost:3300/` returned `200`
-8. Provider-prerequisite preflight checks.
-   - Result: Tailscale config reports manual attention because this Mac is not connected to a
-     tailnet.
-   - Result: NetBird config reports manual attention because this Mac does not have the NetBird
-     client joined to a mesh.
+3. Public-origin routing contract validation.
+   - Result: `Origin: http://localhost:3300` returned `serverUrl=ws://localhost:7888`
+   - Result: `Origin: https://playground.199.7.147.132.sslip.io` returned `serverUrl=wss://livekit.199.7.147.132.sslip.io`
+4. Live public-edge runtime validation.
+   - Result: launcher reached `All Services Running`
+   - Result: runtime state published:
+     - `https://app.199.7.147.132.sslip.io`
+     - `https://api.199.7.147.132.sslip.io`
+     - `https://playground.199.7.147.132.sslip.io`
+     - `wss://livekit.199.7.147.132.sslip.io`
+   - Result: router mappings included `80/tcp`, `443/tcp`, `7889/tcp`, `7890/udp`, `5349/tcp`
+5. LiveKit TURN/TLS runtime validation.
+   - Result: generated `livekit.yaml` contained:
+     - `turn.enabled: true`
+     - `domain: livekit.199.7.147.132.sslip.io`
+     - `tls_port: 5349`
+   - Result: listeners existed on:
+     - `7888/tcp`
+     - `7889/tcp`
+     - `7890/udp`
+     - `5349/tcp`
+6. Localhost regression validation.
+   - Result: authenticated LibreChat chat on `http://localhost:3190` returned exact reply `QA_OK`
+   - Result: a fresh modern-playground voice session connected successfully on `http://localhost:3300`
+   - Result: transcript toggle worked
+   - Result: typed transcript prompt `Reply with exactly REMOTE_QA_OK and nothing else.` returned exact reply `REMOTE_QA_OK`
+   - Result: successful voice run had `0` browser console errors
+7. External public fetch sanity check.
+   - Result: independent external fetch reached `https://playground.199.7.147.132.sslip.io/` and returned HTML for the modern playground shell
+8. Provider-prerequisite checks.
+   - Result: Tailscale CLI is installed but not running/authenticated on this Mac
+   - Result: NetBird CLI is not installed on this Mac
 
 ## Findings
 
 - The branch now supports both private-mesh modes structurally:
   - `tailscale_tailnet_https`
   - `netbird_selfhosted_mesh`
-- The secure-origin NetBird-compatible path is working live on this Mac.
-  - Caddy is listening on `4443`, `8443`, `3443`, and `7443`
-  - `public-network.json` exposes the expected secure URLs plus `livekit_node_ip`
-- The localhost path is preserved.
-  - After enabling remote-access support, the local frontend proxy still serves `/api/config`
-    successfully instead of regressing to `500`
-- The key regression fixed in this pass was the frontend proxy boundary.
-  - `DOMAIN_SERVER` must remain the browser-facing public API origin
-  - the local Vite dev proxy must keep using a local backend target
-  - the launcher now writes `VIVENTIUM_FRONTEND_PROXY_TARGET=http://localhost:3180`
-  - the frontend resolver now prefers that explicit local proxy target instead of feeding the
-    public HTTPS API origin back into Vite
-- Browser QA evidence after the fix:
-  - secure app page loaded with `0` browser errors and only one non-fatal React Router warning
-  - secure playground loaded with `0` browser errors
+- The real public-browser-capable mode in this repo is `public_https_edge`.
+  - It is live on this Mac with Caddy-managed HTTPS, public-IP-derived `sslip.io` hostnames, router
+    mappings, and TURN/TLS-ready LiveKit state.
+- The localhost path is preserved even after enabling the remote edge.
+  - chat still works on `localhost`
+  - a fresh voice launch still works on `localhost`
+  - the modern playground transcript path still returns a real model reply
+- The key regression fixed in this pass was the localhost/public LiveKit boundary.
+  - earlier, localhost modern-playground sessions inherited the public LiveKit WSS URL and timed
+    out on signal
+  - now `api/connection-details` returns public LiveKit only for requests that originated from the
+    configured public playground origin
+  - localhost callers keep `ws://localhost:7888`
+- The public `sslip.io` edge is externally reachable.
+  - non-local fetch succeeded for the public playground shell
+- Stable custom-domain access is the remaining operator-facing finish step.
+  - the public edge works now through `sslip.io`
+  - the durable bookmarkable production answer still requires explicit operator-controlled DNS
+    instead of IP-derived fallback hosts
 
 ## Limitations
 
+- The stable public-domain finish step was not live-validated yet because the required DNS records
+  do not exist today.
+  - `app.viventium.ai`
+  - `api.viventium.ai`
+  - `playground.viventium.ai`
+  - `livekit.viventium.ai`
+- This Mac cannot hairpin cleanly to its own public `sslip.io` hosts with local `curl`/Playwright,
+  so public-surface reachability was validated through an external fetch path instead of a same-host
+  authenticated browser run.
 - Tailscale was not provider-native live-validated end to end on this Mac.
   - `tailscale` CLI is installed, but the local Tailscale service is not running/connected, so the
     tailnet-only URLs could not be exercised in a real tailnet session here.
 - NetBird was not provider-native live-validated end to end on this Mac.
-  - this machine does not have the NetBird client joined to a self-hosted mesh
-  - the live validation in this report proves the Viventium NetBird-mode contract through its
-    secure-origin/Caddy/private-hostname behavior, not a real NetBird control-plane enrollment
-- Caddy local trust remains manual by default.
-  - the helper intentionally does not auto-elevate trust unless explicitly opted in
-  - the generated `trust_note` must be followed on client devices that need browser trust without
-    certificate prompts
+  - this machine does not currently have the NetBird client installed or joined to a self-hosted mesh
+- TURN/TLS is now wired and listening on `5349`, but this report did not include a true external
+  phone-on-cellular voice run over the public edge.
+  - the strongest proof collected here is:
+    - external public playground reachability
+    - local successful voice session after remote-edge enablement
+    - correct origin-based public-vs-local LiveKit routing

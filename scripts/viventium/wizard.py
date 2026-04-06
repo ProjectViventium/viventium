@@ -21,7 +21,6 @@ from installer_ui import CheckboxOption, InstallerUI, SelectOption
 from telegram_tokens import telegram_bot_token_validation_error
 
 LOCAL_TTS_PROVIDER = "local_chatterbox_turbo_mlx_8bit"
-DEFAULT_VOICE_FAST_LLM_PROVIDER = ""
 DEFAULT_WEB_SEARCH_PROVIDER = "searxng"
 DEFAULT_WEB_SCRAPER_PROVIDER = "firecrawl"
 CONNECTED_ACCOUNT_PROVIDERS = {"openai", "anthropic"}
@@ -394,7 +393,6 @@ def build_base_config(
             "stt_provider": "whisper_local",
             "tts_provider": "browser",
             "tts_provider_fallback": "",
-            "fast_llm_provider": DEFAULT_VOICE_FAST_LLM_PROVIDER,
             "wing_mode": {"default_enabled": False},
         },
         "integrations": {
@@ -510,7 +508,6 @@ def set_local_voice_defaults(config: dict[str, Any]) -> None:
     voice["mode"] = "local"
     voice["stt_provider"] = "whisper_local"
     voice["tts_provider"] = default_local_tts_provider()
-    voice["fast_llm_provider"] = DEFAULT_VOICE_FAST_LLM_PROVIDER
     voice["tts_provider_fallback"] = (
         "openai" if voice["tts_provider"] == LOCAL_TTS_PROVIDER else ""
     )
@@ -714,7 +711,6 @@ def disable_feature(config: dict[str, Any], key: str, deferred: list[str]) -> No
         voice["stt_provider"] = "whisper_local"
         voice["tts_provider"] = "browser"
         voice["tts_provider_fallback"] = ""
-        voice["fast_llm_provider"] = DEFAULT_VOICE_FAST_LLM_PROVIDER
     elif key in integrations:
         integrations[key]["enabled"] = False
     mark_deferred(deferred, key)
@@ -761,20 +757,6 @@ def prompt_voice_settings(ui: InstallerUI, config: dict[str, Any], advanced: boo
             SelectOption("cartesia", "Cartesia"),
         ],
         default="x_ai",
-    )
-    fast_voice_provider = ui.select(
-        "Fast voice-response provider",
-        [
-            SelectOption("main", "Use main Viventium model", "No separate voice override"),
-            SelectOption("groq", "Groq"),
-            SelectOption("x_ai", "xAI"),
-            SelectOption("openai", "OpenAI"),
-            SelectOption("anthropic", "Anthropic"),
-        ],
-        default="main",
-    )
-    voice["fast_llm_provider"] = (
-        DEFAULT_VOICE_FAST_LLM_PROVIDER if fast_voice_provider == "main" else fast_voice_provider
     )
     if voice["stt_provider"] == "assemblyai":
         secret_node = prompt_optional_secret(

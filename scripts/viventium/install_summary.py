@@ -502,6 +502,7 @@ def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> lis
         3190,
     )
     lan_host = local_network_host()
+    public_client_url = str(runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or "").strip()
     next_steps: list[str] = []
     next_steps.extend(
         [
@@ -512,6 +513,10 @@ def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> lis
     if lan_host:
         next_steps.append(
             f"Open [cyan]http://{lan_host}:{frontend_port}[/cyan] from another device on your local network."
+        )
+    if public_client_url:
+        next_steps.append(
+            f"Open [cyan]{public_client_url}[/cyan] from outside your local network after remote access is enabled."
         )
     install_mode = str(((config.get("install") or {}).get("mode") or "native")).strip().lower()
     if install_mode == "native":

@@ -2453,7 +2453,8 @@ case "$COMMAND" in
       set +a
       if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
         write_stack_owner_state "$COMMAND"
-        "$REPO_ROOT/scripts/viventium/native_stack.sh" start
+        VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT=1 \
+          "$REPO_ROOT/scripts/viventium/native_stack.sh" start
       else
         write_stack_owner_state "$COMMAND"
       fi

@@ -136,13 +136,56 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   Telegram launcher refuses to start a partially broken bridge without it.
 
 ### Modern LiveKit says `I'm having trouble reaching the service right now. Please try again.`
-- Root cause: the voice call was reaching LibreChat, but a dedicated voice override could still rewrite the run onto a different provider with no server-side credential configured. That produced downstream `no_user_key` initialization failures even though the main agent model was healthy.
+- Root cause: the voice call was reaching LibreChat, but a hidden machine-level fast-voice LLM route
+  could still rewrite the run onto a different provider than the agent-visible selection. That
+  produced downstream provider credential failures even though the main agent model was healthy.
 - Symptom: STT/TTS may work, but the voice reply falls back to the generic service-trouble message.
 - Fix:
-  - new installs should leave the main-agent voice override unset unless the installer explicitly configured a dedicated fast voice provider
-  - when a dedicated voice provider is configured, runtime must choose a model for that provider instead of reusing a stale shipped model from another provider
-  - if the alternate voice provider has no server credential, log the skip clearly and keep the main model/provider
-- Current status: the shipped source-of-truth bundle now leaves the main voice override unset by default, runtime no longer reuses stale voice models across provider changes, and `voiceLlmOverride` now falls back cleanly to the main model when the alternate provider is not actually configured.
+  - the agent primary model/provider and optional explicit Voice Call LLM are the only LLM selectors
+    that may affect live calls
+  - when the Voice Call LLM is unset, runtime must inherit the agent primary model/provider
+  - legacy machine-level `voice.fast_llm_provider` / `VIVENTIUM_VOICE_FAST_LLM_PROVIDER` values
+    must not rewrite call LLM selection
+  - if an explicit Voice Call LLM lacks a required server credential, log the skip clearly and keep
+    the agent primary model/provider
+- Current status: live call LLM selection now ignores the legacy machine fast-voice route, so old
+  config values no longer override the agent-visible Voice Call LLM behavior.
+- Migration note: if an older install intentionally used `voice.fast_llm_provider`, move that choice
+  into the agent `Voice Chat Model` / `voice_llm_provider` + `voice_llm_model` fields instead.
+
+### Local modern playground times out on signal after remote access is enabled
+- Root cause: localhost modern-playground sessions were incorrectly inheriting the public LiveKit
+  WSS URL after remote-access state was prepared.
+- Symptom:
+  - the local voice tab loads, but `Start chat` times out
+  - browser console shows signal-connection or `/rtc/validate` timeouts against the public
+    `wss://livekit...` hostname
+- Fix:
+  - keep localhost callers on `ws://localhost:7888`
+  - return the public LiveKit URL only when `api/connection-details` sees the configured public
+    playground origin
+  - do not globally overwrite localhost-facing `NEXT_PUBLIC_LIVEKIT_URL` when preparing the remote
+    edge
+- Current status: fixed on `codex/remote-modern-playground-access`; fresh localhost voice launches
+  now connect and transcript replies work again.
+
+### Public remote link still uses `sslip.io`
+- Root cause: `public_https_edge` can auto-bootstrap a zero-cost public hostname from the current
+  public IP, but `sslip.io` hostnames change when the home public IP changes.
+- Symptom:
+  - the public app/playground links work, but they are not the durable bookmarkable production
+    answer
+- Fix:
+  - keep `runtime.network.remote_call_mode: public_https_edge` (or `custom_domain`)
+  - set explicit custom-domain origins:
+    - `public_client_origin`
+    - `public_api_origin`
+    - `public_playground_origin`
+    - `public_livekit_url`
+  - point those DNS records at the current public IP and restart Viventium so Caddy can provision
+    real certificates for the stable hostnames
+- Current status: `sslip.io` remains the bootstrap fallback; stable custom-domain access is the
+  remaining operator step.
 
 ### Capacity: how many simultaneous users?
 - There is no hard-coded user cap in this local dev launcher.

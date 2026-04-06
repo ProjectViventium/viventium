@@ -159,6 +159,7 @@ MODEL_MAP = {
         "emotional_resonance": "gpt-5.4",
         "strategic_planning": "gpt-5.4",
         "support": "gpt-5.4",
+        "memory": "gpt-5.4",
     },
     "anthropic": {
         "conscious": "claude-opus-4-6",
@@ -172,6 +173,7 @@ MODEL_MAP = {
         "emotional_resonance": "claude-opus-4-6",
         "strategic_planning": "claude-opus-4-6",
         "support": "claude-sonnet-4-6",
+        "memory": "claude-sonnet-4-6",
     },
     "x_ai": {
         "conscious": "grok-4-1-fast-non-reasoning",
@@ -185,6 +187,7 @@ MODEL_MAP = {
         "emotional_resonance": "grok-4-1-fast-non-reasoning",
         "strategic_planning": "grok-4-1-fast-non-reasoning",
         "support": "grok-4-1-fast-non-reasoning",
+        "memory": "grok-4-1-fast-non-reasoning",
     },
 }
 
@@ -1031,6 +1034,7 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
     analytical_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     emotional_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
     support_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
+    memory_provider = foundation_fallback
 
     return {
         "conscious": (conscious_provider, MODEL_MAP[conscious_provider]["conscious"]),
@@ -1062,7 +1066,36 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
             MODEL_MAP[emotional_provider]["strategic_planning"],
         ),
         "support": (support_provider, MODEL_MAP[support_provider]["support"]),
+        "memory": (memory_provider, MODEL_MAP[memory_provider]["memory"]),
     }
+
+
+def apply_memory_assignment(
+    payload: dict[str, Any],
+    assignments: dict[str, tuple[str, str]],
+) -> None:
+    memory = payload.get("memory")
+    if not isinstance(memory, dict):
+        return
+    agent = memory.get("agent")
+    if not isinstance(agent, dict):
+        return
+    provider, model = assignments["memory"]
+    agent["provider"] = provider
+    agent["model"] = model
+
+
+def normalize_anthropic_title_endpoint(payload: dict[str, Any]) -> None:
+    endpoints = payload.get("endpoints")
+    if not isinstance(endpoints, dict):
+        return
+    anthropic_endpoint = endpoints.get("anthropic")
+    if not isinstance(anthropic_endpoint, dict):
+        return
+    anthropic_endpoint["titleEndpoint"] = "anthropic"
+    anthropic_endpoint["titleModel"] = str(
+        anthropic_endpoint.get("summaryModel") or MODEL_MAP["anthropic"]["background_analysis"]
+    ).strip()
 
 
 def host_supports_local_tts() -> bool:
@@ -1103,20 +1136,15 @@ def resolve_voice_settings(config: dict[str, Any]) -> dict[str, str]:
     else:
         if not tts_provider:
             tts_provider = "browser"
-
-    fast_llm_provider = str(
-        voice.get("fast_llm_provider", DEFAULT_VOICE_FAST_LLM_PROVIDER)
-        or DEFAULT_VOICE_FAST_LLM_PROVIDER
-    ).strip().lower()
-    if fast_llm_provider in {"main", "inherit_main", "same_as_main"}:
-        fast_llm_provider = DEFAULT_VOICE_FAST_LLM_PROVIDER
+    # Legacy compatibility: older configs may still carry `voice.fast_llm_provider`, but the
+    # Voice Call LLM is now owned by the agent primary model plus optional explicit agent voice
+    # override fields. Compiler-managed voice config remains responsible only for STT/TTS routing.
 
     return {
         "mode": voice_mode,
         "stt_provider": stt_provider,
         "tts_provider": tts_provider,
         "tts_provider_fallback": tts_provider_fallback,
-        "fast_llm_provider": fast_llm_provider,
     }
 
 
@@ -1126,6 +1154,8 @@ def normalize_remote_call_mode(network: dict[str, Any]) -> str:
         # `auto` was the legacy quick-tunnel experiment. Local installs should not silently expose
         # remote voice surfaces anymore; operators must opt in explicitly.
         return "disabled"
+    if mode in {"custom_domain", "custom_domain_public_edge", "public_custom_domain"}:
+        return "public_https_edge"
     return mode
 
 
@@ -1434,10 +1464,6 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_STT_PROVIDER"] = resolved_voice["stt_provider"]
     env["VIVENTIUM_TTS_PROVIDER"] = resolved_voice["tts_provider"]
     env["TTS_PROVIDER_PRIMARY"] = resolved_voice["tts_provider"]
-    if resolved_voice["fast_llm_provider"]:
-        env["VIVENTIUM_VOICE_FAST_LLM_PROVIDER"] = resolved_voice["fast_llm_provider"]
-    else:
-        env.pop("VIVENTIUM_VOICE_FAST_LLM_PROVIDER", None)
     wing_mode = voice.get("wing_mode", voice.get("shadow_mode", {})) or {}
     wing_mode_default_enabled = "true" if wing_mode.get("default_enabled") is True else "false"
     env["VIVENTIUM_WING_MODE_DEFAULT_ENABLED"] = wing_mode_default_enabled
@@ -1835,6 +1861,8 @@ def render_librechat_yaml(
     else:
         endpoints["custom"] = copy.deepcopy(generated_custom)
     payload["endpoints"] = endpoints
+    apply_memory_assignment(payload, assignments)
+    normalize_anthropic_title_endpoint(payload)
     payload = prune_unavailable_source_defaults(payload, env)
     return yaml.safe_dump(payload, sort_keys=False)
 

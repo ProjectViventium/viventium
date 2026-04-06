@@ -118,6 +118,11 @@ LIVEKIT_CFG_FILE="$LIVEKIT_CFG_DIR/livekit.yaml"
 LIVEKIT_PID_FILE="$NATIVE_STATE_DIR/livekit.pid"
 LIVEKIT_META_FILE="$NATIVE_STATE_DIR/livekit.runtime.env"
 LIVEKIT_LOG_FILE="$NATIVE_LOG_DIR/livekit.log"
+LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN:-}"
+LIVEKIT_TURN_TLS_PORT="${LIVEKIT_TURN_TLS_PORT:-}"
+LIVEKIT_TURN_CERT_FILE="${LIVEKIT_TURN_CERT_FILE:-}"
+LIVEKIT_TURN_KEY_FILE="${LIVEKIT_TURN_KEY_FILE:-}"
+NATIVE_STACK_SKIP_LIVEKIT="${VIVENTIUM_NATIVE_STACK_SKIP_LIVEKIT:-0}"
 VOICE_ENABLED="${VIVENTIUM_VOICE_ENABLED:-true}"
 
 mkdir -p "$NATIVE_STATE_DIR" "$NATIVE_LOG_DIR" "$PROFILE_STATE_DIR" "$MONGO_DATA_DIR" "$MEILI_DATA_DIR" "$LIVEKIT_CFG_DIR"
@@ -198,6 +203,10 @@ LIVEKIT_NODE_IP=${LIVEKIT_NODE_IP}
 LIVEKIT_HTTP_PORT=${LIVEKIT_HTTP_PORT}
 LIVEKIT_TCP_PORT=${LIVEKIT_TCP_PORT}
 LIVEKIT_UDP_PORT=${LIVEKIT_UDP_PORT}
+LIVEKIT_TURN_DOMAIN=${LIVEKIT_TURN_DOMAIN}
+LIVEKIT_TURN_TLS_PORT=${LIVEKIT_TURN_TLS_PORT}
+LIVEKIT_TURN_CERT_FILE=${LIVEKIT_TURN_CERT_FILE}
+LIVEKIT_TURN_KEY_FILE=${LIVEKIT_TURN_KEY_FILE}
 EOF
 }
 
@@ -206,14 +215,23 @@ livekit_meta_matches_expected() {
     return 1
   fi
   local actual_node_ip actual_http_port actual_tcp_port actual_udp_port
+  local actual_turn_domain actual_turn_tls_port actual_turn_cert_file actual_turn_key_file
   actual_node_ip="$(grep '^LIVEKIT_NODE_IP=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_http_port="$(grep '^LIVEKIT_HTTP_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_tcp_port="$(grep '^LIVEKIT_TCP_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_udp_port="$(grep '^LIVEKIT_UDP_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
+  actual_turn_domain="$(grep '^LIVEKIT_TURN_DOMAIN=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
+  actual_turn_tls_port="$(grep '^LIVEKIT_TURN_TLS_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
+  actual_turn_cert_file="$(grep '^LIVEKIT_TURN_CERT_FILE=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
+  actual_turn_key_file="$(grep '^LIVEKIT_TURN_KEY_FILE=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   [[ "$actual_node_ip" == "$LIVEKIT_NODE_IP" ]] &&
     [[ "$actual_http_port" == "$LIVEKIT_HTTP_PORT" ]] &&
     [[ "$actual_tcp_port" == "$LIVEKIT_TCP_PORT" ]] &&
-    [[ "$actual_udp_port" == "$LIVEKIT_UDP_PORT" ]]
+    [[ "$actual_udp_port" == "$LIVEKIT_UDP_PORT" ]] &&
+    [[ "$actual_turn_domain" == "$LIVEKIT_TURN_DOMAIN" ]] &&
+    [[ "$actual_turn_tls_port" == "$LIVEKIT_TURN_TLS_PORT" ]] &&
+    [[ "$actual_turn_cert_file" == "$LIVEKIT_TURN_CERT_FILE" ]] &&
+    [[ "$actual_turn_key_file" == "$LIVEKIT_TURN_KEY_FILE" ]]
 }
 
 livekit_command_matches_expected() {
@@ -400,6 +418,10 @@ start_meili() {
 }
 
 start_livekit() {
+  if [[ "$NATIVE_STACK_SKIP_LIVEKIT" == "1" || "$NATIVE_STACK_SKIP_LIVEKIT" == "true" ]]; then
+    echo "[native] Skipping native LiveKit during early bootstrap; launcher will own LiveKit startup"
+    return 0
+  fi
   if [[ "$VOICE_ENABLED" != "true" ]]; then
     echo "[native] Voice disabled; skipping native LiveKit"
     return 0
@@ -427,6 +449,18 @@ port: ${LIVEKIT_HTTP_PORT}
 rtc:
   tcp_port: ${LIVEKIT_TCP_PORT}
   udp_port: ${LIVEKIT_UDP_PORT}
+EOF
+  if [[ -n "$LIVEKIT_TURN_DOMAIN" && -n "$LIVEKIT_TURN_TLS_PORT" && -n "$LIVEKIT_TURN_CERT_FILE" && -n "$LIVEKIT_TURN_KEY_FILE" ]]; then
+    cat >>"$LIVEKIT_CFG_FILE" <<EOF
+turn:
+  enabled: true
+  domain: "${LIVEKIT_TURN_DOMAIN}"
+  tls_port: ${LIVEKIT_TURN_TLS_PORT}
+  cert_file: "${LIVEKIT_TURN_CERT_FILE}"
+  key_file: "${LIVEKIT_TURN_KEY_FILE}"
+EOF
+  fi
+  cat >>"$LIVEKIT_CFG_FILE" <<EOF
 keys:
   ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
 EOF

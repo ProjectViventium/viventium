@@ -135,7 +135,7 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     assert config["integrations"]["web_search"]["search_provider"] == "searxng"
     assert config["integrations"]["web_search"]["scraper_provider"] == "firecrawl"
     assert config["llm"]["primary"]["auth_mode"] == "connected_account"
-    assert config["voice"]["fast_llm_provider"] == ""
+    assert "fast_llm_provider" not in config["voice"]
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:
