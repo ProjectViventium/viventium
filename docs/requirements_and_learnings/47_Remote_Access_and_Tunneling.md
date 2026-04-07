@@ -217,6 +217,8 @@ Operational requirements:
 - a public IPv4 path to this machine, or an operator-managed edge that forwards those ports
 - for the durable public answer:
   - operator-owned DNS pointing the app/API/playground/LiveKit subdomains at the current public IP
+- do not run a full-tunnel VPN on the same Mac that is serving the public edge unless the VPN is
+  explicitly split-routed to keep the local LAN and the host's own public IP off the tunnel
 
 Hostname guidance:
 
@@ -261,6 +263,8 @@ Operator recipe for a stable public link:
    - `https://app.<your-domain>` loads LibreChat
    - voice launch opens `https://playground.<your-domain>`
    - the call completes a real round-trip
+   - do not treat a full-tunnel VPN running on the same host Mac as equivalent proof; use a
+     separate device or disable the VPN on the serving host first
 
 User expectation:
 

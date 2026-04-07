@@ -170,6 +170,14 @@
      - an off-box fetch service successfully retrieved `https://playground.app.<your-domain>/` over HTTPS
    - Finding:
      - the current evidence is consistent with NAT hairpin failure on the local machine, not a dead public deployment
+22. Same-host full-tunnel VPN routing check.
+   - Result:
+     - with Windscribe enabled on the same Mac, the route to the host's own public IP resolved to a
+       VPN `utun` interface instead of the normal LAN gateway
+     - Caddy still showed genuine external requests from other public IPs reaching the custom-domain edge
+   - Finding:
+     - a full-tunnel VPN on the serving host is not a valid substitute for a separate off-network
+       client when validating `public_https_edge`
 
 ## Findings
 
@@ -183,6 +191,10 @@
   - chat still works on `localhost`
   - a fresh voice launch still works on `localhost`
   - the modern playground transcript path still returns a real model reply
+- A full-tunnel VPN on the same Mac is not a clean external QA method for `public_https_edge`.
+  - it can route the host's own public IP back through the VPN tunnel instead of the normal home
+    gateway
+  - separate-device or VPN-off testing is required before drawing conclusions from failures there
 - The key regression fixed in this pass was the localhost/public LiveKit boundary.
   - earlier, localhost modern-playground sessions inherited the public LiveKit WSS URL and timed
     out on signal

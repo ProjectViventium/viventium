@@ -40,6 +40,8 @@ honest separation between:
   reply after remote access is enabled.
 - When `public_https_edge` is active, an external fetch path can retrieve at least the public app or
   public playground surface over HTTPS.
+- A full-tunnel VPN running on the same Mac that is serving the public edge does not count as a
+  clean external acceptance path; it can rewrite the host routing table and invalidate the test.
 - Preflight clearly explains missing provider prerequisites instead of failing silently:
   - NetBird client not installed/joined
   - Tailscale daemon/tailnet not connected
@@ -87,18 +89,20 @@ honest separation between:
 8. Run preflight for Tailscale, NetBird, and public-edge configs and record any required manual attention.
 9. If `public_https_edge` is active, capture at least one non-local fetch proof of the public app or
    playground surface.
-10. If stable custom-domain DNS is not yet delegated, record that as the remaining external operator action
+10. Do not use a full-tunnel VPN on the same serving host as the only "outside network" proof.
+    Use a separate device or disable the VPN on the serving host first.
+11. If stable custom-domain DNS is not yet delegated, record that as the remaining external operator action
     instead of overstating acceptance.
-11. Start a safe local directory-test target that exposes `/.well-known/viventium-instance.json`.
-12. Register that target through the real directory CLI and verify the website stores and redirects
+12. Start a safe local directory-test target that exposes `/.well-known/viventium-instance.json`.
+13. Register that target through the real directory CLI and verify the website stores and redirects
     to the resolved origin.
-13. Probe negative cases for the directory layer:
+14. Probe negative cases for the directory layer:
     - tampered signature
     - unknown username
     - burst traffic that must produce throttling
-14. Fetch the runtime-generated `/.well-known/viventium-instance.json` through a live Caddy process,
+15. Fetch the runtime-generated `/.well-known/viventium-instance.json` through a live Caddy process,
     not only through a synthetic side server.
-15. Validate the hosted-mode SSRF guard under `NODE_ENV=production` by attempting to register a
+16. Validate the hosted-mode SSRF guard under `NODE_ENV=production` by attempting to register a
     private/loopback target and confirming rejection.
-16. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
+17. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
     from this feature slice.
