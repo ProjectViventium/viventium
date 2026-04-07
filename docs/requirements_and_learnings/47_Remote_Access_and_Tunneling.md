@@ -29,6 +29,11 @@ Operator guidance:
   `tailscale_tailnet_https`.
 - If you need a stable public browser URL for arbitrary devices, choose `custom_domain`
   / `public_https_edge`.
+- The easiest way to change modes later is `bin/viventium configure`. The wizard now asks where you
+  need to use Viventium and, for remote installs, whether browser sign-up and browser password reset
+  should stay enabled.
+- After startup, run `bin/viventium status` to see the exact live outside URL that Viventium
+  published for this machine.
 
 ## Product Position
 
@@ -73,6 +78,18 @@ Quick operator choice:
   you are willing to install Tailscale on those devices
 - use `custom_domain` when you want the app and modern playground reachable from any browser
   anywhere without installing a mesh client
+
+Public-account safety:
+
+- `runtime.auth.allow_registration` defaults to `true` so a brand-new local install can create its
+  first real account
+- when the wizard is configuring a remote install, it now asks explicitly whether browser sign-up
+  and browser password reset should stay enabled
+- once the install is reachable from outside your network, close registration unless you
+  intentionally want public self-signup
+- keep `runtime.auth.allow_password_reset: false` unless you have real email delivery configured
+- for a one-time operator-issued reset link without opening the public browser reset endpoint, use:
+  - `bin/viventium password-reset-link <email>`
 
 ## Supported Modes
 
@@ -131,6 +148,12 @@ User expectation:
 - the phone or tablet must also be enrolled in the same tailnet
 - this is the easiest remote-access path when the operator only needs their own devices
 
+Validation status:
+
+- Config/compiler/preflight coverage exists.
+- This branch has not yet performed a provider-native end-to-end validation on a real tailnet from
+  this Mac.
+
 ### 4. `netbird_selfhosted_mesh`
 
 Supported as the OSS self-hosted private-mesh path, with a deliberately narrower contract than a
@@ -178,6 +201,12 @@ TLS note:
 - other client devices must trust the same issuing CA, or the operator must adopt a certificate
   strategy compatible with their mesh/browser fleet
 
+Validation status:
+
+- The secure-origin Caddy/browser contract was validated locally.
+- This branch has not yet performed a provider-native end-to-end validation on a real NetBird mesh
+  from this Mac.
+
 ### 5. `public_https_edge` / `custom_domain`
 
 Recommended when the operator wants a real public HTTPS/WSS entrypoint that arbitrary browsers can
@@ -201,6 +230,8 @@ Config contract:
 
 - `runtime.network.remote_call_mode: public_https_edge`
 - `runtime.network.remote_call_mode: custom_domain`
+- `runtime.network.remote_call_mode: custom_domain_public_edge`
+- `runtime.network.remote_call_mode: public_custom_domain`
 - blank `public_*` origins are allowed for the bootstrap `sslip.io` fallback
 - stable bookmarkable access requires explicit values for:
   - `runtime.network.public_client_origin`
@@ -236,6 +267,12 @@ Hostname guidance:
   - `https://api.example.com`
   - `https://playground.example.com`
   - `wss://livekit.example.com`
+- If you prefer to keep one visible namespace in front, choose an app hostname such as
+  `app.example.com` and then derive:
+  - `https://app.example.com`
+  - `https://api.app.example.com`
+  - `https://playground.app.example.com`
+  - `wss://livekit.app.example.com`
 - The helper intentionally rejects reusing one hostname for different surface ports because that
   would blur routing ownership and create brittle mixed-surface assumptions.
 
@@ -269,7 +306,8 @@ Operator recipe for a stable public link:
 4. Restart Viventium. The local Caddy edge will request real certificates for the configured
    hostnames, the launcher will republish those URLs back into the runtime, and leased UPnP
    mappings will be refreshed automatically while the runtime stays up.
-5. Validate from another device on a different network:
+5. Run `bin/viventium status` and copy the exact outside URL Viventium reports.
+6. Validate from another device on a different network:
    - `https://app.<your-domain>` loads LibreChat
    - voice launch opens `https://playground.<your-domain>`
    - the call completes a real round-trip
@@ -292,6 +330,18 @@ Recommended stable record pattern:
 
 That keeps the user-facing primary URL on `app.<your-domain>` while avoiding collisions with other
 top-level properties that may already exist on the same domain.
+
+Learnings from public-edge validation:
+
+- Some consumer routers issue finite UPnP/NAT-PMP leases instead of permanent mappings.
+- Viventium now treats those mappings as renewable runtime state and keeps a refresh worker alive
+  while the public edge is running.
+- If the router drops or refuses renewal, the operator fallback is still manual forwarding of the
+  required ports.
+- A full-tunnel VPN running on the serving Mac can invalidate same-machine "outside network" tests
+  even while real outside devices still work.
+- The runtime-owned `public-network.json` file is the source of truth for the live outside URL, the
+  current public IP, and the current mapping lease state after startup.
 
 ## Directory Discovery Layer
 

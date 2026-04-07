@@ -30,6 +30,13 @@ properties:
         type: object
       extra_env:
         type: object
+      auth:
+        type: object
+        properties:
+          allow_registration:
+            type: boolean
+          allow_password_reset:
+            type: boolean
       personalization:
         type: object
         properties:

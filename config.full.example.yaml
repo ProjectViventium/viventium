@@ -7,6 +7,14 @@ runtime:
   playground_variant: modern
   call_session_secret:
     secret_ref: keychain://viventium/call_session_secret
+  auth:
+    # Browser sign-up is open by default so a new install can create its first account.
+    # Once the install is reachable from outside your network, close this unless you intentionally
+    # want public self-signup.
+    allow_registration: true
+    # Keep browser password reset off unless real email delivery is configured.
+    # Safer operator path: bin/viventium password-reset-link <email>
+    allow_password_reset: false
   network:
     # Remote browser voice calls from other devices need a real HTTPS/WSS deployment path for the
     # web UI and LiveKit media plane. Local installs should default to disabled until the operator
@@ -18,7 +26,7 @@ runtime:
     #   when your router supports UPnP/NAT-PMP or you can forward the required ports manually
     # Supported modes:
     # - disabled
-    # - cloudflare_quick_tunnel (experimental voice-only path)
+    # - cloudflare_quick_tunnel (experimental voice-only path; not the recommended install story)
     # - tailscale_tailnet_https (recommended for your own devices)
     # - netbird_selfhosted_mesh (OSS private-mesh path)
     # - public_https_edge (public custom-domain or zero-cost sslip.io path)
@@ -28,6 +36,11 @@ runtime:
     # Leave them blank for automatic Tailscale mode or the public sslip.io fallback.
     # Set them explicitly for NetBird or your own stable public subdomains.
     # Stable public custom-domain access expects all four of these to be set.
+    # If you prefer a single namespace, choose an app hostname like app.example.com and use:
+    # - https://app.example.com
+    # - https://api.app.example.com
+    # - https://playground.app.example.com
+    # - wss://livekit.app.example.com
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""

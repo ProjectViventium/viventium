@@ -255,6 +255,97 @@ def test_build_next_steps_prioritizes_connected_accounts_when_no_foundation_api_
     assert all("Connected Accounts" not in step for step in steps)
 
 
+def test_build_service_rows_uses_live_public_network_state_for_remote_access(monkeypatch, tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "network": {"remote_call_mode": "custom_domain"},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "public-network.json").write_text(
+        '{"public_client_url":"https://app.example.test"}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    remote_status, remote_detail = services["Remote Access"]
+    assert remote_status == "Running"
+    assert "https://app.example.test" in remote_detail
+
+
+def test_build_service_rows_reports_auth_posture() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "auth": {
+                "allow_registration": False,
+                "allow_password_reset": False,
+            },
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+
+    rows = install_summary.build_service_rows(config, {}, probe_live=False)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Account Sign-up"] == ("Closed", "Only existing accounts can sign in")
+    assert "password-reset-link" in services["Password Reset"][1]
+
+
+def test_build_next_steps_prefers_live_public_network_state(monkeypatch, tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "network": {"remote_call_mode": "custom_domain"},
+            "ports": {"lc_frontend_port": 3190},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "public-network.json").write_text(
+        '{"public_client_url":"https://app.example.test"}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    steps = install_summary.build_next_steps(config, {}, runtime_dir)
+
+    assert any("https://app.example.test" in step for step in steps)
+    assert any("password-reset-link" in step for step in steps)
+
+
 def test_build_next_steps_skips_connected_accounts_priority_when_foundation_api_key_exists(monkeypatch) -> None:
     install_summary = load_install_summary_module()
 

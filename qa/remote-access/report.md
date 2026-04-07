@@ -5,6 +5,7 @@
 - 2026-04-04
 - 2026-04-05
 - 2026-04-06
+- 2026-04-07
 
 ## Build Under Test
 
@@ -201,6 +202,79 @@
    - Finding:
      - the public-edge implementation now matches real home-router behavior more closely because it
        treats UPnP mappings as leased state that may need renewal during a long-running session
+25. Installer and status UX follow-up validation.
+   - Result:
+     - the wizard now lets a user choose remote access in plain language and, when remote access is
+       enabled, explicitly choose whether browser sign-up and browser password reset should stay
+       enabled
+     - the updated release slice passed:
+       `python3 -m pytest tests/release/test_wizard.py tests/release/test_install_summary.py tests/release/test_config_compiler.py tests/release/test_preflight.py tests/release/test_directory_link.py tests/release/test_remote_call_tunnel.py -q`
+       => `117 passed`
+     - `bin/viventium status` now showed:
+       - `Remote Access: Running`
+       - `Account Sign-up: Closed`
+       - `Password Reset: Disabled`
+26. Local operator auth-hardening validation on the live custom-domain install.
+   - Result:
+     - canonical App Support config now sets:
+       - `runtime.auth.allow_registration: false`
+       - `runtime.auth.allow_password_reset: false`
+     - Playwright on `http://localhost:3190/login` showed the login page without the browser
+       `Sign up` link after restart
+     - `bin/viventium password-reset-link <email>` generated a one-time local operator link while
+       leaving the public browser reset path disabled by default
+     - `GET /api/viventium/auth/password-reset?...` returned `200` locally for the issued link
+       without requiring public password-reset enablement
+27. Public custom-domain reachability sanity check after the auth-hardening restart.
+   - Result:
+     - localhost checks returned `200` for:
+       - `http://localhost:3190`
+       - `http://localhost:3300`
+     - an independent web fetch reached `https://playground.app.<your-domain>/` over HTTPS after
+       the restart
+   - Finding:
+     - the auth-hardening restart preserved the public browser edge while closing public sign-up on
+       the running install
+25. Added canonical auth controls, a clearer remote-access setup path, and live status reporting.
+   - Result:
+     - `runtime.auth.allow_registration` and `runtime.auth.allow_password_reset` now compile from
+       canonical `config.yaml` into the generated runtime env
+     - the installer/configure flow now asks remote-access questions in plain language instead of
+       requiring manual YAML edits just to discover the supported modes
+     - if an operator enters `app.example.com`, the wizard derives:
+       - `https://app.example.com`
+       - `https://api.app.example.com`
+       - `https://playground.app.example.com`
+       - `wss://livekit.app.example.com`
+     - `bin/viventium status` now reports:
+       - the actual live outside URL from `public-network.json` when remote access is active
+       - whether browser sign-up is open or closed
+       - whether browser password reset is enabled or intentionally disabled
+     - targeted regression slice passed after these changes:
+       `python3 -m pytest tests/release/test_wizard.py tests/release/test_install_summary.py tests/release/test_config_compiler.py tests/release/test_preflight.py tests/release/test_directory_link.py tests/release/test_remote_call_tunnel.py -q`
+       => `116 passed`
+   - Finding:
+     - remote access and browser-auth posture are now owned by canonical config plus a single
+       operator-facing status surface, which reduces ambiguity for new installs and new machines
+26. Added and live-validated an operator-only local password-reset-link flow for public installs.
+   - Result:
+     - the live personal config compiled to:
+       - `ALLOW_REGISTRATION=false`
+       - `ALLOW_PASSWORD_RESET=false`
+     - `bin/viventium password-reset-link <email>` now:
+       - recompiles runtime files
+       - loads the generated LibreChat runtime env
+       - connects to the live local MongoDB
+       - returns a short-lived password reset URL without opening the public browser reset flow
+     - local GET validation against
+       `http://localhost:3180/api/viventium/auth/password-reset?...`
+       returned `200 text/html`
+     - targeted LibreChat regression slice passed:
+       `npx jest --config jest.config.js --runInBand server/routes/viventium/__tests__/auth.spec.js server/services/viventium/__tests__/localPasswordResetService.spec.js`
+       => `2 passed suites`, `7 passed tests`
+   - Finding:
+     - public installs can now keep browser sign-up closed and browser password reset disabled
+       without losing a safe operator recovery path
 
 ## Findings
 
@@ -271,6 +345,21 @@
   - `livekit.app.<your-domain>`
   - this keeps the primary public entrypoint on `app.<your-domain>` without consuming every
     top-level subdomain on the operator's domain
+- New installs no longer need to discover remote access by reading raw YAML first.
+  - the wizard now offers:
+    - local only
+    - my own phone/laptop
+    - any browser anywhere
+  - if the operator chooses a custom public hostname, the host family is derived automatically
+- Public browser exposure and browser auth posture are now easier to reason about.
+  - `bin/viventium status` is the single operator-facing place to read:
+    - the live outside URL
+    - whether sign-up is open or closed
+    - whether password reset is enabled or intentionally disabled
+  - the documented safe public posture is:
+    - `allow_registration: false` after onboarding
+    - `allow_password_reset: false`
+    - `bin/viventium password-reset-link <email>` when a one-time reset is needed
 
 ## Limitations
 
@@ -284,6 +373,13 @@
     tailnet-only URLs could not be exercised in a real tailnet session here.
 - NetBird was not provider-native live-validated end to end on this Mac.
   - this machine does not currently have the NetBird client installed or joined to a self-hosted mesh
+- The final public-browser acceptance gate still requires a real off-home authenticated chat plus a
+  real voice round-trip on a separate device.
+  - this report now includes stronger supporting proof for the public edge itself:
+    - external fetch success on the public app/playground hosts
+    - real off-home phone browser load restored after renewing the router mappings
+    - local Caddy host-routed `200` checks for app, playground, and well-known identity
+  - but it still does not replace a true remote voice conversation from a separate device
 - TURN/TLS is now wired and listening on `5349`, but this report did not include a true external
   phone-on-cellular voice run over the public edge.
   - the strongest proof collected here is:

@@ -1054,6 +1054,63 @@ def test_config_compiler_preserves_supported_remote_mesh_modes(
     assert "LIVEKIT_NODE_IP=100.80.40.20" in runtime_env
 
 
+def test_config_compiler_renders_runtime_auth_controls(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "auth": {
+                "allow_registration": False,
+                "allow_password_reset": False,
+            },
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "ALLOW_REGISTRATION=false" in runtime_env
+    assert "ALLOW_PASSWORD_RESET=false" in runtime_env
+
+
 def test_resolve_voice_settings_keeps_local_first_stt_on_intel_even_when_openai_key_exists(
     monkeypatch,
 ) -> None:

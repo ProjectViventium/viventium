@@ -42,6 +42,7 @@ RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
 GENERATED_ENV="$RUNTIME_DIR/runtime.env"
 GENERATED_LOCAL_ENV="$RUNTIME_DIR/runtime.local.env"
 GENERATED_LIBRECHAT_YAML="$RUNTIME_DIR/librechat.yaml"
+GENERATED_LIBRECHAT_ENV="$RUNTIME_DIR/service-env/librechat.env"
 LOCK_FILE="${VIVENTIUM_COMPONENTS_LOCK_FILE:-$REPO_ROOT/components.lock.json}"
 CLI_LOCK_DIR="${VIVENTIUM_CLI_LOCK_DIR:-$APP_SUPPORT_DIR/state/cli-operation.lock}"
 CLI_LOCK_OWNER=0
@@ -87,6 +88,7 @@ refresh_runtime_paths() {
   GENERATED_ENV="$RUNTIME_DIR/runtime.env"
   GENERATED_LOCAL_ENV="$RUNTIME_DIR/runtime.local.env"
   GENERATED_LIBRECHAT_YAML="$RUNTIME_DIR/librechat.yaml"
+  GENERATED_LIBRECHAT_ENV="$RUNTIME_DIR/service-env/librechat.env"
   CLI_LOCK_DIR="${VIVENTIUM_CLI_LOCK_DIR:-$APP_SUPPORT_DIR/state/cli-operation.lock}"
 }
 
@@ -354,6 +356,8 @@ Commands:
   compile-config    Render runtime env/yaml files from config.yaml.
   doctor            Run preflight checks against the current config.
   register-link     Register this public Viventium instance under a viventium.ai vanity link.
+  password-reset-link
+                    Print a one-time password reset link locally without enabling public reset.
   install-helper    Install or refresh the macOS Viventium status-bar helper.
   uninstall-helper  Remove the macOS Viventium status-bar helper.
   status-bar        Turn the macOS Viventium status-bar helper on or off.
@@ -446,6 +450,15 @@ Usage:
 Registers the current public Viventium client URL as a vanity redirect under
 viventium.ai/u/<username>. The local instance must already be running with a
 public remote-access mode so the verification document is reachable.
+USAGE
+      ;;
+    password-reset-link)
+      cat <<'USAGE'
+Usage:
+  bin/viventium password-reset-link <email>
+
+Prints a one-time password reset link locally for an existing account without
+enabling the public browser password-reset endpoint.
 USAGE
       ;;
     launch)
@@ -2396,13 +2409,40 @@ case "$COMMAND" in
       subcommand_usage register-link
       exit 0
     fi
-    local reg_username="$1"; shift
+    reg_username="$1"; shift
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     prepare_runtime_exports
     refresh_repo_python
     exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/directory_link.py" \
       --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
       --username "$reg_username" \
+      "$@"
+    ;;
+  password-reset-link)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage password-reset-link
+      exit 0
+    fi
+    reset_email="$1"; shift
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    compile_config
+    prepare_runtime_exports
+    if [[ -f "$GENERATED_ENV" ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      source "$GENERATED_ENV"
+      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LOCAL_ENV"
+      fi
+      if [[ -f "$GENERATED_LIBRECHAT_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LIBRECHAT_ENV"
+      fi
+      set +a
+    fi
+    exec node "$REPO_ROOT/viventium_v0_4/LibreChat/config/issue-password-reset-link.js" \
+      --email "$reset_email" \
       "$@"
     ;;
   launch)

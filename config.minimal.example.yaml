@@ -4,6 +4,13 @@ install:
 runtime:
   log_level: info
   profile: isolated
+  auth:
+    # Browser account creation is open by default for a brand-new local install.
+    # Close it once your real accounts exist and the install is reachable from outside your network.
+    allow_registration: true
+    # Keep this off unless you have real email delivery configured.
+    # For a one-time operator-issued reset link, use: bin/viventium password-reset-link <email>
+    allow_password_reset: false
   network:
     # Supported modes: disabled, cloudflare_quick_tunnel, tailscale_tailnet_https,
     # netbird_selfhosted_mesh, public_https_edge.
@@ -13,6 +20,7 @@ runtime:
     # - tailscale_tailnet_https: easiest for your own devices when they can run Tailscale
     # - custom_domain/public_https_edge: best for any browser anywhere; requires a real public edge
     #   and either UPnP/NAT-PMP support or manual port forwarding
+    # - cloudflare_quick_tunnel: experimental voice-only tunnel, not the recommended install story
     remote_call_mode: disabled
     # Leave these blank for automatic Tailscale mode or the temporary public sslip.io fallback.
     # Set them explicitly for NetBird or your own stable public subdomains when using

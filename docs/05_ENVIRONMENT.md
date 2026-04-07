@@ -53,6 +53,8 @@ to preserve local parity with older setups.
 ## Common Optional Inputs
 
 - secondary LLM provider
+- `runtime.auth.allow_registration`
+- `runtime.auth.allow_password_reset`
 - voice provider settings
 - `voice.wing_mode.default_enabled`
 - `voice.wing_mode.prompt`
@@ -135,9 +137,42 @@ and reverse-proxy patterns.
 User guidance:
 
 - Start from `config.minimal.example.yaml` or `config.full.example.yaml`.
+- Use `bin/viventium configure` to switch modes later without hand-editing YAML.
 - Keep `remote_call_mode: disabled` unless you explicitly need remote access.
 - Choose `tailscale_tailnet_https` for your own enrolled devices.
 - Choose `custom_domain` / `public_https_edge` only when you need public browser access.
+- After startup, run `bin/viventium status` to see the exact live outside URL that Viventium
+  published for this machine.
+
+## Browser Auth Controls
+
+The canonical config also supports browser account posture for self-hosted installs:
+
+- `runtime.auth.allow_registration`
+- `runtime.auth.allow_password_reset`
+
+Defaults:
+
+- `allow_registration: true`
+- `allow_password_reset: false`
+
+Wizard behavior:
+
+- when remote access is enabled through `bin/viventium configure`, the wizard also asks whether
+  browser sign-up and browser password reset should stay enabled for that install
+
+Recommended operator posture:
+
+- keep registration open only while you still need people to create accounts in the browser
+- close registration once the real accounts already exist
+- keep password reset off unless you have real email delivery configured
+- for a one-time operator-issued reset link without opening the public reset endpoint, run:
+  - `bin/viventium password-reset-link <email>`
+
+Why password reset stays off by default:
+
+- LibreChat returns reset links directly when email delivery is not configured
+- that is acceptable for a local operator tool but not for a public browser endpoint
 
 ## Wing Mode
 

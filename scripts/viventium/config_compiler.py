@@ -1224,6 +1224,15 @@ def conversation_recall_enabled(config: dict[str, Any]) -> bool:
     return resolve_bool(personalization.get("default_conversation_recall"), False)
 
 
+def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
+    runtime = config.get("runtime", {}) or {}
+    auth = runtime.get("auth", {}) or {}
+    return {
+        "allow_registration": resolve_bool(auth.get("allow_registration"), True),
+        "allow_password_reset": resolve_bool(auth.get("allow_password_reset"), False),
+    }
+
+
 def telegram_enabled(config: dict[str, Any]) -> bool:
     integrations = config.get("integrations", {}) or {}
     telegram = integrations.get("telegram", {}) or {}
@@ -1261,6 +1270,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         agents.get("default_main_agent_id") or DEFAULT_MAIN_AGENT_ID
     ).strip() or DEFAULT_MAIN_AGENT_ID
     default_conversation_recall = conversation_recall_enabled(config)
+    auth_settings = resolve_auth_settings(config)
     start_rag_api = "true" if default_conversation_recall else "false"
     code_interpreter_is_enabled = code_interpreter_enabled(config)
     web_search_settings = resolve_web_search_settings(config)
@@ -1328,7 +1338,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_WEB_SEARCH_ENABLED": "true" if web_search_is_enabled else "false",
         "VIVENTIUM_OPENCLAW_ENABLED": "true" if integrations.get("openclaw", {}).get("enabled") else "false",
         "ALLOW_EMAIL_LOGIN": "true",
-        "ALLOW_REGISTRATION": "true",
+        "ALLOW_REGISTRATION": "true" if auth_settings["allow_registration"] else "false",
+        "ALLOW_PASSWORD_RESET": "true" if auth_settings["allow_password_reset"] else "false",
         "ALLOW_SOCIAL_LOGIN": "false",
         "ALLOW_SOCIAL_REGISTRATION": "false",
         "ALLOW_UNVERIFIED_EMAIL_LOGIN": "true",

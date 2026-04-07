@@ -187,6 +187,36 @@ This is the shared troubleshooting index. For stack-specific detail, see:
 - Current status: `sslip.io` remains the bootstrap fallback; stable custom-domain access is the
   remaining operator step.
 
+### Public remote access worked, then stopped a few hours later
+- Root cause: some routers grant UPnP/NAT-PMP mappings with finite leases instead of permanent
+  mappings.
+- Symptom:
+  - the public domain still resolves
+  - outside devices stop loading the app or playground
+- Fix:
+  - keep Viventium running so the mapping refresh worker can renew those leases automatically
+  - run `bin/viventium start` again if the router dropped the mappings after a restart or sleep
+  - if the router refuses renewal entirely, use manual forwarding for `80/tcp`, `443/tcp`,
+    `7889/tcp`, `7890/udp`, and `5349/tcp`
+
+### Public remote test fails only when a VPN is running on the host Mac
+- Root cause: a full-tunnel VPN on the same Mac that is serving the public edge can rewrite the
+  route to the host's own public IP and break same-machine "pretend I am remote" tests.
+- Symptom:
+  - outside devices may still work
+  - the serving Mac itself times out or shows odd SSL/proxy errors when it opens the public domain
+- Fix:
+  - turn the VPN off on the serving Mac while Viventium is acting as the public edge
+  - do the real acceptance test from a separate device on cellular or another external network
+
+### Public app loads but voice does not connect from outside the house
+- Root cause: browser HTTPS is up, but LiveKit media/TURN ports are not reachable.
+- Fix:
+  - confirm the public edge still owns `7889/tcp`, `7890/udp`, and `5349/tcp`
+  - if UPnP/NAT-PMP renewal is not stable on the router, forward those ports manually
+  - keep localhost callers on `ws://localhost:7888`; only remote callers should use the public
+    LiveKit URL
+
 ### Capacity: how many simultaneous users?
 - There is no hard-coded user cap in this local dev launcher.
 - Voice gateway worker runs with LiveKit `WorkerOptions` defaults (`job_executor_type=process`, dev `load_threshold=inf`, `job_memory_limit_mb=0`), so practical limits are machine/latency/rate-limit bound.

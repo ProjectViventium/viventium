@@ -22,6 +22,13 @@ honest separation between:
   the local Caddy edge and serve those pages successfully over HTTPS.
 - `public_https_edge` can publish secure app/API/playground/LiveKit signaling origins through the
   local Caddy edge, expose the required router mappings, and generate TURN/TLS-ready LiveKit state.
+- The install/configure path must let a new user choose remote access in plain language without
+  requiring manual YAML edits just to discover the supported modes.
+- `bin/viventium status` must report the actual live outside URL when remote access is active.
+- Publicly exposed installs must support an operator-safe auth posture:
+  - `runtime.auth.allow_registration: false` closes browser sign-up
+  - `runtime.auth.allow_password_reset: false` keeps the public browser reset path closed
+  - `bin/viventium password-reset-link <email>` can still issue a short-lived local operator link
 - the optional `viventium.ai/u/<username>` directory layer only issues redirects to verified
   self-hosted origins; it must never proxy user app, API, or media traffic
 - directory registration only succeeds for verified HTTPS targets with a matching signed payload and
@@ -57,10 +64,14 @@ honest separation between:
 - Root remote-access regression tests:
   - `tests/release/test_preflight.py`
   - `tests/release/test_config_compiler.py`
+  - `tests/release/test_install_summary.py`
   - `tests/release/test_remote_call_tunnel.py`
+  - `tests/release/test_wizard.py`
 - LibreChat regression tests:
   - `viventium_v0_4/LibreChat/api/server/routes/viventium/__tests__/calls.spec.js`
   - `viventium_v0_4/LibreChat/client/src/utils/devProxy.spec.ts`
+  - `viventium_v0_4/LibreChat/api/server/routes/viventium/__tests__/auth.spec.js`
+  - `viventium_v0_4/LibreChat/api/server/services/viventium/__tests__/localPasswordResetService.spec.js`
 - Runtime helper state:
   - `~/Library/Application Support/Viventium/state/runtime/isolated/public-network.json`
 - Remote Caddy log:
@@ -87,28 +98,31 @@ honest separation between:
 4. Verify the localhost-vs-public call-launch and `connection-details` origin split.
 5. Verify secure-origin app/API/playground health through the remote edge under test.
 6. Run browser QA against the local chat and modern-playground voice flow after remote access is enabled.
-7. Run targeted automated regression tests for helper/preflight/call-launch/proxy behavior.
-8. Run preflight for Tailscale, NetBird, and public-edge configs and record any required manual attention.
-9. If `public_https_edge` is active, capture at least one non-local fetch proof of the public app or
+7. Run `bin/viventium status` and confirm it reports the live outside URL plus the current auth posture.
+8. If the instance is publicly reachable, close browser sign-up and keep browser password reset off unless
+   real email delivery is configured. Verify the local operator reset-link command still works.
+9. Run targeted automated regression tests for helper/preflight/wizard/status/call-launch/proxy behavior.
+10. Run preflight for Tailscale, NetBird, and public-edge configs and record any required manual attention.
+11. If `public_https_edge` is active, capture at least one non-local fetch proof of the public app or
    playground surface.
-10. Do not use a full-tunnel VPN on the same serving host as the only "outside network" proof.
+12. Do not use a full-tunnel VPN on the same serving host as the only "outside network" proof.
     Use a separate device or disable the VPN on the serving host first.
-11. If `public_https_edge` is active through UPnP/NAT-PMP, inspect the live router table or the
+13. If `public_https_edge` is active through UPnP/NAT-PMP, inspect the live router table or the
     runtime state file and confirm the expected ports are still mapped after startup.
-12. If the router issues finite leases, confirm the mapping refresh worker exists or manually invoke
+14. If the router issues finite leases, confirm the mapping refresh worker exists or manually invoke
     the mapping refresh command once and verify the router table updates.
-13. If stable custom-domain DNS is not yet delegated, record that as the remaining external operator action
+15. If stable custom-domain DNS is not yet delegated, record that as the remaining external operator action
     instead of overstating acceptance.
-14. Start a safe local directory-test target that exposes `/.well-known/viventium-instance.json`.
-15. Register that target through the real directory CLI and verify the website stores and redirects
+16. Start a safe local directory-test target that exposes `/.well-known/viventium-instance.json`.
+17. Register that target through the real directory CLI and verify the website stores and redirects
     to the resolved origin.
-16. Probe negative cases for the directory layer:
+18. Probe negative cases for the directory layer:
     - tampered signature
     - unknown username
     - burst traffic that must produce throttling
-17. Fetch the runtime-generated `/.well-known/viventium-instance.json` through a live Caddy process,
+19. Fetch the runtime-generated `/.well-known/viventium-instance.json` through a live Caddy process,
     not only through a synthetic side server.
-18. Validate the hosted-mode SSRF guard under `NODE_ENV=production` by attempting to register a
+20. Validate the hosted-mode SSRF guard under `NODE_ENV=production` by attempting to register a
     private/loopback target and confirming rejection.
-19. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
+21. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
     from this feature slice.
