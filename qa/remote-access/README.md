@@ -42,6 +42,8 @@ honest separation between:
   public playground surface over HTTPS.
 - A full-tunnel VPN running on the same Mac that is serving the public edge does not count as a
   clean external acceptance path; it can rewrite the host routing table and invalidate the test.
+- If the router grants leased UPnP mappings, QA must confirm those mappings are still present after
+  initial startup or that the renewal worker is active.
 - Preflight clearly explains missing provider prerequisites instead of failing silently:
   - NetBird client not installed/joined
   - Tailscale daemon/tailnet not connected
@@ -91,18 +93,22 @@ honest separation between:
    playground surface.
 10. Do not use a full-tunnel VPN on the same serving host as the only "outside network" proof.
     Use a separate device or disable the VPN on the serving host first.
-11. If stable custom-domain DNS is not yet delegated, record that as the remaining external operator action
+11. If `public_https_edge` is active through UPnP/NAT-PMP, inspect the live router table or the
+    runtime state file and confirm the expected ports are still mapped after startup.
+12. If the router issues finite leases, confirm the mapping refresh worker exists or manually invoke
+    the mapping refresh command once and verify the router table updates.
+13. If stable custom-domain DNS is not yet delegated, record that as the remaining external operator action
     instead of overstating acceptance.
-12. Start a safe local directory-test target that exposes `/.well-known/viventium-instance.json`.
-13. Register that target through the real directory CLI and verify the website stores and redirects
+14. Start a safe local directory-test target that exposes `/.well-known/viventium-instance.json`.
+15. Register that target through the real directory CLI and verify the website stores and redirects
     to the resolved origin.
-14. Probe negative cases for the directory layer:
+16. Probe negative cases for the directory layer:
     - tampered signature
     - unknown username
     - burst traffic that must produce throttling
-15. Fetch the runtime-generated `/.well-known/viventium-instance.json` through a live Caddy process,
+17. Fetch the runtime-generated `/.well-known/viventium-instance.json` through a live Caddy process,
     not only through a synthetic side server.
-16. Validate the hosted-mode SSRF guard under `NODE_ENV=production` by attempting to register a
+18. Validate the hosted-mode SSRF guard under `NODE_ENV=production` by attempting to register a
     private/loopback target and confirming rejection.
-17. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
+19. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
     from this feature slice.

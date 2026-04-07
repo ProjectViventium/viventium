@@ -922,6 +922,9 @@ export VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL="${VIVENTIUM_REMOTE_CALL_TUNNEL
 export VIVENTIUM_REMOTE_CALL_TUNNEL_TIMEOUT_SECONDS="${VIVENTIUM_REMOTE_CALL_TUNNEL_TIMEOUT_SECONDS:-150}"
 export VIVENTIUM_REMOTE_CALL_PREWARM="${VIVENTIUM_REMOTE_CALL_PREWARM:-true}"
 export VIVENTIUM_REMOTE_CALL_PREWARM_TIMEOUT_SECONDS="${VIVENTIUM_REMOTE_CALL_PREWARM_TIMEOUT_SECONDS:-60}"
+export VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_SECONDS="${VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_SECONDS:-3600}"
+export VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE="${VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE:-$VIVENTIUM_STATE_ROOT/public-network-refresh.pid}"
+export VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE="${VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE:-$VIVENTIUM_CALL_TUNNEL_LOG_DIR/remote-call-upnp-refresh.log}"
 export MCP_PERSISTENT_CONNECTION_SERVERS="${MCP_PERSISTENT_CONNECTION_SERVERS:-scheduling-cortex}"
 export MCP_PERSISTENT_WARMUP_COOLDOWN_MS="${MCP_PERSISTENT_WARMUP_COOLDOWN_MS:-10000}"
 export MCP_CONNECTION_STATUS_SETTLE_WINDOW_MS="${MCP_CONNECTION_STATUS_SETTLE_WINDOW_MS:-3500}"
@@ -4639,7 +4642,63 @@ prewarm_remote_call_access() {
   fi
 }
 
+remote_call_public_edge_mode() {
+  case "${VIVENTIUM_REMOTE_CALL_MODE:-disabled}" in
+    public_https_edge | custom_domain)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+remote_call_mapping_refresh_pid_is_running() {
+  local pid
+  pid="$(read_pid_file "$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE")"
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+  if ! ps -p "$pid" >/dev/null 2>&1; then
+    rm -f "$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE"
+    return 1
+  fi
+  return 0
+}
+
+start_remote_call_mapping_refresh_worker() {
+  if ! remote_call_public_edge_mode; then
+    return 0
+  fi
+  if [[ ! -f "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" || ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
+    return 0
+  fi
+  if remote_call_mapping_refresh_pid_is_running; then
+    return 0
+  fi
+
+  local refresh_seconds="${VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_SECONDS:-3600}"
+  if ! [[ "$refresh_seconds" =~ ^[0-9]+$ ]] || [[ "$refresh_seconds" -lt 300 ]]; then
+    refresh_seconds=3600
+  fi
+
+  mkdir -p "$(dirname "$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE")"
+  (
+    while true; do
+      sleep "$refresh_seconds"
+      "$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" refresh-mappings \
+        --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
+        >/dev/null 2>>"$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE" || true
+    done
+  ) &
+  echo "$!" >"$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE"
+  log_info "Started remote access mapping refresh worker (pid: $!, interval: ${refresh_seconds}s)"
+}
+
+stop_remote_call_mapping_refresh_worker() {
+  stop_pid_file_scoped "$VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE" "$VIVENTIUM_CORE_DIR"
+}
+
 stop_remote_call_tunnels() {
+  stop_remote_call_mapping_refresh_worker
   if [[ ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
     return 0
   fi
@@ -7722,6 +7781,7 @@ if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND
   [[ -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" ]] && echo -e "  Playground:  ${GREEN}${VIVENTIUM_PUBLIC_PLAYGROUND_URL}${NC}"
   [[ -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]] && echo -e "  LiveKit:     ${GREEN}${VIVENTIUM_PUBLIC_LIVEKIT_URL}${NC}"
 fi
+start_remote_call_mapping_refresh_worker
 
 # ----------------------------
 # LiveKit server (Docker)

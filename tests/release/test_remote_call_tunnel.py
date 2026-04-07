@@ -150,6 +150,39 @@ def test_probe_local_endpoint_accepts_tcp_reachability(monkeypatch) -> None:
     assert captured == [(("localhost", 3300), module.DEFAULT_HEALTH_TIMEOUT_SECONDS)]
 
 
+def test_ensure_upnp_mapping_passes_requested_lease_seconds(monkeypatch) -> None:
+    module = load_module()
+    captured: list[list[str]] = []
+
+    monkeypatch.setattr(module, "list_upnpc_state", lambda _bin: {"mappings": {}})
+
+    def fake_run_checked(command: list[str], **_kwargs):
+        captured.append(command)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "run_checked", fake_run_checked)
+
+    module.ensure_upnp_mapping(
+        "/opt/homebrew/bin/upnpc",
+        protocol="TCP",
+        external_port=443,
+        internal_host="10.0.0.2",
+        internal_port=64823,
+        description="Viventium public HTTPS",
+        lease_seconds=7200,
+    )
+
+    assert captured == [[
+        "/opt/homebrew/bin/upnpc",
+        "-a",
+        "10.0.0.2",
+        "64823",
+        "443",
+        "TCP",
+        "7200",
+    ]]
+
+
 def test_tailscale_state_ready_requires_matching_dns_name(monkeypatch) -> None:
     module = load_module()
 
@@ -221,6 +254,59 @@ def test_cmd_start_cloudflare_saves_state_without_waiting_for_local_targets(monk
 
     assert saved["public_playground_url"] == "https://example.trycloudflare.com"
     assert saved["public_livekit_url"] == "wss://example.trycloudflare.com"
+
+
+def test_cmd_refresh_mappings_renews_saved_public_edge_ports(monkeypatch, tmp_path: Path) -> None:
+    module = load_module()
+    captured: list[tuple[str, int, str, int, int]] = []
+    saved: dict[str, object] = {}
+
+    state = {
+        "provider": "public_https_edge",
+        "router": {
+            "local_ip": "10.88.111.46",
+            "mappings": [
+                {
+                    "protocol": "TCP",
+                    "external_port": 80,
+                    "internal_host": "10.88.111.46",
+                    "internal_port": 64822,
+                },
+                {
+                    "protocol": "TCP",
+                    "external_port": 443,
+                    "internal_host": "10.88.111.46",
+                    "internal_port": 64823,
+                },
+            ],
+        },
+    }
+
+    monkeypatch.setattr(module, "load_state", lambda _path: dict(state))
+    monkeypatch.setattr(module, "resolve_binary", lambda _name: "/opt/homebrew/bin/upnpc")
+    monkeypatch.setattr(module.time, "strftime", lambda *_args, **_kwargs: "2026-04-07T03:30:00Z")
+
+    monkeypatch.setattr(
+        module,
+        "ensure_upnp_mapping",
+        lambda _bin, *, protocol, external_port, internal_host, internal_port, description, lease_seconds=14400: captured.append(
+            (protocol, external_port, internal_host, internal_port, lease_seconds)
+        ),
+    )
+    monkeypatch.setattr(module, "save_state", lambda _path, data: saved.update(data))
+
+    args = types.SimpleNamespace(
+        state_file=str(tmp_path / "public-network.json"),
+        upnp_lease_seconds=7200,
+    )
+
+    assert module.cmd_refresh_mappings(args) == 0
+    assert captured == [
+        ("TCP", 80, "10.88.111.46", 64822, 7200),
+        ("TCP", 443, "10.88.111.46", 64823, 7200),
+    ]
+    assert saved["router"]["mapping_lease_seconds"] == 7200
+    assert saved["router"]["last_refreshed_at"] == "2026-04-07T03:30:00Z"
 
 
 def test_cmd_start_tailscale_derives_public_urls_and_node_ip(monkeypatch, tmp_path: Path) -> None:

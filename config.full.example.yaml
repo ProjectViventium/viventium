@@ -15,6 +15,7 @@ runtime:
     # - disabled: keep everything local-only
     # - tailscale_tailnet_https: easiest path for your own devices when you can install Tailscale
     # - custom_domain/public_https_edge: best path for any browser anywhere
+    #   when your router supports UPnP/NAT-PMP or you can forward the required ports manually
     # Supported modes:
     # - disabled
     # - cloudflare_quick_tunnel (experimental voice-only path)

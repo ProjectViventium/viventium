@@ -12,6 +12,7 @@ runtime:
     # - disabled: local-only install, no remote browser access
     # - tailscale_tailnet_https: easiest for your own devices when they can run Tailscale
     # - custom_domain/public_https_edge: best for any browser anywhere; requires a real public edge
+    #   and either UPnP/NAT-PMP support or manual port forwarding
     remote_call_mode: disabled
     # Leave these blank for automatic Tailscale mode or the temporary public sslip.io fallback.
     # Set them explicitly for NetBird or your own stable public subdomains when using

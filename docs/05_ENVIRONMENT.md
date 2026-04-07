@@ -112,6 +112,9 @@ Supported public-browser mode:
   - use this when you want Viventium and the modern playground reachable from any browser anywhere
   - requires a real public `HTTPS/WSS` path for the web app, API, playground, and LiveKit media
   - usually means your own domain plus an inbound public path to this Mac
+  - if the router supports UPnP/NAT-PMP, Viventium can request and renew the needed public port
+    mappings automatically while the runtime stays up
+  - if the router does not support that, use manual port forwarding instead
   - if you only need your own phone or laptop and can install Tailscale, `tailscale_tailnet_https`
     is simpler than a public-edge deployment
 

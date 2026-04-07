@@ -40,6 +40,7 @@ DEFAULT_PUBLIC_EDGE_HOST_PREFIXES = {
 DEFAULT_PUBLIC_EDGE_HTTP_EXTERNAL_PORT = 80
 DEFAULT_PUBLIC_EDGE_HTTPS_EXTERNAL_PORT = 443
 DEFAULT_PUBLIC_EDGE_TURN_TLS_EXTERNAL_PORT = 5349
+DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS = 14400
 DIRECTORY_INSTANCE_PATH = "/.well-known/viventium-instance.json"
 DIRECTORY_REGISTRATION_ALGORITHM = "rsa-sha256"
 UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
@@ -119,6 +120,7 @@ def parse_args() -> argparse.Namespace:
     start.add_argument("--public-livekit-url", default="")
     start.add_argument("--livekit-node-ip", default="")
     start.add_argument("--caddy-data-dir", default="")
+    start.add_argument("--upnp-lease-seconds", type=int, default=DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS)
     start.add_argument(
         "--timeout-seconds",
         type=int,
@@ -130,6 +132,10 @@ def parse_args() -> argparse.Namespace:
 
     status = subparsers.add_parser("status", help="Print current secure remote access state")
     status.add_argument("--state-file", required=True)
+
+    refresh = subparsers.add_parser("refresh-mappings", help="Refresh public HTTPS edge router mappings")
+    refresh.add_argument("--state-file", required=True)
+    refresh.add_argument("--upnp-lease-seconds", type=int, default=DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS)
 
     return parser.parse_args()
 
@@ -1103,7 +1109,7 @@ def ensure_upnp_mapping(
             str(internal_port),
             str(external_port),
             protocol,
-            "0",
+            str(max(0, int(lease_seconds))),
         ],
         timeout_seconds=10,
     )
@@ -1126,6 +1132,58 @@ def remove_upnp_mapping(upnpc_bin: str, *, external_port: int, protocol: str) ->
         raise RuntimeError(
             f"Failed to remove router port forward for {protocol.upper()} {external_port}: {(result.stderr or result.stdout or '').strip()}".strip()
         )
+
+
+def public_edge_mapping_description(protocol: str, external_port: int) -> str:
+    protocol = str(protocol or "").upper()
+    if protocol == "TCP" and external_port == DEFAULT_PUBLIC_EDGE_HTTP_EXTERNAL_PORT:
+        return "Viventium public HTTP"
+    if protocol == "TCP" and external_port == DEFAULT_PUBLIC_EDGE_HTTPS_EXTERNAL_PORT:
+        return "Viventium public HTTPS"
+    if protocol == "TCP" and external_port == DEFAULT_PUBLIC_EDGE_TURN_TLS_EXTERNAL_PORT:
+        return "Viventium LiveKit TURN/TLS"
+    if protocol == "UDP":
+        return "Viventium LiveKit UDP media"
+    return "Viventium LiveKit TCP media"
+
+
+def refresh_public_https_edge_mappings(state: dict[str, Any], *, lease_seconds: int) -> dict[str, Any]:
+    if str(state.get("provider") or "").strip() != "public_https_edge":
+        return state
+    upnpc_bin = resolve_binary("upnpc")
+    if not upnpc_bin:
+        raise RuntimeError("miniupnpc is required to refresh public HTTPS edge router mappings")
+
+    router = state.get("router") if isinstance(state.get("router"), dict) else {}
+    mappings = router.get("mappings") if isinstance(router, dict) else []
+    if not isinstance(mappings, list) or not mappings:
+        return state
+
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        protocol = str(mapping.get("protocol") or "TCP").upper()
+        external_port = int(mapping.get("external_port") or 0)
+        internal_host = str(mapping.get("internal_host") or "").strip()
+        internal_port = int(mapping.get("internal_port") or 0)
+        if external_port <= 0 or internal_port <= 0 or not internal_host:
+            continue
+        ensure_upnp_mapping(
+            upnpc_bin,
+            protocol=protocol,
+            external_port=external_port,
+            internal_host=internal_host,
+            internal_port=internal_port,
+            description=public_edge_mapping_description(protocol, external_port),
+            lease_seconds=lease_seconds,
+        )
+
+    refreshed_state = dict(state)
+    refreshed_router = dict(router) if isinstance(router, dict) else {}
+    refreshed_router["mapping_lease_seconds"] = int(max(0, lease_seconds))
+    refreshed_router["last_refreshed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    refreshed_state["router"] = refreshed_router
+    return refreshed_state
 
 
 def probe_sni_https_host(
@@ -1268,6 +1326,12 @@ def start_public_https_edge(
         raise RuntimeError("At least one local surface port is required for public HTTPS edge access")
 
     caddy_bin = ensure_caddy(args.auto_install)
+    upnp_lease_seconds = int(
+        max(
+            0,
+            getattr(args, "upnp_lease_seconds", DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS),
+        )
+    )
     upnpc_bin = resolve_binary("upnpc")
     if not upnpc_bin and args.auto_install:
         try:
@@ -1398,6 +1462,7 @@ def start_public_https_edge(
             internal_host=lan_ip,
             internal_port=internal_http_port,
             description="Viventium public HTTP",
+            lease_seconds=upnp_lease_seconds,
         )
         port_mappings.append(
             {
@@ -1414,6 +1479,7 @@ def start_public_https_edge(
             internal_host=lan_ip,
             internal_port=internal_https_port,
             description="Viventium public HTTPS",
+            lease_seconds=upnp_lease_seconds,
         )
         port_mappings.append(
             {
@@ -1432,6 +1498,7 @@ def start_public_https_edge(
                 internal_host=lan_ip,
                 internal_port=args.livekit_tcp_port,
                 description="Viventium LiveKit TCP media",
+                lease_seconds=upnp_lease_seconds,
             )
             port_mappings.append(
                 {
@@ -1450,6 +1517,7 @@ def start_public_https_edge(
                 internal_host=lan_ip,
                 internal_port=args.livekit_udp_port,
                 description="Viventium LiveKit UDP media",
+                lease_seconds=upnp_lease_seconds,
             )
             port_mappings.append(
                 {
@@ -1468,6 +1536,7 @@ def start_public_https_edge(
                 internal_host=lan_ip,
                 internal_port=args.livekit_turn_tls_port,
                 description="Viventium LiveKit TURN/TLS",
+                lease_seconds=upnp_lease_seconds,
             )
             port_mappings.append(
                 {
@@ -1525,6 +1594,7 @@ def start_public_https_edge(
             "trust_note": manual_note,
             "router": {
                 "local_ip": lan_ip,
+                "mapping_lease_seconds": upnp_lease_seconds,
                 "mappings": port_mappings,
             },
             "caddy": {
@@ -1662,6 +1732,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0 if state.get("healthy") else 1
 
 
+def cmd_refresh_mappings(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file)
+    state = load_state(state_path)
+    if not state:
+        raise RuntimeError(f"No remote access state found at {state_path}")
+    refreshed_state = refresh_public_https_edge_mappings(
+        state,
+        lease_seconds=int(args.upnp_lease_seconds or DEFAULT_PUBLIC_EDGE_UPNP_LEASE_SECONDS),
+    )
+    save_state(state_path, refreshed_state)
+    print(json.dumps(refreshed_state))
+    return 0
+
+
 def main() -> int:
     args = parse_args()
     if args.command == "start":
@@ -1670,6 +1754,8 @@ def main() -> int:
         return cmd_stop(args)
     if args.command == "status":
         return cmd_status(args)
+    if args.command == "refresh-mappings":
+        return cmd_refresh_mappings(args)
     raise RuntimeError(f"Unsupported command: {args.command}")
 
 

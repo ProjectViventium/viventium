@@ -178,6 +178,29 @@
    - Finding:
      - a full-tunnel VPN on the serving host is not a valid substitute for a separate off-network
        client when validating `public_https_edge`
+23. Investigated real off-network failure after the custom-domain edge had previously passed local
+    and external fetch checks.
+   - Result:
+     - the runtime state still advertised the expected public-edge mappings, but the live router
+       table no longer contained them
+     - manually re-adding `80/tcp`, `443/tcp`, `7889/tcp`, `7890/udp`, and `5349/tcp` immediately
+       restored phone access to `app.<your-domain>`
+     - the router granted those renewed mappings with finite lease times of roughly four hours
+   - Finding:
+     - the remaining public-edge reliability gap was leased UPnP mappings expiring after startup,
+       not a broken app, broken DNS record, or broken Caddy config
+24. Added renewable mapping support to the runtime helper and launcher.
+   - Result:
+     - `remote_call_tunnel.py refresh-mappings --state-file ...` now re-applies the saved public
+       edge mappings and updates `router.last_refreshed_at`
+     - the launcher now starts a background mapping-refresh worker for
+       `public_https_edge` / `custom_domain`
+     - targeted regression slice passed after the change:
+       `python3 -m pytest tests/release/test_directory_link.py tests/release/test_remote_call_tunnel.py tests/release/test_config_compiler.py tests/release/test_preflight.py -q`
+       => `88 passed`
+   - Finding:
+     - the public-edge implementation now matches real home-router behavior more closely because it
+       treats UPnP mappings as leased state that may need renewal during a long-running session
 
 ## Findings
 
@@ -187,6 +210,12 @@
 - The real public-browser-capable mode in this repo is `public_https_edge`.
   - It is live on this Mac with Caddy-managed HTTPS, router mappings, and TURN/TLS-ready LiveKit
     state.
+- The key reliability fix in the latest pass was UPnP lease renewal.
+  - some home routers expire the mapped public ports after a few hours even though the runtime
+    itself is still healthy
+  - manually restoring those mappings immediately restored real phone access
+  - the runtime now includes a mapping refresh path and launcher worker so leased mappings do not
+    silently expire during normal operation
 - The localhost path is preserved even after enabling the remote edge.
   - chat still works on `localhost`
   - a fresh voice launch still works on `localhost`
@@ -210,7 +239,8 @@
     - `api.app.<your-domain>`
     - `playground.app.<your-domain>`
     - `livekit.app.<your-domain>`
-  - the remaining acceptance gate is now a true off-home authenticated browser session and voice call
+  - a real off-home phone browser load was restored after renewing the router mappings
+  - the remaining acceptance gate is now a true off-home authenticated chat and voice round-trip
 - The redirect-only website directory layer now exists and is functioning locally.
   - the self-hosted runtime publishes a signed verification document at
     `/.well-known/viventium-instance.json`
@@ -244,8 +274,9 @@
 
 ## Limitations
 
-- The operator custom-domain DNS can be delegated and the custom-domain runtime can be active, but this report
-  still does not include a true off-home authenticated browser session on `https://app.<your-domain>`.
+- This report now includes proof that an off-home phone browser could load `https://app.<your-domain>`
+  after the router mappings were renewed, but it still does not include a full authenticated chat and
+  voice round-trip on that off-home device.
 - This Mac cannot hairpin cleanly to its own public custom-domain hosts with local `curl`/Playwright,
   so same-machine public URL timeouts are not treated as definitive production failures.
 - Tailscale was not provider-native live-validated end to end on this Mac.

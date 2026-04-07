@@ -220,6 +220,15 @@ Operational requirements:
 - do not run a full-tunnel VPN on the same Mac that is serving the public edge unless the VPN is
   explicitly split-routed to keep the local LAN and the host's own public IP off the tunnel
 
+Router lease note:
+
+- some consumer routers grant UPnP port mappings with finite leases instead of permanent mappings
+- Viventium now treats those mappings as renewable runtime state, not one-time setup
+- the launcher keeps a lightweight background refresh worker alive for `public_https_edge` /
+  `custom_domain` so leased mappings are renewed before they expire
+- if the router does not support UPnP/NAT-PMP at all, or refuses renewal, manual forwarding is still
+  the fallback
+
 Hostname guidance:
 
 - The recommended stable layout is unique subdomains per surface, for example:
@@ -258,7 +267,8 @@ Operator recipe for a stable public link:
 3. Ensure the router forwards `80/tcp`, `443/tcp`, `7889/tcp`, `7890/udp`, and `5349/tcp` to this
    Mac, or allow the helper to manage those mappings through UPnP/NAT-PMP.
 4. Restart Viventium. The local Caddy edge will request real certificates for the configured
-   hostnames and the launcher will republish those URLs back into the runtime.
+   hostnames, the launcher will republish those URLs back into the runtime, and leased UPnP
+   mappings will be refreshed automatically while the runtime stays up.
 5. Validate from another device on a different network:
    - `https://app.<your-domain>` loads LibreChat
    - voice launch opens `https://playground.<your-domain>`
