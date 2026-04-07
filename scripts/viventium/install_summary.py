@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -179,6 +180,17 @@ def runtime_profile_name(config: dict[str, Any], runtime_env: dict[str, str]) ->
     return resolved or "isolated"
 
 
+def normalize_remote_call_mode(config: dict[str, Any]) -> str:
+    runtime = config.get("runtime", {}) or {}
+    network = runtime.get("network", {}) or {}
+    mode = str(network.get("remote_call_mode") or "disabled").strip().lower()
+    if not mode or mode == "auto":
+        return "disabled"
+    if mode in {"custom_domain", "custom_domain_public_edge", "public_custom_domain"}:
+        return "public_https_edge"
+    return mode
+
+
 def runtime_state_root(
     config: dict[str, Any],
     runtime_env: dict[str, str],
@@ -187,6 +199,93 @@ def runtime_state_root(
     if runtime_dir is None:
         return None
     return runtime_dir.parent / "state" / "runtime" / runtime_profile_name(config, runtime_env)
+
+
+def load_public_network_state(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+) -> dict[str, Any]:
+    if normalize_remote_call_mode(config) == "disabled":
+        return {}
+
+    candidates: list[Path] = []
+    env_path = str(runtime_env.get("VIVENTIUM_PUBLIC_NETWORK_STATE_FILE") or "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    state_root = runtime_state_root(config, runtime_env, runtime_dir)
+    if state_root is not None:
+        candidates.append(state_root / "public-network.json")
+
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def resolve_runtime_auth(config: dict[str, Any], runtime_env: dict[str, str]) -> dict[str, bool]:
+    runtime = config.get("runtime", {}) or {}
+    auth = runtime.get("auth", {}) or {}
+    return {
+        "allow_registration": resolve_bool(
+            runtime_env.get("ALLOW_REGISTRATION"),
+            resolve_bool(auth.get("allow_registration"), True),
+        ),
+        "allow_password_reset": resolve_bool(
+            runtime_env.get("ALLOW_PASSWORD_RESET"),
+            resolve_bool(auth.get("allow_password_reset"), False),
+        ),
+    }
+
+
+def remote_access_label(remote_call_mode: str) -> str:
+    return {
+        "disabled": "Local-only on this Mac",
+        "tailscale_tailnet_https": "Private access from your own Tailscale devices",
+        "netbird_selfhosted_mesh": "Private access from your NetBird mesh devices",
+        "cloudflare_quick_tunnel": "Experimental voice-only tunnel",
+        "public_https_edge": "Public browser access from anywhere",
+    }.get(remote_call_mode, remote_call_mode or "Local-only on this Mac")
+
+
+def remote_access_status_and_detail(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+    *,
+    probe_live: bool,
+) -> tuple[str, str]:
+    remote_call_mode = normalize_remote_call_mode(config)
+    if remote_call_mode == "disabled":
+        return "Disabled", "Local-only install"
+
+    public_state = load_public_network_state(config, runtime_env, runtime_dir)
+    public_client_url = str(
+        public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
+    ).strip()
+    if public_client_url:
+        status = "Running" if probe_live else "Configured"
+        return status, f"{remote_access_label(remote_call_mode)}: {public_client_url}"
+
+    if remote_call_mode == "tailscale_tailnet_https":
+        return (
+            "Configured",
+            "Connect Tailscale on this Mac, then run bin/viventium start to publish the private device URL.",
+        )
+    if remote_call_mode == "public_https_edge":
+        return (
+            "Configured",
+            "Run bin/viventium start, then bin/viventium status to see the exact outside URL.",
+        )
+    if remote_call_mode == "netbird_selfhosted_mesh":
+        return "Configured", "Start Viventium after the mesh hostnames and local trust are ready."
+    return "Configured", remote_access_label(remote_call_mode)
 
 
 def pid_file_process_running(path: Path) -> bool:
@@ -314,6 +413,13 @@ def build_service_rows(
     api_url = f"http://localhost:{api_port}/api"
     playground_url = runtime_env.get("VIVENTIUM_PLAYGROUND_URL") or f"http://localhost:{playground_port}"
     livekit_url = runtime_env.get("LIVEKIT_URL", "ws://localhost:7880")
+    remote_status, remote_detail = remote_access_status_and_detail(
+        config,
+        runtime_env,
+        runtime_dir,
+        probe_live=probe_live,
+    )
+    auth_settings = resolve_runtime_auth(config, runtime_env)
     code_interpreter_url = runtime_env.get("LIBRECHAT_CODE_BASEURL", "")
     rag_api_url = runtime_env.get("RAG_API_URL", "")
     google_mcp_url = runtime_env.get("GOOGLE_WORKSPACE_MCP_URL", "")
@@ -370,6 +476,7 @@ def build_service_rows(
             "Configured" if livekit_url else "Disabled",
             livekit_url or "Not configured",
         ),
+        ("Remote Access", remote_status, remote_detail),
     ]
 
     integrations = config.get("integrations", {}) or {}
@@ -380,6 +487,24 @@ def build_service_rows(
             "Primary AI",
             "Configured",
             "Connected account" if primary_auth_mode == "connected_account" else "API key",
+        )
+    )
+    rows.append(
+        (
+            "Account Sign-up",
+            "Open" if auth_settings["allow_registration"] else "Closed",
+            "Anyone can create an account in the browser"
+            if auth_settings["allow_registration"]
+            else "Only existing accounts can sign in",
+        )
+    )
+    rows.append(
+        (
+            "Password Reset",
+            "Enabled" if auth_settings["allow_password_reset"] else "Disabled",
+            "Public browser reset endpoint is enabled"
+            if auth_settings["allow_password_reset"]
+            else "Use bin/viventium password-reset-link <email> locally when you need a one-time reset link",
         )
     )
 
@@ -493,7 +618,11 @@ def build_setup_later_rows(config: dict[str, Any]) -> list[tuple[str, str]]:
     return rows
 
 
-def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> list[str]:
+def build_next_steps(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None = None,
+) -> list[str]:
     frontend_port = runtime_port(
         config,
         runtime_env,
@@ -502,6 +631,11 @@ def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> lis
         3190,
     )
     lan_host = local_network_host()
+    public_state = load_public_network_state(config, runtime_env, runtime_dir)
+    public_client_url = str(
+        public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
+    ).strip()
+    remote_call_mode = normalize_remote_call_mode(config)
     next_steps: list[str] = []
     next_steps.extend(
         [
@@ -513,6 +647,21 @@ def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> lis
         next_steps.append(
             f"Open [cyan]http://{lan_host}:{frontend_port}[/cyan] from another device on your local network."
         )
+    if public_client_url:
+        next_steps.append(
+            f"Outside your local network, open [cyan]{public_client_url}[/cyan]."
+        )
+        next_steps.append(
+            "Optional, after the directory website is deployed: run [cyan]bin/viventium register-link <username>[/cyan] to publish a redirect-only vanity link under [cyan]viventium.ai/u/<username>[/cyan]."
+        )
+    elif remote_call_mode == "tailscale_tailnet_https":
+        next_steps.append(
+            "After Tailscale is connected on this Mac, run [cyan]bin/viventium start[/cyan] and then [cyan]bin/viventium status[/cyan] to see the private device URL."
+        )
+    elif remote_call_mode == "public_https_edge":
+        next_steps.append(
+            "After [cyan]bin/viventium start[/cyan], run [cyan]bin/viventium status[/cyan] to see the exact outside URL Viventium published for this machine."
+        )
     install_mode = str(((config.get("install") or {}).get("mode") or "native")).strip().lower()
     if install_mode == "native":
         next_steps.append(
@@ -521,6 +670,13 @@ def build_next_steps(config: dict[str, Any], runtime_env: dict[str, str]) -> lis
     next_steps.append(
         "Optional: run [cyan]bin/viventium shell-init[/cyan] for the one-line setup that adds "
         "[cyan]viventium[/cyan] and [cyan]viv[/cyan] as global commands."
+    )
+    next_steps.append(
+        "Remote access is optional. For private-device or public-browser setup, see "
+        "[cyan]docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md[/cyan]."
+    )
+    next_steps.append(
+        "Keep [cyan]ALLOW_PASSWORD_RESET[/cyan] off for public installs unless real email delivery is configured. For a one-time operator-issued reset link, run [cyan]bin/viventium password-reset-link <email>[/cyan] locally."
     )
     next_steps.append("Add or change features later with [cyan]bin/viventium configure[/cyan].")
     return next_steps
@@ -598,7 +754,7 @@ def main() -> None:
             style="yellow",
         )
 
-    next_steps = build_next_steps(config, runtime_env)
+    next_steps = build_next_steps(config, runtime_env, runtime_dir)
 
     ui.print_blank()
     ui.print_section("Next Steps", "\n".join(f"{index}. {step}" for index, step in enumerate(next_steps, start=1)), style="cyan")

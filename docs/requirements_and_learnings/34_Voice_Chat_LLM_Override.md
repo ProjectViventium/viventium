@@ -7,9 +7,12 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
 1. Agent entity gains `voice_llm_model` (string|null) and `voice_llm_provider` (string|null) fields.
 2. Agent Builder UI shows a "Voice Chat Model" button that opens a panel for selecting voice provider/model.
 3. When both fields are set and all three voice activation conditions are met, the agent's model/provider are swapped at runtime before validation.
-4. When fields are null/empty, the main model is used (fully backward compatible).
+4. When fields are null/empty, the agent's main model/provider are used (fully backward compatible).
 5. Follow-up service (background cortex insights) also uses the voice model during voice calls.
 6. Sync scripts include voice fields for YAML import/export.
+7. Hidden machine-level voice config must not override or replace the agent-visible Voice Call LLM.
+8. Modern playground disclosures must resolve the effective assistant route from the actual call
+   agent and show the concrete provider/model that will answer the call.
 
 ## Activation Conditions (all three required)
 | Condition | Source | Check |
@@ -40,11 +43,15 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
 - **VoiceLlmPanel.tsx**: New panel mirroring ModelPanel but targeting voice fields. Provider combobox, model combobox, clear button. No model_parameters section.
 - **AgentConfig.tsx**: "Voice Chat Model" button after "Model*" showing voice provider icon + model name, or "Using main model" when empty.
 - **AgentPanel.tsx**: Routes `Panel.voiceLlmModel` to VoiceLlmPanel. Includes voice fields in `composeAgentUpdatePayload()`.
+- **Modern playground Wing Mode disclosure**: Resolves the effective assistant route from the
+  call-session agent and shows the concrete provider/model plus whether it came from the agent
+  Voice Call LLM or inherited the agent primary LLM.
 
 ### Runtime Layer
 - **voiceLlmOverride.js** (`api/server/services/viventium/`): Encapsulates activation check, validation, fallback, and model swap.
   - `isVoiceCallActive(req)` — checks all three conditions
   - `isVoiceModelValid(model, provider, modelsConfig)` — validates against available models
+  - `resolveVoiceOverrideAssignment(agent)` — reads only explicit agent `voice_llm_*` fields
   - `applyVoiceModelOverride(agent, req, modelsConfig)` — mutates agent in place
 - **initialize.js**: Calls `applyVoiceModelOverride()` after agent loaded, before `validateAgentModel()`
 - **addedConvo.js**: Same pattern for parallel/handoff agents
@@ -53,11 +60,12 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
 `removeNullishValues()` strips null values. Voice fields are extracted before that call and re-assigned if `=== null`, same pattern as the `avatar` field. This allows "Clear" in the UI to actually set fields to null in MongoDB.
 
 ### Follow-Up Service
-`BackgroundCortexFollowUpService.generateFollowUpText()` resolves effective model/provider from voice fields when `isVoiceCallActive(req)` returns true.
+`BackgroundCortexFollowUpService.generateFollowUpText()` resolves effective model/provider from explicit voice fields when `isVoiceCallActive(req)` returns true.
 
 ## Edge Cases
 - **One field set, other null**: Override skipped (both required). UI enforces linked comboboxes.
 - **Invalid voice model**: Warning logged, fallback to main model. Never fails the request.
+- **Legacy machine env voice settings present**: Ignored for Voice Call LLM selection.
 - **modelsConfig unavailable**: Voice model trusted from DB (allows cold-start scenarios).
 - **Existing agents without voice fields**: Fields default to null in Mongoose, UI shows "Using main model".
 

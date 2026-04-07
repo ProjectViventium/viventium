@@ -30,6 +30,13 @@ properties:
         type: object
       extra_env:
         type: object
+      auth:
+        type: object
+        properties:
+          allow_registration:
+            type: boolean
+          allow_password_reset:
+            type: boolean
       personalization:
         type: object
         properties:
@@ -40,7 +47,7 @@ properties:
         properties:
           remote_call_mode:
             type: string
-            enum: [auto, disabled, cloudflare_quick_tunnel]
+            enum: [auto, disabled, cloudflare_quick_tunnel, tailscale_tailnet_https, netbird_selfhosted_mesh, public_https_edge, custom_domain, custom_domain_public_edge, public_custom_domain]
           public_client_origin:
             type: string
           public_api_origin:
@@ -48,6 +55,8 @@ properties:
           public_playground_origin:
             type: string
           public_livekit_url:
+            type: string
+          livekit_node_ip:
             type: string
       ports:
         type: object
@@ -122,6 +131,7 @@ properties:
         type: string
       fast_llm_provider:
         type: string
+        description: Legacy ignored field. Voice-call LLM selection comes from the agent's explicit Voice Call LLM fields, otherwise the agent primary LLM is used.
       stt:
         type: object
       tts:

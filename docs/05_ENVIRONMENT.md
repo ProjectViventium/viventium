@@ -53,6 +53,8 @@ to preserve local parity with older setups.
 ## Common Optional Inputs
 
 - secondary LLM provider
+- `runtime.auth.allow_registration`
+- `runtime.auth.allow_password_reset`
 - voice provider settings
 - `voice.wing_mode.default_enabled`
 - `voice.wing_mode.prompt`
@@ -69,7 +71,7 @@ to preserve local parity with older setups.
 - `.env.example`
 - `librechat.yaml.example`
 
-## Remote Local-Device Calling
+## Remote Access Modes
 
 For local installs that need phone/tablet access to the modern voice surface, the canonical config
 also supports:
@@ -78,6 +80,7 @@ also supports:
 - `runtime.network.public_api_origin`
 - `runtime.network.public_playground_origin`
 - `runtime.network.public_livekit_url`
+- `runtime.network.livekit_node_ip`
 - `runtime.network.remote_call_mode`
 
 Recommended local default:
@@ -93,8 +96,83 @@ With `disabled`, local installs stay honest by default:
   real public `HTTPS/WSS` topology
 - `cloudflare_quick_tunnel` remains an explicit experiment, not the default install story
 
+Supported private-mesh modes:
+
+- `tailscale_tailnet_https`
+  - no manual public origins required
+  - Viventium auto-publishes tailnet-only HTTPS URLs on this node's `*.ts.net` hostname
+  - `LIVEKIT_NODE_IP` is derived automatically from the node's Tailscale IPv4
+- `netbird_selfhosted_mesh`
+  - requires explicit `public_client_origin` and `public_api_origin`
+  - when voice is enabled, also requires `public_playground_origin` and `public_livekit_url`
+  - `livekit_node_ip` is the explicit mesh IP override when the configured LiveKit hostname does not
+    already resolve to this Mac's private mesh address during startup
+
+Supported public-browser mode:
+
+- `public_https_edge` / `custom_domain`
+  - use this when you want Viventium and the modern playground reachable from any browser anywhere
+  - requires a real public `HTTPS/WSS` path for the web app, API, playground, and LiveKit media
+  - usually means your own domain plus an inbound public path to this Mac
+  - if the router supports UPnP/NAT-PMP, Viventium can request and renew the needed public port
+    mappings automatically while the runtime stays up
+  - if the router does not support that, use manual port forwarding instead
+  - if you only need your own phone or laptop and can install Tailscale, `tailscale_tailnet_https`
+    is simpler than a public-edge deployment
+
+What a normal self-hosted user should do:
+
+- if you do not need remote access yet, leave `remote_call_mode: disabled`
+- if you want access from your own devices outside the house, prefer `tailscale_tailnet_https`
+- if you want access from any browser anywhere, use `custom_domain`
+
+Runtime note:
+
+- browser-facing public origins are separate from the local LibreChat frontend dev proxy target
+- secure-origin browser URLs must not be fed back into the local Vite proxy as the backend target
+
 See `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` for the supported tunnel
 and reverse-proxy patterns.
+
+User guidance:
+
+- Start from `config.minimal.example.yaml` or `config.full.example.yaml`.
+- Use `bin/viventium configure` to switch modes later without hand-editing YAML.
+- Keep `remote_call_mode: disabled` unless you explicitly need remote access.
+- Choose `tailscale_tailnet_https` for your own enrolled devices.
+- Choose `custom_domain` / `public_https_edge` only when you need public browser access.
+- After startup, run `bin/viventium status` to see the exact live outside URL that Viventium
+  published for this machine.
+
+## Browser Auth Controls
+
+The canonical config also supports browser account posture for self-hosted installs:
+
+- `runtime.auth.allow_registration`
+- `runtime.auth.allow_password_reset`
+
+Defaults:
+
+- `allow_registration: true`
+- `allow_password_reset: false`
+
+Wizard behavior:
+
+- when remote access is enabled through `bin/viventium configure`, the wizard also asks whether
+  browser sign-up and browser password reset should stay enabled for that install
+
+Recommended operator posture:
+
+- keep registration open only while you still need people to create accounts in the browser
+- close registration once the real accounts already exist
+- keep password reset off unless you have real email delivery configured
+- for a one-time operator-issued reset link without opening the public reset endpoint, run:
+  - `bin/viventium password-reset-link <email>`
+
+Why password reset stays off by default:
+
+- LibreChat returns reset links directly when email delivery is not configured
+- that is acceptable for a local operator tool but not for a public browser endpoint
 
 ## Wing Mode
 

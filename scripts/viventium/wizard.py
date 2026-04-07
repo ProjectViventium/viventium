@@ -8,6 +8,7 @@ import platform
 import secrets
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,7 +22,6 @@ from installer_ui import CheckboxOption, InstallerUI, SelectOption
 from telegram_tokens import telegram_bot_token_validation_error
 
 LOCAL_TTS_PROVIDER = "local_chatterbox_turbo_mlx_8bit"
-DEFAULT_VOICE_FAST_LLM_PROVIDER = ""
 DEFAULT_WEB_SEARCH_PROVIDER = "searxng"
 DEFAULT_WEB_SCRAPER_PROVIDER = "firecrawl"
 CONNECTED_ACCOUNT_PROVIDERS = {"openai", "anthropic"}
@@ -256,6 +256,16 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     runtime = config.setdefault("runtime", {})
     runtime.setdefault("profile", "isolated")
     runtime.setdefault("playground_variant", "modern")
+    network = runtime.setdefault("network", {})
+    network.setdefault("remote_call_mode", "disabled")
+    network.setdefault("public_client_origin", "")
+    network.setdefault("public_api_origin", "")
+    network.setdefault("public_playground_origin", "")
+    network.setdefault("public_livekit_url", "")
+    network.setdefault("livekit_node_ip", "")
+    auth = runtime.setdefault("auth", {})
+    auth.setdefault("allow_registration", True)
+    auth.setdefault("allow_password_reset", False)
     personalization = runtime.setdefault("personalization", {})
     personalization.setdefault("default_conversation_recall", False)
     llm = config.setdefault("llm", {})
@@ -372,6 +382,18 @@ def build_base_config(
             "log_level": "info",
             "profile": "isolated",
             "playground_variant": "modern",
+            "network": {
+                "remote_call_mode": "disabled",
+                "public_client_origin": "",
+                "public_api_origin": "",
+                "public_playground_origin": "",
+                "public_livekit_url": "",
+                "livekit_node_ip": "",
+            },
+            "auth": {
+                "allow_registration": True,
+                "allow_password_reset": False,
+            },
             "personalization": {"default_conversation_recall": False},
         },
         "llm": {
@@ -394,7 +416,6 @@ def build_base_config(
             "stt_provider": "whisper_local",
             "tts_provider": "browser",
             "tts_provider_fallback": "",
-            "fast_llm_provider": DEFAULT_VOICE_FAST_LLM_PROVIDER,
             "wing_mode": {"default_enabled": False},
         },
         "integrations": {
@@ -413,6 +434,147 @@ def build_base_config(
             "openclaw": {"enabled": False},
         },
     }
+
+
+def normalize_public_app_hostname(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    candidate = raw if "://" in raw else f"https://{raw}"
+    try:
+        parsed = urllib.parse.urlparse(candidate)
+    except Exception as exc:
+        raise ValueError("Enter a hostname like app.example.com, not a full path.") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Enter a hostname like app.example.com.")
+    if parsed.port is not None:
+        raise ValueError("Do not include a port. Enter only the public app hostname.")
+    if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("Enter only the hostname, without a path or query string.")
+    return parsed.hostname.strip().lower()
+
+
+def apply_remote_access_choice(
+    config: dict[str, Any],
+    *,
+    remote_call_mode: str,
+    public_app_hostname: str = "",
+) -> None:
+    runtime = config.setdefault("runtime", {})
+    network = runtime.setdefault("network", {})
+    network["remote_call_mode"] = remote_call_mode
+    network["livekit_node_ip"] = ""
+    network["public_client_origin"] = ""
+    network["public_api_origin"] = ""
+    network["public_playground_origin"] = ""
+    network["public_livekit_url"] = ""
+
+    if remote_call_mode != "custom_domain":
+        return
+
+    host = normalize_public_app_hostname(public_app_hostname)
+    if not host:
+        return
+
+    network["public_client_origin"] = f"https://{host}"
+    network["public_api_origin"] = f"https://api.{host}"
+    network["public_playground_origin"] = f"https://playground.{host}"
+    network["public_livekit_url"] = f"wss://livekit.{host}"
+
+
+def prompt_remote_access(ui: InstallerUI, config: dict[str, Any]) -> None:
+    remote_access_goal = ui.select(
+        "Where do you need to use Viventium?",
+        [
+            SelectOption(
+                "local_only",
+                "Only on this Mac",
+                "Keep the install local-only. Simplest and safest default.",
+            ),
+            SelectOption(
+                "personal_devices",
+                "My own phone or laptop",
+                "Private device access with Tailscale on the devices you own.",
+            ),
+            SelectOption(
+                "public_browser",
+                "Any browser anywhere",
+                "Public browser access for normal phones, tablets, and laptops.",
+            ),
+        ],
+        default="local_only",
+    )
+
+    if remote_access_goal == "local_only":
+        apply_remote_access_choice(config, remote_call_mode="disabled")
+        ui.print_note("Remote access will stay off. You can enable it later with bin/viventium configure.")
+        return
+
+    if remote_access_goal == "personal_devices":
+        apply_remote_access_choice(config, remote_call_mode="tailscale_tailnet_https")
+        ui.print_note(
+            "Viventium will publish a private Tailscale URL after startup. Install Tailscale on this Mac and on the phone or laptop you want to use."
+        )
+        return
+
+    while True:
+        public_app_hostname = ui.text(
+            "Public app hostname (leave blank for a temporary bootstrap URL)",
+            default="",
+            allow_empty=True,
+        )
+        try:
+            apply_remote_access_choice(
+                config,
+                remote_call_mode="custom_domain",
+                public_app_hostname=public_app_hostname,
+            )
+        except ValueError as exc:
+            ui.print_error(str(exc))
+            continue
+        break
+
+    network = config.setdefault("runtime", {}).setdefault("network", {})
+    public_client_origin = str(network.get("public_client_origin") or "").strip()
+    if public_client_origin:
+        ui.print_note(
+            "Viventium will use the public app hostname you gave it and automatically derive the matching API, playground, and LiveKit hostnames."
+        )
+    else:
+        ui.print_note(
+            "Viventium will start with a temporary outside URL first and show it in bin/viventium status. You can add your real domain later without changing the product code."
+        )
+    ui.print_note(
+        "Viventium will try to request and renew the needed router mappings automatically while it stays running. If your router refuses, the docs cover the manual fallback."
+    )
+
+
+def prompt_browser_auth_controls(ui: InstallerUI, config: dict[str, Any]) -> None:
+    runtime = config.setdefault("runtime", {})
+    network = runtime.setdefault("network", {})
+    remote_call_mode = str(network.get("remote_call_mode") or "disabled").strip().lower()
+    if remote_call_mode == "disabled":
+        return
+
+    auth = runtime.setdefault("auth", {})
+    current_allow_registration = bool(auth.get("allow_registration", True))
+    current_allow_password_reset = bool(auth.get("allow_password_reset", False))
+
+    ui.print_note(
+        "If this is the first account on this install, leave browser sign-up on until you create it. After that, close sign-up for safer remote access."
+    )
+    auth["allow_registration"] = ui.confirm(
+        "Keep browser sign-up open?",
+        default=current_allow_registration,
+    )
+
+    ui.print_note(
+        "Leave browser password reset off unless real email delivery is configured. You can always issue a one-time reset link locally with bin/viventium password-reset-link <email>."
+    )
+    auth["allow_password_reset"] = ui.confirm(
+        "Enable browser password reset?",
+        default=current_allow_password_reset,
+    )
 
 
 def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
@@ -510,7 +672,6 @@ def set_local_voice_defaults(config: dict[str, Any]) -> None:
     voice["mode"] = "local"
     voice["stt_provider"] = "whisper_local"
     voice["tts_provider"] = default_local_tts_provider()
-    voice["fast_llm_provider"] = DEFAULT_VOICE_FAST_LLM_PROVIDER
     voice["tts_provider_fallback"] = (
         "openai" if voice["tts_provider"] == LOCAL_TTS_PROVIDER else ""
     )
@@ -714,7 +875,6 @@ def disable_feature(config: dict[str, Any], key: str, deferred: list[str]) -> No
         voice["stt_provider"] = "whisper_local"
         voice["tts_provider"] = "browser"
         voice["tts_provider_fallback"] = ""
-        voice["fast_llm_provider"] = DEFAULT_VOICE_FAST_LLM_PROVIDER
     elif key in integrations:
         integrations[key]["enabled"] = False
     mark_deferred(deferred, key)
@@ -761,20 +921,6 @@ def prompt_voice_settings(ui: InstallerUI, config: dict[str, Any], advanced: boo
             SelectOption("cartesia", "Cartesia"),
         ],
         default="x_ai",
-    )
-    fast_voice_provider = ui.select(
-        "Fast voice-response provider",
-        [
-            SelectOption("main", "Use main Viventium model", "No separate voice override"),
-            SelectOption("groq", "Groq"),
-            SelectOption("x_ai", "xAI"),
-            SelectOption("openai", "OpenAI"),
-            SelectOption("anthropic", "Anthropic"),
-        ],
-        default="main",
-    )
-    voice["fast_llm_provider"] = (
-        DEFAULT_VOICE_FAST_LLM_PROVIDER if fast_voice_provider == "main" else fast_voice_provider
     )
     if voice["stt_provider"] == "assemblyai":
         secret_node = prompt_optional_secret(
@@ -981,6 +1127,9 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
             mark_deferred(deferred, "telegram")
     else:
         mark_deferred(deferred, "telegram")
+    if ui.confirm("Need to use Viventium from another device?", default=False):
+        prompt_remote_access(ui, config)
+        prompt_browser_auth_controls(ui, config)
     return config, deferred
 
 
@@ -1162,6 +1311,9 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
         prompt_skyvern(ui, config, deferred)
     else:
         mark_deferred(deferred, "skyvern")
+
+    prompt_remote_access(ui, config)
+    prompt_browser_auth_controls(ui, config)
 
     return config, deferred
 

@@ -103,7 +103,20 @@ The public-safe fix pattern is:
 4. Add guardrails for placeholder-based updates that would otherwise drop prior content.
 5. Keep the runtime behavior aligned with the tracked source-of-truth config.
 
-### 2.4 Example Memory Structure
+### 2.4 Compiler-Owned Model Assignment
+
+The memory runtime is configurable, but the generated `librechat.yaml` must still come from the
+installer/compiler ownership layer instead of inheriting historical template defaults.
+
+- The compiler must assign `memory.agent.provider` and `memory.agent.model` from actually available
+  foundation auth (`openai` / `anthropic`), including connected-account auth.
+- Do not silently leave the memory writer on xAI when xAI was never configured for that install.
+- When both OpenAI and Anthropic are available, memory should honor the configured foundation order
+  rather than silently preferring a different provider.
+- Source-of-truth templates may still carry historical defaults, but generated runtime files are the
+  product contract users actually run.
+
+### 2.5 Example Memory Structure
 
 ```yaml
 working:
@@ -136,6 +149,8 @@ drafts:
 - updates remain additive when possible
 - placeholder text does not delete prior meaning
 - the live runtime matches the source-of-truth config
+- the generated runtime does not point memory at an unavailable provider
+- connected-account installs still compile a valid memory writer without requiring extra API keys
 
 ### What not to publish
 

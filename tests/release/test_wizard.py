@@ -130,12 +130,15 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     )
 
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert config["runtime"]["network"]["remote_call_mode"] == "disabled"
+    assert config["runtime"]["auth"]["allow_registration"] is True
+    assert config["runtime"]["auth"]["allow_password_reset"] is False
     assert config["integrations"]["code_interpreter"]["enabled"] is False
     assert config["integrations"]["web_search"]["enabled"] is False
     assert config["integrations"]["web_search"]["search_provider"] == "searxng"
     assert config["integrations"]["web_search"]["scraper_provider"] == "firecrawl"
     assert config["llm"]["primary"]["auth_mode"] == "connected_account"
-    assert config["voice"]["fast_llm_provider"] == ""
+    assert "fast_llm_provider" not in config["voice"]
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:
@@ -253,10 +256,18 @@ def test_normalize_preset_backfills_wing_mode_for_local_voice(monkeypatch) -> No
 
 
 class _FakeWizardUI:
-    def __init__(self, *, selects: list[str], passwords: list[str] | None = None, texts: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        selects: list[str],
+        passwords: list[str] | None = None,
+        texts: list[str] | None = None,
+        confirms: list[bool] | None = None,
+    ) -> None:
         self.select_values = list(selects)
         self.password_values = list(passwords or [])
         self.text_values = list(texts or [])
+        self.confirm_values = list(confirms or [])
         self.notes: list[str] = []
         self.errors: list[str] = []
         self.sections: list[tuple[str, str, str]] = []
@@ -290,6 +301,8 @@ class _FakeWizardUI:
         return default if allow_empty else default
 
     def confirm(self, _prompt: str, default: bool = False) -> bool:
+        if self.confirm_values:
+            return self.confirm_values.pop(0)
         return default
 
     def checkbox(self, _prompt: str, _options) -> list[str]:
@@ -428,6 +441,7 @@ def test_configure_advanced_setup_limits_primary_provider_to_foundation_models(m
     monkeypatch.setattr(wizard, "prompt_skyvern", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard, "prompt_telegram", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard, "prompt_telegram_codex", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard, "prompt_remote_access", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard, "build_secret_node", lambda service, value: {"service": service, "secret_value": value})
     monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
 
@@ -441,3 +455,60 @@ def test_configure_advanced_setup_limits_primary_provider_to_foundation_models(m
     assert config["llm"]["primary"]["provider"] == "openai"
     assert config["llm"]["primary"]["auth_mode"] == "connected_account"
     assert deferred
+
+
+def test_prompt_remote_access_derives_public_surface_urls_from_app_hostname() -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    ui = _FakeWizardUI(selects=["public_browser"], texts=["app.example.com"])
+
+    wizard.prompt_remote_access(ui, config)
+
+    network = config["runtime"]["network"]
+    assert network["remote_call_mode"] == "custom_domain"
+    assert network["public_client_origin"] == "https://app.example.com"
+    assert network["public_api_origin"] == "https://api.app.example.com"
+    assert network["public_playground_origin"] == "https://playground.app.example.com"
+    assert network["public_livekit_url"] == "wss://livekit.app.example.com"
+
+
+def test_prompt_remote_access_uses_temporary_public_url_when_hostname_is_blank() -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    ui = _FakeWizardUI(selects=["public_browser"], texts=[""])
+
+    wizard.prompt_remote_access(ui, config)
+
+    network = config["runtime"]["network"]
+    assert network["remote_call_mode"] == "custom_domain"
+    assert network["public_client_origin"] == ""
+    assert any("temporary outside URL" in note for note in ui.notes)
+
+
+def test_prompt_browser_auth_controls_sets_remote_browser_auth_flags() -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    wizard.apply_remote_access_choice(config, remote_call_mode="custom_domain", public_app_hostname="app.example.com")
+    ui = _FakeWizardUI(selects=[], confirms=[False, False])
+
+    wizard.prompt_browser_auth_controls(ui, config)
+
+    assert config["runtime"]["auth"]["allow_registration"] is False
+    assert config["runtime"]["auth"]["allow_password_reset"] is False
+    assert any("leave browser sign-up on until you create it" in note for note in ui.notes)
+    assert any("one-time reset link locally" in note for note in ui.notes)

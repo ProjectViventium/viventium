@@ -7,17 +7,48 @@ runtime:
   playground_variant: modern
   call_session_secret:
     secret_ref: keychain://viventium/call_session_secret
+  auth:
+    # Browser sign-up is open by default so a new install can create its first account.
+    # Once the install is reachable from outside your network, close this unless you intentionally
+    # want public self-signup.
+    allow_registration: true
+    # Keep browser password reset off unless real email delivery is configured.
+    # Safer operator path: bin/viventium password-reset-link <email>
+    allow_password_reset: false
   network:
     # Remote browser voice calls from other devices need a real HTTPS/WSS deployment path for the
     # web UI and LiveKit media plane. Local installs should default to disabled until the operator
-    # deliberately configures a supported public topology.
+    # deliberately configures a supported topology.
+    # Quick rule of thumb:
+    # - disabled: keep everything local-only
+    # - tailscale_tailnet_https: easiest path for your own devices when you can install Tailscale
+    # - custom_domain/public_https_edge: best path for any browser anywhere
+    #   when your router supports UPnP/NAT-PMP or you can forward the required ports manually
+    # Supported modes:
+    # - disabled
+    # - cloudflare_quick_tunnel (experimental voice-only path; not the recommended install story)
+    # - tailscale_tailnet_https (recommended for your own devices)
+    # - netbird_selfhosted_mesh (OSS private-mesh path)
+    # - public_https_edge (public custom-domain or zero-cost sslip.io path)
+    # `custom_domain` is accepted as a clearer alias for `public_https_edge`.
     remote_call_mode: disabled
     # Optional browser-facing origins for remote-device access.
-    # Set these when you have a real public deployment or reverse proxy.
+    # Leave them blank for automatic Tailscale mode or the public sslip.io fallback.
+    # Set them explicitly for NetBird or your own stable public subdomains.
+    # Stable public custom-domain access expects all four of these to be set.
+    # If you prefer a single namespace, choose an app hostname like app.example.com and use:
+    # - https://app.example.com
+    # - https://api.app.example.com
+    # - https://playground.app.example.com
+    # - wss://livekit.app.example.com
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""
     public_livekit_url: ""
+    # Optional explicit mesh IP for LiveKit media when the public_livekit_url hostname does not
+    # resolve to this Mac's private mesh address on startup. Most Tailscale installs can leave this
+    # blank; NetBird operators may want to set it deliberately.
+    livekit_node_ip: ""
   personalization:
     # New installs should ship with "Recall all conversations" enabled so
     # runtime recall and vector recall can activate without extra manual toggles.
@@ -70,7 +101,6 @@ voice:
   # stt:
   #   secret_ref: keychain://viventium/assemblyai_api_key
   tts_provider: browser
-  fast_llm_provider: x_ai
   wing_mode:
     default_enabled: false
     prompt: |-

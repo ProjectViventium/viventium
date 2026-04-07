@@ -35,6 +35,13 @@ memory:
     model: "grok-4-1-fast-reasoning"
 ```
 
+Historical note:
+- This January 22, 2026 cloud snapshot used xAI for the memory writer.
+- As of April 5, 2026, the public config compiler no longer treats that xAI value as the product
+  default for generated local/runtime config. Memory provider/model must now be compiled from the
+  actually configured foundation provider (`openai` / `anthropic`) instead of preserving a hidden
+  xAI dependency.
+
 ---
 
 ## Voice Call Flow (Where Time Accrues)
@@ -131,7 +138,8 @@ const withoutKeys = sortedMemories.map(...).join('\n\n');
 ```
 
 ### Memory Agent Run (Concurrent LLM Call)
-When enabled, memory processing launches a **separate LLM run** (default config uses `xai/grok-4-1-fast-reasoning`).
+When enabled, memory processing launches a **separate LLM run**. In the January 22, 2026 cloud
+snapshot shown above, that memory writer used `xai/grok-4-1-fast-reasoning`.
 
 ```333:349:viventium_v0_4/LibreChat/packages/api/src/agents/memory.ts
 const defaultLLMConfig = {
@@ -171,7 +179,9 @@ if (!bypassConcurrency) { checkAndIncrementPendingRequest(...) } else {
 ```
 
 ### 3) Main agent is fast, but memory agent is separate
-Your main agent can be fast (`grok-4-1-fast`), but the **memory agent is configured separately** (xAI `grok-4-1-fast-reasoning`) and can still consume latency and provider quota.
+Your main agent can be fast, but the **memory agent is configured separately** and can still
+consume latency and provider quota. In the January 22, 2026 cloud snapshot above, that separate
+memory writer was xAI `grok-4-1-fast-reasoning`.
 
 ---
 

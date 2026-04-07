@@ -18,11 +18,18 @@ background-cortex behavior.
 
 ## Public-Safe Specifications
 
-### Voice Fast-Route Fallback Contract
-- The main agent may optionally expose a dedicated voice provider/model, but the shared default must
-  remain safe for clean installs.
-- If no explicit fast voice provider is configured, runtime should use the main agent provider/model.
-- If runtime changes the dedicated voice provider, it must choose a compatible model for that family.
+### Voice Call LLM Ownership Contract
+- The main agent provider/model is the default LLM for live voice calls.
+- The agent may optionally expose a dedicated Voice Call LLM via explicit `voice_llm_provider` and
+  `voice_llm_model` fields.
+- If the Voice Call LLM is unset, runtime must use the agent's primary provider/model exactly as
+  selected in Agent Builder.
+- Machine-level voice transport settings such as STT/TTS configuration must not silently rewrite the
+  call LLM route.
+- Legacy machine-level config fields such as `voice.fast_llm_provider` /
+  `VIVENTIUM_VOICE_FAST_LLM_PROVIDER` must not override the agent-visible Voice Call LLM contract.
+- If an explicit Voice Call LLM is invalid or lacks a required server credential, runtime should log
+  the skip and fall back to the agent primary model/provider.
 
 ### Call Session Storage
 - Persist call sessions with TTL.
@@ -31,7 +38,10 @@ background-cortex behavior.
 
 ### Wing Mode
 - Wing Mode is a passive companion mode for live voice calls.
-- The first-enable disclosure should show the current STT route, TTS route, and fast voice LLM route.
+- The first-enable disclosure should show the current STT route, TTS route, and effective assistant
+  call LLM route for the owning agent.
+- The assistant disclosure must show the concrete provider/model and whether that route comes from
+  the agent Voice Call LLM or from inheritance of the agent primary LLM.
 - Runtime should use the persisted call-session flag as the source of truth for whether Wing Mode is on.
 
 ### Voice Gateway Contract
@@ -43,6 +53,17 @@ background-cortex behavior.
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.
 - The gateway should not wait for the full final LLM answer before starting speech.
+
+### Remote Browser Voice Contract
+- Enabling remote access must not break the canonical localhost voice path.
+- The modern playground must choose the LiveKit URL by browser origin:
+  - localhost callers keep `ws://localhost:7888`
+  - configured public playground origins receive the configured public LiveKit WSS URL
+- Public-browser access also needs the non-HTTP media path:
+  - direct LiveKit TCP/UDP media where available
+  - TURN/TLS fallback when the public HTTPS edge is active
+- The stable public answer for arbitrary browsers is the public HTTPS edge with explicit custom
+  domains; private mesh modes remain separate operator-owned access modes for enrolled devices.
 
 ## Public-Safe Guidance
 - Keep browser-visible URLs honest.

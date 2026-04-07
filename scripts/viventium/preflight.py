@@ -5,11 +5,14 @@ import argparse
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -37,6 +40,7 @@ MANUAL_RECHECK_TIMEOUT_SECONDS = 300
 DEFAULT_DOCKER_READINESS_TIMEOUT_SECONDS = 3.0
 DEFAULT_DOCKER_AUTOSTART_GRACE_SECONDS = 12.0
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
+UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
 
 
 @dataclass
@@ -349,7 +353,99 @@ def normalize_remote_call_mode(network: dict[str, Any]) -> str:
     mode = str(network.get("remote_call_mode", "disabled") or "disabled").strip().lower()
     if not mode or mode == "auto":
         return "disabled"
+    if mode in {"custom_domain", "custom_domain_public_edge", "public_custom_domain"}:
+        return "public_https_edge"
     return mode
+
+
+def runtime_network_config(config: dict[str, Any]) -> dict[str, Any]:
+    runtime = config.get("runtime", {}) or {}
+    network = runtime.get("network", {}) or {}
+    return network if isinstance(network, dict) else {}
+
+
+def tailscale_service_ready() -> bool:
+    if not command_exists("tailscale"):
+        return False
+    return run_checked(["tailscale", "status", "--json"], timeout_seconds=3).returncode == 0
+
+
+def upnpc_router_ready() -> bool:
+    if not command_exists("upnpc"):
+        return False
+    result = run_checked(["upnpc", "-l"], timeout_seconds=5)
+    if result.returncode != 0:
+        return False
+    return "Found valid IGD" in (result.stdout or "")
+
+
+def upnpc_router_external_ipv4() -> str:
+    if not command_exists("upnpc"):
+        return ""
+    result = run_checked(["upnpc", "-l"], timeout_seconds=5)
+    if result.returncode != 0:
+        return ""
+    match = UPNPC_EXTERNAL_IP_RE.search(result.stdout or "")
+    return match.group(1) if match else ""
+
+
+def discover_public_ipv4() -> str:
+    for endpoint in ("https://api.ipify.org", "https://checkip.amazonaws.com"):
+        try:
+            with urllib.request.urlopen(endpoint, timeout=4) as response:
+                candidate = str(response.read().decode("utf-8", errors="ignore")).strip()
+        except Exception:
+            continue
+        if candidate and re.fullmatch(r"[0-9.]+", candidate):
+            return candidate
+    return ""
+
+
+def public_edge_cgnat_details() -> tuple[bool, str, str]:
+    router_external_ip = upnpc_router_external_ipv4()
+    public_ip = discover_public_ipv4()
+    if not router_external_ip or not public_ip:
+        return (False, router_external_ip, public_ip)
+    return (router_external_ip != public_ip, router_external_ip, public_ip)
+
+
+def netbird_missing_remote_origin_fields(config: dict[str, Any]) -> list[str]:
+    network = runtime_network_config(config)
+    missing = [
+        field
+        for field in ("public_client_origin", "public_api_origin")
+        if not str(network.get(field, "") or "").strip()
+    ]
+    voice_mode = str(config.get("voice", {}).get("mode", "disabled")).strip().lower() or "disabled"
+    if voice_mode != "disabled":
+        missing.extend(
+            field
+            for field in ("public_playground_origin", "public_livekit_url")
+            if not str(network.get(field, "") or "").strip()
+        )
+    return missing
+
+
+def netbird_livekit_node_ip_ready(config: dict[str, Any]) -> bool:
+    network = runtime_network_config(config)
+    explicit_node_ip = str(network.get("livekit_node_ip", "") or "").strip()
+    if explicit_node_ip:
+        return True
+
+    public_livekit_url = str(network.get("public_livekit_url", "") or "").strip()
+    if not public_livekit_url:
+        return False
+
+    parsed = urllib.parse.urlparse(public_livekit_url)
+    hostname = str(parsed.hostname or "").strip()
+    if not hostname:
+        return False
+
+    try:
+        socket.gethostbyname(hostname)
+    except Exception:
+        return False
+    return True
 
 
 def code_interpreter_enabled(config: dict[str, Any]) -> bool:
@@ -524,7 +620,11 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
 
     install_mode = ctx["install_mode"]
     voice_enabled = ctx["voice_mode"] != "disabled"
-    remote_call_needed = voice_enabled and ctx["remote_call_mode"] == "cloudflare_quick_tunnel"
+    remote_call_mode = ctx["remote_call_mode"]
+    cloudflare_remote_voice_requested = voice_enabled and remote_call_mode == "cloudflare_quick_tunnel"
+    tailscale_remote_requested = remote_call_mode == "tailscale_tailnet_https"
+    netbird_remote_requested = remote_call_mode == "netbird_selfhosted_mesh"
+    public_edge_remote_requested = remote_call_mode == "public_https_edge"
 
     if install_mode == "native":
         items.extend(
@@ -659,7 +759,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     )
                 )
 
-    if remote_call_needed:
+    if cloudflare_remote_voice_requested:
         cloudflared_ready = command_exists("cloudflared")
         items.append(
             PreflightItem(
@@ -673,6 +773,179 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 command="cloudflared",
             )
         )
+
+    if tailscale_remote_requested:
+        tailscale_ready = command_exists("tailscale")
+        items.append(
+            PreflightItem(
+                key="tailscale",
+                label="tailscale",
+                category="remote access",
+                reason="tailnet-only HTTPS access for the full Viventium browser surface and modern voice playground",
+                status="ok" if tailscale_ready else "missing",
+                install_kind="brew_formula" if not tailscale_ready else "none",
+                formula="tailscale" if not tailscale_ready else "",
+                command="tailscale",
+            )
+        )
+        if tailscale_ready:
+            signed_in = tailscale_service_ready()
+            items.append(
+                PreflightItem(
+                    key="tailscale_tailnet",
+                    label="Tailscale tailnet connected",
+                    category="remote access",
+                    reason="tailnet-only Viventium links only work after this Mac is signed in to your Tailscale tailnet",
+                    status="ok" if signed_in else "missing",
+                    install_kind="manual" if not signed_in else "none",
+                    manual_command="Open Tailscale and join this Mac to your tailnet, or run `tailscale up`"
+                    if not signed_in
+                    else "",
+                    command="tailscale",
+                )
+            )
+
+    if netbird_remote_requested:
+        netbird_ready = command_exists("netbird")
+        items.append(
+            PreflightItem(
+                key="netbird",
+                label="NetBird client",
+                category="remote access",
+                reason="join this Mac to your self-hosted NetBird mesh before exposing Viventium on private mesh hostnames",
+                status="ok" if netbird_ready else "missing",
+                install_kind="manual" if not netbird_ready else "none",
+                manual_command="Install the NetBird client/CLI for your self-hosted mesh, then connect this Mac to that mesh"
+                if not netbird_ready
+                else "",
+                command="netbird",
+            )
+        )
+        caddy_ready = command_exists("caddy")
+        items.append(
+            PreflightItem(
+                key="caddy",
+                label="caddy",
+                category="remote access",
+                reason="terminate browser-trusted HTTPS/WSS for the private NetBird mesh browser surface",
+                status="ok" if caddy_ready else "missing",
+                install_kind="brew_formula" if not caddy_ready else "none",
+                formula="caddy" if not caddy_ready else "",
+                command="caddy",
+            )
+        )
+        missing_origin_fields = netbird_missing_remote_origin_fields(config)
+        if missing_origin_fields:
+            field_list = ", ".join(missing_origin_fields)
+            items.append(
+                PreflightItem(
+                    key="netbird_origins",
+                    label="NetBird remote origins",
+                    category="remote access",
+                    reason=(
+                        "private-mesh browser access still needs explicit HTTPS/WSS origins for the app, API, "
+                        "and any enabled voice surfaces"
+                    ),
+                    status="missing",
+                    install_kind="manual",
+                    manual_command=(
+                        "Set runtime.network."
+                        + field_list.replace(", ", ", runtime.network.")
+                        + " in config.yaml, then rerun preflight"
+                    ),
+                )
+            )
+        if voice_enabled and not netbird_livekit_node_ip_ready(config):
+            items.append(
+                PreflightItem(
+                    key="netbird_livekit_node_ip",
+                    label="NetBird LiveKit node IP",
+                    category="remote access",
+                    reason=(
+                        "LiveKit media still needs a mesh-reachable node IP after secure signaling; "
+                        "set runtime.network.livekit_node_ip or make the LiveKit hostname resolve on this Mac"
+                    ),
+                    status="missing",
+                    install_kind="manual",
+                    manual_command=(
+                        "Set runtime.network.livekit_node_ip to this Mac's NetBird mesh IP, or make "
+                        "runtime.network.public_livekit_url resolve locally before startup"
+                    ),
+                )
+            )
+
+    if public_edge_remote_requested:
+        caddy_ready = command_exists("caddy")
+        items.append(
+            PreflightItem(
+                key="public_edge_caddy",
+                label="caddy",
+                category="remote access",
+                reason="terminate real public HTTPS/WSS for the public Viventium browser surfaces",
+                status="ok" if caddy_ready else "missing",
+                install_kind="brew_formula" if not caddy_ready else "none",
+                formula="caddy" if not caddy_ready else "",
+                command="caddy",
+            )
+        )
+        upnpc_ready = command_exists("upnpc")
+        items.append(
+            PreflightItem(
+                key="public_edge_upnpc",
+                label="miniupnpc",
+                category="remote access",
+                reason="auto-create router port forwards for the public HTTPS edge and LiveKit media ports",
+                status="ok" if upnpc_ready else "missing",
+                install_kind="brew_formula" if not upnpc_ready else "none",
+                formula="miniupnpc" if not upnpc_ready else "",
+                command="upnpc",
+            )
+        )
+        if upnpc_ready:
+            router_ready = upnpc_router_ready()
+            items.append(
+                PreflightItem(
+                    key="public_edge_router",
+                    label="Router public port mapping",
+                    category="remote access",
+                    reason=(
+                        "the public HTTPS edge only works after ports 80/tcp, 443/tcp, "
+                        "5349/tcp, and the LiveKit media ports reach this Mac from the internet"
+                    ),
+                    status="ok" if router_ready else "missing",
+                    install_kind="manual" if not router_ready else "none",
+                    manual_command=(
+                        "Enable UPnP/NAT-PMP on the router or manually forward "
+                        "80/tcp, 443/tcp, 5349/tcp, 7889/tcp, and 7890/udp to this Mac"
+                    )
+                    if not router_ready
+                    else "",
+                )
+            )
+            if router_ready:
+                cgnat_suspected, router_external_ip, public_ip = public_edge_cgnat_details()
+                if cgnat_suspected:
+                    items.append(
+                        PreflightItem(
+                            key="public_edge_public_ipv4",
+                            label="Public IPv4 path",
+                            category="remote access",
+                            reason=(
+                                "the router WAN IP does not match the internet-visible IPv4, which "
+                                "usually means CGNAT or another upstream NAT is blocking direct "
+                                "inbound access to this home network"
+                            ),
+                            status="missing",
+                            install_kind="manual",
+                            manual_command=(
+                                f"Router WAN IP {router_external_ip} does not match public IPv4 "
+                                f"{public_ip}. Ask the ISP for a real public IPv4, configure a "
+                                "separate operator-managed public edge, or do not rely on "
+                                "`public_https_edge` inbound access from the internet until that "
+                                "difference is resolved."
+                            ),
+                        )
+                    )
 
     need_brew = any(item.status == "missing" and item.install_kind.startswith("brew_") for item in items)
     if need_brew:

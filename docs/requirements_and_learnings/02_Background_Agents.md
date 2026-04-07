@@ -1,9 +1,11 @@
 # Background Agents (Cortices) - Requirements, Specs, and Learnings
 
 ## Overview
+
 Background agents ("cortices") run in a two-phase flow:
-1) Activation detection.
-2) Asynchronous execution and insight merge.
+
+1. Activation detection.
+2. Asynchronous execution and insight merge.
 
 They must never degrade tool or MCP capabilities compared to running the same agent directly.
 
@@ -13,6 +15,7 @@ For the manager-readable handbook, start with:
 - `qa/background_agents/README.md`
 
 ## Core Requirements
+
 - Activation is fast, accurate, and low-noise.
 - Execution is non-blocking and does not delay the main response.
 - Background agents retain full capabilities: tools, MCPs, code interpreter, web search.
@@ -28,6 +31,17 @@ For the manager-readable handbook, start with:
 - Keep runtime plumbing generic and reusable.
 - Use explicit tests and evidence collection to verify activation and follow-up behavior.
 - Do not encode private names, machine names, or client examples into the runtime contract.
+
+## Anthropic Runtime Compatibility
+
+- Anthropic background cortices must never send `temperature` when `thinking` is active.
+- This includes provider-default thinking that can be materialized later during runtime hydration, not
+  just explicit `thinking` fields already present in the source-of-truth YAML.
+- Background-cortex execution should therefore re-check the final initialized Anthropic config before
+  Phase B execution and remove `temperature` if thinking is active.
+- When a shipped Anthropic cortex is intentionally temperature-tuned rather than thinking-enabled,
+  its source-of-truth `model_parameters` must set `thinking: false` explicitly so fresh installs and
+  runtime reseeding preserve the intended behavior.
 
 ## Memory Context Parity
 
@@ -69,3 +83,13 @@ Use this order so the fix stays surgical:
 3. compare the result against the exact prompt family, not just one example
 4. update the QA set if the failure exposed a new boundary
 5. only then change runtime code or source-of-truth prompts
+
+## Learnings
+
+- On April 5, 2026, live failures for `Confirmation Bias` and `Emotional Resonance` traced to
+  Anthropic rejecting `temperature` after default thinking was added during initialization.
+- Fixing only the pre-initialize background-cortex copy was insufficient because the provider layer
+  can still hydrate `thinking` later.
+- Fixing only the provider layer would stop the crash but could silently change the intended shipped
+  behavior of temperature-tuned built-ins; those built-ins also need truthful source-of-truth
+  `thinking` settings.

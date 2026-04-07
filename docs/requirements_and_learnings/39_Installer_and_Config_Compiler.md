@@ -18,6 +18,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
    - detached local startup plus health wait
 3. Generated runtime files are written under `~/Library/Application Support/Viventium/runtime/` and
    are outputs, not authoring surfaces.
+4. LibreChat startup then re-seeds the built-in Viventium agents from the git-tracked/source-of-truth
+   agents bundle:
+   - `viventium_v0_4/viventium-librechat-start.sh`
+   - `viventium_v0_4/LibreChat/scripts/viventium-seed-agents.js`
+   - `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml`
 
 ## Installer UX Requirements
 
@@ -44,6 +49,23 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `runtime.env`
   - `runtime.local.env`
   - `librechat.yaml`
+- Human-facing browser auth posture must compile from canonical config too:
+  - `runtime.auth.allow_registration` -> `ALLOW_REGISTRATION`
+  - `runtime.auth.allow_password_reset` -> `ALLOW_PASSWORD_RESET`
+- Generated runtime config must not silently preserve hidden provider defaults from the source
+  template when the installer/compiler already knows the machine's real auth surface.
+- `librechat.yaml` memory-writer provider/model must be compiled from the actually available
+  foundation providers (`openai` / `anthropic`), including connected-account auth:
+  - do not leave memory on a hardcoded xAI default when xAI was never configured
+  - when both OpenAI and Anthropic are available, honor the configured foundation-provider order
+    instead of silently preferring a different provider
+- Endpoint helper config must not hide unavailable provider dependencies:
+  - Anthropic conversation-title generation must stay on Anthropic instead of routing through xAI
+- Built-in agent runtime truth must remain compatible with the selected install/runtime surface:
+  - fresh installs and restarts rely on the seeded source-of-truth agent bundle
+  - do not rely on Mongo hand-edits or App Support leftovers to make built-ins behave correctly
+  - shipped Anthropic agents that intentionally use `temperature` must set `thinking: false`
+    explicitly when Anthropic runtime defaults would otherwise enable thinking
 - Installer UX affordances, including wait copy and inline animations, must not mutate or depend on
   generated App Support outputs to appear correct.
 
@@ -54,3 +76,17 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - Playful wait copy is acceptable when the deterministic status path remains visible and reliable.
 - The right ownership layer for this feature is the public CLI wait loop in `bin/viventium`, not
   generated runtime files, LibreChat prompts, or machine-local App Support state.
+- Remote access surfaced the same ownership rule again on April 7, 2026:
+  - the wizard must own the human-facing remote-access choice in plain language
+  - the config compiler must own the generated browser-auth/env posture
+  - the runtime state file must own the exact live outside URL after startup
+  - `bin/viventium status` / install summary must read that runtime state instead of making the
+    operator reconstruct it manually
+- On April 5, 2026, a background-cortex failure showed why install/start ownership matters:
+  built-in Anthropic agents are re-seeded from source-of-truth on startup, so fixing only live
+  Mongo state or only a local runtime leftover would not align fresh installs or later restarts.
+- On April 5, 2026, the memory-writer compile path exposed the same ownership rule from another
+  angle: `local.librechat.yaml` still carried historical xAI defaults for `memory.agent` and the
+  Anthropic endpoint `titleEndpoint/titleModel`, but the compiler never overlaid those fields. The
+  correct fix was to compile those runtime surfaces from real configured provider availability, not
+  to hand-edit App Support outputs or patch the memory runtime.
