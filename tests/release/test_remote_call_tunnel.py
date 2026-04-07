@@ -264,18 +264,18 @@ def test_cmd_refresh_mappings_renews_saved_public_edge_ports(monkeypatch, tmp_pa
     state = {
         "provider": "public_https_edge",
         "router": {
-            "local_ip": "10.88.111.46",
+            "local_ip": "192.168.50.10",
             "mappings": [
                 {
                     "protocol": "TCP",
                     "external_port": 80,
-                    "internal_host": "10.88.111.46",
+                    "internal_host": "192.168.50.10",
                     "internal_port": 64822,
                 },
                 {
                     "protocol": "TCP",
                     "external_port": 443,
-                    "internal_host": "10.88.111.46",
+                    "internal_host": "192.168.50.10",
                     "internal_port": 64823,
                 },
             ],
@@ -302,8 +302,8 @@ def test_cmd_refresh_mappings_renews_saved_public_edge_ports(monkeypatch, tmp_pa
 
     assert module.cmd_refresh_mappings(args) == 0
     assert captured == [
-        ("TCP", 80, "10.88.111.46", 64822, 7200),
-        ("TCP", 443, "10.88.111.46", 64823, 7200),
+        ("TCP", 80, "192.168.50.10", 64822, 7200),
+        ("TCP", 443, "192.168.50.10", 64823, 7200),
     ]
     assert saved["router"]["mapping_lease_seconds"] == 7200
     assert saved["router"]["last_refreshed_at"] == "2026-04-07T03:30:00Z"
