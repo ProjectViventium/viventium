@@ -4496,6 +4496,59 @@ clear_remote_call_runtime_exports() {
   unset LIVEKIT_TURN_KEY_FILE
 }
 
+persist_remote_call_failure_state_if_needed() {
+  local provider="${1:-public_https_edge}"
+  local message="${2:-}"
+  if [[ -z "$message" ]]; then
+    message="Remote access setup failed before the helper could persist an error state."
+  fi
+  REMOTE_CALL_STATE_FILE="$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
+  REMOTE_CALL_PROVIDER="$provider" \
+  REMOTE_CALL_FAILURE_MESSAGE="$message" \
+  "$PYTHON_BIN" - <<'PY'
+import json
+import os
+import time
+from pathlib import Path
+
+state_file = Path(os.environ.get("REMOTE_CALL_STATE_FILE", "") or "")
+if not str(state_file):
+    raise SystemExit(0)
+
+provider = str(os.environ.get("REMOTE_CALL_PROVIDER") or "public_https_edge").strip() or "public_https_edge"
+message = str(os.environ.get("REMOTE_CALL_FAILURE_MESSAGE") or "").strip()
+if not message:
+    message = "Remote access setup failed before the helper could persist an error state."
+
+existing = {}
+try:
+    if state_file.exists():
+        loaded = json.loads(state_file.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            existing = loaded
+except Exception:
+    existing = {}
+
+if str(existing.get("provider") or "").strip() == provider and str(existing.get("last_error") or "").strip():
+    raise SystemExit(0)
+
+state_file.parent.mkdir(parents=True, exist_ok=True)
+state_file.write_text(
+    json.dumps(
+        {
+            "provider": provider,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "last_error": message,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
 remote_call_mapping_state_supports_refresh() {
   if [[ ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
     return 1
@@ -4626,6 +4679,7 @@ prepare_remote_call_access() {
     "${auto_install_args[@]}" 2>&1)"; then
     local failure_message="${state_json//$'\r'/ }"
     failure_message="${failure_message//$'\n'/ }"
+    persist_remote_call_failure_state_if_needed "$remote_provider" "$failure_message"
     clear_remote_call_runtime_exports
     log_warn "Remote access setup failed; local startup will continue without it: $failure_message"
     return 0

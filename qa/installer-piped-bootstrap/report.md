@@ -2,16 +2,15 @@
 
 ## Date
 
-- 2026-04-07
+- 2026-04-08
 
 ## Build Under Test
 
-- Branch: `main`
-- Working tree included local changes to:
-  - `bin/viventium`
-  - `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md`
-  - `tests/release/test_cli_upgrade.py`
-  - `qa/installer-piped-bootstrap/*`
+- Branch: `feature/installer-resilience-public-review`
+- Scope: clean public-review branch state for the installer stdin-reattachment fix
+- Verification reference:
+  - `git rev-parse HEAD`
+  - use the checked-out branch revision that contains this report
 
 ## Steps Executed
 

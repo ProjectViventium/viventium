@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
 import pty
 import re
@@ -163,6 +164,7 @@ def test_remote_access_failure_does_not_abort_local_launcher_progress(tmp_path: 
     )
     json_state_value = extract_shell_function(launcher_text, "json_state_value")
     clear_remote_exports = extract_shell_function(launcher_text, "clear_remote_call_runtime_exports")
+    persist_failure_state = extract_shell_function(launcher_text, "persist_remote_call_failure_state_if_needed")
     mapping_state_support = extract_shell_function(launcher_text, "remote_call_mapping_state_supports_refresh")
     prepare_remote_access = extract_shell_function(launcher_text, "prepare_remote_call_access")
     start_refresh_worker = extract_shell_function(launcher_text, "start_remote_call_mapping_refresh_worker")
@@ -205,7 +207,139 @@ VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT={str(fake_tunnel)!r}
 VIVENTIUM_PUBLIC_NETWORK_STATE_FILE={str(state_file)!r}
 VIVENTIUM_CALL_TUNNEL_LOG_DIR={str((tmp_path / "logs"))!r}
 VIVENTIUM_REMOTE_CALL_MODE=public_https_edge
-VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL=false
+VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL=true
+VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE={str(refresh_pid_file)!r}
+VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE={str(refresh_log_file)!r}
+VIVENTIUM_CORE_DIR={str(tmp_path)!r}
+VIVENTIUM_VOICE_ENABLED=false
+SKIP_PLAYGROUND=true
+SKIP_LIVEKIT=true
+VIVENTIUM_PUBLIC_CLIENT_URL=https://stale.example.test
+LIVEKIT_NODE_IP=192.0.2.44
+export PYTHON_BIN VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT VIVENTIUM_PUBLIC_NETWORK_STATE_FILE
+export VIVENTIUM_CALL_TUNNEL_LOG_DIR VIVENTIUM_REMOTE_CALL_MODE VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL
+export VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE
+export VIVENTIUM_CORE_DIR VIVENTIUM_VOICE_ENABLED SKIP_PLAYGROUND SKIP_LIVEKIT
+export VIVENTIUM_PUBLIC_CLIENT_URL LIVEKIT_NODE_IP
+
+log_info() {{ printf 'INFO:%s\\n' "$*"; }}
+log_warn() {{ printf 'WARN:%s\\n' "$*"; }}
+remote_call_mode_enabled() {{ return 0; }}
+remote_call_public_edge_mode() {{ return 0; }}
+remote_call_mapping_refresh_pid_is_running() {{ return 1; }}
+get_client_port() {{ printf '3190\\n'; }}
+get_api_port() {{ printf '3180\\n'; }}
+get_playground_port() {{ printf '3300\\n'; }}
+get_livekit_port() {{ printf '7888\\n'; }}
+is_truthy() {{
+  case "${{1:-}}" in
+    1|true|TRUE|yes|YES)
+      return 0
+      ;;
+  esac
+  return 1
+}}
+
+    {json_state_value}
+    {clear_remote_exports}
+    {persist_failure_state}
+    {mapping_state_support}
+    {prepare_remote_access}
+    {start_refresh_worker}
+
+prepare_remote_call_access
+mkdir -p "$(dirname "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE")"
+printf '%s\n' '{{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}}' > "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
+printf 'AFTER_CLIENT=%s\\n' "${{VIVENTIUM_PUBLIC_CLIENT_URL:-}}"
+printf 'AFTER_NODE_IP=%s\\n' "${{LIVEKIT_NODE_IP:-}}"
+start_remote_call_mapping_refresh_worker
+if [[ -f {str(refresh_pid_file)!r} ]]; then
+  printf 'REFRESH_PID_EXISTS=yes\\n'
+else
+  printf 'REFRESH_PID_EXISTS=no\\n'
+fi
+"""
+
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    combined_output = completed.stdout + completed.stderr
+    assert "Remote access setup failed; local startup will continue without it" in combined_output
+    assert "AFTER_CLIENT=" in completed.stdout
+    assert "AFTER_NODE_IP=" in completed.stdout
+    assert "AFTER_CLIENT=https://stale.example.test" not in completed.stdout
+    assert "AFTER_NODE_IP=192.0.2.44" not in completed.stdout
+    assert "REFRESH_PID_EXISTS=no" in completed.stdout
+    assert state_file.exists()
+    assert "Router already forwards TCP 80" in state_file.read_text(encoding="utf-8")
+
+
+def test_remote_access_failure_replaces_stale_healthy_state_when_helper_dies_early(tmp_path: Path) -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    json_state_value = extract_shell_function(launcher_text, "json_state_value")
+    clear_remote_exports = extract_shell_function(launcher_text, "clear_remote_call_runtime_exports")
+    persist_failure_state = extract_shell_function(launcher_text, "persist_remote_call_failure_state_if_needed")
+    mapping_state_support = extract_shell_function(launcher_text, "remote_call_mapping_state_supports_refresh")
+    prepare_remote_access = extract_shell_function(launcher_text, "prepare_remote_call_access")
+    start_refresh_worker = extract_shell_function(launcher_text, "start_remote_call_mapping_refresh_worker")
+
+    fake_tunnel = tmp_path / "remote_call_tunnel.py"
+    fake_tunnel.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+
+sys.stderr.write("helper crashed before persisting state\\n")
+raise SystemExit(1)
+""",
+        encoding="utf-8",
+    )
+    fake_tunnel.chmod(0o755)
+
+    state_file = tmp_path / "state" / "public-network.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(
+        json.dumps(
+            {
+                "provider": "public_https_edge",
+                "public_client_url": "https://stale.example.test",
+                "router": {
+                    "mappings": [
+                        {
+                            "external_port": 80,
+                            "internal_port": 3190,
+                            "protocol": "TCP",
+                        }
+                    ]
+                },
+                "client": {
+                    "target": "http://localhost:3190",
+                    "public_url": "https://stale.example.test",
+                },
+                "caddy": {"pid": 99999},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    refresh_pid_file = tmp_path / "state" / "public-network-refresh.pid"
+    refresh_log_file = tmp_path / "logs" / "remote-call-upnp-refresh.log"
+
+    script = f"""
+set -euo pipefail
+PYTHON_BIN={str(sys.executable)!r}
+VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT={str(fake_tunnel)!r}
+VIVENTIUM_PUBLIC_NETWORK_STATE_FILE={str(state_file)!r}
+VIVENTIUM_CALL_TUNNEL_LOG_DIR={str((tmp_path / "logs"))!r}
+VIVENTIUM_REMOTE_CALL_MODE=public_https_edge
+VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL=true
 VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE={str(refresh_pid_file)!r}
 VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE={str(refresh_log_file)!r}
 VIVENTIUM_CORE_DIR={str(tmp_path)!r}
@@ -240,13 +374,12 @@ is_truthy() {{
 
 {json_state_value}
 {clear_remote_exports}
+{persist_failure_state}
 {mapping_state_support}
 {prepare_remote_access}
 {start_refresh_worker}
 
 prepare_remote_call_access
-mkdir -p "$(dirname "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE")"
-printf '%s\n' '{{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}}' > "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
 printf 'AFTER_CLIENT=%s\\n' "${{VIVENTIUM_PUBLIC_CLIENT_URL:-}}"
 printf 'AFTER_NODE_IP=%s\\n' "${{LIVEKIT_NODE_IP:-}}"
 start_remote_call_mapping_refresh_worker
@@ -266,13 +399,17 @@ fi
 
     combined_output = completed.stdout + completed.stderr
     assert "Remote access setup failed; local startup will continue without it" in combined_output
-    assert "AFTER_CLIENT=" in completed.stdout
-    assert "AFTER_NODE_IP=" in completed.stdout
+    assert "helper crashed before persisting state" in combined_output
     assert "AFTER_CLIENT=https://stale.example.test" not in completed.stdout
     assert "AFTER_NODE_IP=192.0.2.44" not in completed.stdout
     assert "REFRESH_PID_EXISTS=no" in completed.stdout
-    assert state_file.exists()
-    assert "Router already forwards TCP 80" in state_file.read_text(encoding="utf-8")
+
+    saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert saved_state["provider"] == "public_https_edge"
+    assert saved_state["last_error"] == "helper crashed before persisting state"
+    assert "router" not in saved_state
+    assert "client" not in saved_state
+    assert "public_client_url" not in saved_state
 
 
 def test_maybe_install_macos_helper_accepts_explicit_no_launch_override() -> None:

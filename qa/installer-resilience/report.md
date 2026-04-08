@@ -26,14 +26,38 @@ Coverage added:
 - Telegram bridge defers cleanly during long LibreChat builds, surfaces `Starting`, and self-starts
   after API health without a manual restart
 
+## Public-review follow-up
+
+Date: 2026-04-08
+
+Reran the focused launcher/runtime slice after closing the helper-early-exit stale-state gap and
+sanitizing the public QA artifact placeholders.
+
+Ran:
+
+```bash
+bash -n viventium_v0_4/viventium-librechat-start.sh
+python3 -m pytest tests/release/test_cli_upgrade.py tests/release/test_install_summary.py tests/release/test_remote_call_tunnel.py -q
+```
+
+Result:
+
+- `57 passed in 14.86s`
+
+Additional coverage now proves:
+
+- the launcher writes a fallback `last_error` when the remote-access helper exits before persisting
+  failure state
+- stale healthy `public-network.json` content is replaced before refresh-worker gating runs
+
 ## Live-machine verification
 
 Machine:
 
 - local macOS clean-install test host
-- existing router conflict:
-  - `80/tcp -> 10.88.111.46:50779`
-  - `443/tcp -> 10.88.111.46:50780`
+- required public ports already forwarded to another LAN host:
+  - `80/tcp`
+  - `443/tcp`
 
 Ran:
 
@@ -63,13 +87,13 @@ Machine:
 
 - local macOS clean-install test host
 - isolated temp root:
-  - `/tmp/viventium-e2e.7sNlwf`
+  - `<temp>`
 
 Ran:
 
 ```bash
-./install.sh --headless --config-input /tmp/viventium-e2e.7sNlwf/preset.yaml --app-support-dir /tmp/viventium-e2e.7sNlwf/app-support
-/tmp/viventium-e2e.7sNlwf/repo/bin/viventium --app-support-dir /tmp/viventium-e2e.7sNlwf/app-support status
+./install.sh --headless --config-input <temp>/preset.yaml --app-support-dir <temp>/app-support
+<temp>/repo/bin/viventium --app-support-dir <temp>/app-support status
 ```
 
 Observed:
@@ -88,5 +112,5 @@ Observed:
   - `Remote Access | Action Required`
   - `Telegram Bridge | Running`
 - runtime state persisted:
-  - `/tmp/viventium-e2e.7sNlwf/app-support/state/runtime/isolated/public-network.json`
-  - `/tmp/viventium-e2e.7sNlwf/app-support/state/runtime/isolated/telegram_bot.pid`
+  - `<temp>/app-support/state/runtime/isolated/public-network.json`
+  - `<temp>/app-support/state/runtime/isolated/telegram_bot.pid`

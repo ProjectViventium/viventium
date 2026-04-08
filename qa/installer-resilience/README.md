@@ -22,7 +22,8 @@ Expected behavior:
 
 - startup logs a warning instead of exiting
 - local services continue booting
-- `public-network.json` persists the exact blocker
+- `public-network.json` persists the exact blocker, even if the remote-access helper exits before it
+  can write its own failure state
 - `bin/viventium status` reports `Remote Access: Action Required`
 - no background UPnP refresh worker starts for the failed edge state
 
