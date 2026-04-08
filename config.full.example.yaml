@@ -119,12 +119,27 @@ integrations:
   telegram:
     enabled: true
     secret_ref: keychain://viventium/telegram_bot_token
+    # Optional override for Telegram media downloads.
+    # Hosted Telegram defaults to 10 MB.
+    # When Viventium manages a local Bot API server below, the compiler
+    # raises the default to 100 MB unless you override it here.
+    # max_file_size_bytes: 10485760
     # Optional local Telegram Bot API server for large media downloads.
     # Set bot_api_origin for the usual local server shape, or use the explicit
-    # base URLs if your Bot API server is fronted differently.
+    # base URLs if an external Bot API server is fronted differently.
     bot_api_origin: ""
     bot_api_base_url: ""
     bot_api_base_file_url: ""
+    # Optional Viventium-managed local Telegram Bot API server.
+    # Use this when large Telegram media must download/transcribe locally on
+    # the same Mac instead of failing at Telegram's hosted Bot API ceiling.
+    local_bot_api:
+      enabled: false
+      host: 127.0.0.1
+      port: 8084
+      binary_path: ""
+      api_id: keychain://viventium/telegram_api_id
+      api_hash: keychain://viventium/telegram_api_hash
   telegram_codex:
     enabled: false
     secret_ref: keychain://viventium/telegram_codex_bot_token

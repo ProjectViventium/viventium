@@ -48,8 +48,10 @@ def test_telegram_bot_supports_optional_local_bot_api_server() -> None:
     assert "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN" in config_source
     assert "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL" in config_source
     assert "VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL" in config_source
+    assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED" in config_source
     assert ".base_url(telegram_bot_api_base_url)" in bot_source
     assert ".base_file_url(telegram_bot_api_base_file_url)" in bot_source
+    assert "builder = builder.local_mode(True)" in bot_source
 
 
 def test_telegram_runtime_prefers_generated_service_env() -> None:
@@ -67,7 +69,14 @@ def test_telegram_runtime_prefers_generated_service_env() -> None:
     assert 'bot_api_origin:' in schema_source
     assert 'bot_api_base_url:' in schema_source
     assert 'bot_api_base_file_url:' in schema_source
+    assert 'max_file_size_bytes:' in schema_source
+    assert 'local_bot_api:' in schema_source
+    assert 'api_id:' in schema_source
+    assert 'api_hash:' in schema_source
     assert 'bot_api_origin: ""' in example_source
+    assert 'max_file_size_bytes: 10485760' in example_source
+    assert 'local_bot_api:' in example_source
+    assert 'api_id: keychain://viventium/telegram_api_id' in example_source
 
 
 def test_telegram_bot_stops_before_forwarding_failed_transcription() -> None:
@@ -88,3 +97,21 @@ def test_telegram_bot_stops_before_forwarding_failed_transcription() -> None:
     assert "return message, False" in bot_source
     assert 'transcription_display = f"🎤 Transcription:\\n> {voice_text}"' in bot_source
     assert "return voice_text, False" in bot_source
+
+
+def test_telegram_launcher_supports_managed_local_bot_api_contract() -> None:
+    launcher_source = (
+        REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "start_telegram_local_bot_api() {" in launcher_source
+    assert "stop_telegram_local_bot_api() {" in launcher_source
+    assert "ensure_telegram_local_bot_api_hosted_logout() {" in launcher_source
+    assert 'VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED' in launcher_source
+    assert 'VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID' in launcher_source
+    assert 'VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH' in launcher_source
+    assert 'VIVENTIUM_TELEGRAM_MAX_FILE_SIZE' in launcher_source
+    assert '--local \\' in launcher_source
+    assert '--api-id="$local_api_id" \\' in launcher_source
+    assert '--api-hash="$local_api_hash" \\' in launcher_source
+    assert 'if ! start_telegram_local_bot_api; then' in launcher_source

@@ -94,3 +94,17 @@ def test_start_telegram_bot_checks_media_prereqs_before_launch() -> None:
 
     assert "if ! ensure_telegram_media_prereqs; then" in script_text
     assert "Telegram bot cannot start without ffmpeg for supported voice/video media" in script_text
+    assert "if ! start_telegram_local_bot_api; then" in script_text
+
+
+def test_launcher_includes_managed_local_telegram_bot_api_runtime() -> None:
+    script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "start_telegram_local_bot_api() {" in script_text
+    assert "stop_telegram_local_bot_api() {" in script_text
+    assert "ensure_telegram_local_bot_api_hosted_logout() {" in script_text
+    assert 'TELEGRAM_LOCAL_BOT_API_PID_FILE="$LOG_ROOT/telegram-local-bot-api.pid"' in script_text
+    assert 'TELEGRAM_LOCAL_BOT_API_LOG_FILE="$LOG_DIR/telegram-local-bot-api.log"' in script_text
+    assert '--local \\' in script_text
+    assert '--http-port="$local_port" \\' in script_text
+    assert 'https://api.telegram.org/bot${BOT_TOKEN}/logOut' in script_text

@@ -51,11 +51,22 @@ stream back to Telegram through the existing bridge.
 - If the install needs Telegram media downloads beyond the hosted Bot API ceiling, the Telegram bot
   must be pointed at a local Telegram Bot API server instead of `https://api.telegram.org`.
 - Canonical config owns that choice under `integrations.telegram`:
-  - `bot_api_origin`, or
-  - explicit `bot_api_base_url` and `bot_api_base_file_url`
+  - explicit external-server wiring with `bot_api_origin`, or
+  - explicit `bot_api_base_url` and `bot_api_base_file_url`, or
+  - Viventium-managed same-Mac server wiring under `local_bot_api`
 - Those canonical fields compile to:
   - `VIVENTIUM_TELEGRAM_BOT_API_ORIGIN`, or
   - explicit `VIVENTIUM_TELEGRAM_BOT_API_BASE_URL` and `VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL`
+- When `integrations.telegram.local_bot_api.enabled` is true:
+  - Viventium owns the local `telegram-bot-api` process lifecycle in the launcher
+  - preflight must report the `telegram-bot-api` binary plus `api_id` / `api_hash` as prerequisites
+  - the compiler derives `VIVENTIUM_TELEGRAM_BOT_API_ORIGIN` from the local host/port instead of
+    requiring duplicate manual base-URL config
+  - the Telegram bot must run in PTB local mode
+  - Telegram media size policy must come from canonical config, not a hidden hardcoded default
+- `integrations.telegram.max_file_size_bytes` is the canonical Telegram bridge media ceiling.
+  Hosted Telegram defaults to 10 MB; managed local Bot API mode defaults to 100 MB unless the
+  operator sets a different value explicitly.
 - Public install flows must detect and install `ffmpeg` automatically through preflight when
   Telegram is enabled.
 - Telegram startup must fail honestly instead of reporting a healthy bridge when `ffmpeg` is still

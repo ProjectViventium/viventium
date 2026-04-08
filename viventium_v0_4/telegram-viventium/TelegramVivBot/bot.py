@@ -2040,6 +2040,9 @@ if __name__ == '__main__':
     telegram_bot_api_base_file_url = (
         getattr(config, "VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL", "") or ""
     ).strip()
+    telegram_bot_local_mode = bool(
+        getattr(config, "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED", False)
+    )
 
     builder = (
         ApplicationBuilder()
@@ -2049,6 +2052,8 @@ if __name__ == '__main__':
         builder = builder.base_url(telegram_bot_api_base_url)
     if telegram_bot_api_base_file_url:
         builder = builder.base_file_url(telegram_bot_api_base_file_url)
+    if telegram_bot_local_mode:
+        builder = builder.local_mode(True)
 
     application = (
         builder

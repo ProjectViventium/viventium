@@ -120,7 +120,9 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   - older bridge code collapsed Telegram's specific `File is too big` error into a generic download failure
 - Fix:
   - map Telegram's oversize exception to an explicit oversize media error instead of a generic retry-only message
-  - for large Telegram videos that truly need to work, run a local Telegram Bot API server and point the bot at it with `VIVENTIUM_TELEGRAM_BOT_API_ORIGIN` (or explicit base URLs)
+  - for large Telegram videos that truly need to work, either point the bot at an external local Telegram Bot API server with `integrations.telegram.bot_api_origin` / base URLs, or enable the Viventium-managed same-Mac server under `integrations.telegram.local_bot_api`
+  - managed local Bot API mode also needs `api_id` / `api_hash` plus the `telegram-bot-api` binary available on the Mac
+  - if local Bot API mode is enabled, Telegram media size policy now comes from `integrations.telegram.max_file_size_bytes` instead of a hidden bot default
 
 ### Telegram shows `🎤 Transcription: error: ...`
 - Root cause: Telegram media ingestion treated raw transcription exceptions as if they were successful transcript text, then forwarded that raw `error:` string into LibreChat as the user's message.

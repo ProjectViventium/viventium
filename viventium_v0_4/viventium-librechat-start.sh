@@ -467,6 +467,12 @@ GLASSHIVE_RUNTIME_PID_FILE="$LOG_ROOT/glasshive_runtime.pid"
 GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
+TELEGRAM_LOCAL_BOT_API_PID_FILE="$LOG_ROOT/telegram-local-bot-api.pid"
+TELEGRAM_LOCAL_BOT_API_LOG_FILE="$LOG_DIR/telegram-local-bot-api.log"
+TELEGRAM_LOCAL_BOT_API_STATE_DIR="$VIVENTIUM_STATE_ROOT/telegram-local-bot-api"
+TELEGRAM_LOCAL_BOT_API_WORK_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/work"
+TELEGRAM_LOCAL_BOT_API_TEMP_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/tmp"
+TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/hosted-logout.sha256"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 MONGO_CONTAINER_NAME="${VIVENTIUM_LOCAL_MONGO_CONTAINER:-viventium-mongodb}"
 MONGO_VOLUME_NAME="${VIVENTIUM_LOCAL_MONGO_VOLUME:-viventium-mongodb-data}"
@@ -1730,6 +1736,7 @@ MS365_STARTED_BY_SCRIPT=false
 RAG_API_STARTED_BY_SCRIPT=false
 MS365_CALLBACK_STARTED_BY_SCRIPT=false
 TELEGRAM_STARTED_BY_SCRIPT=false
+TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=false
 V1_AGENT_STARTED_BY_SCRIPT=false
 CODE_INTERPRETER_STARTED_BY_SCRIPT=false
 SEARXNG_STARTED_BY_SCRIPT=false
@@ -1743,6 +1750,7 @@ GOOGLE_MCP_PID=""
 SCHEDULING_MCP_PID=""
 MS365_MCP_CALLBACK_PID=""
 TELEGRAM_BOT_PID=""
+TELEGRAM_LOCAL_BOT_API_PID=""
 V1_AGENT_PID=""
 
 require_cmd() {
@@ -4755,6 +4763,7 @@ stop_running_services() {
     kill_pids "$telegram_pid"
     rm -f "$TELEGRAM_BOT_PID_FILE"
   fi
+  stop_telegram_local_bot_api
   kill_by_pattern_scoped "TelegramVivBot.*bot.py" "$ROOT_DIR"
   if [[ -n "$telegram_dir" ]]; then
     kill_by_pattern_scoped "uv run python bot.py" "$telegram_dir"
@@ -5051,6 +5060,191 @@ wait_for_http() {
 
 librechat_api_healthy() {
   curl -fsS --max-time 3 "${LC_API_URL}/health" >/dev/null 2>&1
+}
+
+telegram_local_bot_api_enabled() {
+  is_truthy "${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED:-false}"
+}
+
+telegram_local_bot_api_host() {
+  printf '%s\n' "${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST:-127.0.0.1}"
+}
+
+telegram_local_bot_api_port() {
+  printf '%s\n' "${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT:-8084}"
+}
+
+resolve_telegram_local_bot_api_binary() {
+  local configured="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH:-}"
+  if [[ -n "$configured" ]]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  if command -v telegram-bot-api >/dev/null 2>&1; then
+    command -v telegram-bot-api
+    return 0
+  fi
+  return 1
+}
+
+telegram_local_bot_api_pid_is_running() {
+  local pid
+  pid="$(read_pid_file "$TELEGRAM_LOCAL_BOT_API_PID_FILE")"
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+  if ps -p "$pid" >/dev/null 2>&1; then
+    TELEGRAM_LOCAL_BOT_API_PID="$pid"
+    return 0
+  fi
+  rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+  return 1
+}
+
+telegram_local_bot_api_ready() {
+  local port
+  port="$(telegram_local_bot_api_port)"
+  VIVENTIUM_PORT_CHECK_HOST="$(telegram_local_bot_api_host)" viventium_port_listener_active "$port"
+}
+
+telegram_bot_token_fingerprint() {
+  if [[ -z "${BOT_TOKEN:-}" ]]; then
+    return 1
+  fi
+  printf '%s' "$BOT_TOKEN" | shasum -a 256 | awk '{print $1}'
+}
+
+ensure_telegram_local_bot_api_hosted_logout() {
+  if ! telegram_local_bot_api_enabled; then
+    return 0
+  fi
+  if [[ -z "${BOT_TOKEN:-}" ]]; then
+    log_error "Telegram local Bot API mode requires BOT_TOKEN before logout handoff"
+    return 1
+  fi
+
+  mkdir -p "$TELEGRAM_LOCAL_BOT_API_STATE_DIR"
+  local token_fingerprint=""
+  token_fingerprint="$(telegram_bot_token_fingerprint)" || true
+  if [[ -n "$token_fingerprint" ]] && [[ -f "$TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE" ]]; then
+    local saved_fingerprint=""
+    saved_fingerprint="$(tr -d '\r\n' <"$TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE" 2>/dev/null || true)"
+    if [[ -n "$saved_fingerprint" && "$saved_fingerprint" == "$token_fingerprint" ]]; then
+      return 0
+    fi
+  fi
+
+  local logout_response=""
+  logout_response="$(curl -fsS --max-time 10 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/logOut" 2>/dev/null || true)"
+  if [[ "$logout_response" == *'"ok":true'* ]]; then
+    printf '%s\n' "$token_fingerprint" >"$TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE"
+    log_success "Telegram hosted Bot API session logged out for local-server mode"
+    return 0
+  fi
+
+  log_error "Failed to log out Telegram hosted Bot API session before local-server mode"
+  return 1
+}
+
+stop_telegram_local_bot_api() {
+  local pid
+  pid="$(read_pid_file "$TELEGRAM_LOCAL_BOT_API_PID_FILE")"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then
+    log_warn "Stopping Telegram local Bot API server (PID: $pid)"
+    kill "$pid" 2>/dev/null || true
+    local tries=0
+    while [[ "$tries" -lt 10 ]] && ps -p "$pid" >/dev/null 2>&1; do
+      sleep 0.5
+      tries=$((tries + 1))
+    done
+    if ps -p "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+  TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=false
+  TELEGRAM_LOCAL_BOT_API_PID=""
+}
+
+start_telegram_local_bot_api() {
+  if ! telegram_local_bot_api_enabled; then
+    return 0
+  fi
+
+  local local_host=""
+  local local_port=""
+  local local_binary=""
+  local local_api_id="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID:-}"
+  local local_api_hash="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH:-}"
+  local_host="$(telegram_local_bot_api_host)"
+  local_port="$(telegram_local_bot_api_port)"
+
+  if [[ -z "$local_api_id" || -z "$local_api_hash" ]]; then
+    log_error "Telegram local Bot API is enabled but api_id/api_hash are missing"
+    return 1
+  fi
+
+  if ! local_binary="$(resolve_telegram_local_bot_api_binary)"; then
+    log_error "Telegram local Bot API is enabled but the telegram-bot-api binary is unavailable"
+    return 1
+  fi
+  if [[ ! -x "$local_binary" ]]; then
+    log_error "Telegram local Bot API binary is not executable: $local_binary"
+    return 1
+  fi
+
+  if telegram_local_bot_api_pid_is_running; then
+    log_success "Telegram local Bot API already running (PID: $TELEGRAM_LOCAL_BOT_API_PID)"
+    return 0
+  fi
+
+  if telegram_local_bot_api_ready; then
+    log_error "Telegram local Bot API port ${local_port} is already occupied by another process"
+    return 1
+  fi
+
+  if ! ensure_telegram_local_bot_api_hosted_logout; then
+    return 1
+  fi
+
+  mkdir -p "$TELEGRAM_LOCAL_BOT_API_WORK_DIR" "$TELEGRAM_LOCAL_BOT_API_TEMP_DIR"
+  log_info "Starting Telegram local Bot API server on ${local_host}:${local_port}..."
+  "$local_binary" \
+    --local \
+    --api-id="$local_api_id" \
+    --api-hash="$local_api_hash" \
+    --http-ip-address="$local_host" \
+    --http-port="$local_port" \
+    --dir="$TELEGRAM_LOCAL_BOT_API_WORK_DIR" \
+    --temp-dir="$TELEGRAM_LOCAL_BOT_API_TEMP_DIR" \
+    >"$TELEGRAM_LOCAL_BOT_API_LOG_FILE" 2>&1 &
+  TELEGRAM_LOCAL_BOT_API_PID=$!
+  TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=true
+  printf '%s\n' "$TELEGRAM_LOCAL_BOT_API_PID" >"$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+
+  local start_tries=0
+  while [[ "$start_tries" -lt 15 ]]; do
+    if telegram_local_bot_api_ready; then
+      log_success "Telegram local Bot API server started (PID: $TELEGRAM_LOCAL_BOT_API_PID)"
+      return 0
+    fi
+    if ! ps -p "$TELEGRAM_LOCAL_BOT_API_PID" >/dev/null 2>&1; then
+      rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+      log_error "Telegram local Bot API server failed to start (see $TELEGRAM_LOCAL_BOT_API_LOG_FILE)"
+      tail -30 "$TELEGRAM_LOCAL_BOT_API_LOG_FILE" 2>/dev/null || true
+      return 1
+    fi
+    sleep 1
+    start_tries=$((start_tries + 1))
+  done
+
+  if telegram_local_bot_api_ready; then
+    log_success "Telegram local Bot API server started (PID: $TELEGRAM_LOCAL_BOT_API_PID)"
+    return 0
+  fi
+
+  log_error "Telegram local Bot API server did not listen on ${local_host}:${local_port} in time"
+  return 1
 }
 
 restart_detached_librechat_backend() {
@@ -5957,6 +6151,7 @@ cleanup() {
   echo ""
   echo -e "${YELLOW}[viventium]${NC} Shutting down..."
   stop_detached_librechat_api_watchdog
+  stop_telegram_local_bot_api
   [[ "$VOICE_GATEWAY_STARTED_BY_SCRIPT" == "true" && -n "${VOICE_GATEWAY_PID:-}" ]] && kill "${VOICE_GATEWAY_PID}" 2>/dev/null || true
   local cleanup_voice_gateway_runtime_pids=""
   cleanup_voice_gateway_runtime_pids="$(find_voice_gateway_runtime_pids "$VOICE_GATEWAY_DIR")"
@@ -7298,9 +7493,16 @@ start_telegram_bot() {
   local _saved_call_session_secret="${VIVENTIUM_CALL_SESSION_SECRET-$_env_unset_marker}"
   local _saved_telegram_secret="${VIVENTIUM_TELEGRAM_SECRET-$_env_unset_marker}"
   local _saved_telegram_backend="${VIVENTIUM_TELEGRAM_BACKEND-$_env_unset_marker}"
+  local _saved_telegram_max_file_size="${VIVENTIUM_TELEGRAM_MAX_FILE_SIZE-$_env_unset_marker}"
   local _saved_telegram_bot_api_origin="${VIVENTIUM_TELEGRAM_BOT_API_ORIGIN-$_env_unset_marker}"
   local _saved_telegram_bot_api_base_url="${VIVENTIUM_TELEGRAM_BOT_API_BASE_URL-$_env_unset_marker}"
   local _saved_telegram_bot_api_base_file_url="${VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_enabled="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_host="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_port="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_binary_path="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_api_id="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_api_hash="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH-$_env_unset_marker}"
 
   restore_telegram_env() {
     if [[ "$_saved_api_key" == "$_env_unset_marker" ]]; then unset API_KEY; else export API_KEY="$_saved_api_key"; fi
@@ -7317,9 +7519,16 @@ start_telegram_bot() {
     if [[ "$_saved_call_session_secret" == "$_env_unset_marker" ]]; then unset VIVENTIUM_CALL_SESSION_SECRET; else export VIVENTIUM_CALL_SESSION_SECRET="$_saved_call_session_secret"; fi
     if [[ "$_saved_telegram_secret" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_SECRET; else export VIVENTIUM_TELEGRAM_SECRET="$_saved_telegram_secret"; fi
     if [[ "$_saved_telegram_backend" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BACKEND; else export VIVENTIUM_TELEGRAM_BACKEND="$_saved_telegram_backend"; fi
+    if [[ "$_saved_telegram_max_file_size" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_MAX_FILE_SIZE; else export VIVENTIUM_TELEGRAM_MAX_FILE_SIZE="$_saved_telegram_max_file_size"; fi
     if [[ "$_saved_telegram_bot_api_origin" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BOT_API_ORIGIN; else export VIVENTIUM_TELEGRAM_BOT_API_ORIGIN="$_saved_telegram_bot_api_origin"; fi
     if [[ "$_saved_telegram_bot_api_base_url" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BOT_API_BASE_URL; else export VIVENTIUM_TELEGRAM_BOT_API_BASE_URL="$_saved_telegram_bot_api_base_url"; fi
     if [[ "$_saved_telegram_bot_api_base_file_url" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL; else export VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL="$_saved_telegram_bot_api_base_file_url"; fi
+    if [[ "$_saved_telegram_local_bot_api_enabled" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED="$_saved_telegram_local_bot_api_enabled"; fi
+    if [[ "$_saved_telegram_local_bot_api_host" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST="$_saved_telegram_local_bot_api_host"; fi
+    if [[ "$_saved_telegram_local_bot_api_port" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT="$_saved_telegram_local_bot_api_port"; fi
+    if [[ "$_saved_telegram_local_bot_api_binary_path" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH="$_saved_telegram_local_bot_api_binary_path"; fi
+    if [[ "$_saved_telegram_local_bot_api_api_id" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID="$_saved_telegram_local_bot_api_api_id"; fi
+    if [[ "$_saved_telegram_local_bot_api_api_hash" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH="$_saved_telegram_local_bot_api_api_hash"; fi
   }
 
   local telegram_dir
@@ -7370,6 +7579,11 @@ start_telegram_bot() {
   fi
   if ! ensure_telegram_media_prereqs; then
     log_error "Telegram bot cannot start without ffmpeg for supported voice/video media"
+    restore_telegram_env
+    popd >/dev/null
+    return 1
+  fi
+  if ! start_telegram_local_bot_api; then
     restore_telegram_env
     popd >/dev/null
     return 1
@@ -8746,6 +8960,15 @@ else
   echo -e "  ${CYAN}V1 Agent:${NC}            disabled"
 fi
 if [[ "$START_TELEGRAM" == "true" ]]; then
+  if telegram_local_bot_api_enabled; then
+    if telegram_local_bot_api_pid_is_running || telegram_local_bot_api_ready; then
+      echo -e "  ${CYAN}Telegram Local API:${NC}  running"
+    else
+      echo -e "  ${CYAN}Telegram Local API:${NC}  enabled (check $TELEGRAM_LOCAL_BOT_API_LOG_FILE)"
+    fi
+  else
+    echo -e "  ${CYAN}Telegram Local API:${NC}  disabled"
+  fi
   if [[ -z "${BOT_TOKEN:-}" ]]; then
     echo -e "  ${CYAN}Telegram Bot:${NC}        BOT_TOKEN not set"
   elif ! telegram_bot_token_looks_valid "${BOT_TOKEN:-}"; then

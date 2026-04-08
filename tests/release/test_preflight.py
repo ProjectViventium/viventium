@@ -99,6 +99,41 @@ integrations:
     assert "Mac Prerequisites" in completed.stdout
 
 
+def test_preflight_flags_local_telegram_bot_api_prereqs_when_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+version: 1
+install:
+  mode: native
+runtime:
+  profile: isolated
+voice:
+  mode: disabled
+integrations:
+  telegram:
+    enabled: true
+    local_bot_api:
+      enabled: true
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
+        cwd=REPO_ROOT,
+        env=preflight_subprocess_env(tmp_path),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "telegram-bot-api" in completed.stdout
+    assert "Telegram local Bot API credentials" in completed.stdout
+
+
 def test_preflight_legacy_auto_remote_call_mode_defaults_to_disabled(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

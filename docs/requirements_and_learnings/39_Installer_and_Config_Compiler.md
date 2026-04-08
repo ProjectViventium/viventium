@@ -71,6 +71,12 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   generated App Support outputs to appear correct.
 - Telegram launcher parity follows the same rule: compiled Telegram service env must be the default
   startup source ahead of legacy repo-local or private overlay files.
+- Managed Telegram large-media mode follows the same rule:
+  - canonical `integrations.telegram.local_bot_api` config compiles to generated Telegram service env
+  - the launcher reads that generated env to decide whether it owns a local `telegram-bot-api` process
+  - Telegram max media size comes from canonical config (`integrations.telegram.max_file_size_bytes`),
+    not a shell-only or repo-local default
+  - preflight must surface missing `telegram-bot-api` / `api_id` / `api_hash` before runtime start
 
 ## Learnings
 

@@ -179,12 +179,29 @@ properties:
             type: string
           secret_value:
             type: string
+          max_file_size_bytes:
+            type: integer
           bot_api_origin:
             type: string
           bot_api_base_url:
             type: string
           bot_api_base_file_url:
             type: string
+          local_bot_api:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              host:
+                type: string
+              port:
+                type: integer
+              binary_path:
+                type: string
+              api_id:
+                type: string
+              api_hash:
+                type: string
       telegram_codex:
         type: object
         properties:
