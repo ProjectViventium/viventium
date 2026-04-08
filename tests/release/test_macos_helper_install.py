@@ -259,6 +259,58 @@ def test_install_preserves_hidden_status_bar_preference(tmp_path: Path) -> None:
     assert '"showInStatusBar": false' in config_text
 
 
+def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    swift_marker = tmp_path / "swift-invoked"
+    xcrun_marker = tmp_path / "xcrun-invoked"
+
+    for name, marker in (("swift", swift_marker), ("xcrun", xcrun_marker)):
+        script = fake_bin / name
+        script.write_text(
+            "#!/bin/sh\n"
+            f"touch '{marker}'\n"
+            "exit 99\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(fake_home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+            "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        }
+    )
+
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    completed = subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--no-launch",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    helper_binary = fake_home / "Applications" / "Viventium.app" / "Contents" / "MacOS" / "ViventiumHelper"
+    assert helper_binary.exists()
+    assert "Using shipped prebuilt helper" in completed.stderr
+    assert not swift_marker.exists()
+    assert not xcrun_marker.exists()
+
+
 def test_helper_source_autostarts_stack_on_launch() -> None:
     source = HELPER_SOURCE.read_text(encoding="utf-8")
     install_script = SCRIPT.read_text(encoding="utf-8")
@@ -516,7 +568,10 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
         in install_script
     )
     assert 'HELPER_PREBUILT_SOURCE_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_SOURCE_HASH_FILE:-$HELPER_PREBUILT_DIR/source.sha256}"' in install_script
+    assert 'FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"' in install_script
     assert 'OSASCRIPT_TIMEOUT_SECONDS="${VIVENTIUM_HELPER_OSASCRIPT_TIMEOUT_SECONDS:-15}"' in install_script
+    assert 'if [[ "$FORCE_LOCAL_BUILD" != "1" ]] && prebuilt_helper_matches_sources; then' in install_script
+    assert 'use_prebuilt_helper "Using shipped prebuilt helper"' in install_script
     assert 'swiftpm_timeout_seconds="${VIVENTIUM_HELPER_SWIFTPM_TIMEOUT_SECONDS:-60}"' in install_script
     assert 'rm -f "$HELPER_PACKAGE_DIR/.build/workspace-state.json"' in install_script
     assert '["swift", "build", "-c", "release", "--product", helper_name],' in install_script
@@ -532,8 +587,11 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'helper_source_hash() {' in install_script
     assert 'prebuilt_helper_matches_sources() {' in install_script
     assert 'use_prebuilt_helper() {' in install_script
-    assert 'if prebuilt_helper_matches_sources; then' in install_script
-    assert 'echo "[viventium] Using prebuilt helper fallback from $HELPER_PREBUILT_EXECUTABLE" >&2' in install_script
+    assert 'local notice="${1:-Using prebuilt helper fallback}"' in install_script
+    assert 'echo "[viventium] $notice from $HELPER_PREBUILT_EXECUTABLE" >&2' in install_script
+    assert 'use_prebuilt_helper "Using prebuilt helper fallback"' in install_script
+    assert 'if [[ "$FORCE_LOCAL_BUILD" == "1" ]]; then' in install_script
+    assert 'echo "[viventium] Local helper build was forced and no source build completed successfully" >&2' in install_script
     assert 'echo "[viventium] Prebuilt helper fallback exists but does not match current helper sources" >&2' in install_script
     assert 'echo "[viventium] No matching prebuilt helper fallback found" >&2' in install_script
     assert '"$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/ViventiumHelperApp.swift"' in install_script
@@ -588,11 +646,13 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert '"repoRoot": repo_root,' in cli_source
     assert 'write_stack_owner_state "$COMMAND"' in cli_source
 
-    prebuilt_check_offset = install_script.index('if prebuilt_helper_matches_sources; then')
-    direct_compile_offset = install_script.index(
-        'echo "[viventium] SwiftPM helper build failed; retrying with direct swiftc compile" >&2'
-    )
-    assert prebuilt_check_offset < direct_compile_offset
+    shipped_prebuilt_offset = install_script.index('use_prebuilt_helper "Using shipped prebuilt helper"')
+    swiftpm_offset = install_script.index('["swift", "build", "-c", "release", "--product", helper_name],')
+    prebuilt_fallback_offset = install_script.index('use_prebuilt_helper "Using prebuilt helper fallback"')
+    direct_compile_offset = install_script.index('echo "[viventium] SwiftPM helper build failed; retrying with direct swiftc compile" >&2')
+    assert shipped_prebuilt_offset < swiftpm_offset
+    assert swiftpm_offset < direct_compile_offset
+    assert prebuilt_fallback_offset < direct_compile_offset
 
 
 def test_prebuilt_helper_fallback_matches_current_sources() -> None:

@@ -20,6 +20,7 @@ Recommended mode today for the most reliable first run:
 - `native`
 - `isolated` profile
 - modern playground default
+- keep remote access optional on first run unless you actively need it
 
 Headless configuration flow:
 
@@ -58,6 +59,26 @@ Then validate and start:
 bin/viventium doctor
 bin/viventium start
 ```
+
+Remote-access note:
+
+- if you choose public browser access and your router already gives `80/tcp` or `443/tcp` to another
+  LAN device, Viventium now keeps the local install running and records the exact blocker in
+  `bin/viventium status` instead of aborting the whole startup
+- fix the reported router/DNS/public-edge blocker later and rerun `bin/viventium start`
+
+Telegram first-run note:
+
+- if Telegram Bridge is enabled, Viventium now keeps retrying the bridge automatically until the
+  LibreChat API is actually ready on a clean first build
+- during that window, `bin/viventium status` shows the bridge as `Starting` instead of a false
+  stopped state
+
+macOS helper note:
+
+- on clean supported installs, Viventium now uses the shipped matching menu-bar helper binary first
+  when it matches the tracked helper sources
+- local Swift helper builds remain a development override, not the default end-user dependency path
 
 Refresh an existing local install after new published changes:
 

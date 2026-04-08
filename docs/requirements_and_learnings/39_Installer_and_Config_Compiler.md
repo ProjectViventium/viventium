@@ -74,6 +74,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - First-run startup can honestly take minutes because local package builds and optional Docker sidecars
   are real work, especially on a clean machine.
 - Playful wait copy is acceptable when the deterministic status path remains visible and reliable.
+- Optional-sidecar readiness used by the launcher, install wait loop, and status must share the same
+  contract. One path cannot hold the install open on a stricter probe than the runtime itself uses
+  to declare the sidecar up.
+- Interactive bootstrap paths can arrive with stdin still attached to a consumed pipe:
+  - example: `curl .../install.sh | bash`
+  - the CLI must reattach stdin from `/dev/tty` before wizard or preflight prompts
+  - otherwise the first prompt sees EOF even though the user launched the install from a real terminal
 - The right ownership layer for this feature is the public CLI wait loop in `bin/viventium`, not
   generated runtime files, LibreChat prompts, or machine-local App Support state.
 - Remote access surfaced the same ownership rule again on April 7, 2026:
@@ -82,6 +89,21 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - the runtime state file must own the exact live outside URL after startup
   - `bin/viventium status` / install summary must read that runtime state instead of making the
     operator reconstruct it manually
+- Public remote access is optional and must never block local first run:
+  - if router mappings or edge startup fail, local LibreChat/API/playground startup must continue
+  - the remote access state file must persist the exact blocker so `bin/viventium status` can show
+    an action-required message and the next `bin/viventium start` can retry cleanly
+- Deferred Telegram startup must survive clean first-run build time:
+  - LibreChat can spend several minutes rebuilding packages and the client bundle on a clean Mac
+  - any Telegram startup path that waits inline against the API before those builds finish will
+    produce a false skipped/stopped state for enabled installs
+  - the launcher must retry Telegram in the background and expose that pending state through
+    `bin/viventium status`
+- The shipped macOS helper binary is the reliable clean-install path on April 7, 2026:
+  - clean x86_64 CommandLineTools hosts can fail SwiftPM manifest linking before any app code builds
+  - when `apps/macos/ViventiumHelper/prebuilt/source.sha256` matches current helper sources, the
+    installer should use that shipped binary by default instead of surfacing brittle source-build
+    failures to end users
 - On April 5, 2026, a background-cortex failure showed why install/start ownership matters:
   built-in Anthropic agents are re-seeded from source-of-truth on startup, so fixing only live
   Mongo state or only a local runtime leftover would not align fresh installs or later restarts.

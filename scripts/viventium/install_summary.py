@@ -266,6 +266,10 @@ def remote_access_status_and_detail(
         return "Disabled", "Local-only install"
 
     public_state = load_public_network_state(config, runtime_env, runtime_dir)
+    last_error = str(public_state.get("last_error") or "").strip()
+    if last_error:
+        return "Action Required", f"{remote_access_label(remote_call_mode)} inactive: {last_error}"
+
     public_client_url = str(
         public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
     ).strip()
@@ -312,11 +316,15 @@ def telegram_service_status(
     log_file_name: str,
     pid_file_name: str,
     running_detail: str,
+    pending_pid_file_name: str | None = None,
+    pending_marker_file_name: str | None = None,
+    pending_detail: str | None = None,
 ) -> tuple[str, str]:
     token = str(runtime_env.get(token_env_key, "") or "").strip()
     state_root = runtime_state_root(config, runtime_env, runtime_dir)
     log_detail = "Starts with Viventium"
     process_running = False
+    pending_running = False
 
     if state_root is not None:
         log_detail = str(state_root / "logs" / log_file_name)
@@ -325,9 +333,24 @@ def telegram_service_status(
             state_root / "logs" / pid_file_name,
         )
         process_running = any(pid_file_process_running(candidate) for candidate in pid_candidates)
+        if pending_pid_file_name:
+            pending_pid_candidates = (
+                state_root / pending_pid_file_name,
+                state_root / "logs" / pending_pid_file_name,
+            )
+            pending_running = any(pid_file_process_running(candidate) for candidate in pending_pid_candidates)
+        if not pending_running and pending_marker_file_name:
+            pending_marker_candidates = (
+                state_root / pending_marker_file_name,
+                state_root / "logs" / pending_marker_file_name,
+            )
+            pending_running = any(candidate.is_file() for candidate in pending_marker_candidates)
 
     if process_running:
         return "Running", running_detail
+
+    if pending_running:
+        return "Starting", pending_detail or "Waiting for Viventium to finish starting this service"
 
     if not token:
         detail = (
@@ -518,6 +541,9 @@ def build_service_rows(
             log_file_name="telegram_bot.log",
             pid_file_name="telegram_bot.pid",
             running_detail="Polling Telegram bridge on this Mac",
+            pending_pid_file_name="telegram_bot_deferred.pid",
+            pending_marker_file_name="telegram_bot_deferred.pending",
+            pending_detail="Waiting for LibreChat API before first Telegram bridge start on this Mac",
         )
         rows.append(("Telegram Bridge", telegram_status, telegram_detail))
     if resolve_bool((integrations.get("telegram_codex") or {}).get("enabled"), False):
@@ -632,6 +658,7 @@ def build_next_steps(
     )
     lan_host = local_network_host()
     public_state = load_public_network_state(config, runtime_env, runtime_dir)
+    remote_error = str(public_state.get("last_error") or "").strip()
     public_client_url = str(
         public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
     ).strip()
@@ -647,7 +674,12 @@ def build_next_steps(
         next_steps.append(
             f"Open [cyan]http://{lan_host}:{frontend_port}[/cyan] from another device on your local network."
         )
-    if public_client_url:
+    if remote_error:
+        next_steps.append(
+            "Remote access could not start on this run. Fix the blocker shown in "
+            f"[cyan]bin/viventium status[/cyan] and then rerun [cyan]bin/viventium start[/cyan]. ({remote_error})"
+        )
+    elif public_client_url:
         next_steps.append(
             f"Outside your local network, open [cyan]{public_client_url}[/cyan]."
         )

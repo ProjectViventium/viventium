@@ -30,6 +30,7 @@ HELPER_SCRIPT_DIR="${VIVENTIUM_HELPER_SCRIPT_DIR:-$APP_SUPPORT_DIR/helper-script
 HELPER_STACK_SCRIPT_COPY="${VIVENTIUM_HELPER_STACK_SCRIPT_COPY:-$HELPER_SCRIPT_DIR/viventium-librechat-start.sh}"
 HELPER_STACK_WRAPPER="${VIVENTIUM_HELPER_STACK_WRAPPER:-$HELPER_SCRIPT_DIR/viventium-stack.sh}"
 SKIP_BUILD="${VIVENTIUM_HELPER_SKIP_BUILD:-0}"
+FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"
 SKIP_LAUNCHCTL="${VIVENTIUM_HELPER_SKIP_LAUNCHCTL:-0}"
 SKIP_LOGIN_ITEM="${VIVENTIUM_HELPER_SKIP_LOGIN_ITEM:-0}"
 OSASCRIPT_TIMEOUT_SECONDS="${VIVENTIUM_HELPER_OSASCRIPT_TIMEOUT_SECONDS:-15}"
@@ -415,10 +416,11 @@ prebuilt_helper_matches_sources() {
 }
 
 use_prebuilt_helper() {
+  local notice="${1:-Using prebuilt helper fallback}"
   mkdir -p "$HELPER_BUILD_DIR"
   cp "$HELPER_PREBUILT_EXECUTABLE" "$BUILT_EXECUTABLE"
   chmod +x "$BUILT_EXECUTABLE"
-  echo "[viventium] Using prebuilt helper fallback from $HELPER_PREBUILT_EXECUTABLE" >&2
+  echo "[viventium] $notice from $HELPER_PREBUILT_EXECUTABLE" >&2
 }
 
 build_helper() {
@@ -427,6 +429,10 @@ build_helper() {
       echo "Missing built helper executable: $BUILT_EXECUTABLE" >&2
       exit 1
     }
+    return 0
+  fi
+  if [[ "$FORCE_LOCAL_BUILD" != "1" ]] && prebuilt_helper_matches_sources; then
+    use_prebuilt_helper "Using shipped prebuilt helper"
     return 0
   fi
   local python_bin
@@ -467,8 +473,8 @@ PY
   target_triple="$(uname -m)-apple-macosx13.0"
   compile_timeout_seconds="${VIVENTIUM_HELPER_DIRECT_COMPILE_TIMEOUT_SECONDS:-600}"
   mkdir -p "$HELPER_BUILD_DIR"
-  if prebuilt_helper_matches_sources; then
-    use_prebuilt_helper
+  if [[ "$FORCE_LOCAL_BUILD" != "1" ]] && prebuilt_helper_matches_sources; then
+    use_prebuilt_helper "Using prebuilt helper fallback"
     return 0
   fi
 
@@ -504,6 +510,10 @@ PY
     return 0
   fi
 
+  if [[ "$FORCE_LOCAL_BUILD" == "1" ]]; then
+    echo "[viventium] Local helper build was forced and no source build completed successfully" >&2
+    return 1
+  fi
   if [[ -f "$HELPER_PREBUILT_SOURCE_HASH_FILE" ]]; then
     echo "[viventium] Prebuilt helper fallback exists but does not match current helper sources" >&2
   else

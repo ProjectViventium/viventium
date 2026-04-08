@@ -29,6 +29,8 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
   - Uses `START_FIRECRAWL=true` by default.
   - Uses `START_SEARXNG=true` by default.
   - `--skip-firecrawl` disables it for a run.
+  - SearXNG readiness must probe the local root page, not a live search query, because cold search requests can be slow enough to create false installer/startup failures on clean Macs.
+  - Firecrawl readiness in the launcher, install wait loop, and status must share the same local-health contract (`/health`, API banner, or the expected local API container) so first-run startup does not strand on a stricter probe than the runtime itself.
 
 ## Notes
 - Installer UX contract:
@@ -64,4 +66,4 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
 - `./viventium_v0_4/viventium-librechat-start.sh`
 - `curl -fs "${FIRECRAWL_BASE_URL%/}/health"` (if the service exposes a health endpoint)
 - `curl -fs "${FIRECRAWL_BASE_URL%/}/"` (base API response)
-- `curl -fs "${SEARXNG_INSTANCE_URL%/}/search?q=ping&format=json"`
+- `curl -fs "${SEARXNG_INSTANCE_URL%/}/"`

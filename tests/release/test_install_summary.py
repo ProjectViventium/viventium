@@ -162,6 +162,52 @@ def test_build_service_rows_marks_running_telegram_bridge_from_pid_file(monkeypa
     assert "Polling Telegram bridge" in telegram_detail
 
 
+def test_build_service_rows_marks_pending_telegram_bridge_as_starting(monkeypatch, tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": True},
+        },
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    runtime_root = tmp_path / "state" / "runtime" / "isolated"
+    runtime_root.mkdir(parents=True)
+    (runtime_root / "telegram_bot_deferred.pending").write_text("pending\n", encoding="utf-8")
+
+    def fake_http_ok(url: str) -> bool:
+        return url in {
+            "http://localhost:3190",
+            "http://localhost:3180/api/health",
+            "http://localhost:3300",
+        }
+
+    monkeypatch.setattr(install_summary, "http_ok", fake_http_ok)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "BOT_TOKEN": "123456789:Valid_botfather_token_value_ABCDEFGH",
+            "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        },
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    telegram_status, telegram_detail = services["Telegram Bridge"]
+    assert telegram_status == "Starting"
+    assert "Waiting for LibreChat API" in telegram_detail
+
+
 def test_build_service_rows_warns_when_local_firecrawl_needs_more_docker_memory(monkeypatch) -> None:
     install_summary = load_install_summary_module()
 
@@ -293,6 +339,47 @@ def test_build_service_rows_uses_live_public_network_state_for_remote_access(mon
     assert "https://app.example.test" in remote_detail
 
 
+def test_build_service_rows_reports_action_required_when_remote_access_state_saved_an_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "network": {"remote_call_mode": "public_https_edge"},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "public-network.json").write_text(
+        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {"VIVENTIUM_PUBLIC_CLIENT_URL": "https://app.example.test"},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    remote_status, remote_detail = services["Remote Access"]
+    assert remote_status == "Action Required"
+    assert "Router already forwards TCP 80" in remote_detail
+    assert "https://app.example.test" not in remote_detail
+
+
 def test_build_service_rows_reports_auth_posture() -> None:
     install_summary = load_install_summary_module()
 
@@ -344,6 +431,43 @@ def test_build_next_steps_prefers_live_public_network_state(monkeypatch, tmp_pat
 
     assert any("https://app.example.test" in step for step in steps)
     assert any("password-reset-link" in step for step in steps)
+
+
+def test_build_next_steps_prioritizes_remote_access_recovery_when_public_edge_failed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "network": {"remote_call_mode": "public_https_edge"},
+            "ports": {"lc_frontend_port": 3190},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "public-network.json").write_text(
+        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    steps = install_summary.build_next_steps(
+        config,
+        {"VIVENTIUM_PUBLIC_CLIENT_URL": "https://app.example.test"},
+        runtime_dir,
+    )
+
+    assert any("Remote access could not start on this run." in step for step in steps)
+    assert any("bin/viventium start" in step for step in steps)
+    assert all("Outside your local network, open [cyan]https://app.example.test[/cyan]." != step for step in steps)
 
 
 def test_build_next_steps_skips_connected_accounts_priority_when_foundation_api_key_exists(monkeypatch) -> None:

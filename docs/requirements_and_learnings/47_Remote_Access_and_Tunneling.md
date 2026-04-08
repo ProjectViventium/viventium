@@ -257,6 +257,9 @@ Router lease note:
 - Viventium now treats those mappings as renewable runtime state, not one-time setup
 - the launcher keeps a lightweight background refresh worker alive for `public_https_edge` /
   `custom_domain` so leased mappings are renewed before they expire
+- if the router refuses a required mapping, or those public ports already belong to another LAN host,
+  Viventium must keep the local install running and record the exact blocker in
+  `public-network.json` for `bin/viventium status`
 - if the router does not support UPnP/NAT-PMP at all, or refuses renewal, manual forwarding is still
   the fallback
 

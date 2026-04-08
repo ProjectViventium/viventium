@@ -37,6 +37,13 @@ cd viventium
 
 On macOS, install also adds `Viventium Helper` to the status bar so you can open, start, and stop the local stack without going back to Terminal.
 
+First-run notes:
+
+- remote access stays optional; if public-edge setup hits a router-port conflict, the local install
+  now keeps running and `bin/viventium status` reports the exact blocker
+- the macOS helper now uses the shipped matching helper binary first on clean installs instead of
+  depending on opportunistic local Swift builds
+
 Then start or check the stack:
 
 ```bash

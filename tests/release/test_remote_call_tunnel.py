@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import types
 import pytest
@@ -555,6 +556,55 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert saved["livekit_turn_tls_port"] == 5349
     assert saved["livekit_turn_cert_file"] == "/tmp/livekit-turn.crt"
     assert saved["livekit_turn_key_file"] == "/tmp/livekit-turn.key"
+
+
+def test_cmd_start_persists_error_state_when_remote_access_bootstrap_fails(monkeypatch, tmp_path: Path) -> None:
+    module = load_module()
+
+    class DummyLock:
+        def fileno(self):
+            return 0
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(module, "with_lock", lambda _path: DummyLock())
+    monkeypatch.setattr(module.fcntl, "flock", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "load_state", lambda _path: {})
+
+    def fail_public_edge(*_args, **_kwargs):
+        raise RuntimeError("Router already forwards TCP 80 to 10.88.111.46:50779")
+
+    monkeypatch.setattr(module, "start_public_https_edge", fail_public_edge)
+
+    args = types.SimpleNamespace(
+        state_file=str(tmp_path / "public-network.json"),
+        log_dir=str(tmp_path / "logs"),
+        client_port=3190,
+        api_port=3180,
+        playground_port=3300,
+        livekit_port=7888,
+        livekit_tcp_port=7889,
+        livekit_udp_port=7890,
+        livekit_turn_tls_port=5349,
+        public_client_origin="",
+        public_api_origin="",
+        public_playground_origin="",
+        public_livekit_url="",
+        livekit_node_ip="",
+        caddy_data_dir="",
+        provider="public_https_edge",
+        auto_install=False,
+        timeout_seconds=5,
+        command="start",
+    )
+
+    with pytest.raises(RuntimeError, match="Router already forwards TCP 80"):
+        module.cmd_start(args)
+
+    saved = json.loads((tmp_path / "public-network.json").read_text(encoding="utf-8"))
+    assert saved["provider"] == "public_https_edge"
+    assert saved["last_error"].startswith("Router already forwards TCP 80")
 
 
 def test_render_caddyfile_can_serve_directory_instance_document() -> None:

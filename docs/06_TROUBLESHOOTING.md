@@ -71,6 +71,15 @@ This is the shared troubleshooting index. For stack-specific detail, see:
 - Fix: launcher now validates Firecrawl with multiple signals (`/health`, `/` banner, and expected Docker container).
 - Current status: health checks no longer fail on `/health`-only assumptions.
 
+### SearXNG looks unready on first boot even though web search was enabled
+- Root cause: a cold SearXNG container can answer its local root page before the first live
+  `/search?...` request returns quickly, so installer/startup checks that probe a real search query
+  can create false negatives on clean Macs.
+- Fix: installer/startup readiness now probes the local SearXNG root page with a longer timeout and
+  retry window.
+- Current status: if web search is enabled, first-run readiness should no longer fail just because
+  upstream search engines are still warming.
+
 ### Skyvern starts with unhealthy postgres and keeps restarting
 - Root cause: local Skyvern dependency instability on some machines/platform combinations.
 - Fix: launcher now cleans up Skyvern containers immediately on failed startup instead of leaving restart loops.
@@ -112,6 +121,7 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   - keep the detached direct LibreChat fallback supervising both backend and frontend processes instead of turning the launcher shell into the frontend process
   - if the stack is still warming, confirm LibreChat health first instead of rotating Telegram tokens
 - Current status: the launcher now defers `VIVENTIUM_TELEGRAM_BACKEND=librechat` startup until LibreChat API health is up, and detached direct LibreChat launches no longer `exec` the frontend in a way that can strand Telegram behind a dead `3180` listener.
+- Current status on clean installs: if LibreChat is still building, the launcher keeps retrying the Telegram bridge in the background and `bin/viventium status` reports `Telegram Bridge | Starting` until that handoff completes.
 
 ### Telegram replies include `stream_preview_task ... not associated with a value`
 - Root cause: nested stream flush helper in `TelegramVivBot/bot.py` wrote to `stream_preview_task` without declaring it `nonlocal` under async flush paths.
@@ -198,6 +208,34 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   - run `bin/viventium start` again if the router dropped the mappings after a restart or sleep
   - if the router refuses renewal entirely, use manual forwarding for `80/tcp`, `443/tcp`,
     `7889/tcp`, `7890/udp`, and `5349/tcp`
+
+### Public remote access fails because ports `80` / `443` already belong to another LAN device
+- Root cause: router port-forward ownership conflict. Viventium cannot safely steal those public
+  ports from another machine already using them.
+- Symptom:
+  - startup or install logs `Router already forwards TCP 80 ...`
+  - local Viventium keeps running
+  - `bin/viventium status` shows `Remote Access: Action Required`
+- Fix:
+  - move the existing router forwards off that other LAN host, or disable them there
+  - or choose a different remote-access mode such as `tailscale_tailnet_https`
+  - rerun `bin/viventium start` after the router conflict is resolved
+- Current status: remote-access setup failure is now non-fatal to the local install; the exact
+  blocker is persisted in `public-network.json` and surfaced by `bin/viventium status`.
+
+### Clean macOS helper install prints Swift build errors before continuing
+- Root cause: some clean macOS CommandLineTools environments can fail SwiftPM manifest linking for
+  the menu-bar helper even when the shipped helper binary is already valid.
+- Symptom:
+  - first-run helper install prints Swift or `Package.swift` build/linker errors
+  - helper still succeeds only after a fallback path
+- Fix:
+  - current public installer behavior now prefers the shipped matching
+    `apps/macos/ViventiumHelper/prebuilt/ViventiumHelper-universal` binary by default
+  - only force local helper builds if you are actively developing the helper and intentionally set
+    `VIVENTIUM_HELPER_FORCE_LOCAL_BUILD=1`
+- Current status: clean end-user installs should no longer depend on opportunistic local helper
+  source builds.
 
 ### Public remote test fails only when a VPN is running on the host Mac
 - Root cause: a full-tunnel VPN on the same Mac that is serving the public edge can rewrite the

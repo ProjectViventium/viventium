@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import errno
 import os
+import pty
 import re
 import shutil
 import subprocess
@@ -42,6 +44,33 @@ def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
 
+def run_bash_on_pty(script: str, *, cwd: Path, env: dict[str, str] | None = None) -> tuple[int, str]:
+    env_payload = {**os.environ, **(env or {})}
+    pid, master_fd = pty.fork()
+    if pid == 0:
+        os.chdir(cwd)
+        os.execvpe("bash", ["bash", "-lc", script], env_payload)
+    chunks: list[bytes] = []
+    try:
+        while True:
+            try:
+                chunk = os.read(master_fd, 4096)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(master_fd)
+    _, status = os.waitpid(pid, 0)
+    return (
+        os.waitstatus_to_exitcode(status),
+        b"".join(chunks).decode("utf-8", errors="replace").replace("\r\n", "\n"),
+    )
+
+
 def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     install_section = cli_source.split('if [[ "$AUTO_START" == "1" ]]; then', 1)[1].split(
@@ -75,8 +104,15 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert "local_http_surface_healthy() {" in cli_source
     assert 'http_url_healthy "http://localhost:${port}${path_suffix}"' in cli_source
     assert 'http_url_healthy "http://127.0.0.1:${port}${path_suffix}"' in cli_source
+    assert 'local timeout_seconds="${2:-2}"' in cli_source
     assert 'local_http_surface_healthy "$port" "/api/health"' in cli_source
     assert 'local_http_surface_healthy "$port" "/"' in cli_source
+    assert 'http_url_healthy "${base_url}/" 5' in cli_source
+    assert '/search?q=ping&format=json' not in extract_shell_function(cli_source, "searxng_surface_healthy")
+    firecrawl_surface_function = extract_shell_function(cli_source, "firecrawl_surface_healthy")
+    assert 'http_url_healthy "${base_url}/health"' in firecrawl_surface_function
+    assert 'curl -s --max-time 3 "${base_url}/" 2>/dev/null | grep -q "Firecrawl API"' in firecrawl_surface_function
+    assert 'docker ps -q --filter "name=^/viventium_firecrawl_api$"' in firecrawl_surface_function
     assert 'if runtime_env_true "START_SEARXNG" "false" && ! searxng_surface_healthy; then' in cli_source
     assert 'if runtime_env_true "START_FIRECRAWL" "false" && ! firecrawl_surface_healthy; then' in cli_source
     assert 'waiting_on+=("$(searxng_install_wait_label)")' in cli_source
@@ -119,6 +155,124 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
         'launch_macos_helper_app\n      print_install_summary 1\n      open_default_browser\n      print_connected_accounts_browser_reminder'
         in cli_source
     )
+
+
+def test_remote_access_failure_does_not_abort_local_launcher_progress(tmp_path: Path) -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    json_state_value = extract_shell_function(launcher_text, "json_state_value")
+    clear_remote_exports = extract_shell_function(launcher_text, "clear_remote_call_runtime_exports")
+    mapping_state_support = extract_shell_function(launcher_text, "remote_call_mapping_state_supports_refresh")
+    prepare_remote_access = extract_shell_function(launcher_text, "prepare_remote_call_access")
+    start_refresh_worker = extract_shell_function(launcher_text, "start_remote_call_mapping_refresh_worker")
+
+    fake_tunnel = tmp_path / "remote_call_tunnel.py"
+    fake_tunnel.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+state_file = Path(sys.argv[sys.argv.index("--state-file") + 1])
+state_file.parent.mkdir(parents=True, exist_ok=True)
+state_file.write_text(
+    json.dumps(
+        {
+            "provider": "public_https_edge",
+            "last_error": "Router already forwards TCP 80 to 10.88.111.46:50779",
+        }
+    )
+    + "\\n",
+    encoding="utf-8",
+)
+raise SystemExit(1)
+""",
+        encoding="utf-8",
+    )
+    fake_tunnel.chmod(0o755)
+
+    state_file = tmp_path / "state" / "public-network.json"
+    refresh_pid_file = tmp_path / "state" / "public-network-refresh.pid"
+    refresh_log_file = tmp_path / "logs" / "remote-call-upnp-refresh.log"
+
+    script = f"""
+set -euo pipefail
+PYTHON_BIN={str(sys.executable)!r}
+VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT={str(fake_tunnel)!r}
+VIVENTIUM_PUBLIC_NETWORK_STATE_FILE={str(state_file)!r}
+VIVENTIUM_CALL_TUNNEL_LOG_DIR={str((tmp_path / "logs"))!r}
+VIVENTIUM_REMOTE_CALL_MODE=public_https_edge
+VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL=false
+VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE={str(refresh_pid_file)!r}
+VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE={str(refresh_log_file)!r}
+VIVENTIUM_CORE_DIR={str(tmp_path)!r}
+VIVENTIUM_VOICE_ENABLED=false
+SKIP_PLAYGROUND=true
+SKIP_LIVEKIT=true
+VIVENTIUM_PUBLIC_CLIENT_URL=https://stale.example.test
+LIVEKIT_NODE_IP=192.0.2.44
+export PYTHON_BIN VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT VIVENTIUM_PUBLIC_NETWORK_STATE_FILE
+export VIVENTIUM_CALL_TUNNEL_LOG_DIR VIVENTIUM_REMOTE_CALL_MODE VIVENTIUM_REMOTE_CALL_TUNNEL_AUTO_INSTALL
+export VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_PID_FILE VIVENTIUM_REMOTE_CALL_MAPPING_REFRESH_LOG_FILE
+export VIVENTIUM_CORE_DIR VIVENTIUM_VOICE_ENABLED SKIP_PLAYGROUND SKIP_LIVEKIT
+export VIVENTIUM_PUBLIC_CLIENT_URL LIVEKIT_NODE_IP
+
+log_info() {{ printf 'INFO:%s\\n' "$*"; }}
+log_warn() {{ printf 'WARN:%s\\n' "$*"; }}
+remote_call_mode_enabled() {{ return 0; }}
+remote_call_public_edge_mode() {{ return 0; }}
+remote_call_mapping_refresh_pid_is_running() {{ return 1; }}
+get_client_port() {{ printf '3190\\n'; }}
+get_api_port() {{ printf '3180\\n'; }}
+get_playground_port() {{ printf '3300\\n'; }}
+get_livekit_port() {{ printf '7888\\n'; }}
+is_truthy() {{
+  case "${{1:-}}" in
+    1|true|TRUE|yes|YES)
+      return 0
+      ;;
+  esac
+  return 1
+}}
+
+{json_state_value}
+{clear_remote_exports}
+{mapping_state_support}
+{prepare_remote_access}
+{start_refresh_worker}
+
+prepare_remote_call_access
+mkdir -p "$(dirname "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE")"
+printf '%s\n' '{{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}}' > "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
+printf 'AFTER_CLIENT=%s\\n' "${{VIVENTIUM_PUBLIC_CLIENT_URL:-}}"
+printf 'AFTER_NODE_IP=%s\\n' "${{LIVEKIT_NODE_IP:-}}"
+start_remote_call_mapping_refresh_worker
+if [[ -f {str(refresh_pid_file)!r} ]]; then
+  printf 'REFRESH_PID_EXISTS=yes\\n'
+else
+  printf 'REFRESH_PID_EXISTS=no\\n'
+fi
+"""
+
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    combined_output = completed.stdout + completed.stderr
+    assert "Remote access setup failed; local startup will continue without it" in combined_output
+    assert "AFTER_CLIENT=" in completed.stdout
+    assert "AFTER_NODE_IP=" in completed.stdout
+    assert "AFTER_CLIENT=https://stale.example.test" not in completed.stdout
+    assert "AFTER_NODE_IP=192.0.2.44" not in completed.stdout
+    assert "REFRESH_PID_EXISTS=no" in completed.stdout
+    assert state_file.exists()
+    assert "Router already forwards TCP 80" in state_file.read_text(encoding="utf-8")
 
 
 def test_maybe_install_macos_helper_accepts_explicit_no_launch_override() -> None:
@@ -244,6 +398,116 @@ def test_install_script_defaults_to_main_branch() -> None:
 
     assert 'BRANCH="${VIVENTIUM_REPO_BRANCH:-main}"' in install_source
     assert "main-viventium" not in install_source
+
+
+def test_reattach_stdin_from_tty_if_available_restores_terminal_input() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "reattach_stdin_from_tty_if_available")
+
+    returncode, output = run_bash_on_pty(
+        (
+            "set -euo pipefail\n"
+            f"{function_def}"
+            "exec 0< <(printf 'bootstrap-pipe\\n')\n"
+            "printf 'before=%s\\n' \"$([[ -t 0 ]] && printf 'tty' || printf 'pipe')\"\n"
+            "reattach_stdin_from_tty_if_available || true\n"
+            "printf 'after=%s\\n' \"$([[ -t 0 ]] && printf 'tty' || printf 'pipe')\"\n"
+        ),
+        cwd=REPO_ROOT,
+    )
+
+    assert returncode == 0
+    assert "before=pipe" in output
+    assert "after=tty" in output
+
+
+def test_install_restores_terminal_input_for_wizard_and_preflight_when_stdin_is_piped(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "bin").mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+
+    common_sh = """#!/usr/bin/env bash
+set -euo pipefail
+
+ensure_brew_paths_on_path() {
+  :
+}
+
+ensure_app_support_layout() {
+  local dir="$1"
+  mkdir -p "$dir/runtime" "$dir/state" "$dir/logs" "$dir/snapshots"
+}
+
+resolve_repo_python() {
+  printf 'python3\\n'
+}
+
+ensure_python_requirements_file() {
+  printf '%s\\n' "$1"
+}
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "common.sh", common_sh)
+
+    wizard_py = """#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--output", required=True)
+args = parser.parse_args()
+
+output_path = Path(args.output)
+output_path.parent.mkdir(parents=True, exist_ok=True)
+output_path.write_text("version: 1\\n", encoding="utf-8")
+print(f"wizard-stdin-tty={int(sys.stdin.isatty())}")
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "wizard.py", wizard_py)
+
+    preflight_py = """#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+
+print(f"preflight-stdin-tty={int(sys.stdin.isatty())}")
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "preflight.py", preflight_py)
+
+    write_executable(
+        repo_root / "scripts" / "viventium" / "bootstrap_components.py",
+        "#!/usr/bin/env python3\nprint('bootstrap-components-ok')\n",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "config_compiler.py",
+        "#!/usr/bin/env python3\nprint('config-compiler-ok')\n",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "install_summary.py",
+        "#!/usr/bin/env python3\nprint('install-summary-ok')\n",
+    )
+    write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", "#!/usr/bin/env bash\nexit 0\n")
+    write_executable(
+        repo_root / "scripts" / "viventium" / "install_macos_helper.sh",
+        "#!/usr/bin/env bash\nexit 0\n",
+    )
+
+    app_support_dir = tmp_path / "app-support"
+    returncode, output = run_bash_on_pty(
+        (
+            "set -euo pipefail\n"
+            "exec 0< <(printf '')\n"
+            f"VIVENTIUM_APP_SUPPORT_DIR='{app_support_dir}' '{repo_root / 'bin' / 'viventium'}' install --no-start\n"
+        ),
+        cwd=repo_root,
+    )
+
+    assert returncode == 0
+    assert "wizard-stdin-tty=1" in output
+    assert "preflight-stdin-tty=1" in output
 
 
 def test_install_wait_log_activity_summary_reports_current_build_phase(tmp_path: Path) -> None:

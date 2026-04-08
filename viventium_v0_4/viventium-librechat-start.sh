@@ -458,6 +458,8 @@ GLASSHIVE_RUNTIME_PID_FILE="$LOG_ROOT/glasshive_runtime.pid"
 GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
+TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
+TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 MONGO_CONTAINER_NAME="${VIVENTIUM_LOCAL_MONGO_CONTAINER:-viventium-mongodb}"
 MONGO_VOLUME_NAME="${VIVENTIUM_LOCAL_MONGO_VOLUME:-viventium-mongodb-data}"
@@ -955,6 +957,8 @@ GLASSHIVE_RUNTIME_PID_FILE="$LOG_ROOT/glasshive_runtime.pid"
 GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
+TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
+TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
 MONGO_NATIVE_PID_FILE="$LOG_ROOT/mongodb-native.pid"
@@ -2382,6 +2386,26 @@ telegram_pid_is_running() {
     return 1
   fi
   return 0
+}
+
+telegram_deferred_pid_is_running() {
+  local pid
+  pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+  if ! ps -p "$pid" >/dev/null 2>&1; then
+    rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+    return 1
+  fi
+  return 0
+}
+
+telegram_deferred_start_pending() {
+  if telegram_deferred_pid_is_running; then
+    return 0
+  fi
+  [[ -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE" ]]
 }
 
 telegram_codex_pid_is_running() {
@@ -4460,6 +4484,48 @@ print(str(data.get(key, "")).strip())
 PY
 }
 
+clear_remote_call_runtime_exports() {
+  unset VIVENTIUM_PUBLIC_CLIENT_URL
+  unset VIVENTIUM_PUBLIC_SERVER_URL
+  unset VIVENTIUM_PUBLIC_PLAYGROUND_URL
+  unset VIVENTIUM_PUBLIC_LIVEKIT_URL
+  unset LIVEKIT_NODE_IP
+  unset LIVEKIT_TURN_DOMAIN
+  unset LIVEKIT_TURN_TLS_PORT
+  unset LIVEKIT_TURN_CERT_FILE
+  unset LIVEKIT_TURN_KEY_FILE
+}
+
+remote_call_mapping_state_supports_refresh() {
+  if [[ ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
+    return 1
+  fi
+  "$PYTHON_BIN" - "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(data, dict):
+    raise SystemExit(1)
+
+if str(data.get("provider") or "").strip() != "public_https_edge":
+    raise SystemExit(1)
+
+if str(data.get("last_error") or "").strip():
+    raise SystemExit(1)
+
+router = data.get("router") or {}
+mappings = router.get("mappings") or []
+raise SystemExit(0 if isinstance(mappings, list) and len(mappings) > 0 else 1)
+PY
+}
+
 prepare_remote_call_access() {
   if ! remote_call_mode_enabled; then
     return 0
@@ -4558,8 +4624,11 @@ prepare_remote_call_access() {
   if ! state_json="$("$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" \
     "${helper_args[@]}" \
     "${auto_install_args[@]}" 2>&1)"; then
-    log_error "Remote access setup failed: $state_json"
-    return 1
+    local failure_message="${state_json//$'\r'/ }"
+    failure_message="${failure_message//$'\n'/ }"
+    clear_remote_call_runtime_exports
+    log_warn "Remote access setup failed; local startup will continue without it: $failure_message"
+    return 0
   fi
 
   public_client_url="$(json_state_value "$state_json" "public_client_url")"
@@ -4629,9 +4698,15 @@ prewarm_remote_call_access() {
   api_url="$(json_state_value "$state_json" "public_api_url")"
   playground_url="$(json_state_value "$state_json" "public_playground_url")"
   livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
+  local remote_error=""
+  remote_error="$(json_state_value "$state_json" "last_error")"
 
   if [[ "$command_status" -ne 0 ]]; then
-    log_warn "Remote access verification failed - browser links may need a retry: $state_json"
+    if [[ -n "$remote_error" ]]; then
+      log_warn "Remote access is still inactive for this run: $remote_error"
+    else
+      log_warn "Remote access verification failed - browser links may need a retry: $state_json"
+    fi
     return 0
   fi
 
@@ -4669,6 +4744,9 @@ start_remote_call_mapping_refresh_worker() {
     return 0
   fi
   if [[ ! -f "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" || ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
+    return 0
+  fi
+  if ! remote_call_mapping_state_supports_refresh; then
     return 0
   fi
   if remote_call_mapping_refresh_pid_is_running; then
@@ -4792,6 +4870,13 @@ stop_running_services() {
     kill_pids "$telegram_pid"
     rm -f "$TELEGRAM_BOT_PID_FILE"
   fi
+  local telegram_deferred_pid
+  telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+  if [[ -n "$telegram_deferred_pid" ]]; then
+    kill_pids "$telegram_deferred_pid"
+    rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  fi
+  rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
   kill_by_pattern_scoped "TelegramVivBot.*bot.py" "$ROOT_DIR"
   if [[ -n "$telegram_dir" ]]; then
     kill_by_pattern_scoped "uv run python bot.py" "$telegram_dir"
@@ -5440,7 +5525,12 @@ ms365_http_ping() {
 searxng_http_ping() {
   local base_url="${SEARXNG_INSTANCE_URL:-http://localhost:${SEARXNG_PORT}}"
   base_url="${base_url%/}"
-  curl -fs --max-time 3 "${base_url}/search?q=ping&format=json" >/dev/null 2>&1
+  # A real search request can be slow on cold start while upstream engines warm.
+  # Use the root page as the readiness check so local installs do not treat a
+  # healthy SearXNG container as failed just because the first query is slow.
+  local status
+  status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${base_url}/" || true)
+  [[ "$status" =~ ^(2|3)[0-9][0-9]$ ]]
 }
 
 firecrawl_http_ping() {
@@ -5917,6 +6007,13 @@ cleanup() {
   fi
   [[ "$V1_AGENT_STARTED_BY_SCRIPT" == "true" && -n "${V1_AGENT_PID:-}" ]] && kill "${V1_AGENT_PID}" 2>/dev/null || true
   [[ "$TELEGRAM_STARTED_BY_SCRIPT" == "true" && -n "${TELEGRAM_BOT_PID:-}" ]] && kill "${TELEGRAM_BOT_PID}" 2>/dev/null || true
+  local cleanup_telegram_deferred_pid=""
+  cleanup_telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+  if [[ -n "$cleanup_telegram_deferred_pid" ]]; then
+    kill_pids "$cleanup_telegram_deferred_pid"
+    rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  fi
+  rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
   [[ "$GOOGLE_MCP_STARTED_BY_SCRIPT" == "true" && -n "${GOOGLE_MCP_PID:-}" ]] && kill "${GOOGLE_MCP_PID}" 2>/dev/null || true
   stop_remote_call_tunnels
   stop_pid_file_scoped "$GOOGLE_MCP_PID_FILE" "$GOOGLE_MCP_DIR"
@@ -7092,7 +7189,12 @@ start_searxng() {
   SEARXNG_PORT="$SEARXNG_PORT" docker compose -f "$compose_file" up -d
   SEARXNG_STARTED_BY_SCRIPT=true
 
-  for _ in $(seq 1 20); do
+  local ready_retries="${VIVENTIUM_SEARXNG_READY_RETRIES:-60}"
+  if ! [[ "$ready_retries" =~ ^[0-9]+$ ]] || [[ "$ready_retries" -lt 1 ]]; then
+    ready_retries=60
+  fi
+
+  for _ in $(seq 1 "$ready_retries"); do
     if searxng_http_ping; then
       log_success "SearxNG reachable at $SEARXNG_INSTANCE_URL"
       return 0
@@ -7223,6 +7325,8 @@ start_v1_agent() {
 }
 
 start_telegram_bot() {
+  rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
   if [[ "$START_TELEGRAM" != "true" ]]; then
     log_info "Skipping Telegram bot startup"
     return 0
@@ -7482,6 +7586,36 @@ PY
     return 1
   fi
   log_success "Telegram bot started (PID: $TELEGRAM_BOT_PID)"
+  return 0
+}
+
+schedule_deferred_telegram_bot_start() {
+  local existing_pid=""
+  local background_retries="${TELEGRAM_LIBRECHAT_DEFERRED_START_RETRIES:-${TELEGRAM_LIBRECHAT_START_RETRIES:-1800}}"
+
+  if telegram_deferred_pid_is_running; then
+    existing_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+    if [[ -n "$existing_pid" ]]; then
+      log_success "Deferred Telegram bot startup already queued (PID: $existing_pid)"
+      return 0
+    fi
+  fi
+
+  : >"$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
+  rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  (
+    trap 'rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE" "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"' EXIT
+    if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "$background_retries"; then
+      if ! start_telegram_bot; then
+        log_warn "Telegram bot startup had issues - continuing anyway"
+      fi
+    else
+      log_warn "LibreChat API never became ready; skipping deferred Telegram bot startup"
+    fi
+  ) &
+  local deferred_pid=$!
+  printf '%s\n' "$deferred_pid" >"$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  log_info "Queued deferred Telegram bot startup watcher (PID: $deferred_pid)"
   return 0
 }
 
@@ -7770,9 +7904,7 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
   fi
 fi
 
-if ! prepare_remote_call_access; then
-  exit 1
-fi
+prepare_remote_call_access
 
 if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" || -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
   echo -e "${CYAN}[viventium]${NC} Public remote access:"
@@ -7984,6 +8116,7 @@ if [[ "$START_TELEGRAM" == "true" ]]; then
   telegram_backend_preference="$(echo "${VIVENTIUM_TELEGRAM_BACKEND:-librechat}" | tr '[:upper:]' '[:lower:]')"
   if [[ "$telegram_backend_preference" == "librechat" && "$SKIP_LIBRECHAT" != "true" ]]; then
     DEFER_TELEGRAM_LIBRECHAT_START=true
+    : >"$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
     log_info "Deferring Telegram bot startup until LibreChat API is ready"
   fi
 fi
@@ -8225,12 +8358,15 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
 fi
 
 if [[ "$DEFER_TELEGRAM_LIBRECHAT_START" == "true" ]]; then
-  if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "${TELEGRAM_LIBRECHAT_START_RETRIES:-240}"; then
-    if ! start_telegram_bot; then
-      log_warn "Telegram bot startup had issues - continuing anyway"
+  if ! schedule_deferred_telegram_bot_start; then
+    log_warn "Unable to queue deferred Telegram bot startup; falling back to inline wait"
+    if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "${TELEGRAM_LIBRECHAT_START_RETRIES:-240}"; then
+      if ! start_telegram_bot; then
+        log_warn "Telegram bot startup had issues - continuing anyway"
+      fi
+    else
+      log_warn "LibreChat API never became ready; skipping deferred Telegram bot startup"
     fi
-  else
-    log_warn "LibreChat API never became ready; skipping deferred Telegram bot startup"
   fi
 fi
 
@@ -8691,6 +8827,8 @@ if [[ "$START_TELEGRAM" == "true" ]]; then
     echo -e "  ${CYAN}Telegram Bot:${NC}        invalid BotFather token"
   elif [[ "$TELEGRAM_STARTED_BY_SCRIPT" == "true" ]]; then
     echo -e "  ${CYAN}Telegram Bot:${NC}        running (PID: $TELEGRAM_BOT_PID)"
+  elif telegram_deferred_start_pending; then
+    echo -e "  ${CYAN}Telegram Bot:${NC}        starting (waiting for LibreChat API)"
   else
     echo -e "  ${CYAN}Telegram Bot:${NC}        enabled (check $LOG_DIR/telegram_bot.log)"
   fi

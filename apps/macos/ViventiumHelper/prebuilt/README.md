@@ -4,9 +4,9 @@ This directory holds the shipped fallback artifact for the macOS menu-bar helper
 
 Rules:
 
-- source builds remain the preferred path
-- direct `swiftc` compile remains the first fallback when SwiftPM fails
-- this prebuilt binary is only used if local source builds fail
+- the installer uses this shipped binary first when `source.sha256` matches the current helper sources
+- local source builds remain available for development via `VIVENTIUM_HELPER_FORCE_LOCAL_BUILD=1`
+- direct `swiftc` compile remains the fallback after SwiftPM when local source builds are forced
 - the installer must only use the prebuilt artifact when `source.sha256` matches the current helper sources
 
 Regeneration command:

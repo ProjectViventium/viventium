@@ -329,12 +329,28 @@ run_preflight() {
     args+=(--apply)
     if [[ "${VIVENTIUM_AUTO_APPROVE_PREREQS:-false}" == "true" || "${HEADLESS:-0}" == "1" ]]; then
       args+=(--non-interactive)
+    else
+      reattach_stdin_from_tty_if_available || true
     fi
   fi
   ensure_brew_paths_on_path
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/preflight.py" "${args[@]}"
   refresh_repo_python
   ensure_brew_paths_on_path
+}
+
+reattach_stdin_from_tty_if_available() {
+  # `curl ... | bash` leaves stdin on the consumed bootstrap pipe even though the
+  # user still has a controlling terminal. Reattach before any interactive prompt.
+  if [[ -t 0 ]]; then
+    return 0
+  fi
+  if [[ ! -t 1 && ! -t 2 ]]; then
+    return 1
+  fi
+  if ! exec </dev/tty; then
+    return 1
+  fi
 }
 
 usage() {
@@ -1198,22 +1214,24 @@ runtime_port_listening() {
 
 http_url_healthy() {
   local url="${1:-}"
+  local timeout_seconds="${2:-2}"
   [[ -n "$url" ]] || return 1
 
   local code=""
   if command -v curl >/dev/null 2>&1; then
-    code="$(curl -sS -L -o /dev/null --max-time 2 -w '%{http_code}' "$url" 2>/dev/null || true)"
+    code="$(curl -sS -L -o /dev/null --max-time "$timeout_seconds" -w '%{http_code}' "$url" 2>/dev/null || true)"
   else
     code="$(
-      "$PYTHON_BIN" - "$url" <<'PY'
+      "$PYTHON_BIN" - "$url" "$timeout_seconds" <<'PY'
 import sys
 import urllib.error
 import urllib.request
 
 url = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
 request = urllib.request.Request(url, method="GET")
 try:
-    with urllib.request.urlopen(request, timeout=2) as response:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         print(getattr(response, "status", 200))
 except urllib.error.HTTPError as error:
     print(error.code)
@@ -1250,7 +1268,10 @@ searxng_surface_healthy() {
   local base_url=""
   base_url="$(read_generated_env_value "SEARXNG_INSTANCE_URL" "http://localhost:8082")"
   base_url="${base_url%/}"
-  http_url_healthy "${base_url}/search?q=ping&format=json"
+  # Cold SearXNG search requests can take a few seconds while engines wake up.
+  # The root page responds much earlier and is enough to prove the local service
+  # is accepting traffic for installer/startup readiness purposes.
+  http_url_healthy "${base_url}/" 5
 }
 
 firecrawl_surface_healthy() {
@@ -1266,8 +1287,15 @@ firecrawl_surface_healthy() {
   fi
 
   if command -v curl >/dev/null 2>&1; then
-    curl -s --max-time 3 "${base_url}/" 2>/dev/null | grep -q "Firecrawl API"
-    return $?
+    if curl -s --max-time 3 "${base_url}/" 2>/dev/null | grep -q "Firecrawl API"; then
+      return 0
+    fi
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    if docker ps -q --filter "name=^/viventium_firecrawl_api$" 2>/dev/null | head -1 | grep -q .; then
+      return 0
+    fi
   fi
 
   return 1
@@ -2188,6 +2216,9 @@ case "$COMMAND" in
           ;;
       esac
     done
+    if [[ "$HEADLESS" != "1" ]]; then
+      reattach_stdin_from_tty_if_available || true
+    fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     RECOVERY_ACTION="resume"
     if [[ -z "$CONFIG_INPUT" ]]; then
@@ -2361,6 +2392,9 @@ case "$COMMAND" in
           ;;
       esac
     done
+    if [[ "$HEADLESS" != "1" ]]; then
+      reattach_stdin_from_tty_if_available || true
+    fi
     WIZARD_ARGS=(--output "$CONFIG_FILE")
     if [[ -n "$CONFIG_INPUT" ]]; then
       WIZARD_ARGS+=(--preset "$CONFIG_INPUT" --non-interactive)
