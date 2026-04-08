@@ -14,7 +14,7 @@ def test_direct_detached_librechat_fallback_supervises_backend_and_frontend() ->
     assert 'log_info "Using direct LibreChat startup fallback' in launcher_text
     assert 'npm run backend:dev &' in launcher_text
     assert 'BACKEND_PID=$!' in launcher_text
-    assert 'local librechat_dev_host="${HOST:-::}"' in launcher_text
+    assert 'librechat_dev_host="${HOST:-::}"' in launcher_text
     assert 'npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"' in launcher_text
     assert 'FRONTEND_PID=$!' in launcher_text
     assert 'wait "$BACKEND_PID" "$FRONTEND_PID"' in launcher_text

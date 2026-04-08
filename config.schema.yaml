@@ -179,6 +179,12 @@ properties:
             type: string
           secret_value:
             type: string
+          bot_api_origin:
+            type: string
+          bot_api_base_url:
+            type: string
+          bot_api_base_file_url:
+            type: string
       telegram_codex:
         type: object
         properties:

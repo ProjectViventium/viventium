@@ -18,6 +18,8 @@ Secrets should live in macOS Keychain and be referenced from `config.yaml` using
 
 For advanced local setups that still depend on env-based LibreChat provider wiring
 (for example Azure-backed local models), use `runtime.extra_env` in `config.yaml`.
+Telegram local Bot API settings now have canonical config fields under
+`integrations.telegram` and should not require `runtime.extra_env`.
 
 ## Generated Runtime Files
 
@@ -59,6 +61,7 @@ to preserve local parity with older setups.
 - `voice.wing_mode.default_enabled`
 - `voice.wing_mode.prompt`
 - Telegram bot token
+- optional Telegram local Bot API server origin/base URLs for large-media downloads
 - Google Workspace auth material
 - Microsoft 365 auth material
 - Skyvern settings

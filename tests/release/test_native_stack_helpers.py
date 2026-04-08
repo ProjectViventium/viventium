@@ -57,6 +57,10 @@ def test_livekit_meta_matches_expected_accepts_matching_runtime_meta(tmp_path: P
                 "LIVEKIT_HTTP_PORT='7888'\n"
                 "LIVEKIT_TCP_PORT='7889'\n"
                 "LIVEKIT_UDP_PORT='7890'\n"
+                "LIVEKIT_TURN_DOMAIN=''\n"
+                "LIVEKIT_TURN_TLS_PORT=''\n"
+                "LIVEKIT_TURN_CERT_FILE=''\n"
+                "LIVEKIT_TURN_KEY_FILE=''\n"
                 f"{function_def}"
                 "if livekit_meta_matches_expected; then printf 'match\\n'; else printf 'mismatch\\n'; fi\n"
             ),
@@ -237,6 +241,7 @@ def test_managed_livekit_listener_pid_requires_installer_managed_config_path() -
     script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
     listener_def = extract_shell_function(script_text, "managed_livekit_listener_pid")
     process_def = extract_shell_function(script_text, "process_command_line")
+    command_match_def = extract_shell_function(script_text, "livekit_command_matches_expected")
 
     completed = subprocess.run(
         [
@@ -244,11 +249,12 @@ def test_managed_livekit_listener_pid_requires_installer_managed_config_path() -
             "-lc",
             (
                 "set -euo pipefail\n"
-                "LIVEKIT_HTTP_PORT='7888'\n"
+                "LIVEKIT_PID_FILE='/tmp/does-not-exist'\n"
                 "LIVEKIT_CFG_FILE='/tmp/viventium/livekit/livekit.yaml'\n"
-                "listener_pid() { printf '4242\\n'; }\n"
+                "pgrep() { printf '4242\\n'; }\n"
                 "ps() { printf '/usr/local/bin/livekit-server --config /tmp/other/livekit.yaml --node-ip 127.0.0.1\\n'; }\n"
                 f"{process_def}"
+                f"{command_match_def}"
                 f"{listener_def}"
                 "if managed_livekit_listener_pid >/tmp/out 2>/dev/null; then cat /tmp/out; else printf 'unmanaged\\n'; fi\n"
             ),
@@ -290,6 +296,11 @@ def test_start_livekit_restarts_managed_listener_when_runtime_meta_drifted(tmp_p
                 "LIVEKIT_NODE_IP='192.0.2.10'\n"
                 "LIVEKIT_API_KEY='viventium-local'\n"
                 "LIVEKIT_API_SECRET='secret'\n"
+                "LIVEKIT_TURN_DOMAIN=''\n"
+                "LIVEKIT_TURN_TLS_PORT=''\n"
+                "LIVEKIT_TURN_CERT_FILE=''\n"
+                "LIVEKIT_TURN_KEY_FILE=''\n"
+                "NATIVE_STACK_SKIP_LIVEKIT='0'\n"
                 f"LIVEKIT_CFG_FILE='{cfg_file}'\n"
                 f"LIVEKIT_META_FILE='{meta_file}'\n"
                 f"LIVEKIT_PID_FILE='{pid_file}'\n"
@@ -322,4 +333,8 @@ def test_start_livekit_restarts_managed_listener_when_runtime_meta_drifted(tmp_p
         "LIVEKIT_HTTP_PORT=7888",
         "LIVEKIT_TCP_PORT=7889",
         "LIVEKIT_UDP_PORT=7890",
+        "LIVEKIT_TURN_DOMAIN=",
+        "LIVEKIT_TURN_TLS_PORT=",
+        "LIVEKIT_TURN_CERT_FILE=",
+        "LIVEKIT_TURN_KEY_FILE=",
     ]

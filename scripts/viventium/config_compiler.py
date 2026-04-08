@@ -1415,6 +1415,18 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             integrations["telegram"],
             "integrations.telegram",
         )
+        telegram_settings = integrations.get("telegram", {}) or {}
+        bot_api_origin = str(telegram_settings.get("bot_api_origin", "") or "").strip()
+        bot_api_base_url = str(telegram_settings.get("bot_api_base_url", "") or "").strip()
+        bot_api_base_file_url = str(
+            telegram_settings.get("bot_api_base_file_url", "") or ""
+        ).strip()
+        if bot_api_origin:
+            env["VIVENTIUM_TELEGRAM_BOT_API_ORIGIN"] = bot_api_origin
+        if bot_api_base_url:
+            env["VIVENTIUM_TELEGRAM_BOT_API_BASE_URL"] = bot_api_base_url
+        if bot_api_base_file_url:
+            env["VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL"] = bot_api_base_file_url
 
     telegram_codex = integrations.get("telegram_codex", {}) or {}
     if telegram_codex_enabled(config):
@@ -1897,6 +1909,9 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_LIBRECHAT_ORIGIN",
         "VIVENTIUM_TELEGRAM_SECRET",
         "VIVENTIUM_CALL_SESSION_SECRET",
+        "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN",
+        "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL",
+        "VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL",
     ]
     telegram_codex_keys = ["TELEGRAM_CODEX_BOT_TOKEN", "TELEGRAM_CODEX_BOT_USERNAME"]
     skyvern_keys = ["START_SKYVERN"]

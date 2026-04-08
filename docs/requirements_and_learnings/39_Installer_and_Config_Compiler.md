@@ -49,6 +49,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `runtime.env`
   - `runtime.local.env`
   - `librechat.yaml`
+  - service-specific env files such as `runtime/service-env/telegram.config.env`
 - Human-facing browser auth posture must compile from canonical config too:
   - `runtime.auth.allow_registration` -> `ALLOW_REGISTRATION`
   - `runtime.auth.allow_password_reset` -> `ALLOW_PASSWORD_RESET`
@@ -68,6 +69,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     explicitly when Anthropic runtime defaults would otherwise enable thinking
 - Installer UX affordances, including wait copy and inline animations, must not mutate or depend on
   generated App Support outputs to appear correct.
+- Telegram launcher parity follows the same rule: compiled Telegram service env must be the default
+  startup source ahead of legacy repo-local or private overlay files.
 
 ## Learnings
 

@@ -414,6 +414,15 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private let busyStateHandoffGraceSeconds: TimeInterval = 8" in source
     assert "private let delayedQuitWatchTimeoutSeconds: Int = 420" in source
     assert "private var busyStateGraceDeadline: Date?" in source
+    assert "private var launchAtLoginRefreshTask: Task<Void, Never>?" in source
+    assert "private func refreshLaunchAtLoginState(force: Bool = false) {" in source
+    assert "self.refreshLaunchAtLoginState(force: force)" in source
+    assert "self.launchAtLoginRefreshTask = Task.detached(priority: .utility)" in source
+    assert "private nonisolated static func launchAtLoginFastPathEnabled() -> Bool" in source
+    assert "self.launchAtLoginFastPathEnabled() || self.loginItemExists()" in source
+    assert "timeoutSeconds: 5" in source
+    assert 'self.launchAtLoginEnabled = Self.launchAtLoginIsEnabled()' not in refresh_section
+    assert 'self.launchAtLoginEnabled = Self.launchAtLoginIsEnabled()' not in source
     assert "cleanup_legacy_terminal_helper_launchers()" in install_script
     assert '"showInStatusBar": bool(existing.get("showInStatusBar", True)),' in install_script
     assert 'helper_script_dir.glob("*.command")' in install_script

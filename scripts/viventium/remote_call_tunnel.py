@@ -1096,23 +1096,34 @@ def ensure_upnp_mapping(
     if existing == (internal_host, internal_port):
         return
     if existing and existing != (internal_host, internal_port):
-        raise RuntimeError(
-            f"Router already forwards {protocol} {external_port} to {existing[0]}:{existing[1]}; "
-            f"cannot reuse it for Viventium {description}"
-        )
+        existing_host = str(existing[0] or "").strip()
+        existing_port = int(existing[1])
+        if existing_host == internal_host and not mapping_target_reachable(existing_host, existing_port):
+            remove_upnp_mapping(
+                upnpc_bin,
+                external_port=external_port,
+                protocol=protocol,
+            )
+        else:
+            raise RuntimeError(
+                f"Router already forwards {protocol} {external_port} to {existing[0]}:{existing[1]}; "
+                f"cannot reuse it for Viventium {description}"
+            )
 
-    result = run_checked(
+    command = [upnpc_bin]
+    if str(description or "").strip():
+        command.extend(["-e", description])
+    command.extend(
         [
-            upnpc_bin,
             "-a",
             internal_host,
             str(internal_port),
             str(external_port),
             protocol,
             str(max(0, int(lease_seconds))),
-        ],
-        timeout_seconds=10,
+        ]
     )
+    result = run_checked(command, timeout_seconds=10)
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(
@@ -1132,6 +1143,26 @@ def remove_upnp_mapping(upnpc_bin: str, *, external_port: int, protocol: str) ->
         raise RuntimeError(
             f"Failed to remove router port forward for {protocol.upper()} {external_port}: {(result.stderr or result.stdout or '').strip()}".strip()
         )
+
+
+def mapping_target_reachable(
+    host: str,
+    port: int,
+    *,
+    timeout_seconds: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
+) -> bool:
+    candidate_host = str(host or "").strip()
+    try:
+        candidate_port = int(port)
+    except Exception:
+        return False
+    if not candidate_host or candidate_port <= 0:
+        return False
+    try:
+        with socket.create_connection((candidate_host, candidate_port), timeout=timeout_seconds):
+            return True
+    except Exception:
+        return False
 
 
 def public_edge_mapping_description(protocol: str, external_port: int) -> str:

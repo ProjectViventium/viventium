@@ -10,6 +10,8 @@ stream back to Telegram through the existing bridge.
 - Retry should be user-initiated to avoid duplicate tool actions.
 - Telegram bot-token setup must stay truthful and reject malformed tokens.
 - Telegram must differentiate voice-note input vs text input and forward that mode to LibreChat.
+- Telegram media transcription failures must surface as explicit media errors, not as transcript text,
+  and must not be forwarded into LibreChat as if the user said them.
 - Telegram text responses should leverage MarkdownV2 formatting; voice-mode responses must be plain
   conversational text.
 - Background follow-ups must preserve the same formatting rules as the main response.
@@ -18,6 +20,8 @@ stream back to Telegram through the existing bridge.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
 - Detached/local launches must not leave Telegram pointed at a dead LibreChat localhost origin after
   frontend dev-server exits or launcher-side supervision gaps.
+- Detached/local launches must recover the LibreChat API when the real API child dies even if an
+  npm/nodemon parent process is still alive.
 
 ## Public-Safe Implementation Notes
 
@@ -29,6 +33,10 @@ stream back to Telegram through the existing bridge.
 
 ## Telegram Voice and Call Behavior
 - Voice-note transcription must use the configured runtime STT provider.
+- Voice-note and video-note download/transcription failures must return one clean Telegram error and
+  stop before chat submission.
+- Telegram's hosted Bot API cannot download files above its platform limit, so oversized Telegram
+  media must fail honestly unless the install is configured to use a local Telegram Bot API server.
 - Voice replies must use a compatible TTS provider/key pair.
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
@@ -40,6 +48,14 @@ stream back to Telegram through the existing bridge.
 - When Telegram is enabled, `ffmpeg` must be available on the host:
   - local `pywhispercpp` transcription needs it to decode Telegram's non-WAV voice-note media
   - Telegram video-note extraction already depends on it before transcription
+- If the install needs Telegram media downloads beyond the hosted Bot API ceiling, the Telegram bot
+  must be pointed at a local Telegram Bot API server instead of `https://api.telegram.org`.
+- Canonical config owns that choice under `integrations.telegram`:
+  - `bot_api_origin`, or
+  - explicit `bot_api_base_url` and `bot_api_base_file_url`
+- Those canonical fields compile to:
+  - `VIVENTIUM_TELEGRAM_BOT_API_ORIGIN`, or
+  - explicit `VIVENTIUM_TELEGRAM_BOT_API_BASE_URL` and `VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL`
 - Public install flows must detect and install `ffmpeg` automatically through preflight when
   Telegram is enabled.
 - Telegram startup must fail honestly instead of reporting a healthy bridge when `ffmpeg` is still

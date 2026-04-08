@@ -119,6 +119,12 @@ integrations:
   telegram:
     enabled: true
     secret_ref: keychain://viventium/telegram_bot_token
+    # Optional local Telegram Bot API server for large media downloads.
+    # Set bot_api_origin for the usual local server shape, or use the explicit
+    # base URLs if your Bot API server is fronted differently.
+    bot_api_origin: ""
+    bot_api_base_url: ""
+    bot_api_base_file_url: ""
   telegram_codex:
     enabled: false
     secret_ref: keychain://viventium/telegram_codex_bot_token

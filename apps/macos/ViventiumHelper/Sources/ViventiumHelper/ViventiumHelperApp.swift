@@ -98,11 +98,12 @@ final class HelperController: ObservableObject {
     private var delayedQuitWatchTask: Task<Void, Never>?
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
+    private var launchAtLoginRefreshTask: Task<Void, Never>?
 
     init() {
         self.config = Self.loadConfig()
         self.helperLogURL = Self.makeHelperLogURL(appSupportDir: self.config?.appSupportDir)
-        self.launchAtLoginEnabled = Self.launchAtLoginIsEnabled()
+        self.launchAtLoginEnabled = Self.launchAtLoginFastPathEnabled()
         self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true
         self.log("Helper launched")
         if self.showInStatusBarEnabled {
@@ -470,7 +471,7 @@ final class HelperController: ObservableObject {
         let runtime = self.envParser.readRuntime(appSupportDir: config.appSupportDir)
         let host = LocalNetworkAddressResolver.currentHost() ?? "localhost"
         self.openURLString = Self.frontendURLString(host: host, port: runtime.frontendPort)
-        self.launchAtLoginEnabled = Self.launchAtLoginIsEnabled()
+        self.refreshLaunchAtLoginState(force: force)
 
         let allowBusyStateTransition = force
         Task {
@@ -504,6 +505,26 @@ final class HelperController: ObservableObject {
                 return
             }
             self.stackState = .stopped
+        }
+    }
+
+    private func refreshLaunchAtLoginState(force: Bool = false) {
+        if !force, self.launchAtLoginRefreshTask != nil {
+            return
+        }
+        self.launchAtLoginRefreshTask?.cancel()
+        self.launchAtLoginRefreshTask = Task.detached(priority: .utility) { [weak self] in
+            let updated = Self.launchAtLoginIsEnabled()
+            guard !Task.isCancelled else {
+                return
+            }
+            await MainActor.run {
+                guard let self else {
+                    return
+                }
+                self.launchAtLoginEnabled = updated
+                self.launchAtLoginRefreshTask = nil
+            }
         }
     }
 
@@ -1056,7 +1077,8 @@ final class HelperController: ObservableObject {
     private nonisolated static func runSystemProcess(
         executableURL: URL,
         arguments: [String],
-        standardInput: String? = nil
+        standardInput: String? = nil,
+        timeoutSeconds: TimeInterval? = nil
     ) -> (status: Int32, stdout: String, stderr: String) {
         let process = Process()
         process.executableURL = executableURL
@@ -1078,6 +1100,24 @@ final class HelperController: ObservableObject {
 
         do {
             try process.run()
+            if let timeoutSeconds {
+                let deadline = Date().addingTimeInterval(timeoutSeconds)
+                while process.isRunning && Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+                if process.isRunning {
+                    process.terminate()
+                    let terminationDeadline = Date().addingTimeInterval(1.0)
+                    while process.isRunning && Date() < terminationDeadline {
+                        Thread.sleep(forTimeInterval: 0.05)
+                    }
+                    if process.isRunning {
+                        Darwin.kill(process.processIdentifier, SIGKILL)
+                    }
+                    process.waitUntilExit()
+                    return (124, "", "Timed out after \(Int(timeoutSeconds))s")
+                }
+            }
             process.waitUntilExit()
         } catch {
             return (1, "", String(describing: error))
@@ -1092,6 +1132,10 @@ final class HelperController: ObservableObject {
         )
     }
 
+    private nonisolated static func launchAtLoginFastPathEnabled() -> Bool {
+        FileManager.default.fileExists(atPath: self.launchAgentPlistURL().path)
+    }
+
     private nonisolated static func loginItemExists() -> Bool {
         let script = """
         tell application "System Events"
@@ -1101,7 +1145,8 @@ final class HelperController: ObservableObject {
         let result = self.runSystemProcess(
             executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
             arguments: [],
-            standardInput: script
+            standardInput: script,
+            timeoutSeconds: 5
         )
         guard result.status == 0 else {
             return false
@@ -1110,14 +1155,15 @@ final class HelperController: ObservableObject {
     }
 
     private nonisolated static func launchAtLoginIsEnabled() -> Bool {
-        self.loginItemExists() || FileManager.default.fileExists(atPath: self.launchAgentPlistURL().path)
+        self.launchAtLoginFastPathEnabled() || self.loginItemExists()
     }
 
     private nonisolated static func removeLaunchAgent() {
         let plistURL = self.launchAgentPlistURL()
         _ = self.runSystemProcess(
             executableURL: URL(fileURLWithPath: "/bin/launchctl"),
-            arguments: ["bootout", "gui/\(getuid())", plistURL.path]
+            arguments: ["bootout", "gui/\(getuid())", plistURL.path],
+            timeoutSeconds: 5
         )
         try? FileManager.default.removeItem(at: plistURL)
     }
@@ -1133,7 +1179,8 @@ final class HelperController: ObservableObject {
         _ = self.runSystemProcess(
             executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
             arguments: [],
-            standardInput: script
+            standardInput: script,
+            timeoutSeconds: 5
         )
     }
 
@@ -1152,7 +1199,8 @@ final class HelperController: ObservableObject {
         let result = self.runSystemProcess(
             executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
             arguments: [],
-            standardInput: script
+            standardInput: script,
+            timeoutSeconds: 5
         )
         return result.status == 0
     }

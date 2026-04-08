@@ -10,6 +10,8 @@ frontend dev server exits later.
 - Detached launch brings up LibreChat API on `3180`.
 - Telegram bridge can start chat requests against LibreChat after detached launch.
 - Killing the frontend dev server does not take down the LibreChat API.
+- Killing the real LibreChat API child while a parent `npm`/`nodemon` process survives must trigger
+  launcher-owned recovery instead of leaving Telegram pointed at a dead `3180` origin.
 - A synthetic Telegram ingress request still succeeds after the frontend is stopped.
 
 ## Public-Safe Evidence
@@ -30,12 +32,16 @@ frontend dev server exits later.
 3. Submit a synthetic Telegram chat request with the configured shared secret and confirm `{ streamId, conversationId }` is returned.
 4. Kill only the LibreChat frontend dev server process.
 5. Re-check `http://localhost:3180/health` and repeat the synthetic Telegram chat request.
-6. Confirm Mongo records the ingress and resulting conversation/message updates.
+6. Kill only the real LibreChat API child process and leave any parent `npm`/`nodemon` process alive.
+7. Confirm the detached LibreChat API watchdog restores `http://localhost:3180/health`.
+8. Repeat the synthetic Telegram chat request and confirm Mongo records the ingress and resulting conversation/message updates.
 
 ## Result
 
 - 2026-04-03: launcher hardening added so the direct detached LibreChat fallback backgrounds both
   backend and frontend and waits on both, instead of `exec`-ing the frontend process.
+- 2026-04-07: launcher hardening added a detached LibreChat API watchdog for the dead-child/live-parent
+  backend failure mode, and Telegram media transcription failures were split from normal transcript text.
 - 2026-04-03 verification on the canonical App Support runtime:
   - `VIVENTIUM_DETACHED_START=1 bin/viventium start --restart` completed the detached launch path
     without the old direct-fallback supervision break.
@@ -46,3 +52,7 @@ frontend dev server exits later.
     and `conversationId`.
   - Mongo `viventiumtelegramingressevents` recorded the new ingress at
     `2026-04-03T17:39:12.370Z` for Telegram user/chat `160553220`.
+- 2026-04-07 automated verification:
+  - release contract tests now assert the detached watchdog pid/log contract and restart probes
+  - Telegram voice-media tests now assert oversized/download-failure paths return structured media
+    errors instead of raw transcript text

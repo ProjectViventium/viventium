@@ -361,6 +361,31 @@
     - `allow_password_reset: false`
     - `bin/viventium password-reset-link <email>` when a one-time reset is needed
 
+## Runtime Evidence Follow-up
+
+- Date: April 7, 2026
+- Symptom:
+  - helper-triggered startup reached remote-edge bootstrap, then shut the stack back down before
+    LibreChat or Telegram could come up
+- Evidence:
+  - `~/Library/Application Support/Viventium/logs/helper-start.log` recorded:
+    - `Preparing secure remote access topology`
+    - `Remote access setup failed: Router already forwards TCP 80 to 10.88.111.46:50779; cannot reuse it for Viventium Viventium public HTTP`
+    - `All services stopped.`
+  - `upnpc -l` on the same machine showed the conflicting `80/tcp` and `443/tcp` mappings also
+    targeted `10.88.111.46`, which is this Mac's current LAN IP
+  - local socket checks against the mapped internal targets `50779` and `50780` failed, proving
+    they were stale same-machine forwards rather than a live foreign service
+- Fix:
+  - `scripts/viventium/remote_call_tunnel.py` now reclaims dead UPnP mappings only when they
+    already point back to this same Mac and the mapped local target is no longer reachable
+  - active conflicts still remain a fatal operator-visible error
+- Regression coverage:
+  - `tests/release/test_remote_call_tunnel.py` now covers:
+    - the labeled `upnpc -e ... -a ...` create path
+    - dead same-host mapping reclamation
+    - preservation of active conflicting mappings as hard failures
+
 ## Limitations
 
 - This report now includes proof that an off-home phone browser could load `https://app.<your-domain>`

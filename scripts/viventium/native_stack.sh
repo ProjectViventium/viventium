@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck source=/dev/null
+source "$REPO_ROOT/scripts/viventium/common.sh"
 
 APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
 STATE_DIR="${VIVENTIUM_BASE_STATE_DIR:-$APP_SUPPORT_DIR/state}"
@@ -129,12 +131,7 @@ mkdir -p "$NATIVE_STATE_DIR" "$NATIVE_LOG_DIR" "$PROFILE_STATE_DIR" "$MONGO_DATA
 
 port_listening() {
   local port="$1"
-  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
-}
-
-listener_pid() {
-  local port="$1"
-  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1 || true
+  viventium_port_listener_active "$port"
 }
 
 process_command_line() {
@@ -244,13 +241,25 @@ livekit_command_matches_expected() {
 }
 
 managed_livekit_listener_pid() {
-  local pid command_line
-  pid="$(listener_pid "$LIVEKIT_HTTP_PORT")"
-  [[ -n "$pid" ]] || return 1
-  command_line="$(process_command_line "$pid")"
-  [[ "$command_line" == *"livekit"* ]] || return 1
-  [[ "$command_line" == *"$LIVEKIT_CFG_FILE"* ]] || return 1
-  printf '%s\n' "$pid"
+  local pid=""
+
+  if [[ -f "$LIVEKIT_PID_FILE" ]]; then
+    pid="$(tr -d '[:space:]' <"$LIVEKIT_PID_FILE" || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1 && livekit_command_matches_expected "$pid"; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  fi
+
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    if livekit_command_matches_expected "$pid"; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  done < <(pgrep -f "$LIVEKIT_CFG_FILE" 2>/dev/null || true)
+
+  return 1
 }
 
 stop_livekit() {
