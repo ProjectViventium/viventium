@@ -54,6 +54,11 @@ stream back to Telegram through the existing bridge.
   - explicit external-server wiring with `bot_api_origin`, or
   - explicit `bot_api_base_url` and `bot_api_base_file_url`, or
   - Viventium-managed same-Mac server wiring under `local_bot_api`
+- Path of least resistance applies here:
+  - if an operator already has a supported local/external Telegram Bot API server, prefer wiring
+    `bot_api_origin` (or the explicit base URLs) instead of making Viventium own another server
+  - only use `integrations.telegram.local_bot_api` when Viventium must own the same-Mac server
+    lifecycle itself
 - Those canonical fields compile to:
   - `VIVENTIUM_TELEGRAM_BOT_API_ORIGIN`, or
   - explicit `VIVENTIUM_TELEGRAM_BOT_API_BASE_URL` and `VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL`
