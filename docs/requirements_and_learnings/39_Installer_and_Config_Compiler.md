@@ -49,6 +49,14 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `runtime.env`
   - `runtime.local.env`
   - `librechat.yaml`
+- The config compiler also owns the retrieval embeddings contract compiled from
+  `runtime.retrieval.embeddings`:
+  - `EMBEDDINGS_PROVIDER`
+  - `EMBEDDINGS_MODEL`
+  - `OLLAMA_BASE_URL` when the configured provider uses Ollama
+  - `VIVENTIUM_RAG_EMBEDDINGS_PROVIDER`
+  - `VIVENTIUM_RAG_EMBEDDINGS_MODEL`
+  - `VIVENTIUM_RAG_EMBEDDINGS_PROFILE`
 - Human-facing browser auth posture must compile from canonical config too:
   - `runtime.auth.allow_registration` -> `ALLOW_REGISTRATION`
   - `runtime.auth.allow_password_reset` -> `ALLOW_PASSWORD_RESET`
@@ -57,10 +65,23 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - `librechat.yaml` memory-writer provider/model must be compiled from the actually available
   foundation providers (`openai` / `anthropic`), including connected-account auth:
   - do not leave memory on a hardcoded xAI default when xAI was never configured
-  - when both OpenAI and Anthropic are available, honor the configured foundation-provider order
-    instead of silently preferring a different provider
+  - current product policy prefers Anthropic for memory when Anthropic is available and otherwise
+    falls back to OpenAI
+  - docs, tests, and generated runtime outputs must all reflect that exact compiler rule
+  - the generated provider token is part of the public product contract; downstream runtime
+    initialization must accept the compiler-emitted canonical value instead of requiring a
+    different alias such as `openAI`
 - Endpoint helper config must not hide unavailable provider dependencies:
   - Anthropic conversation-title generation must stay on Anthropic instead of routing through xAI
+- Retrieval-runtime prerequisites must stay honest across install/start surfaces:
+  - if conversation recall is configured to use Ollama embeddings, preflight, install summary,
+    doctor, and launcher readiness must all surface the same local-runtime dependency
+  - Docker being healthy is not enough when the selected embeddings runtime is down
+  - Ollama binary presence is not enough when the selected embeddings model artifact is still
+    missing on the configured Ollama host
+  - the launcher must ensure the configured embeddings model exists before starting the RAG sidecar
+  - doctor should report whether the configured model is already ready or will be pulled on first
+    start
 - Built-in agent runtime truth must remain compatible with the selected install/runtime surface:
   - fresh installs and restarts rely on the seeded source-of-truth agent bundle
   - do not rely on Mongo hand-edits or App Support leftovers to make built-ins behave correctly
@@ -112,3 +133,35 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   Anthropic endpoint `titleEndpoint/titleModel`, but the compiler never overlaid those fields. The
   correct fix was to compile those runtime surfaces from real configured provider availability, not
   to hand-edit App Support outputs or patch the memory runtime.
+- On April 8, 2026, a follow-up incident showed the other half of the same contract:
+  the compiler correctly emitted `memory.agent.provider = openai`, but runtime provider resolution
+  still rejected that generated value in one path with `Provider openai not supported`. The fix
+  belongs at the shared runtime normalization/initialization boundary, not in App Support hand
+  edits and not by changing the compiler back to a different alias.
+- On April 9, 2026, a local restart verified the memory-writer contract end to end:
+  - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
+    running helper logs showed the unsupported-provider initialization failure
+  - after the compiler/runtime fix and restart, the generated runtime pointed memory at
+    `anthropic / claude-sonnet-4-6`
+  - the saved-memory path then ran through product code without manual App Support or Mongo edits
+- On April 9, 2026, the same ownership rule extended to local-first conversation recall:
+  - the compiler must emit the selected retrieval embeddings provider/model explicitly
+  - wizard defaults, preflight, doctor, install summary, and launcher readiness must consume the
+    same retrieval-config helper
+  - the startup path must fail closed when recall depends on Ollama embeddings but Ollama is not
+    actually reachable
+- A later April 9, 2026 follow-up clarified the next layer of the same contract:
+  - fresh local installs can have Ollama installed and reachable while still missing the configured
+    embedding model artifact
+  - launcher ownership therefore includes verifying/pulling the configured model before RAG startup
+  - doctor ownership includes reporting model readiness instead of only binary presence
+  - Ollama host responses can normalize untagged model requests to `:latest`, so readiness checks
+    must accept that canonicalization rather than treating it as a false missing-model error
+- On April 9, 2026, conversation-recall prompt propagation exposed the compile/source boundary:
+  - compile-time source-of-truth precedence must be private curated YAML when present, otherwise the
+    tracked `local.librechat.yaml`
+  - the compiler must not seed itself from a previously generated runtime `librechat.yaml` during
+    compile, because that can silently drop newly added tracked fields until some manual cleanup or
+    lucky regeneration path happens
+  - generated runtime YAML is a deployment artifact for launch/runtime, not an authoring source for
+    the next compile pass

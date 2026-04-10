@@ -826,6 +826,8 @@ prepare_runtime_exports() {
   fi
   if [[ "$source_phase" == "compile" && "$private_source_valid" == "1" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$private_source_of_truth"
+  elif [[ "$source_phase" == "compile" ]]; then
+    unset VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH
   elif [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
   elif [[ "$private_source_valid" == "1" ]]; then

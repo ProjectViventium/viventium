@@ -77,3 +77,55 @@ runtime:
     assert "ENABLE_TELEGRAM=1" in completed.stdout
     assert "ENABLE_GOOGLE_WORKSPACE=0" in completed.stdout
     assert "ENABLE_CONVERSATION_RECALL=1" in completed.stdout
+    assert "RETRIEVAL_EMBEDDINGS_PROVIDER=ollama" in completed.stdout
+    assert "RETRIEVAL_EMBEDDINGS_MODEL=qwen3-embedding:0.6b" in completed.stdout
+    assert "RETRIEVAL_OLLAMA_BASE_URL=http://host.docker.internal:11434" in completed.stdout
+
+
+def test_doctor_check_ollama_embeddings_model_warns_when_model_missing(tmp_path: Path) -> None:
+    doctor_text = DOCTOR_PATH.read_text(encoding="utf-8")
+    normalize_def = extract_shell_function(doctor_text, "doctor_normalize_ollama_base_url")
+    function_def = extract_shell_function(doctor_text, "doctor_check_ollama_embeddings_model")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    curl_log = tmp_path / "curl.log"
+    curl_path = fake_bin / "curl"
+    curl_path.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                f"printf '%s\\n' \"$*\" >> '{curl_log}'",
+                "printf '%s' '{\"models\":[{\"name\":\"embeddinggemma\"}]}'",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    curl_path.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"PATH='{fake_bin}'\n"
+                f"PYTHON_BIN='{sys.executable}'\n"
+                "ENABLE_CONVERSATION_RECALL=1\n"
+                "RETRIEVAL_EMBEDDINGS_PROVIDER=ollama\n"
+                "RETRIEVAL_EMBEDDINGS_MODEL='qwen3-embedding:0.6b'\n"
+                "RETRIEVAL_OLLAMA_BASE_URL='http://host.docker.internal:11434'\n"
+                f"{normalize_def}"
+                f"{function_def}"
+                "doctor_check_ollama_embeddings_model\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "first start will pull it" in completed.stdout
+    assert "http://localhost:11434/api/tags" in curl_log.read_text(encoding="utf-8")

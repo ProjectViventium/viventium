@@ -20,6 +20,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from installer_ui import InstallerUI  # noqa: E402
+from retrieval_config import resolve_retrieval_embeddings_settings  # noqa: E402
 from telegram_tokens import telegram_bot_token_looks_valid  # noqa: E402
 
 
@@ -619,7 +620,16 @@ def build_setup_later_rows(config: dict[str, Any]) -> list[tuple[str, str]]:
 
     rows: list[tuple[str, str]] = []
     if not resolve_bool(personalization.get("default_conversation_recall"), False):
-        rows.append(("Conversation Recall", "Docker Desktop if you want local recall"))
+        retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
+        if retrieval_embeddings["provider"] == "ollama":
+            rows.append(
+                (
+                    "Conversation Recall",
+                    f"Docker Desktop and Ollama if you want local recall; first start pulls {retrieval_embeddings['model']}",
+                )
+            )
+        else:
+            rows.append(("Conversation Recall", "Docker Desktop if you want local recall"))
     if not resolve_bool((integrations.get("web_search") or {}).get("enabled"), False):
         rows.append(
             (

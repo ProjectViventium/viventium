@@ -258,6 +258,32 @@ def test_build_service_rows_warns_when_local_firecrawl_needs_more_docker_memory(
     assert "Firecrawl API" in firecrawl_detail
 
 
+def test_build_setup_later_rows_mentions_ollama_for_conversation_recall() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "personalization": {"default_conversation_recall": False},
+            "retrieval": {
+                "embeddings": {
+                    "provider": "ollama",
+                    "model": "qwen3-embedding:0.6b",
+                    "profile": "medium",
+                }
+            },
+        },
+        "integrations": {},
+    }
+
+    rows = install_summary.build_setup_later_rows(config)
+    later = {name: detail for name, detail in rows}
+
+    assert (
+        later["Conversation Recall"]
+        == "Docker Desktop and Ollama if you want local recall; first start pulls qwen3-embedding:0.6b"
+    )
+
+
 def test_build_next_steps_mentions_optional_shell_init(monkeypatch) -> None:
     install_summary = load_install_summary_module()
 
