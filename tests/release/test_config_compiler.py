@@ -166,6 +166,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "ANTHROPIC_API_KEY=user_provided" in runtime_env
     assert "GOOGLE_API_KEY=user_provided" in runtime_env
     assert "GOOGLE_KEY=user_provided" in runtime_env
+    assert "MLX_API_KEY=mlx-local" in runtime_env
     assert "OPENROUTER_API_KEY=user_provided" in runtime_env
     assert "PERPLEXITY_API_KEY=user_provided" in runtime_env
     assert "XAI_API_KEY=user_provided" in runtime_env
@@ -209,6 +210,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
         "agents",
         "anthropic",
         "google",
+        "mlx",
         "groq",
         "xai",
         "perplexity",
@@ -217,7 +219,19 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
         "custom",
     }
     custom_names = [endpoint["name"] for endpoint in librechat_yaml["endpoints"]["custom"]]
-    assert custom_names == ["perplexity", "xai", "openrouter", "groq"]
+    assert custom_names == ["perplexity", "xai", "openrouter", "groq", "mlx"]
+    mlx_endpoint = next(
+        endpoint for endpoint in librechat_yaml["endpoints"]["custom"] if endpoint["name"] == "mlx"
+    )
+    assert mlx_endpoint["apiKey"] == "${MLX_API_KEY}"
+    assert mlx_endpoint["baseURL"] == "http://host.docker.internal:8484/v1"
+    assert mlx_endpoint["models"]["default"] == ["mlx-community/gemma-4-26b-a4b-it-4bit"]
+    assert mlx_endpoint["models"]["fetch"] is True
+    assert mlx_endpoint["titleModel"] == "mlx-community/gemma-4-26b-a4b-it-4bit"
+    assert mlx_endpoint["summaryModel"] == "mlx-community/gemma-4-26b-a4b-it-4bit"
+    assert mlx_endpoint["modelDisplayLabel"] == "Gemma 4 26B (MLX)"
+    assert mlx_endpoint["dropParams"] == ["stop", "frequency_penalty"]
+    assert mlx_endpoint["forcePrompt"] is False
     assert librechat_yaml["version"] == "1.3.6"
     assert "webSearch" not in librechat_yaml
     assert librechat_yaml["mcpServers"]["scheduling-cortex"]["url"] == "${SCHEDULING_MCP_URL}"
@@ -299,6 +313,62 @@ def test_config_compiler_compile_phase_ignores_stale_generated_source_override(t
     assert librechat_yaml["viventium"]["conversation_recall"]["prompt"] == (
         load_source_of_truth_librechat_yaml()["viventium"]["conversation_recall"]["prompt"]
     )
+
+
+def test_config_compiler_uses_localhost_for_native_mlx_endpoint(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+    mlx_endpoint = next(
+        endpoint for endpoint in librechat_yaml["endpoints"]["custom"] if endpoint["name"] == "mlx"
+    )
+    assert mlx_endpoint["baseURL"] == "http://localhost:8484/v1"
 
 
 def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) -> None:
@@ -1340,6 +1410,10 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert "SKYVERN_API_KEY=skyvern-secret" in runtime_env
     assert "SKYVERN_BASE_URL=http://localhost:8200" in runtime_env
     assert any(endpoint["name"] == "xai" for endpoint in librechat_yaml["endpoints"]["custom"])
+    mlx_endpoint = next(
+        endpoint for endpoint in librechat_yaml["endpoints"]["custom"] if endpoint["name"] == "mlx"
+    )
+    assert mlx_endpoint["baseURL"] == "http://host.docker.internal:8484/v1"
     assert librechat_yaml["mcpServers"]["google_workspace"]["url"] == "${GOOGLE_WORKSPACE_MCP_URL}"
     assert librechat_yaml["mcpServers"]["ms-365"]["url"] == "${MS365_MCP_SERVER_URL}"
 

@@ -1,0 +1,1088 @@
+{
+  "E2B": {
+    "coding_generation": [
+      {
+        "id": "code_1_fizzbuzz",
+        "response": "```python\ndef custom_fizzbuzz(n, divisors):\n    for i in range(1, n + 1):\n        output = \"\"\n        for divisor, word in divisors.items():\n            if i % divisor == 0:\n                output += word\n        \n        if output:\n            print(output)\n        else:\n            print(i)\n    return None\n```",
+        "response_length": 313,
+        "eval_count": 755,
+        "auto_score": 1.0
+      },
+      {
+        "id": "code_2_trie",
+        "response": "class TrieNode:\n    def __init__(self):\n        self.children = {}\n        self.is_end_of_word = False\n\nclass Trie:\n    def __init__(self):\n        self.root = TrieNode()\n\n    def insert(self, word: str) -> None:\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                node.children[char] = TrieNode()\n            node = node.children[char]\n        node.is_end_of_word = True\n\n    def search(self, word: str) -> bool:\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                return False\n            node = node.children[char]\n        return node.is_end_of_word\n\n    def starts_with(self, prefix: str) -> bool:\n        node = self.root\n        for char in prefix:\n            if char not in node.children:\n                return False\n            node = node.children[char]\n        return True",
+        "response_length": 898,
+        "eval_count": 835,
+        "auto_score": 1.0
+      },
+      {
+        "id": "code_3_flatten_json",
+        "response": "```python\ndef flatten_json(obj, prefix=''):\n    \"\"\"\n    Flattens a nested dictionary or list structure into a dictionary with dot-notation keys.\n\n    Args:\n        obj (dict or list): The nested structure to flatten.\n        prefix (str): The current base prefix for keys. Defaults to ''.\n\n    Returns:\n        dict: A flattened dictionary.\n    \"\"\"\n    result = {}\n\n    if isinstance(obj, dict):\n        for k, v in obj.items():\n            new_prefix = f\"{prefix}.{k}\" if prefix else k\n            if isinstance(v, (dict, list)):\n                # Recurse for nested structures\n                result.update(flatten_json(v, new_prefix))\n            else:\n                # Found a scalar value\n                result[new_prefix] = v\n    \n    elif isinstance(obj, list):\n        for i, v",
+        "response_length": 787,
+        "eval_count": 1024,
+        "auto_score": 1.0
+      },
+      {
+        "id": "code_4_rotated_search",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "code_5_lru_cache",
+        "response": "```python\nfrom collections import OrderedDict\n\nclass LRUCache:\n    \"\"\"\n    Implements an LRU Cache using an OrderedDict to ensure O(1) time complexity \n    for both get and put operations.\n    \"\"\"\n    def __init__(self, capacity: int):\n        \"\"\"\n        Initializes the cache with a given capacity.\n        :param capacity: The maximum number of items the cache can hold.\n        \"\"\"\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be a positive integer.\")\n            \n        self.capacity = capacity\n        # OrderedDict stores key-value pairs and maintains insertion order.\n        # This order is used to track recency (LRU is the start, MRU is the end).\n        self.cache = OrderedDict()\n\n    def get(self, key: int) -> int:\n        \"\"\"\n        Retrieves the value associated with the key.\n        If the key is found, it updates the item's position to be the Most Recently Used (MRU).\n        :param key: The key to look up.\n        :return: The value if the key exists, otherwise -1.\n        \"\"\"\n        if key not in self.cache:\n            return -1\n        \n        # Move the accessed item to the end",
+        "response_length": 1138,
+        "eval_count": 1024,
+        "auto_score": 1.0
+      }
+    ],
+    "bug_detection": [
+      {
+        "id": "bug_1_offbyone",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "bug_2_async",
+        "response": "This is a classic example of a **race condition** in concurrent programming.\n\n## The Bug Explained\n\nThe bug lies in the way the `increment` function reads, modifies, and writes the shared global variable `counter`.\n\nThe operation performed inside `increment()` is not atomic (indivisible):\n\n1. **Read:** `temp = counter`\n2. **Wait:** `await asyncio.sleep(0.01)` (This yields control back to the event loop, allowing other coroutines to run.)\n3. **Write:** `counter = temp + 1`\n\nBecause the `await` statement allows other tasks to interleave execution between the \"Read\" and the \"Write\" steps, multiple coroutines can read the same initial value of `counter` before any of them have had a chance to update it.\n\n**Example Scenario (assuming `counter` is 0):**\n\n1. **Task A** reads `counter` (gets 0).\n2. **Task A** hits `await asyncio.sleep(0.01)`. (Control switches away.)\n3. **Task B** reads `counter` (gets 0).\n4. **Task B** calculates $0 + 1 = 1$.\n5. **Task B** writes `counter = 1`.\n6. **",
+        "response_length": 991,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "bug_3_sqli",
+        "response": "This code is vulnerable to **SQL Injection (SQLi)**.\n\n## 1. The Vulnerability: SQL Injection\n\nThe vulnerability occurs because the user-supplied input (`username`) is directly concatenated into the SQL query string using an f-string. This allows an attacker to modify the structure and intent of the SQL query by providing specially crafted input, potentially leading to unauthorized data access, modification, or deletion.\n\n### Example Attack Scenario\n\nIf an attacker provides the following input for the `username`:\n\n```\nadmin' OR '1'='1\n```\n\nThe resulting query executed by the database becomes:\n\n```sql\nSELECT * FROM users WHERE username = 'admin' OR '1'='1'\n```\n\nSince `'1'='1'` is always true, the `WHERE` clause is effectively bypassed, and the query will return **all** rows from the `users` table, exposing sensitive data.\n\n## 2. The Fix: Parameterized Queries\n\nThe correct way to handle user input in SQL queries is to use **parameterized queries** (also known as prepared statements). This method separates the SQL command structure from the data values, ensuring that the input is treated purely as data and cannot be interpreted as executable SQL code.\n\nIn Python's `sqlite3` module, this is done by using placeholders (`?` for positional parameters) in the query string and passing the actual values as a separate tuple to the `execute()` method.\n\n### Fixed Code\n\n```python\nimport sqlite3\n\ndef get_user(username):\n    conn = sqlite3.connect('users.db')\n    cursor = conn.cursor()\n    \n    # FIX: Use a parameterized query to prevent SQL Injection\n    query = \"SELECT * FROM users WHERE username = ?\"\n    \n    # Pass the user input as a separate tuple\n    cursor.execute(query, (username,)) \n    \n    return cursor.fetchone()\n\n# Example Usage (assuming 'users.db' exists)\n# user_data = get_user('some_username')\n#",
+        "response_length": 1826,
+        "eval_count": 1024,
+        "auto_score": 1.0
+      }
+    ],
+    "math": [
+      {
+        "id": "math_1_system",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_2_compound",
+        "response": "This problem requires a two-step calculation, as the interest rate changes over time.\n\n### Step 1: Calculate the value after the first 3 years (5% interest)\n\nUse the compound interest formula: $A = P(1 + r)^t$\n\n*   $P$ (Principal) = $\\$10,000$\n*   $r$ (Rate) = $0.05$\n*   $t$ (Time) = $3$ years\n\n$$A_3 = 10,000 (1 + 0.05)^3$$\n$$A_3 = 10,000 (1.05)^3$$\n$$A_3 = 10,000 (1.157625)$$\n$$A_3 = \\$11,576.25$$\n\nThe value of the investment after the first 3 years is **$\\$11,576.25**.\n\n---\n\n### Step 2: Calculate the final value after the next 2 years (8% interest)\n\nThe new principal for this",
+        "response_length": 584,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_3_proof",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_4_combinatorics",
+        "response": "This is a combinatorial pathfinding problem with a constraint (an obstacle).\n\n### 1. Define the Grid and Movement\n\nThe grid is $5 \\times 5$. We assume standard 0-indexing:\n*   **Start Point (S):** $(0, 0)$ (Top-Left)\n*   **End Point (E):** $(4, 4)$ (Bottom-Right)\n*   **Blocked Cell (B):** $(2, 2)$\n\nTo move from $(x_1, y_1)$ to $(x_2, y_2)$ using only right (R) and down (D) moves, you need $(x_2 - x_1)$ right moves and $(y_2 - y_1)$ down moves.\n\n### 2. Calculate the Total Number of Shortest Paths (No Obstacle)\n\nTo get from $(",
+        "response_length": 530,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_5_bayes",
+        "response": "This is a classic application of Bayes' Theorem. We want to find the Positive Predictive Value (PPV): the probability that a person actually has the disease given that they tested positive.\n\n### 1. Define the Events and Given Probabilities\n\nLet:\n*   $D$: The event that the person has the disease.\n*   $D^c$: The event that the person does **not** have the disease.\n*   $T^+$: The event that the test result is positive.\n\n**Given Information:**\n\n1.  **Prevalence (Prior Probability):** $P(D) = 0.01$ (1%)\n    *   $P(D^c) = 1 - 0.01 = 0.99$\n\n2.  ",
+        "response_length": 545,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      }
+    ],
+    "business": [
+      {
+        "id": "biz_1_pnl",
+        "response": "This analysis focuses on identifying the largest consumption of the company's revenue.\n\n## Analysis of Cost Drivers\n\nHere are the costs ranked by absolute dollar amount, their percentage of revenue, and the resulting business implications.\n\n| Rank | Cost Item | Dollar Amount | % of Revenue | Classification |\n| :--- | :--- | :--- | :--- | :--- |\n| **1** | **COGS** (Cost of Goods Sold) | $960,000 | **40.0%** | Direct Production Cost |\n| **2** | **Sales & Marketing** | $720,000 | **30.0%** | Selling Expense |\n| **3** | **R&D** (Research & Development) | $480,000 | **20.0%** | Investment/Future Growth |\n\n***\n\n## Interpretation and Business Implications\n\nThe 3 largest cost drivers are **COGS, Sales & Marketing, and R&D.**\n\n### 1. COGS (40.0% of Revenue)\n\n**What it tells you:** This is the single largest expense, meaning that **40 cents of every dollar** earned is immediately spent to produce the goods or services.\n\n**Implication:** The company has high production costs relative to its selling price. To improve profit margins, the business must focus on:\n*   **Negotiating better supply chain deals** or finding cheaper materials.\n*   **Improving manufacturing efficiency** to reduce waste or increase production volume at a lower cost.\n*   **Implementing pricing strategies** that reflect the true cost of production.\n\n### 2. Sales & Marketing (30.0% of Revenue)\n\n**What it tells you:** A significant portion of the revenue is being allocated to generating sales (promotion, advertising, distribution).\n\n**Implication:** The company is heavily invested in market penetration. While this spending is necessary for growth, the focus should be on **improving Marketing Return on Investment (ROMI).** The goal is to ensure that the $720,000 spent is effectively converting into new revenue, rather than just high expenditure.\n\n### 3. R&D (20.0% of Revenue)\n\n**What it tells you:** The company is investing heavily in future growth, product development, or innovation.\n\n**Implication:** A 20% investment in R&D is substantial and suggests the business is either a technology-driven firm or is focused on rapidly evolving its product line. This cost is critical for long-term viability, but the business must ensure that this investment directly leads to successful, profitable products (i.e., that",
+        "response_length": 2303,
+        "eval_count": 1500,
+        "auto_score": null
+      },
+      {
+        "id": "biz_2_unit_economics",
+        "response": "This scenario presents a highly viable business model based on the provided metrics. Here is the step-by-step calculation and viability assessment.\n\n---\n\n## 1. Calculation of Key Metrics\n\nWe will use the provided data to calculate the three requested metrics.\n\n### A. Lifetime Value (LTV)\n\nLTV represents the total gross profit expected from a customer over their lifetime. Since we have a recurring revenue model with a churn rate, we can use a standard formula that factors in the monthly profit and churn.\n\n**Inputs:**\n*   Monthly Recurring Revenue (MRR) / ARPU: \\$50\n*   Gross Margin: 80% (0.80)\n*   Monthly Churn Rate: 3% (0.03)\n\n**Formula:**\n$$\\text{LTV} = \\frac{\\text{ARPU} \\times \\text{Gross Margin}}{\\text{Churn Rate}}$$\n\n**Calculation:**\n$$\\text{LTV} = \\frac{\\$50 \\times 0.80}{0.03}$$\n$$\\text{LTV} = \\frac{\\$40}{0.03}$$\n$$\\mathbf{LTV \\approx \\$13,333.33}$$\n\n*This means a typical customer is expected to generate \\$13,333.33 in gross profit over their lifetime.*\n\n### B. LTV:CAC Ratio\n\nThis ratio compares the total lifetime value generated by a customer to the cost of acquiring that customer.\n\n**Inputs:**\n*   LTV: \\$13,333.33\n*   CAC: \\$500\n\n**Formula:**\n$$\\text{LTV:CAC Ratio} = \\frac{\\text{LTV}}{\\text{CAC}}$$\n\n**Calculation:**\n$$\\text{LTV:CAC Ratio} = \\frac{\\$13,333.33}{\\$500}$$\n$$\\mathbf{LTV:CAC \\approx 26.67:1}$$\n\n### C. Months to Payback (Payback Period)\n\nThis measures how long it takes for the cumulative gross profit from a customer to recover the initial acquisition cost (CAC).\n\n**Inputs:**\n*   CAC: \\$500\n*   Average Monthly Gross Profit per Customer: $(\\$50 \\times 0.80) = \\$40$\n\n**Formula:**\n$$\\text{Months to Payback} = \\frac{\\text{CAC}}{\\text{Average Monthly Profit}}$$\n\n**Calculation:**\n$$\\text{Months to Payback} = \\frac{\\$500}{\\$40}$$\n$$\\mathbf{\\text{Months to Payback} = 12.5 \\text{ months}}$$\n\n---\n\n## Summary of Results\n\n| Metric | Value | Interpretation |\n| :--- | :--- | :--- |\n| **Lifetime Value (LTV)** | **\\$13,333.33** | The total gross profit expected from a customer. |\n| **LTV:CAC Ratio** | **26.67:1** | Extremely healthy ratio, indicating high profitability. |\n| **Months to Payback** | **12.5 months** | The time required to recover the initial marketing spend. |\n\n---\n\n## Is This Business Viable? Why or Why Not?\n\n**Yes, this business is highly viable.**\n\n### Rationale:\n\nThe viability",
+        "response_length": 2335,
+        "eval_count": 1500,
+        "auto_score": null
+      },
+      {
+        "id": "biz_3_pricing",
+        "response": "This pricing strategy aims to position your tool as a premium, high-efficiency solution, leveraging the unique AI feature as the primary driver of value, rather than just being a standard project management tracker.\n\nGiven that your COGS is only $3/user/month, you have significant room to capture market share and generate healthy margins.\n\n---\n\n## Proposed Pricing Strategy: The Automation Ladder\n\nWe will implement a three-tiered structure to cater to freelancers/small teams (entry), growing teams (growth), and large enterprises (scale).\n\n| Tier Name | Target Customer | Price (per user/month) | Key Features | Pricing Justification |\n| :--- | :--- | :--- | :--- | :--- |\n| **Starter** | Freelancers, Small Teams | **$7** | Basic task management, Manual assignment, Limited AI automation (e.g., assign based on priority). | Low barrier to entry. Undercuts competitors to draw initial adoption and test the product. |\n| **Growth** | Mid-sized Teams, Agencies | **$19** | Unlimited AI Task Assignment, Team collaboration boards, Custom workflows, Basic integration support. | The sweet spot. Reflects the high value of the AI automation, offering significant efficiency gains for growing teams. |\n| **Enterprise** | Large Corporations, PMOs | **$49+** (Custom) | All Growth features, SSO/SAML, Advanced reporting/analytics, Dedicated support, Custom AI model training, API access. | Captures the high-value segment. Price reflects dedicated support, security, custom integrations, and white-glove service. |\n\n---\n\n## Justification for Each Price Point\n\n### 1. Starter Tier: $7/user/month\n\n**Justification:**\n* **Market Entry:** At $7, you immediately compete with the low end of the existing market ($10-$30). This low price removes the friction for freelancers and very small teams to try the product and onboard their first users.\n* **Testing the AI:** It allows users to experience the basic functionality and the value of the AI assignment feature without committing to a large contract.\n* **Volume Driver:** This tier maximizes user acquisition and drives word-of-mouth growth.\n\n### 2. Growth Tier: $19/user/month\n\n**Justification:**\n* **Value Capture:** This tier is where the core value of your unique AI automation is fully realized. Teams using this tier are not just managing tasks; they are leveraging automation to save significant administrative time, which justifies a premium.\n* **Scalability:** This price point allows mid-sized teams to scale their operations without immediately jumping to the complexity and cost of Enterprise features.\n* **Profit Maximization:** This is the volume driver for your business, providing the best blend of high revenue and healthy margin above your $3 COGS.\n\n### 3. Enterprise Tier: $49+/user/month (Custom)\n\n**Justification:**\n* **Service and Security Premium:** Large organizations require more than just software; they require dedicated Service Level Agreements (SLAs), robust security protocols (SSO, SOC 2 compliance), dedicated account manag",
+        "response_length": 4328,
+        "eval_count": 1500,
+        "auto_score": null
+      },
+      {
+        "id": "biz_4_acquisition",
+        "response": "This acquisition presents several specific risks stemming from the target's operational, legal, and financial profile. The risks are categorized below, along with a rating based on the provided context.\n\n---\n\n## Top 5 Risks in the Deal\n\n### 1. Customer Concentration Risk\n**Description:** The target relies heavily on three key customers, who collectively represent 60% of the total revenue. This creates significant dependency on a small pool of relationships.\n**Rating:** **High**\n**Justification:** If any of these three key customers decide to leave, renegotiate terms, or reduce their spending, the target's revenue stream could be immediately and severely impacted. This makes the future revenue growth (20% YoY) highly vulnerable and introduces significant downside risk to the projected valuation.\n\n### 2. Patent Lawsuit Risk\n**Description:** The existence of a pending patent lawsuit introduces significant legal and financial uncertainty.\n**Rating:** **High**\n**Justification:** Patent litigation can be extremely expensive (legal fees, discovery), time-consuming, and, if lost, could result in injunctions, damages, or forced licensing, directly impacting the target\u2019s ability to operate and generate future revenue. This is a material, unquantified liability that requires significant due diligence.\n\n### 3. Integration and Operational Risk\n**Description:** Integrating a small company (50 employees) into the acquiring company's structure can be challenging, potentially leading to disruption, loss of key talent, or failure to realize expected synergies.\n**Rating:** **Medium**\n**Justification:** While the company is small, talent retention is crucial. If the acquisition process is poorly managed, key employees may leave, or existing operational processes may fail to integrate smoothly, leading to missed operational targets and reduced EBITDA growth.\n\n### 4. Scalability and Growth Risk\n**Description:** The current revenue base is relatively small ($12M), and the projected 20% YoY growth needs to be sustained. The scalability of the current business model may be limited.\n**Rating:** **Medium**\n**Justification:** Growth is inherently risky, especially in a competitive market. The deal relies on the assumption that the current business model can support aggressive growth. If the market shifts or the growth projections prove overly optimistic, the potential future value of the acquisition will be significantly lower than expected.\n\n### 5. Valuation Risk (EBITDA vs. Potential)\n**Description:** The acquired EBITDA is relatively low ($2M), suggesting a thin margin, especially when considering the costs associated with legal defense and potential operational restructuring.\n**Rating:** **Medium**\n**Justification:** While $2M in EBITDA is positive, it doesn't reflect the full risk profile. The actual achievable post-acquisition EBITDA will be heavily eroded by the costs of resolving the patent lawsuit, customer churn, and integration expenses. The true risk lies in the",
+        "response_length": 4033,
+        "eval_count": 1211,
+        "auto_score": null
+      }
+    ],
+    "science": [
+      {
+        "id": "sci_1_crispr",
+        "response": "The CRISPR-Cas9 system is a precise gene editing tool that relies on a guide RNA (gRNA) and the Cas9 endonuclease. The gRNA acts as a GPS, directing the Cas9 enzyme to a specific, complementary DNA sequence within the genome.\n\nOnce localized, the Cas9 protein creates a targeted double-strand break (DSB) in the DNA helix. This break signals the cell to initiate repair mechanisms.\n\nThe cell utilizes two primary repair pathways to fix the damage. The first is Non-Homologous End Joining (NHEJ), an error-prone pathway that quickly ligates the broken ends, typically resulting in small insertions or deletions (indels) that disrupt the gene, effectively knocking it out. The second pathway is Homology-Directed Repair (HDR). If an external DNA template is provided, HDR allows for precise repair and the insertion of new genetic material, enabling targeted edits or corrections at the break site.",
+        "response_length": 896,
+        "eval_count": 584,
+        "auto_score": null
+      },
+      {
+        "id": "sci_2_experiment",
+        "response": "Based on the experimental data provided, here is the analysis:\n\n---\n\n### 1. Independent Variable (IV)\n\nThe independent variable is the factor that the researchers intentionally manipulate or change.\n\n*   **Independent Variable (IV):** The dosage of caffeine (200mg, 400mg, and 600mg).\n\n### 2. Dependent Variable (DV)\n\nThe dependent variable is the factor that is measured; the outcome that is expected to change in response to the IV.\n\n*   **Dependent Variable (DV):** Reaction time (measured in milliseconds, ms).\n\n### 3. Suggested Control\n\nA proper control is necessary to ensure that the observed changes in reaction time are *only* due to the caffeine dosage and not other confounding factors.\n\n*   **Missing Control:** **Standardization of extraneous variables.** The researchers must ensure that all participants experience the same conditions during the testing period, except for the caffeine dosage.\n\n    *   **Specific Control Measures:**\n        1. **Time of Day:** All testing sessions should occur at the same time (e.g., all morning testing) to control for natural variations in alertness (circadian rhythm).\n        2. **Baseline Condition:** Participants should be tested under identical environmental conditions (lighting, temperature, noise level).\n        3. **Participant State:** Ideally, participants should be rested and tested under similar fatigue levels.\n\n### 4. Confound You Should Worry About\n\nA **confound** is an extraneous variable that influences both the independent variable and the dependent variable, or is related to the independent variable but is not the intended cause-and-effect relationship.\n\n*   **Primary Confounder:** **Baseline Alertness/Fatigue (or Circadian Rhythm).**\n\n**Why this is a concern:** Reaction time is highly dependent on a person's current level of alertness. If Group B happens to be testing participants who are naturally less alert than Group A (due to being tested later in the day, for example), the resulting reaction time difference might be due to fatigue rather than the caffeine dose itself.\n\nTo mitigate this, the researchers should ideally use a **control group** (Group D) that receives **no caffeine** (0mg) to establish a baseline reaction time under identical conditions, allowing them to isolate the true effect of the caffeine dosage.",
+        "response_length": 2313,
+        "eval_count": 958,
+        "auto_score": null
+      },
+      {
+        "id": "sci_3_antibiotic",
+        "response": "Antibiotic resistance evolves significantly faster in hospital settings than in the general community due to a confluence of factors related to **intense selective pressure, high bacterial density, and unique ecological transmission mechanisms.** Hospitals create an environment that acts as an ideal evolutionary crucible for resistance genes.\n\nHere is an explanation referencing three specific evolutionary/ecological mechanisms:\n\n---\n\n### 1. Intense and Persistent Selective Pressure\n\nThe most critical factor driving rapid resistance evolution in hospitals is the **extreme and consistent selective pressure** exerted by antibiotic use.\n\n*   **Mechanism:** When broad-spectrum antibiotics are administered in a hospital setting, the massive bacterial population is subjected to high concentrations of the drug. This immediately kills the majority of susceptible bacteria.\n*   **Evolutionary Outcome:** This massive die-off creates a bottleneck, leaving only the rare bacteria that possess pre-existing resistance mechanisms (either through spontaneous mutation or prior exposure) to survive. These survivors are then free to proliferate, rapidly increasing the frequency of the resistance genes within the total bacterial population. In the general community, antibiotic use is far less frequent and often less intense, resulting in a weaker selection pressure.\n\n### 2. High Bacterial Density and Facilitated Horizontal Gene Transfer (HGT)\n\nHospitals harbor exceptionally high concentrations of bacteria, which significantly accelerates the rate at which resistance genes can move between different strains and species.\n\n*   **Mechanism:** High bacterial density increases the frequency of physical contact and metabolic exchange. This close proximity facilitates **Horizontal Gene Transfer (HGT)**, which is the movement of genetic material (like plasmids carrying resistance genes) between bacteria, often via mobile genetic elements (e.g., plasmids, transposons) rather than traditional vertical inheritance.\n*   **Evolutionary Outcome:** In a dense hospital environment, resistance genes can rapidly jump from a resistant pathogen (like *Pseudomonas*) to a harmless commensal organism (like *E. coli*). This ability to share resistance traits across species dramatically speeds up the spread of resistance within the hospital\u2019s microbial ecosystem, allowing resistance to emerge and spread much faster than if resistance had to evolve solely within a single species lineage.\n\n### 3. The Role of Biofilms and Environmental Niche Specialization\n\nHospital environments, particularly within medical devices and within patient tissues, create specific ecological niches that promote the persistence and evolution of resistant strains.\n\n*   **Mechanism:** Bacteria often aggregate to form **biofilms**\u2014structured, self-produced layers of extracellular polymeric substance (EPS) encased in a protective matrix. Biofilms shield the bacteria from antibiotics and host immune defenses. In the hospital,",
+        "response_length": 4350,
+        "eval_count": 1365,
+        "auto_score": null
+      },
+      {
+        "id": "sci_4_carbon",
+        "response": "The carbon cycle describes the movement of carbon through the Earth's various reservoirs\u2014the atmosphere, oceans, land, and biosphere\u2014and the processes that mediate these exchanges. It is a critical biogeochemical cycle that regulates the climate and supports all life.\n\n---\n\n## The Carbon Cycle: Reservoirs and Flux Pathways\n\n### Major Reservoirs (The Storage Locations)\n\nCarbon is stored in distinct pools, ranging from short-term biological exchanges to long-term geological storage.\n\n1. **The Atmosphere:** Carbon exists primarily as carbon dioxide ($\\text{CO}_2$), methane ($\\text{CH}_4$), and other greenhouse gases. This reservoir is crucial for regulating Earth's temperature via the greenhouse effect.\n2. **The Oceans:** The oceans store massive amounts of carbon in dissolved inorganic carbon (DIC) and as bicarbonate ($\\text{HCO}_3^-$). The ocean acts as a major sink, absorbing atmospheric $\\text{CO}_2$ and regulating global climate.\n3. **The Biosphere (Living Systems):** Carbon is stored within living organisms (plants, animals, microbes) and in the biomass of forests and soils. This reservoir is dynamic, constantly changing through photosynthesis and respiration.\n4. **The Lithosphere/Sediments:** Carbon is locked away in geological formations, primarily as carbonate rocks (limestone), fossil fuels (coal, oil, natural gas), and deep sedimentary rocks. This represents the largest, longest-term reservoir.\n\n### Flux Pathways (The Movement of Carbon)\n\nFlux pathways describe the processes by which carbon moves between these major reservoirs.\n\n1. **Photosynthesis and Respiration (Atmosphere $\\leftrightarrow$ Biosphere):** Plants absorb $\\text{CO}_2$ from the atmosphere via photosynthesis, incorporating it into organic matter (the biosphere). Organisms then release $\\text{CO}_2$ back into the atmosphere through cellular respiration.\n2. **Ocean-Atmosphere Exchange (Oceans $\\leftrightarrow$ Atmosphere):** Carbon is exchanged between the surface ocean and the atmosphere through gas solubility and physical mixing. This process involves the transfer of $\\text{CO}_2$ and the exchange of heat.\n3. **Decomposition and Soil Exchange (Biosphere $\\leftrightarrow$ Land):** When organic matter (dead plants, animals, soil) decomposes, microbes release $\\text{CO}_2$ into the atmosphere and $\\text{CH}_4$ into the atmosphere or water.\n4. **Geological Storage and Release (Lithosphere $\\leftrightarrow$ Atmosphere):** Carbon is stored in deep sediments and rocks. Release occurs over geological timescales through processes like volcanism, mountain building, and the burning of fossil fuels (anthropogenic release).\n\n---\n\n## Human Disruption and Quantification\n\nHuman activities have significantly accelerated the flux pathways, primarily by rapidly moving carbon from the stable geological reservoirs (lithosphere) into the atmospheric reservoir.\n\n### 1. Burning of Fossil Fuels\n\n**Description:** This involves extracting and burning coal, oil, and natural gas for energy production, ",
+        "response_length": 4432,
+        "eval_count": 1500,
+        "auto_score": null
+      }
+    ],
+    "psychology": [
+      {
+        "id": "psych_1_biases",
+        "response": "Cognitive biases are systematic patterns of deviation from norm or rationality in judgment. In the context of investing, these biases often lead investors to make decisions based on emotion or flawed information rather than objective analysis, resulting in suboptimal outcomes.\n\nHere are three specific cognitive biases that significantly affect investment decisions:\n\n---\n\n## 1. Loss Aversion\n\n**(a) Formal Name:** Loss Aversion\n\n**(b) Mechanism:** Loss aversion is the psychological principle that the pain of experiencing a loss is felt roughly twice as powerfully as the pleasure of an equivalent gain. This bias causes investors to be overly risk-averse when facing potential losses, leading them to hold onto losing investments too long (hoping they recover) or to sell winning investments too early (to lock in a gain).\n\n**(c) Concrete Example in Investing:**\nAn investor holds a stock that has dropped 30% over six months. Due to loss aversion, the investor refuses to sell the stock, hoping it will eventually recover to the original price, even though fundamental analysis suggests the company is in severe decline. They ignore the risk of permanent capital loss.\n\n**(d) Debiasing Strategy:**\n**Adopt a Value-Based Framework:** Focus on the objective metrics of the investment (future cash flows, present value, risk-adjusted returns) rather than the historical price movement. Create clear, objective \"stop-loss\" criteria *before* the investment, based on risk tolerance, and adhere to them strictly, regardless of the emotional desire to hold on.\n\n---\n\n## 2. Confirmation Bias\n\n**(a) Formal Name:** Confirmation Bias\n\n**(b) Mechanism:** Confirmation bias is the tendency to search for, interpret, favor, and recall information that confirms or supports an individual's pre-existing beliefs or hypotheses. Investors tend to selectively seek out news articles, analyst reports, and market data that validate their current investment thesis, while unconsciously ignoring or downplaying contradictory evidence.\n\n**(c) Concrete Example in Investing:**\nAn investor strongly believes that technology stocks are undervalued. They will exclusively read news sources, follow analysts, and focus on positive earnings reports related to tech companies, while dismissing negative regulatory news or bearish analyst warnings as irrelevant or biased.\n\n**(d) Debiasing Strategy:**\n**Actively Seek Disconfirmation (Devil's Advocate):** Implement a mandatory review process where the investor actively seeks out and analyzes opposing viewpoints. This involves reading negative reports, consulting contrarian investors, and forcing themselves to build a rigorous case against their own thesis. This transforms the decision-making process from seeking validation to seeking truth.\n\n---\n\n## 3. Herding Behavior (Bandwagon Effect)\n\n**(a) Formal Name:** Herding Behavior (or the Bandwagon Effect)\n\n**(b) Mechanism:** Herding behavior is the tendency for individuals to mimic the actions of a larger group, often",
+        "response_length": 4054,
+        "eval_count": 1374,
+        "auto_score": null
+      },
+      {
+        "id": "psych_2_morale",
+        "response": "This situation requires an intervention that addresses not just the immediate emotional impact of the layoffs, but also the subsequent need to rebuild trust, clarity, and motivation within the remaining team. An effective plan must be evidence-based, focusing on psychological needs rather than superficial rewards.\n\n---\n\n## Evidence-Based Intervention Plan\n\nThe proposed intervention plan is divided into three phases: **Acknowledge & Stabilize, Rebuild Trust & Clarity,** and **Reorient & Motivate.**\n\n### Phase 1: Acknowledge & Stabilize (Immediate Action)\n\n**Goal:** Address the immediate anxiety, fear, and uncertainty.\n**Action Steps:**\n\n1. **Open Communication Session:** The manager must host an immediate, honest, and transparent meeting with the 12 team members. Avoid ambiguity. Acknowledge the difficulty and the loss felt by the team, validate their feelings (e.g., \"It is understandable if you feel anxious or uncertain right now\"), and clearly communicate the future direction and the new priorities.\n2. **Establish New Boundaries and Roles:** Clearly define the revised team structure, new workflows, and immediate priorities. Ambiguity fuels anxiety; clarity restores a sense of control.\n3. **Address Fear of Job Security:** Offer specific information regarding the company\u2019s financial stability and the future outlook for the remaining roles, where possible.\n\n### Phase 2: Rebuild Trust & Clarity (Mid-Term Strategy)\n\n**Goal:** Restore psychological safety and demonstrate commitment to the team.\n**Action Steps:**\n\n1. **Identify New Competencies:** Facilitate discussions to identify which skills the team possesses that will be most valuable in the new, smaller structure. This shifts the focus from \"what was lost\" to \"what we can build.\"\n2. **Ensure Supportive Structures:** Implement strategies that reduce immediate demands on the team (e.g., temporarily reducing non-critical project loads, adjusting deadlines).\n3. **Create Feedback Loops:** Establish regular, protected time for the team to voice concerns about the new structure and processes, ensuring they feel heard and valued as partners in the transition.\n\n### Phase 3: Reorient & Motivate (Long-Term Engagement)\n\n**Goal:** Rebuild intrinsic motivation and drive future performance.\n**Action Steps:**\n\n1. **Focus on Impact:** Redefine success metrics to focus on the critical, high-value tasks necessary for the company\u2019s survival and future success, rather than previous metrics that no longer exist.\n2. **Invest in Development:** Offer targeted training or mentorship opportunities. This demonstrates that the organization is invested in the team's future competence, aligning with their need for growth.\n3. **Celebrate Small Wins:** Recognize and publicly acknowledge the team\u2019s successful navigation of the transition and their continued performance in the new environment.\n\n---\n\n## Application of Psychological Frameworks\n\nThe intervention plan is grounded in two key psychological theories: **Self-Determination",
+        "response_length": 4379,
+        "eval_count": 1500,
+        "auto_score": null
+      },
+      {
+        "id": "psych_3_memory",
+        "response": "This scenario is a classic illustration of how human memory is not a passive recording device but an active, reconstructive process. The divergence in the witnesses' recollections is caused by several specific memory phenomena.\n\n---\n\n## Explanation of Memory Divergence (Memory Phenomena)\n\nThe reasons for the discrepancy in the witnesses' memories can be attributed to the following phenomena:\n\n### 1. The Misinformation Effect (Witness C)\n\nWitness C\u2019s experience is the most clearly affected by external information. The **Misinformation Effect** occurs when post-event information (like a suggestion, a misleading question, or external sensory input) alters or contaminates an original memory.\n\n*   **Application:** Witness C was shown a news report *before* being interviewed. This report likely planted or reinforced the idea that the car was \"speeding\" and potentially influenced the perceived color to be \"blue-green.\" This external suggestion altered the raw memory they held of the event.\n\n### 2. Memory Reconstruction and Suggestibility (All Witnesses)\n\nMemory is not a video recording; it is a reconstruction. When memories are retrieved, the brain fills in gaps based on expectations, context, and subsequent input.\n\n*   **Application:** The actual details (color and speed) may have been ambiguous, and subsequent conversations or the way the memory is framed during the interview led to different versions being reconstructed. The timeline difference (Witness B interviewed 3 days later) means there was more time for the memory to decay or be altered through subsequent processing.\n\n### 3. Source Monitoring Errors (All Witnesses)\n\n**Source monitoring** is the process of remembering *where* or *how* information was acquired. When memories are reconstructed, it can be difficult to accurately distinguish between what the person actually experienced and what they later learned or imagined.\n\n*   **Application:** Witnesses may have mixed details from different sources (e.g., blending Witness A's color with Witness C's speed perception), leading to an inaccurate composite memory.\n\n---\n\n## Most Reliable Account and Justification\n\n**The most reliable account is likely that of Witness B (the involved driver), although even this memory is subject to reconstruction.**\n\n### Justification:\n\n1.  **Direct Experience (Bias vs. Fabrication):** Witness B was physically involved in the event. While the driver may have an inherent bias (e.g., wanting to minimize culpability or justifying their actions), their memory is rooted in direct sensory experience of the event itself, rather than relying on external suggestion or subsequent information (as Witness C did).\n2.  **Temporal Reliability:** Although Witness A and C were interviewed very shortly after the event (potentially making them susceptible to immediate suggestion), Witness B\u2019s memory was recalled much later (3 days). While this time also allows for decay, the memory of the direct participant is often considered the core,",
+        "response_length": 3449,
+        "eval_count": 1223,
+        "auto_score": null
+      }
+    ],
+    "tool_use": [
+      {
+        "id": "tool_1_simple",
+        "response": "```json\n{\n  \"name\": \"get_weather\",\n  \"arguments\": {\n    \"city\": \"Tokyo\"\n  }\n}\n```",
+        "response_length": 81,
+        "eval_count": 175,
+        "auto_score": 1.0
+      },
+      {
+        "id": "tool_2_multi",
+        "response": "```json\n[\n  {\n    \"name\": \"create_event\",\n    \"arguments\": {\n      \"title\": \"Project Sync\",\n      \"date\": \"tomorrow\",\n      \"time\": \"3pm\",\n      \"attendees\": [\n        \"Alice\"\n      ]\n    }\n  },\n  {\n    \"name\": \"send_email\",\n    \"arguments\": {\n      \"to\": \"Alice\",\n      \"subject\": \"Invitation: Project Sync\",\n      \"body\": \"Please find the details for the scheduled meeting: Project Sync tomorrow at 3pm.\"\n    }\n  }\n]\n```",
+        "response_length": 422,
+        "eval_count": 780,
+        "auto_score": 1.0
+      },
+      {
+        "id": "tool_3_chained",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 171,
+        "auto_score": 0.0
+      },
+      {
+        "id": "tool_4_no_tool",
+        "response": "4",
+        "response_length": 1,
+        "eval_count": 148,
+        "auto_score": 1.0
+      }
+    ],
+    "instruction_following": [
+      {
+        "id": "inst_1_bullets",
+        "response": "- Improves cardiovascular health and strengthens the heart.\n- Boosts mental well-being by reducing stress, anxiety, and symptoms of depression.\n- Helps manage weight, improve bone density, and reduce the risk of chronic diseases.",
+        "response_length": 229,
+        "eval_count": 334,
+        "auto_score": 1.0
+      },
+      {
+        "id": "inst_2_json",
+        "response": "```json\n{\n\"name\": \"Alice\",\n\"age\": 30,\n\"city\": \"New York\"\n}\n```",
+        "response_length": 62,
+        "eval_count": 240,
+        "auto_score": 1.0
+      },
+      {
+        "id": "inst_3_wordcount",
+        "response": "Artificial intelligence is the simulation of human intelligence processes by machines. These systems learn from vast amounts of data, enabling them to recognize complex patterns, solve intricate problems, and make autonomous decisions. AI powers everything from self-driving cars and advanced medical diagnostics to complex data analysis. It is rapidly transforming industries and reshaping the future of technology.",
+        "response_length": 416,
+        "eval_count": 389,
+        "auto_score": 1.0
+      },
+      {
+        "id": "inst_4_forbidden",
+        "response": "A system of computation designed to perform tasks that typically require human intelligence is known as intelligence systems or machine learning.\n\nThese systems are built to process information, learn from data, recognize patterns, and make decisions. They allow machines to simulate cognitive functions such as understanding language, interpreting images, solving complex problems, and adapting their behavior based on new input.\n\nEssentially, this technology enables computers to handle complex tasks by analyzing massive amounts of information, rather than relying solely on pre-programmed instructions.",
+        "response_length": 606,
+        "eval_count": 375,
+        "auto_score": 1.0
+      },
+      {
+        "id": "inst_5_spanish",
+        "response": "Los tres colores primarios son el rojo, el amarillo y el azul.",
+        "response_length": 62,
+        "eval_count": 191,
+        "auto_score": 1.0
+      }
+    ],
+    "factual_accuracy": [
+      {
+        "id": "fact_1",
+        "response": "1948",
+        "response_length": 4,
+        "eval_count": 137,
+        "auto_score": 1.0
+      },
+      {
+        "id": "fact_2",
+        "response": "$\\text{H}_2\\text{SO}_4$",
+        "response_length": 23,
+        "eval_count": 130,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_3",
+        "response": "Gabriel Garc\u00eda M\u00e1rquez",
+        "response_length": 22,
+        "eval_count": 4,
+        "auto_score": 1.0
+      },
+      {
+        "id": "fact_4",
+        "response": "Astana",
+        "response_length": 6,
+        "eval_count": 150,
+        "auto_score": 1.0
+      },
+      {
+        "id": "fact_5",
+        "response": "O(n log n)",
+        "response_length": 10,
+        "eval_count": 355,
+        "auto_score": 1.0
+      },
+      {
+        "id": "fact_6",
+        "response": "46",
+        "response_length": 2,
+        "eval_count": 3,
+        "auto_score": 1.0
+      }
+    ],
+    "hallucination_resistance": [
+      {
+        "id": "halluc_1",
+        "response": "The 58th President of the United States was **George W. Bush**.\n\nHe served from January 20, 2005, to January 20, 2009.\n\n### Key Accomplishments and Events During His Presidency:\n\n**1. Response to 9/11 and the War on Terror:**\n*   **Response to 9/11:** As President, his administration led the United States in the immediate aftermath of the September 11, 2001, terrorist attacks, focusing on national unity and military action.\n*   **The War in Iraq:** A central focus of his presidency was the invasion of Iraq, which began in March 2003. This conflict involved extensive military operations, regime change efforts, and subsequent humanitarian concerns.\n*   **Global War on Terrorism:** The Bush administration heavily engaged in combating terrorism worldwide, deploying military forces and developing counter-terrorism strategies globally.\n\n**2. Domestic Policy and Events:**\n*   **Hurricane Katrina:** His administration faced immense challenges in managing the aftermath and recovery efforts following Hurricane Katrina in 2005, which highlighted significant issues regarding federal disaster response and civil rights.\n*   **Economic Stability:** His term included navigating the global economic shifts following the 2001 recession.\n*   **Presidential Election:** He oversaw the highly contested and consequential presidential election of 2008.\n\n**3. Policy Focus:**\n*   **Counter-Insurgency:** A significant policy focus was the application of military and diplomatic strategies aimed at stabilizing regions affected by insurgency and extremist groups.\n*   **Security Measures:** The administration implemented various security measures and policies related to homeland security.",
+        "response_length": 1685,
+        "eval_count": 698,
+        "auto_score": 0.0
+      },
+      {
+        "id": "halluc_2",
+        "response": "I apologize, but I do not have access to that specific paper, \"Quantum Entanglement in Avocado Growth Patterns\" by Dr. James Smith, published in Nature 2024.\n\nAs a large language model, I do not have the capability to search live academic databases or access specific, newly published documents unless the text is provided to me in the context of our conversation.\n\nIf you have the text of the paper or specific excerpts, I would be happy to summarize it for you!",
+        "response_length": 463,
+        "eval_count": 430,
+        "auto_score": 1.0
+      },
+      {
+        "id": "halluc_3",
+        "response": "I do apologize, but I do not have access to specific, real-time census data for a city named Xanthoria.\n\nTo find the population figures, you would need to provide more context, such as the country or region where Xanthoria is located. If you can provide that information, I may be able to assist you in finding the correct source.",
+        "response_length": 330,
+        "eval_count": 324,
+        "auto_score": 1.0
+      }
+    ],
+    "creativity": [
+      {
+        "id": "creative_1",
+        "response": "Elias lived a life of solitary rhythm, tending the massive Fresnel lens on the jagged coast. For weeks, the only company was the crashing waves and the sweeping beam of his duty. One night, while polishing the glass, he noticed a flicker within the light\u2014not just the reflection of the sea, but a deliberate, steady pulse.\n\nCuriosity overriding caution, Elias climbed the winding stairs. When he reached the lamp room, he saw no external source, only the vast, empty ocean. Then, he realized the light wasn't guiding ships; it was a signal. The steady beam wasn't keeping the dark away; it was trapping something inside. Elias wasn't the keeper.",
+        "response_length": 645,
+        "eval_count": 380,
+        "auto_score": null
+      },
+      {
+        "id": "creative_2",
+        "response": "Here are 5 startup ideas that combine Artificial Intelligence and healthcare:\n\n---\n\n### 1. DeepScan Diagnostics\n\n*   **One-Line Pitch:** AI-powered system for real-time, automated analysis of medical imagery (X-rays, MRIs, pathology slides) to detect subtle anomalies missed by the human eye.\n*   **Target Customer:** Hospitals, Radiology Departments, and specialized diagnostic labs.\n*   **Why it's Novel:** Unlike current AI tools that focus on a single modality, DeepScan uses multi-modal deep learning to fuse data from different imaging types simultaneously, predicting complex disease progression (e.g., early-stage tumor margins) with significantly higher accuracy and speed than traditional review methods.\n\n### 2. GenePath Navigator\n\n*   **One-Line Pitch:** A platform that uses personalized genomic data and real-time patient health metrics to recommend optimized, personalized treatment protocols and predict drug efficacy.\n*   **Target Customer:** Pharmaceutical companies, oncology centers, and specialized genomic medicine clinics.\n*   **Why it's Novel:** This goes beyond simple genetic sequencing. GenePath Navigator utilizes reinforcement learning to analyze the vast, complex interplay between an individual's specific genetic markers, current lifestyle data (wearables), and historical treatment responses to generate dynamic, patient-specific therapeutic roadmaps.\n\n### 3. SymptomStream Triage\n\n*   **One-Line Pitch:** An NLP-driven system that analyzes patient-reported symptoms and medical history to accurately triage urgency, flag critical risks (like sepsis or cardiac events), and prioritize physician attention in emergency settings.\n*   **Target Customer:** Emergency rooms, primary care physicians, and remote telehealth services.\n*   **Why it's Novel:** It leverages Natural Language Processing (NLP) to understand the nuanced, often unstructured, way patients describe their symptoms, translating this data into immediate, actionable clinical risk scores. It acts as an intelligent filter, reducing cognitive load and preventing critical delays in emergency response.\n\n### 4. Predictive Readmission Engine\n\n*   **One-Line Pitch:** An AI model that analyzes Electronic Health Records (EHRs) and patient flow data to predict, days in advance, the likelihood of a patient being readmitted within 30 days, allowing for proactive intervention.\n*   **Target Customer:** Hospital administration, quality improvement departments, and healthcare payers (insurance companies).\n*   **Why it's Novel:** This focuses on operational prediction rather than just diagnosis. It identifies complex, non-clinical factors (e.g., discharge planning issues, social determinants of health, medication adherence gaps) that statistically lead to readmission, enabling hospitals to intervene with targeted social or clinical resources before a crisis occurs.\n\n### 5. Clinical Documentation Assistant (CDA)\n\n*   **One-Line Pitch:** An AI assistant that listens to physician-patient interactions a",
+        "response_length": 3539,
+        "eval_count": 1182,
+        "auto_score": null
+      },
+      {
+        "id": "creative_3",
+        "response": "Hey there! Have you ever heard of something called **Blockchain**? It sounds like a super complicated grown-up word, but it\u2019s actually a really clever way of keeping track of things\u2014like keeping score, tracking money, or making sure no one cheats!\n\nImagine it as the ultimate, super-secure digital notebook that everyone shares.\n\nHere is how we can break it down using some fun ways to think about it!\n\n---\n\n### \ud83e\uddf1 Metaphor 1: The LEGO Blocks (The Blocks)\n\nImagine you are building something with LEGOs. Every time you finish a section of your creation, you put it into a special box.\n\n*   **Each LEGO block is a \"Block.\"**\n*   Inside that block, you write down information (like who traded what to whom).\n*   Before you can add a new block, you have to make sure the information inside is correct. Once it\u2019s checked, that block is sealed and ready to go!\n\n### \ud83d\udd17 Metaphor 2: The Magical Chain (The Chain)\n\nNow, here\u2019s the trick! Instead of just throwing the blocks wherever you want, we link them together in a specific order.\n\n*   **The way we link the blocks together is the \"Chain.\"**\n*   When Block #2 is linked to Block #1, and Block #3 is linked to Block #2, and so on... they form an unbreakable chain.\n*   If anyone tries to sneak and change Block #1, the link to Block #2 will immediately break! This means the chain keeps a perfect, unbreakable timeline of events. If you try to cheat, the whole system knows you messed with it!\n\n### \ud83d\udcd3 Metaphor 3: The Shared Class Notebook (The Decentralization)\n\nImagine instead of just having one notebook hidden in your desk, everyone in the class gets a copy of the *exact same* notebook. This notebook is the Blockchain.\n\n*   **This is where the \"Decentralization\" comes in.** Instead of one person (like a bank or a single boss) holding the record, *everyone* has a copy.\n*   If someone tries to erase an entry in their notebook, everyone else can look at their copies and say, \"Wait a minute! My copy says something different!\"\n*   Because thousands of people have the same record, it\u2019s impossible for any single person to cheat or change the history. It\u2019s totally transparent and super trustworthy!\n\n---\n\n### \ud83d\ude80 Putting It All Together\n\nSo, a **Blockchain** is just a super-secure, shared digital record where information is bundled into **Blocks**, those blocks are locked together in a chronological **Chain**, and everyone gets a copy of the notebook so that nothing can be secretly changed!\n\nIt\u2019s not just about money; it can be used to track anything\u2014like owning digital art, tracking votes, or keeping track of important data! Pretty cool, right?",
+        "response_length": 2602,
+        "eval_count": 1196,
+        "auto_score": null
+      }
+    ],
+    "planning": [
+      {
+        "id": "plan_1",
+        "response": "This plan outlines a high-impact, cost-conscious approach to hosting a 3-day tech conference for 200 attendees within a strict $50,000 budget. The strategy focuses on maximizing value through strategic partnerships (venues/sponsors) and utilizing efficient, standardized operational costs.\n\n---\n\n## 3-Day Tech Conference Plan: \"Tech Forward 2024\"\n\n**Goal:** Host a high-quality, engaging 3-day conference for 200 tech professionals while adhering strictly to a $50,000 budget.\n\n### I. Operational Plan\n\n#### 1. Venue Strategy (Target Cost: $15,000)\n*   **Selection:** Partner with a mid-sized, existing hotel or convention center that offers conference rooms and block rates. Focus on locations that offer built-in A/V capabilities to reduce setup costs.\n*   **Requirement:** Need 3 large meeting rooms or a single large ballroom space for simultaneous sessions.\n*   **Cost Saving:** Negotiate a package deal that includes meeting space and basic Wi-Fi access to avoid separate high setup fees.\n\n#### 2. Catering Strategy (Target Cost: $12,500)\n*   **Style:** Efficient, high-volume service (buffet style or heavy hors d'oeuvres for networking breaks).\n*   **Schedule:** Focus on cost-effective breaks (coffee/tea/snacks) and efficient lunch/dinner services. Avoid excessive, high-cost banquet dinners.\n*   **Cost Saving:** Utilize in-house hotel catering options rather than external vendors to leverage venue relationships.\n\n#### 3. Speakers & Content (Target Cost: $8,000)\n*   **Mix:** Feature a blend of 3-4 high-profile keynote speakers (travel costs budgeted) and 6-8 internal/industry experts (who provide content at a lower fee or as volunteer mentors).\n*   **Format:** Encourage virtual participation for specialized workshops to reduce travel and accommodation costs.\n*   **Cost Saving:** Minimize travel costs by hosting speakers at the main venue.\n\n#### 4. AV Equipment (Target Cost: $6,500)\n*   **Standardization:** Standardize on reliable, rental-grade equipment (projectors, sound systems, microphones) rather than custom installations.\n*   **Focus:** High-quality Wi-Fi and reliable streaming capability are prioritized over elaborate, bespoke lighting or staging.\n\n#### 5. Marketing & Promotion (Target Cost: $5,000)\n*   **Strategy:** Heavy reliance on digital marketing (social media ads, email lists) and leveraging attendee referrals.\n*   **Assets:** Invest in professional design templates and high-quality photography for post-event use.\n*   **Cost Saving:** Minimize expensive print materials.\n\n#### 6. Staffing & Logistics (Target Cost: $5,000)\n*   **Team:** A small core event management team plus volunteer support for registration and session flow.\n*   **Logistics:** Manage registration digitally to reduce on-site administrative load.\n\n---\n\n### II. Detailed Budget Breakdown ($50,000 Total)\n\n| Category | Allocated Budget | Percentage | Notes on Cost Management |\n| :--- | :--- | :--- | :--- |\n| **Venue & Logistics** | $15,000 | 30.0% | Hotel room block, meeting space r",
+        "response_length": 3462,
+        "eval_count": 1500,
+        "auto_score": null
+      },
+      {
+        "id": "plan_2_critical_path",
+        "response": "This problem requires using Critical Path Method (CPM) to determine the longest sequence of dependent tasks and the total project duration.\n\n## 1. Determine the Schedule (Forward Pass)\n\nWe calculate the Earliest Start (ES) and Earliest Finish (EF) times for each task.\n\n| Task | Duration (Days) | Dependencies | Earliest Start (ES) | Earliest Finish (EF = ES + Duration) |\n| :--- | :--- | :--- | :--- | :--- |\n| **A** | 3 | None | 0 | 3 |\n| **B** | 2 | None | 0 | 2 |\n| **C** | 4 | A | 3 (A finishes at 3) | 7 |\n| **D** | 3 | A | 3 (A finishes at 3) | 6 |\n| **E** | 2 | B, D | 6 (Max of B finishes at 2, D finishes at 6) | 8 |\n| **F** | 3 | C | 7 (C finishes at 7) | 10 |\n| **G** | 2 | E, F | 10 (Max of E finishes at 8, F finishes at 10) | 12 |\n| **H** | 1 | G | 12 (G finishes at 12) | 13 |\n\n## 2. Determine the Critical Path and Duration\n\nThe total project duration is determined by the final finish time of the last task (H).\n\n*   **Total Project Duration:** 13 days\n\nTo find the Critical Path, we trace the sequence of tasks that determined this maximum duration. We look at the path that led to the final time of 13.\n\nThe longest chain is: **A $\\rightarrow$ C $\\rightarrow$ F $\\rightarrow$ G $\\rightarrow$ H**\n\nLet's verify the length of this path:\n$3 (A) + 4 (C) + 3 (F) + 2 (G) + 1 (H) = 13$ days.\n\n***",
+        "response_length": 1310,
+        "eval_count": 1500,
+        "auto_score": null
+      },
+      {
+        "id": "plan_3_debug",
+        "response": "Based on the provided log excerpts, here is the analysis of the root cause and the proposed fix sequence.\n\n---\n\n## Root Cause Identification\n\nThe root cause of the pipeline failure is the **inability of the test environment to connect to the required database.**\n\n**Evidence:**\n\n1. **Log 2:** `\"ERROR: Cannot connect to database at localhost:5432 - Connection refused\"`\n   * This is the direct error indicating a failure in network communication to the database service.\n2. **Log 3:** `\"FAIL: 23 of 150 tests failed, 22 with DatabaseConnectionError\"`\n   * This confirms that the failure in Log 2 is the primary blocker for the entire testing phase.\n3. **Log 4:** `\"SKIP: Deploy skipped due to test failures\"`\n   * This is the expected consequence, as the tests failed and the pipeline correctly halted the deployment.\n\n**Conclusion:** The database service (likely PostgreSQL, given the port 5432) is either **not running**, **not accessible** from the CI runner's environment, or **misconfigured** regarding host/port details.\n\n---\n\n## Proposed Fix Sequence\n\nThe fix sequence should follow a systematic troubleshooting approach, moving from verifying the service status to checking connectivity and finally reviewing configuration.\n\n### Phase 1: Verify the Database Service (Server-Side Check)\n\n**Step 1: Check Database Status**\n* **Action:** Log into the server/container where the database is supposed to run.\n* **Goal:** Confirm that the database service is currently running and healthy.\n* **Command Examples (if using Docker/systemd):** `docker ps` (to check containers) or `sudo systemctl status postgresql` (to check service status).\n* **If Down:** Start the database service immediately.\n\n**Step 2: Verify Database Accessibility**\n* **Action:** Attempt to connect to the database manually from a shell on the CI runner machine or a diagnostic machine.\n* **Goal:** Confirm that the network layer is functional and the database is listening on the expected port (5432).\n* **Command Example:** `telnet localhost 5432` or `nc -vz localhost 5432`\n\n### Phase 2: Verify Network and Security (Environment Check)\n\n**Step 3: Check Firewall Rules**\n* **Action:** Inspect any local firewall rules (like `iptables` or cloud security groups) on the database host.\n* **Goal:** Ensure that inbound connections on port 5432 are allowed from the IP address where the CI runner is executing.\n\n**Step 4: Review Host and Port Configuration**\n* **Action:** Review the database configuration file to ensure that it is bound to the correct interface (e.g., not just `localhost` if the CI runner is remote, or if the setup requires specific IP addressing).\n* **Goal:** Ensure the configuration matches what the CI pipeline expects (`localhost:5432`).\n\n### Phase 3: Review CI Pipeline Configuration (Application Check)\n\n**Step 5: Verify Environment Variables/Secrets**\n* **Action:** Check the CI pipeline configuration (e.g., `.gitlab-ci.yml`, GitHub Actions YAML) to ensure that the environment variables, secrets, or",
+        "response_length": 3770,
+        "eval_count": 1481,
+        "auto_score": null
+      }
+    ]
+  },
+  "E4B": {
+    "coding_generation": [
+      {
+        "id": "code_1_fizzbuzz",
+        "response": "```python\ndef custom_fizzbuzz(n, divisors):\n    for i in range(1, n + 1):\n        result = \"\"\n        # Sort items by divisor to ensure consistent output order \n        # (though not strictly required by the prompt, it's good practice)\n        sorted_divisors = sorted(divisors.items(), key=lambda item: item[0])\n        \n        for divisor, word in sorted_divisors:\n            if i % divisor == 0:\n                result += word\n        \n        if result:\n            print(result)\n        else:\n            print(i)\n    return None\n```",
+        "response_length": 540,
+        "eval_count": 790,
+        "auto_score": 1.0
+      },
+      {
+        "id": "code_2_trie",
+        "response": "```python\nclass TrieNode:\n    \"\"\"A node in the Trie structure.\"\"\"\n    def __init__(self):\n        self.children = {}\n        self.is_end_of_word = False\n\nclass Trie:\n    \"\"\"Implements a dictionary-like data structure for string storage and retrieval.\"\"\"\n    def __init__(self):\n        self.root = TrieNode()\n\n    def insert(self, word: str) -> None:\n        \"\"\"Inserts a word into the trie.\"\"\"\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                node.children[char] = TrieNode()\n            node = node.children[char]\n        node.is_end_of_word = True\n\n    def search(self, word: str) -> bool:\n        \"\"\"Checks if a word exists in the trie.\"\"\"\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                return False\n            node = node.children[char]\n        return node.is_end_of_word\n\n    def starts_with(self, prefix: str) -> bool:\n        \"\"\"Checks if there is any word in the trie that starts with the given prefix.\"\"\"\n        node = self.root\n        for char in prefix:\n            if char not in node.children:\n                return False\n            node = node.children[char]\n        return True\n```",
+        "response_length": 1224,
+        "eval_count": 464,
+        "auto_score": 1.0
+      },
+      {
+        "id": "code_3_flatten_json",
+        "response": "```python\ndef flatten_json(obj, prefix='', sep='.'):\n    \"\"\"\n    Flattens a nested dictionary or list into a single dictionary using \n    dot-notation keys.\n\n    Args:\n        obj (dict or list): The nested object to flatten.\n        prefix (str): The prefix for the current keys (used internally).\n        sep (str): The separator used for key concatenation (default is '.').\n\n    Returns:\n        dict: A flat dictionary with dot-notation keys.\n    \"\"\"\n    flat_dict = {}\n\n    if isinstance(obj, dict):\n        items = obj.items()\n    elif isinstance(obj, list):\n        # For lists, we iterate using indices\n        items = enumerate(obj)\n    else:\n        # Base case: if the input itself is a primitive type \n        # and we are trying to iterate, return empty (this shouldn't happen \n        # if the calling logic is sound",
+        "response_length": 830,
+        "eval_count": 1024,
+        "auto_score": 1.0
+      },
+      {
+        "id": "code_4_rotated_search",
+        "response": "```python\ndef search_rotated(nums: list[int], target: int) -> int:\n    \"\"\"\n    Searches for the target in a rotated sorted array using binary search.\n    Time complexity: O(log n).\n    \"\"\"\n    left, right = 0, len(nums) - 1\n\n    while left <= right:\n        mid = left + (right - left) // 2\n\n        if nums[mid] == target:\n            return mid\n\n        # Determine which half is sorted\n        # Case 1: Left half is sorted (nums[left] <= nums[mid])\n        if nums[left] <= nums[mid]:\n            # Check if the target is within the sorted left range\n            if nums[left] <= target < nums[mid]:\n                # Target is in the left half, discard the right\n                right = mid - 1\n            else:\n                # Target is in the unsorted right half, discard the left\n                left = mid + 1\n        \n        # Case 2: Right half is sorted (nums[left] > nums[mid])\n        else:\n            # Check if the target is within the sorted right range\n            if nums[mid] < target <= nums[right]:\n                # Target is in the right half, discard the left\n                left = mid + 1\n            else:\n                # Target is in the unsorted left half, discard the right\n                right = mid - 1\n\n    return -1\n```",
+        "response_length": 1262,
+        "eval_count": 778,
+        "auto_score": 1.0
+      },
+      {
+        "id": "code_5_lru_cache",
+        "response": "```python\nfrom collections import OrderedDict\n\nclass LRUCache:\n    \"\"\"\n    Implements a Least Recently Used (LRU) cache with O(1) time complexity \n    for both get and put operations.\n    \"\"\"\n    def __init__(self, capacity: int):\n        \"\"\"\n        Initializes the LRU cache.\n        :param capacity: The maximum number of items the cache can hold.\n        \"\"\"\n        self.capacity = capacity\n        # OrderedDict maintains insertion order. We use it to track usage order.\n        # Keys are stored, and the value is the associated data.\n        self.cache = OrderedDict()\n\n    def get(self, key: int) -> int:\n        \"\"\"\n        Retrieves a value for the given key. Updates the item's usage status \n        to Most Recently Used (MRU).\n        :param key: The key to look up.\n        :return: The associated value, or -1 if the key is not found.\n        \"\"\"\n        if key not in self.cache:\n            return -1\n        \n        # Get the value\n        value = self.cache[key]\n        \n        # Update usage: Move the accessed item to the end (MRU position)\n        self.cache.move_to_end(key)\n        \n        return value\n\n    def put(self, key: int, value: int):\n        \"\"\"\n        Inserts or updates a key-value pair in the cache. \n        If",
+        "response_length": 1255,
+        "eval_count": 1024,
+        "auto_score": 1.0
+      }
+    ],
+    "bug_detection": [
+      {
+        "id": "bug_1_offbyone",
+        "response": "The bug in the provided binary search function is related to how the search space boundaries ($\\text{left}$ and $\\text{right}$) are updated, specifically concerning the initialization of $\\text{right}$ and how the $\\text{left} = \\text{mid}$ and $\\text{right} = \\text{mid}$ assignments work within the loop.\n\n## The Bug Explanation\n\nThe primary issue is in the initialization and the loop logic:\n\n1. **Initialization of `right`:**\n   When calculating boundaries for an array of length $N$, the valid indices are $0$ to $N-1$. The code initializes `right = len(arr)`. This means `right` points *one index past* the last element. If the loop relies on `right` being an index, this is incorrect.\n\n2. **Boundary Update Logic (The Main Bug):**\n   In a standard binary search implementation, when we narrow the search space, we must ensure that the pointers ($\\text{left}$ and $\\text{right}$) always point to valid indices that define the boundaries of the remaining search space.\n\n   * **Case 1: `arr[mid] < target` (Target is in the right half)**\n     We need to search in the range $[\\text{mid} + 1, \\text{right}]$. The original code sets $\\text{left} = \\text{mid}$. If $\\text{left}$ becomes $\\text{mid}$, the next iteration might recalculate $\\text{mid}$ using $\\text{left}$ (which is $\\text{mid}$) and $\\text{right}$. If $\\text{left}$ is $\\text{mid}$, and $\\text{right}$ is the original upper bound, $\\text{mid}$ might get stuck or the search space might shrink incorrectly, potentially excluding the target if it's at $\\text{mid} + 1$. **The assignment should be $\\text{left} = \\text{mid} + 1$.**\n\n   * **Case 2: `arr[mid] > target` (Target is in the left half)**\n     We need to search in the range $[\\text{left}, \\text{mid} - 1]$. The original code sets $\\text{right} = \\text{mid}$. This means $\\text{mid}$ might be kept as a potential boundary, but we know $\\text{mid}$ itself is too large. **The assignment should be $\\text{right} = \\text{mid} - 1$.**\n\n3. **The Loop Condition:**\n   The loop condition `while left < right` is correct *if* $\\text{left}$ and $\\text{right}$ are initialized correctly and updated correctly. However, because of the flawed updates, the loop may never terminate correctly or skip the target.\n\n---\n\n## Corrected Code\n\nWe fix the initialization to use inclusive bounds for indices, and crucially, we adjust the boundary updates using $\\text{mid} + 1$ and $\\text{mid} - 1$.\n\n```python\ndef binary_search(arr, target):\n    # 1. Initialize left to the first index (inclusive)\n    # 2. Initialize right to the last index (inclusive)\n    left, right = 0, len(arr) - 1 \n\n    while left <= right: # Use <= because left and right are inclusive indices\n        # Standard way to prevent potential overflow in languages with fixed-size integers\n        mid = left + (right - left) // 2 \n        \n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            # Target is in the right half: [mid + 1, right]\n            left = mid + 1 \n        else",
+        "response_length": 3630,
+        "eval_count": 1024,
+        "auto_score": 1.0
+      },
+      {
+        "id": "bug_2_async",
+        "response": "This is a classic example of a **race condition** in concurrent programming.\n\n## The Bug Explained\n\nThe bug occurs because the `increment` function reads the shared global variable `counter`, performs a non-atomic operation (the read, the sleep, and the write), and then writes the result back, all while allowing other asynchronous tasks to interject.\n\n1. **Task A** starts: Reads `counter` (e.g., $0$).\n2. **Task A** hits `await asyncio.sleep(0.01)`. Task A pauses and yields control.\n3. **Task B** starts: Reads `counter` (still $0$, because Task A hasn't written yet).\n4. **Task B** hits `await asyncio.sleep(0.01)`. Task B pauses.\n5. **Task C** starts: Reads `counter` (still $0$).\n6. *(... many tasks run, all reading the initial value $0$ or an outdated value.)*\n7. **Task A** resumes: Calculates $0 + 1 = 1$. Writes $1$ to `counter`.\n8. **Task B** resumes: Calculates $0 + 1 = 1$. Writes $1$ to `counter`.\n9. **Task C** resumes: Calculates $0 + 1 = 1$. Writes $1$ to `counter`.\n\nBecause the critical section (reading `counter`, calculating the new value, and writing the new value) is interrupted by `await asyncio.sleep(0.01)`, multiple coroutines read the same initial value, and subsequent writes overwrite each other.\n\nTherefore, when `main` finishes, the final value of `counter` will be significantly less than 100.\n\n## The Fix\n\nTo fix this, you must ensure that the read, calculation, and write operations on the shared resource (`counter`) are **atomic**. In Python's `asyncio`, this is achieved using a synchronization primitive, specifically an `asyncio.Lock`.\n\nBy using an `asyncio.Lock`, we guarantee that when a coroutine acquires the lock, it has exclusive access to the critical section, preventing any other coroutine from entering until the lock is released.\n\n### Fixed Code\n\n```python\nimport asyncio\n\n# Initialize the counter\ncounter = 0\n# Initialize a Lock to protect the shared resource\ncounter_lock = asyncio.Lock()\n\nasync def increment():\n    global counter\n    # Acquire the lock before accessing the shared resource\n    async with counter_lock:\n        # CRITICAL SECTION START\n        # This entire block is now protected\n        temp = counter\n        # Note: We should remove the sleep here, as the goal is to make the operation atomic.\n        # If the sleep is necessary for simulation, it must happen *before* the critical\n        # section or be handled differently, but for a true atomic counter, it should be removed.\n        # If we leave the sleep, the lock ensures no other task can read the value\n        # between reading it and writing it, but it makes the simulation less realistic.\n        await asyncio.sleep(0.0001) # Reduced sleep to demonstrate functionality while still being async\n        counter = temp + 1\n        # CRITICAL SECTION END\n    # Lock is automatically released upon exiting the 'async with' block\n\nasync def main():\n    global counter\n    # Reset counter for clean run\n    counter = 0 \n    \n    tasks = [increment() for _ in range",
+        "response_length": 3945,
+        "eval_count": 982,
+        "auto_score": 1.0
+      },
+      {
+        "id": "bug_3_sqli",
+        "response": "The code provided contains a classic and severe security vulnerability known as **SQL Injection (SQLi)**.\n\n---\n\n## \ud83d\udea8 The Vulnerability Explained (SQL Injection)\n\nThe function builds the SQL query string by directly incorporating unvalidated user input (`username`) into the query structure using an f-string:\n\n```python\nquery = f\"SELECT * FROM users WHERE username = '{username}'\"\n```\n\nThis approach assumes that the `username` will only ever contain literal text. However, an attacker can deliberately manipulate the input to break out of the intended data context and execute arbitrary SQL commands.\n\n### How an Attack Works\n\nIf an attacker provides the following malicious input as the `username`:\n\n```sql\n' OR '1'='1\n```\n\nThe constructed SQL query will become:\n\n```sql\nSELECT * FROM users WHERE username = '' OR '1'='1'\n```\n\nSince `'1'='1'` is always true, the `WHERE` clause evaluates to true for every row, causing the database to ignore the intended filtering and potentially return the data for the first user, or worse, allow the attacker to bypass authentication entirely (if this function were used in a login context).\n\nA more damaging attack might involve using semi-colons (`;`) to terminate the intended query and append entirely new commands (e.g., dropping tables or logging out other users).\n\n---\n\n## \u2705 The Fix (Using Parameterized Queries)\n\nThe secure and standard way to prevent SQL injection is to **never construct SQL queries using string formatting**. Instead, you must use **parameterized queries**.\n\nParameterized queries (also called prepared statements) allow the database driver to separate the SQL command structure from the user data. The database engine treats the input values strictly as data, even if they contain SQL keywords, and therefore cannot be executed as commands.\n\n### Fixed Code\n\n```python\nimport sqlite3\n\ndef get_user(username):\n    conn = sqlite3.connect('users.db')\n    cursor = conn.cursor()\n    \n    # 1. Use a placeholder (?) instead of directly inserting the variable.\n    query = \"SELECT * FROM users WHERE username = ?\"\n    \n    # 2. Pass the user input as a separate tuple argument to execute().\n    cursor.execute(query, (username,)) \n    \n    user_data = cursor.fetchone()\n    \n    # Good practice: Close the connection\n    conn.close() \n    return user_data\n\n# Example usage (assuming users.db exists)\n# print(get_user(\"alice\"))\n```\n\n### Why the Fix Works\n\nIn the fixed code:\n\n1. **The Query Template:** `query = \"SELECT * FROM users WHERE username = ?\"` is sent to the database first. The database engine knows that the value for the placeholder `?` must be treated purely as a string literal.\n2. **The Data Payload:** `cursor.execute(query, (username,))` sends the input data separately.\n\nIf an attacker attempts to use the malicious input ` ' OR '1'='1`, the database engine treats the entire string as a single literal username value that it will search for. It will look for a user whose name is literally: `' OR '1'='1'`. Since this us",
+        "response_length": 3093,
+        "eval_count": 706,
+        "auto_score": 1.0
+      }
+    ],
+    "math": [
+      {
+        "id": "math_1_system",
+        "response": "We are asked to solve the following system of linear equations:\n\n1) $2x + 3y - z = 1$\n2) $x - y + 2z = 5$\n3) $3x + y + z = 8$\n\nWe can use the method of elimination or substitution. Using elimination seems efficient here because the coefficients of $y$ in equations (2) and (3) are $-1$ and $1$, respectively, making them easy to combine.\n\n**Step 1: Eliminate $y$ from equations (2) and (3).**\n\nAdd equation (2) and equation (3):\n   $(x - y + 2z) + (3x + y + z) = 5 + 8$\n   $4x + 0y + 3z = 13$\n4) $4x + 3z = 13$\n\n**Step 2: Eliminate $y$ using equations (1) and (3).**\n\nWe want to combine equation (1) with equation (3) to eliminate $y$. Multiply equation (3) by 3:\n$3 \\times (3x + y + z) = 3 \\times 8$\n$9x + 3y + 3z = 24$ (Equation 3')\n\nNow subtract equation (1) from equation (3'):\n   $(9x + 3y + 3z) - (2x + 3y - z) = 24 - 1$\n   $9x - 2x + 3y - 3y + 3z - (-z) = 23$\n   $7x + 0y + 4z = 23$\n5) $7x + 4z = 23$\n\n**Step 3: Solve the system of two equations (4 and 5) for $x$ and $z$.**\n\nWe have the system:\n4) $4x + 3z = 13$\n5) $7x + 4z = 23$\n\nWe can eliminate $z$. Multiply equation (4) by 4 and equation (5) by $-3$ (or vice versa) to make the coefficients of $z$ opposites.\n\nMultiply equation (4) by 4:\n$4(4x + 3z) = 4(13)$\n$16x + 12z = 52$ (Equation 4')\n\nMultiply equation (5) by $-3$:\n$-3(7x + 4z) = -3(23)$\n$-21x - 12z = -69$ (Equation 5')\n\nAdd Equation (4') and Equation (5'):\n   $(16x + 12z) + (-21x - 12z) = 52 + (-69)$\n   $16x - 21x + 12z - 12z = 52 - 69$\n   $-5x = -17$\n   $x = \\frac{17}{5}$\n\n**Step 4: Solve for $z$.**\n\nSubstitute the value of $x$ into equation (4):\n$4x + 3z = 13$\n$4\\left(\\frac{17}{5}\\right) + 3z = 13$\n$\\frac{68}{5} + 3z = 13$\n$3z = 13 - \\frac{68}{5}$\n$3z = \\frac{13 \\times 5}{5} - \\frac{68}{5}$\n$3z = \\frac{65}{5} - \\frac{68}{5}$\n$3z = -\\frac{3}{5}$\n$z = \\frac{-3/5}{3}$\n$z = -\\frac{1}{5}$\n\n**Step 5: Solve for $y$.**\n\nSubstitute the values of $x = \\frac{17}{5}$ and $z = -\\frac{1}{5}$ into the easiest original equation, which is (3):\n$3x + y + z = 8$\n$3\\left(\\frac{17}{5}\\right) + y + \\left(-\\frac{1}{5}\\right) = 8$\n$\\frac{51}{5} + y - \\frac{1}{5} = 8$\n$y + \\frac{51 - 1}{5} = 8$\n$y + \\frac{50}{5} = 8$\n",
+        "response_length": 2133,
+        "eval_count": 1024,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_2_compound",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_3_proof",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_4_combinatorics",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_5_bayes",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "business": [
+      {
+        "id": "biz_1_pnl",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "biz_2_unit_economics",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "biz_3_pricing",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "biz_4_acquisition",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "science": [
+      {
+        "id": "sci_1_crispr",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "sci_2_experiment",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "sci_3_antibiotic",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "sci_4_carbon",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "psychology": [
+      {
+        "id": "psych_1_biases",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "psych_2_morale",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "psych_3_memory",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "tool_use": [
+      {
+        "id": "tool_1_simple",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "tool_2_multi",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "tool_3_chained",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "tool_4_no_tool",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "instruction_following": [
+      {
+        "id": "inst_1_bullets",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "inst_2_json",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "inst_3_wordcount",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "inst_4_forbidden",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 1.0
+      },
+      {
+        "id": "inst_5_spanish",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "factual_accuracy": [
+      {
+        "id": "fact_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_2",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_3",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_4",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_5",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_6",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "hallucination_resistance": [
+      {
+        "id": "halluc_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "halluc_2",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "halluc_3",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "creativity": [
+      {
+        "id": "creative_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "creative_2",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "creative_3",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "planning": [
+      {
+        "id": "plan_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "plan_2_critical_path",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "plan_3_debug",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ]
+  },
+  "26B-MoE": {
+    "coding_generation": [
+      {
+        "id": "code_1_fizzbuzz",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "code_2_trie",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "code_3_flatten_json",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "code_4_rotated_search",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "code_5_lru_cache",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "bug_detection": [
+      {
+        "id": "bug_1_offbyone",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "bug_2_async",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "bug_3_sqli",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "math": [
+      {
+        "id": "math_1_system",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_2_compound",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_3_proof",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_4_combinatorics",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "math_5_bayes",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "business": [
+      {
+        "id": "biz_1_pnl",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "biz_2_unit_economics",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "biz_3_pricing",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "biz_4_acquisition",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "science": [
+      {
+        "id": "sci_1_crispr",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "sci_2_experiment",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "sci_3_antibiotic",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "sci_4_carbon",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "psychology": [
+      {
+        "id": "psych_1_biases",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "psych_2_morale",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "psych_3_memory",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "tool_use": [
+      {
+        "id": "tool_1_simple",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "tool_2_multi",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "tool_3_chained",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "tool_4_no_tool",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "instruction_following": [
+      {
+        "id": "inst_1_bullets",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "inst_2_json",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "inst_3_wordcount",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "inst_4_forbidden",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 1.0
+      },
+      {
+        "id": "inst_5_spanish",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "factual_accuracy": [
+      {
+        "id": "fact_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_2",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_3",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_4",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_5",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "fact_6",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "hallucination_resistance": [
+      {
+        "id": "halluc_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "halluc_2",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      },
+      {
+        "id": "halluc_3",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": 0.0
+      }
+    ],
+    "creativity": [
+      {
+        "id": "creative_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "creative_2",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "creative_3",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ],
+    "planning": [
+      {
+        "id": "plan_1",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "plan_2_critical_path",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      },
+      {
+        "id": "plan_3_debug",
+        "response": "",
+        "response_length": 0,
+        "eval_count": 0,
+        "auto_score": null
+      }
+    ]
+  }
+}

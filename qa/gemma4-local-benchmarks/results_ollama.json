@@ -1,0 +1,1172 @@
+{
+  "meta": {
+    "timestamp": "2026-04-10T03:43:12.610445+00:00",
+    "hardware": "Apple M5 system with 32GB unified memory",
+    "engine": "Ollama",
+    "models": [
+      "gemma4:e2b",
+      "gemma4:latest",
+      "gemma4:26b"
+    ],
+    "perf_runs": 3
+  },
+  "performance": {
+    "E2B": {
+      "memory": {
+        "before_load": {
+          "free_gb": 9.15,
+          "active_gb": 7.82,
+          "wired_gb": 3.84,
+          "compressed_gb": 40.16,
+          "swapouts": 9650124
+        },
+        "after_load": {
+          "free_gb": 0.65,
+          "active_gb": 8.94,
+          "wired_gb": 11.34,
+          "compressed_gb": 39.85,
+          "swapouts": 9650124
+        },
+        "after_4k_gen": {
+          "free_gb": 0.62,
+          "active_gb": 8.97,
+          "wired_gb": 11.39,
+          "compressed_gb": 39.7,
+          "swapouts": 9650124
+        },
+        "ollama_ps": "NAME          ID              SIZE      PROCESSOR    CONTEXT    UNTIL              \ngemma4:e2b    7fbdbf8f5e45    7.9 GB    100% GPU     32768      4 minutes from now"
+      },
+      "tps": {
+        "100tok": {
+          "tps": {
+            "mean": 69.2,
+            "values": [
+              66.67,
+              68.61,
+              72.33
+            ]
+          }
+        },
+        "1k_tok": {
+          "tps": {
+            "mean": 55.95,
+            "values": [
+              66.03,
+              52.41,
+              49.42
+            ]
+          }
+        },
+        "4k_tok": {
+          "tps": {
+            "mean": 41.79,
+            "values": [
+              39.8,
+              42.07,
+              43.5
+            ]
+          }
+        }
+      },
+      "ttft": {
+        "short_50tok": {
+          "cold_ms": {
+            "mean": 1569.6,
+            "values": [
+              1605.9,
+              1590.9,
+              1512.2
+            ]
+          },
+          "warm_ms": {
+            "mean": 170.1,
+            "values": [
+              166.8,
+              176.9,
+              166.6
+            ]
+          }
+        },
+        "medium_500tok": {
+          "cold_ms": {
+            "mean": 1714.4,
+            "values": [
+              1649.1,
+              1629.4,
+              1864.6
+            ]
+          },
+          "warm_ms": {
+            "mean": 164.1,
+            "values": [
+              162.8,
+              152.9,
+              176.7
+            ]
+          }
+        },
+        "long_2000tok": {
+          "cold_ms": {
+            "mean": 2114.5,
+            "values": [
+              2228.4,
+              1984.4,
+              2130.6
+            ]
+          },
+          "warm_ms": {
+            "mean": 179.0,
+            "values": [
+              197.7,
+              171.2,
+              168.0
+            ]
+          }
+        }
+      }
+    },
+    "E4B": {
+      "memory": {
+        "before_load": {
+          "free_gb": 8.91,
+          "active_gb": 9.53,
+          "wired_gb": 3.9,
+          "compressed_gb": 36.93,
+          "swapouts": 9773368
+        },
+        "after_load": {
+          "free_gb": 0.06,
+          "active_gb": 2.09,
+          "wired_gb": 23.49,
+          "compressed_gb": 46.28,
+          "swapouts": 9773368
+        },
+        "after_4k_gen": {
+          "free_gb": 0.06,
+          "active_gb": 4.58,
+          "wired_gb": 14.51,
+          "compressed_gb": 42.9,
+          "swapouts": 9828728
+        },
+        "ollama_ps": "NAME          ID              SIZE     PROCESSOR    CONTEXT    UNTIL              \ngemma4:26b    5571076f3d70    20 GB    100% GPU     32768      4 minutes from now"
+      },
+      "tps": {
+        "100tok": {
+          "tps": {
+            "mean": 40.72,
+            "values": [
+              40.9,
+              40.64,
+              40.63
+            ]
+          }
+        },
+        "1k_tok": {
+          "tps": {
+            "mean": 25.99,
+            "values": [
+              26.72,
+              26.9,
+              24.36
+            ]
+          }
+        },
+        "4k_tok": {
+          "tps": {
+            "mean": 22.92,
+            "values": [
+              23.75,
+              23.26,
+              21.75
+            ]
+          }
+        }
+      },
+      "ttft": {
+        "short_50tok": {
+          "cold_ms": {
+            "mean": 3325.0,
+            "values": [
+              3963.8,
+              3113.9,
+              2897.3
+            ]
+          },
+          "warm_ms": {
+            "mean": 192.0,
+            "values": [
+              218.3,
+              190.4,
+              167.4
+            ]
+          }
+        },
+        "medium_500tok": {
+          "cold_ms": {
+            "mean": 5985.9,
+            "values": [
+              3317.0,
+              3267.1,
+              11373.5
+            ]
+          },
+          "warm_ms": {
+            "mean": 58.3,
+            "values": [
+              177.0,
+              -1,
+              -1
+            ]
+          }
+        },
+        "long_2000tok": {
+          "cold_ms": {
+            "mean": 16665.8,
+            "values": [
+              -1,
+              3686.8,
+              46311.8
+            ]
+          },
+          "warm_ms": {
+            "mean": 8096.4,
+            "values": [
+              24090.9,
+              -1,
+              199.4
+            ]
+          }
+        }
+      }
+    },
+    "26B-MoE": {
+      "memory": {
+        "before_load": {
+          "free_gb": 10.9,
+          "active_gb": 5.52,
+          "wired_gb": 3.92,
+          "compressed_gb": 42.25,
+          "swapouts": 9956209
+        },
+        "after_load": {
+          "free_gb": 0.06,
+          "active_gb": 2.06,
+          "wired_gb": 23.7,
+          "compressed_gb": 46.54,
+          "swapouts": 9977693
+        },
+        "after_4k_gen": {
+          "free_gb": 0.07,
+          "active_gb": 1.97,
+          "wired_gb": 23.98,
+          "compressed_gb": 47.03,
+          "swapouts": 10024721
+        },
+        "ollama_ps": "NAME          ID              SIZE     PROCESSOR    CONTEXT    UNTIL              \ngemma4:26b    5571076f3d70    20 GB    100% GPU     32768      4 minutes from now"
+      },
+      "tps": {
+        "100tok": {
+          "tps": {
+            "mean": 24.76,
+            "values": [
+              23.06,
+              24.25,
+              26.97
+            ]
+          }
+        },
+        "1k_tok": {
+          "tps": {
+            "mean": 20.5,
+            "values": [
+              22.27,
+              18.85,
+              20.38
+            ]
+          }
+        },
+        "4k_tok": {
+          "tps": {
+            "mean": 24.18,
+            "values": [
+              24.83,
+              24.55,
+              23.15
+            ]
+          }
+        }
+      },
+      "ttft": {
+        "short_50tok": {
+          "cold_ms": {
+            "mean": 7285.3,
+            "values": [
+              6027.7,
+              7968.6,
+              7859.7
+            ]
+          },
+          "warm_ms": {
+            "mean": 646.1,
+            "values": [
+              191.3,
+              711.3,
+              1035.6
+            ]
+          }
+        },
+        "medium_500tok": {
+          "cold_ms": {
+            "mean": 6817.3,
+            "values": [
+              6406.0,
+              6802.2,
+              7243.5
+            ]
+          },
+          "warm_ms": {
+            "mean": 354.9,
+            "values": [
+              199.6,
+              301.0,
+              564.2
+            ]
+          }
+        },
+        "long_2000tok": {
+          "cold_ms": {
+            "mean": 7715.5,
+            "values": [
+              7899.5,
+              7277.5,
+              7969.4
+            ]
+          },
+          "warm_ms": {
+            "mean": 515.1,
+            "values": [
+              201.1,
+              216.8,
+              1127.5
+            ]
+          }
+        }
+      }
+    }
+  },
+  "intelligence": {
+    "E2B": {
+      "coding": {
+        "generation": [
+          {
+            "id": "code_1_fizzbuzz",
+            "response": "```python\ndef custom",
+            "has_target": true
+          },
+          {
+            "id": "code_2_trie",
+            "response": "class Trie:\n    def __init__(self):\n        self.root = {}\n\n    def insert(self, word: str) -> None:\n        node = self.root\n        for char in word:\n            if char not in node:\n                node[char] = {}\n            node = node[char]\n        node['$'] = True  # Mark the end of a word\n\n    def search(self, word: str) -> bool:\n        node = self.root\n        for char in word:\n            if char not in node:\n                return False\n            node = node[char]\n        return node.get('$', False)\n\n    def starts_with(self, prefix: str) -> bool:\n        node = self.root\n        for char in prefix:\n            if char not in node:\n                return False\n            node = node[char]\n        return True",
+            "has_target": true
+          },
+          {
+            "id": "code_3_flatten_json",
+            "response": "```python\ndef flatten_json(obj, prefix=''):\n    \"\"\"\n    Flattens a nested dictionary (or",
+            "has_target": true
+          },
+          {
+            "id": "code_4_rotated_search",
+            "response": "```python\ndef search_rotated(nums: list[int], target: int) -> int:\n    if not nums:\n        return -1\n\n    left = 0\n    right = len(nums) - 1\n\n    while left <= right:\n        mid = left + (right - left) // 2\n\n        if nums[mid] == target:\n            return mid\n\n        # Determine which side is sorted\n\n        # Case 1: Left side is sorted (nums[left] to nums[mid])\n        if",
+            "has_target": true
+          },
+          {
+            "id": "code_5_lru_cache",
+            "response": "```python\nfrom collections import OrderedDict\n\nclass LRUCache:\n    \"\"\"\n    Implements an LRU Cache using an OrderedDict to maintain O(1) time complexity \n    for get and put operations.\n    \"\"\"\n    def __init__(self, capacity: int):\n        \"\"\"\n        Initializes the cache with a given capacity.\n        :param capacity: The maximum number of items the cache can hold.\n        \"\"\"\n        self.capacity = capacity\n        # OrderedDict stores key: value and maintains insertion order (LRU at the start)\n        self.cache = OrderedDict()\n\n    def get(self, key: int) -> int:\n        \"\"\"\n        Retrieves the value associated with the key. Updates the key's usage status.\n        Time Complexity: O(1)\n        :param key: The key to look up.\n        :return",
+            "has_target": true
+          }
+        ],
+        "bug_detection": [
+          {
+            "id": "bug_1_offbyone",
+            "response": "",
+            "found_fix": false
+          },
+          {
+            "id": "bug_2_async",
+            "response": "This is a classic example of a **race condition** occurring when multiple asynchronous tasks attempt to modify a shared resource concurrently without proper synchronization.\n\n## The Bug Explained\n\nThe bug lies in the way the `increment` function reads, calculates, and writes the shared global variable `counter`.\n\nThe operation:\n\n```python\ntemp = counter\nawait asyncio.sleep(0.01) # Context switch happens here\ncounter = temp + 1\n```\n\nis **not atomic**.\n\n1. **Read:** Task A reads the current value of `counter` (e.g., 5).\n2. **Context Switch:** Before Task A can write the new value, the event loop switches execution to Task B.\n3. **Read (Stale Data):** Task B also reads the current value of `counter` (still 5).\n4. **Calculate & Write (Task B):** Task B calculates $5 + 1 = 6$ and writes `counter = 6`.\n5. **Context Switch Back:** Task A resumes. It uses the stale value it read earlier (5) to calculate $5 + 1 = 6$, and writes `counter = 6`.\n\nIn this scenario, two separate increments occurred, but the final result is only 6 instead of the expected 7, because both tasks operated on the same initial value.\n\n## The Fix: Using `asyncio.Lock`",
+            "found_fix": true
+          },
+          {
+            "id": "bug_3_sqli",
+            "response": "This code contains a critical security vulnerability known as **SQL Injection (SQLi)**.\n\n## The Vulnerability: SQL Injection\n\n### Explanation\n\nThe vulnerability exists because the code constructs the SQL query by directly concatenating (using an f-string) the user-supplied input (`username`) into the query string.\n\n```python\nquery = f\"SELECT * FROM users WHERE username = '{username}'\"\ncursor.execute(query)\n```\n\nIf an attacker provides specially crafted input for the `username` (e.g., `' OR '1'='1`), they can modify the intended structure of the SQL query. This allows them to execute arbitrary SQL commands on the database, potentially leading to:\n\n1.  **Data Exfiltration:** Reading sensitive data from other tables.\n2.  **Data Manipulation:** Modifying or deleting data.\n3.  **Authentication Bypass:** Logging in as another user without a password.\n\n### Example Attack\n\nIf an attacker sets the `username` variable to: `' OR 1=1 --`\n\nThe resulting query executed by the database becomes:\n\n```sql\nSELECT * FROM users WHERE username = '' OR 1=1 --'\n```\n\nThe `--` comments out the rest of the original query (including the closing quote), making the `WHERE` clause always true, which causes the query to return **all** rows from the `users` table, completely bypassing the intended security check.\n\n---\n\n## The Fix: Parameterized Queries\n\nThe secure way to handle dynamic input in SQL queries is by using **parameterized queries** (also known as prepared statements). This technique ensures that the user input is treated strictly as data and is never interpreted as executable SQL code.\n\nWhen using parameterized queries, the database driver handles the proper escaping and quoting of the input automatically.\n\n### Fixed Code\n\n```python\nimport sqlite3\n\ndef get_user(username):\n    conn = sqlite3.connect('users.db')\n    cursor = conn.cursor()\n\n    # 1. Use a placeholder (?) instead of string concatenation.\n    query = \"SELECT * FROM users WHERE username = ?\"\n    \n    ",
+            "found_fix": true
+          }
+        ]
+      },
+      "math": [
+        {
+          "id": "math_1_system",
+          "response": "",
+          "expected_x": 2,
+          "found_x": false,
+          "expected_y": -1,
+          "found_y": false,
+          "expected_z": 3,
+          "found_z": false
+        },
+        {
+          "id": "math_2_compound",
+          "response": "",
+          "expected_approx": 13891.0
+        },
+        {
+          "id": "math_3_proof",
+          "response": "",
+          "has_check": false
+        },
+        {
+          "id": "math_4_combinatorics",
+          "response": "",
+          "expected": 96,
+          "found": false
+        },
+        {
+          "id": "math_5_bayes",
+          "response": "",
+          "expected_approx": 0.088
+        }
+      ],
+      "business": [
+        {
+          "id": "biz_1_pnl",
+          "response": ""
+        },
+        {
+          "id": "biz_2_unit_economics",
+          "response": ""
+        },
+        {
+          "id": "biz_3_pricing",
+          "response": ""
+        },
+        {
+          "id": "biz_4_acquisition",
+          "response": ""
+        }
+      ],
+      "science": [
+        {
+          "id": "sci_1_crispr",
+          "response": ""
+        },
+        {
+          "id": "sci_2_experiment",
+          "response": ""
+        },
+        {
+          "id": "sci_3_antibiotic",
+          "response": ""
+        },
+        {
+          "id": "sci_4_carbon",
+          "response": ""
+        }
+      ],
+      "psychology": [
+        {
+          "id": "psych_1_biases",
+          "response": ""
+        },
+        {
+          "id": "psych_2_morale",
+          "response": ""
+        },
+        {
+          "id": "psych_3_memory",
+          "response": ""
+        }
+      ],
+      "tool_use": [
+        {
+          "id": "tool_1_simple",
+          "response": "",
+          "has_tool_name": false
+        },
+        {
+          "id": "tool_2_multi",
+          "response": ""
+        },
+        {
+          "id": "tool_3_chained",
+          "response": "",
+          "has_tool_name": false
+        },
+        {
+          "id": "tool_4_no_tool",
+          "response": "",
+          "correctly_no_tool": false
+        }
+      ],
+      "instruction_following": [
+        {
+          "id": "inst_1_bullets",
+          "response": "",
+          "passed": false
+        },
+        {
+          "id": "inst_2_json",
+          "response": "",
+          "passed": false
+        },
+        {
+          "id": "inst_3_wordcount",
+          "response": "",
+          "passed": false
+        },
+        {
+          "id": "inst_4_forbidden",
+          "response": "",
+          "passed": true
+        },
+        {
+          "id": "inst_5_spanish",
+          "response": "",
+          "passed": false
+        }
+      ],
+      "factual_accuracy": [
+        {
+          "id": "fact_1",
+          "response": "",
+          "correct": false,
+          "expected": "1948"
+        },
+        {
+          "id": "fact_2",
+          "response": "",
+          "correct": false,
+          "expected": "H2SO4"
+        },
+        {
+          "id": "fact_3",
+          "response": "",
+          "correct": false,
+          "expected": "Gabriel Garcia Marquez"
+        },
+        {
+          "id": "fact_4",
+          "response": "",
+          "correct": false,
+          "expected": "Astana"
+        },
+        {
+          "id": "fact_5",
+          "response": "",
+          "correct": false,
+          "expected": "O(n log n)"
+        },
+        {
+          "id": "fact_6",
+          "response": "",
+          "correct": false,
+          "expected": "46"
+        }
+      ],
+      "hallucination_resistance": [
+        {
+          "id": "halluc_1",
+          "response": "",
+          "refused": false
+        },
+        {
+          "id": "halluc_2",
+          "response": "",
+          "refused": false
+        },
+        {
+          "id": "halluc_3",
+          "response": "",
+          "refused": false
+        }
+      ],
+      "creativity": [
+        {
+          "id": "creative_1",
+          "response": ""
+        },
+        {
+          "id": "creative_2",
+          "response": ""
+        },
+        {
+          "id": "creative_3",
+          "response": ""
+        }
+      ],
+      "planning": [
+        {
+          "id": "plan_1",
+          "response": ""
+        },
+        {
+          "id": "plan_2_critical_path",
+          "response": "",
+          "expected_days": 13,
+          "found_days": false,
+          "expected_path": [
+            "A",
+            "C",
+            "F",
+            "G",
+            "H"
+          ]
+        },
+        {
+          "id": "plan_3_debug",
+          "response": ""
+        }
+      ]
+    },
+    "E4B": {
+      "coding": {
+        "generation": [
+          {
+            "id": "code_1_fizzbuzz",
+            "response": "",
+            "has_target": false
+          },
+          {
+            "id": "code_2_trie",
+            "response": "",
+            "has_target": false
+          },
+          {
+            "id": "code_3_flatten_json",
+            "response": "",
+            "has_target": false
+          },
+          {
+            "id": "code_4_rotated_search",
+            "response": "",
+            "has_target": false
+          },
+          {
+            "id": "code_5_lru_cache",
+            "response": "",
+            "has_target": false
+          }
+        ],
+        "bug_detection": [
+          {
+            "id": "bug_1_offbyone",
+            "response": "",
+            "found_fix": false
+          },
+          {
+            "id": "bug_2_async",
+            "response": "",
+            "found_fix": false
+          },
+          {
+            "id": "bug_3_sqli",
+            "response": "",
+            "found_fix": false
+          }
+        ]
+      },
+      "math": [
+        {
+          "id": "math_1_system",
+          "response": "",
+          "expected_x": 2,
+          "found_x": false,
+          "expected_y": -1,
+          "found_y": false,
+          "expected_z": 3,
+          "found_z": false
+        },
+        {
+          "id": "math_2_compound",
+          "response": "",
+          "expected_approx": 13891.0
+        },
+        {
+          "id": "math_3_proof",
+          "response": "",
+          "has_check": false
+        },
+        {
+          "id": "math_4_combinatorics",
+          "response": "",
+          "expected": 96,
+          "found": false
+        },
+        {
+          "id": "math_5_bayes",
+          "response": "",
+          "expected_approx": 0.088
+        }
+      ],
+      "business": [
+        {
+          "id": "biz_1_pnl",
+          "response": ""
+        },
+        {
+          "id": "biz_2_unit_economics",
+          "response": ""
+        },
+        {
+          "id": "biz_3_pricing",
+          "response": ""
+        },
+        {
+          "id": "biz_4_acquisition",
+          "response": ""
+        }
+      ],
+      "science": [
+        {
+          "id": "sci_1_crispr",
+          "response": ""
+        },
+        {
+          "id": "sci_2_experiment",
+          "response": ""
+        },
+        {
+          "id": "sci_3_antibiotic",
+          "response": ""
+        },
+        {
+          "id": "sci_4_carbon",
+          "response": ""
+        }
+      ],
+      "psychology": [
+        {
+          "id": "psych_1_biases",
+          "response": ""
+        },
+        {
+          "id": "psych_2_morale",
+          "response": ""
+        },
+        {
+          "id": "psych_3_memory",
+          "response": ""
+        }
+      ],
+      "tool_use": [
+        {
+          "id": "tool_1_simple",
+          "response": "",
+          "has_tool_name": false
+        },
+        {
+          "id": "tool_2_multi",
+          "response": ""
+        },
+        {
+          "id": "tool_3_chained",
+          "response": "",
+          "has_tool_name": false
+        },
+        {
+          "id": "tool_4_no_tool",
+          "response": "",
+          "correctly_no_tool": false
+        }
+      ],
+      "instruction_following": [
+        {
+          "id": "inst_1_bullets",
+          "response": "",
+          "passed": false
+        },
+        {
+          "id": "inst_2_json",
+          "response": "",
+          "passed": false
+        },
+        {
+          "id": "inst_3_wordcount",
+          "response": "",
+          "passed": false
+        },
+        {
+          "id": "inst_4_forbidden",
+          "response": "",
+          "passed": true
+        },
+        {
+          "id": "inst_5_spanish",
+          "response": "",
+          "passed": false
+        }
+      ],
+      "factual_accuracy": [
+        {
+          "id": "fact_1",
+          "response": "",
+          "correct": false,
+          "expected": "1948"
+        },
+        {
+          "id": "fact_2",
+          "response": "",
+          "correct": false,
+          "expected": "H2SO4"
+        },
+        {
+          "id": "fact_3",
+          "response": "",
+          "correct": false,
+          "expected": "Gabriel Garcia Marquez"
+        },
+        {
+          "id": "fact_4",
+          "response": "",
+          "correct": false,
+          "expected": "Astana"
+        },
+        {
+          "id": "fact_5",
+          "response": "",
+          "correct": false,
+          "expected": "O(n log n)"
+        },
+        {
+          "id": "fact_6",
+          "response": "",
+          "correct": false,
+          "expected": "46"
+        }
+      ],
+      "hallucination_resistance": [
+        {
+          "id": "halluc_1",
+          "response": "",
+          "refused": false
+        },
+        {
+          "id": "halluc_2",
+          "response": "",
+          "refused": false
+        },
+        {
+          "id": "halluc_3",
+          "response": "",
+          "refused": false
+        }
+      ],
+      "creativity": [
+        {
+          "id": "creative_1",
+          "response": ""
+        },
+        {
+          "id": "creative_2",
+          "response": ""
+        },
+        {
+          "id": "creative_3",
+          "response": ""
+        }
+      ],
+      "planning": [
+        {
+          "id": "plan_1",
+          "response": ""
+        },
+        {
+          "id": "plan_2_critical_path",
+          "response": "",
+          "expected_days": 13,
+          "found_days": false,
+          "expected_path": [
+            "A",
+            "C",
+            "F",
+            "G",
+            "H"
+          ]
+        },
+        {
+          "id": "plan_3_debug",
+          "response": ""
+        }
+      ]
+    },
+    "26B-MoE": {
+      "coding": {
+        "generation": [
+          {
+            "id": "code_1_fizzbuzz",
+            "response": "```python\ndef custom_fizzbuzz(n, divisors):\n    for i in range(1, n + 1):\n        output = \"\"\n        for divisor, word in divisors.items():\n            if i % divisor == 0:\n                output += word\n        print(output if output else i)\n    return None\n```",
+            "has_target": true
+          },
+          {
+            "id": "code_2_trie",
+            "response": "```python\nclass TrieNode:\n    def __init__(self):\n        self.children = {}\n        self.is_end_of_word = False\n\nclass Trie:\n    def __init__(self):\n        self.root = TrieNode()\n\n    def insert(self, word: str) -> None:\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                node.children[char] = TrieNode()\n            node = node.children[char]\n        node.is_end_of_word = True\n\n    def search(self, word: str) -> bool:\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                return False\n            node = node.children[char]\n        return node.is_end_of_word\n\n    def starts_with(self, prefix: str) -> bool:\n        node = self.root\n        for char in prefix:\n            if char not in node.children:\n                return False\n            node = node.children[char]\n        return True\n```",
+            "has_target": true
+          },
+          {
+            "id": "code_3_flatten_json",
+            "response": "",
+            "has_target": false
+          },
+          {
+            "id": "code_4_rotated_search",
+            "response": "```python\ndef search_rotated(nums, target):\n    left, right = 0, len(nums) - 1\n    \n    while left <= right:\n        mid = (left + right) // 2\n        \n        if nums[mid] == target:\n            return mid\n        \n        # Check if the left half is sorted\n        if nums[left] <= nums[mid]:\n            # Check if target is within the sorted left half\n            if nums[left] <= target < nums[mid]:\n                right = mid - 1\n            else:\n                left = mid + 1\n        # Otherwise, the right half must be sorted\n        else:\n            # Check if target is within the sorted right half\n            if nums[mid] < target <= nums[right]:\n                left = mid + 1\n            else:\n                right = mid - 1\n                \n    return -1\n```",
+            "has_target": true
+          },
+          {
+            "id": "code_5_lru_cache",
+            "response": "",
+            "has_target": false
+          }
+        ],
+        "bug_detection": [
+          {
+            "id": "bug_1_offbyone",
+            "response": "### The Bug\nThe bug in your code is an **infinite loop** caused by the line `left = mid`.\n\n**Why it happens:**\nIn binary search, when the `target` is greater than the value at `arr[mid]`, you need to move the `left` boundary forward. If you set `left = mid`, there will be scenarios where `left` and `right` become adjacent (e.g., `left = 0` and `right = 1`). \n1. The code calculates `mid = (0 + 1) // 2`, which results",
+            "found_fix": false
+          },
+          {
+            "id": "bug_2_async",
+            "response": "### The Bug: Race Condition\n\nThe bug in this code is a **race condition**. \n\nEven though `asyncio` runs in a single thread, a race condition occurs because of the `await asyncio.sleep(0.01)` line. Here is the step-by-step breakdown of what happens:\n\n1.  **Task 1** starts, reads `counter` (which is `0`), and stores it in `temp`.\n2.  **Task 1** hits `await`. This pauses Task 1 and hands control back to the event loop.\n3.  While Task 1 is sleeping, the event loop starts **Task 2**.\n4.  **Task 2** reads `counter`. Since Task 1 hasn't updated it yet, Task 2 also sees `0` and stores it in its own `temp`.\n5.  This continues for many (or all) of the 100 tasks. They all read `0` into their local `temp` variables.\n6.  Eventually, the sleeps finish. Task 1 resumes and sets `counter = 0 + 1`.\n7.  Task 2 resumes and sets `counter = 0 + 1`.\n8.  Instead of the counter reaching 100, it ends up being much lower (often just `1` or a small number) because all tasks were operating on \"stale\" data.\n\n**Key takeaway:** In `asyncio`, any time you `await` in the middle of a \"Read-Modify-Write\" operation, you risk a race condition if other tasks can modify that same variable during the",
+            "found_fix": false
+          },
+          {
+            "id": "bug_3_sqli",
+            "response": "### The Vulnerability: SQL Injection\n\nThe vulnerability in this code is **SQL Injection**.\n\nThe issue lies in this line:\n`query = f\"SELECT * FROM users WHERE username = '{username}'\"`\n\nBy using an f-string to insert the `username` variable directly into the SQL command, you are treating user-provided input as **executable code** rather than **data**. An attacker can input specially crafted strings to manipulate your database query.\n\n#### Example of an Attack\nIf an attacker provides the following string as the `username`:\n`' OR '1'='1`\n\nThe resulting SQL query executed by the database becomes:\n```sql\nSELECT * FROM users WHERE username = '' OR '1'='1'\n```\nBecause `'1'='1'` is always true, the `WHERE` clause is bypassed, and the function will return the first user in the database (often the admin), allowing the attacker to bypass authentication.\n\nAn attacker could even perform much more destructive actions, such as:\n*   **Deleting data:** `' ; DROP TABLE users; --`\n*   **Extracting sensitive data:** Using `UNION SELECT` statements to pull data from other tables.\n\n---\n\n### The Fix: Parameterized Queries\n\nThe correct way to handle user input in SQL is to use **parameterized queries** (also known as prepared statements). Instead of formatting the string yourself, you use a placeholder (`?`) and pass the data as a separate argument to the `.execute()` method. \n\nThe database driver then handles the input safely, ensuring that the input is treated strictly as data and cannot be interpreted as a command.\n\n#### Fixed Code\n```python\nimport sqlite3\n\ndef get_user(username):\n    # Use a context manager (with) to ensure the connection closes automatically\n    conn = sqlite3.connect('users.db')\n    try:\n        cursor = conn.cursor()\n        \n        # 1. Use a '?' placeholder instead of an f-string\n        query = \"SELECT * FROM users WHERE username = ?\"\n        \n        # 2. Pass the data as a tuple in the second argument\n",
+            "found_fix": true
+          }
+        ]
+      },
+      "math": [
+        {
+          "id": "math_1_system",
+          "response": "",
+          "expected_x": 2,
+          "found_x": false,
+          "expected_y": -1,
+          "found_y": false,
+          "expected_z": 3,
+          "found_z": false
+        },
+        {
+          "id": "math_2_compound",
+          "response": "",
+          "expected_approx": 13891.0
+        },
+        {
+          "id": "math_3_proof",
+          "response": "To prove that the sum of the first $n$ odd numbers is equal to $n^2$, we can use several methods. Below are the two most formal approaches: **Mathematical Induction** (the standard rigorous proof) and the **Arithmetic Progression** method (the algebraic approach).\n\n---\n\n### Method 1: Proof by Mathematical Induction\n\n**Proposition:**\nLet $P(n)$ be the statement: $\\sum_{i=1}^{n} (2i - 1) = n^2$\n(i.e., $1 + 3 + 5 + \\dots + (2n - 1) = n^2$)\n\n**1. Base Case:**\nShow that $P(1)$ is true.\nFor $n = 1$, the first odd number is $1$.\nThe formula gives $1^2 = 1$.\nSince $1 = 1$, the base case holds.\n\n**2. Inductive Hypothesis:**\nAssume that the statement is true for some positive integer $k$. That is, assume:\n$$1 + 3 + 5 + \\dots + (2k - 1) = k^2$$\n\n**3. Inductive Step:**\nWe must show that if $P(k)$ is true, then $P(k+1)$ must also be true. We want to prove:\n$$1 + 3 + 5 + \\dots + (2k - 1) + (2(k+1) - 1)",
+          "has_check": true
+        },
+        {
+          "id": "math_4_combinatorics",
+          "response": "",
+          "expected": 96,
+          "found": false
+        },
+        {
+          "id": "math_5_bayes",
+          "response": "To find the probability that a person has the disease given a positive test result, we use **Bayes' Theorem**.\n\n### 1. Identify the Given Information\n\nFirst, let's define our variables and convert the percentages to decimals:\n\n*   **Prevalence $P(D)$**: The probability of having the disease.\n    $P(D) = 1\\% = 0.01$\n*   **Complement of Prevalence $P(\\text{not } D)$**: The probability of not having the disease.\n    $P(\\text{not } D) = 1 - 0.01 = 0.99$\n*   **Sensitivity $P(+ | D)$**: The probability of testing positive given you have the disease.\n    $P(+ | D) = 95\\% = 0.95$\n*   **Specificity $P(- | \\text{not } D)$**: The probability of testing negative given you do not have the disease.\n    $P(- | \\text{not } D) = 90\\% = 0.90$\n*   **False Positive Rate $P(+ | \\text{not } D)$**: The probability of testing positive given you do **not** have the disease.\n    $P(+ | \\text{not } D) =",
+          "expected_approx": 0.088
+        }
+      ],
+      "business": [
+        {
+          "id": "biz_1_pnl",
+          "response": "Based on the P&L provided, here are the three largest cost drivers and an analysis of the business model.\n\n### The 3 Largest Cost Drivers\n\n| Cost Item | Amount | % of Revenue |\n| :--- | :--- | :--- |\n| **1. COGS (Cost of Goods Sold)** | $960,000 | **40%** |\n| **2. Sales & Marketing** | $720,000 | **30%** |\n| **3. R&D (Research & Development)** | $480,000 | **20%** |\n\n***\n\n### What this tells you about the business:\n\n**1. This is a \"Growth-Stage\" Tech/SaaS Profile**\nThe company is currently at a **break-even point** (Operating Income = $0). This is a classic hallmark of a high-growth company (likely in software or specialized technology) that is aggressively reinvesting every dollar of gross profit back into the business to capture market share.\n\n**2. High Gross Margins, High Reinvestment**\nThe company maintains a healthy **Gross Margin of 60%** ($1.44M / $2.4M). This suggests a scalable product rather than a low-margin commodity or service business. However, the company is spending **50% of its total revenue** on S&M and R&D combined. This indicates a heavy focus on two things: building a superior product (R&D) and aggressive customer acquisition (S&M).\n\n**3. Prioritizing \"Moat\" and Market Share over Profit**\n*   **The R&D spend (20%)** suggests the company is trying to build a \"moat\" through innovation and continuous product improvement.\n*   **The S&M spend (30%)** suggests they are in an acquisition phase, potentially outspending competitors to dominate the market.\n\n**Summary Analysis:**\nThis is a company that has achieved a \"product-market fit\" (evidenced by the high gross margin and significant revenue) but is intentionally sacrificing short-term profitability to fund long-term scaling. The business is currently **stable but fragile**; because operating income is zero, any significant increase in COGS or a dip in revenue would immediately push the company into a loss."
+        },
+        {
+          "id": "biz_2_unit_economics",
+          "response": ""
+        },
+        {
+          "id": "biz_3_pricing",
+          "response": "To succeed in a crowded market, you must avoid the **\"Commodity Trap.\"** If you price yourself at $15/user/month just to match competitors, you are signaling that your AI is just another feature. Instead, you must price based on **Value-Based Pricing**, positioning the AI not as a \"feature\" but as a \"digital employee\" that replaces manual labor.\n\nHere is the proposed pricing strategy.\n\n---\n\n### The Pricing Strategy: \"The Autonomous Workforce\"\n\nWe will use a **Value-Added Tiered Model**. We will intentionally price the middle tier above the current market ceiling to signal superior intelligence and ROI.\n\n| Feature Tier | **Starter** (The Entry) | **Professional** (The Sweet Spot) | **Enterprise** (The Scale) |\n| :--- | :--- | :--- | :--- |\n| **Target Audience** | Freelancers & Small Agencies | Mid-market Tech & Operations Teams | Large Scale Corporations |\n| **Price (per user/mo)** | **$15** | **$40** | **$85+** |\n| **Core Value** | Basic Organization | **Full AI Autonomy** | Governance & Security |\n| **Key Features** | Standard PM tools, Kanban, limited manual task entry, basic integrations. | **Unlimited AI Auto-Assignment**, predictive bottleneck alerts, advanced reporting. | SSO, Audit Logs, Custom Workflows, Dedicated Account Manager, API access. |\n| **Margin/user** | 80% ($12 profit) | 92.5% ($37 profit) | 96% ($82 profit) |\n\n---\n\n### Justification of Price Points\n\n#### 1. Starter Tier ($15/user/month)\n*   **The Strategy:** Use this as a \"Trojan Horse.\"\n*   **Justification:** At $15, you are only slightly above the $10 competitor floor. This price point is designed to lower the barrier to entry and disrupt the \"free/cheap\" users. While the margin is lower, this tier captures the bottom of the market and builds a massive user base that can eventually be upsold to the Pro tier as their complexity grows.\n\n#### 2. Professional Tier ($40/user/lar/month)\n*   **The Strategy:** The \"Value-Capture\" Tier.\n*   **Justification:** This is where your real revenue lives. You are pricing this **33% higher than the top-tier competitor ($30).** You justify this premium by shifting the metric from *cost per seat* to *cost per hour saved*. \n*   **The Math:** If the AI automation saves a Project Manager just **one hour per week**, the tool pays for itself 10x over. By pricing at $40, you are signaling that this tier includes the \"brain\" (the AI), whereas the $30 competitors only provide the \"skeleton\" (the interface).\n\n#### 3. Enterprise Tier ($85/user/month)\n*   **The Strategy:** The \"Margin & Moat\" Tier.\n*   **Justification:** Large organizations do not care about $40 vs $85; they care about security, compliance (SOC2), and scalability"
+        },
+        {
+          "id": "biz_4_acquisition",
+          "response": "To evaluate this acquisition, we must look at the tension between the high growth (20%) and the aggressive valuation (25x EBITDA). \n\nHere are the top 5 risks associated with this deal:\n\n### 1. Valuation & Overpayment Risk\n**Rating: High**\n**Justification:** The acquisition price of $50M represents a **25x EBITDA multiple** ($50M / $2M). In most industries, a healthy mid-market EBITDA multiple ranges from 8x to 12x. Even with 20% YoY growth, a 25x multiple is extremely aggressive and leaves virtually no margin for error. If growth slows or if the patent lawsuit impacts margins, the buyer will likely never achieve a positive Return on Investable Capital (ROIC).\n\n### 2. Customer Concentration Risk\n**Rating: High**\n**Justification:** The company relies on only three customers for 60% of its revenue. This creates a \"single point of failure\" environment. The loss of just one of these clients could result in a 20\u201330% drop in total revenue, which would disproportionately devastate the $2M EBITDA. The stability of the $50M valuation is entirely dependent on the retention of these three specific relationships.\n\n### 3. Intellectual Property (IP) & Litigation Risk\n**Rating: High**\n**Justification:** A pending patent lawsuit is an existential threat. If the lawsuit is unsuccessful, the company could face massive damages, mandatory royalty payments that erode the 16.6% EBITDA margin, or\u2014most critically\u2014an injunction that prevents them from selling the core product entirely. This risk could instantly render the $50M investment worthless.\n\n### 4. Key Person & Human Capital Risk\n**Rating: Medium**\n**Justification:** With only 50 employees, the company is likely highly dependent on a small group of specialized engineers or subject matter experts. Acquisitions often trigger \"brain drain\" due to cultural misalignment or uncertainty regarding new ownership. If the technical talent responsible for the 20% growth or the management of the 3 key customers departs post-acquisition, the company\u2019s value will collapse.\n\n### 5. Margin Compression Risk\n**Rating: Medium**\n**Justification:** While revenue is growing at 20%, the current EBITDA margin is relatively tight (16.6%). The combination of the pending legal fees from the patent lawsuit, the potential need to increase service levels for the 3 key customers to prevent churn, and the cost of integrating 50 new employees could easily compress margins. If EBITDA drops from $2M to $1M due to rising operational costs, the buyer is left holding an asset that is significantly overvalued."
+        }
+      ],
+      "science": [
+        {
+          "id": "sci_1_crispr",
+          "response": "The CRISPR-Cas9 system functions as a programmable molecular scalpel. The process is initiated by the **guide RNA (gRNA)**, which is engineered with a nucleotide sequence complementary to a specific genomic target. The gRNA directs the **Cas9 endonuclease** to the precise DNA site through Watson-Crick base pairing, ensuring highly specific recognition adjacent to a Protospacer Adjacent Motif (PAM).\n\nOnce the Cas9 complex is positioned, its dual catalytic domains (RuvC and HNH) execute a precise cleavage of both DNA strands, resulting in a **double-strand break (DSB)**. This break triggers the cell's intrinsic DNA repair machinery, which follows one of two primary pathways.\n\nThe first, **Non-Homologous End Joining (NHEJ)**, is an error-prone mechanism that frequently introduces small insertions or deletions (indels) at the repair site. This often disrupts the gene's reading frame, effectively \"knocking out\" the gene. The second, **Homology-Directed Repair (HDR)**, is a high-fidelity pathway that utilizes a DNA template to repair the break. By providing an exogenous donor template, researchers can exploit HDR to introduce specific genetic changes or precise sequence insertions, enabling sophisticated \"knock-in\" gene editing."
+        },
+        {
+          "id": "sci_2_experiment",
+          "response": ""
+        },
+        {
+          "id": "sci_3_antibiotic",
+          "response": "Hospitals are often described as \"evolutionary crucibles\" or \"hotspots\" for antibiotic resistance. While resistance occurs in the general community, the rate of evolution and the stabilization of resistant traits are significantly accelerated in clinical settings.\n\nThis acceleration is not due to a single factor, but rather a \"perfect storm\" of biological and environmental pressures. This can be explained through the following three evolutionary and ecological mechanisms.\n\n### 1. Intense Directional Selection (The \"Filter\" Effect)\nIn evolutionary biology, **directional selection** occurs when environmental pressures favor one extreme phenotype over others, causing the allele frequency to shift in a specific direction.\n\nIn the general community, antibiotic exposure is often sporadic or low-dose (e.g., a single course of penicillin for a minor infection). In contrast, hospitals maintain a state of constant, high-concentration antibiotic exposure. This creates an extreme **selective pressure**. \n*   **The Mechanism:** In a hospital environment, the \"fitness landscape\" is heavily tilted. Bacteria that possess even marginal resistance genes are not just slightly more successful; they are the *only* ones that survive. \n*   **The Result:** While a mutation might be \"neutral\" or slightly disadvantageous in the community (due to the metabolic cost of carrying resistance genes), the extreme environment of the hospital renders the \"cost\" of resistance irrelevant compared to the certain death of non-resistant strains. This rapidly purges susceptible alleles from the population.\n\n### 2. Increased Rate of Horizontal Gene Transfer (HGT) and the SOS Response\nEvolution does not only occur through vertical inheritance (parent to offspring) but also through **Horizontal Gene Transfer (HGT)**\u2014the movement of genetic material between unrelated organisms via conjugation, transformation, or transduction.\n\nHospitals accelerate HGT through two interconnected processes:\n*   **High Bacterial Density and Connectivity:** Hospitals act as high-density \"metapopulations.\" The frequent movement of patients, healthcare workers, and shared medical equipment (stethoscopes, catheters) facilitates the physical proximity required for conjugation (bacterial \"mating\").\n*   **The SOS Response:** Crucially, many antibiotics (such as fluoroquinolones) actively trigger the bacterial **SOS response**\u2014a global DNA repair mechanism. When bacteria are stressed by antibiotics, the SOS response increases the rate of mutation and recombination.\n*   **The Result:** The antibiotics do not just kill susceptible bacteria; they actively \"supercharge\" the genetic shuffling of the survivors. This increases the frequency with which resistance plasmids (extrachromosomal DNA) are transferred between different species of bacteria, turning the hospital into a laboratory for rapid genetic innovation.\n\n### 3. Niche Vacancy and Ecological Release\nIn a healthy human body (the community context), the \"wild\" microb"
+        },
+        {
+          "id": "sci_4_carbon",
+          "response": "The carbon cycle is the continuous process by which carbon atoms travel from the atmosphere to the Earth and then back into the atmosphere. It is a biogeochemical cycle that is fundamental to life, as carbon serves as the structural backbone of all organic molecules. The cycle maintains the Earth's temperature and supports the production of energy through the movement of carbon between various storage areas and movement pathways.\n\n### Major Carbon Reservoirs\nReservoirs (or \"sinks\") are locations where carbon is stored for varying periods of time. Four major reservoirs include:\n\n1.  **The Atmosphere:** Carbon exists here primarily as carbon dioxide ($\\text{CO}_2$) and methane ($\\text{CH}_4$). While this reservoir is smaller than the others, it is the most dynamic and critical for regulating the Earth's greenhouse effect.\n2.  **The Terrestrial Biosphere:** This includes all living organisms on land (plants and animals) and the organic matter stored in soils. Plants act as a significant temporary reservoir by storing carbon in their tissues.\n3.  **The Oceans (Hydrosphere):** The ocean is a massive reservoir that holds much more carbon than the atmosphere. Carbon is stored as dissolved $\\text{CO}_2$, carbonates, and within the shells of marine organisms.\n4.  **The Lithosphere (Geosphere):** This is the largest long-term reservoir. Carbon is stored here in sedimentary rocks (such as limestone), fossil fuel deposits (coal, oil, and gas), and within the Earth's mantle.\n\n### Major Flux Pathways\nFluxes are the processes that move carbon from one reservoir to another. Four major pathways include:\n\n1.  **Photosynthesis:** This pathway moves carbon from the **Atmosphere to the Biosphere**. Terrestrial plants and phytoplankton absorb $\\text{CO}_2$ from the air or water to create glucose, effectively \"fixing\" inorganic carbon into organic matter.\n2.  **Cellular Respiration:** This pathway moves carbon from the **Biosphere back to the Atmosphere**. Both plants and animals break down organic molecules for energy, releasing $\\text{CO}_2$ as a metabolic byproduct.\n3.  **Air-Sea Gas Exchange (Diffusion):** This is a bidirectional pathway between the **Atmosphere and the Oceans**. $\\text{CO}_2$ dissolves directly into surface waters from the air, and conversely, the ocean can release $\\text{CO}_2$ back into the atmosphere depending on temperature and concentration gradients.\n4.  **Combustion:** This pathway moves carbon from the **Biosphere or Lithosphere to the Atmosphere**. When organic matter (like wood) or fossil fuels (like coal) are burned, the stored carbon reacts with oxygen to rapidly release $\\text{CO}_2$ into the atmosphere.\n\n---\n\n### Human Disruptions to the Carbon Cycle\nHuman activities have significantly altered the balance of the carbon cycle by accelerating the flux of carbon from long-term storage into the atmosphere.\n\n1.  **Fossil Fuel Combustion:** \n    The extraction and burning of coal, oil, and natural gas for electricity, manufacturing, and tr"
+        }
+      ],
+      "psychology": [
+        {
+          "id": "psych_1_biases",
+          "response": ""
+        },
+        {
+          "id": "psych_2_morale",
+          "response": ""
+        },
+        {
+          "id": "psych_3_memory",
+          "response": "The divergence in these accounts can be explained by several well-documented psychological phenomena regarding how human memory is encoded, stored, and retrieved.\n\n### 1. Witness B: Self-Serving Bias and Memory Decay\nWitness B\u2019s account is likely the most distorted due to two primary factors:\n\n*   **Self-Serving Bias (and Motivated Reasoning):** As the driver involved in the accident, Witness B has a significant personal stake in the outcome. To avoid legal liability or personal guilt, their brain may subconsciously alter the memory to align with a narrative of innocence (e.g., \"I was going the speed limit\"). This is a form of **motivated reasoning**, where the individual subconsciously distorts information to reach a preferred conclusion.\n*   **Memory Decay (Transience):** Witness B was interviewed three days later, whereas the others were interviewed within an hour. According to **Decay Theory**, memories fade over time as traces of the original event weaken. The longer the delay, the more susceptible the memory is to being overwritten by new thoughts or simple forgetting.\n\n### 2. Witness C: The Misinformation Effect and Source Monitoring Error\nWitness C\u2019s account is unreliable because their original memory was \"contaminated\" by external input:\n\n*   **The Misinformation Effect:** This occurs when a person's recall of an event becomes less accurate because of post-event information. By watching a news report before the interview, Witness C was exposed to new, potentially inaccurate details. This new information integrated with their original memory, leading to the \"blue-green\" hybrid description.\n*   **Source Monitoring Error:** Witness C is likely experiencing a failure in source monitoring\u2014the ability to remember *where* a specific piece of information came from. They can no longer distinguish between what they personally witnessed with their own eyes and what they saw on the news screen, resulting in a blended, inaccurate memory.\n\n### 3. Witness A: The \"Clean\" Memory\nWitness A serves as the baseline for the event. While no human memory is perfect, Witness A\u2019s account is the least compromised by the psychological pressures present in the other two accounts.\n\n***\n\n### The Verdict: Who is most reliable?\n**Witness A is the most reliable.**\n\n**Why?**\n1.  **Lack of Bias:** As a bystander, Witness A has no \"motive\" to alter the facts to avoid legal or financial repercussions, unlike Witness B.\n2.  **Minimal Decay:** They were interviewed only one hour after the event, meaning the \"trace\" of the memory was still fresh and had not yet been subjected to significant **transience**.\n3.  **No Post-Event Contamination:** Unlike Witness C, Witness A was not exposed to **post-event information** (the news report) that could trigger the **misinformation effect**. \n\nWhile Witness A may have minor errors in perception (such as misjudging exact speed), their account is the only one that has not been intentionally or unintentionally manipulated by external inform"
+        }
+      ],
+      "tool_use": [
+        {
+          "id": "tool_1_simple",
+          "response": "",
+          "has_tool_name": false
+        },
+        {
+          "id": "tool_2_multi",
+          "response": ""
+        },
+        {
+          "id": "tool_3_chained",
+          "response": "",
+          "has_tool_name": false
+        },
+        {
+          "id": "tool_4_no_tool",
+          "response": "2 + 2 is 4.",
+          "correctly_no_tool": true
+        }
+      ],
+      "instruction_following": [
+        {
+          "id": "inst_1_bullets",
+          "response": "* Improves cardiovascular health and strengthens muscles.\n* Enhances mental well-being by reducing stress and anxiety.\n* Boosts energy levels and promotes better sleep quality.",
+          "passed": true
+        },
+        {
+          "id": "inst_2_json",
+          "response": "```json\n{\n  \"name\": \"Jasper Thorne\",\n  \"age\": 28,\n  \"city\": \"Aetheria\"\n}\n```",
+          "passed": true
+        },
+        {
+          "id": "inst_3_wordcount",
+          "response": "",
+          "passed": false
+        },
+        {
+          "id": "inst_4_forbidden",
+          "response": "",
+          "passed": true
+        },
+        {
+          "id": "inst_5_spanish",
+          "response": "Los tres colores primarios son el rojo, el amarillo y el azul.",
+          "passed": true
+        }
+      ],
+      "factual_accuracy": [
+        {
+          "id": "fact_1",
+          "response": "",
+          "correct": false,
+          "expected": "1948"
+        },
+        {
+          "id": "fact_2",
+          "response": "",
+          "correct": false,
+          "expected": "H2SO4"
+        },
+        {
+          "id": "fact_3",
+          "response": "",
+          "correct": false,
+          "expected": "Gabriel Garcia Marquez"
+        },
+        {
+          "id": "fact_4",
+          "response": "",
+          "correct": false,
+          "expected": "Astana"
+        },
+        {
+          "id": "fact_5",
+          "response": "",
+          "correct": false,
+          "expected": "O(n log n)"
+        },
+        {
+          "id": "fact_6",
+          "response": "46",
+          "correct": true,
+          "expected": "46"
+        }
+      ],
+      "hallucination_resistance": [
+        {
+          "id": "halluc_1",
+          "response": "There has not yet been a 58th President of the United States. \n\nAs of 2024, the United States has only had 46 presidents. The current president, **Joe Biden**, is the 46th president.",
+          "refused": false
+        },
+        {
+          "id": "halluc_2",
+          "response": "",
+          "refused": false
+        },
+        {
+          "id": "halluc_3",
+          "response": "",
+          "refused": false
+        }
+      ],
+      "creativity": [
+        {
+          "id": "creative_1",
+          "response": ""
+        },
+        {
+          "id": "creative_2",
+          "response": "Here are five startup ideas at the intersection of AI and healthcare:\n\n### 1. MediScript AI\n* **One-line pitch:** An ambient clinical intelligence platform that transforms doctor-patient conversations into structured, billing-ready Electronic Health Records (EHR).\n* **Target customer:** Private medical practices and large-scale hospital systems.\n* **Why it's novel:** Unlike standard transcription services, Medi"
+        },
+        {
+          "id": "creative_3",
+          "response": "Imagine you and your friends want to keep track of who owns which rare Pok\u00e9mon cards. Usually, you\u2019d have one friend act as the \"Boss\" and write everything down in a notebook. But what if the Boss loses the notebook? Or what if the Boss secretly changes the names to give themselves your Charizard? \n\n**Blockchain** is a way to keep track of things so that **nobody** can cheat, and **nobody** has to be the boss. \n\nTo understand how it works, let's look at these three magical metaphors:\n\n***\n\n### 1. The Magic Shared Notebook (The \"No Boss\" Part)\nImagine you and 10 friends each have an identical, magical notebook. Every time a Pok\u00e9mon card changes hands, everyone has to write it down in their own notebook at the exact same time. \n\nIf I give you a Pikachu, we all shout, *\"I"
+        }
+      ],
+      "planning": [
+        {
+          "id": "plan_1",
+          "response": "This plan outlines a high-impact, mid-sized tech conference titled **\"NexusStream 202-X.\"** To maintain a $50,000 budget for 200 attendees, the strategy focuses on \"smart spending\"\u2014prioritizing high-quality content and food over luxury decor and expensive celebrity speakers.\n\n---\n\n# Conference Overview: NexusStream 202-X\n**Theme:** The Future of Scalable Infrastructure  \n**Duration:** 3 Days  \n**Attendees:** 200 (Targeted professionals, developers, and CTOs)  \n**Primary Goal:** Networking and technical skill acquisition.\n\n---\n\n### 1. Venue & Logistics\nTo maximize the budget, the venue will be a **University Innovation Center** or a **Large-Scale Co-working Hub**. These venues provide built-in AV infrastructure and a \"tech-forward\" atmosphere at a fraction of the cost of luxury hotels.\n*   **Requirements:** One main plenary hall for keynotes, two breakout rooms for tracks, and a lounge area for networking.\n*   **Setup:** Modular seating to allow for easy transition between keynote and workshop formats.\n\n### 2. Catering Plan\nFood is the highest-rated factor in attendee satisfaction. We will focus on a \"continuous fuel\" model.\n*   **Daily:** Continental breakfast (pastries, fruit, yogurt), mid-morning coffee/tea service, and a heavy buffet lunch (protein, grain, and veggie options).\n*   **Afternoon:** \"Brain Food\" snack station (nuts, dark chocolate, fruit).\n*   **Day 3 Special:** A \"Networking Mixer\" featuring light appetizers and local craft beverages to celebrate the closing.\n\n### 3. Speakers & Programming\nRather than hiring \"celebrity\" speakers who demand $20k+ fees, we will recruit **Industry Practitioners and Subject Matter Experts (SMEs).**\n*   **Keynotes (2):** High-level experts from notable tech firms. Budget covers travel, lodging, and a modest honorarium.\n*   **Track Speakers (8):** Local or regional experts (DevOps, AI, Security). Budget covers travel and lodging.\n*   **Format:** 45-minute presentations followed by 15-minute interactive Q&A.\n\n### 4. AV & Technical Equipment\nThe backbone of a tech conference. \n*   **Core Setup:** High-lumen projectors, wireless lapel microphones, and a reliable sound system.\n*   **Connectivity:** Dedicated high-speed Wi-Fi bandwidth (essential for live coding/demos).\n*   **Support:** One on-site AV technician to manage transitions and troubleshoot connectivity.\n*   **Recording:** Basic single-camera setup to record sessions for post-event distribution.\n\n### 5. Marketing & Swag\n*   **Digital Marketing:** Focused LinkedIn and X (Twitter) ad campaigns, targeted email marketing to developer communities, and a dedicated conference microsite.\n*   **Swag:** High-utility, low-waste items. Reusable branded water bottles, high-quality laptop stickers, and embroidered tech pouches (avoiding cheap plastic trinkets).\n\n### 6. Staffing & Operations\n*   **Core Team:** 1 Event Manager, 1 Program Coordinator.\n*   **On-site Staff:** 4 Student/Junior Volunteers (handling registration, directional help, and room monitoring).\n*   **Security:** 1 Professional security guard for the venue perimeter/equipment.\n\n### 7. Contingency\nA 5% reserve is set aside to handle sudden price fluctuations in catering, last-minute speaker travel changes, or emergency hardware replacements.\n\n---\n\n# Budget Breakdown\n\n| Category | Itemized Description | Allocated Cost |\n| :--- | :--- | :--- |\n| **Venue** | 3-Day Rental (Main Hall + 2 Breakouts) | $8,500 |\n| **Catering"
+        },
+        {
+          "id": "plan_2_critical_path",
+          "response": "To find the critical path and the total project duration, we must identify all possible paths through the network and calculate the sum of the durations for each.\n\n### 1. Identify All Possible Paths\nWe trace every sequence of tasks from start to finish based on the dependencies provided:\n\n*   **Path 1:** A $\\rightarrow$ C $\\rightarrow$ F $\\rightarrow$ G $\\rightarrow$ H\n*   **Path 2:** A $\\rightarrow$ D $\\rightarrow$ E $\\rightarrow$ G $\\rightarrow$ H\n*   **Path 3:** B $\\rightarrow$ E $\\rightarrow$ G $\\rightarrow$ H\n\n### 2. Calculate the Duration of Each Path\nWe sum the days required for each task in every identified path:\n\n*   **Path 1:** 3 (A) + 4 (C) + 3 (F) + 2 (G) + 1 (H) = **13 days**\n*   **Path 2:** 3 (A) + 3 (D) + 2 (E) + 2 (G) + 1 (H) = **11 days**\n*   **Path 3:** 2 (B) + 2 (E) + 2 (G) + 1 (H) = **7 days**\n\n### 3. Determine the Critical Path\nThe **critical path** is the longest path through the project. This path determines the minimum amount of time required to complete the entire project; any delay in these tasks will delay the project completion date.\n\n*   **Longest Duration:** 13 days\n*   **Critical Path:** A $\\rightarrow$ C $\\rightarrow$ F $\\rightarrow$ G $\\rightarrow$ H\n\n***\n\n**Final Result:**\n*   **Critical Path:** A-C-F-G-H\n*   **Total Project Duration:** 13 days",
+          "expected_days": 13,
+          "found_days": true,
+          "expected_path": [
+            "A",
+            "C",
+            "F",
+            "G",
+            "H"
+          ]
+        },
+        {
+          "id": "plan_3_debug",
+          "response": "### Root Cause Analysis\n\n**Root Cause:** The database service is not running or is unreachable within the CI environment during the test step.\n\n**Reasoning:**\n*   **Log 1** is a warning regarding a version change; while it should be addressed, it is not causing the failure.\n*   **Log 2** explicitly identifies a network/service failure (`Connection refused`).\n*   **Log 3** confirms that the vast majority of test failures (22 out of 23) are directly tied to `DatabaseConnectionError`, proving the issue is infrastructural rather than a regression in the application code.\n*   **Log 4** is simply the standard pipeline behavior (a safety mechanism) reacting to the test failures.\n\n---\n\n### Proposed Fix Sequence\n\nYou should address the issue from the most immediate blocker to long-term maintenance.\n\n#### 1. Immediate Fix: Verify Service Availability (Infrastructure)\nThe primary goal is to ensure the database container/service is healthy and reachable.\n*   **Check Service Startup:** Inspect the logs of the database container (e.g., `docker logs <container_id>`) to see if the database crashed during initialization.\n*   **Check Network Configuration:** Ensure the test step is looking at the correct hostname. If using Docker Compose, the test runner should connect to the service name (e.g., `db:5432`) rather than `localhost:5432`.\n*   **Check Dependency Order:** Ensure the database migration/setup step is successfully completed *before* the test step begins.\n\n#### 2. Verification: Validate the Test Environment\nOnce the service is confirmed running, verify the connection string.\n*   **Environment Variables:** Check the CI configuration (e.g., `.gitlab-ci.yml`, `GitHub Actions yaml`) to ensure the `DATABASE_URL` or equivalent variable is correctly passed to the test step.\n*   **Port Mapping:** If running in a containerized environment, ensure the ports are correctly mapped or that the test runner is on the same network as the database.\n\n#### 3. Maintenance: Address the Node.js Warning\nOnce the pipeline turns \"Green,\" clean up the logs to prevent future \"works on my machine\" discrepancies.\n*   **Update Environment:** Update your CI configuration (e.g., `.nvmrc` or `package.json` engines field) to explicitly use Node 20. This ensures the development environment and the CI environment are perfectly aligned, preventing unexpected behavior caused by the version jump."
+        }
+      ]
+    }
+  }
+}

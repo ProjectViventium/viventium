@@ -200,6 +200,7 @@ CURATED_ADDED_ENDPOINTS = [
     "openAI",
     "anthropic",
     "google",
+    "mlx",
     "groq",
     "xai",
     "perplexity",
@@ -237,6 +238,20 @@ CURATED_CUSTOM_ENDPOINTS = [
         "titleModel": "sonar",
         "summaryModel": "sonar",
         "modelDisplayLabel": "Perplexity",
+        "dropParams": ["stop", "frequency_penalty"],
+        "forcePrompt": False,
+    },
+    {
+        "name": "mlx",
+        "apiKeyEnv": "MLX_API_KEY",
+        "baseURL": "http://host.docker.internal:8484/v1",
+        "models": [
+            "mlx-community/gemma-4-26b-a4b-it-4bit",
+        ],
+        "titleModel": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "summaryModel": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "modelDisplayLabel": "Gemma 4 26B (MLX)",
+        "fetch": True,
         "dropParams": ["stop", "frequency_penalty"],
         "forcePrompt": False,
     },
@@ -977,6 +992,7 @@ def ensure_user_provided_endpoint_surfaces(env: dict[str, str]) -> None:
     env.setdefault("ANTHROPIC_API_KEY", "user_provided")
     env.setdefault("GOOGLE_KEY", env.get("GOOGLE_API_KEY", "user_provided"))
     env.setdefault("GOOGLE_API_KEY", env.get("GOOGLE_KEY", "user_provided"))
+    env.setdefault("MLX_API_KEY", "mlx-local")
     env.setdefault("XAI_API_KEY", "user_provided")
     env.setdefault("OPENROUTER_API_KEY", "user_provided")
     env.setdefault("PERPLEXITY_API_KEY", "user_provided")
@@ -990,13 +1006,22 @@ def build_model_specs(_default_main_agent_id: str) -> dict[str, Any]:
     }
 
 
-def build_custom_endpoints() -> list[dict[str, Any]]:
+def resolve_custom_endpoint_base_url(definition: dict[str, Any], config: dict[str, Any]) -> str:
+    if definition.get("name") != "mlx":
+        return str(definition["baseURL"])
+
+    install_mode = str(((config.get("install") or {}).get("mode") or "native")).strip().lower()
+    host = "host.docker.internal" if install_mode == "docker" else "localhost"
+    return f"http://{host}:8484/v1"
+
+
+def build_custom_endpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
     endpoints: list[dict[str, Any]] = []
     for definition in CURATED_CUSTOM_ENDPOINTS:
         payload = {
             "name": definition["name"],
             "apiKey": f"${{{definition['apiKeyEnv']}}}",
-            "baseURL": definition["baseURL"],
+            "baseURL": resolve_custom_endpoint_base_url(definition, config),
             "models": {
                 "default": definition["models"],
                 "fetch": definition.get("fetch", False),
@@ -1827,7 +1852,7 @@ def render_librechat_yaml(
                 "recursionLimit": DEFAULT_AGENT_RECURSION_LIMIT,
                 "maxRecursionLimit": DEFAULT_AGENT_RECURSION_LIMIT,
             },
-            "custom": build_custom_endpoints(),
+            "custom": build_custom_endpoints(config),
         },
     }
     source_template = load_source_of_truth_librechat_yaml()

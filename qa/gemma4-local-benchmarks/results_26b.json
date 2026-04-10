@@ -1,0 +1,202 @@
+{
+  "coding": [
+    {
+      "id": "code_1",
+      "score": 1.0,
+      "len": 235,
+      "response": "```python\ndef custom_fizzbuzz(n, divisors):\n    result = []\n    for i in range(1, n + 1):\n        output = \"\".join(word for d, word in divisors.items() if i % d == 0)\n        result.append(output if output else i)\n    return result\n```"
+    },
+    {
+      "id": "code_2",
+      "score": 1.0,
+      "len": 1193,
+      "response": "```python\nclass TrieNode:\n    def __init__(self):\n        self.children = {}\n        self.is_end_of_word = False\n\nclass Trie:\n    def __init__(self):\n        self.root = TrieNode()\n\n    def insert(self, word: str) -> None:\n        \"\"\"Inserts a word into the trie.\"\"\"\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                node.children[char] = TrieNode()\n            node = node.children[char]\n        node.is_end_of_word = True\n\n    def search(self, word: str) -> bool:\n        \"\"\"Returns True if the word is in the trie.\"\"\"\n        node = self._find_node(word)\n        return node is not None and node.is_end_of_word\n\n    def starts_with(self, prefix: str) -> bool:\n        \"\"\"Returns True if there is any word in the trie that starts with the given prefix.\"\"\"\n        return self._find_node(prefix) is not None\n\n    def _find_node(self, string: str) -> TrieNode:\n        \"\"\"Helper method to navigate to the node representing the end of the string.\"\"\"\n        node = self.root\n        for char in string:\n            if char not in node.children:\n                return None\n            node = node.children[char]\n        return node\n```"
+    },
+    {
+      "id": "code_3",
+      "score": 1.0,
+      "len": 309,
+      "response": "```python\ndef flatten_json(obj, prefix=''):\n    items = {}\n    for key, value in obj.items():\n        new_key = f\"{prefix}.{key}\" if prefix else key\n        if isinstance(value, dict):\n            items.update(flatten_json(value, new_key))\n        else:\n            items[new_key] = value\n    return items\n```"
+    },
+    {
+      "id": "code_4",
+      "score": 1.0,
+      "len": 653,
+      "response": "```python\ndef search_rotated(nums, target):\n    left, right = 0, len(nums) - 1\n\n    while left <= right:\n        mid = (left + right) // 2\n\n        if nums[mid] == target:\n            return mid\n\n        # Identify which half is sorted\n        # Left half [left...mid] is sorted\n        if nums[left] <= nums[mid]:\n            if nums[left] <= target < nums[mid]:\n                right = mid - 1\n            else:\n                left = mid + 1\n        # Right half [mid...right] is sorted\n        else:\n            if nums[mid] < target <= nums[right]:\n                left = mid + 1\n            else:\n                right = mid - 1\n\n    return -1\n```"
+    },
+    {
+      "id": "code_5",
+      "score": 1.0,
+      "len": 1234,
+      "response": "```python\nclass Node:\n    def __init__(self, key=0, val=0):\n        self.key = key\n        self.val = val\n        self.prev = None\n        self.next = None\n\nclass LRUCache:\n    def __init__(self, capacity: int):\n        self.capacity = capacity\n        self.cache = {}  # Maps key -> Node\n        # Dummy nodes to avoid null checks for head/tail\n        self.head = Node()\n        self.tail = Node()\n        self.head.next = self.tail\n        self.tail.prev = self.head\n\n    def _remove(self, node: Node):\n        \"\"\"Removes a node from the doubly linked list.\"\"\"\n        prev_node = node.prev\n        next_node = node.next\n        prev_node.next = next_node\n        next_node.prev = prev_node\n\n    def _add_to_front(self, node: Node):\n        \"\"\"Adds a node right after the dummy head (Most Recently Used).\"\"\"\n        first_node = self.head.next\n        self.head.next = node\n        node.prev = self.head\n        node.next = first_node\n        first_node.prev = node\n\n    def get(self, key: int) -> int:\n        if key in self.cache:\n            node = self.cache[key]\n            self._remove(node)\n            self._add_to_front(node)\n            return node.val\n        return -1\n\n    def put(self, key: int, value: int) -> None:"
+    }
+  ],
+  "bugs": [
+    {
+      "id": "bug_1",
+      "score": 1.0,
+      "len": 2204,
+      "response": "The bug in your code is the line **`left = mid`**. This creates an **infinite loop** in certain scenarios.\n\n### The Bug: Why it happens\nWhen `left` and `right` become adjacent (e.g., `left = 0` and `right = 1`), the calculation `mid = (0 + 1) // 2` results in `mid = 0`. \n\nIf `arr[0] < target`, the instruction `left = mid` sets `left` to `0` again. The values of `left` and `right` never change, the loop condition `left < right` remains true forever, and your program hangs.\n\n### The Fix\nYou must increment `left` to `mid + 1`. Since you have already checked `arr[mid]` and confirmed it is less than the target, you know the target cannot be at index `mid`.\n\nHere is the corrected code for a standard binary search (to find if an element exists):\n\n```python\ndef binary_search(arr, target):\n    left, right = 0, len(arr) - 1  # Use len(arr) - 1 for inclusive bounds\n    \n    while left <= right:          # Use <= to ensure the last element is checked\n        mid = (left + right) // 2\n        \n        if arr[mid] == target:\n            return mid           # Found the target!\n        elif arr[mid] < target:\n            left = mid + 1       # Move past the mid element\n        else:\n            right = mid - 1      # Move left of the mid element\n            \n    return -1                        # Target not found\n```\n\n### Summary of Changes\n1.  **`left = mid + 1`**: This prevents the infinite loop and ensures progress is made through the array.\n2.  **`right = mid - 1`**: When the target is smaller than `mid`, you move the right boundary inward.\n3.  **`while left <= right`**: If you use `right = len(arr) - 1`, you need `<=` to ensure the case where the target is the very last element is evaluated.\n4.  **Added `arr[mid] == target`**: A binary search needs a way to exit successfully once the value is located.\n\n### If you were trying to implement `bisect_right` (Finding insertion point)\nIf your goal was not to find the element, but to find the **index where the element should be inser"
+    },
+    {
+      "id": "bug_2",
+      "score": 1.0,
+      "len": 2701,
+      "response": "The problem is that the **Read-Modify-Write** cycle is being interrupted. Because of the `await`, the execution context switches to another task before the first task can finish its update. All 100 tasks read the same initial value (e.g., `0`), and all 100 tasks eventually write `0 + 1 = 1`.\n\nHere are the three best ways to fix this, depending on your requirements.\n\n---\n\n### 1. The Mutex (The Standard Fix)\nIf you **must** keep the `await` (e.g., it represents a database call or a network delay), you need a **Mutex** (Mutual Exclusion). A Mutex ensures that only one task can enter the \"critical section\" at a time.\n\n**Logic:** A task must \"lock\" the counter, perform the work, and \"unlock\" it. Other tasks must wait in line.\n\n**JavaScript (using `async-mutex` pattern):**\n```javascript\nimport { Mutex } from 'async-mutex';\n\nconst mutex = new Mutex();\nlet counter = 0;\n\nasync function incrementTask() {\n    // Acquire the lock before reading\n    const release = await mutex.acquire(); \n    try {\n        let temp = counter;\n        await new Promise(r => setTimeout(r, 10)); // Simulated delay\n        counter = temp + 1;\n    } finally {\n        // Always release the lock in a finally block!\n        release(); \n    }\n}\n```\n\n---\n\n### 2. Atomic Operations (The Efficient Fix)\nIf the `await` is **not** actually necessary for your business logic (i.e., you only added it to simulate a delay), the best fix is to remove the \"Read-Modify-Write\" separation entirely and use an atomic increment.\n\n**Logic:** Perform the update in a single, uninterruptible step.\n\n**JavaScript / Python / C#:**\n```javascript\n// Bad: Read -> Await -> Write (Race condition)\n// Good: Atomic Update\ncounter++; \n```\n*In languages like C++ or Java, you would use `std::atomic` or `AtomicInteger`. In Node.js, `counter++` is synchronous and therefore atomic relative to the event loop.*\n\n---\n\n### 3. Optimistic Concurrency (The \"Retry\" Pattern)\nIf you don't want to use a lock (which can slow down your app by forcing tasks "
+    },
+    {
+      "id": "bug_3",
+      "score": 1.0,
+      "len": 2455,
+      "response": "To fix SQL injection in an f-string query, you must stop using Python string formatting and switch to **Parameterized Queries** (also known as Prepared Statements).\n\nThe core issue is that f-strings treat user input as **code** to be executed, whereas parameterized queries treat user input strictly as **data**.\n\n### 1. The Vulnerable Way (DO NOT DO THIS)\nIn this example, if a user enters `' OR '1'='1`, they can bypass authentication and see all users in the database.\n\n```python\n# DANGEROUS: Vulnerable to SQL Injection\nuser_id = \"1 OR 1=1\" \nquery = f\"SELECT * FROM users WHERE id = {user_id}\"\ncursor.execute(query)\n```\n\n---\n\n### 2. The Secure Way (The Fix)\nYou must pass the query and the data as **two separate arguments** to the `.execute()` method. The database driver will then handle the escaping and sanitization safely.\n\nThe syntax for the placeholder (the `?` or `%s`) depends on which database library you are using.\n\n#### Option A: Using `sqlite3` (Standard Library)\nUse a `?` as the placeholder.\n\n```python\n# SECURE: Using parameterized queries\nuser_id = \"1\"\n# The second argument MUST be a tuple, even if there is only one item\nquery = \"SELECT * FROM users WHERE id = ?\"\ncursor.execute(query, (user_id,)) \n```\n\n#### Option B: Using `psycopg2` (PostgreSQL)\nUse `%s` as the placeholder.\n\n```python\n# SECURE: Using parameterized queries\nuser_name = \"john_doe\"\nquery = \"SELECT * FROM users WHERE username = %s\"\ncursor.execute(query, (user_name,))\n```\n\n#### Option C: Using `mysql-connector` (MySQL)\nUse `%s` as the placeholder.\n\n```python\n# SECURE: Using parameterized queries\nuser_id = 10\nquery = \"SELECT * FROM users WHERE id = %s\"\ncursor.execute(query, (user_id,))\n```\n\n---\n\n### Summary of Rules\n\n| Feature | **F-Strings / `.format()`** | **Parameterized Queries** |\n| :--- | :--- | :--- |\n| **Input Treatment** | Treated as part of the SQL command. | Treated strictly as a literal value. |\n| **Risk** | **High** (SQL Injection). | **Low** (Secure). |\n| **Complexity** | Simple to wri"
+    }
+  ],
+  "math": [
+    {
+      "id": "math_1",
+      "score": 1.0,
+      "len": 515,
+      "response": "To solve this system of linear equations, we can use the **Elimination Method**.\n\nThe given equations are:\n1) $2x + 3y - z = 1$\n2) $x - y + 2z = 5$\n3) $3x + y + z = 8$\n\n---\n\n### Step 1: Eliminate one variable from two pairs of equations\nLet's eliminate **$y$** first, as the coefficients in equations (2) and (3) make this easy.\n\n**Pair A: Combine (2) and (3)**\n$x - y + 2z = 5$\n$3x + y + z = 8$\nAdding them together:\n$(x + 3x) + (-y + y) + (2z + z) = 5 + 8$\n**$4x + 3z = 13$**  \u2014 (Equation 4)\n\n**Pair B: Combine (1"
+    },
+    {
+      "id": "math_2",
+      "score": 0.0,
+      "len": 666,
+      "response": "To find the final value, we calculate the compound interest in two stages.\n\n### Step 1: First 3 years at 5%\nThe formula for compound interest is: $A = P(1 + r)^n$\n*   **P** (Principal) = $10,000\n*   **r** (Rate) = 0.05\n*   **n** (Years) = 3\n\nCalculation:\n$10,000 \\times (1.05)^3$\n$10,000 \\times 1.157625 = \\mathbf{\\$11,576.25}$\n\n---\n\n### Step 2: Next 2 years at 8%\nNow, the new principal is $11,576.25.\n*   **P** (New Principal) = $11,576.25\n*   **r** (Rate) = 0.08\n*   **n** (Years) = 2\n\nCalculation:\n$11,576.25 \\times (1.08)^2$\n$11,576.25 \\times 1.1664 = \\mathbf{\\$13,502.538}$\n\n---\n\n### Final Value:\nRounded to the nearest cent, the final value is:\n**$13,502.54**"
+    },
+    {
+      "id": "math_3",
+      "score": 1.0,
+      "len": 2195,
+      "response": "There are several ways to prove this property. I will provide the three most common methods: **Algebraic (Arithmetic Progression)**, **Mathematical Induction**, and **Geometric (Visual)**.\n\n---\n\n### Method 1: Algebraic Proof (Arithmetic Progression)\nThe sequence of odd numbers is an Arithmetic Progression (AP) where the first term is $1$ and the common difference is $2$.\n\n**1. Identify the terms:**\n*   First term ($a_1$) = $1$\n*   Common difference ($d$) = $2$\n*   Number of terms = $n$\n\n**2. Find the $n$-th term ($a_n$):**\nThe formula for the $n$-th term of an AP is:\n$$a_n = a_1 + (n - 1)d$$\n$$a_n = 1 + (n - 1)2$$\n$$a_n = 1 + 2n - 2 = 2n - 1$$\n\n**3. Use the sum formula for an AP:**\nThe sum $S_n$ of the first $n$ terms of an AP is given by:\n$$S_n = \\frac{n}{2}(a_1 + a_n)$$\n\n**4. Substitute the values:**\n$$S_n = \\frac{n}{2}(1 + (2n - 1))$$\n$$S_n = \\frac{n}{2}(2n)$$\n$$S_n = n^2$$\n\n**Conclusion:** The sum of the first $n$ odd numbers is $n^2$.\n\n---\n\n### Method 2: Proof by Mathematical Induction\nMathematical induction proves a statement is true for all natural numbers $n$.\n\n**Step 1: Base Case**\nLet $n = 1$.\nThe first odd number is $1$.\nThe formula gives $1^2 = 1$.\nThe base case holds ($1 = 1$).\n\n**Step 2: Inductive Hypothesis**\nAssume the statement is true for some integer $k$:\n$$1 + 3 + 5 + \\dots + (2k - 1) = k^2$$\n\n**Step 3: Inductive Step**\nWe must prove that the statement holds for $n = k + 1$. We want to show that:\n$$1 + 3 + 5 + \\dots + (2k - 1) + (2(k+1) - 1) = (k + 1)^2$$\n\nStarting with our hypothesis:\n$$(1 + 3 + 5 + \\dots + (2k - 1)) + (2k + 2 - 1)$$\nSubstitute $k^2$ for the sum of the first $k$ terms:\n$$k^2 + (2k + 1)$$\nRearrange the expression:\n$$k^2 + 2k + 1$$\nRecognize the quadratic pattern (Perfect Square Trinomial):\n$$(k + 1)^2$$\n\n**Conclusion:** Since the base case is true and the inductive step holds, the statement is true for all $n \\geq 1$.\n\n---\n\n### Method 3: Geometric Proof (Visual)\nThis is the most intuitive way to understand the proof. Imagine buil"
+    },
+    {
+      "id": "math_4",
+      "score": 0.0,
+      "len": 0,
+      "response": ""
+    },
+    {
+      "id": "math_5",
+      "score": 0.0,
+      "len": 1551,
+      "response": "To find the probability of having the disease given a positive test result ($P(\\text{Disease}|\\text{Positive})$), we use **Bayes' Theorem**.\n\n### 1. Identify the Variables\n*   **Prevalence $P(D)$:** $1\\% = 0.01$\n*   **Probability of no disease $P(\\neg D)$:** $1 - 0.01 = 0.99$\n*   **Sensitivity $P(+|D)$:** $95\\% = 0.95$\n*   **Specificity $P(-|\\neg D)$:** $90\\% = 0.90$\n*   **False Positive Rate $P(+|\\neg D)$:** $1 - \\text{Specificity} = 1 - 0.90 = 0.10$\n\n### 2. The Formula\nBayes' Theorem for this scenario is:\n$$P(D|+) = \\frac{P(+|D) \\cdot P(D)}{P(+)}$$\n\nWhere $P(+)$ (the total probability of testing positive) is:\n$$P(+) = [P(+|D) \\cdot P(D)] + [P(+|\\neg D) \\cdot P(\\neg D)]$$\n\n### 3. Step-by-Step Calculation\n\n**Step A: Calculate True Positives (Numerator)**\n$$\\text{Sensitivity} \\times \\text{Prevalence} = 0.95 \\times 0.01 = \\mathbf{0.0095}$$\n\n**Step B: Calculate False Positives**\n$$\\text{False Positive Rate} \\times \\text{Probability of No Disease} = 0.10 \\times 0.99 = \\mathbf{0.099}$$\n\n**Step C: Calculate Total Positives (Denominator)**\n$$0.0095 + 0.099 = \\mathbf{0.1085}$$\n\n**Step D: Final Division**\n$$P(D|+) = \\frac{0.0095}{0.1085} \\approx 0.087557...$$\n\n### Final Answer:\nThe probability of having the disease given a positive test is approximately **8.76%**.\n\n***\n\n**Intuition Check:** Even though the test is very \"accurate\" (95% sensitivity), because the disease is so rare (1%), the number of false positives from the healthy 99% of the population significantly outweighs the number of true positives from the 1% of the population."
+    }
+  ],
+  "factual": [
+    {
+      "id": "fact_1",
+      "score": 1.0,
+      "len": 4,
+      "response": "1948"
+    },
+    {
+      "id": "fact_2",
+      "score": 0.0,
+      "len": 5,
+      "response": "H\u2082SO\u2084"
+    },
+    {
+      "id": "fact_3",
+      "score": 1.0,
+      "len": 22,
+      "response": "Gabriel Garc\u00eda M\u00e1rquez"
+    },
+    {
+      "id": "fact_4",
+      "score": 1.0,
+      "len": 6,
+      "response": "Astana"
+    },
+    {
+      "id": "fact_5",
+      "score": 0.0,
+      "len": 13,
+      "response": "$O(n \\log n)$"
+    },
+    {
+      "id": "fact_6",
+      "score": 1.0,
+      "len": 2,
+      "response": "46"
+    }
+  ],
+  "halluc": [
+    {
+      "id": "h_1",
+      "score": 1.0,
+      "len": 228,
+      "response": "There has not yet been a 58th President of the United States.\n\nAs of 2024, the current President, **Joe Biden**, is the **46th** President. Because the United States has only had 46 presidencies, a 58th president does not exist."
+    },
+    {
+      "id": "h_2",
+      "score": 1.0,
+      "len": 1975,
+      "response": "It appears that the paper **\"Quantum Entanglement in Avocado Growth\" by Dr. Smith, published in *Nature* (2024), does not exist in the scientific record.**\n\nThere is no such study documented in the journal *Nature* or any other major scientific database. Based on the title provided, it is likely one of the following:\n\n1.  **A Fictional or \"Hallucinated\" Prompt:** This may be a test to see if an AI will invent a summary for a non-existent paper.\n2.  **Scientific Satire:** It sounds like the type of title used in scientific parody (such as the *Journal of Irreproducible Results*) to mock the \"buzzword\" nature of quantum physics.\n3.  **A Misunderstanding of Quantum Biology:** You may be thinking of real research into **Quantum Biology**, which is a legitimate field.\n\n### For context: What is actually scientifically possible?\nWhile \"entanglement in avocado growth\" is not a real scientific concept, there is real science that links these two areas:\n\n*   **Quantum Biology:** Scientists *do* study quantum effects in biological systems. For example, there is significant research into how **quantum coherence** helps plants perform **photosynthesis** more efficiently by allowing energy to \"test\" multiple pathways simultaneously to find the most efficient route to the reaction center.\n*   **The Problem of Decoherence:** The reason \"entanglement\" is unlikely to be found in something as large and warm as an avocado is a phenomenon called **decoherence**. Quantum entanglement is incredibly fragile; as soon as a particle interacts with its environment (like heat, moisture, or light in a fruit), the entanglement breaks. Maintaining entanglement in a macroscopic, biological object like a growing fruit is currently considered physically impossible by our understanding of physics.\n\n**If you are referring to a specific piece of science fiction, a satirical article, or if you have a different title in mind, please let me know and I would be happy to discuss it!**"
+    },
+    {
+      "id": "h_3",
+      "score": 1.0,
+      "len": 1240,
+      "response": "There is no record of a real-world city named **Xanthoria** in any current or historical census data. \n\nIt is likely that the name refers to one of the following:\n\n**1. A Fictional Location**\n\"Xanthoria\" is a name frequently used in science fiction, fantasy literature, and tabletop gaming (such as *Star Trek* or various RPG settings). If you are referring to a city from a specific book, movie, or game, please specify the franchise, and I can look for lore-based population details.\n\n**2. A Misspelling of Xanthi, Greece**\nIf you meant **Xanthi**, a well-known city in northern Greece, here are the approximate figures:\n*   **City Population:** The municipality of Xanthi has a population of approximately **40,000 to 45,000** people.\n*   **Census Context:** Recent Greek census data shows a slight decline in population in many regional Greek cities due to urbanization and migration.\n\n**3. Biological Reference**\nIn biology, ***Xanthoria*** is a well-known genus of lichen (often called \"sunburst lichen\"). It is a living organism, not a geographic location, so it does not have a human population.\n\n**If you intended to ask about a different city, please check the spelling and I will be happy to provide the correct census figures.**"
+    }
+  ],
+  "instruct": [
+    {
+      "id": "i_1",
+      "score": 1.0,
+      "len": 149,
+      "response": "- Improves cardiovascular health and strengthens muscles.\n- Reduces stress and enhances overall mood.\n- Boosts cognitive function and mental clarity."
+    },
+    {
+      "id": "i_2",
+      "score": 1.0,
+      "len": 51,
+      "response": "{\"name\": \"John Doe\", \"age\": 30, \"city\": \"New York\"}"
+    },
+    {
+      "id": "i_3",
+      "score": 0.0,
+      "len": 0,
+      "response": ""
+    },
+    {
+      "id": "i_4",
+      "score": 1.0,
+      "len": 818,
+      "response": "Think of this technology as software that learns from experience rather than just following a fixed list of instructions.\n\nIn traditional computing, a human writes a strict set of rules for a machine to follow: *\"If X happens, then do Y.\"* However, this advanced form of computing works differently. Instead of being told exactly what to do, the system is fed massive amounts of data. It analyzes this information to find hidden patterns, much like a human brain does when learning to recognize a face or understand a language.\n\nBy recognizing these patterns, the system can make predictions, solve complex problems, and perform tasks that previously required human thought\u2014such as translating speech, recognizing objects in a photo, or navigating a vehicle\u2014all through mathematical algorithms and computational power."
+    },
+    {
+      "id": "i_5",
+      "score": 1.0,
+      "len": 57,
+      "response": "Los colores primarios son el rojo, el amarillo y el azul."
+    }
+  ],
+  "tools": [
+    {
+      "id": "t_1",
+      "score": 1.0,
+      "len": 81,
+      "response": "```json\n{\n  \"name\": \"get_weather\",\n  \"arguments\": {\n    \"city\": \"Tokyo\"\n  }\n}\n```"
+    },
+    {
+      "id": "t_2",
+      "score": 1.0,
+      "len": 397,
+      "response": "```json\n[\n  {\n    \"create_event\": {\n      \"title\": \"Project Sync\",\n      \"date\": \"tomorrow\",\n      \"time\": \"15:00\",\n      \"attendees\": [\n        \"Alice\"\n      ]\n    }\n  },\n  {\n    \"send_email\": {\n      \"to\": \"Alice\",\n      \"subject\": \"Meeting Invitation: Project Sync\",\n      \"body\": \"Hi Alice, I've scheduled a Project Sync meeting for tomorrow at 3:00 PM. Looking forward to it!\"\n    }\n  }\n]\n```"
+    },
+    {
+      "id": "t_3",
+      "score": 1.0,
+      "len": 97,
+      "response": "```json\n{\n  \"action\": \"web_search\",\n  \"action_input\": \"best python tutorials for beginners\"\n}\n```"
+    },
+    {
+      "id": "t_4",
+      "score": 1.0,
+      "len": 9,
+      "response": "2 + 2 = 4"
+    }
+  ]
+}

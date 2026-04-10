@@ -1,0 +1,206 @@
+{
+  "E2B": {},
+  "E4B": {
+    "coding": [
+      {
+        "id": "code_1",
+        "score": 1.0,
+        "response": "```python\ndef custom_fizzbuzz(n, divisors):\n    \"\"\"\n    Prints a FizzBuzz sequence up to n, using custom divisors.\n\n    Args:\n        n (int): The upper limit (inclusive) for the sequence.\n        divisors (dict): A dictionary where keys are divisors (int) \n                          and values are the corresponding output strings (str).\n    \"\"\"\n    for i in range(1, n + 1):\n        output = \"\"\n        for divisor, word in divisors.items():\n            if i % divisor == 0:\n                output += word\n        \n        if output:\n            print(output)\n        else:\n            print(i)\n```",
+        "len": 600
+      },
+      {
+        "id": "code_2",
+        "score": 1.0,
+        "response": "```python\nclass TrieNode:\n    \"\"\"A node in the Trie structure.\"\"\"\n    def __init__(self):\n        # Dictionary to store children nodes (char -> TrieNode)\n        self.children = {}\n        # Boolean flag to mark the end of a complete word\n        self.is_end_of_word = False\n\nclass Trie:\n    \"\"\"\n    A Trie (Prefix Tree) implementation for efficient storage and retrieval \n    of strings based on prefixes.\n    \"\"\"\n    def __init__(self):\n        # The root node of the Trie\n        self.root = TrieNode()\n\n    def insert(self, word: str) -> None:\n        \"\"\"\n        Inserts a word into the Trie.\n        Time Complexity: O(L), where L is the length of the word.\n        \"\"\"\n        node = self.root\n        for char in word:\n            # If the character is not in the children, create a new node\n            if char not in node.children:\n                node.children[char] = TrieNode()\n            # Move to the child node\n            node = node.children[char]\n        \n        # Mark the final node as the end of a word\n        node.is_end_of_word = True\n\n    def search(self, word: str) -> bool:\n        \"\"\"\n        Checks if a specific word exists in the Trie.\n        Time Complexity: O(L), where L is the length of the word.\n        Returns True if the word exists, False otherwise.\n        \"\"\"\n        node = self.root\n        for char in word:\n            if char not in node.children:\n                return False\n            node = node.children[char]\n        \n        # Must end at a node that was explicitly marked as an end of word\n        return node.is_end_of_word\n\n    def starts_with(self, prefix: str) -> bool:\n        \"\"\"\n        Checks if any word in the Trie starts with the given prefix.\n        Time Complexity: O(L), where L is the length of the prefix.\n        Returns True if the path exists, False otherwise.\n        \"\"\"\n        node = self.root\n        for char in prefix:\n            if char not in node.children:\n                return False\n            node = node",
+        "len": 2982
+      },
+      {
+        "id": "code_3",
+        "score": 1.0,
+        "response": "```python\ndef flatten_json(obj, prefix=''):\n    \"\"\"\n    Flattens a nested dictionary into a single dictionary using dot-notation\n    for keys.\n\n    :param obj: The dictionary to flatten.\n    :param prefix: The prefix to use for the current level of keys.\n    :return: A flattened dictionary.\n    \"\"\"\n    result = {}\n    for key, value in obj.items():\n        new_key = f\"{prefix}.{key}\" if prefix else key\n\n        if isinstance(value, dict):\n            # If the value is a dictionary, recurse and merge the result\n            nested_flat = flatten_json(value, new_key)\n            result.update(nested_flat)\n        else:\n            # Otherwise, it's a base type, so assign the value directly\n            result[new_key] = value\n    return result\n```",
+        "len": 753
+      },
+      {
+        "id": "code_4",
+        "score": 1.0,
+        "response": "```python\ndef search_rotated(nums: list[int], target: int) -> bool:\n    \"\"\"\n    Searches for a target value in a rotated sorted array using modified binary search.\n    Time Complexity: O(log n)\n    Space Complexity: O(1)\n    \"\"\"\n    if not nums:\n        return False\n\n    left, right = 0, len(nums) - 1\n\n    while left <= right:\n        mid = left + (right - left) // 2\n\n        if nums[mid] == target:\n            return True\n\n        # Determine which half is sorted:\n        # Case 1: The left half is sorted (nums[left] <= nums[mid])\n        if nums[left] <= nums[mid]:\n            # Check if the target lies within the sorted left half\n            if nums[left] <= target and target < nums[mid]:\n                # Target is in the left half, discard the right half\n                right = mid - 1\n            else:\n                # Target must be in the unsorted right half\n                left = mid + 1\n        \n        # Case 2: The right half is sorted (nums[left] > nums[mid])\n        else:\n            # Check if the target lies within the sorted right half\n            if nums[mid] < target and target <= nums[right]:\n                # Target is in the right half, discard the left half\n                left = mid + 1\n            else:\n                # Target must be in the unsorted left half\n                right = mid - 1\n\n    return False\n\n# Example Usage (Optional for testing)\n# print(search_rotated([1, 2, 3, 4, 5], 3))  # True (No rotation)\n# print(search_rotated([5, 1, 2, 3, 4], 2))  # True (Rotated right)\n# print(search_rotated([3, 4, 5, 1, 2], 5))  # True (Rotated left)\n# print(search_rotated([1, 2, 3, 4, 5], 6))  # False\n```",
+        "len": 1655
+      },
+      {
+        "id": "code_5",
+        "score": 1.0,
+        "response": "```python\nclass Node:\n    \"\"\"Helper class for the doubly linked list.\"\"\"\n    def __init__(self, key, value):\n        self.key = key\n        self.value = value\n        self.prev = None\n        self.next = None\n\nclass LRUCache:\n    \"\"\"\n    Implements a Least Recently Used Cache using a combination of a Hash Map \n    and a Doubly Linked List to ensure O(1) time complexity for get and put operations.\n    \"\"\"\n    def __init__(self, capacity: int):\n        self.capacity = capacity\n        self.cache = {}  # Maps key to Node\n        \n        # Dummy head and tail nodes to simplify list operations\n        # The head.next is MRU (Most Recently Used)\n        # The tail.prev is LRU (Least Recently Used)\n        self.head = Node(0, 0)\n        self.tail = Node(0, 0)\n        self.head.next = self.tail\n        self.tail.prev = self.head\n\n    # --- Private Helper Methods for Linked List Manipulation ---\n\n    def _remove_node(self, node: Node):\n        \"\"\"Removes a given node from the linked list.\"\"\"\n        p = node.prev\n        n = node.next\n        \n        p.next = n\n        n.prev = p\n\n    def _add_to_head(self, node: Node):\n        \"\"\"Adds a node right after the head (marking it as MRU).\"\"\"\n        node.next = self.head.next\n        node.prev = self.head\n        \n        self.head.next.prev = node\n        self.head.next = node\n\n    # --- Public Interface Methods ---\n\n    def get(self, key: int) -> int:\n        \"\"\"\n        Retrieves the value for a key. If found, moves the node to the head (MRU).\n        Returns -1 if the key does not exist.\n        Time Complexity: O(1)\n        \"\"\"\n        if key not in self.cache:\n            return -1\n        \n        node = self.cache[key]\n        \n        # 1. Update usage (move to head)\n        self._remove_node(node)\n        self._add_to_head(node)\n        \n        # 2. Return value\n        return node.value\n\n    def put(self, key: int, value: int) -> None:\n        \"\"\"\n        Inserts or updates a key-value pair. Handles eviction if capa",
+        "len": 3460
+      }
+    ],
+    "bugs": [
+      {
+        "id": "bug_1",
+        "score": 1.0,
+        "response": "The provided code contains **three bugs**, all related to how the search boundaries (`left` and `right`) are initialized and, more critically, how they are updated inside the loop.\n\nIf these bugs are not fixed, the search will either fail to find the target even if it exists, or, in some cases, enter an infinite loop.\n\n---\n\n### \ud83d\udc1e The Bugs Explained\n\n#### 1. Initialization Bug (Incorrect `right` boundary)\nThe indices of an array of length $N$ run from $0$ to $N-1$.\n\n*   **Original:** `left, right = 0, len(arr)`\n*   **Problem:** If `len(arr)` is 5, the array indices are 0, 1, 2, 3, 4. By setting `right = 5`, the search attempts to check an index that is out of bounds (`arr[5]`).\n*   **Fix:** `right` must be initialized to the last valid index: `right = len(arr) - 1`.\n\n#### 2. Boundary Update Bug (Incorrectly updating `left`)\nWhen the target is larger than `arr[mid]`, we know the target must be in the right half. We must exclude the current `mid` index because we already checked it and determined it was too small.\n\n*   **Original:** `elif arr[mid] < target: left = mid`\n*   **Problem:** Setting `left = mid` means the search range for the next iteration still includes `mid`. This is incorrect because `mid` was shown to be too small. This can lead to an infinite loop if the search space shrinks slowly.\n*   **Fix:** `left` must be updated to one index past `mid`: `left = mid + 1`.\n\n#### 3. Boundary Update Bug (Incorrectly updating `right`)\nWhen the target is smaller than `arr[mid]`, we know the target must be in the left half. We must exclude the current `mid` index because we already checked it and determined it was too large.\n\n*   **Original:** `else: right = mid`\n*   **Problem:** Similar to the issue above, keeping `mid` in the search range (`right = mid`) means we are potentially re-checking an index we already proved was too large.\n*   **Fix:** `right` must be updated to one index before `mid`: `right = mid - 1`.\n\n---\n\n### \u2705 The Corrected Code\n\nFor the binary search t",
+        "len": 2139
+      },
+      {
+        "id": "bug_2",
+        "score": 1.0,
+        "response": "This is a classic and clear example of a **race condition** in asynchronous programming when dealing with shared, mutable state (the global counter).\n\nHere is a detailed breakdown of the problem, the mechanism of the race condition, and why the counter ends up as 1.\n\n---\n\n## 1. The Mechanism of the Race Condition\n\nThe vulnerable sequence of operations is:\n\n1. **Read (Load):** `temp = counter;` (Reads the current value of `counter`)\n2. **Suspend:** `await sleep;` (Yields control, allowing other tasks to run)\n3. **Write (Store):** `counter = temp + 1;` (Writes the calculated new value)\n\nBecause of the `await sleep;` call, the operation is not *atomic*. It can be interrupted between the reading of the value and the writing of the new value.\n\n### The Scenario (The \"Lost Update\")\n\nImagine the global counter starts at $0$.\n\n**Task A** and **Task B** both start simultaneously.\n\n| Time | Task A Action | Task B Action | Global Counter State | Notes |\n| :---: | :--- | :--- | :---: | :--- |\n| $T_1$ | `temp = counter;` (Reads 0) | - | 0 | Task A stores `temp` as 0. |\n| $T_2$ | `await sleep;` (Yields) | - | 0 | Task A pauses. |\n| $T_3$ | - | `temp = counter;` (Reads 0) | 0 | Task B runs. It reads the *same* initial value (0). |\n| $T_4$ | - | `await sleep;` (Yields) | 0 | Task B pauses. |\n| $T_5$ | (Resumes) | - | 0 | Task A wakes up. |\n| $T_6$ | `counter = temp + 1;` (Sets $0+1$) | - | **1** | Task A finishes its update. |\n| $T_7$ | - | (Resumes) | 1 | Task B wakes up. |\n| $T_8$ | - | `counter = temp + 1;` (Sets $0+1$) | **1** | Task B uses its stale `temp` (which is still 0) and overwrites the counter back to 1. |\n\n## 2. Why the Counter Ends Up as 1 (or some small, incorrect number)\n\nThe key takeaway from the scenario above is the **\"Lost Update\"**:\n\n* **Expected Outcome:** If 100 tasks run, and each correctly increments the counter, the final value should be $100$ (assuming the initial counter was 0).\n* **Actual Outcome:** Because all 100 tasks read the initial value of 0, and",
+        "len": 4396
+      },
+      {
+        "id": "bug_3",
+        "score": 1.0,
+        "response": "The vulnerability in the provided code snippet is **SQL Injection (SQLi)**.\n\n### \u26a0\ufe0f Vulnerability Explained\n\nThe code constructs a SQL query string by directly embedding the user-provided variable (`username`) into the query using an f-string:\n\n```python\nquery = f\"SELECT * FROM users WHERE username = '{username}'\";\ncursor.execute(query)\n```\n\nBecause the `username` variable is taken directly from external input and concatenated into the SQL command without proper sanitization or escaping, an attacker can inject malicious SQL code to alter the intended logic of the query.\n\n### \ud83c\udfaf Exploitation Example\n\nAn attacker could set the `username` variable to a malicious string like:\n\n`' OR '1'='1`\n\nWhen this value is inserted into the query, the resulting SQL command executed by the database becomes:\n\n```sql\nSELECT * FROM users WHERE username = '' OR '1'='1'';\n```\n\nSince `'1'='1'` is always true, the `WHERE` clause evaluates to true for every row, causing the query to return **all records** from the `users` table, completely bypassing the intended authentication mechanism and allowing the attacker to potentially view unauthorized data.\n\n### \u2705 How to Fix the Vulnerability (The Solution)\n\nThe secure and standard way to prevent SQL Injection when executing parameterized queries is to **use parameterized queries** (also known as prepared statements).\n\nInstead of building the query string manually, you pass the query structure and the data parameters separately to the database driver's execution method. The database driver handles the necessary escaping and quoting internally, ensuring that the input data is treated *only* as data, and never as executable code.\n\n#### **The Correct Code (Example using Python's `sqlite3` or similar libraries):**\n\n```python\n# Do NOT use f-strings for query construction\n# Pass the query structure and the variables (as a tuple) separately\nquery = \"SELECT * FROM users WHERE username = ?;\" \ncursor.execute(query, (username,)) \n```\n\n*(Note: The exact placeho",
+        "len": 2155
+      }
+    ],
+    "math": [
+      {
+        "id": "math_1",
+        "score": 1.0,
+        "response": "This is a system of three linear equations:\n1) $2x + 3y - z = 1$\n2) $x - y + 2z = 5$\n3) $3x + y + z = 8$\n\nWe will use the method of elimination to solve for $x, y$, and $z$.\n\n### Step 1: Eliminate $y$ using Equations (2) and (3)\n\nAdding Equation (2) and Equation (3) eliminates $y$:\n$$(x - y + 2z) + (3x + y + z) = 5 + 8$$\n$$4x + 3",
+        "len": 331
+      },
+      {
+        "id": "math_2",
+        "score": 0.0,
+        "response": "This is a compound interest problem solved in two stages.\n\n### Stage 1: The first 3 years at 5%\n\nWe use the compound interest formula: $A = P(1 + r)^t$\n\n*   $P$ (Principal) = $\\$10,000$\n*   $r$ (Rate) = $0.05$\n*   $t$ (Time) = $3$ years\n\n$$A_1 = \\$10,000 (1 + 0.05)^3$$\n$$A_1 = \\$10,000 (1.157625)$$\n$$\\mathbf{A_1 = \\$11,576.25}$$\n\nThe value after the first three years is **\\$11,576.25**. This amount becomes the new principal for Stage 2.\n\n### Stage 2: The next 2 years at 8%\n\n*   $P$ (New Principal) = $\\$11,576.25$\n*   $r$ (Rate) = $0.08$\n*   $t$ (Time) = $2$ years\n\n$$A_2 = \\$11,576.25 (1 + 0.08)^2$$\n$$A_2 = \\$11,576.25 (1.1664)$$\n$$\\mathbf{A_2 = \\$13,482.26}$$\n\n***\n\nThe final value after the total 5 years is **\\$13,482.26**.",
+        "len": 733
+      },
+      {
+        "id": "math_3",
+        "score": 1.0,
+        "response": "Here are a few methods to prove that the sum of the first $n$ odd numbers is $n^2$.\n\nThe $k$-th odd number can be represented by the formula $2k - 1$.\nWe want to find the sum: $S_n = 1 + 3 + 5 + \\cdots + (2n - 1)$.\n\n---\n\n## Method 1: Using Arithmetic Series Formula (The Algebraic Approach)\n\nThe sequence of odd numbers $1, 3, 5, \\ldots, (2n - 1)$ is an arithmetic progression (AP) with:\n* First term ($a_1$): $1$\n* Common difference ($d$): $2$\n* Number of terms ($n$): $n$\n* Last term ($a_n$): $2n - 1$\n\nThe sum $S_n$ of an AP is given by the formula:\n$$S_n = \\frac{n}{2}(a_1 + a_n)$$\n\nSubstitute the values:\n$$S_n = \\frac{n}{2}(1 + (2n - 1))$$\n$$S_n = \\frac{n}{2}(2n)$$\n$$S_n = n \\cdot n$$\n$$S_n = n^2$$\n\n---\n\n## Method 2: Using Summation Notation and Properties (The Direct Summation Approach)\n\nWe express the sum using summation notation:\n$$S_n = \\sum_{k=1}^{n} (2k - 1)$$\n\nWe can split the summation using the properties of linearity ($\\sum (a k + b) = a \\sum k + \\sum b$):\n$$S_n = 2 \\sum_{k=1}^{n} k - \\sum_{k=1}^{n} 1$$\n\nWe use the standard formulas for summations:\n1. $\\sum_{k=1}^{n} 1 = n$\n2. $\\sum_{k=1}^{n} k = \\frac{n(n+1)}{2}$\n\nSubstitute these formulas back into the equation for $S_n$:\n$$S_n = 2 \\left[ \\frac{n(n+1)}{2} \\right] - n$$\n$$S_n = n(n+1) - n$$\n$$S_n = n^2 + n - n$$\n$$S_n = n^2$$\n\n---\n\n## Method 3: Proof by Mathematical Induction (The Rigorous Approach)\n\nLet $P(n)$ be the statement that the sum of the first $n$ odd numbers equals $n^2$.\n$$P(n): 1 + 3 + 5 + \\cdots + (2n - 1) = n^2$$\n\n### 1. Base Case ($n=1$)\nWe check if the statement holds for $n=1$.\nLeft Hand Side (LHS): The first odd number is $1$.\nRight Hand Side (RHS): $1^2 = 1$.\nSince LHS = RHS (1 = 1), the base case holds.\n\n### 2. Inductive Hypothesis\nAssume that $P(k)$ is true for some positive integer $k$.\n$$P(k): 1 + 3 + 5 + \\cdots + (2k - 1) = k^2$$\n\n### 3. Inductive Step (Prove $P(k+1)$)\nWe must show that $P(k+1)$ is true; that is, the sum of the first $k+1$ odd numbers is $(k+1)^2$.\n\nStart with the s",
+        "len": 2721
+      },
+      {
+        "id": "math_4",
+        "score": 0.0,
+        "response": "",
+        "len": 0
+      },
+      {
+        "id": "math_5",
+        "score": 0.0,
+        "response": "This is a classic problem requiring the application of **Bayes' Theorem** to find the Positive Predictive Value (PPV), $P(\\text{Disease} | \\text{Positive})$.\n\nThe PPV answers the question: *Given that the test is positive, what is the probability that the person actually has the disease?*\n\n***\n\n### 1. Define the Variables\n\n| Variable | Description | Value |\n| :--- | :--- | :--- |\n| $P(D)$ | **Prevalence** (Prior probability of having the disease) | 0.01 (1%) |\n| $P(D^c)$ | Probability of *not* having the disease | $1 - 0.01 = 0.99$ |\n| $P(+|D)$ | **Sensitivity** (True positive rate) | 0.95 |\n| $P(-|D^c)$ | **Specificity** (True negative rate) | 0.90 |\n| $P(+|D^c)$ | **False Positive Rate** (Type I Error) | $1 - 0.90 = 0.10$ |\n\n### 2. The Goal Formula\n\nWe want to calculate:\n$$P(D \\mid +) = \\frac{P(+ \\mid D) \\cdot P(D)}{P(+)}$$\n\nWhere $P(+)$ is the total probability of testing positive (which is the sum of True Positives and False Positives).\n\n$$P(+) = [P(+ \\mid D) \\cdot P(D)] + [P(+ \\mid D^c) \\cdot P(D^c)]$$\n\n### 3. Calculation Steps\n\n**A. Calculate the Probability of a True Positive (Numerator):**\nThis is the chance of having the disease AND testing positive.\n$$P(\\text{True Positive}) = \\text{Sensitivity} \\times \\text{Prevalence}$$\n$$P(\\text{True Positive}) = 0.95 \\times 0.01 = 0.0095$$\n\n**B. Calculate the Probability of a False Positive:**\nThis is the chance of NOT having the disease AND still testing positive.\n$$P(\\text{False Positive}) = (1 - \\text{Specificity}) \\times (1 - \\text{Prevalence})$$\n$$P(\\text{False Positive}) = 0.10 \\times 0.99 = 0.099$$\n\n**C. Calculate the Total Probability of Testing Positive ($P(+)$):**\n$$P(+) = P(\\text{True Positive}) + P(\\text{False Positive})$$\n$$P(+) = 0.0095 + 0.099 = 0.1085$$\n\n**D. Calculate the Positive Predictive Value (PPV):**\n$$P(D \\mid +) = \\frac{P(\\text{True Positive})}{P(\\text{Total Positive})}$$\n$$P(D \\mid +) = \\frac{0.0095}{0.1085} \\approx 0.0874$$\n\n***\n\n",
+        "len": 1937
+      }
+    ],
+    "factual": [
+      {
+        "id": "fact_1",
+        "score": 1.0,
+        "response": "1948",
+        "len": 4
+      },
+      {
+        "id": "fact_2",
+        "score": 0.0,
+        "response": "H\u2082SO\u2084",
+        "len": 5
+      },
+      {
+        "id": "fact_3",
+        "score": 1.0,
+        "response": "Gabriel Garc\u00eda M\u00e1rquez",
+        "len": 22
+      },
+      {
+        "id": "fact_4",
+        "score": 1.0,
+        "response": "Astana",
+        "len": 6
+      },
+      {
+        "id": "fact_5",
+        "score": 0.0,
+        "response": "$O(N \\log N)$",
+        "len": 13
+      },
+      {
+        "id": "fact_6",
+        "score": 1.0,
+        "response": "46",
+        "len": 2
+      }
+    ],
+    "halluc": [
+      {
+        "id": "halluc_1",
+        "score": 0.0,
+        "response": "There has not yet been a 58th President of the United States.\n\nAs of today, the 46th President of the United States is Joe Biden. The presidential numbering system tracks every individual who has held the office, and the number is significantly lower than 58.",
+        "len": 259
+      },
+      {
+        "id": "halluc_2",
+        "score": 1.0,
+        "response": "I do not have any record of a paper titled \"Quantum Entanglement in Avocado Growth Patterns\" by Dr. Smith, published in Nature in 2024.\n\nIt is possible that:\n1. The paper title or details are slightly incorrect.\n2. The paper is hypothetical or belongs to a source I do not have access to.\n\nIf you can provide more context (such as a DOI, abstract, or specific details about the findings), I would be happy to help you summarize the research!",
+        "len": 441
+      },
+      {
+        "id": "halluc_3",
+        "score": 1.0,
+        "response": "I do not have any information regarding a city named **Xanthoria** in my current database, and therefore I cannot provide you with its latest census population.\n\nIt is possible that:\n\n1. **The city is fictional:** If it is from a book, game, or movie, please specify the source so I can help you find information about it.\n2. **The spelling is incorrect:** Could you please double-check the spelling of the city?\n3. **The city is very small or local:** If it is a real city, please provide the country or region it is located in.\n\nIf you can provide more context, I would be happy to try and find the information for you!",
+        "len": 621
+      }
+    ],
+    "instruct": [
+      {
+        "id": "inst_1",
+        "score": 1.0,
+        "response": "- Improves cardiovascular health by strengthening the heart and lungs.\n- Boosts mental clarity and mood by releasing endorphins, which reduces symptoms of stress and anxiety.\n- Strengthens bones and muscles while aiding in weight management and improving sleep quality.",
+        "len": 269
+      },
+      {
+        "id": "inst_2",
+        "score": 1.0,
+        "response": "```json\n{\n  \"name\": \"Example Name\",\n  \"age\": 30,\n  \"city\": \"Example City\"\n}\n```",
+        "len": 79
+      },
+      {
+        "id": "inst_3",
+        "score": 0.0,
+        "response": "Artificial intelligence is rapidly transforming industries and daily life. Machine learning algorithms process vast datasets, enabling machines to perform tasks once exclusive to human intellect. From complex medical diagnoses to powering self-driving vehicles, AI's scope is expanding exponentially. It drives automation, optimizing efficiency in virtually every sector. However, ethical considerations, bias mitigation, and job displacement remain crucial discussions. AI promises unparalleled progress, demanding careful governance and responsible development worldwide.",
+        "len": 573
+      },
+      {
+        "id": "inst_4",
+        "score": 1.0,
+        "response": "At its heart, thinking about this field is about engineering processes that allow machines to display capabilities traditionally reserved for biological minds.\n\nIt is a discipline focused on building computer systems that can perform tasks requiring high levels of intelligence. These tasks include:\n\n**1. Learning:** Instead of being programmed with explicit rules for every single scenario, these systems are fed vast amounts of data\u2014millions of examples, texts, images, or sounds. They then analyze this data to detect patterns, rules, and correlations on their own. The more data they process, the smarter and more accurate they become, similar to how a child learns through observation and repetition.\n\n**2. Reasoning and Problem-Solving:** When presented with a complex goal (like figuring out the fastest route across a map, or diagnosing a faulty engine), the system doesn't just follow a single checklist. It builds internal models of the problem, evaluates possibilities, and uses logic to determine the most probable solution.\n\n**3. Perception:** These tools allow machines to interpret sensory input. They can \"see\" images by identifying edges, shapes, and objects\u2014telling the difference between a cat and a dog, for example. They can \"hear\" spoken commands and translate those complex sound waves back into written, actionable data.\n\n**In essence:** We are building computational architectures that move beyond simple calculation. We are creating tools that can analyze, adapt, predict, and communicate, effectively simulating a form of sophisticated intellectual function within a machine structure.",
+        "len": 1613
+      },
+      {
+        "id": "inst_5",
+        "score": 1.0,
+        "response": "Los tres colores primarios son el rojo, el azul y el amarillo.",
+        "len": 62
+      }
+    ],
+    "tools": [
+      {
+        "id": "tool_1",
+        "score": 1.0,
+        "response": "{\"name\":\"get_weather\",\"arguments\":{\"city\":\"Tokyo\"}}",
+        "len": 51
+      },
+      {
+        "id": "tool_2",
+        "score": 1.0,
+        "response": "[\n  {\n    \"tool_name\": \"create_event\",\n    \"params\": {\n      \"title\": \"Project Sync\",\n      \"date\": \"tomorrow\",\n      \"time\": \"3pm\",\n      \"attendees\": [\n        \"Alice\"\n      ]\n    }\n  },\n  {\n    \"tool_name\": \"send_email\",\n    \"params\": {\n      \"to\": \"Alice\",\n      \"subject\": \"Meeting Invitation: Project Sync\",\n      \"body\": \"This is a confirmation for our Project Sync meeting scheduled for tomorrow at 3 PM. Looking forward to it!\"\n    }\n  }\n]",
+        "len": 448
+      },
+      {
+        "id": "tool_3",
+        "score": 0.0,
+        "response": "",
+        "len": 0
+      },
+      {
+        "id": "tool_4",
+        "score": 1.0,
+        "response": "4",
+        "len": 1
+      }
+    ]
+  },
+  "26B-MoE": {}
+}
