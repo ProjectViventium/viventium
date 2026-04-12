@@ -1613,7 +1613,7 @@ while [[ $# -gt 0 ]]; do
       echo "  - Google Workspace MCP (profile port)"
       echo "  - MS365 MCP (port 6274)"
       echo "  - GlassHive Runtime (8766) + MCP (8767) + UI (8780)"
-      echo "  - Local RAG API for conversation recall (profile port)"
+      echo "  - Local RAG API for conversation recall (profile port, local embeddings runtime)"
       echo "  - Skyvern Browser Agent (Docker, profile ports)"
       echo "  - LibreCodeInterpreter API (profile port)"
       echo "  - Firecrawl (Docker, port 3003)"
@@ -3289,6 +3289,18 @@ ensure_librechat_env() {
   local registration_approval="${VIVENTIUM_REGISTRATION_APPROVAL:-false}"
   local effective_client_url="${VIVENTIUM_PUBLIC_CLIENT_URL:-$LC_FRONTEND_URL}"
   local effective_server_url="${VIVENTIUM_PUBLIC_SERVER_URL:-$LC_API_URL}"
+  # === VIVENTIUM START ===
+  # Feature: Persist the compiled conversation-recall embeddings contract into LibreChat/.env.
+  # Purpose:
+  # - rag.yml only injects LibreChat/.env into the RAG container.
+  # - Without these keys, query-time embeddings silently fall back to OpenAI defaults even when
+  #   the compiled local profile selected Ollama, which breaks recall at runtime.
+  # Added: 2026-04-09
+  # === VIVENTIUM END ===
+  local embeddings_provider="${EMBEDDINGS_PROVIDER:-${VIVENTIUM_RAG_EMBEDDINGS_PROVIDER:-}}"
+  local embeddings_model="${EMBEDDINGS_MODEL:-${VIVENTIUM_RAG_EMBEDDINGS_MODEL:-}}"
+  local embeddings_profile="${VIVENTIUM_RAG_EMBEDDINGS_PROFILE:-}"
+  local ollama_base_url="${OLLAMA_BASE_URL:-}"
   local vite_allowed_hosts_existing="${VITE_ALLOWED_HOSTS:-}"
   local vite_allowed_hosts=""
   vite_allowed_hosts="$(merge_allowed_hosts_csv \
@@ -3345,6 +3357,18 @@ EOF
 
   if [[ -z "$rag_api_url" ]]; then
     rag_api_url="$(read_env_kv "$env_file" "RAG_API_URL" || true)"
+  fi
+  if [[ -z "$embeddings_provider" ]]; then
+    embeddings_provider="$(read_env_kv "$env_file" "EMBEDDINGS_PROVIDER" || true)"
+  fi
+  if [[ -z "$embeddings_model" ]]; then
+    embeddings_model="$(read_env_kv "$env_file" "EMBEDDINGS_MODEL" || true)"
+  fi
+  if [[ -z "$embeddings_profile" ]]; then
+    embeddings_profile="$(read_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_PROFILE" || true)"
+  fi
+  if [[ -z "$ollama_base_url" ]]; then
+    ollama_base_url="$(read_env_kv "$env_file" "OLLAMA_BASE_URL" || true)"
   fi
   if [[ -n "$rag_api_url" ]]; then
     case "$rag_api_url" in
@@ -3431,6 +3455,22 @@ EOF
   # === VIVENTIUM START ===
   upsert_env_kv "$env_file" "OPENAI_MODELS" "$curated_openai_models"
   upsert_env_kv "$env_file" "ASSISTANTS_MODELS" "$curated_assistants_models"
+  if [[ -n "$embeddings_provider" ]]; then
+    upsert_env_kv "$env_file" "EMBEDDINGS_PROVIDER" "$embeddings_provider"
+    upsert_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_PROVIDER" "$embeddings_provider"
+  fi
+  if [[ -n "$embeddings_model" ]]; then
+    upsert_env_kv "$env_file" "EMBEDDINGS_MODEL" "$embeddings_model"
+    upsert_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_MODEL" "$embeddings_model"
+  fi
+  if [[ -n "$embeddings_profile" ]]; then
+    upsert_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_PROFILE" "$embeddings_profile"
+  fi
+  if [[ "$embeddings_provider" == "ollama" && -n "$ollama_base_url" ]]; then
+    upsert_env_kv "$env_file" "OLLAMA_BASE_URL" "$ollama_base_url"
+  else
+    remove_env_kv "$env_file" "OLLAMA_BASE_URL"
+  fi
   remove_env_kv "$env_file" "CHECK_BALANCE"
   remove_env_kv "$env_file" "START_BALANCE"
   unset CHECK_BALANCE START_BALANCE
@@ -3467,6 +3507,22 @@ EOF
   # === VIVENTIUM START ===
   export OPENAI_MODELS="$curated_openai_models"
   export ASSISTANTS_MODELS="$curated_assistants_models"
+  if [[ -n "$embeddings_provider" ]]; then
+    export EMBEDDINGS_PROVIDER="$embeddings_provider"
+    export VIVENTIUM_RAG_EMBEDDINGS_PROVIDER="$embeddings_provider"
+  fi
+  if [[ -n "$embeddings_model" ]]; then
+    export EMBEDDINGS_MODEL="$embeddings_model"
+    export VIVENTIUM_RAG_EMBEDDINGS_MODEL="$embeddings_model"
+  fi
+  if [[ -n "$embeddings_profile" ]]; then
+    export VIVENTIUM_RAG_EMBEDDINGS_PROFILE="$embeddings_profile"
+  fi
+  if [[ "$embeddings_provider" == "ollama" && -n "$ollama_base_url" ]]; then
+    export OLLAMA_BASE_URL="$ollama_base_url"
+  else
+    unset OLLAMA_BASE_URL
+  fi
   # === VIVENTIUM END ===
 
   local canonical_env_source=""
@@ -5576,6 +5632,42 @@ ms365_http_ping() {
   return 1
 }
 
+# === VIVENTIUM START ===
+# Feature: MS365 MCP restart ownership enforcement.
+# Purpose: Reclaim the shipped MS365 MCP port from foreign listeners instead of
+# silently reusing another workspace's server and credentials.
+# === VIVENTIUM END ===
+ms365_port_listener_is_viventium_owned() {
+  local port="${1:-$MS365_MCP_PORT}"
+
+  if command -v docker >/dev/null 2>&1 && docker_daemon_ready; then
+    if docker ps -q --filter "name=^/viventium_ms365_mcp$" 2>/dev/null | head -1 | grep -q .; then
+      return 0
+    fi
+  fi
+
+  local pids
+  pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  if [[ -z "$pids" ]]; then
+    return 1
+  fi
+
+  local pid
+  for pid in $pids; do
+    if pid_matches_scope "$pid" "$ROOT_DIR/MCPs/ms-365-mcp-server"; then
+      return 0
+    fi
+    if pid_matches_scope "$pid" "$LEGACY_V0_3_DIR"; then
+      return 0
+    fi
+    if pid_matches_scope "$pid" "$VIVENTIUM_CORE_DIR"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 searxng_http_ping() {
   local base_url="${SEARXNG_INSTANCE_URL:-http://localhost:${SEARXNG_PORT}}"
   base_url="${base_url%/}"
@@ -5889,6 +5981,15 @@ run_health_checks() {
       log_success "MS365 MCP responded"
     else
       log_warn "MS365 MCP did not respond yet"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [[ "$START_RAG_API" == "true" && "$SKIP_LIBRECHAT" != "true" ]] && ollama_embeddings_enabled_for_rag; then
+    if ollama_http_ping "$(ollama_host_base_url)"; then
+      log_success "Ollama embeddings runtime ready"
+    else
+      log_warn "Ollama embeddings runtime did not respond yet"
       failures=$((failures + 1))
     fi
   fi
@@ -6682,7 +6783,10 @@ start_ms365_mcp() {
 
   if [[ "$RESTART_DOCKER_SERVICES" == "true" && "$ms365_port_in_use" == "true" ]]; then
     if port_in_use "$base_port"; then
-      if ms365_http_ping "http://localhost:${base_port}/mcp"; then
+      if ! ms365_port_listener_is_viventium_owned "$base_port"; then
+        log_warn "MS365 MCP port $base_port is occupied by a non-Viventium listener; reclaiming the port for Viventium"
+        kill_port_listeners "$base_port"
+      elif ms365_http_ping "http://localhost:${base_port}/mcp"; then
         MS365_MCP_PORT="$base_port"
         export MS365_MCP_PORT
         export MS365_MCP_TRANSPORT="streamable-http"
@@ -6750,6 +6854,155 @@ rag_api_http_ping() {
   curl -fsS --max-time 3 "http://localhost:${port}/health" >/dev/null 2>&1
 }
 
+# === VIVENTIUM START ===
+# Feature: Ollama embeddings runtime readiness for local RAG.
+# Purpose:
+# - Keep the local-first embeddings default honest on fresh installs.
+# - Start the local Ollama service when Conversation Recall depends on it instead of letting the
+#   RAG sidecar fail later with hidden runtime drift.
+# Added: 2026-04-09
+# === VIVENTIUM END ===
+ollama_embeddings_enabled_for_rag() {
+  [[ "${EMBEDDINGS_PROVIDER:-}" == "ollama" ]]
+}
+
+ollama_host_base_url() {
+  local base_url="${OLLAMA_BASE_URL:-http://localhost:11434}"
+  base_url="${base_url%/}"
+  base_url="${base_url/host.docker.internal/localhost}"
+  printf '%s\n' "$base_url"
+}
+
+ollama_http_ping() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  curl -fsS --max-time 3 "${base_url%/}/api/tags" >/dev/null 2>&1
+}
+
+ollama_tags_json() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  curl -fsS --max-time 10 "${base_url%/}/api/tags"
+}
+
+ollama_embedding_model_name() {
+  local model="${EMBEDDINGS_MODEL:-qwen3-embedding:0.6b}"
+  printf '%s\n' "$model"
+}
+
+ollama_model_present() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  local model="${2:-$(ollama_embedding_model_name)}"
+  local tags_json=""
+
+  if ! tags_json="$(ollama_tags_json "$base_url" 2>/dev/null)"; then
+    return 1
+  fi
+
+  OLLAMA_TAGS_JSON="$tags_json" "$PYTHON_BIN" - "$model" <<'PY'
+import json
+import os
+import sys
+
+target = str(sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not target:
+    raise SystemExit(1)
+
+targets = {target}
+if ":" not in target:
+    targets.add(f"{target}:latest")
+elif target.endswith(":latest"):
+    targets.add(target.rsplit(":", 1)[0])
+
+try:
+    payload = json.loads(os.environ.get("OLLAMA_TAGS_JSON", "") or "{}")
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+for entry in payload.get("models") or []:
+    name = str(entry.get("name") or entry.get("model") or "").strip()
+    if name in targets:
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+ollama_pull_model() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  local model="${2:-$(ollama_embedding_model_name)}"
+  local payload=""
+  payload="$("$PYTHON_BIN" - "$model" <<'PY'
+import json
+import sys
+
+model = sys.argv[1]
+print(json.dumps({"name": model, "stream": False}))
+PY
+)"
+
+  curl -fsS -H 'Content-Type: application/json' --data "$payload" "${base_url%/}/api/pull" >/dev/null
+}
+
+ensure_ollama_for_rag() {
+  if ! ollama_embeddings_enabled_for_rag; then
+    return 0
+  fi
+
+  local host_url=""
+  host_url="$(ollama_host_base_url)"
+
+  if ollama_http_ping "$host_url"; then
+    log_success "Ollama embeddings runtime ready at $host_url"
+    return 0
+  fi
+
+  if ! command -v ollama >/dev/null 2>&1; then
+    log_error "Ollama is required for the configured local embeddings runtime but is not installed"
+    return 1
+  fi
+
+  if command -v brew >/dev/null 2>&1 && brew list ollama >/dev/null 2>&1; then
+    log_info "Starting Ollama embeddings runtime..."
+    HOMEBREW_NO_AUTO_UPDATE=1 brew services start ollama >/dev/null 2>&1 || true
+  fi
+
+  if wait_for_http "${host_url%/}/api/tags" "Ollama embeddings runtime" 5; then
+    return 0
+  fi
+
+  log_error "Ollama embeddings runtime is not reachable at ${host_url}. Start it with 'brew services start ollama' or 'ollama serve' and retry."
+  return 1
+}
+
+ensure_ollama_embedding_model_for_rag() {
+  if ! ollama_embeddings_enabled_for_rag; then
+    return 0
+  fi
+
+  local host_url=""
+  local model=""
+  host_url="$(ollama_host_base_url)"
+  model="$(ollama_embedding_model_name)"
+
+  if ollama_model_present "$host_url" "$model"; then
+    log_success "Ollama embedding model ready: $model"
+    return 0
+  fi
+
+  log_info "Pulling Ollama embedding model $model from $host_url..."
+  if ! ollama_pull_model "$host_url" "$model"; then
+    log_error "Failed to pull Ollama embedding model $model from $host_url"
+    return 1
+  fi
+
+  if ollama_model_present "$host_url" "$model"; then
+    log_success "Ollama embedding model ready: $model"
+    return 0
+  fi
+
+  log_error "Ollama embedding model $model is still unavailable after pull"
+  return 1
+}
+
 start_rag_api() {
   if [[ "$START_RAG_API" != "true" || "$SKIP_LIBRECHAT" == "true" ]]; then
     log_info "Skipping local RAG API startup"
@@ -6761,6 +7014,12 @@ start_rag_api() {
     return 1
   fi
   if ! ensure_docker_daemon_for_service "local RAG API"; then
+    return 1
+  fi
+  if ! ensure_ollama_for_rag; then
+    return 1
+  fi
+  if ! ensure_ollama_embedding_model_for_rag; then
     return 1
   fi
 
@@ -7959,6 +8218,8 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
 fi
 
 prepare_remote_call_access
+
+export LIVEKIT_NODE_IP="${LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}"
 
 if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" || -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
   echo -e "${CYAN}[viventium]${NC} Public remote access:"

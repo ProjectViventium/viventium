@@ -117,6 +117,13 @@ def test_normalize_preset_keeps_local_secret_values_when_keychain_write_fails(mo
     assert normalized["integrations"]["skyvern"]["api_key"]["secret_value"] == "skyvern-secret"
     assert normalized["runtime"]["call_session_secret"]["secret_value"] == "generated-call-secret"
     assert normalized["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert normalized["runtime"]["retrieval"]["embeddings"]["provider"] == "ollama"
+    assert normalized["runtime"]["retrieval"]["embeddings"]["model"] == "qwen3-embedding:0.6b"
+    assert normalized["runtime"]["retrieval"]["embeddings"]["profile"] == "medium"
+    assert (
+        normalized["runtime"]["retrieval"]["embeddings"]["ollama_base_url"]
+        == "http://host.docker.internal:11434"
+    )
 
 
 def test_build_base_config_matches_easy_install_defaults() -> None:
@@ -130,6 +137,13 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     )
 
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert config["runtime"]["retrieval"]["embeddings"]["provider"] == "ollama"
+    assert config["runtime"]["retrieval"]["embeddings"]["model"] == "qwen3-embedding:0.6b"
+    assert config["runtime"]["retrieval"]["embeddings"]["profile"] == "medium"
+    assert (
+        config["runtime"]["retrieval"]["embeddings"]["ollama_base_url"]
+        == "http://host.docker.internal:11434"
+    )
     assert config["runtime"]["network"]["remote_call_mode"] == "disabled"
     assert config["runtime"]["auth"]["allow_registration"] is True
     assert config["runtime"]["auth"]["allow_password_reset"] is False
@@ -180,6 +194,7 @@ def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> 
 
     assert normalized["voice"]["provider_keys"]["assemblyai"]["secret_value"] == "assemblyai-secret"
     assert normalized["voice"]["provider_keys"]["cartesia"]["secret_value"] == "cartesia-secret"
+    assert normalized["runtime"]["retrieval"]["embeddings"]["provider"] == "ollama"
 
 
 def test_validate_non_interactive_integrations_rejects_disabled_telegram_secret() -> None:
@@ -393,7 +408,7 @@ def test_prompt_web_search_with_docker_warns_when_firecrawl_memory_is_low() -> N
         docker_memory_bytes=3 * 1024 * 1024 * 1024,
     )
 
-    assert any("lighter local Firecrawl profile" in note for note in ui.notes)
+    assert any("bounded local Firecrawl profile" in note for note in ui.notes)
     assert any("prefer Firecrawl API" in note for note in ui.notes)
 
 

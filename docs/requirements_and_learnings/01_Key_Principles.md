@@ -197,9 +197,24 @@ A developer referring to a single document about a respective feature **must per
 - **Activation classifier rule**:
   - If a background-agent activation bug is `model-generated`, fix the user-configured activation prompt/source-of-truth first and prove it with evals.
   - Do **not** add runtime string blacklists or message-specific "if text contains X, suppress agent Y" gates for classifier false positives.
-  - Runtime changes are allowed only for generic activation plumbing defects (for example: wrong context assembly, wrong provider/scope inference, stale-history labeling, broken latest-turn extraction).
+  - Runtime changes are allowed only for structural activation plumbing defects (for example: wrong context assembly, broken latest-turn extraction, missing fallback wiring, or bad scope metadata propagation). This bullet does **not** override the CRITICAL RULE below.
   - For productivity agents specifically, "reply/respond/say/return" must never be hardcoded as special-case deny words in code; the classifier prompt must distinguish chat-format instructions from real email/content actions.
   - Do **not** infer agent role from hardcoded agent names, cortex titles, or tool names when explicit config metadata can carry the intent. User systems may rename agents, replace tools, or define different specialist shapes entirely.
+
+### CRITICAL RULE: No Hardcoded NLU in Runtime Code
+- Intent detection, provider clarification, and history classification must be owned by LLM activation classifiers plus YAML-configured activation prompts.
+- Runtime code must **not** use regex, substring matching, or hand-written NLU helpers on user/assistant message text to:
+  - decide cortex activation
+  - classify provider intent such as Gmail / Outlook / Ms365
+  - pre-filter or rewrite activation history based on guessed semantics
+  - create "deterministic fast paths" that bypass the activation classifier
+- Allowed runtime string handling is limited to deterministic structural parsing:
+  - identifier extraction such as URLs, file IDs, email addresses, or protocol strings
+  - message metadata such as role, timestamp, length, attachment presence, or configured scope keys
+  - message-content normalization needed to read stored text blocks safely
+- If a fix requires teaching the system to understand new phrasing, the change belongs in `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml`, not in JavaScript.
+- If classifier reliability is the issue, fix it with `activation.fallbacks` and live eval coverage, not with heuristic runtime preempts.
+- Any PR that reintroduces regex or keyword NLU in runtime routing layers is a critical review block unless it proves the logic is deterministic-by-construction and not user-intent classification.
 
 ### User-Level Configurations and System Prompts
 - **Do not overfit user-level designs** such as system prompts and configurations
@@ -212,17 +227,33 @@ A developer referring to a single document about a respective feature **must per
   node viventium_v0_4/LibreChat/scripts/viventium-sync-agents.js pull
   ```
 - This provides visibility into the inner workings of user-level agent configurations, system prompts, and related settings
+- Before any push/update to live user-level agents, **always run a live-vs-source comparison** and review:
+  - A = current live user-level agent bundle
+  - B = tracked source-of-truth bundle
+  - C = current repo/source-of-truth edits that are not yet in live
+- Present the A/B/C drift to the user before syncing when there is any difference in user-managed
+  fields such as instructions, conversation starters, tools, provider/model, or background cortex config.
+- Treat live user edits as protected state until they are intentionally reconciled. Do **not** assume
+  the tracked scaffold should automatically overwrite live user-managed config.
+- If the symptom is capability availability rather than prompt text alone, inspect adjacent
+  scaffold/runtime config too (for example `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.librechat.yaml`).
+  Global toggles such as `interface.webSearch` can disable behavior even when the agent bundle still
+  contains the expected tool entries.
+- Non-dry-run sync should fail closed when reviewed live-vs-source drift still exists. Only proceed
+  with an explicit acknowledgement such as `--compare-reviewed` after the A/B/C diff has been shown
+  and intentionally accepted.
 - When syncing agent model/provider fields into a live local Mongo surface, the sync path must honor
   the canonical generated runtime env. Do not treat the raw git-tracked bundle as the live model
   truth when the runtime compiler/seed path defines the actual assignment for that machine.
 - To update user-level configs:
   1. Pull the latest configs: `viventium-sync-agents.js pull --env=<env>`
-  2. Edit the **git-tracked source-of-truth** file for clean diffs:
+  2. Compare live vs source-of-truth vs current repo edits: `viventium-sync-agents.js compare --env=<env>`
+  3. Edit the **git-tracked source-of-truth** file for clean diffs:
      - `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml`
      - (Snapshots are still written under `.viventium/artifacts/agents-sync/runs/<timestamp>-<env>/viventium-agents.yaml`)
-  3. Push the updated configs using the **correct push mode**:
+  4. Push the updated configs using the **correct push mode**:
     - `viventium-sync-agents.js push --prompts-only --env=<env>` — for prompt/instruction/cortex activation changes
-     - `viventium-sync-agents.js push --activation-config-only --activation-fields=prompt,model,provider,intent_scope --env=<env>` — for selected background cortex activation config changes
+     - `viventium-sync-agents.js push --activation-config-only --activation-fields=prompt,model,provider,fallbacks,intent_scope --env=<env>` — for selected background cortex activation config changes
      - `viventium-sync-agents.js push --model-config-only --env=<env>` — for provider/model updates only
      - `viventium-sync-agents.js push --env=<env>` — full push (DANGEROUS, see warning below)
 - `env` is set via `--env=<env>` (or `VIVENTIUM_ENV=<env>`); use the target runtime environment name for pull/push operations.
@@ -231,10 +262,12 @@ A developer referring to a single document about a respective feature **must per
 
 #### CRITICAL: Push Safety Rules (Learned 2026-02-15)
 - **ALWAYS use `--prompts-only` for prompt/instruction/cortex activation changes**. This is the safe mode that skips `tools`, `model`, `provider`, and other UI-managed fields.
+- **ALWAYS review `compare --env=<env>` output before push**. If live user config differs from the tracked scaffold on user-managed fields, reconcile intentionally and present that drift to the user before applying changes.
 - **NEVER use default `push` (without `--prompts-only`) unless you are certain the YAML `tools` arrays exactly match the live target environment state**. Default push overwrites ALL fields including `tools`, which breaks MCP server links that were configured via the LibreChat UI. The user then has to manually re-add each MCP server one by one.
 - **Why it breaks**: Default push writes 16 fields including `tools` (string arrays like `sys__server__sys_mcp_scheduling-cortex`). If the YAML was pulled at time T1 and someone changed MCP tools via UI between T1 and push at T2, the stale T1 tools array overwrites the UI changes.
-- **`--prompts-only` safe fields**: `id`, `name`, `description`, `instructions`, `conversation_starters`, `background_cortices` (with safe merge that only touches `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`).
-- **`--activation-config-only` safe fields**: only `background_cortices`, with an allowlist merge over `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, `activation.model`, `activation.provider`, `activation.cooldown_ms`, `activation.max_history`, and `activation.intent_scope`. Use `--activation-fields=...` to narrow further.
+- **Do not blindly overwrite live instructions or conversation starters either**. A stale scaffold can erase user-authored main-agent or background-agent prompt edits just as easily as it can erase tools.
+- **`--prompts-only` safe fields**: `id`, `name`, `description`, `instructions`, `conversation_starters`, `background_cortices` (with safe merge that only touches `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, and the explicitly reviewed reliability field `activation.fallbacks`). Treat fallback changes as live runtime-behavior changes, not as copy-only prompt edits.
+- **`--activation-config-only` safe fields**: only `background_cortices`, with an allowlist merge over `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, `activation.fallbacks`, `activation.model`, `activation.provider`, `activation.cooldown_ms`, `activation.max_history`, and `activation.intent_scope`. Use `--activation-fields=...` to narrow further.
 - **`--model-config-only` safe fields**: only top-level agent model fields (`provider`, `model`, `model_parameters`, `voice_llm_model`, `voice_llm_provider`). Use this when correcting stale model drift without touching tools or prompts.
 - **Use `--agent-ids=...` for surgical pushes** when only a subset of background agents changed. This keeps model/prompt fixes narrowly scoped instead of rewriting the whole roster.
 - **Always dry-run first**: `push --prompts-only --dry-run --env=<env>` to preview changes before applying.
@@ -260,7 +293,10 @@ A developer referring to a single document about a respective feature **must per
   - `anthropic / claude-opus-4-6`
   - `openAI / gpt-5.4`
 - Foundation provider rule:
-  - Groq remains required for activation detection
+  - Groq is the current launch-ready primary for activation detection under the shipped 2-second
+    Phase A budget
+  - Anthropic Haiku-class activation is acceptable as a fallback or alternative only when the
+    benchmark for the target environment proves it fits the chosen budget
   - at least one of `OpenAI` or `Anthropic` must be configured for main/background execution on install
   - do not treat `x_ai` alone as a sufficient built-in background-agent foundation for launch-ready installs
 - Do **not** silently drift back to older defaults such as `gpt-4o` or `gpt-4o-mini` just because a pull or reset changed stored config.
@@ -294,6 +330,11 @@ A developer referring to a single document about a respective feature **must per
   - keep a cross-contract check between the Python release guard and the JS runtime-model helper so
     the documented launch-ready families cannot drift apart between source-of-truth validation and
     live Mongo rewrite logic
+  - keep activation-provider benchmarks honest:
+    - connected-account providers must be benchmarked through the real connected-account path
+    - standalone eval scripts must bootstrap the same runtime dependencies the app uses
+    - when one real user is reused, per-user activation cooldown state must not bleed across
+      independent benchmark scenarios
   - reason: model drift and QA drift are both launch regressions, even when the app still boots
 - Inventory hygiene rule:
   - local model-picker inventories and helper/title models must also stay aligned with the current approved families

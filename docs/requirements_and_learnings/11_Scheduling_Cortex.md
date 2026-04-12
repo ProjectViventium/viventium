@@ -36,6 +36,9 @@ We will implement a dedicated Scheduling MCP server that:
 - The MCP server validates and stores schedules.
 - Keep schedule naming, reminders, and delivery content generic and user-safe.
 - Avoid private-contact examples in the public contract.
+- List/search browsing must be summary-safe. Ordinary schedule browsing is not a license to expose
+  full internal prompts, generated delivery prose, or raw delivery payloads to other answer
+  surfaces.
 
 ## Dispatch Behavior
 
@@ -47,3 +50,24 @@ We will implement a dedicated Scheduling MCP server that:
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
 - Do not start a second agent run through the Telegram chat route just for scheduled tasks.
+
+## Summary-Safe Browsing Contract
+
+Default schedule browsing tools such as `schedule_list` and `schedule_search` should return summary
+fields only:
+
+- identifiers
+- schedule metadata
+- status timestamps
+- delivery outcome metadata
+- a short human-readable summary
+
+The following must stay out of default list/search payloads:
+
+- full schedule prompt text
+- `last_generated_text`
+- raw `last_delivery` payloads
+
+Detailed inspection belongs to explicit detail tools such as `schedule_get` or
+`schedule_last_delivery`, not routine browsing surfaces that may be pulled into ordinary answering
+context.

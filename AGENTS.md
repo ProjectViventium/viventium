@@ -63,6 +63,7 @@ For installer, runtime, release, or publish-boundary work, also read:
   output.
 - Prefer shared structural fixes over one-off patches, hacks, or owner-machine workarounds.
 - Do not hardcode on agent names, prompt text, tool substrings, provider labels, user identity, or one machine's state unless a source-of-truth doc explicitly requires it.
+- CRITICAL RULE: do not add regex or keyword matching in runtime code to detect user intent, provider selection, email phrasing, or productivity scope. Activation prompts in `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml` own that behavior; classifier outages are solved with `activation.fallbacks`, not heuristics.
 - If a proposed fix looks like the user's exact complaint turned into an `if` statement, widen the
   investigation first.
 - In the LibreChat fork, wrap upstream modifications with `VIVENTIUM START` / `VIVENTIUM END` plus
@@ -120,8 +121,23 @@ For installer, runtime, release, or publish-boundary work, also read:
 
 ## Agent Sync Safety
 
+- Before any user-level agent push, run `viventium-sync-agents.js compare --env=<env>` (or an
+  equivalent live-vs-source review) and inspect:
+  - A: current live user-level agent config
+  - B: tracked source-of-truth bundle
+  - C: current repo/source-of-truth edits still not in live
+- Present the A/B/C drift to the user before applying a sync when live user-managed fields differ.
+- If the reported symptom is capability availability, also inspect adjacent scaffold/runtime config
+  such as `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.librechat.yaml`; global
+  toggles like `interface.webSearch` can disable behavior even when the agent bundle still carries
+  the expected tool.
+- Non-dry-run pushes should fail closed when reviewed live-vs-source drift still exists; only use a
+  follow-up acknowledgement such as `--compare-reviewed` after you have already presented the drift
+  and intentionally accepted it.
 - Always dry-run first.
 - For prompt/instruction changes, use `--prompts-only`.
+- Treat live user edits to instructions, conversation starters, tools, model/provider, and
+  background cortex config as protected state until they are intentionally reconciled.
 - Do not use default push unless the synced fields were intentionally reviewed.
 - After sync changes, verify the target runtime actually reloaded the intended data.
 

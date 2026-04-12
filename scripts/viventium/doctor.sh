@@ -109,14 +109,21 @@ import shlex
 import sys
 import yaml
 
-config_path = Path(sys.argv[1])
 repo_root = Path(sys.argv[2])
+script_dir = repo_root / "scripts" / "viventium"
+if str(script_dir) not in sys.path:
+    sys.path.insert(0, str(script_dir))
+
+from retrieval_config import resolve_retrieval_embeddings_settings
+
+config_path = Path(sys.argv[1])
 config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 install_mode = str(config.get("install", {}).get("mode", "docker")).strip().lower()
 voice_mode = str(config.get("voice", {}).get("mode", "disabled")).strip().lower()
 integrations = config.get("integrations", {}) or {}
 runtime = config.get("runtime", {}) or {}
 personalization = runtime.get("personalization", {}) or {}
+retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
 selected = {
     "INSTALL_MODE": install_mode or "docker",
     "VOICE_MODE": voice_mode or "disabled",
@@ -128,10 +135,69 @@ selected = {
     "ENABLE_CONVERSATION_RECALL": "1" if personalization.get("default_conversation_recall", False) else "0",
     "ENABLE_RUN_CODE_DEFAULT": "1" if (integrations.get("code_interpreter", {}) or {}).get("enabled") else "0",
     "ENABLE_WEB_SEARCH_DEFAULT": "1" if (integrations.get("web_search", {}) or {}).get("enabled") else "0",
+    "RETRIEVAL_EMBEDDINGS_PROVIDER": retrieval_embeddings.get("provider", ""),
+    "RETRIEVAL_EMBEDDINGS_MODEL": retrieval_embeddings.get("model", ""),
+    "RETRIEVAL_OLLAMA_BASE_URL": retrieval_embeddings.get("ollama_base_url", ""),
 }
 for key, value in selected.items():
     print(f"{key}={shlex.quote(value)}")
 PY
+}
+
+doctor_normalize_ollama_base_url() {
+  local base_url="${1:-http://host.docker.internal:11434}"
+  base_url="${base_url%/}"
+  base_url="${base_url/host.docker.internal/localhost}"
+  printf '%s\n' "$base_url"
+}
+
+doctor_check_ollama_embeddings_model() {
+  if [[ "$ENABLE_CONVERSATION_RECALL" != "1" || "$RETRIEVAL_EMBEDDINGS_PROVIDER" != "ollama" ]]; then
+    return 0
+  fi
+
+  local model="${RETRIEVAL_EMBEDDINGS_MODEL:-qwen3-embedding:0.6b}"
+  local base_url=""
+  local tags_json=""
+  base_url="$(doctor_normalize_ollama_base_url "${RETRIEVAL_OLLAMA_BASE_URL:-http://host.docker.internal:11434}")"
+
+  if ! tags_json="$(curl -fsS --max-time 3 "${base_url%/}/api/tags" 2>/dev/null)"; then
+    echo "[doctor] INFO: Ollama embeddings model '${model}' will be verified and pulled by the launcher once Ollama is reachable at ${base_url}."
+    return 0
+  fi
+
+  if OLLAMA_TAGS_JSON="$tags_json" "$PYTHON_BIN" - "$model" <<'PY'
+import json
+import os
+import sys
+
+target = str(sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not target:
+    raise SystemExit(1)
+
+targets = {target}
+if ":" not in target:
+    targets.add(f"{target}:latest")
+elif target.endswith(":latest"):
+    targets.add(target.rsplit(":", 1)[0])
+
+try:
+    payload = json.loads(os.environ.get("OLLAMA_TAGS_JSON", "") or "{}")
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+for entry in payload.get("models") or []:
+    name = str(entry.get("name") or entry.get("model") or "").strip()
+    if name in targets:
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+  then
+    echo "[doctor] Ollama embeddings model ready: ${model}"
+  else
+    echo "[doctor] WARN: configured Ollama embeddings model '${model}' is not present at ${base_url}; first start will pull it."
+  fi
 }
 
 doctor_env_exports="$(load_doctor_config_flags "$CONFIG_FILE" "$REPO_ROOT")"
@@ -140,6 +206,15 @@ if [[ -z "$doctor_env_exports" ]]; then
   exit 1
 fi
 eval "$doctor_env_exports"
+
+if [[ "$ENABLE_CONVERSATION_RECALL" == "1" && "$RETRIEVAL_EMBEDDINGS_PROVIDER" == "ollama" ]]; then
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "[doctor] ERROR: Conversation Recall is enabled and the configured local embeddings provider is Ollama, but ollama is not installed." >&2
+    echo "[doctor] INFO: Install it with 'brew install ollama' or disable Conversation Recall before this run." >&2
+    exit 1
+  fi
+  doctor_check_ollama_embeddings_model
+fi
 
 if [[ "$INSTALL_MODE" == "docker" ]]; then
   if ! command -v docker >/dev/null 2>&1; then

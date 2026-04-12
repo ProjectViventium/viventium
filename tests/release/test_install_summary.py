@@ -258,6 +258,32 @@ def test_build_service_rows_warns_when_local_firecrawl_needs_more_docker_memory(
     assert "Firecrawl API" in firecrawl_detail
 
 
+def test_build_setup_later_rows_mentions_ollama_for_conversation_recall() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "personalization": {"default_conversation_recall": False},
+            "retrieval": {
+                "embeddings": {
+                    "provider": "ollama",
+                    "model": "qwen3-embedding:0.6b",
+                    "profile": "medium",
+                }
+            },
+        },
+        "integrations": {},
+    }
+
+    rows = install_summary.build_setup_later_rows(config)
+    later = {name: detail for name, detail in rows}
+
+    assert (
+        later["Conversation Recall"]
+        == "Docker Desktop and Ollama if you want local recall; first start pulls qwen3-embedding:0.6b"
+    )
+
+
 def test_build_next_steps_mentions_optional_shell_init(monkeypatch) -> None:
     install_summary = load_install_summary_module()
 
@@ -299,6 +325,34 @@ def test_build_next_steps_prioritizes_connected_accounts_when_no_foundation_api_
     assert "Settings -> Connected Accounts" in notice
     assert "OpenAI" in notice
     assert all("Connected Accounts" not in step for step in steps)
+
+
+def test_build_connected_accounts_notice_mentions_workspace_accounts_when_enabled() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"ports": {"lc_frontend_port": 3190}},
+        "llm": {
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_ref": "openai-key",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "local"},
+        "integrations": {
+            "google_workspace": {"enabled": True},
+            "ms365": {"enabled": True},
+        },
+    }
+
+    notice = install_summary.build_connected_accounts_notice(config)
+
+    assert "Google Workspace" in notice
+    assert "Microsoft 365" in notice
+    assert "Activation can succeed" in notice
 
 
 def test_build_service_rows_uses_live_public_network_state_for_remote_access(monkeypatch, tmp_path: Path) -> None:
@@ -359,7 +413,7 @@ def test_build_service_rows_reports_action_required_when_remote_access_state_sav
     state_root = tmp_path / "state" / "runtime" / "isolated"
     state_root.mkdir(parents=True)
     (state_root / "public-network.json").write_text(
-        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}',
+        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 192.0.2.44:50779"}',
         encoding="utf-8",
     )
 
@@ -453,7 +507,7 @@ def test_build_next_steps_prioritizes_remote_access_recovery_when_public_edge_fa
     state_root = tmp_path / "state" / "runtime" / "isolated"
     state_root.mkdir(parents=True)
     (state_root / "public-network.json").write_text(
-        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}',
+        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 192.0.2.44:50779"}',
         encoding="utf-8",
     )
 

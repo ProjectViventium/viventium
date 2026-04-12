@@ -117,7 +117,7 @@
      and request counts, proving shared-state throttling
 17. Real Caddy-served well-known validation.
    - Setup:
-     - local upstream server on `http://127.0.0.1:39190`
+     - local upstream server on `http://127.0.0.1:<ephemeral-port>`
      - live Caddy process using the helper-generated directory document in its Caddyfile
    - Result:
      - `curl --resolve app.qa.test:40443:127.0.0.1 https://app.qa.test:40443/.well-known/viventium-instance.json -k`
@@ -235,7 +235,7 @@
    - Finding:
      - the auth-hardening restart preserved the public browser edge while closing public sign-up on
        the running install
-25. Added canonical auth controls, a clearer remote-access setup path, and live status reporting.
+28. Added canonical auth controls, a clearer remote-access setup path, and live status reporting.
    - Result:
      - `runtime.auth.allow_registration` and `runtime.auth.allow_password_reset` now compile from
        canonical `config.yaml` into the generated runtime env
@@ -256,7 +256,7 @@
    - Finding:
      - remote access and browser-auth posture are now owned by canonical config plus a single
        operator-facing status surface, which reduces ambiguity for new installs and new machines
-26. Added and live-validated an operator-only local password-reset-link flow for public installs.
+29. Added and live-validated an operator-only local password-reset-link flow for public installs.
    - Result:
      - the live personal config compiled to:
        - `ALLOW_REGISTRATION=false`

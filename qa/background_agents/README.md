@@ -5,6 +5,11 @@
 Verify Anthropic background-cortex execution stays compatible with provider thinking defaults while
 the shipped built-in bundle remains truthful for fresh installs and local restarts.
 
+Additional current QA artifacts:
+
+- `qa/background_agents/report.md` — historical April 5, 2026 Anthropic execution compatibility report
+- `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
+
 ## Requirements Under Test
 
 - Background cortices must not send `temperature` when Anthropic thinking is active.
@@ -44,3 +49,7 @@ the shipped built-in bundle remains truthful for fresh installs and local restar
   `temperature`-plus-default-thinking behavior.
 - Start-path inspection confirms fresh installs and restarts consume the corrected bundle instead of
   relying on live Mongo edits.
+- Live QA separates activation success from downstream user-scoped auth:
+  - one connected-account user must complete a real Google Workspace or Microsoft 365 task
+  - any duplicate/local QA user used for realism must have those service connections reseeded or
+    reconnected explicitly before it is treated as parity coverage

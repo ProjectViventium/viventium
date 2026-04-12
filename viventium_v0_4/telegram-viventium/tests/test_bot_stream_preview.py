@@ -102,7 +102,7 @@ async def test_deliver_proactive_telegram_message_falls_back_to_text_when_voice_
 
 class _FakeUser:
     id = 12345
-    username = "adri"
+    username = "sampleuser"
 
 
 class _FakeChat:

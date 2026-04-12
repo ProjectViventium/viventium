@@ -27,7 +27,8 @@ CODEX_OPENAI_MODEL_ID = os.environ.get(
     "CURSOR_BRIDGE_CODEX_OPENAI_MODEL_ID",
     "CODEX_SUBSCRIPTION",
 )
-AUTH_TOKEN = os.environ.get("CURSOR_BRIDGE_AUTH_TOKEN", "sk-local-bridge")
+# Use a clearly synthetic local token that cannot be mistaken for a provider secret.
+AUTH_TOKEN = os.environ.get("CURSOR_BRIDGE_AUTH_TOKEN", "local-bridge-token")
 TIMEOUT_SECONDS = int(os.environ.get("CURSOR_BRIDGE_TIMEOUT_SECONDS", "240"))
 WORKDIR = Path(os.environ.get("CURSOR_BRIDGE_WORKDIR", os.getcwd()))
 LOG_PATH = Path(

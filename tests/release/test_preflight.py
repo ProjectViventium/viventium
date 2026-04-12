@@ -332,6 +332,37 @@ integrations:
     assert "MS365" in completed.stdout
     assert "Docker Desktop" in completed.stdout
     assert "Conversation Recall" not in completed.stdout
+
+
+def test_preflight_native_conversation_recall_requires_docker_and_ollama(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+version: 1
+install:
+  mode: native
+runtime:
+  profile: isolated
+  personalization:
+    default_conversation_recall: true
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--config", str(config_path)],
+        cwd=REPO_ROOT,
+        env=preflight_subprocess_env(tmp_path),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Docker Desktop" in completed.stdout
+    assert "Conversation Recall" in completed.stdout
+    assert "ollama" in completed.stdout
     assert "Code Interpreter" not in completed.stdout
     assert "Web Search" not in completed.stdout
 

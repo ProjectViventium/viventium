@@ -158,10 +158,35 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     )
 
 
+def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.split("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+    autorestart_section = upgrade_section.split('if [[ "$AUTO_RESTART" == "1" ]]; then', 1)[1].split(
+        '    fi\n    echo "Upgrade complete. Next: bin/viventium start"',
+        1,
+    )[0]
+    restart_section = cli_source.split("restart_stack_after_upgrade() {", 1)[1].split(
+        "stop_stack_for_upgrade() {",
+        1,
+    )[0]
+
+    assert "restart_stack_after_upgrade() {" in cli_source
+    assert "cleanup_cli_lock" in restart_section
+    assert "launch_stack_detached" in restart_section
+    assert "wait_for_install_stack_health" in restart_section
+    assert 'echo "Restarting Viventium..."' in restart_section
+    assert "install_waiting_on_surfaces" in restart_section
+    assert "print_install_timeout_log_excerpt" in restart_section
+    assert "if ! restart_stack_after_upgrade; then" in upgrade_section
+    assert '"$REPO_ROOT/bin/viventium" \\' not in autorestart_section
+    assert "        start" not in autorestart_section
+
+
 def test_remote_access_failure_does_not_abort_local_launcher_progress(tmp_path: Path) -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
     )
+    detect_livekit_node_ip = extract_shell_function(launcher_text, "detect_livekit_node_ip")
     json_state_value = extract_shell_function(launcher_text, "json_state_value")
     clear_remote_exports = extract_shell_function(launcher_text, "clear_remote_call_runtime_exports")
     persist_failure_state = extract_shell_function(launcher_text, "persist_remote_call_failure_state_if_needed")
@@ -184,7 +209,7 @@ state_file.write_text(
     json.dumps(
         {
             "provider": "public_https_edge",
-            "last_error": "Router already forwards TCP 80 to 10.88.111.46:50779",
+            "last_error": "Router already forwards TCP 80 to 192.0.2.44:50779",
         }
     )
     + "\\n",
@@ -240,6 +265,7 @@ is_truthy() {{
   return 1
 }}
 
+    {detect_livekit_node_ip}
     {json_state_value}
     {clear_remote_exports}
     {persist_failure_state}
@@ -248,8 +274,9 @@ is_truthy() {{
     {start_refresh_worker}
 
 prepare_remote_call_access
+LIVEKIT_NODE_IP="${{LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}}"
 mkdir -p "$(dirname "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE")"
-printf '%s\n' '{{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}}' > "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
+printf '%s\n' '{{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 192.0.2.44:50779"}}' > "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
 printf 'AFTER_CLIENT=%s\\n' "${{VIVENTIUM_PUBLIC_CLIENT_URL:-}}"
 printf 'AFTER_NODE_IP=%s\\n' "${{LIVEKIT_NODE_IP:-}}"
 start_remote_call_mapping_refresh_worker
@@ -273,6 +300,7 @@ fi
     assert "AFTER_NODE_IP=" in completed.stdout
     assert "AFTER_CLIENT=https://stale.example.test" not in completed.stdout
     assert "AFTER_NODE_IP=192.0.2.44" not in completed.stdout
+    assert "AFTER_NODE_IP=" in completed.stdout and "AFTER_NODE_IP=\n" not in completed.stdout
     assert "REFRESH_PID_EXISTS=no" in completed.stdout
     assert state_file.exists()
     assert "Router already forwards TCP 80" in state_file.read_text(encoding="utf-8")
@@ -282,6 +310,7 @@ def test_remote_access_failure_replaces_stale_healthy_state_when_helper_dies_ear
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
     )
+    detect_livekit_node_ip = extract_shell_function(launcher_text, "detect_livekit_node_ip")
     json_state_value = extract_shell_function(launcher_text, "json_state_value")
     clear_remote_exports = extract_shell_function(launcher_text, "clear_remote_call_runtime_exports")
     persist_failure_state = extract_shell_function(launcher_text, "persist_remote_call_failure_state_if_needed")
@@ -372,6 +401,7 @@ is_truthy() {{
   return 1
 }}
 
+{detect_livekit_node_ip}
 {json_state_value}
 {clear_remote_exports}
 {persist_failure_state}
@@ -380,6 +410,7 @@ is_truthy() {{
 {start_refresh_worker}
 
 prepare_remote_call_access
+LIVEKIT_NODE_IP="${{LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}}"
 printf 'AFTER_CLIENT=%s\\n' "${{VIVENTIUM_PUBLIC_CLIENT_URL:-}}"
 printf 'AFTER_NODE_IP=%s\\n' "${{LIVEKIT_NODE_IP:-}}"
 start_remote_call_mapping_refresh_worker
@@ -402,6 +433,7 @@ fi
     assert "helper crashed before persisting state" in combined_output
     assert "AFTER_CLIENT=https://stale.example.test" not in completed.stdout
     assert "AFTER_NODE_IP=192.0.2.44" not in completed.stdout
+    assert "AFTER_NODE_IP=" in completed.stdout and "AFTER_NODE_IP=\n" not in completed.stdout
     assert "REFRESH_PID_EXISTS=no" in completed.stdout
 
     saved_state = json.loads(state_file.read_text(encoding="utf-8"))

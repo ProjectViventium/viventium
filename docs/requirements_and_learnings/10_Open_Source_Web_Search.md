@@ -42,6 +42,11 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
 - Firecrawl expects a valid `fc-` API key format (or UUID). LibreChat sends `FIRECRAWL_API_KEY`.
 - If Firecrawl expects a different API version, update `FIRECRAWL_VERSION` and
   `FIRECRAWL_API_URL` together to keep v0.4 and v0.3 aligned.
+- The canonical config under `~/Library/Application Support/Viventium/config.yaml` owns whether
+  web search is actually enabled on a machine. The tracked `local.librechat.yaml` snapshot is not
+  the live switch. If `integrations.web_search.enabled` is false or missing, the compiler will emit
+  `interface.webSearch: false`, remove the top-level `webSearch` block, and the built-in agent tool
+  surface will drift accordingly on restart.
 - Runtime auth must accept both `${ENV_VAR}` references in tracked YAML and the
   already-interpolated literal values returned by LibreChat's loaded AppConfig.
 - `rerankerType` is optional. If source-of-truth config does not declare a reranker,
@@ -54,7 +59,10 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
   - prefer `rabbitmq:3-alpine` over the management image unless the local admin UI is explicitly
     needed
   - keep Playwright shared memory conservative (`256m`) for single-user local scraping
-  - apply bounded container memory limits so Firecrawl cannot balloon unbounded on small-memory Macs
+  - keep the Firecrawl API container on a bounded but sane default budget
+    (`FIRECRAWL_API_MEM_LIMIT`, default `1536m`) so local scraping stays reliable
+  - keep the Playwright helper on a lower bounded budget
+    (`FIRECRAWL_PLAYWRIGHT_MEM_LIMIT`, default `768m`)
   - tune Firecrawl worker/concurrency knobs for a single-user laptop profile instead of shipping
     upstream multi-worker defaults
   - default Firecrawl logging should be `warn`, not `info`, for local installs
