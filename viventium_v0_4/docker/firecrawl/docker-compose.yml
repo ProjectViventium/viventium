@@ -6,7 +6,7 @@ services:
     image: ghcr.io/firecrawl/firecrawl:latest
     container_name: viventium_firecrawl_api
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: ${FIRECRAWL_API_MEM_LIMIT:-1536m}
     networks:
       - firecrawl
     ports:
@@ -45,7 +45,7 @@ services:
     image: ghcr.io/firecrawl/playwright-service:latest
     container_name: viventium_firecrawl_playwright
     restart: unless-stopped
-    mem_limit: 768m
+    mem_limit: ${FIRECRAWL_PLAYWRIGHT_MEM_LIMIT:-768m}
     networks:
       - firecrawl
     environment:

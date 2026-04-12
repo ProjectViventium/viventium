@@ -49,6 +49,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `runtime.env`
   - `runtime.local.env`
   - `librechat.yaml`
+- Web search ownership is part of that same compiler contract:
+  - the live switch is `integrations.web_search` in canonical App Support config
+  - if that input is off or absent, generated runtime must disable `interface.webSearch`, omit the
+    top-level `webSearch` block, and launcher env must keep `START_SEARXNG` / `START_FIRECRAWL`
+    false
+  - do not treat the tracked `viventium/source_of_truth/local.librechat.yaml` snapshot as the
+    machine's live enablement state
 - The config compiler also owns the retrieval embeddings contract compiled from
   `runtime.retrieval.embeddings`:
   - `EMBEDDINGS_PROVIDER`
@@ -185,3 +192,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     when another workspace's MCP server is squatting there
   - otherwise the isolated runtime can silently inherit the wrong Azure app credentials even though
     the compiled Viventium config is correct
+- On April 12, 2026, web search drift showed the same compiler boundary from another angle:
+  - the runtime correctly disabled Web Search because canonical App Support config never enabled
+    `integrations.web_search`
+  - the tracked source-of-truth YAML still advertising `interface.webSearch: true` did not make the
+    machine live
+  - the right fix was to update canonical config and restart, not to patch generated
+    `librechat.yaml`

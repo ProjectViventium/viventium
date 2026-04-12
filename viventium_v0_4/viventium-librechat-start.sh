@@ -8219,6 +8219,8 @@ fi
 
 prepare_remote_call_access
 
+export LIVEKIT_NODE_IP="${LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}"
+
 if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" || -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
   echo -e "${CYAN}[viventium]${NC} Public remote access:"
   [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" ]] && echo -e "  App:         ${GREEN}${VIVENTIUM_PUBLIC_CLIENT_URL}${NC}"

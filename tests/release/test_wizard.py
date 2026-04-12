@@ -408,7 +408,7 @@ def test_prompt_web_search_with_docker_warns_when_firecrawl_memory_is_low() -> N
         docker_memory_bytes=3 * 1024 * 1024 * 1024,
     )
 
-    assert any("lighter local Firecrawl profile" in note for note in ui.notes)
+    assert any("bounded local Firecrawl profile" in note for note in ui.notes)
     assert any("prefer Firecrawl API" in note for note in ui.notes)
 
 

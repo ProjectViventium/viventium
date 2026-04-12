@@ -101,7 +101,7 @@ def local_firecrawl_memory_note(docker_memory_bytes: int | None) -> str | None:
     recommended_gib = DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES / float(1024 * 1024 * 1024)
     return (
         "Docker Desktop is currently limited to about "
-        f"{current_gib:.1f} GB. Viventium now ships a lighter local Firecrawl profile, "
+        f"{current_gib:.1f} GB. Viventium now ships a bounded local Firecrawl profile, "
         f"but Firecrawl is more reliable with at least {recommended_gib:.0f} GB assigned. "
         "If you keep Docker smaller, prefer Firecrawl API for full-page scraping."
     )

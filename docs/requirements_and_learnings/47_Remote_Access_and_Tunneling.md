@@ -262,6 +262,9 @@ Router lease note:
   `public-network.json` for `bin/viventium status`
 - the launcher must also persist a fallback `last_error` itself when the helper exits before writing
   failure state, so stale healthy mappings cannot survive into status or the refresh worker gate
+- a failed remote-access attempt must clear only the public-edge exports. Local startup must restore
+  a LAN-reachable `LIVEKIT_NODE_IP` before the local LiveKit path runs, so a blocked router mapping
+  cannot take down localhost startup
 - if the router does not support UPnP/NAT-PMP at all, or refuses renewal, manual forwarding is still
   the fallback
 
