@@ -28,6 +28,7 @@ cd viventium_v0_4/voice-gateway && python3 -m pytest tests -q
 
 # Agent sync: dry-run first, then narrow push mode explicitly
 node viventium_v0_4/LibreChat/scripts/viventium-sync-agents.js pull --env=<env>
+node viventium_v0_4/LibreChat/scripts/viventium-sync-agents.js compare --env=<env>
 node viventium_v0_4/LibreChat/scripts/viventium-sync-agents.js push --prompts-only --dry-run --env=<env>
 ```
 
@@ -111,6 +112,21 @@ Before changing code:
 - `viventium_v0_4/LibreChat/` has separate git history. Parent repo commits do not deploy it.
 - Agent sync default push can overwrite tool arrays and break MCP links. Dry-run first and use the
   narrowest safe mode.
+- Before any user-level agent push, review A/B/C drift:
+  - A = live user-level bundle
+  - B = tracked source-of-truth bundle
+  - C = current repo changes not yet reflected in live
+- Do not treat the tracked scaffold as automatically authoritative over live user edits to
+  instructions, conversation starters, tools, model/provider, or background cortex config.
+- Do not add regex or keyword matching in runtime code to detect user intent, provider selection,
+  email phrasing, or productivity scope. Activation prompts plus `activation.fallbacks` own that
+  behavior; runtime heuristics are a critical review block.
+- If a user reports a capability disappearing, also inspect adjacent scaffold/runtime config such as
+  `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.librechat.yaml`; a global toggle like
+  `interface.webSearch` can disable the feature even when the agent tool array still includes it.
+- Non-dry-run pushes should fail closed when reviewed live-vs-source drift still exists. Only use a
+  follow-up acknowledgement such as `--compare-reviewed` after you have already shown the user the
+  A/B/C diff and they intend to proceed.
 - Generated runtime files in `~/Library/Application Support/Viventium/` are outputs, not canonical
   authoring inputs.
 - A historically healthy owner machine is not the source of truth. Fresh compile/start on the

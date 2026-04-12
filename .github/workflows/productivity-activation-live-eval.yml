@@ -1,0 +1,60 @@
+name: Productivity Activation Live Eval
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/productivity-activation-live-eval.yml
+      - tests/release/test_productivity_activation_live_eval.py
+      - tests/release/test_no_runtime_nlu.py
+      - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
+      - viventium_v0_4/LibreChat/api/server/services/viventium/**
+      - viventium_v0_4/LibreChat/scripts/run-productivity-activation-evals.js
+      - viventium_v0_4/LibreChat/viventium/source_of_truth/*.viventium-agents.yaml
+  push:
+    paths:
+      - .github/workflows/productivity-activation-live-eval.yml
+      - tests/release/test_productivity_activation_live_eval.py
+      - tests/release/test_no_runtime_nlu.py
+      - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
+      - viventium_v0_4/LibreChat/api/server/services/viventium/**
+      - viventium_v0_4/LibreChat/scripts/run-productivity-activation-evals.js
+      - viventium_v0_4/LibreChat/viventium/source_of_truth/*.viventium-agents.yaml
+  workflow_dispatch:
+
+jobs:
+  live-activation-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VIVENTIUM_RUN_LIVE_ACTIVATION_EVALS: "1"
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: viventium_v0_4/LibreChat/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Require activation-eval provider credentials
+        run: |
+          test -n "$GROQ_API_KEY" || { echo "::error::Missing GROQ_API_KEY"; exit 1; }
+          test -n "$OPENAI_API_KEY" || { echo "::error::Missing OPENAI_API_KEY"; exit 1; }
+          test -n "$ANTHROPIC_API_KEY" || { echo "::error::Missing ANTHROPIC_API_KEY"; exit 1; }
+
+      - name: Install LibreChat workspace dependencies
+        working-directory: viventium_v0_4/LibreChat
+        run: npm ci
+
+      - name: Install Python test dependencies
+        run: python3 -m pip install pytest pyyaml
+
+      - name: Run live activation eval gate
+        run: python3 -m pytest tests/release/test_productivity_activation_live_eval.py -q

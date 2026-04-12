@@ -165,3 +165,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     lucky regeneration path happens
   - generated runtime YAML is a deployment artifact for launch/runtime, not an authoring source for
     the next compile pass
+- On April 10, 2026, MS365 MCP startup exposed the same runtime-ownership rule on a shipped local
+  port:
+  - restart must not trust an arbitrary healthy listener already occupying the shipped MS365 MCP
+    port
+  - the launcher must verify that the existing listener is Viventium-owned and reclaim the port
+    when another workspace's MCP server is squatting there
+  - otherwise the isolated runtime can silently inherit the wrong Azure app credentials even though
+    the compiled Viventium config is correct

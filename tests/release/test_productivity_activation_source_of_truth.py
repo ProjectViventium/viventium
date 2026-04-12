@@ -97,6 +97,8 @@ def test_productivity_activation_models_follow_documented_local_recommendation()
         activation = activation_by_agent_id[agent_id]
         assert activation["provider"] == "groq"
         assert activation["model"] == "meta-llama/llama-4-scout-17b-16e-instruct"
+        assert isinstance(activation["fallbacks"], list)
+        assert len(activation["fallbacks"]) >= 2
 
 
 def test_source_of_truth_bundle_does_not_embed_owner_specific_identity() -> None:
@@ -120,7 +122,7 @@ def test_productivity_activation_configs_define_explicit_scope_keys() -> None:
     )
 
 
-def test_productivity_activation_prompts_guard_against_chat_format_false_positives() -> None:
+def test_productivity_activation_prompts_define_chat_format_negative_boundary() -> None:
     activation_by_agent_id = _load_activation_by_agent_id()
 
     for agent_id in (
@@ -130,14 +132,42 @@ def test_productivity_activation_prompts_guard_against_chat_format_false_positiv
         prompt = activation_by_agent_id[agent_id]["prompt"].lower()
 
         assert "primary decision rule" in prompt
-        assert "latest user message is the decisive signal" in prompt
-        assert "chat response-format or wording instruction" in prompt
-        assert "how viventium should answer in chat" in prompt
+        assert 'return "should_activate": false when' in prompt
+        assert "activate (true) when all of these are true" in prompt
+        assert "chat" in prompt
         assert "direct_ok" in prompt
-        assert "say test worked" in prompt
         assert "respond only with yes" in prompt
-        assert "reply\", \"respond\", \"say\", or \"return\"" in prompt
-        assert "do not count when the user is telling viventium how to phrase its chat response" in prompt
+        assert "capability question" in prompt
+
+
+def test_productivity_activation_prompts_name_their_owned_scopes() -> None:
+    activation_by_agent_id = _load_activation_by_agent_id()
+
+    ms365_prompt = activation_by_agent_id["agent_viventium_online_tool_use_95aeb3"]["prompt"]
+    google_prompt = activation_by_agent_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["prompt"]
+
+    assert "PRIMARY DECISION RULE:" in ms365_prompt
+    assert "SCOPE:" in ms365_prompt
+    assert "Microsoft 365 / Outlook / OneDrive" in ms365_prompt
+
+    assert "PRIMARY DECISION RULE:" in google_prompt
+    assert "SCOPE:" in google_prompt
+    assert "Google Workspace" in google_prompt
+
+
+def test_productivity_activation_configs_define_provider_fallback_chain() -> None:
+    activation_by_agent_id = _load_activation_by_agent_id()
+
+    for agent_id in (
+        "agent_viventium_online_tool_use_95aeb3",
+        "agent_8Y1d7JNhpubtvzYz3hvEv",
+    ):
+        activation = activation_by_agent_id[agent_id]
+        fallbacks = activation["fallbacks"]
+        assert isinstance(fallbacks, list)
+        assert len(fallbacks) >= 2
+        assert all(isinstance(entry.get("provider"), str) and entry["provider"] for entry in fallbacks)
+        assert all(isinstance(entry.get("model"), str) and entry["model"] for entry in fallbacks)
 
 
 def test_productivity_activation_prompts_keep_parallel_provider_rule() -> None:
@@ -232,8 +262,10 @@ def test_runtime_activation_plumbing_stays_config_driven_and_avoids_illegal_titl
     assert "productivity tool agent" not in background_cortex_source
     assert "PRODUCTIVITY_ACTIVATION_SCOPES" not in background_cortex_source
     assert "ActivationScopeKey:" in background_cortex_source
-    assert "ActivationProviderIntent:" in background_cortex_source
+    assert "resolveDeterministicLiveEmailActivation" not in background_cortex_source
+    assert "reduceMessagesForProductivitySpecialist" not in background_cortex_source
     assert "resolveProductivitySpecialistScope" in brewing_hold_source
+    assert "hasExplicitProductivityRequest" not in brewing_hold_source
     assert "['online_tool_use', 'google']" not in brewing_hold_source
     assert "VIVENTIUM_TOOL_CORTEX_HOLD_AGENT_IDS" not in brewing_hold_source
     assert "cortex?.activationScope" not in brewing_hold_source
@@ -246,6 +278,8 @@ def test_runtime_activation_plumbing_stays_config_driven_and_avoids_illegal_titl
     assert "instructions.includes('do not reference memory systems or assumed prior context')" not in (
         productivity_context_source
     )
+    assert "hasExplicitProductivityRequest" not in productivity_context_source
+    assert "reduceMessagesForProductivitySpecialist" not in productivity_context_source
     assert "agent?.intent_scope" not in productivity_context_source
     assert "extractLegacyProductivityScopeHeader" in productivity_context_source
     assert "scopeHeaderPattern" in productivity_context_source

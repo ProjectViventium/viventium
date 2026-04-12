@@ -93,3 +93,9 @@ Use this order so the fix stays surgical:
 - Fixing only the provider layer would stop the crash but could silently change the intended shipped
   behavior of temperature-tuned built-ins; those built-ins also need truthful source-of-truth
   `thinking` settings.
+- Activation intent detection is classifier-owned. Runtime code must not regex-match user text to
+  decide activation or to prune activation history based on guessed semantics.
+- When activation phrasing needs to expand, fix the source-of-truth activation prompt and prove it
+  with live evals.
+- When the classifier provider is unavailable, fix reliability with `activation.fallbacks`, not with
+  deterministic runtime heuristics.

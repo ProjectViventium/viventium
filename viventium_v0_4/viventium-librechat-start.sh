@@ -5632,6 +5632,42 @@ ms365_http_ping() {
   return 1
 }
 
+# === VIVENTIUM START ===
+# Feature: MS365 MCP restart ownership enforcement.
+# Purpose: Reclaim the shipped MS365 MCP port from foreign listeners instead of
+# silently reusing another workspace's server and credentials.
+# === VIVENTIUM END ===
+ms365_port_listener_is_viventium_owned() {
+  local port="${1:-$MS365_MCP_PORT}"
+
+  if command -v docker >/dev/null 2>&1 && docker_daemon_ready; then
+    if docker ps -q --filter "name=^/viventium_ms365_mcp$" 2>/dev/null | head -1 | grep -q .; then
+      return 0
+    fi
+  fi
+
+  local pids
+  pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  if [[ -z "$pids" ]]; then
+    return 1
+  fi
+
+  local pid
+  for pid in $pids; do
+    if pid_matches_scope "$pid" "$ROOT_DIR/MCPs/ms-365-mcp-server"; then
+      return 0
+    fi
+    if pid_matches_scope "$pid" "$LEGACY_V0_3_DIR"; then
+      return 0
+    fi
+    if pid_matches_scope "$pid" "$VIVENTIUM_CORE_DIR"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 searxng_http_ping() {
   local base_url="${SEARXNG_INSTANCE_URL:-http://localhost:${SEARXNG_PORT}}"
   base_url="${base_url%/}"
@@ -6747,7 +6783,10 @@ start_ms365_mcp() {
 
   if [[ "$RESTART_DOCKER_SERVICES" == "true" && "$ms365_port_in_use" == "true" ]]; then
     if port_in_use "$base_port"; then
-      if ms365_http_ping "http://localhost:${base_port}/mcp"; then
+      if ! ms365_port_listener_is_viventium_owned "$base_port"; then
+        log_warn "MS365 MCP port $base_port is occupied by a non-Viventium listener; reclaiming the port for Viventium"
+        kill_port_listeners "$base_port"
+      elif ms365_http_ping "http://localhost:${base_port}/mcp"; then
         MS365_MCP_PORT="$base_port"
         export MS365_MCP_PORT
         export MS365_MCP_TRANSPORT="streamable-http"
