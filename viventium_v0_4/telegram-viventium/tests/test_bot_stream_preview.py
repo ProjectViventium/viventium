@@ -196,7 +196,7 @@ def test_resolve_voice_input_message_keeps_caption_when_media_fails():
 
 class _FakeUser:
     id = 12345
-    username = "adri"
+    username = "sampleuser"
 
 
 class _FakeChat:
