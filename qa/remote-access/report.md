@@ -117,7 +117,7 @@
      and request counts, proving shared-state throttling
 17. Real Caddy-served well-known validation.
    - Setup:
-     - local upstream server on `http://127.0.0.1:39190`
+     - local upstream server on `http://127.0.0.1:<ephemeral-port>`
      - live Caddy process using the helper-generated directory document in its Caddyfile
    - Result:
      - `curl --resolve app.qa.test:40443:127.0.0.1 https://app.qa.test:40443/.well-known/viventium-instance.json -k`
