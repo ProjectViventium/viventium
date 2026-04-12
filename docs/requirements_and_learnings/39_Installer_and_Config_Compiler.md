@@ -87,6 +87,12 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - do not rely on Mongo hand-edits or App Support leftovers to make built-ins behave correctly
   - shipped Anthropic agents that intentionally use `temperature` must set `thinking: false`
     explicitly when Anthropic runtime defaults would otherwise enable thinking
+  - install summary, browser reminders, and setup docs must distinguish foundation-model auth
+    from per-user workspace OAuth; a healthy activation path does not mean Gmail/Drive or
+    Outlook/MS365 execution is ready for that user yet
+  - local duplicate QA accounts do not automatically inherit another user's Google Workspace,
+    Microsoft 365, or connected-model OAuth state; realistic live QA must reconnect or reseed those
+    user-scoped credentials explicitly
 - Installer UX affordances, including wait copy and inline animations, must not mutate or depend on
   generated App Support outputs to appear correct.
 
@@ -138,6 +144,12 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   still rejected that generated value in one path with `Provider openai not supported`. The fix
   belongs at the shared runtime normalization/initialization boundary, not in App Support hand
   edits and not by changing the compiler back to a different alias.
+- On April 12, 2026, local live QA showed the next runtime boundary clearly:
+  classifier-first activation and fallback wiring can be fully healthy while the user-visible
+  Outlook or Gmail task still waits on user-scoped connected-account OAuth. Install/status/setup
+  guidance must tell users to connect both:
+  - one foundation model account so the shipped agents can reason
+  - the matching Google Workspace or Microsoft 365 account when they want those tool surfaces
 - On April 9, 2026, a local restart verified the memory-writer contract end to end:
   - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
     running helper logs showed the unsupported-provider initialization failure

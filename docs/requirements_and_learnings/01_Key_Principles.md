@@ -266,8 +266,8 @@ A developer referring to a single document about a respective feature **must per
 - **NEVER use default `push` (without `--prompts-only`) unless you are certain the YAML `tools` arrays exactly match the live target environment state**. Default push overwrites ALL fields including `tools`, which breaks MCP server links that were configured via the LibreChat UI. The user then has to manually re-add each MCP server one by one.
 - **Why it breaks**: Default push writes 16 fields including `tools` (string arrays like `sys__server__sys_mcp_scheduling-cortex`). If the YAML was pulled at time T1 and someone changed MCP tools via UI between T1 and push at T2, the stale T1 tools array overwrites the UI changes.
 - **Do not blindly overwrite live instructions or conversation starters either**. A stale scaffold can erase user-authored main-agent or background-agent prompt edits just as easily as it can erase tools.
-- **`--prompts-only` safe fields**: `id`, `name`, `description`, `instructions`, `conversation_starters`, `background_cortices` (with safe merge that only touches `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`).
-- **`--activation-config-only` safe fields**: only `background_cortices`, with an allowlist merge over `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, `activation.model`, `activation.provider`, `activation.cooldown_ms`, `activation.max_history`, and `activation.intent_scope`. Use `--activation-fields=...` to narrow further.
+- **`--prompts-only` safe fields**: `id`, `name`, `description`, `instructions`, `conversation_starters`, `background_cortices` (with safe merge that only touches `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, and the explicitly reviewed reliability field `activation.fallbacks`). Treat fallback changes as live runtime-behavior changes, not as copy-only prompt edits.
+- **`--activation-config-only` safe fields**: only `background_cortices`, with an allowlist merge over `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, `activation.fallbacks`, `activation.model`, `activation.provider`, `activation.cooldown_ms`, `activation.max_history`, and `activation.intent_scope`. Use `--activation-fields=...` to narrow further.
 - **`--model-config-only` safe fields**: only top-level agent model fields (`provider`, `model`, `model_parameters`, `voice_llm_model`, `voice_llm_provider`). Use this when correcting stale model drift without touching tools or prompts.
 - **Use `--agent-ids=...` for surgical pushes** when only a subset of background agents changed. This keeps model/prompt fixes narrowly scoped instead of rewriting the whole roster.
 - **Always dry-run first**: `push --prompts-only --dry-run --env=<env>` to preview changes before applying.
@@ -293,7 +293,10 @@ A developer referring to a single document about a respective feature **must per
   - `anthropic / claude-opus-4-6`
   - `openAI / gpt-5.4`
 - Foundation provider rule:
-  - Groq remains required for activation detection
+  - Groq is the current launch-ready primary for activation detection under the shipped 2-second
+    Phase A budget
+  - Anthropic Haiku-class activation is acceptable as a fallback or alternative only when the
+    benchmark for the target environment proves it fits the chosen budget
   - at least one of `OpenAI` or `Anthropic` must be configured for main/background execution on install
   - do not treat `x_ai` alone as a sufficient built-in background-agent foundation for launch-ready installs
 - Do **not** silently drift back to older defaults such as `gpt-4o` or `gpt-4o-mini` just because a pull or reset changed stored config.
@@ -327,6 +330,11 @@ A developer referring to a single document about a respective feature **must per
   - keep a cross-contract check between the Python release guard and the JS runtime-model helper so
     the documented launch-ready families cannot drift apart between source-of-truth validation and
     live Mongo rewrite logic
+  - keep activation-provider benchmarks honest:
+    - connected-account providers must be benchmarked through the real connected-account path
+    - standalone eval scripts must bootstrap the same runtime dependencies the app uses
+    - when one real user is reused, per-user activation cooldown state must not bleed across
+      independent benchmark scenarios
   - reason: model drift and QA drift are both launch regressions, even when the app still boots
 - Inventory hygiene rule:
   - local model-picker inventories and helper/title models must also stay aligned with the current approved families

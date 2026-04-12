@@ -43,6 +43,9 @@ First-run notes:
   now keeps running and `bin/viventium status` reports the exact blocker
 - the macOS helper now uses the shipped matching helper binary first on clean installs instead of
   depending on opportunistic local Swift builds
+- after you create your local account, open `Settings -> Connected Accounts` and connect at least
+  one foundation model account (`OpenAI` or `Anthropic`); if you want Gmail/Drive or Outlook/MS365
+  tasks, connect those service accounts there too
 
 Then start or check the stack:
 

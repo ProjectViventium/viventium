@@ -6,7 +6,7 @@ services:
     image: ghcr.io/firecrawl/firecrawl:latest
     container_name: viventium_firecrawl_api
     restart: unless-stopped
-    mem_limit: 1536m
+    mem_limit: 512m
     networks:
       - firecrawl
     ports:

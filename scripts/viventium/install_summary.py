@@ -725,15 +725,48 @@ def build_next_steps(
 
 
 def build_connected_accounts_notice(config: dict[str, Any]) -> str | None:
-    if foundation_api_key_present(config):
-        return None
-    return (
-        "After you create your account in the browser:\n"
-        "1. Click your account in the left sidebar.\n"
-        "2. Open [cyan]Settings -> Connected Accounts[/cyan].\n"
-        "3. Connect [bold]OpenAI[/bold], and optionally [bold]Anthropic[/bold].\n\n"
-        "At minimum connect one of them so the shipped Viventium and background agents work on this install."
+    integrations = config.get("integrations", {}) or {}
+    foundation_needed = not foundation_api_key_present(config)
+    google_workspace_enabled = resolve_bool(
+        (integrations.get("google_workspace") or {}).get("enabled"),
+        False,
     )
+    ms365_enabled = resolve_bool((integrations.get("ms365") or {}).get("enabled"), False)
+
+    if not foundation_needed and not google_workspace_enabled and not ms365_enabled:
+        return None
+
+    lines = [
+        "After you create your account in the browser:",
+        "1. Click your account in the left sidebar.",
+        "2. Open [cyan]Settings -> Connected Accounts[/cyan].",
+    ]
+    next_step = 3
+
+    if foundation_needed:
+        lines.append(
+            f"{next_step}. Connect [bold]OpenAI[/bold], and optionally [bold]Anthropic[/bold], so the shipped Viventium and background agents can run."
+        )
+        next_step += 1
+
+    workspace_accounts: list[str] = []
+    if google_workspace_enabled:
+        workspace_accounts.append("[bold]Google Workspace[/bold]")
+    if ms365_enabled:
+        workspace_accounts.append("[bold]Microsoft 365[/bold]")
+    if workspace_accounts:
+        if len(workspace_accounts) == 2:
+            workspace_label = f"{workspace_accounts[0]} and {workspace_accounts[1]}"
+        else:
+            workspace_label = workspace_accounts[0]
+        lines.append(
+            f"{next_step}. Connect {workspace_label} if you want Gmail/Drive or Outlook/MS365 tasks on this user account."
+        )
+        lines.append(
+            "Foundation-model auth and workspace OAuth are separate layers. Activation can succeed while tool execution still waits on a missing or expired service connection."
+        )
+
+    return "\n".join(lines)
 
 
 def main() -> None:

@@ -158,6 +158,30 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     )
 
 
+def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade_section = cli_source.split("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+    autorestart_section = upgrade_section.split('if [[ "$AUTO_RESTART" == "1" ]]; then', 1)[1].split(
+        '    fi\n    echo "Upgrade complete. Next: bin/viventium start"',
+        1,
+    )[0]
+    restart_section = cli_source.split("restart_stack_after_upgrade() {", 1)[1].split(
+        "stop_stack_for_upgrade() {",
+        1,
+    )[0]
+
+    assert "restart_stack_after_upgrade() {" in cli_source
+    assert "cleanup_cli_lock" in restart_section
+    assert "launch_stack_detached" in restart_section
+    assert "wait_for_install_stack_health" in restart_section
+    assert 'echo "Restarting Viventium..."' in restart_section
+    assert "install_waiting_on_surfaces" in restart_section
+    assert "print_install_timeout_log_excerpt" in restart_section
+    assert "if ! restart_stack_after_upgrade; then" in upgrade_section
+    assert '"$REPO_ROOT/bin/viventium" \\' not in autorestart_section
+    assert "        start" not in autorestart_section
+
+
 def test_remote_access_failure_does_not_abort_local_launcher_progress(tmp_path: Path) -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"

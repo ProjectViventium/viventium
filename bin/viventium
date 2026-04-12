@@ -992,7 +992,12 @@ foundation_present = any(
     for provider_name, node in extra_provider_keys.items()
 )
 
-print("0" if foundation_present else "1")
+integrations = config.get("integrations", {}) or {}
+google_workspace_enabled = bool((integrations.get("google_workspace") or {}).get("enabled"))
+ms365_enabled = bool((integrations.get("ms365") or {}).get("enabled"))
+
+needs_guidance = (not foundation_present) or google_workspace_enabled or ms365_enabled
+print("1" if needs_guidance else "0")
 PY
 }
 
@@ -1004,7 +1009,8 @@ print_connected_accounts_browser_reminder() {
 
   echo
   echo "Important: after you create your account in the browser, click your account in the left sidebar,"
-  echo "open Settings -> Connected Accounts, and connect OpenAI or Anthropic so the shipped Viventium agents can run."
+  echo "open Settings -> Connected Accounts, connect OpenAI or Anthropic so the shipped Viventium agents can run,"
+  echo "and connect Google Workspace and/or Microsoft 365 there as well if you want those tasks on this user account."
 }
 
 open_default_browser() {
@@ -2089,6 +2095,49 @@ start_stack_for_install() {
   return 1
 }
 
+restart_stack_after_upgrade() {
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
+  local wait_status=0
+  local waiting_on=""
+
+  # Upgrade already refreshed components and regenerated runtime outputs.
+  # Restart should hand off to the detached launcher path instead of keeping
+  # the upgrade process attached to the long-lived stack owner.
+  cleanup_cli_lock
+  DETACHED_START_PID=""
+
+  if install_surfaces_healthy; then
+    return 0
+  fi
+
+  echo "Restarting Viventium..."
+  launch_stack_detached
+
+  wait_for_install_stack_health
+  wait_status=$?
+  if [[ "$wait_status" == "0" ]]; then
+    return 0
+  fi
+
+  waiting_on="$(install_waiting_on_surfaces || true)"
+  if [[ -z "$waiting_on" ]]; then
+    waiting_on="service readiness checks"
+  fi
+
+  if [[ "$wait_status" == "2" ]]; then
+    echo "Viventium stopped during restart before the required surfaces became healthy." >&2
+  else
+    echo "Viventium did not become healthy before the restart timeout (${timeout_seconds}s)." >&2
+  fi
+  echo "Still waiting on: $waiting_on" >&2
+  if [[ -f "$launch_log" ]]; then
+    echo "Check the detached start log: $launch_log" >&2
+  fi
+  print_install_timeout_log_excerpt "$launch_log"
+  return 1
+}
+
 stop_stack_for_upgrade() {
   "$REPO_ROOT/bin/viventium" \
     --app-support-dir "$APP_SUPPORT_DIR" \
@@ -2359,13 +2408,10 @@ case "$COMMAND" in
       --lock-file "$LOCK_FILE"
     maybe_install_macos_helper
     if [[ "$AUTO_RESTART" == "1" ]]; then
-      "$REPO_ROOT/bin/viventium" \
-        --app-support-dir "$APP_SUPPORT_DIR" \
-        --config-file "$CONFIG_FILE" \
-        --runtime-dir "$RUNTIME_DIR" \
-        --lock-file "$LOCK_FILE" \
-        start
-      exit $?
+      if ! restart_stack_after_upgrade; then
+        exit 1
+      fi
+      exit 0
     fi
     echo "Upgrade complete. Next: bin/viventium start"
     ;;

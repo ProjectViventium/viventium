@@ -327,6 +327,34 @@ def test_build_next_steps_prioritizes_connected_accounts_when_no_foundation_api_
     assert all("Connected Accounts" not in step for step in steps)
 
 
+def test_build_connected_accounts_notice_mentions_workspace_accounts_when_enabled() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"ports": {"lc_frontend_port": 3190}},
+        "llm": {
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_ref": "openai-key",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "local"},
+        "integrations": {
+            "google_workspace": {"enabled": True},
+            "ms365": {"enabled": True},
+        },
+    }
+
+    notice = install_summary.build_connected_accounts_notice(config)
+
+    assert "Google Workspace" in notice
+    assert "Microsoft 365" in notice
+    assert "Activation can succeed" in notice
+
+
 def test_build_service_rows_uses_live_public_network_state_for_remote_access(monkeypatch, tmp_path: Path) -> None:
     install_summary = load_install_summary_module()
 

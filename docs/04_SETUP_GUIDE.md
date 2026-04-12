@@ -131,6 +131,9 @@ bin/viventium restore --snapshot-dir <path>
 - `viventium_v0_3_py` is legacy and not part of the target public release surface
 - if native install enables `MS365`, Docker Desktop is still required today because the local MS365 MCP remains Docker-backed
 - OpenAI/Anthropic local installs should automatically surface Connected Accounts actions from the generated runtime config
+- Google Workspace and Microsoft 365 tasks still require each local user to connect those services
+  in `Settings -> Connected Accounts`; those OAuth links are user-scoped and are not implied by the
+  installer alone
 - if the configured provider auth mode is API key, the default local OpenAI inventory should stay on safe broadly accessible models rather than premium subscription-only ones
 
 ## Release Prep
