@@ -413,7 +413,7 @@ def test_build_service_rows_reports_action_required_when_remote_access_state_sav
     state_root = tmp_path / "state" / "runtime" / "isolated"
     state_root.mkdir(parents=True)
     (state_root / "public-network.json").write_text(
-        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}',
+        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 192.0.2.44:50779"}',
         encoding="utf-8",
     )
 
@@ -507,7 +507,7 @@ def test_build_next_steps_prioritizes_remote_access_recovery_when_public_edge_fa
     state_root = tmp_path / "state" / "runtime" / "isolated"
     state_root.mkdir(parents=True)
     (state_root / "public-network.json").write_text(
-        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}',
+        '{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 192.0.2.44:50779"}',
         encoding="utf-8",
     )
 

@@ -141,5 +141,5 @@ bin/viventium restore --snapshot-dir <path>
 Before any file move or publishing:
 
 ```bash
-python3 scripts/release/build_release_manifests.py
+python3 -m pytest tests/release/ -q
 ```

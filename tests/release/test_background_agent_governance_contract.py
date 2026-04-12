@@ -152,6 +152,15 @@ def test_local_source_of_truth_main_agent_stays_on_claude_opus_46() -> None:
     ) == APPROVED_MAIN_AGENT_FAMILY
 
 
+def test_local_source_of_truth_main_agent_voice_route_defaults_to_fast_anthropic_without_thinking() -> None:
+    bundle = _load_source_of_truth()
+    main_agent = bundle.get("mainAgent", {})
+
+    assert main_agent.get("voice_llm_provider") == "anthropic"
+    assert main_agent.get("voice_llm_model") == "claude-haiku-4-5"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("thinking") is False
+
+
 def test_runtime_models_script_exports_match_release_contract() -> None:
     runtime_contract = _load_runtime_models_contract()
 

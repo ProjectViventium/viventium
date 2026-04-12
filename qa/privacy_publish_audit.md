@@ -24,6 +24,8 @@ Public-safe packaging audit for the review branches prepared on April 12, 2026.
 - One personal test fixture was present in the Telegram test suite and was replaced with a synthetic username
 - One secret-looking local default token was present in the Cursor bridge helper and was replaced with a clearly synthetic local token
 - One local runtime artifact directory, `.rag-pgdata/`, was present in the nested `LibreChat` working tree and is now ignored
+- One owner-specific LAN IP string was present in public release tests and is now replaced with the public-safe placeholder `192.0.2.44`
+- One stale doc reference to a missing `scripts/release/build_release_manifests.py` command was removed so public release instructions match the current tree
 
 ## Sanitization Fixes Applied
 

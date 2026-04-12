@@ -573,7 +573,7 @@ def test_cmd_start_persists_error_state_when_remote_access_bootstrap_fails(monke
     monkeypatch.setattr(module, "load_state", lambda _path: {})
 
     def fail_public_edge(*_args, **_kwargs):
-        raise RuntimeError("Router already forwards TCP 80 to 10.88.111.46:50779")
+        raise RuntimeError("Router already forwards TCP 80 to 192.0.2.44:50779")
 
     monkeypatch.setattr(module, "start_public_https_edge", fail_public_edge)
 

@@ -209,7 +209,7 @@ state_file.write_text(
     json.dumps(
         {
             "provider": "public_https_edge",
-            "last_error": "Router already forwards TCP 80 to 10.88.111.46:50779",
+            "last_error": "Router already forwards TCP 80 to 192.0.2.44:50779",
         }
     )
     + "\\n",
@@ -276,7 +276,7 @@ is_truthy() {{
 prepare_remote_call_access
 LIVEKIT_NODE_IP="${{LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}}"
 mkdir -p "$(dirname "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE")"
-printf '%s\n' '{{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 10.88.111.46:50779"}}' > "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
+printf '%s\n' '{{"provider":"public_https_edge","last_error":"Router already forwards TCP 80 to 192.0.2.44:50779"}}' > "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE"
 printf 'AFTER_CLIENT=%s\\n' "${{VIVENTIUM_PUBLIC_CLIENT_URL:-}}"
 printf 'AFTER_NODE_IP=%s\\n' "${{LIVEKIT_NODE_IP:-}}"
 start_remote_call_mapping_refresh_worker

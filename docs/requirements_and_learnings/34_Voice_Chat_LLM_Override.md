@@ -19,6 +19,9 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
    bag. Voice settings are separate authoring state.
 9. Modern playground disclosures must resolve the effective assistant route from the actual call
    agent and show the concrete provider/model that will answer the call.
+10. Shipped source-of-truth for Anthropic voice routes must set `voice_llm_model_parameters.thinking: false`
+    explicitly so fresh installs and syncs preserve low-latency voice behavior without relying on
+    inheritance from the primary model bag.
 
 ## Activation Conditions (all three required)
 | Condition | Source | Check |
@@ -49,6 +52,9 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
   `voice_llm_model_parameters`
 - **Default form values** (`packages/data-provider/src/schemas.ts`): provider/model default to
   `null`; voice parameter bag is omitted until used or explicitly cleared
+- **Seed/sync contract** (`scripts/viventium-seed-agents.js`, `scripts/viventium-sync-agents.js`):
+  source-of-truth import/export must preserve `voice_llm_model_parameters` exactly, including
+  explicit `thinking: false` defaults for shipped Anthropic voice routes
 
 ### UI Layer
 - **VoiceLlmPanel.tsx**: Voice provider/model panel plus the shared parameter grid used by

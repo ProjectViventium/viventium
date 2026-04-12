@@ -157,6 +157,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   guidance must tell users to connect both:
   - one foundation model account so the shipped agents can reason
   - the matching Google Workspace or Microsoft 365 account when they want those tool surfaces
+- On April 12, 2026, voice-call QA exposed the install/bootstrap side of the same contract:
+  - the main agent's fast voice route can be visibly active in runtime logs while still relying on
+    inherited primary-model parameters if the seeded source-of-truth omits the dedicated voice bag
+  - shipped Anthropic voice overrides must therefore seed `voice_llm_model_parameters.thinking:
+    false` explicitly
+  - seed/sync tooling must preserve that bag so fresh installs, local rebuilds, and reviewed syncs
+    all keep the same low-latency voice defaults
 - On April 9, 2026, a local restart verified the memory-writer contract end to end:
   - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
     running helper logs showed the unsupported-provider initialization failure
