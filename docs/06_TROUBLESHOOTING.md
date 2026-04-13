@@ -114,14 +114,36 @@ This is the shared troubleshooting index. For stack-specific detail, see:
 ### Telegram says `Failed to reach Viventium. Please retry.`
 - Root cause:
   - early-start case: the Telegram bridge was starting before a LibreChat-backed install had actually finished bringing up `3180`, so early Telegram requests were racing the cold-start LibreChat health check instead of waiting for it
-  - detached-runtime case: a detached direct LibreChat launch could later lose API supervision after a frontend dev-server exit, leaving Telegram alive but `localhost:3180` unreachable
+  - detached-runtime case: a detached direct LibreChat launch could later lose the real API child while a parent `npm`/`nodemon` process stayed alive, leaving Telegram healthy but `localhost:3180` unreachable
 - Symptom: Telegram auth is fine, but the bot returns the generic connection fallback during cold start, first-run rebuilds, or after the local LibreChat API silently drops out of a detached run.
 - Fix:
   - start the LibreChat-backed Telegram bridge only after `http://localhost:3180/health` is healthy
   - keep the detached direct LibreChat fallback supervising both backend and frontend processes instead of turning the launcher shell into the frontend process
+  - run a detached LibreChat API watchdog that restarts the backend when API health drops even though parent dev processes are still present
   - if the stack is still warming, confirm LibreChat health first instead of rotating Telegram tokens
-- Current status: the launcher now defers `VIVENTIUM_TELEGRAM_BACKEND=librechat` startup until LibreChat API health is up, and detached direct LibreChat launches no longer `exec` the frontend in a way that can strand Telegram behind a dead `3180` listener.
-- Current status on clean installs: if LibreChat is still building, the launcher keeps retrying the Telegram bridge in the background and `bin/viventium status` reports `Telegram Bridge | Starting` until that handoff completes.
+- Current status: the launcher now defers `VIVENTIUM_TELEGRAM_BACKEND=librechat` startup until LibreChat API health is up, detached direct LibreChat launches no longer `exec` the frontend in a way that can strand Telegram behind a dead `3180` listener, and detached runs now include an API watchdog for the dead-child/live-parent failure mode.
+ - Current status on clean installs: if LibreChat is still building, the launcher keeps retrying the Telegram bridge in the background and `bin/viventium status` reports `Telegram Bridge | Starting` until that handoff completes.
+
+### Telegram says `Temporarily unable to download this video from Telegram. Please retry.`
+- Root cause:
+  - Telegram itself rejected the bot's `getFile` request before download because the file exceeded the hosted Bot API download limit
+  - older bridge code collapsed Telegram's specific `File is too big` error into a generic download failure
+- Fix:
+  - map Telegram's oversize exception to an explicit oversize media error instead of a generic retry-only message
+  - for large Telegram videos that truly need to work, either point the bot at an external local Telegram Bot API server with `integrations.telegram.bot_api_origin` / base URLs, or enable the Viventium-managed same-Mac server under `integrations.telegram.local_bot_api`
+  - managed local Bot API mode also needs `api_id` / `api_hash` plus the `telegram-bot-api` binary available on the Mac
+  - if local Bot API mode is enabled, Telegram media size policy now comes from `integrations.telegram.max_file_size_bytes` instead of a hidden bot default
+
+### Telegram shows `🎤 Transcription: error: ...`
+- Root cause: Telegram media ingestion treated raw transcription exceptions as if they were successful transcript text, then forwarded that raw `error:` string into LibreChat as the user's message.
+- Symptom:
+  - Telegram visibly prints `🎤 Transcription:` followed by an `error:` string
+  - the next bot reply may be the generic LibreChat connection fallback because the garbage transcript text was submitted as chat input
+- Fix:
+  - use structured transcription results for voice notes and video notes instead of raw `error:` strings
+  - if transcription fails, send one clean Telegram media error and stop before chat submission
+  - keep the shared Telegram downloader responsible for file-size gating so oversized media fails honestly before transcription
+- Current status: failed Telegram voice/video transcription no longer renders as transcript text and no longer gets forwarded into LibreChat as user input.
 
 ### Telegram replies include `stream_preview_task ... not associated with a value`
 - Root cause: nested stream flush helper in `TelegramVivBot/bot.py` wrote to `stream_preview_task` without declaring it `nonlocal` under async flush paths.
@@ -209,6 +231,18 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   - if the router refuses renewal entirely, use manual forwarding for `80/tcp`, `443/tcp`,
     `7889/tcp`, `7890/udp`, and `5349/tcp`
 
+### Public startup aborts saying the router already forwards `80` or `443`
+- Root cause:
+  - the router still has a stale UPnP mapping from an earlier Viventium run, but that mapping now
+    points to a dead local target port on this same Mac
+- Symptom:
+  - startup fails during `Preparing secure remote access topology`
+  - the launcher logs a message like:
+    - `Router already forwards TCP 80 to <lan-ip>:<old-port>; cannot reuse it for Viventium ...`
+- Fix:
+  - current Viventium startup now reclaims dead same-machine mappings automatically
+  - if the conflicting mapping points to a live service or a different machine, treat that as a
+    real conflict and clear the router rule or switch to manual forwarding intentionally
 ### Public remote access fails because ports `80` / `443` already belong to another LAN device
 - Root cause: router port-forward ownership conflict. Viventium cannot safely steal those public
   ports from another machine already using them.

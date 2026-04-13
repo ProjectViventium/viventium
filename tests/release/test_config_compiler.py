@@ -1367,6 +1367,216 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in telegram_codex_env
 
 
+def test_config_compiler_renders_structured_telegram_bot_api_settings(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-telegram-bot-api"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "disabled",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+        },
+        "integrations": {
+            "telegram": {
+                "enabled": True,
+                "secret_value": VALID_TELEGRAM_TOKEN,
+                "bot_api_origin": "http://127.0.0.1:8081",
+                "bot_api_base_url": "",
+                "bot_api_base_file_url": "",
+            },
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE=10485760" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN=http://127.0.0.1:8081" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN=http://127.0.0.1:8081" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL" not in runtime_env
+    assert "VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL" not in runtime_env
+
+
+def test_config_compiler_renders_managed_local_telegram_bot_api_settings(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-telegram-local-bot-api"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "disabled",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+        },
+        "integrations": {
+            "telegram": {
+                "enabled": True,
+                "secret_value": VALID_TELEGRAM_TOKEN,
+                "local_bot_api": {
+                    "enabled": True,
+                    "host": "127.0.0.1",
+                    "port": 8084,
+                    "api_id": "telegram-api-id-test",
+                    "api_hash": "telegram-api-hash-test",
+                },
+            },
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED=true" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST=127.0.0.1" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT=8084" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID=telegram-api-id-test" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH=telegram-api-hash-test" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN=http://127.0.0.1:8084" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE=104857600" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED=true" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN=http://127.0.0.1:8084" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE=104857600" in telegram_env
+
+
+def test_config_compiler_rejects_conflicting_managed_and_explicit_telegram_bot_api_settings(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {"profile": "isolated"},
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {
+                "enabled": True,
+                "secret_value": VALID_TELEGRAM_TOKEN,
+                "bot_api_origin": "http://127.0.0.1:9999",
+                "local_bot_api": {
+                    "enabled": True,
+                    "api_id": "telegram-api-id-test",
+                    "api_hash": "telegram-api-hash-test",
+                },
+            },
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    combined_output = completed.stdout + completed.stderr
+    assert "integrations.telegram.local_bot_api.enabled cannot be combined" in combined_output
+
+
 def test_config_compiler_rejects_invalid_enabled_telegram_token(tmp_path: Path) -> None:
     config = {
         "version": 1,

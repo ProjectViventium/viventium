@@ -3,7 +3,6 @@ name: Productivity Activation Live Eval
 on:
   pull_request:
     paths:
-      - .github/workflows/productivity-activation-live-eval.yml
       - tests/release/test_productivity_activation_live_eval.py
       - tests/release/test_no_runtime_nlu.py
       - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
@@ -12,7 +11,6 @@ on:
       - viventium_v0_4/LibreChat/viventium/source_of_truth/*.viventium-agents.yaml
   push:
     paths:
-      - .github/workflows/productivity-activation-live-eval.yml
       - tests/release/test_productivity_activation_live_eval.py
       - tests/release/test_no_runtime_nlu.py
       - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
@@ -33,28 +31,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - id: detect_librechat_workspace
+        name: Detect LibreChat activation-eval workspace
+        shell: bash
+        run: |
+          if [ -f "viventium_v0_4/LibreChat/package-lock.json" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip when nested LibreChat workspace is not part of this checkout
+        if: steps.detect_librechat_workspace.outputs.available != 'true'
+        run: |
+          echo "Skipping live activation eval: nested LibreChat workspace is not present in this checkout."
+
       - uses: actions/setup-node@v4
+        if: steps.detect_librechat_workspace.outputs.available == 'true'
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: viventium_v0_4/LibreChat/package-lock.json
 
       - uses: actions/setup-python@v5
+        if: steps.detect_librechat_workspace.outputs.available == 'true'
         with:
           python-version: "3.11"
 
       - name: Require activation-eval provider credentials
+        if: steps.detect_librechat_workspace.outputs.available == 'true'
         run: |
           test -n "$GROQ_API_KEY" || { echo "::error::Missing GROQ_API_KEY"; exit 1; }
           test -n "$OPENAI_API_KEY" || { echo "::error::Missing OPENAI_API_KEY"; exit 1; }
           test -n "$ANTHROPIC_API_KEY" || { echo "::error::Missing ANTHROPIC_API_KEY"; exit 1; }
 
       - name: Install LibreChat workspace dependencies
+        if: steps.detect_librechat_workspace.outputs.available == 'true'
         working-directory: viventium_v0_4/LibreChat
         run: npm ci
 
       - name: Install Python test dependencies
+        if: steps.detect_librechat_workspace.outputs.available == 'true'
         run: python3 -m pip install pytest pyyaml
 
       - name: Run live activation eval gate
+        if: steps.detect_librechat_workspace.outputs.available == 'true'
         run: python3 -m pytest tests/release/test_productivity_activation_live_eval.py -q

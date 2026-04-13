@@ -64,6 +64,22 @@ def _coerce_bool(value, default=None):
             return False
         return default
     return bool(value)
+
+
+def _normalize_url_env(name):
+    value = str(os.environ.get(name, "") or "").strip()
+    return value.rstrip("/") if value else ""
+
+
+def _derive_telegram_bot_api_prefix(origin: str, suffix: str) -> str:
+    candidate = str(origin or "").strip().rstrip("/")
+    if not candidate:
+        return ""
+    if candidate.endswith("/file/bot"):
+        candidate = candidate[: -len("/file/bot")]
+    elif candidate.endswith("/bot"):
+        candidate = candidate[: -len("/bot")]
+    return f"{candidate}{suffix}"
 # === VIVENTIUM END ===
 
 # Optional local whisper integration
@@ -89,6 +105,20 @@ VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED = _get_bool_env(
 VIVENTIUM_TELEGRAM_MAX_FILE_SIZE = int(
     os.environ.get('VIVENTIUM_TELEGRAM_MAX_FILE_SIZE', '10485760')
 )
+VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED = _get_bool_env(
+    'VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED', False
+)
+VIVENTIUM_TELEGRAM_BOT_API_ORIGIN = _normalize_url_env('VIVENTIUM_TELEGRAM_BOT_API_ORIGIN')
+VIVENTIUM_TELEGRAM_BOT_API_BASE_URL = _normalize_url_env('VIVENTIUM_TELEGRAM_BOT_API_BASE_URL')
+if not VIVENTIUM_TELEGRAM_BOT_API_BASE_URL and VIVENTIUM_TELEGRAM_BOT_API_ORIGIN:
+    VIVENTIUM_TELEGRAM_BOT_API_BASE_URL = _derive_telegram_bot_api_prefix(
+        VIVENTIUM_TELEGRAM_BOT_API_ORIGIN, '/bot'
+    )
+VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL = _normalize_url_env('VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL')
+if not VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL and VIVENTIUM_TELEGRAM_BOT_API_ORIGIN:
+    VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL = _derive_telegram_bot_api_prefix(
+        VIVENTIUM_TELEGRAM_BOT_API_ORIGIN, '/file/bot'
+    )
 VIVENTIUM_TELEGRAM_FILE_TEXT_FALLBACK = _get_bool_env(
     'VIVENTIUM_TELEGRAM_FILE_TEXT_FALLBACK', False
 )

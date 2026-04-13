@@ -794,6 +794,7 @@ prepare_runtime_exports() {
   local private_source_of_truth=""
   local private_agents_bundle=""
   local private_telegram_env=""
+  local generated_telegram_env="$RUNTIME_DIR/service-env/telegram.config.env"
   local generated_telegram_codex_env="$RUNTIME_DIR/service-env/telegram-codex.env"
   local generated_telegram_codex_settings="$RUNTIME_DIR/telegram-codex/settings.yaml"
   local generated_telegram_codex_projects="$RUNTIME_DIR/telegram-codex/projects.yaml"
@@ -843,7 +844,9 @@ prepare_runtime_exports() {
       unset LIBRECHAT_AGENTS_BUNDLE_FILE
     fi
   fi
-  if [[ -f "$private_telegram_env" ]]; then
+  if [[ -f "$generated_telegram_env" ]]; then
+    export VIVENTIUM_TELEGRAM_ENV_FILE="$generated_telegram_env"
+  elif [[ -f "$private_telegram_env" ]]; then
     export VIVENTIUM_TELEGRAM_ENV_FILE="$private_telegram_env"
   fi
   if [[ -f "$generated_telegram_codex_env" ]]; then
@@ -1217,7 +1220,7 @@ runtime_env_true() {
 runtime_port_listening() {
   local port="${1:-}"
   [[ -n "$port" ]] || return 1
-  lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  viventium_port_listener_active "$port"
 }
 
 http_url_healthy() {
@@ -1331,42 +1334,6 @@ pid_matches_repo_scope() {
         return 0
         ;;
     esac
-  fi
-
-  if command -v lsof >/dev/null 2>&1; then
-    local cwd
-    local python_bin="${PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
-    if [[ -z "$python_bin" ]]; then
-      return 1
-    fi
-    cwd="$("$python_bin" - "$pid" <<'PY' 2>/dev/null || true
-import subprocess
-import sys
-
-pid = str(sys.argv[1]).strip()
-if not pid:
-    raise SystemExit(0)
-
-try:
-    result = subprocess.run(
-        ["lsof", "-a", "-p", pid, "-d", "cwd", "-F", "n"],
-        capture_output=True,
-        text=True,
-        timeout=2,
-        check=False,
-    )
-except Exception:
-    raise SystemExit(0)
-
-for line in result.stdout.splitlines():
-    if line.startswith("n") and line[1:]:
-        print(line[1:])
-        break
-PY
-)"
-    if [[ -n "$cwd" && "$cwd" == *"$REPO_ROOT"* ]]; then
-      return 0
-    fi
   fi
 
   return 1

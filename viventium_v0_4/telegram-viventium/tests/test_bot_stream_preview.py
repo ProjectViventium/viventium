@@ -12,6 +12,12 @@ BOT_DIR = ROOT / "TelegramVivBot"
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
+_fake_pil = types.ModuleType("PIL")
+_fake_pil_image = types.ModuleType("PIL.Image")
+_fake_pil.Image = _fake_pil_image
+sys.modules.setdefault("PIL", _fake_pil)
+sys.modules.setdefault("PIL.Image", _fake_pil_image)
+
 import bot as tg_bot  # noqa: E402
 from utils.librechat_bridge import TelegramLinkRequired  # noqa: E402
 
@@ -50,22 +56,45 @@ class _FakeTelegramBot:
         self.audios.append(_kwargs)
         return None
 
+    async def send_document(self, **_kwargs):
+        return None
+
 
 class _FakeContext:
     def __init__(self) -> None:
         self.bot = _FakeTelegramBot()
 
 
-@pytest.mark.asyncio
-async def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_additive():
+def _make_message_info(*, voice_error_text=None):
+    return (
+        None,
+        None,
+        None,
+        "chat-1",
+        123,
+        None,
+        None,
+        None,
+        "chat-1:user-1",
+        None,
+        None,
+        None,
+        voice_error_text,
+        [],
+    )
+
+
+def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_additive():
     bot = _FakeTelegramBot()
 
-    await tg_bot.deliver_proactive_telegram_message(
-        bot,
-        chat_id=321,
-        text="**Bold** follow-up",
-        parse_mode="MarkdownV2",
-        voice_audio=b"voice-bytes",
+    asyncio.run(
+        tg_bot.deliver_proactive_telegram_message(
+            bot,
+            chat_id=321,
+            text="**Bold** follow-up",
+            parse_mode="MarkdownV2",
+            voice_audio=b"voice-bytes",
+        )
     )
 
     assert len(bot.messages) == 1
@@ -79,25 +108,90 @@ async def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice
     assert bot.audios[0]["audio"].getvalue() == b"voice-bytes"
 
 
-@pytest.mark.asyncio
-async def test_deliver_proactive_telegram_message_falls_back_to_text_when_voice_send_fails():
+def test_deliver_proactive_telegram_message_falls_back_to_text_when_voice_send_fails():
     class _FailingVoiceBot(_FakeTelegramBot):
         async def send_audio(self, **_kwargs):
             raise RuntimeError("audio failed")
 
     bot = _FailingVoiceBot()
 
-    await tg_bot.deliver_proactive_telegram_message(
-        bot,
-        chat_id=654,
-        text="Plain follow-up",
-        parse_mode=None,
-        voice_audio=b"voice-bytes",
+    asyncio.run(
+        tg_bot.deliver_proactive_telegram_message(
+            bot,
+            chat_id=654,
+            text="Plain follow-up",
+            parse_mode=None,
+            voice_audio=b"voice-bytes",
+        )
     )
 
     assert len(bot.messages) == 1
     assert bot.messages[0]["chat_id"] == 654
     assert "Plain follow-up" in bot.messages[0]["text"]
+
+
+def test_resolve_voice_input_message_aborts_without_transcription_preview():
+    context = _FakeContext()
+
+    message, aborted = asyncio.run(
+        tg_bot._resolve_voice_input_message(
+            context,
+            chatid=321,
+            messageid=654,
+            message_thread_id=None,
+            message=None,
+            voice_text=None,
+            voice_error_text="This video note is too large to transcribe in Telegram right now.",
+        )
+    )
+
+    assert message is None
+    assert aborted is True
+    assert len(context.bot.messages) == 1
+    assert context.bot.messages[0]["text"] == "This video note is too large to transcribe in Telegram right now."
+    assert "🎤 Transcription" not in context.bot.messages[0]["text"]
+
+
+def test_resolve_voice_input_message_passes_successful_transcription():
+    context = _FakeContext()
+
+    message, aborted = asyncio.run(
+        tg_bot._resolve_voice_input_message(
+            context,
+            chatid=321,
+            messageid=654,
+            message_thread_id=None,
+            message=None,
+            voice_text="hello world",
+            voice_error_text=None,
+        )
+    )
+
+    assert message == "hello world"
+    assert aborted is False
+    assert len(context.bot.messages) == 1
+    assert "🎤 Transcription" in context.bot.messages[0]["text"]
+
+
+def test_resolve_voice_input_message_keeps_caption_when_media_fails():
+    context = _FakeContext()
+
+    message, aborted = asyncio.run(
+        tg_bot._resolve_voice_input_message(
+            context,
+            chatid=321,
+            messageid=654,
+            message_thread_id=None,
+            message="caption text",
+            voice_text=None,
+            voice_error_text="Temporarily unable to transcribe this video note. Please retry.",
+        )
+    )
+
+    assert message == "caption text"
+    assert aborted is False
+    assert len(context.bot.messages) == 1
+    assert context.bot.messages[0]["text"] == "Temporarily unable to transcribe this video note. Please retry."
 
 
 class _FakeUser:
@@ -143,8 +237,7 @@ class _LinkRequiredRobot:
         _ = args, kwargs
 
 
-@pytest.mark.asyncio
-async def test_get_viventium_response_stream_preview_flush_no_unbound(monkeypatch):
+def test_get_viventium_response_stream_preview_flush_no_unbound(monkeypatch):
     async def _noop_send_librechat_attachments(**_kwargs):
         return None
 
@@ -159,21 +252,23 @@ async def test_get_viventium_response_stream_preview_flush_no_unbound(monkeypatc
     update_message = _FakeUpdateMessage()
     context = _FakeContext()
 
-    await tg_bot.getViventiumResponse(
-        update_message=update_message,
-        context=context,
-        title="",
-        robot=_FakeRobot(),
-        message="quick question",
-        chatid=111,
-        messageid=222,
-        convo_id="chat-1",
-        message_thread_id=None,
-        voice_note_detected=False,
-        files=None,
-        trace_id="test-stream-preview",
-        telegram_message_id=222,
-        telegram_update_id=333,
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=update_message,
+            context=context,
+            title="",
+            robot=_FakeRobot(),
+            message="quick question",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-stream-preview",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
     )
 
     delivered_texts = [str(item.get("text", "")) for item in context.bot.messages]
@@ -184,8 +279,7 @@ async def test_get_viventium_response_stream_preview_flush_no_unbound(monkeypatc
     assert all("stream_preview_task" not in text for text in delivered_texts)
 
 
-@pytest.mark.asyncio
-async def test_get_viventium_response_stream_preview_single_message_with_edits(monkeypatch):
+def test_get_viventium_response_stream_preview_single_message_with_edits(monkeypatch):
     class _SlowRobot:
         async def ask_stream_async(self, *args, **kwargs):
             _ = args, kwargs
@@ -213,21 +307,23 @@ async def test_get_viventium_response_stream_preview_single_message_with_edits(m
     update_message = _FakeUpdateMessage()
     context = _FakeContext()
 
-    await tg_bot.getViventiumResponse(
-        update_message=update_message,
-        context=context,
-        title="",
-        robot=_SlowRobot(),
-        message="yo",
-        chatid=111,
-        messageid=222,
-        convo_id="chat-1",
-        message_thread_id=None,
-        voice_note_detected=False,
-        files=None,
-        trace_id="test-stream-preview-edits",
-        telegram_message_id=222,
-        telegram_update_id=333,
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=update_message,
+            context=context,
+            title="",
+            robot=_SlowRobot(),
+            message="yo",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-stream-preview-edits",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
     )
 
     delivered_texts = [str(item.get("text", "")) for item in context.bot.messages]
@@ -239,8 +335,7 @@ async def test_get_viventium_response_stream_preview_single_message_with_edits(m
     assert all("stream_preview_task" not in text for text in delivered_texts)
 
 
-@pytest.mark.asyncio
-async def test_get_viventium_response_surfaces_link_prompt(monkeypatch):
+def test_get_viventium_response_surfaces_link_prompt(monkeypatch):
     async def _noop_send_librechat_attachments(**_kwargs):
         return None
 
@@ -255,24 +350,69 @@ async def test_get_viventium_response_surfaces_link_prompt(monkeypatch):
     update_message = _FakeUpdateMessage()
     context = _FakeContext()
 
-    await tg_bot.getViventiumResponse(
-        update_message=update_message,
-        context=context,
-        title="",
-        robot=_LinkRequiredRobot(),
-        message="hi",
-        chatid=111,
-        messageid=222,
-        convo_id="chat-1",
-        message_thread_id=None,
-        voice_note_detected=False,
-        files=None,
-        trace_id="test-link-required",
-        telegram_message_id=222,
-        telegram_update_id=333,
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=update_message,
+            context=context,
+            title="",
+            robot=_LinkRequiredRobot(),
+            message="hi",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-link-required",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
     )
 
     assert len(context.bot.messages) == 1
     sent_text = str(context.bot.messages[0].get("text", ""))
     assert "Please link your Viventium account to continue" in sent_text
     assert "telegram/link/test\\-token" in sent_text
+
+
+def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
+    forwarded_calls = []
+
+    async def _fake_wrapper_get_message_info(*_args, **_kwargs):
+        return _make_message_info(voice_error_text=None)
+
+    async def _fake_handle_get_message_info(*_args, **_kwargs):
+        return _make_message_info(
+            voice_error_text="Temporarily unable to transcribe this video note. Please retry."
+        )
+
+    async def _fake_get_viventium_response(*args, **kwargs):
+        forwarded_calls.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(tg_bot.decorators, "GetMesageInfo", _fake_wrapper_get_message_info)
+    monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_handle_get_message_info)
+    monkeypatch.setattr(tg_bot, "getViventiumResponse", _fake_get_viventium_response)
+    monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "whitelist", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "GROUP_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "ADMIN_LIST", None, raising=False)
+    monkeypatch.setattr(
+        tg_bot.config,
+        "get_robot",
+        lambda _convo_id: ("robot", None, "api-key", "http://localhost:3180"),
+        raising=False,
+    )
+
+    update = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id="user-1", username="user"),
+        effective_chat=None,
+    )
+    context = _FakeContext()
+
+    asyncio.run(tg_bot.handle_file(update, context))
+
+    assert forwarded_calls == []
+    assert len(context.bot.messages) == 1
+    assert context.bot.messages[0]["text"] == "Temporarily unable to transcribe this video note. Please retry."
+    assert "🎤 Transcription" not in context.bot.messages[0]["text"]

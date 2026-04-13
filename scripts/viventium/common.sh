@@ -237,3 +237,60 @@ ensure_python_requirements_file() {
   printf '%s\n' "$requirements_hash" >"$stamp_path"
   printf '%s\n' "$target_python"
 }
+
+viventium_port_listener_active() {
+  local port="$1"
+  [[ -n "$port" ]] || return 1
+
+  local python_bin="${VIVENTIUM_PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
+  local host="${VIVENTIUM_PORT_CHECK_HOST:-localhost}"
+  local timeout_seconds="${VIVENTIUM_PORT_CHECK_TIMEOUT_SECONDS:-1}"
+
+  if [[ -n "$python_bin" ]]; then
+    "$python_bin" - "$host" "$port" "$timeout_seconds" <<'PY' 2>/dev/null
+import socket
+import sys
+
+host = str(sys.argv[1]).strip() or "localhost"
+port = int(sys.argv[2])
+try:
+    timeout_seconds = max(0.2, float(sys.argv[3]))
+except Exception:
+    timeout_seconds = 1.0
+
+seen = set()
+for family, socktype, proto, _, sockaddr in socket.getaddrinfo(
+    host,
+    port,
+    type=socket.SOCK_STREAM,
+):
+    key = (family, sockaddr)
+    if key in seen:
+        continue
+    seen.add(key)
+    sock = socket.socket(family, socktype, proto)
+    sock.settimeout(timeout_seconds)
+    try:
+        if sock.connect_ex(sockaddr) == 0:
+            raise SystemExit(0)
+    except Exception:
+        pass
+    finally:
+        sock.close()
+
+raise SystemExit(1)
+PY
+    return $?
+  fi
+
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z -w "$timeout_seconds" "$host" "$port" >/dev/null 2>&1; then
+      return 0
+    fi
+    if nc -z -G "$timeout_seconds" "$host" "$port" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  return 1
+}

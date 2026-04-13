@@ -909,6 +909,18 @@ def optional_nested_secret(node: dict[str, Any], key: str) -> str:
     return resolve_optional_secret(value)
 
 
+def positive_int_or_default(value: Any, default: int, label: str) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"{label} must be an integer") from exc
+    if parsed < 1:
+        raise SystemExit(f"{label} must be greater than 0")
+    return parsed
+
+
 def resolve_voice_provider_secret(
     voice: dict[str, Any],
     resolved_voice: dict[str, str],
@@ -1441,6 +1453,56 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             integrations["telegram"],
             "integrations.telegram",
         )
+        telegram_settings = integrations.get("telegram", {}) or {}
+        telegram_local_bot_api = telegram_settings.get("local_bot_api", {}) or {}
+        telegram_local_bot_api_enabled = resolve_bool(
+            telegram_local_bot_api.get("enabled"),
+            False,
+        )
+        bot_api_origin = str(telegram_settings.get("bot_api_origin", "") or "").strip()
+        bot_api_base_url = str(telegram_settings.get("bot_api_base_url", "") or "").strip()
+        bot_api_base_file_url = str(
+            telegram_settings.get("bot_api_base_file_url", "") or ""
+        ).strip()
+        if telegram_local_bot_api_enabled and (
+            bot_api_origin or bot_api_base_url or bot_api_base_file_url
+        ):
+            raise SystemExit(
+                "integrations.telegram.local_bot_api.enabled cannot be combined with "
+                "integrations.telegram.bot_api_origin/bot_api_base_url/bot_api_base_file_url"
+            )
+        telegram_max_file_size = positive_int_or_default(
+            telegram_settings.get("max_file_size_bytes"),
+            104_857_600 if telegram_local_bot_api_enabled else 10_485_760,
+            "integrations.telegram.max_file_size_bytes",
+        )
+        env["VIVENTIUM_TELEGRAM_MAX_FILE_SIZE"] = str(telegram_max_file_size)
+        if telegram_local_bot_api_enabled:
+            local_host = str(telegram_local_bot_api.get("host", "") or "").strip() or "127.0.0.1"
+            local_port = positive_int_or_default(
+                telegram_local_bot_api.get("port"),
+                8084,
+                "integrations.telegram.local_bot_api.port",
+            )
+            local_binary_path = str(
+                telegram_local_bot_api.get("binary_path", "") or ""
+            ).strip()
+            local_api_id = resolve_secret(telegram_local_bot_api.get("api_id") or "")
+            local_api_hash = resolve_secret(telegram_local_bot_api.get("api_hash") or "")
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED"] = "true"
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST"] = local_host
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT"] = str(local_port)
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID"] = local_api_id
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH"] = local_api_hash
+            if local_binary_path:
+                env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH"] = local_binary_path
+            bot_api_origin = f"http://{local_host}:{local_port}"
+        if bot_api_origin:
+            env["VIVENTIUM_TELEGRAM_BOT_API_ORIGIN"] = bot_api_origin
+        if bot_api_base_url:
+            env["VIVENTIUM_TELEGRAM_BOT_API_BASE_URL"] = bot_api_base_url
+        if bot_api_base_file_url:
+            env["VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL"] = bot_api_base_file_url
 
     telegram_codex = integrations.get("telegram_codex", {}) or {}
     if telegram_codex_enabled(config):
@@ -1923,6 +1985,16 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_LIBRECHAT_ORIGIN",
         "VIVENTIUM_TELEGRAM_SECRET",
         "VIVENTIUM_CALL_SESSION_SECRET",
+        "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE",
+        "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN",
+        "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL",
+        "VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH",
     ]
     telegram_codex_keys = ["TELEGRAM_CODEX_BOT_TOKEN", "TELEGRAM_CODEX_BOT_USERNAME"]
     skyvern_keys = ["START_SKYVERN"]
