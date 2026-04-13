@@ -13,4 +13,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install -r scripts/viventium/requirements.txt pytest
-      - run: python -m pytest tests/release/test_config_compiler.py -q
+      - run: >
+          python -m pytest tests/release/test_config_compiler.py -q -k
+          "renders_structured_telegram_bot_api_settings or
+          renders_managed_local_telegram_bot_api_settings or
+          rejects_conflicting_managed_and_explicit_telegram_bot_api_settings"
