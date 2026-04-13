@@ -12,5 +12,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python3 -m pip install -r scripts/viventium/requirements.txt
-      - run: python3 -m pytest tests/release/test_config_compiler.py -q
+      - run: python -m pip install -r scripts/viventium/requirements.txt pytest
+      - run: python -m pytest tests/release/test_config_compiler.py -q
