@@ -133,6 +133,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - example: `curl .../install.sh | bash`
   - the CLI must reattach stdin from `/dev/tty` before wizard or preflight prompts
   - otherwise the first prompt sees EOF even though the user launched the install from a real terminal
+- Reattached stdin is still not enough on every macOS terminal shape:
+  - `questionary` / `prompt_toolkit` can still raise raw-mode attachment errors after the CLI hands
+    prompts a real TTY
+  - the shared installer UI must catch those runtime prompt failures and fall back to plain prompts
+    instead of crashing the install
+  - that fallback belongs in the shared prompt wrapper, not as one-off handling in only one wizard
+    question
 - The right ownership layer for this feature is the public CLI wait loop in `bin/viventium`, not
   generated runtime files, LibreChat prompts, or machine-local App Support state.
 - Remote access surfaced the same ownership rule again on April 7, 2026:

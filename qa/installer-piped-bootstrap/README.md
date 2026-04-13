@@ -11,6 +11,8 @@ with stdin attached to a consumed pipe but the user still has a controlling term
 - `bin/viventium install` must keep interactive stdin available for aggregated preflight prompts.
 - Equivalent piped bootstrap entrypoints must no longer crash at the first setup prompt with
   `EOFError`.
+- Equivalent piped bootstrap entrypoints must also survive `questionary` / `prompt_toolkit`
+  raw-mode attachment failures by falling back to plain prompts instead of aborting.
 
 ## Environments
 
@@ -26,11 +28,15 @@ with stdin attached to a consumed pipe but the user still has a controlling term
    redirected from a pipe; verify both the wizard and preflight see `sys.stdin.isatty() == true`.
 3. Reproduce the public bootstrap shape with `cat install.sh | bash` against an isolated temp clone;
    confirm the installer reaches the first setup prompt instead of throwing `EOFError`.
-4. Validate shell syntax with `bash -n bin/viventium`.
+4. Reproduce the same piped bootstrap shape while `questionary` raises a raw-mode attachment error;
+   confirm the installer prints the fallback note and reaches the plain prompt instead of crashing.
+5. Validate shell syntax with `bash -n bin/viventium`.
 
 ## Expected Results
 
 - The CLI helper restores terminal stdin successfully.
 - Interactive install reaches the setup prompt normally under a piped bootstrap.
+- Interactive install falls back to plain prompts cleanly when `questionary` cannot attach raw-mode
+  terminal handling.
 - Wizard and preflight both inherit a real TTY in the isolated install harness.
 - No shell syntax regressions are introduced.

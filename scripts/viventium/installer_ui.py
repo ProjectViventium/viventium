@@ -48,6 +48,7 @@ class InstallerUI:
         self.interactive = bool(sys.stdin.isatty() and sys.stdout.isatty())
         self.rich_enabled = Console is not None
         self.questionary_enabled = questionary is not None and self.interactive
+        self._questionary_fallback_notified = False
         self.console = Console() if self.rich_enabled else None
 
     def print_blank(self) -> None:
@@ -131,24 +132,26 @@ class InstallerUI:
                 )
                 for option in options
             ]
-            answer = questionary.select(
-                prompt,
-                choices=choices,
-                instruction="Use arrow keys and press Enter",
-                use_shortcuts=False,
-            ).ask()
-            if answer is None:
-                raise KeyboardInterrupt
-            return str(answer)
+            answer, used_questionary = self._ask_questionary(
+                lambda: questionary.select(
+                    prompt,
+                    choices=choices,
+                    instruction="Use arrow keys and press Enter",
+                    use_shortcuts=False,
+                ),
+            )
+            if used_questionary:
+                return str(answer)
 
         return self._plain_select(prompt, options, default)
 
     def confirm(self, prompt: str, default: bool = False) -> bool:
         if self.questionary_enabled:
-            answer = questionary.confirm(prompt, default=default, auto_enter=False).ask()
-            if answer is None:
-                raise KeyboardInterrupt
-            return bool(answer)
+            answer, used_questionary = self._ask_questionary(
+                lambda: questionary.confirm(prompt, default=default, auto_enter=False),
+            )
+            if used_questionary:
+                return bool(answer)
 
         suffix = "[Y/n]" if default else "[y/N]"
         raw = input(f"{prompt} {suffix} ").strip().lower()
@@ -158,14 +161,17 @@ class InstallerUI:
 
     def text(self, prompt: str, default: str = "", allow_empty: bool = True) -> str:
         if self.questionary_enabled:
-            answer = questionary.text(
-                prompt,
-                default=default,
-                validate=(lambda value: True if allow_empty or str(value).strip() else "Value required."),
-            ).ask()
-            if answer is None:
-                raise KeyboardInterrupt
-            return str(answer).strip()
+            answer, used_questionary = self._ask_questionary(
+                lambda: questionary.text(
+                    prompt,
+                    default=default,
+                    validate=(
+                        lambda value: True if allow_empty or str(value).strip() else "Value required."
+                    ),
+                ),
+            )
+            if used_questionary:
+                return str(answer).strip()
 
         while True:
             suffix = f" [{default}]" if default else ""
@@ -180,13 +186,16 @@ class InstallerUI:
 
     def password(self, prompt: str, allow_empty: bool = False) -> str:
         if self.questionary_enabled:
-            answer = questionary.password(
-                prompt,
-                validate=(lambda value: True if allow_empty or str(value).strip() else "Value required."),
-            ).ask()
-            if answer is None:
-                raise KeyboardInterrupt
-            return str(answer).strip()
+            answer, used_questionary = self._ask_questionary(
+                lambda: questionary.password(
+                    prompt,
+                    validate=(
+                        lambda value: True if allow_empty or str(value).strip() else "Value required."
+                    ),
+                ),
+            )
+            if used_questionary:
+                return str(answer).strip()
 
         while True:
             value = getpass.getpass(f"{prompt}: ").strip()
@@ -206,14 +215,15 @@ class InstallerUI:
                 if option.note:
                     title = f"{title}  ({option.note})"
                 choices.append(Choice(title=title, value=option.value, checked=option.checked))
-            answer = questionary.checkbox(
-                prompt,
-                choices=choices,
-                instruction="Space toggles, Enter confirms",
-            ).ask()
-            if answer is None:
-                raise KeyboardInterrupt
-            return [str(item) for item in (answer or [])]
+            answer, used_questionary = self._ask_questionary(
+                lambda: questionary.checkbox(
+                    prompt,
+                    choices=choices,
+                    instruction="Space toggles, Enter confirms",
+                ),
+            )
+            if used_questionary:
+                return [str(item) for item in (answer or [])]
 
         selected: list[str] = []
         current_group = None
@@ -261,3 +271,25 @@ class InstallerUI:
                 if normalized == option.value.lower():
                     return option.value
             print("Invalid choice. Try again.")
+
+    def _disable_questionary(
+        self,
+        reason: str = "Interactive terminal UI unavailable; falling back to plain prompts.",
+    ) -> None:
+        self.questionary_enabled = False
+        if self._questionary_fallback_notified:
+            return
+        self._questionary_fallback_notified = True
+        self.print_note(reason)
+
+    def _ask_questionary(self, build_prompt):
+        try:
+            answer = build_prompt().ask()
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            self._disable_questionary()
+            return None, False
+        if answer is None:
+            raise KeyboardInterrupt
+        return answer, True
