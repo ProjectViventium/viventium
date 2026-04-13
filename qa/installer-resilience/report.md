@@ -188,3 +188,123 @@ Scope note:
 - a separate-device voice deep-link that opens `http://localhost:3300/...` is still not a public
   remote-access claim in `remote_call_mode: disabled`; that path remains out of scope unless the
   supported remote voice mode is enabled
+
+## Remote current-main audit
+
+Date: 2026-04-13
+
+Machine:
+
+- private remote macOS test laptop
+- validated against:
+  - the pre-existing canonical local install on default ports
+  - a fresh isolated public clone in a new directory on alternate ports
+
+### Existing-install findings
+
+Verified through real browser QA plus Mongo/runtime inspection:
+
+- synthetic browser user login worked and reached `/c/new`
+- browser `Settings > Account > Connected Accounts` showed:
+  - `OpenAI | Connected`
+  - `Using your connected account.`
+- live chat on the shipped `Viventium` agent worked once that browser-visible connection existed
+- the installed main agent was still stale on that machine:
+  - Mongo `agents.instructions` began with the legacy `You're Eve (or Viv for Viventium)...`
+  - this did not match the current tracked/source-of-truth main agent prompt
+- the user-facing continuity controls were still split on that install:
+  - `Reference saved memories` was on
+  - `Recall all conversations` was off
+- durable memory was still broken on that stale install:
+  - an explicit memory-worthy prompt got an in-thread success reply:
+    - user: `Remember this as a personal preference: my favorite color is teal. Reply with exactly SAVED.`
+    - assistant: `SAVED`
+  - but the durable-memory surfaces remained empty immediately afterward:
+    - Mongo `memoryentries` remained `0`
+    - the browser `Memories` panel still showed `0% used` and `No memories yet`
+  - a brand-new conversation then failed the recovery check:
+    - user: `What is my favorite color? Reply in one word.`
+    - assistant: `Unknown`
+- historical error logs on that install still contained:
+  - `Error initializing memory writer Provider openai not supported`
+- launcher/runtime logs on that install also still contained:
+  - `Local RAG API not detected on port 8110; disabling conversation recall sync for this run`
+- the straightforward Mongo probe for that account did not surface a matching visible user-scoped
+  `keys` row in the expected collection, even though the UI showed `Connected` and chat execution
+  worked
+
+Interpretation:
+
+- foundation-model connected-account chat execution was healthy
+- conversation/message persistence was healthy
+- durable memory and cross-conversation recall were not healthy on the stale install
+- the browser showing `Connected` is not enough to claim durable memory is healthy
+- a visible recall toggle is not enough to claim recall runtime/indexing is healthy
+- the stale prompt and stale memory behavior came from the installed runtime/bundle state, not from
+  the current tracked source alone
+
+### Fresh isolated current-main findings
+
+Used a fresh public clone in a new directory plus an isolated App Support root.
+
+Verified:
+
+- the parent-side component pin fix changed clean bootstrap behavior:
+  - before the fix, fresh bootstrap pulled LibreChat ref `07c1960c...`
+  - after the fix, fresh bootstrap pulled LibreChat ref `ba450451...`
+- seeded main-agent truth in Mongo matched the current source:
+  - prompt now begins with `You're Viv (Viventium). A cognitive brain...`
+- seeded voice override truth in Mongo matched the current source:
+  - `voice_llm_provider: anthropic`
+  - `voice_llm_model: claude-haiku-4-5`
+  - `voice_llm_model_parameters.thinking: false`
+- `bin/viventium status` on the fresh isolated install now reports honest foundation-auth posture:
+  - `Primary AI | Action Required | Connect OpenAI in Settings > Account > Connected Accounts`
+  - it no longer falsely implies that a missing connected account is already configured
+
+Observed remaining gaps on that fresh isolated run:
+
+- cold first boot on the remote laptop was still materially long:
+  - the modern playground reached `Running`
+  - LibreChat API/frontend remained in `Starting` while the client build/finalization path was still
+    running beyond the initial warm-up window
+- durable memory on a fresh current-ref install is still not production-proven:
+  - the clean browser pass proved registration/login and actionable connected-account guidance
+  - but a real connected-account memory write + recovery pass has still not been completed on the
+    fresh current-ref install
+- conversation recall was still not live on that machine:
+  - launcher/status reported local recall prerequisites were not satisfied
+  - the machine did not have a local `ollama` binary available, so the local recall sidecar could
+    not come up there
+
+Interpretation:
+
+- prompt freshness and voice-LLM seeding now follow current main on clean bootstrap
+- status honesty for connected-account installs is fixed
+- clean-machine first-boot latency is still a real product-quality concern
+- local conversation recall still depends on shipping or provisioning its actual local embeddings
+  runtime on that machine
+
+### Root causes confirmed by this audit
+
+1. Parent component pin drift was shipping stale nested product truth.
+   - Fresh installs follow `components.lock.json`, not whatever newer nested checkout may exist on
+     an owner machine.
+   - A stale LibreChat ref therefore shipped the stale main-agent prompt and older runtime behavior
+     even when the nested repo had already moved on locally.
+
+2. Existing installs do not auto-heal just because tracked source changed.
+   - The startup seed/upsert path can only heal from the bundle currently checked out on disk.
+   - The old remote install kept the stale main-agent prompt and stale memory behavior until an
+     explicit upgrade/reinstall refreshed the checked-out component ref.
+
+3. Connected-account readiness and durable memory readiness are separate surfaces.
+   - The remote synthetic user could chat successfully through a connected OpenAI account while
+     still having zero durable memories and no cross-conversation recovery.
+
+4. Local conversation recall availability still depends on local embeddings prerequisites.
+   - A machine without the required local embeddings runtime cannot actually provide local recall,
+     even if the broader install succeeds.
+
+5. Clean-machine cold-start time is still a friction source on slower Macs.
+   - Fresh users can wait through a long staged build before the API/frontend are actually ready.

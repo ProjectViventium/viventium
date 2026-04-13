@@ -41,6 +41,8 @@ them:
 2. Durable memory writer behavior
    - memory policy and memory agent tests pass for additive updates, overwrite handling, and noise
      rejection
+   - a real browser pass on a connected account proves that an explicit memory-worthy prompt creates
+     a visible entry in the `Memories` panel; an in-thread success reply alone does not pass
 3. Forgetting + integrity behavior
    - partial forgetting is defined as a cross-key `set_memory` rewrite contract, not a whole-key
      delete shortcut
@@ -59,6 +61,13 @@ them:
 7. Long-conversation correction coverage
    - important corrections do not disappear purely because they fell outside a tiny memory writer
      window
+8. Connected-account live continuity check
+   - real connected-account chat can succeed while saved memory or conversation recall still fail
+   - QA must therefore verify:
+     - chat success
+     - saved-memory artifact presence
+     - cross-conversation recovery
+     - recall-runtime health
 
 ## Expected Results
 

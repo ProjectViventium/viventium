@@ -510,11 +510,26 @@ def build_service_rows(
     integrations = config.get("integrations", {}) or {}
     primary = ((config.get("llm", {}) or {}).get("primary", {}) or {})
     primary_auth_mode = str(primary.get("auth_mode") or "api_key").strip().lower()
+    primary_provider = str(primary.get("provider") or "").strip().lower()
+    primary_label = {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+    }.get(primary_provider, "your model provider")
+    primary_status = "Configured"
+    primary_detail = "API key"
+    if primary_auth_mode == "connected_account":
+        if foundation_api_key_present(config):
+            primary_detail = f"{primary_label} connected account or API-key fallback"
+        else:
+            primary_status = "Action Required"
+            primary_detail = (
+                f"Connect {primary_label} in Settings > Account > Connected Accounts"
+            )
     rows.append(
         (
             "Primary AI",
-            "Configured",
-            "Connected account" if primary_auth_mode == "connected_account" else "API key",
+            primary_status,
+            primary_detail,
         )
     )
     rows.append(

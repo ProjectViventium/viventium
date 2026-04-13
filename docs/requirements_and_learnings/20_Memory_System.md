@@ -314,6 +314,38 @@ The April 9, 2026 memory-integrity investigation added five concrete product tru
 - Later maintenance passes must preserve previously archived draft entries instead of silently
   dropping them on re-compaction.
 
+### 2.9 2026-04-13 Remote Connected-Account QA
+
+The April 13, 2026 remote QA pass added another concrete continuity boundary:
+
+#### 2.9.1 Connected-account chat success is not memory success
+
+- A real connected OpenAI account on the stale remote install produced successful live chat.
+- An explicit memory-worthy prompt also got an in-thread success response (`SAVED`).
+- But the durable-memory surfaces still failed:
+  - the browser `Memories` panel stayed at `0% used` / `No memories yet`
+  - the saved-memory store still had `0` entries for that user
+  - a brand-new conversation answered `Unknown` instead of recovering the stored preference
+
+#### 2.9.2 Same-thread success is not acceptable memory evidence
+
+- A product QA pass must not treat “the assistant answered correctly in the same thread” as proof
+  that memory works.
+- Durable-memory acceptance now requires all three:
+  1. successful chat on a real connected account
+  2. a real saved-memory artifact appearing in the durable memory surface
+  3. cross-conversation recovery of that stored fact
+
+#### 2.9.3 Memory and recall still fail independently
+
+- The same remote run also showed recall remained unavailable because the local recall runtime was
+  not live on that machine.
+- Therefore:
+  - connected foundation-model auth
+  - durable saved-memory writing
+  - conversation-recall retrieval
+  are three separate acceptance surfaces and must be QA’d separately.
+
 ---
 
 ## Part 3: Public-Safe QA Notes

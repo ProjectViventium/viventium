@@ -70,6 +70,7 @@ def test_normalize_preset_keeps_local_secret_values_when_keychain_write_fails(mo
     wizard = load_wizard_module()
     monkeypatch.setattr(wizard, "store_keychain_secret", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: False)
 
     config = {
         "version": 1,
@@ -146,6 +147,7 @@ def test_normalize_preset_keeps_local_secret_values_when_keychain_write_fails(mo
 
 def test_build_base_config_matches_easy_install_defaults() -> None:
     wizard = load_wizard_module()
+    wizard.docker_desktop_installed = lambda: False
 
     config = wizard.build_base_config(
         install_mode="native",
@@ -172,6 +174,95 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     assert config["integrations"]["web_search"]["scraper_provider"] == "firecrawl"
     assert config["llm"]["primary"]["auth_mode"] == "connected_account"
     assert "fast_llm_provider" not in config["voice"]
+
+
+def test_build_base_config_enables_recall_by_default_when_docker_desktop_present(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
+
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is True
+
+
+def test_normalize_preset_enables_recall_by_default_when_docker_desktop_present(
+    monkeypatch,
+) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
+    monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
+
+    normalized = wizard.normalize_preset({"version": 1, "runtime": {}, "llm": {}, "integrations": {}})
+
+    assert normalized["runtime"]["personalization"]["default_conversation_recall"] is True
+
+
+def test_configure_easy_install_enables_conversation_recall_when_docker_desktop_present(
+    monkeypatch,
+) -> None:
+    wizard = load_wizard_module()
+
+    class FakeUI:
+        def password(self, _prompt: str, allow_empty: bool = False) -> str:
+            assert allow_empty is False
+            return "groq-test"
+
+        def confirm(self, _prompt: str, default: bool = False) -> bool:
+            return False
+
+        def print_note(self, *_args, **_kwargs) -> None:
+            return None
+
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
+    monkeypatch.setattr(wizard, "docker_total_memory_bytes", lambda: None)
+    monkeypatch.setattr(wizard, "prompt_web_search", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        wizard,
+        "build_secret_node",
+        lambda _service, value: {"secret_value": value},
+    )
+
+    config, deferred = wizard.configure_easy_install(FakeUI())
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is True
+    assert "conversation_recall" not in deferred
+
+
+def test_configure_easy_install_defers_conversation_recall_without_docker(monkeypatch) -> None:
+    wizard = load_wizard_module()
+
+    class FakeUI:
+        def password(self, _prompt: str, allow_empty: bool = False) -> str:
+            assert allow_empty is False
+            return "groq-test"
+
+        def confirm(self, _prompt: str, default: bool = False) -> bool:
+            return False
+
+        def print_note(self, *_args, **_kwargs) -> None:
+            return None
+
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: False)
+    monkeypatch.setattr(wizard, "prompt_web_search", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        wizard,
+        "build_secret_node",
+        lambda _service, value: {"secret_value": value},
+    )
+
+    config, deferred = wizard.configure_easy_install(FakeUI())
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert "conversation_recall" in deferred
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:

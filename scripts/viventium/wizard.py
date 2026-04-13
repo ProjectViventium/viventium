@@ -76,6 +76,10 @@ def docker_desktop_installed() -> bool:
     return shutil_which("docker") is not None
 
 
+def conversation_recall_enabled_by_default() -> bool:
+    return docker_desktop_installed()
+
+
 def docker_total_memory_bytes() -> int | None:
     docker_cmd = shutil_which("docker")
     if not docker_cmd:
@@ -295,7 +299,10 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     auth.setdefault("bootstrap_registration_once", False)
     auth.setdefault("allow_password_reset", False)
     personalization = runtime.setdefault("personalization", {})
-    personalization.setdefault("default_conversation_recall", False)
+    personalization.setdefault(
+        "default_conversation_recall",
+        conversation_recall_enabled_by_default(),
+    )
     retrieval = runtime.setdefault("retrieval", {})
     embeddings = retrieval.setdefault("embeddings", {})
     embeddings.setdefault("provider", DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER)
@@ -429,7 +436,9 @@ def build_base_config(
                 "bootstrap_registration_once": False,
                 "allow_password_reset": False,
             },
-            "personalization": {"default_conversation_recall": False},
+            "personalization": {
+                "default_conversation_recall": conversation_recall_enabled_by_default()
+            },
             "retrieval": {
                 "embeddings": {
                     "provider": DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER,
@@ -677,7 +686,7 @@ def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
             value="conversation_recall",
             label="Conversation Recall",
             note="Search past conversations locally; requires Docker and Ollama",
-            checked=False,
+            checked=docker_installed,
         ),
         CheckboxOption(
             group="Advanced Features",
@@ -1169,7 +1178,6 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
     )
 
     deferred = [
-        "conversation_recall",
         "code_interpreter",
         "telegram_codex",
         "google_workspace",
@@ -1177,6 +1185,13 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
         "skyvern",
         "openclaw",
     ]
+    if docker_installed:
+        config["runtime"]["personalization"]["default_conversation_recall"] = True
+        ui.print_note(
+            "Conversation recall will be enabled automatically with the local Docker + Ollama path on this Mac."
+        )
+    else:
+        mark_deferred(deferred, "conversation_recall")
     if not resolve_bool((config["integrations"]["web_search"]).get("enabled"), False):
         mark_deferred(deferred, "web_search")
     if ui.confirm("Connect a Telegram bot now?", default=False):

@@ -445,7 +445,7 @@ def test_build_service_rows_reports_auth_posture() -> None:
             },
             "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
         },
-        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
         "voice": {"mode": "local"},
         "integrations": {},
     }
@@ -453,6 +453,10 @@ def test_build_service_rows_reports_auth_posture() -> None:
     rows = install_summary.build_service_rows(config, {}, probe_live=False)
     services = {name: (status, detail) for name, status, detail in rows}
 
+    assert services["Primary AI"] == (
+        "Action Required",
+        "Connect OpenAI in Settings > Account > Connected Accounts",
+    )
     assert services["Account Sign-up"] == ("Closed", "Only existing accounts can sign in")
     assert "password-reset-link" in services["Password Reset"][1]
 

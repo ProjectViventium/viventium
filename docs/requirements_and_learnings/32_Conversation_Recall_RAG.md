@@ -243,6 +243,11 @@ query-intent classifier.
   present vector recall as healthy/current evidence for that run.
 - In that degraded state, the supported path is a source-only recall attachment plus tool-level
   fallback through `file_search`, not proactive runtime recall snippets.
+- The April 13, 2026 remote QA pass clarified the user-visible side of this rule:
+  - the recall toggle existing in Settings or the Memories panel is only policy state
+  - it is not proof that the local recall runtime/index is live
+  - if helper/runtime logs say local recall sync was disabled because the local RAG API was absent,
+    QA must treat recall as unavailable for that run
 
 ### Freshness gate
 

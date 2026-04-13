@@ -92,6 +92,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     start
 - Built-in agent runtime truth must remain compatible with the selected install/runtime surface:
   - fresh installs and restarts rely on the seeded source-of-truth agent bundle
+  - for nested managed components, fresh installs follow the pinned component ref in
+    `components.lock.json`; a newer local nested checkout does not change what end users receive
   - do not rely on Mongo hand-edits or App Support leftovers to make built-ins behave correctly
   - shipped Anthropic agents that intentionally use `temperature` must set `thinking: false`
     explicitly when Anthropic runtime defaults would otherwise enable thinking
@@ -180,6 +182,32 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     false` explicitly
   - seed/sync tooling must preserve that bag so fresh installs, local rebuilds, and reviewed syncs
     all keep the same low-latency voice defaults
+- On April 13, 2026, a remote clean-machine audit showed the next nested-release boundary:
+  - fresh installs followed the LibreChat ref pinned in `components.lock.json`, not a newer local
+    nested checkout
+  - a stale parent pin therefore shipped an older built-in main-agent prompt even though current
+    nested source had already been updated
+  - release readiness for built-in agent/prompt/runtime changes therefore includes updating and
+    verifying the parent component pin, not only reviewing the nested repo
+- The same April 13, 2026 audit also clarified the existing-install upgrade boundary:
+  - the startup seed path already upserts built-in agents from the checked-out bundle on every run
+  - existing installs therefore self-heal only after the supported upgrade path refreshes the
+    checked-out nested component ref
+  - the product gap is not “missing reseed logic”; it is failing to move stale installs onto the
+    reviewed pinned checkout before that reseed/upsert runs
+- The same April 13, 2026 audit clarified the recall-default ownership boundary:
+  - if local conversation recall should default on when the machine already supports the local
+    recall path, that default must be set consistently in shared config-building layers
+  - fixing only one wizard branch is not enough when presets, base config generation, and advanced
+    setup can still seed a different default
+- The same April 13, 2026 remote connected-account QA clarified the continuity acceptance boundary:
+  - a user can have a healthy connected foundation-model account and successful live chat while
+    durable memory is still dead
+  - an explicit `remember this` prompt that gets an in-thread success reply is not enough evidence;
+    QA must also check the actual `Memories` surface and durable store
+  - a visible recall toggle is only policy, not proof that the local recall runtime/index is live
+  - when helper logs say the local RAG API is unavailable and recall sync is disabled, the product
+    must present recall as unavailable even if the UI toggle still exists
 - On April 12-13, 2026, a real remote clean-machine install on Intel macOS clarified the next
   installer/runtime boundaries:
   - `bin/viventium status` and install summary must not claim "ready" while core web surfaces are

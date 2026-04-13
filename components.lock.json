@@ -7,7 +7,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "07c1960c9105e547c312f7eab6f43c1dd2ba17ab"
+      "ref": "ba45045172dee476350861dfb70232395d40b196"
     },
     {
       "name": "agents-playground",

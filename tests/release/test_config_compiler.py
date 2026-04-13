@@ -1959,6 +1959,46 @@ def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other
     assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
 
 
+def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_foundation_exists() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "connected_account",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert env["VIVENTIUM_OPENAI_AUTH_MODE"] == "connected_account"
+    assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+
+
 def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret_is_missing(
     tmp_path: Path,
 ) -> None:
