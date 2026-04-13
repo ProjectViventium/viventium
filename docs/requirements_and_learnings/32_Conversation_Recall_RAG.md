@@ -51,7 +51,7 @@ This feature adds two user-facing controls:
   supported local path exists.
 - Model selection must be driven by explicit config or installer tier metadata, not by runtime
   guessing, provider-label remaps, or one-off user complaints turned into code branches.
-- Default-eligible models must have a public-safe license posture for the open-source install story.
+- Default-eligible models must have a public-safe license posture for the public install story.
   Non-commercial, research-only, or otherwise restricted licenses are not valid defaults.
 - Any change to embeddings provider, model, quantization family, output dimension, or normalization
   contract requires an index-version change and a full re-embed before cutover.

@@ -101,6 +101,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - local duplicate QA accounts do not automatically inherit another user's Google Workspace,
     Microsoft 365, or connected-model OAuth state; realistic live QA must reconnect or reseed those
     user-scoped credentials explicitly
+  - optional MCP/runtime surfaces such as GlassHive must compile out cleanly when they are not
+    enabled for the install or not actually present in the checked-out component set
+  - seeded built-in agents must not keep dead GlassHive tool IDs on installs where
+    `START_GLASSHIVE=false`, or fresh-user chat can fail before any real task begins
+  - public checkout bootstrap must accept vendored component source trees that were shipped inside
+    the reviewed repo export; installer correctness must not depend on nested `.git` metadata being
+    present on end-user machines
 - Installer UX affordances, including wait copy and inline animations, must not mutate or depend on
   generated App Support outputs to appear correct.
 - Telegram launcher parity follows the same rule: compiled Telegram service env must be the default
@@ -173,6 +180,37 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     false` explicitly
   - seed/sync tooling must preserve that bag so fresh installs, local rebuilds, and reviewed syncs
     all keep the same low-latency voice defaults
+- On April 12-13, 2026, a real remote clean-machine install on Intel macOS clarified the next
+  installer/runtime boundaries:
+  - `bin/viventium status` and install summary must not claim "ready" while core web surfaces are
+    still warming up; fresh users read that heading literally
+  - headless macOS CLI paths must sanitize unsupported locale defaults such as `C.UTF-8` so clean
+    SSH-driven installs do not emit noisy Perl locale warnings
+  - a fresh browser user on connected-account auth must get an actionable "connect your account"
+    message, not the raw `No key found` fallback intended for direct API-key mode
+  - registration success redirects must not update router state during render; even a harmless
+    warning there makes a clean install look unstable during first-user onboarding
+- On April 13, 2026, remote clean-machine onboarding exposed the next optional-service rule:
+  - GlassHive is not part of the minimum public first-run contract
+  - generated `librechat.yaml`, seeded built-in agent tools, and runtime MCP/tool loading must all
+    agree when GlassHive is off
+  - otherwise a missing local GlassHive MCP can surface to fresh users as a generic `No key found`
+    error even though foundation-model auth is healthy
+- The same April 13, 2026 remote clean-machine pass exposed the public-clone bootstrap boundary:
+  - a shipped public checkout can contain vendored component source without nested git history
+  - `bootstrap_components.py` must therefore treat a bootable vendored component tree as valid
+    installer input instead of aborting with `Existing path is not a git repo`
+- The same April 13, 2026 uninstall/reinstall pass clarified the destructive-cleanup boundary:
+  - uninstall and factory reset must synchronously drain managed native services before deleting App
+    Support state
+  - helper-detached cleanup is acceptable for normal stop flows, but destructive removal cannot
+    race the deletion of pid/config state needed to identify managed native services such as LiveKit
+- The same April 13, 2026 remote clean-machine reinstall clarified two more first-user boundaries:
+  - non-interactive/headless setup must not spam macOS Keychain write failures when the supported
+    fallback is to keep secrets in machine-local config state
+  - first-message auth aborts on a brand-new conversation must not queue title generation against a
+    transient stream id; otherwise clean installs surface a misleading `/api/convos/gen_title/...`
+    404 after the real `connected_account_required` error
 - On April 9, 2026, a local restart verified the memory-writer contract end to end:
   - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
     running helper logs showed the unsupported-provider initialization failure

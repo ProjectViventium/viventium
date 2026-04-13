@@ -256,9 +256,9 @@
    - Finding:
      - remote access and browser-auth posture are now owned by canonical config plus a single
        operator-facing status surface, which reduces ambiguity for new installs and new machines
-29. Added and live-validated an operator-only local password-reset-link flow for public installs.
+29. Added and validated a local password-reset-link flow for public installs.
    - Result:
-     - the live personal config compiled to:
+     - the public browser-auth posture can compile to:
        - `ALLOW_REGISTRATION=false`
        - `ALLOW_PASSWORD_RESET=false`
      - `bin/viventium password-reset-link <email>` now:
@@ -370,10 +370,10 @@
 - Evidence:
   - `~/Library/Application Support/Viventium/logs/helper-start.log` recorded:
     - `Preparing secure remote access topology`
-    - `Remote access setup failed: Router already forwards TCP 80 to 10.88.111.46:50779; cannot reuse it for Viventium Viventium public HTTP`
+    - `Remote access setup failed: Router already forwards TCP 80 to 192.0.2.44:50779; cannot reuse it for Viventium Viventium public HTTP`
     - `All services stopped.`
   - `upnpc -l` on the same machine showed the conflicting `80/tcp` and `443/tcp` mappings also
-    targeted `10.88.111.46`, which is this Mac's current LAN IP
+    targeted `192.0.2.44`, the placeholder same-host LAN IP used in this public report
   - local socket checks against the mapped internal targets `50779` and `50780` failed, proving
     they were stale same-machine forwards rather than a live foreign service
 - Fix:

@@ -35,6 +35,24 @@ def test_store_keychain_secret_returns_none_on_failure(monkeypatch, capsys) -> N
     assert "keeping it in local config state" in captured.err
 
 
+def test_store_keychain_secret_skips_keychain_in_non_interactive_mode(monkeypatch, capsys) -> None:
+    wizard = load_wizard_module()
+    called = False
+
+    def should_not_run(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("security CLI should not run when keychain writes are disabled")
+
+    monkeypatch.setattr(wizard.subprocess, "run", should_not_run)
+    wizard.set_keychain_writes_enabled(False)
+
+    assert wizard.store_keychain_secret("viventium/test_secret", "value") is None
+    captured = capsys.readouterr()
+    assert "non-interactive setup stores secrets in local config state" in captured.err
+    assert called is False
+
+
 def test_build_secret_node_prefers_keychain_ref_when_available(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(
@@ -146,6 +164,7 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     )
     assert config["runtime"]["network"]["remote_call_mode"] == "disabled"
     assert config["runtime"]["auth"]["allow_registration"] is True
+    assert config["runtime"]["auth"]["bootstrap_registration_once"] is False
     assert config["runtime"]["auth"]["allow_password_reset"] is False
     assert config["integrations"]["code_interpreter"]["enabled"] is False
     assert config["integrations"]["web_search"]["enabled"] is False
@@ -519,11 +538,13 @@ def test_prompt_browser_auth_controls_sets_remote_browser_auth_flags() -> None:
         secondary_provider="none",
     )
     wizard.apply_remote_access_choice(config, remote_call_mode="custom_domain", public_app_hostname="app.example.com")
-    ui = _FakeWizardUI(selects=[], confirms=[False, False])
+    ui = _FakeWizardUI(selects=[], confirms=[True, True, False])
 
     wizard.prompt_browser_auth_controls(ui, config)
 
-    assert config["runtime"]["auth"]["allow_registration"] is False
+    assert config["runtime"]["auth"]["allow_registration"] is True
+    assert config["runtime"]["auth"]["bootstrap_registration_once"] is True
     assert config["runtime"]["auth"]["allow_password_reset"] is False
     assert any("leave browser sign-up on until you create it" in note for note in ui.notes)
+    assert any("automatically close sign-up after the first real account" in note for note in ui.notes)
     assert any("one-time reset link locally" in note for note in ui.notes)

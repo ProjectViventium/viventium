@@ -132,12 +132,13 @@ User → LibreChat → MCP Server (OAuth Proxy) → Google OAuth
    - Keep `authorization_url`, `token_url`, `redirect_uri`, and `scope`.
    - This forces LibreChat to use DCR (`POST /register`) against the MCP server.
 
-2. **Google Workspace MCP** (Azure Container App):
+2. **Google Workspace MCP** (managed container deployment):
    - Enable OAuth 2.1: `MCP_ENABLE_OAUTH21=true`
    - Persist OAuth proxy registry:
      - `WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND=disk`
-     - `WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY=/app/store_creds/oauth-proxy`
-   - Mount a persistent volume at `/app/store_creds` (Azure Files, ReadWrite).
+     - `WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY=<persistent-runtime-volume>/oauth-proxy`
+   - Mount a persistent writable volume. Keep the exact platform-specific deployment steps outside
+     this public product repo.
 
 **Result**: LibreChat authenticates once, stores tokens + the DCR `client_id`/`client_secret`, and token refresh continues working across MCP restarts/deployments unless the user revokes access.
 
@@ -161,7 +162,7 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
 - Consent screen shows FastMCP's default "F" logo page.
 
 #### Root Cause
-1. The live cloud `librechat.yaml` in the managed config store drifted to loopback OAuth endpoints for MCP servers (for example `http://localhost:8000/oauth2/token`), while runtime was remote.
+1. The live managed `librechat.yaml` drifted to loopback OAuth endpoints for MCP servers (for example `http://localhost:8000/oauth2/token`), while runtime was remote.
 2. In LibreChat refresh flow, `MCPOAuthHandler.refreshOAuthTokens(...)` prioritized `oauth.token_url` from config when stored client info existed.
 3. Because the configured `token_url` was loopback, refresh requests from the LibreChat container failed (`fetch failed`) and the server repeatedly fell back to re-auth.
 4. A secondary issue: flow-state TTL is 10 minutes; delayed user approval can produce `Flow state not found`/`invalid_state`.
@@ -171,9 +172,9 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
 - Deployment validation did not block `localhost` OAuth URLs for non-local environments.
 
 #### Permanent Fix Applied
-1. Corrected live cloud OAuth URLs to public MCP endpoints (Google + MS365) in:
+1. Corrected live managed OAuth URLs to public MCP endpoints (Google + MS365) in:
    - the managed runtime config
-   - the environment-specific git source-of-truth mirror
+   - the environment-specific source-of-truth mirror
 2. Added a code guard in `viventium_v0_4/LibreChat/packages/api/src/mcp/oauth/handler.ts`:
    - Ignore configured loopback `token_url` when `serverUrl` is non-loopback.
    - Fall back to discovered OAuth token endpoint.
@@ -181,10 +182,10 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
 4. Restarted LibreChat after config/image update so runtime picked up corrected endpoints.
 
 #### Preventatives (Must Keep)
-1. Before any deploy, pull live config from Azure Files and diff against git-tracked source of truth.
+1. Before any deploy, verify the live managed config still matches the git-tracked source of truth.
 2. Add/keep a pre-deploy guard: fail deployment if cloud/prod `oauth.authorization_url` or `oauth.token_url` contains `localhost`, `127.0.0.1`, `0.0.0.0`, or `::1`.
 3. Keep OAuth refresh regression tests in CI (loopback configured URL must not be used when server is remote).
-4. Keep OAuth proxy persistence enabled for Google MCP (`WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND=disk` + Azure Files mount).
+4. Keep OAuth proxy persistence enabled for Google MCP (`WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND=disk` + persistent writable volume).
 5. Preserve the FastMCP consent page behavior as expected upstream; branding customizations, if desired, must be done in the MCP OAuth proxy layer, not LibreChat callback handling.
 
 #### Per-User Separation Validation (2026-02-19)
@@ -213,8 +214,8 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
    `viventium_v0_4/LibreChat/api/cache/getLogStores.js` now stores `CacheKeys.FLOWS` in Mongo-backed Keyv instead of in-process cache.
 2. **Google OAuth proxy persistence** (already in place, retained):  
    - `WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND=disk`  
-   - `WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY=/app/store_creds/oauth-proxy`  
-   - Azure Files mounted at `/app/store_creds`
+   - `WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY=<persistent-runtime-volume>/oauth-proxy`
+   - exact managed volume details remain in the private deployment repo
 
 #### Live Validation Snapshot (2026-02-19)
 - Example user `user-1`: `google_workspace/reinitialize` returns `oauthRequired: true` (no stored tokens for this user).
@@ -362,12 +363,8 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
    - response: `GOOGLE_OK`
 
 ### Backup / Rollback Safety
-- Pre-fix local snapshots were stored at:
-  - `.viventium/artifacts/manual-repairs/runs/20260312T100845-google-oauth-cortex-repair/`
-- Included:
-  - pre-fix YAML/env files
-  - exported local agent docs
-  - exported local MCP key docs
+- Pre-fix repair artifacts were kept outside this public repo.
+- The public repo keeps only sanitized RCA, tests, and product-truth documentation.
 - Example user `user-2`: `google_workspace/reinitialize` returns `oauthRequired: false` and reconnects directly.
 - This confirms per-user isolation is functioning and explains why one user can reconnect silently while another still needs first-time auth.
 
@@ -378,14 +375,14 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
    - `/api/mcp/<server>/reinitialize` response (`oauthRequired`, `oauthUrl`)
    - `/api/mcp/connection/status/<server>`
    - token presence by user ID (`mcp:<server>`, `mcp:<server>:refresh`, `mcp:<server>:client`)
-4. Continue to persist Google MCP OAuth proxy storage on disk + Azure Files.
+4. Continue to persist Google MCP OAuth proxy storage on disk + a persistent writable volume.
 
 ### RCA: Local Google OAuth Drift In Isolated Runtime (2026-03-05)
 
 #### Symptoms
-- Local Google auth opened Google with blocked legacy app `764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com`.
+- Local Google auth opened Google with a blocked legacy app `<legacy-google-oauth-client-id>`.
 - Redirect URI in that blocked flow was `http://localhost:8000/oauth2callback`.
-- The isolated runtime was expected to use Google MCP on `http://localhost:8111` with app `1006762232621-it2lm2r4b8af4qjcujqvo1gpl78cqneh.apps.googleusercontent.com`.
+- The isolated runtime was expected to use Google MCP on `http://localhost:8111` with app `<active-local-google-oauth-client-id>`.
 
 #### Root Cause
 1. Repo-root fallback env files (`.env`, `.env.local`) still contained stale legacy `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` values.
@@ -527,7 +524,7 @@ When deploying Google Workspace MCP to a new environment:
    GOOGLE_OAUTH_CLIENT_ID: <from secret store>
    GOOGLE_OAUTH_CLIENT_SECRET: <from secret store>
    WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND: "disk"
-   WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY: "/app/store_creds/oauth-proxy"
+   WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY: "<persistent-runtime-volume>/oauth-proxy"
    ```
    - Also mount persistent storage at the configured credentials volume.
 
@@ -642,7 +639,7 @@ This is safe because:
 2. **Legacy local drift paths**
    - Old `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` values and stale port-`8000` processes could still revive older local Google flows unless startup normalized them.
 3. **Cloud-side redirect prerequisite**
-   - Google Cloud OAuth client `1006762232621-it2lm2r4b8af4qjcujqvo1gpl78cqneh.apps.googleusercontent.com` must explicitly save `http://localhost:8111/oauth2callback`.
+   - Google Cloud OAuth client `<active-local-google-oauth-client-id>` must explicitly save `http://localhost:8111/oauth2callback`.
    - When that redirect is missing or unsaved, Google returns `Error 400: redirect_uri_mismatch` regardless of local logs.
 
 ### Fixes Applied

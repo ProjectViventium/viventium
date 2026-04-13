@@ -1,9 +1,31 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def extract_shell_function(text: str, name: str) -> str:
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.strip() == f"{name}() {{":
+            start = index
+            break
+    if start is None:
+        raise AssertionError(f"Missing shell function: {name}")
+
+    collected: list[str] = []
+    depth = 0
+    for line in lines[start:]:
+        collected.append(line)
+        depth += line.count("{")
+        depth -= line.count("}")
+        if depth == 0:
+            break
+    return "\n".join(collected) + "\n"
 
 
 def test_direct_detached_librechat_fallback_supervises_backend_and_frontend() -> None:
@@ -49,3 +71,53 @@ def test_searxng_readiness_probe_uses_root_endpoint() -> None:
     assert 'local ready_retries="${VIVENTIUM_SEARXNG_READY_RETRIES:-60}"' in launcher_text
     assert 'status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${base_url}/" || true)' in launcher_text
     assert '/search?q=ping&format=json' not in launcher_text
+
+
+def test_scope_detection_matches_processes_by_working_directory(tmp_path: Path) -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    functions = "".join(
+        extract_shell_function(launcher_text, name)
+        for name in (
+            "read_pid_cwd",
+            "normalize_scope_path",
+            "path_is_trashed_checkout",
+            "scope_component_signature",
+            "pid_matches_trashed_scope_variant",
+            "pid_matches_scope",
+            "find_scope_pattern_pids",
+        )
+    )
+
+    worker = tmp_path / "worker.py"
+    worker.write_text("import time\nwhile True:\n    time.sleep(1)\n", encoding="utf-8")
+
+    sleeper = subprocess.Popen(
+        ["python3", "worker.py"],
+        cwd=tmp_path,
+    )
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                (
+                        "set -euo pipefail\n"
+                        f"{functions}"
+                        f'SCOPE="{tmp_path}"\n'
+                        f'PID="{sleeper.pid}"\n'
+                        'pid_matches_scope "$PID" "$SCOPE"\n'
+                        'MATCHED="$(find_scope_pattern_pids "python3 worker.py" "$SCOPE")"\n'
+                        '[[ " $MATCHED " == *" $PID "* ]]\n'
+                    ),
+                ],
+                cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert completed.returncode == 0
+    finally:
+        sleeper.terminate()
+        sleeper.wait(timeout=5)

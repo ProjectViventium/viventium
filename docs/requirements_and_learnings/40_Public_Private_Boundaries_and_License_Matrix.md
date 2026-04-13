@@ -25,6 +25,10 @@ This document defines what belongs in public, private personal, and private ente
 - Viventium-owned original code/docs/brand in the main public repo use an FSL-based source-available posture.
 - Upstream open-source components keep their required notices and compatible licenses.
 - `skyvern-source` remains AGPL in its own public component repo.
+- Placeholder public component repos must clearly declare placeholder status and carry the intended
+  upstream legal files before upstream-derived source is published there.
+- Public-facing docs for FSL repos must say source-available / Fair Source today, not OSI open
+  source before the future Apache-2.0 conversion date applies.
 - The public surface must use a license matrix; it must not claim a single blanket license over every component.
 
 ## Release Artifacts

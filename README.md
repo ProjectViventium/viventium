@@ -27,7 +27,7 @@ A local Viventium install can give you:
 
 ## Quick Start
 
-**Current verified install path:** macOS, repo-local install.
+**Current verified install path:** macOS, fresh-clone or repo-local install via `./install.sh`.
 
 ```bash
 git clone https://github.com/ProjectViventium/viventium.git
@@ -41,6 +41,8 @@ First-run notes:
 
 - remote access stays optional; if public-edge setup hits a router-port conflict, the local install
   now keeps running and `bin/viventium status` reports the exact blocker
+- public-browser installs can keep sign-up open just long enough to create the first account, then
+  automatically close browser registration for safer exposure
 - the macOS helper now uses the shipped matching helper binary first on clean installs instead of
   depending on opportunistic local Swift builds
 - after you create your local account, open `Settings -> Connected Accounts` and connect at least

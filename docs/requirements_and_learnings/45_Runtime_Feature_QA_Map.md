@@ -12,6 +12,7 @@ verification, and regression checks stay grounded in one place.
 - `qa/installer-resilience/README.md`
 - `qa/installer-piped-bootstrap/README.md`
 - `qa/installer-wait-taglines/README.md`
+- `qa/remote-access/README.md`
 
 Use these when changing:
 
@@ -19,6 +20,7 @@ Use these when changing:
 - `bin/viventium`
 - start/stop/status/doctor flows
 - public remote-access posture surfaced by the local runtime
+- first-account browser onboarding on clean installs
 - clean-install helper/bootstrap behavior
 
 ### Background Agents / Activation / Follow-Up

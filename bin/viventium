@@ -22,6 +22,45 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$REPO_ROOT/scripts/viventium/common.sh"
 ensure_brew_paths_on_path
 
+sanitize_macos_locale() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+
+  local needs_sanitization=0
+  case "${LC_ALL:-}" in
+    C.UTF-8|c.utf-8) needs_sanitization=1 ;;
+  esac
+  case "${LC_CTYPE:-}" in
+    C.UTF-8|c.utf-8) needs_sanitization=1 ;;
+  esac
+  case "${LANG:-}" in
+    C.UTF-8|c.utf-8) needs_sanitization=1 ;;
+  esac
+  (( needs_sanitization == 1 )) || return 0
+
+  local available_locales=""
+  local fallback_locale=""
+  available_locales="$(locale -a 2>/dev/null || true)"
+
+  if printf '%s\n' "$available_locales" | grep -Eiq '^C\.UTF-8$'; then
+    return 0
+  fi
+
+  fallback_locale="$(
+    printf '%s\n' "$available_locales" | grep -Ei 'utf-8$|utf8$' | head -n 1 || true
+  )"
+
+  [[ "${LC_ALL:-}" == "C.UTF-8" || "${LC_ALL:-}" == "c.utf-8" ]] && unset LC_ALL
+  [[ "${LC_CTYPE:-}" == "C.UTF-8" || "${LC_CTYPE:-}" == "c.utf-8" ]] && unset LC_CTYPE
+
+  if [[ -n "$fallback_locale" ]]; then
+    export LANG="$fallback_locale"
+  elif [[ "${LANG:-}" == "C.UTF-8" || "${LANG:-}" == "c.utf-8" ]]; then
+    unset LANG
+  fi
+}
+
+sanitize_macos_locale
+
 refresh_repo_python() {
   ensure_brew_paths_on_path
   PYTHON_BIN="$(resolve_repo_python)"
@@ -1084,6 +1123,24 @@ confirm_destructive_action() {
   fi
 }
 
+drain_native_stack_before_state_removal() {
+  # Destructive flows cannot rely on helper-detached cleanup alone because the
+  # helper can return before native services have drained and before App Support
+  # state is still present for command-line matching.
+  prepare_runtime_exports
+  if [[ -f "$GENERATED_ENV" ]]; then
+    set +u
+    # shellcheck disable=SC1090
+    source "$GENERATED_ENV"
+    if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+      # shellcheck disable=SC1090
+      source "$GENERATED_LOCAL_ENV"
+    fi
+    set -u
+  fi
+  "$REPO_ROOT/scripts/viventium/native_stack.sh" stop >/dev/null 2>&1 || true
+}
+
 reset_local_install_state() {
   local backup_dir=""
   if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
@@ -1094,6 +1151,7 @@ reset_local_install_state() {
     echo "Stopping the current Viventium stack before reset..."
     stop_stack_for_upgrade
   fi
+  drain_native_stack_before_state_removal
 
   rm -rf "$APP_SUPPORT_DIR"
   if [[ -n "$backup_dir" ]]; then
@@ -1112,6 +1170,7 @@ uninstall_local_installation() {
     echo "Stopping the current Viventium stack before uninstall..."
     stop_stack_for_upgrade
   fi
+  drain_native_stack_before_state_removal
 
   run_macos_helper_installer uninstall || true
   rm -rf "$APP_SUPPORT_DIR"

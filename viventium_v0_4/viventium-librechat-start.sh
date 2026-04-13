@@ -2111,10 +2111,42 @@ is_truthy() {
 
 # === VIVENTIUM START ===
 # Feature: Smarter process scope detection for restarts.
-# Purpose: Match by command without shelling into unstable local process crawlers.
+# Purpose: Match by working directory first, then command, so restarts do not
+# misclassify normal Node/Python processes that run from the right checkout but
+# use relative entrypoints like `api/server/index.js`.
 # === VIVENTIUM END ===
 read_pid_cwd() {
-  return 0
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+
+  local cwd=""
+  if command -v lsof >/dev/null 2>&1; then
+    cwd="$(
+      lsof -a -d cwd -p "$pid" -Fn 2>/dev/null \
+        | sed -n 's/^n//p' \
+        | head -n 1
+    )"
+  fi
+
+  if [[ -z "$cwd" ]] && command -v pwdx >/dev/null 2>&1; then
+    cwd="$(pwdx "$pid" 2>/dev/null | sed 's/^[^:]*: //' | head -n 1 || true)"
+  fi
+
+  if [[ -n "$cwd" ]]; then
+    printf '%s\n' "$cwd"
+  fi
+}
+
+normalize_scope_path() {
+  local path="${1:-}"
+  path="${path%/}"
+  if [[ -d "$path" ]]; then
+    (
+      cd "$path" >/dev/null 2>&1 && pwd -P
+    ) || printf '%s\n' "$path"
+    return 0
+  fi
+  printf '%s\n' "$path"
 }
 
 path_is_trashed_checkout() {
@@ -2145,16 +2177,19 @@ pid_matches_trashed_scope_variant() {
   local pid="$1"
   local scope="$2"
   [[ -n "$scope" ]] || return 1
+  scope="$(normalize_scope_path "$scope")"
 
   local signature=""
   signature="$(scope_component_signature "$scope")"
   [[ -n "$signature" ]] || return 1
 
   local cmd=""
+  local cwd=""
   local candidate=""
   cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+  cwd="$(read_pid_cwd "$pid")"
 
-  for candidate in "$cmd"; do
+  for candidate in "$cwd" "$cmd"; do
     [[ -n "$candidate" ]] || continue
     if path_is_trashed_checkout "$candidate" && [[ "$candidate" == *"/$signature"* ]]; then
       return 0
@@ -2169,6 +2204,16 @@ pid_matches_scope() {
   local scope="$2"
   if [[ -z "$scope" ]]; then
     return 0
+  fi
+  scope="$(normalize_scope_path "$scope")"
+  local cwd
+  cwd="$(read_pid_cwd "$pid")"
+  if [[ -n "$cwd" ]]; then
+    case "$cwd" in
+      "$scope"|"$scope"/*)
+        return 0
+        ;;
+    esac
   fi
   local cmd
   cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
@@ -2448,16 +2493,20 @@ find_scope_pattern_pids() {
   local pid
   while read -r pid; do
     [[ -z "$pid" ]] && continue
-    local cmd
-    cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    if [[ -n "$cmd" ]] && printf '%s\n' "$cmd" | grep -E -- "$pattern" >/dev/null 2>&1; then
+    if pid_matches_scope "$pid" "$scope" || pid_matches_trashed_scope_variant "$pid" "$scope"; then
       collected+=("$pid")
     fi
-  done < <(find_scope_runtime_pids "$scope")
+  done < <(pgrep -f "$pattern" 2>/dev/null || true)
 
   if [[ "${#collected[@]}" -gt 0 ]]; then
     printf '%s\n' "${collected[@]}" | sort -u | xargs 2>/dev/null || true
   fi
+}
+
+find_port_listener_pids() {
+  local port="${1:-}"
+  [[ -n "$port" ]] || return 0
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u | xargs 2>/dev/null || true
 }
 
 find_scope_orphan_pids() {
@@ -2558,14 +2607,32 @@ kill_port_listeners() {
     return 0
   fi
 
-  pids="$(find_scope_runtime_pids "$scope")"
+  pids="$(find_port_listener_pids "$port")"
   if [[ -z "$pids" ]]; then
     log_warn "Port $port is in use but no scoped runtime processes were found under $scope"
     return 0
   fi
 
+  local scoped_port_pids=()
+  local pid=""
+  for pid in $pids; do
+    if pid_matches_scope "$pid" "$scope"; then
+      scoped_port_pids+=("$pid")
+    elif pid_matches_trashed_scope_variant "$pid" "$scope"; then
+      log_warn "Stopping stale trashed PID $pid for scope: $scope"
+      scoped_port_pids+=("$pid")
+    else
+      log_warn "Skipping PID $pid (outside scope: $scope)"
+    fi
+  done
+
+  if [[ "${#scoped_port_pids[@]}" -eq 0 ]]; then
+    log_warn "Port $port is in use but no scoped runtime processes were found under $scope"
+    return 0
+  fi
+
   log_warn "Stopping scoped processes that may own port $port"
-  kill_pids_scoped "$pids" "$scope"
+  kill_pids "${scoped_port_pids[*]}"
 }
 
 port_has_listener() {
@@ -4869,6 +4936,26 @@ stop_remote_call_tunnels() {
     >/dev/null 2>&1 || true
 }
 
+stop_telegram_local_bot_api() {
+  local pid
+  pid="$(read_pid_file "$TELEGRAM_LOCAL_BOT_API_PID_FILE")"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then
+    log_warn "Stopping Telegram local Bot API server (PID: $pid)"
+    kill "$pid" 2>/dev/null || true
+    local tries=0
+    while [[ "$tries" -lt 10 ]] && ps -p "$pid" >/dev/null 2>&1; do
+      sleep 0.5
+      tries=$((tries + 1))
+    done
+    if ps -p "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+  TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=false
+  TELEGRAM_LOCAL_BOT_API_PID=""
+}
+
 stop_running_services() {
   local reason="${1:-Restart requested - stopping running services}"
   local done_msg="${2:-Restart cleanup complete}"
@@ -5339,26 +5426,6 @@ ensure_telegram_local_bot_api_hosted_logout() {
 
   log_error "Failed to log out Telegram hosted Bot API session before local-server mode"
   return 1
-}
-
-stop_telegram_local_bot_api() {
-  local pid
-  pid="$(read_pid_file "$TELEGRAM_LOCAL_BOT_API_PID_FILE")"
-  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then
-    log_warn "Stopping Telegram local Bot API server (PID: $pid)"
-    kill "$pid" 2>/dev/null || true
-    local tries=0
-    while [[ "$tries" -lt 10 ]] && ps -p "$pid" >/dev/null 2>&1; do
-      sleep 0.5
-      tries=$((tries + 1))
-    done
-    if ps -p "$pid" >/dev/null 2>&1; then
-      kill -9 "$pid" 2>/dev/null || true
-    fi
-  fi
-  rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
-  TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=false
-  TELEGRAM_LOCAL_BOT_API_PID=""
 }
 
 start_telegram_local_bot_api() {

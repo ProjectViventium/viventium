@@ -263,6 +263,12 @@ def is_empty_placeholder_dir(path: Path) -> bool:
     return path.is_dir() and not any(path.iterdir())
 
 
+def is_bootable_vendored_component_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    return any((path / marker).exists() for marker in BOOTSTRAP_MARKER_PATHS)
+
+
 def clone_component_checkout(
     repo_root: Path,
     name: str,
@@ -355,6 +361,8 @@ def clone_or_update_component(
                 target_dir,
                 "existing-non-git-path",
             )
+        if is_bootable_vendored_component_dir(target_dir):
+            return f"kept vendored checkout for {name} -> {target_dir}"
         raise SystemExit(f"Existing path is not a git repo: {target_dir}")
 
     if repo_is_dirty(target_dir):
@@ -660,6 +668,8 @@ def validate_component(
             raise SystemExit(
                 f"Snapshot-installed component {name} requires refresh: existing-non-git-path"
             )
+        if is_bootable_vendored_component_dir(target_dir):
+            return f"validated vendored checkout for {name} -> {target_dir}"
         raise SystemExit(f"Existing path is not a git repo: {target_dir}")
     if repo_is_dirty(target_dir):
         ensure_dirty_checkout_is_bootable(target_dir, name)

@@ -457,6 +457,32 @@ def test_build_service_rows_reports_auth_posture() -> None:
     assert "password-reset-link" in services["Password Reset"][1]
 
 
+def test_build_service_rows_reports_bootstrap_only_registration_mode() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "auth": {
+                "allow_registration": True,
+                "bootstrap_registration_once": True,
+                "allow_password_reset": False,
+            },
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+
+    rows = install_summary.build_service_rows(config, {}, probe_live=False)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Account Sign-up"] == (
+        "Bootstrap Only",
+        "Browser sign-up stays open only until the first account is created, then closes automatically",
+    )
+
+
 def test_build_next_steps_prefers_live_public_network_state(monkeypatch, tmp_path: Path) -> None:
     install_summary = load_install_summary_module()
 
@@ -551,6 +577,29 @@ def test_build_next_steps_skips_connected_accounts_priority_when_foundation_api_
     assert all("Connected Accounts" not in step for step in steps)
 
 
+def test_build_next_steps_mentions_bootstrap_only_registration_mode(monkeypatch) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "auth": {
+                "allow_registration": True,
+                "bootstrap_registration_once": True,
+            },
+            "ports": {"lc_frontend_port": 3190},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    steps = install_summary.build_next_steps(config, {})
+
+    assert any("closes automatically after the first account is created" in step for step in steps)
+
+
 def test_build_next_steps_clarifies_native_installs_use_processes(monkeypatch) -> None:
     install_summary = load_install_summary_module()
 
@@ -567,3 +616,37 @@ def test_build_next_steps_clarifies_native_installs_use_processes(monkeypatch) -
     steps = install_summary.build_next_steps(config, {})
 
     assert any("local background processes" in step for step in steps)
+
+
+def test_resolve_summary_heading_reports_starting_until_core_surfaces_are_live() -> None:
+    install_summary = load_install_summary_module()
+
+    heading, intro, table_title = install_summary.resolve_summary_heading(
+        True,
+        [
+            ("LibreChat Frontend", "Starting", "http://localhost:3190"),
+            ("LibreChat API", "Running", "http://localhost:3180/api"),
+            ("Modern Playground", "Running", "http://localhost:3300"),
+        ],
+    )
+
+    assert heading == "Viventium is still starting"
+    assert "still warming up" in intro
+    assert table_title == "Live Services"
+
+
+def test_resolve_summary_heading_reports_ready_once_core_surfaces_are_live() -> None:
+    install_summary = load_install_summary_module()
+
+    heading, intro, table_title = install_summary.resolve_summary_heading(
+        True,
+        [
+            ("LibreChat Frontend", "Running", "http://localhost:3190"),
+            ("LibreChat API", "Running", "http://localhost:3180/api"),
+            ("Modern Playground", "Running", "http://localhost:3300"),
+        ],
+    )
+
+    assert heading == "Viventium is ready"
+    assert "live surfaces" in intro
+    assert table_title == "Live Services"

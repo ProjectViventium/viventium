@@ -85,6 +85,8 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     install_surfaces_function = extract_shell_function(cli_source, "install_surfaces_healthy")
 
     assert "wait_for_install_stack_health() {" in cli_source
+    assert "sanitize_macos_locale() {" in cli_source
+    assert "sanitize_macos_locale" in cli_source.split("refresh_repo_python() {", 1)[0]
     assert "optional_install_surfaces_healthy() {" in cli_source
     assert "install_surfaces_healthy() {" in cli_source
     assert "render_install_wait_progress() {" in cli_source
@@ -106,6 +108,30 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert 'http_url_healthy "http://localhost:${port}${path_suffix}"' in cli_source
     assert 'http_url_healthy "http://127.0.0.1:${port}${path_suffix}"' in cli_source
     assert 'local timeout_seconds="${2:-2}"' in cli_source
+
+
+def test_destructive_flows_drain_native_stack_before_removing_app_support() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    install_section = cli_source.split('if [[ "$AUTO_START" == "1" ]]; then', 1)[1].split(
+        "INSTALL_TRAP_ACTIVE=0",
+        1,
+    )[0]
+    detached_section = cli_source.split("start_stack_for_install() {", 1)[1].split(
+        "stop_stack_for_upgrade() {",
+        1,
+    )[0]
+    install_surfaces_function = extract_shell_function(cli_source, "install_surfaces_healthy")
+    drain_function = extract_shell_function(cli_source, "drain_native_stack_before_state_removal")
+    reset_function = extract_shell_function(cli_source, "reset_local_install_state")
+    uninstall_function = extract_shell_function(cli_source, "uninstall_local_installation")
+
+    assert "prepare_runtime_exports" in drain_function
+    assert 'source "$GENERATED_ENV"' in drain_function
+    assert 'scripts/viventium/native_stack.sh" stop' in drain_function
+    assert "drain_native_stack_before_state_removal" in reset_function
+    assert "drain_native_stack_before_state_removal" in uninstall_function
+    assert reset_function.index("drain_native_stack_before_state_removal") < reset_function.index('rm -rf "$APP_SUPPORT_DIR"')
+    assert uninstall_function.index("drain_native_stack_before_state_removal") < uninstall_function.index('rm -rf "$APP_SUPPORT_DIR"')
     assert 'local_http_surface_healthy "$port" "/api/health"' in cli_source
     assert 'local_http_surface_healthy "$port" "/"' in cli_source
     assert 'http_url_healthy "${base_url}/" 5' in cli_source
@@ -996,6 +1022,11 @@ set -euo pipefail
 exit 0
 """
     write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", doctor_sh)
+    helper_install_sh = """#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "install_macos_helper.sh", helper_install_sh)
 
     start_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1070,6 +1101,8 @@ ensure_app_support_layout() {
   local dir="$1"
   mkdir -p "$dir/runtime" "$dir/state"
 }
+
+viventium_port_listener_active() { return 0; }
 
 python_has_module() { return 0; }
 resolve_repo_python() { printf '%s\\n' "${TEST_PYTHON:-python3}"; }
@@ -1153,6 +1186,44 @@ printf '1234\\n'
         encoding="utf-8",
     )
     fake_lsof.chmod(0o755)
+
+    fake_curl = tmp_path / "fakebrew" / "bin" / "curl"
+    fake_curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+
+write_code_only=0
+url=""
+while (($#)); do
+  case "$1" in
+    -w)
+      shift
+      [[ "${1:-}" == "%{http_code}" ]] && write_code_only=1
+      ;;
+    http://*|https://*)
+      url="$1"
+      ;;
+  esac
+  shift || true
+done
+
+case "$url" in
+  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/)
+    if [[ "$write_code_only" == "1" ]]; then
+      printf '200'
+    fi
+    exit 0
+    ;;
+esac
+
+if [[ "$write_code_only" == "1" ]]; then
+  printf '000'
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
 
     config_path = tmp_path / "app-support" / "config.yaml"
     runtime_dir = config_path.parent / "runtime"
@@ -1282,6 +1353,15 @@ printf '%s' "${VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH:-}" > "${TEST_ROOT}/runtime-s
     private_source.parent.mkdir(parents=True, exist_ok=True)
     private_source.write_text("private: true\n", encoding="utf-8")
 
+    test_python = tmp_path / "with-pyyaml-python"
+    write_executable(
+        test_python,
+        """#!/usr/bin/env bash
+set -euo pipefail
+exec uv run --with pyyaml python "$@"
+""",
+    )
+
     config_path = tmp_path / "app-support" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -1294,7 +1374,7 @@ printf '%s' "${VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH:-}" > "${TEST_ROOT}/runtime-s
     env = {
         **dict(os.environ),
         "TEST_ROOT": str(tmp_path),
-        "TEST_PYTHON": sys.executable,
+        "TEST_PYTHON": str(test_python),
         "VIVENTIUM_PRIVATE_REPO_DIR": str(private_root),
         "VIVENTIUM_PRIVATE_CURATED_DIR": str(private_root / "curated"),
     }
@@ -1646,6 +1726,8 @@ ensure_app_support_layout() {
   mkdir -p "$dir/runtime" "$dir/state"
 }
 
+viventium_port_listener_active() { return 0; }
+
 python_has_module() { return 0; }
 resolve_repo_python() { printf 'python3\\n'; }
 ensure_python_module() { return 0; }
@@ -1655,6 +1737,7 @@ ensure_python_module() { return 0; }
     write_executable(repo_root / "scripts" / "viventium" / "bootstrap_components.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     write_executable(repo_root / "scripts" / "viventium" / "config_compiler.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+    write_executable(repo_root / "scripts" / "viventium" / "install_macos_helper.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
     write_executable(repo_root / "viventium_v0_4" / "viventium-librechat-start.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
 
     fake_lsof = tmp_path / "fakebrew" / "bin" / "lsof"

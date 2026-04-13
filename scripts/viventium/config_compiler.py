@@ -78,6 +78,8 @@ DEFAULT_GOOGLE_WORKSPACE_MCP_SCOPE = (
     "https://www.googleapis.com/auth/cse"
 )
 LOCAL_MCP_ALLOWED_DOMAINS = ["localhost", "127.0.0.1", "host.docker.internal"]
+REPO_ROOT = SCRIPT_DIR.parent.parent
+GLASSHIVE_RUNTIME_DIR = REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
 LEGACY_CANONICAL_ENV_IMPORT_KEYS = (
     "AZURE_AI_FOUNDRY_API_KEY",
     "AZURE_AI_FOUNDRY_API_VERSION",
@@ -140,6 +142,12 @@ KEYCHAIN_SERVICE_ENV_FALLBACKS = {
     "viventium/telegram_codex_bot_token": ("TELEGRAM_CODEX_BOT_TOKEN",),
     "viventium/x_ai_api_key": ("XAI_API_KEY",),
 }
+
+
+def glasshive_enabled(config: dict[str, Any]) -> bool:
+    integrations = config.get("integrations", {}) or {}
+    configured = resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False)
+    return configured and GLASSHIVE_RUNTIME_DIR.is_dir()
 
 VOICE_PROVIDER_KEYCHAIN_SERVICES = {
     "assemblyai": "viventium/assemblyai_api_key",
@@ -647,6 +655,8 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
             mcp_servers.pop("ms-365", None)
         if not resolve_bool(env.get("START_GOOGLE_MCP"), False):
             mcp_servers.pop("google_workspace", None)
+        if not resolve_bool(env.get("START_GLASSHIVE"), False):
+            mcp_servers.pop("glasshive-workers-projects", None)
 
     web_search = cleaned.get("webSearch")
     if isinstance(web_search, dict):
@@ -1258,6 +1268,9 @@ def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
     auth = runtime.get("auth", {}) or {}
     return {
         "allow_registration": resolve_bool(auth.get("allow_registration"), True),
+        "bootstrap_registration_once": resolve_bool(
+            auth.get("bootstrap_registration_once"), False
+        ),
         "allow_password_reset": resolve_bool(auth.get("allow_password_reset"), False),
     }
 
@@ -1308,6 +1321,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     start_searxng = web_search_is_enabled and web_search_settings["search_provider"] == "searxng"
     start_firecrawl = web_search_is_enabled and web_search_settings["scraper_provider"] == "firecrawl"
     telegram_is_enabled = telegram_enabled(config)
+    glasshive_is_enabled = glasshive_enabled(config)
 
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
@@ -1357,6 +1371,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_MAIN_AGENT_ID": default_main_agent_id,
         "START_GOOGLE_MCP": "true" if integrations.get("google_workspace", {}).get("enabled") else "false",
         "START_MS365_MCP": "true" if integrations.get("ms365", {}).get("enabled") else "false",
+        "START_GLASSHIVE": "true" if glasshive_is_enabled else "false",
         "START_SCHEDULING_MCP": "true",
         "START_RAG_API": start_rag_api,
         "START_SKYVERN": "true" if integrations.get("skyvern", {}).get("enabled") else "false",
@@ -1369,6 +1384,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_OPENCLAW_ENABLED": "true" if integrations.get("openclaw", {}).get("enabled") else "false",
         "ALLOW_EMAIL_LOGIN": "true",
         "ALLOW_REGISTRATION": "true" if auth_settings["allow_registration"] else "false",
+        "VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE": "true"
+        if auth_settings["bootstrap_registration_once"]
+        else "false",
         "ALLOW_PASSWORD_RESET": "true" if auth_settings["allow_password_reset"] else "false",
         "ALLOW_SOCIAL_LOGIN": "false",
         "ALLOW_SOCIAL_REGISTRATION": "false",
@@ -1779,7 +1797,10 @@ def build_mcp_servers(
                 "Scheduling Cortex MCP for reminders, recurring jobs, and schedule management."
             ),
         },
-        "glasshive-workers-projects": {
+    }
+
+    if glasshive_enabled(config):
+        servers["glasshive-workers-projects"] = {
             "type": "streamable-http",
             "url": "${GLASSHIVE_MCP_URL}",
             "headers": {
@@ -1794,8 +1815,7 @@ def build_mcp_servers(
                 "sandboxes, and live operator takeover. Use it when work needs delegation, "
                 "persistence, or a human handoff into a live sandbox."
             ),
-        },
-    }
+        }
 
     if integrations.get("ms365", {}).get("enabled"):
         servers["ms-365"] = {

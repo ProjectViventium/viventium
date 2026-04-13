@@ -238,6 +238,10 @@ def resolve_runtime_auth(config: dict[str, Any], runtime_env: dict[str, str]) ->
             runtime_env.get("ALLOW_REGISTRATION"),
             resolve_bool(auth.get("allow_registration"), True),
         ),
+        "bootstrap_registration_once": resolve_bool(
+            runtime_env.get("VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE"),
+            resolve_bool(auth.get("bootstrap_registration_once"), False),
+        ),
         "allow_password_reset": resolve_bool(
             runtime_env.get("ALLOW_PASSWORD_RESET"),
             resolve_bool(auth.get("allow_password_reset"), False),
@@ -516,10 +520,16 @@ def build_service_rows(
     rows.append(
         (
             "Account Sign-up",
-            "Open" if auth_settings["allow_registration"] else "Closed",
-            "Anyone can create an account in the browser"
-            if auth_settings["allow_registration"]
-            else "Only existing accounts can sign in",
+            "Bootstrap Only"
+            if auth_settings["allow_registration"] and auth_settings["bootstrap_registration_once"]
+            else ("Open" if auth_settings["allow_registration"] else "Closed"),
+            "Browser sign-up stays open only until the first account is created, then closes automatically"
+            if auth_settings["allow_registration"] and auth_settings["bootstrap_registration_once"]
+            else (
+                "Anyone can create an account in the browser"
+                if auth_settings["allow_registration"]
+                else "Only existing accounts can sign in"
+            ),
         )
     )
     rows.append(
@@ -611,6 +621,39 @@ def build_service_rows(
         rows.append(("OpenClaw", "Configured", "Exposure monitoring integration"))
 
     return rows
+
+
+def live_core_services_ready(rows: list[tuple[str, str, str]]) -> bool:
+    statuses = {name: status for name, status, _detail in rows}
+    return all(
+        statuses.get(name) == "Running"
+        for name in ("LibreChat Frontend", "LibreChat API", "Modern Playground")
+    )
+
+
+def resolve_summary_heading(
+    probe_live: bool,
+    rows: list[tuple[str, str, str]],
+) -> tuple[str, str, str]:
+    if not probe_live:
+        return (
+            "Viventium is configured",
+            "The table below shows the services this install is set up to run.",
+            "Configured Services",
+        )
+
+    if live_core_services_ready(rows):
+        return (
+            "Viventium is ready",
+            "The table below reflects the live surfaces Viventium can currently reach on this Mac.",
+            "Live Services",
+        )
+
+    return (
+        "Viventium is still starting",
+        "The table below reflects the live surfaces Viventium can currently reach on this Mac. Core services are still warming up.",
+        "Live Services",
+    )
 
 
 def build_setup_later_rows(config: dict[str, Any]) -> list[tuple[str, str]]:
@@ -717,6 +760,11 @@ def build_next_steps(
         "Remote access is optional. For private-device or public-browser setup, see "
         "[cyan]docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md[/cyan]."
     )
+    auth_settings = resolve_runtime_auth(config, runtime_env)
+    if auth_settings["allow_registration"] and auth_settings["bootstrap_registration_once"]:
+        next_steps.append(
+            "Browser sign-up is in bootstrap-only mode for this install: it closes automatically after the first account is created."
+        )
     next_steps.append(
         "Keep [cyan]ALLOW_PASSWORD_RESET[/cyan] off for public installs unless real email delivery is configured. For a one-time operator-issued reset link, run [cyan]bin/viventium password-reset-link <email>[/cyan] locally."
     )
@@ -791,22 +839,13 @@ def main() -> None:
     probe_live = args.probe_live or args.stack_started
     ui = InstallerUI()
 
-    if probe_live:
-        intro = (
-            "The table below reflects the live surfaces Viventium can currently reach on this Mac."
-        )
-        table_title = "Live Services"
-    else:
-        intro = (
-            "Your workspace is configured. The table below shows the services this install is set up to run."
-        )
-        table_title = "Configured Services"
-
-    ui.print_section("Viventium is ready", intro, style="green")
+    service_rows = build_service_rows(config, runtime_env, runtime_dir=runtime_dir, probe_live=probe_live)
+    heading, intro, table_title = resolve_summary_heading(probe_live, service_rows)
+    ui.print_section(heading, intro, style="green")
     ui.print_table(
         table_title,
         ("Component", "Status", "Details"),
-        build_service_rows(config, runtime_env, runtime_dir=runtime_dir, probe_live=probe_live),
+        service_rows,
         style="green",
     )
 

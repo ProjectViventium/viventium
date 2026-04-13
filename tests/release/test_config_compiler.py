@@ -150,6 +150,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_RAG_EMBEDDINGS_MODEL=qwen3-embedding:0.6b" in runtime_env
     assert "VIVENTIUM_RAG_EMBEDDINGS_PROFILE=medium" in runtime_env
     assert "START_CODE_INTERPRETER=false" in runtime_env
+    assert "START_GLASSHIVE=false" in runtime_env
     assert "START_SEARXNG=false" in runtime_env
     assert "START_FIRECRAWL=false" in runtime_env
     assert "VIVENTIUM_WEB_SEARCH_ENABLED=false" in runtime_env
@@ -221,8 +222,24 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["version"] == "1.3.6"
     assert "webSearch" not in librechat_yaml
     assert librechat_yaml["mcpServers"]["scheduling-cortex"]["url"] == "${SCHEDULING_MCP_URL}"
+    assert "glasshive-workers-projects" not in librechat_yaml["mcpServers"]
     assert librechat_yaml["mcpServers"]["sequential-thinking"]["command"] == "npx"
     assert summary["primary_provider"] == "openai"
+
+
+def test_glasshive_enabled_requires_config_and_runtime_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_dir = tmp_path / "missing-glasshive"
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", missing_dir)
+
+    assert config_compiler.glasshive_enabled({"integrations": {}}) is False
+    assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": True}}}) is False
+
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": False}}}) is False
+    assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": True}}}) is True
 
 
 def test_config_compiler_compile_phase_ignores_stale_generated_source_override(tmp_path: Path) -> None:
@@ -1159,6 +1176,7 @@ def test_config_compiler_renders_runtime_auth_controls(tmp_path: Path) -> None:
             "profile": "isolated",
             "auth": {
                 "allow_registration": False,
+                "bootstrap_registration_once": True,
                 "allow_password_reset": False,
             },
             "call_session_secret": {"secret_value": "call-session-test"},
@@ -1205,6 +1223,7 @@ def test_config_compiler_renders_runtime_auth_controls(tmp_path: Path) -> None:
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
     assert "ALLOW_REGISTRATION=false" in runtime_env
+    assert "VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE=true" in runtime_env
     assert "ALLOW_PASSWORD_RESET=false" in runtime_env
 
 
@@ -1700,7 +1719,12 @@ def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selecti
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_STT_PROVIDER=whisper_local" in runtime_env
-    assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        assert "VIVENTIUM_TTS_PROVIDER=local_chatterbox_turbo_mlx_8bit" in runtime_env
+        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=openai" in runtime_env
+    else:
+        assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
+        assert "VIVENTIUM_TTS_PROVIDER_FALLBACK=" not in runtime_env
     assert "ASSEMBLYAI_API_KEY=assemblyai-dormant" in runtime_env
     assert "CARTESIA_API_KEY=cartesia-dormant" in runtime_env
     assert "ELEVENLABS_API_KEY=elevenlabs-dormant" in runtime_env

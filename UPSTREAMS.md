@@ -4,6 +4,7 @@ The active public component set is pinned in `components.lock.json`.
 
 | Local path | Public repo | Upstream repo |
 |---|---|---|
+| `viventium_v0_4/GlassHive` | `ProjectViventium/GlassHive` | first-party (no upstream fork boundary) |
 | `viventium_v0_4/LibreChat` | `ProjectViventium/viventium-librechat` | `danny-avila/LibreChat` |
 | `viventium_v0_4/agents-playground` | `ProjectViventium/agents-playground` | `livekit/agents-playground` |
 | `viventium_v0_4/livekit` | `ProjectViventium/livekit` | `livekit/livekit` |
