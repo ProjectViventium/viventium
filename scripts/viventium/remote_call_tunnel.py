@@ -463,6 +463,14 @@ def build_state(provider: str, surfaces: dict[str, dict[str, Any]], *, livekit_n
     return state
 
 
+def build_error_state(provider: str, message: str) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "last_error": str(message or "").strip(),
+    }
+
+
 def ensure_directory_identity(state_path: Path) -> dict[str, str]:
     openssl_bin = ensure_openssl()
     identity_dir = state_path.parent / "directory-identity"
@@ -1719,16 +1727,20 @@ def cmd_start(args: argparse.Namespace) -> int:
             stop_state(existing)
 
         provider = str(args.provider or "cloudflare_quick_tunnel").strip().lower()
-        if provider == "cloudflare_quick_tunnel":
-            state = start_cloudflare(args, log_dir=log_dir)
-        elif provider == "tailscale_tailnet_https":
-            state = start_tailscale(args)
-        elif provider == "netbird_selfhosted_mesh":
-            state = start_netbird(args, state_path=state_path, log_dir=log_dir)
-        elif provider == "public_https_edge":
-            state = start_public_https_edge(args, state_path=state_path, log_dir=log_dir)
-        else:
-            raise RuntimeError(f"Unsupported remote call provider: {provider}")
+        try:
+            if provider == "cloudflare_quick_tunnel":
+                state = start_cloudflare(args, log_dir=log_dir)
+            elif provider == "tailscale_tailnet_https":
+                state = start_tailscale(args)
+            elif provider == "netbird_selfhosted_mesh":
+                state = start_netbird(args, state_path=state_path, log_dir=log_dir)
+            elif provider == "public_https_edge":
+                state = start_public_https_edge(args, state_path=state_path, log_dir=log_dir)
+            else:
+                raise RuntimeError(f"Unsupported remote call provider: {provider}")
+        except Exception as exc:
+            save_state(state_path, build_error_state(provider, str(exc)))
+            raise
 
         save_state(state_path, state)
         print(json.dumps(state))

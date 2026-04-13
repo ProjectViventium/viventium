@@ -238,6 +238,27 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
 3. Add regression coverage proving placeholderized MCP OAuth URLs validate correctly when `.env` supplies the concrete values.
 
 ### Rule
+
+### MCP OAuth Wait Policy Must Stay Structural (2026-04-12)
+
+- MCP OAuth wait behavior must not infer user intent from message keywords, provider labels, or
+  hand-written text heuristics.
+- Runtime wait/strip decisions may use only structural signals available at tool-loading time:
+  - current surface (`web`, `voice`, `telegram`, `gateway`)
+  - which MCP servers are actually pending OAuth
+  - which tool definitions for the current turn are owned by those pending servers
+  - whether any non-pending specialized tools remain available after stripping pending MCP tools
+- Current product rule:
+  - `telegram` / `gateway` never wait in-turn
+  - `always` waits on web/voice for all pending OAuth servers
+  - `never` never waits
+  - `intent` is still the default env mode name, but its runtime meaning is structural:
+    wait only when exactly one pending OAuth server owns the current specialist tool surface and
+    only generic built-ins remain otherwise
+- Reason:
+  - keyword-based OAuth wait logic is runtime NLU by another name
+  - it drifts with phrasing and conflicts with the no-hardcoded-NLU rule in
+    `01_Key_Principles.md`
 - Placeholderized `librechat.yaml` is valid source-of-truth input.
 - Direct backend dev starts must not lose MCP servers just because the generated `CONFIG_PATH` step was skipped.
 

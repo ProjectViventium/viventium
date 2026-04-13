@@ -24,6 +24,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from installer_ui import InstallerUI
+from retrieval_config import resolve_retrieval_embeddings_settings
 
 
 RESET = "\033[0m"
@@ -539,6 +540,7 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
 def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     refresh_brew_paths()
     ctx = compute_install_context(config)
+    retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     items: list[PreflightItem] = []
 
     items.append(
@@ -613,6 +615,22 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
             command="uv",
         )
     )
+    if ctx["conversation_recall"] and retrieval_embeddings["provider"] == "ollama":
+        items.append(
+            PreflightItem(
+                key="ollama",
+                label="ollama",
+                category="runtime",
+                reason=(
+                    "Conversation Recall uses local Ollama embeddings on this Mac while the "
+                    "current recall sidecar keeps its vector/index path in Docker"
+                ),
+                status="ok" if command_exists("ollama") else "missing",
+                install_kind="brew_formula" if not command_exists("ollama") else "none",
+                formula="ollama" if not command_exists("ollama") else "",
+                command="ollama",
+            )
+        )
     if ctx["telegram"]:
         items.append(
             PreflightItem(

@@ -11,8 +11,9 @@ They must never degrade tool or MCP capabilities compared to running the same ag
 
 For the manager-readable handbook, start with:
 
-- `docs/requirements_and_learnings/52_Background_Agent_QA_and_Persona.md`
 - `qa/background_agents/README.md`
+- `qa/background_agents/01_catalog.md`
+- `qa/background_agents/06_agent_signoff_manifest.md`
 
 ## Core Requirements
 
@@ -93,3 +94,25 @@ Use this order so the fix stays surgical:
 - Fixing only the provider layer would stop the crash but could silently change the intended shipped
   behavior of temperature-tuned built-ins; those built-ins also need truthful source-of-truth
   `thinking` settings.
+- Activation intent detection is classifier-owned. Runtime code must not regex-match user text to
+  decide activation or to prune activation history based on guessed semantics.
+- When activation phrasing needs to expand, fix the source-of-truth activation prompt and prove it
+  with live evals.
+- When the classifier provider is unavailable, fix reliability with `activation.fallbacks`, not with
+  deterministic runtime heuristics.
+- Activation and execution must be diagnosed separately. A productivity cortex can activate
+  correctly and still fail later if its execution-model credential or connected account is expired.
+- Activation-provider benchmarks must use the same auth/runtime path as the product:
+  - connected-account providers must be measured through their connected-account initializer path
+  - standalone eval scripts must bootstrap Mongo/runtime dependencies before running activation
+  - cooldown state must be cleared between benchmark scenarios when one real user is reused
+- On April 12, 2026, corrected live benchmarking under the real 11-cortex parallel load showed:
+  - `groq / meta-llama/llama-4-scout-17b-16e-instruct` was the best shipping primary for the
+    current 2-second Phase A budget: fast, zero timeouts, and full target-hit rate
+  - `anthropic / claude-haiku-4-5` worked correctly through the connected-account path with
+    `thinking: false`, but at the shipping 2-second budget it was too close to timeout to replace
+    Groq as the primary
+  - the same Haiku model hit full target coverage when given a larger 10-second diagnostic budget,
+    proving the limitation was latency, not activation reasoning quality
+  - the tested SambaNova candidates remained non-viable for the current 11-cortex topology because
+    they exhausted the full 2-second budget under parallel activation

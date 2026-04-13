@@ -25,6 +25,14 @@ SOURCE_OF_TRUTH_AGENTS_BUNDLE = (
     / "source_of_truth"
     / "local.viventium-agents.yaml"
 )
+SOURCE_OF_TRUTH_LIBRECHAT_YAML = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "viventium"
+    / "source_of_truth"
+    / "local.librechat.yaml"
+)
 CONFIG_COMPILER_SPEC = importlib.util.spec_from_file_location(
     "viventium_config_compiler",
     REPO_ROOT / "scripts/viventium/config_compiler.py",
@@ -40,6 +48,10 @@ def write_config(path: Path, payload: dict) -> None:
 
 def load_source_of_truth_agents_bundle() -> dict:
     return yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+
+
+def load_source_of_truth_librechat_yaml() -> dict:
+    return yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8"))
 
 
 def source_of_truth_built_in_agent_map() -> dict[str, str]:
@@ -131,6 +143,12 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE=owner" in runtime_env
     assert "START_RAG_API=false" in runtime_env
+    assert "EMBEDDINGS_PROVIDER=ollama" in runtime_env
+    assert "EMBEDDINGS_MODEL=qwen3-embedding:0.6b" in runtime_env
+    assert "OLLAMA_BASE_URL=http://host.docker.internal:11434" in runtime_env
+    assert "VIVENTIUM_RAG_EMBEDDINGS_PROVIDER=ollama" in runtime_env
+    assert "VIVENTIUM_RAG_EMBEDDINGS_MODEL=qwen3-embedding:0.6b" in runtime_env
+    assert "VIVENTIUM_RAG_EMBEDDINGS_PROFILE=medium" in runtime_env
     assert "START_CODE_INTERPRETER=false" in runtime_env
     assert "START_SEARXNG=false" in runtime_env
     assert "START_FIRECRAWL=false" in runtime_env
@@ -162,6 +180,10 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["memory"]["personalize"] is True
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert (
+        librechat_yaml["viventium"]["conversation_recall"]["prompt"]
+        == load_source_of_truth_librechat_yaml()["viventium"]["conversation_recall"]["prompt"]
+    )
     assert librechat_yaml["balance"]["enabled"] is False
     assert librechat_yaml["speech"]["tts"] == {}
     assert librechat_yaml["speech"]["stt"] == {}
@@ -201,6 +223,82 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["mcpServers"]["scheduling-cortex"]["url"] == "${SCHEDULING_MCP_URL}"
     assert librechat_yaml["mcpServers"]["sequential-thinking"]["command"] == "npx"
     assert summary["primary_provider"] == "openai"
+
+
+def test_config_compiler_compile_phase_ignores_stale_generated_source_override(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "personalization": {"default_conversation_recall": True},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    stale_generated = tmp_path / "stale-generated-librechat.yaml"
+    write_config(config_path, config)
+    stale_generated.write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.3.6",
+                "viventium": {
+                    "configVersion": 1,
+                    "no_response": {"prompt": "NO RESPONSE TAG"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["VIVENTIUM_LIBRECHAT_SOURCE_PHASE"] = "compile"
+    env["VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH"] = str(stale_generated)
+    env.pop("VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH", None)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+    assert librechat_yaml["viventium"]["conversation_recall"]["prompt"] == (
+        load_source_of_truth_librechat_yaml()["viventium"]["conversation_recall"]["prompt"]
+    )
 
 
 def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) -> None:
@@ -581,10 +679,9 @@ def test_build_agent_assignments_use_current_generation_models() -> None:
     assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-4-6")
     assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-6")
     assert assignments["support"] == ("anthropic", "claude-sonnet-4-6")
-    assert assignments["memory"] == ("openai", "gpt-5.4")
+    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-6")
 
-
-def test_build_agent_assignments_memory_honors_configured_foundation_order() -> None:
+def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -1666,6 +1763,72 @@ def test_config_compiler_disables_rag_bootstrap_when_conversation_recall_default
     assert "START_RAG_API=false" in runtime_env
 
 
+def test_config_compiler_respects_explicit_retrieval_embeddings_override(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-off"},
+            "retrieval": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-small",
+                    "profile": "custom",
+                }
+            },
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "EMBEDDINGS_PROVIDER=openai" in runtime_env
+    assert "EMBEDDINGS_MODEL=text-embedding-3-small" in runtime_env
+    assert "VIVENTIUM_RAG_EMBEDDINGS_PROVIDER=openai" in runtime_env
+    assert "VIVENTIUM_RAG_EMBEDDINGS_MODEL=text-embedding-3-small" in runtime_env
+    assert "VIVENTIUM_RAG_EMBEDDINGS_PROFILE=custom" in runtime_env
+    assert "OLLAMA_BASE_URL=" not in runtime_env
+
+
 def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropic(tmp_path: Path) -> None:
     config = {
         "version": 1,
@@ -1725,8 +1888,8 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
-    assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
-    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
+    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-6"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
     assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
 

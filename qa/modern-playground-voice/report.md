@@ -274,3 +274,83 @@ Observed results:
 - Re-run the same browser QA on the canonical launcher-managed playground once those independent
   runtime issues are repaired, so the acceptance evidence includes the exact shipped local port in
   addition to the clean dev-server proof.
+
+---
+
+## Date
+
+- 2026-04-12
+
+## Build Under Test
+
+- Repo branch: `codex/public-safe-recall-install-20260410`
+- Runtime profile: `isolated`
+
+## Scope
+
+- Verify that the Agent Builder Voice Chat Model path is actually honored in the live local
+  runtime.
+- Make new installs and reviewed syncs preserve the dedicated voice parameter bag instead of
+  relying only on inheritance from the primary model parameters.
+- Inspect a real local modern-playground voice session for the reported startup delay.
+
+## Checks Executed
+
+1. Live Mongo inspection for the main agent and the relevant call-session records.
+2. Runtime log inspection in:
+   - `~/Library/Application Support/Viventium/logs/helper-start.log`
+   - `~/Library/Application Support/Viventium/logs/native/livekit.log`
+3. Targeted LibreChat regression checks:
+   - `npm exec jest -- --runInBand models/Agent.spec.js -t "persist dedicated voice parameters"`
+   - `npm exec jest -- --runInBand test/scripts/viventium-sync-agents.test.js`
+4. Parent release contract check:
+   - `/usr/bin/python3 -m pytest tests/release/test_background_agent_governance_contract.py -q`
+5. Live reviewed sync:
+   - `node scripts/viventium-sync-agents.js push --env=local --model-config-only --agent-ids=agent_viventium_main_95aeb3 --compare-reviewed`
+6. Live post-sync verification:
+   - direct Mongo read of `agent_viventium_main_95aeb3`
+   - direct `resolveVoiceModelParameters()` probe against the persisted live agent
+   - fresh `compare --env=local --json`
+
+## Findings
+
+- The live voice route is being picked up correctly in runtime:
+  - helper logs show the main agent swapping from `anthropic / claude-opus-4-6` to
+    `anthropic / claude-haiku-4-5` during voice-call initialization.
+- The install/bootstrap gap was real:
+  - source-of-truth had no dedicated persisted `voice_llm_model_parameters` bag for the main
+    voice route
+  - seed/sync tooling did not preserve that field
+  - the compiled `packages/data-schemas/dist` bundle used by the running runtime was stale and did
+    not expose `voice_llm_model_parameters` on the live `Agent` schema
+- After fixing seed/sync, rebuilding `packages/data-schemas`, and re-running the bounded live
+  sync, the local main agent now persists the dedicated voice bag at the top level:
+  - `voice_llm_provider = anthropic`
+  - `voice_llm_model = claude-haiku-4-5`
+  - `voice_llm_model_parameters = { model: "claude-haiku-4-5", thinking: false }`
+- Direct runtime resolution against the persisted live agent now returns:
+  - `model = claude-haiku-4-5`
+  - `thinking = false`
+- The inspected slow local voice session was not explained solely by reasoning/thinking:
+  - the session reused an existing conversation and loaded prior history
+  - startup reconnected multiple MCP surfaces before the call stabilized
+  - background-cortex activation still ran during the session startup path
+  - in the inspected session, Phase A finished in roughly half a second, so it contributed but was
+    not the whole delay
+
+## QA Conclusion
+
+- The Voice Chat Model route and its parameter bag are now wired end to end for the local main
+  agent on this machine.
+- New installs and reviewed syncs can now preserve the dedicated voice `thinking: false` setting as
+  first-class product state instead of depending on indirect inheritance from the main model bag.
+- The remaining live-vs-source drift after this fix is limited to the two intentionally preserved
+  background-agent `execute_code` tool differences.
+
+## Follow-Ups
+
+- If voice startup still feels slow in day-to-day use, profile and reduce the remaining startup
+  overheads separately:
+  - conversation-history reuse
+  - MCP reconnect churn
+  - background-cortex startup policy for voice calls

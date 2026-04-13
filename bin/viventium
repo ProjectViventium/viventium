@@ -329,12 +329,28 @@ run_preflight() {
     args+=(--apply)
     if [[ "${VIVENTIUM_AUTO_APPROVE_PREREQS:-false}" == "true" || "${HEADLESS:-0}" == "1" ]]; then
       args+=(--non-interactive)
+    else
+      reattach_stdin_from_tty_if_available || true
     fi
   fi
   ensure_brew_paths_on_path
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/preflight.py" "${args[@]}"
   refresh_repo_python
   ensure_brew_paths_on_path
+}
+
+reattach_stdin_from_tty_if_available() {
+  # `curl ... | bash` leaves stdin on the consumed bootstrap pipe even though the
+  # user still has a controlling terminal. Reattach before any interactive prompt.
+  if [[ -t 0 ]]; then
+    return 0
+  fi
+  if [[ ! -t 1 && ! -t 2 ]]; then
+    return 1
+  fi
+  if ! exec </dev/tty; then
+    return 1
+  fi
 }
 
 usage() {
@@ -811,6 +827,8 @@ prepare_runtime_exports() {
   fi
   if [[ "$source_phase" == "compile" && "$private_source_valid" == "1" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$private_source_of_truth"
+  elif [[ "$source_phase" == "compile" ]]; then
+    unset VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH
   elif [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
   elif [[ "$private_source_valid" == "1" ]]; then
@@ -977,7 +995,12 @@ foundation_present = any(
     for provider_name, node in extra_provider_keys.items()
 )
 
-print("0" if foundation_present else "1")
+integrations = config.get("integrations", {}) or {}
+google_workspace_enabled = bool((integrations.get("google_workspace") or {}).get("enabled"))
+ms365_enabled = bool((integrations.get("ms365") or {}).get("enabled"))
+
+needs_guidance = (not foundation_present) or google_workspace_enabled or ms365_enabled
+print("1" if needs_guidance else "0")
 PY
 }
 
@@ -989,7 +1012,8 @@ print_connected_accounts_browser_reminder() {
 
   echo
   echo "Important: after you create your account in the browser, click your account in the left sidebar,"
-  echo "open Settings -> Connected Accounts, and connect OpenAI or Anthropic so the shipped Viventium agents can run."
+  echo "open Settings -> Connected Accounts, connect OpenAI or Anthropic so the shipped Viventium agents can run,"
+  echo "and connect Google Workspace and/or Microsoft 365 there as well if you want those tasks on this user account."
 }
 
 open_default_browser() {
@@ -1201,22 +1225,24 @@ runtime_port_listening() {
 
 http_url_healthy() {
   local url="${1:-}"
+  local timeout_seconds="${2:-2}"
   [[ -n "$url" ]] || return 1
 
   local code=""
   if command -v curl >/dev/null 2>&1; then
-    code="$(curl -sS -L -o /dev/null --max-time 2 -w '%{http_code}' "$url" 2>/dev/null || true)"
+    code="$(curl -sS -L -o /dev/null --max-time "$timeout_seconds" -w '%{http_code}' "$url" 2>/dev/null || true)"
   else
     code="$(
-      "$PYTHON_BIN" - "$url" <<'PY'
+      "$PYTHON_BIN" - "$url" "$timeout_seconds" <<'PY'
 import sys
 import urllib.error
 import urllib.request
 
 url = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
 request = urllib.request.Request(url, method="GET")
 try:
-    with urllib.request.urlopen(request, timeout=2) as response:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         print(getattr(response, "status", 200))
 except urllib.error.HTTPError as error:
     print(error.code)
@@ -1253,7 +1279,10 @@ searxng_surface_healthy() {
   local base_url=""
   base_url="$(read_generated_env_value "SEARXNG_INSTANCE_URL" "http://localhost:8082")"
   base_url="${base_url%/}"
-  http_url_healthy "${base_url}/search?q=ping&format=json"
+  # Cold SearXNG search requests can take a few seconds while engines wake up.
+  # The root page responds much earlier and is enough to prove the local service
+  # is accepting traffic for installer/startup readiness purposes.
+  http_url_healthy "${base_url}/" 5
 }
 
 firecrawl_surface_healthy() {
@@ -1269,8 +1298,15 @@ firecrawl_surface_healthy() {
   fi
 
   if command -v curl >/dev/null 2>&1; then
-    curl -s --max-time 3 "${base_url}/" 2>/dev/null | grep -q "Firecrawl API"
-    return $?
+    if curl -s --max-time 3 "${base_url}/" 2>/dev/null | grep -q "Firecrawl API"; then
+      return 0
+    fi
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    if docker ps -q --filter "name=^/viventium_firecrawl_api$" 2>/dev/null | head -1 | grep -q .; then
+      return 0
+    fi
   fi
 
   return 1
@@ -2026,6 +2062,49 @@ start_stack_for_install() {
   return 1
 }
 
+restart_stack_after_upgrade() {
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
+  local wait_status=0
+  local waiting_on=""
+
+  # Upgrade already refreshed components and regenerated runtime outputs.
+  # Restart should hand off to the detached launcher path instead of keeping
+  # the upgrade process attached to the long-lived stack owner.
+  cleanup_cli_lock
+  DETACHED_START_PID=""
+
+  if install_surfaces_healthy; then
+    return 0
+  fi
+
+  echo "Restarting Viventium..."
+  launch_stack_detached
+
+  wait_for_install_stack_health
+  wait_status=$?
+  if [[ "$wait_status" == "0" ]]; then
+    return 0
+  fi
+
+  waiting_on="$(install_waiting_on_surfaces || true)"
+  if [[ -z "$waiting_on" ]]; then
+    waiting_on="service readiness checks"
+  fi
+
+  if [[ "$wait_status" == "2" ]]; then
+    echo "Viventium stopped during restart before the required surfaces became healthy." >&2
+  else
+    echo "Viventium did not become healthy before the restart timeout (${timeout_seconds}s)." >&2
+  fi
+  echo "Still waiting on: $waiting_on" >&2
+  if [[ -f "$launch_log" ]]; then
+    echo "Check the detached start log: $launch_log" >&2
+  fi
+  print_install_timeout_log_excerpt "$launch_log"
+  return 1
+}
+
 stop_stack_for_upgrade() {
   "$REPO_ROOT/bin/viventium" \
     --app-support-dir "$APP_SUPPORT_DIR" \
@@ -2155,6 +2234,9 @@ case "$COMMAND" in
           ;;
       esac
     done
+    if [[ "$HEADLESS" != "1" ]]; then
+      reattach_stdin_from_tty_if_available || true
+    fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     RECOVERY_ACTION="resume"
     if [[ -z "$CONFIG_INPUT" ]]; then
@@ -2293,13 +2375,10 @@ case "$COMMAND" in
       --lock-file "$LOCK_FILE"
     maybe_install_macos_helper
     if [[ "$AUTO_RESTART" == "1" ]]; then
-      "$REPO_ROOT/bin/viventium" \
-        --app-support-dir "$APP_SUPPORT_DIR" \
-        --config-file "$CONFIG_FILE" \
-        --runtime-dir "$RUNTIME_DIR" \
-        --lock-file "$LOCK_FILE" \
-        start
-      exit $?
+      if ! restart_stack_after_upgrade; then
+        exit 1
+      fi
+      exit 0
     fi
     echo "Upgrade complete. Next: bin/viventium start"
     ;;
@@ -2328,6 +2407,9 @@ case "$COMMAND" in
           ;;
       esac
     done
+    if [[ "$HEADLESS" != "1" ]]; then
+      reattach_stdin_from_tty_if_available || true
+    fi
     WIZARD_ARGS=(--output "$CONFIG_FILE")
     if [[ -n "$CONFIG_INPUT" ]]; then
       WIZARD_ARGS+=(--preset "$CONFIG_INPUT" --non-interactive)

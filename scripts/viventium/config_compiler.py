@@ -19,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from telegram_tokens import telegram_bot_token_validation_error
+from retrieval_config import resolve_retrieval_embeddings_settings
 
 CONFIG_VERSION = 1
 DEFAULT_MAIN_AGENT_ID = "agent_viventium_main_95aeb3"
@@ -375,10 +376,26 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 def resolve_source_of_truth_librechat_yaml_candidates() -> list[Path]:
     candidates: list[Path] = []
+    compile_phase = os.environ.get("VIVENTIUM_LIBRECHAT_SOURCE_PHASE", "").strip() == "compile"
+    private = os.environ.get("VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH", "").strip()
     explicit = os.environ.get("VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH", "").strip()
+
+    def add_candidate(raw: str | Path) -> None:
+        candidate = Path(raw).expanduser().resolve()
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    if compile_phase:
+        if private:
+            add_candidate(private)
+        add_candidate(SOURCE_OF_TRUTH_LIBRECHAT_YAML)
+        if explicit:
+            add_candidate(explicit)
+        return candidates
+
     if explicit:
-        candidates.append(Path(explicit).expanduser().resolve())
-    candidates.append(SOURCE_OF_TRUTH_LIBRECHAT_YAML)
+        add_candidate(explicit)
+    add_candidate(SOURCE_OF_TRUTH_LIBRECHAT_YAML)
     return candidates
 
 
@@ -1046,7 +1063,7 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
     analytical_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     emotional_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
     support_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
-    memory_provider = foundation_fallback
+    memory_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
 
     return {
         "conscious": (conscious_provider, MODEL_MAP[conscious_provider]["conscious"]),
@@ -1282,6 +1299,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         agents.get("default_main_agent_id") or DEFAULT_MAIN_AGENT_ID
     ).strip() or DEFAULT_MAIN_AGENT_ID
     default_conversation_recall = conversation_recall_enabled(config)
+    retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
     start_rag_api = "true" if default_conversation_recall else "false"
     code_interpreter_is_enabled = code_interpreter_enabled(config)
@@ -1370,7 +1388,15 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "MS365_MCP_AUTH_URL": "http://localhost:6274/authorize",
         "MS365_MCP_TOKEN_URL": "http://localhost:6274/token",
         "MS365_MCP_SCOPE": DEFAULT_MS365_MCP_SCOPE,
+        "EMBEDDINGS_PROVIDER": retrieval_embeddings["provider"],
+        "EMBEDDINGS_MODEL": retrieval_embeddings["model"],
+        "VIVENTIUM_RAG_EMBEDDINGS_PROVIDER": retrieval_embeddings["provider"],
+        "VIVENTIUM_RAG_EMBEDDINGS_MODEL": retrieval_embeddings["model"],
+        "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
     }
+
+    if retrieval_embeddings["provider"] == "ollama":
+        env["OLLAMA_BASE_URL"] = retrieval_embeddings["ollama_base_url"]
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()

@@ -473,6 +473,8 @@ TELEGRAM_LOCAL_BOT_API_STATE_DIR="$VIVENTIUM_STATE_ROOT/telegram-local-bot-api"
 TELEGRAM_LOCAL_BOT_API_WORK_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/work"
 TELEGRAM_LOCAL_BOT_API_TEMP_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/tmp"
 TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/hosted-logout.sha256"
+TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
+TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 MONGO_CONTAINER_NAME="${VIVENTIUM_LOCAL_MONGO_CONTAINER:-viventium-mongodb}"
 MONGO_VOLUME_NAME="${VIVENTIUM_LOCAL_MONGO_VOLUME:-viventium-mongodb-data}"
@@ -970,6 +972,8 @@ GLASSHIVE_RUNTIME_PID_FILE="$LOG_ROOT/glasshive_runtime.pid"
 GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
+TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
+TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
 LIBRECHAT_API_WATCHDOG_PID_FILE="$LOG_ROOT/librechat-api-watchdog.pid"
@@ -1626,7 +1630,7 @@ while [[ $# -gt 0 ]]; do
       echo "  - Google Workspace MCP (profile port)"
       echo "  - MS365 MCP (port 6274)"
       echo "  - GlassHive Runtime (8766) + MCP (8767) + UI (8780)"
-      echo "  - Local RAG API for conversation recall (profile port)"
+      echo "  - Local RAG API for conversation recall (profile port, local embeddings runtime)"
       echo "  - Skyvern Browser Agent (Docker, profile ports)"
       echo "  - LibreCodeInterpreter API (profile port)"
       echo "  - Firecrawl (Docker, port 3003)"
@@ -2361,6 +2365,26 @@ telegram_pid_is_running() {
     return 1
   fi
   return 0
+}
+
+telegram_deferred_pid_is_running() {
+  local pid
+  pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+  if ! ps -p "$pid" >/dev/null 2>&1; then
+    rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+    return 1
+  fi
+  return 0
+}
+
+telegram_deferred_start_pending() {
+  if telegram_deferred_pid_is_running; then
+    return 0
+  fi
+  [[ -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE" ]]
 }
 
 telegram_codex_pid_is_running() {
@@ -3207,6 +3231,18 @@ ensure_librechat_env() {
   local registration_approval="${VIVENTIUM_REGISTRATION_APPROVAL:-false}"
   local effective_client_url="${VIVENTIUM_PUBLIC_CLIENT_URL:-$LC_FRONTEND_URL}"
   local effective_server_url="${VIVENTIUM_PUBLIC_SERVER_URL:-$LC_API_URL}"
+  # === VIVENTIUM START ===
+  # Feature: Persist the compiled conversation-recall embeddings contract into LibreChat/.env.
+  # Purpose:
+  # - rag.yml only injects LibreChat/.env into the RAG container.
+  # - Without these keys, query-time embeddings silently fall back to OpenAI defaults even when
+  #   the compiled local profile selected Ollama, which breaks recall at runtime.
+  # Added: 2026-04-09
+  # === VIVENTIUM END ===
+  local embeddings_provider="${EMBEDDINGS_PROVIDER:-${VIVENTIUM_RAG_EMBEDDINGS_PROVIDER:-}}"
+  local embeddings_model="${EMBEDDINGS_MODEL:-${VIVENTIUM_RAG_EMBEDDINGS_MODEL:-}}"
+  local embeddings_profile="${VIVENTIUM_RAG_EMBEDDINGS_PROFILE:-}"
+  local ollama_base_url="${OLLAMA_BASE_URL:-}"
   local vite_allowed_hosts_existing="${VITE_ALLOWED_HOSTS:-}"
   local vite_allowed_hosts=""
   vite_allowed_hosts="$(merge_allowed_hosts_csv \
@@ -3263,6 +3299,18 @@ EOF
 
   if [[ -z "$rag_api_url" ]]; then
     rag_api_url="$(read_env_kv "$env_file" "RAG_API_URL" || true)"
+  fi
+  if [[ -z "$embeddings_provider" ]]; then
+    embeddings_provider="$(read_env_kv "$env_file" "EMBEDDINGS_PROVIDER" || true)"
+  fi
+  if [[ -z "$embeddings_model" ]]; then
+    embeddings_model="$(read_env_kv "$env_file" "EMBEDDINGS_MODEL" || true)"
+  fi
+  if [[ -z "$embeddings_profile" ]]; then
+    embeddings_profile="$(read_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_PROFILE" || true)"
+  fi
+  if [[ -z "$ollama_base_url" ]]; then
+    ollama_base_url="$(read_env_kv "$env_file" "OLLAMA_BASE_URL" || true)"
   fi
   if [[ -n "$rag_api_url" ]]; then
     case "$rag_api_url" in
@@ -3349,6 +3397,22 @@ EOF
   # === VIVENTIUM START ===
   upsert_env_kv "$env_file" "OPENAI_MODELS" "$curated_openai_models"
   upsert_env_kv "$env_file" "ASSISTANTS_MODELS" "$curated_assistants_models"
+  if [[ -n "$embeddings_provider" ]]; then
+    upsert_env_kv "$env_file" "EMBEDDINGS_PROVIDER" "$embeddings_provider"
+    upsert_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_PROVIDER" "$embeddings_provider"
+  fi
+  if [[ -n "$embeddings_model" ]]; then
+    upsert_env_kv "$env_file" "EMBEDDINGS_MODEL" "$embeddings_model"
+    upsert_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_MODEL" "$embeddings_model"
+  fi
+  if [[ -n "$embeddings_profile" ]]; then
+    upsert_env_kv "$env_file" "VIVENTIUM_RAG_EMBEDDINGS_PROFILE" "$embeddings_profile"
+  fi
+  if [[ "$embeddings_provider" == "ollama" && -n "$ollama_base_url" ]]; then
+    upsert_env_kv "$env_file" "OLLAMA_BASE_URL" "$ollama_base_url"
+  else
+    remove_env_kv "$env_file" "OLLAMA_BASE_URL"
+  fi
   remove_env_kv "$env_file" "CHECK_BALANCE"
   remove_env_kv "$env_file" "START_BALANCE"
   unset CHECK_BALANCE START_BALANCE
@@ -3385,6 +3449,22 @@ EOF
   # === VIVENTIUM START ===
   export OPENAI_MODELS="$curated_openai_models"
   export ASSISTANTS_MODELS="$curated_assistants_models"
+  if [[ -n "$embeddings_provider" ]]; then
+    export EMBEDDINGS_PROVIDER="$embeddings_provider"
+    export VIVENTIUM_RAG_EMBEDDINGS_PROVIDER="$embeddings_provider"
+  fi
+  if [[ -n "$embeddings_model" ]]; then
+    export EMBEDDINGS_MODEL="$embeddings_model"
+    export VIVENTIUM_RAG_EMBEDDINGS_MODEL="$embeddings_model"
+  fi
+  if [[ -n "$embeddings_profile" ]]; then
+    export VIVENTIUM_RAG_EMBEDDINGS_PROFILE="$embeddings_profile"
+  fi
+  if [[ "$embeddings_provider" == "ollama" && -n "$ollama_base_url" ]]; then
+    export OLLAMA_BASE_URL="$ollama_base_url"
+  else
+    unset OLLAMA_BASE_URL
+  fi
   # === VIVENTIUM END ===
 
   local canonical_env_source=""
@@ -4430,6 +4510,101 @@ print(str(data.get(key, "")).strip())
 PY
 }
 
+clear_remote_call_runtime_exports() {
+  unset VIVENTIUM_PUBLIC_CLIENT_URL
+  unset VIVENTIUM_PUBLIC_SERVER_URL
+  unset VIVENTIUM_PUBLIC_PLAYGROUND_URL
+  unset VIVENTIUM_PUBLIC_LIVEKIT_URL
+  unset LIVEKIT_NODE_IP
+  unset LIVEKIT_TURN_DOMAIN
+  unset LIVEKIT_TURN_TLS_PORT
+  unset LIVEKIT_TURN_CERT_FILE
+  unset LIVEKIT_TURN_KEY_FILE
+}
+
+persist_remote_call_failure_state_if_needed() {
+  local provider="${1:-public_https_edge}"
+  local message="${2:-}"
+  if [[ -z "$message" ]]; then
+    message="Remote access setup failed before the helper could persist an error state."
+  fi
+  REMOTE_CALL_STATE_FILE="$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" \
+  REMOTE_CALL_PROVIDER="$provider" \
+  REMOTE_CALL_FAILURE_MESSAGE="$message" \
+  "$PYTHON_BIN" - <<'PY'
+import json
+import os
+import time
+from pathlib import Path
+
+state_file = Path(os.environ.get("REMOTE_CALL_STATE_FILE", "") or "")
+if not str(state_file):
+    raise SystemExit(0)
+
+provider = str(os.environ.get("REMOTE_CALL_PROVIDER") or "public_https_edge").strip() or "public_https_edge"
+message = str(os.environ.get("REMOTE_CALL_FAILURE_MESSAGE") or "").strip()
+if not message:
+    message = "Remote access setup failed before the helper could persist an error state."
+
+existing = {}
+try:
+    if state_file.exists():
+        loaded = json.loads(state_file.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            existing = loaded
+except Exception:
+    existing = {}
+
+if str(existing.get("provider") or "").strip() == provider and str(existing.get("last_error") or "").strip():
+    raise SystemExit(0)
+
+state_file.parent.mkdir(parents=True, exist_ok=True)
+state_file.write_text(
+    json.dumps(
+        {
+            "provider": provider,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "last_error": message,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+remote_call_mapping_state_supports_refresh() {
+  if [[ ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
+    return 1
+  fi
+  "$PYTHON_BIN" - "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(data, dict):
+    raise SystemExit(1)
+
+if str(data.get("provider") or "").strip() != "public_https_edge":
+    raise SystemExit(1)
+
+if str(data.get("last_error") or "").strip():
+    raise SystemExit(1)
+
+router = data.get("router") or {}
+mappings = router.get("mappings") or []
+raise SystemExit(0 if isinstance(mappings, list) and len(mappings) > 0 else 1)
+PY
+}
+
 prepare_remote_call_access() {
   if ! remote_call_mode_enabled; then
     return 0
@@ -4528,8 +4703,12 @@ prepare_remote_call_access() {
   if ! state_json="$("$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" \
     "${helper_args[@]}" \
     "${auto_install_args[@]}" 2>&1)"; then
-    log_error "Remote access setup failed: $state_json"
-    return 1
+    local failure_message="${state_json//$'\r'/ }"
+    failure_message="${failure_message//$'\n'/ }"
+    persist_remote_call_failure_state_if_needed "$remote_provider" "$failure_message"
+    clear_remote_call_runtime_exports
+    log_warn "Remote access setup failed; local startup will continue without it: $failure_message"
+    return 0
   fi
 
   public_client_url="$(json_state_value "$state_json" "public_client_url")"
@@ -4599,9 +4778,15 @@ prewarm_remote_call_access() {
   api_url="$(json_state_value "$state_json" "public_api_url")"
   playground_url="$(json_state_value "$state_json" "public_playground_url")"
   livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
+  local remote_error=""
+  remote_error="$(json_state_value "$state_json" "last_error")"
 
   if [[ "$command_status" -ne 0 ]]; then
-    log_warn "Remote access verification failed - browser links may need a retry: $state_json"
+    if [[ -n "$remote_error" ]]; then
+      log_warn "Remote access is still inactive for this run: $remote_error"
+    else
+      log_warn "Remote access verification failed - browser links may need a retry: $state_json"
+    fi
     return 0
   fi
 
@@ -4639,6 +4824,9 @@ start_remote_call_mapping_refresh_worker() {
     return 0
   fi
   if [[ ! -f "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" || ! -f "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" ]]; then
+    return 0
+  fi
+  if ! remote_call_mapping_state_supports_refresh; then
     return 0
   fi
   if remote_call_mapping_refresh_pid_is_running; then
@@ -4764,6 +4952,13 @@ stop_running_services() {
     rm -f "$TELEGRAM_BOT_PID_FILE"
   fi
   stop_telegram_local_bot_api
+  local telegram_deferred_pid
+  telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+  if [[ -n "$telegram_deferred_pid" ]]; then
+    kill_pids "$telegram_deferred_pid"
+    rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  fi
+  rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
   kill_by_pattern_scoped "TelegramVivBot.*bot.py" "$ROOT_DIR"
   if [[ -n "$telegram_dir" ]]; then
     kill_by_pattern_scoped "uv run python bot.py" "$telegram_dir"
@@ -5685,10 +5880,51 @@ ms365_http_ping() {
   return 1
 }
 
+# === VIVENTIUM START ===
+# Feature: MS365 MCP restart ownership enforcement.
+# Purpose: Reclaim the shipped MS365 MCP port from foreign listeners instead of
+# silently reusing another workspace's server and credentials.
+# === VIVENTIUM END ===
+ms365_port_listener_is_viventium_owned() {
+  local port="${1:-$MS365_MCP_PORT}"
+
+  if command -v docker >/dev/null 2>&1 && docker_daemon_ready; then
+    if docker ps -q --filter "name=^/viventium_ms365_mcp$" 2>/dev/null | head -1 | grep -q .; then
+      return 0
+    fi
+  fi
+
+  local pids
+  pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  if [[ -z "$pids" ]]; then
+    return 1
+  fi
+
+  local pid
+  for pid in $pids; do
+    if pid_matches_scope "$pid" "$ROOT_DIR/MCPs/ms-365-mcp-server"; then
+      return 0
+    fi
+    if pid_matches_scope "$pid" "$LEGACY_V0_3_DIR"; then
+      return 0
+    fi
+    if pid_matches_scope "$pid" "$VIVENTIUM_CORE_DIR"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 searxng_http_ping() {
   local base_url="${SEARXNG_INSTANCE_URL:-http://localhost:${SEARXNG_PORT}}"
   base_url="${base_url%/}"
-  curl -fs --max-time 3 "${base_url}/search?q=ping&format=json" >/dev/null 2>&1
+  # A real search request can be slow on cold start while upstream engines warm.
+  # Use the root page as the readiness check so local installs do not treat a
+  # healthy SearXNG container as failed just because the first query is slow.
+  local status
+  status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${base_url}/" || true)
+  [[ "$status" =~ ^(2|3)[0-9][0-9]$ ]]
 }
 
 firecrawl_http_ping() {
@@ -5997,6 +6233,15 @@ run_health_checks() {
     fi
   fi
 
+  if [[ "$START_RAG_API" == "true" && "$SKIP_LIBRECHAT" != "true" ]] && ollama_embeddings_enabled_for_rag; then
+    if ollama_http_ping "$(ollama_host_base_url)"; then
+      log_success "Ollama embeddings runtime ready"
+    else
+      log_warn "Ollama embeddings runtime did not respond yet"
+      failures=$((failures + 1))
+    fi
+  fi
+
   if [[ "$START_RAG_API" == "true" && "$SKIP_LIBRECHAT" != "true" ]]; then
     if rag_api_http_ping "$VIVENTIUM_RAG_API_PORT"; then
       log_success "Local RAG API ready"
@@ -6167,6 +6412,13 @@ cleanup() {
   fi
   [[ "$V1_AGENT_STARTED_BY_SCRIPT" == "true" && -n "${V1_AGENT_PID:-}" ]] && kill "${V1_AGENT_PID}" 2>/dev/null || true
   [[ "$TELEGRAM_STARTED_BY_SCRIPT" == "true" && -n "${TELEGRAM_BOT_PID:-}" ]] && kill "${TELEGRAM_BOT_PID}" 2>/dev/null || true
+  local cleanup_telegram_deferred_pid=""
+  cleanup_telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+  if [[ -n "$cleanup_telegram_deferred_pid" ]]; then
+    kill_pids "$cleanup_telegram_deferred_pid"
+    rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  fi
+  rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
   [[ "$GOOGLE_MCP_STARTED_BY_SCRIPT" == "true" && -n "${GOOGLE_MCP_PID:-}" ]] && kill "${GOOGLE_MCP_PID}" 2>/dev/null || true
   stop_remote_call_tunnels
   stop_pid_file_scoped "$GOOGLE_MCP_PID_FILE" "$GOOGLE_MCP_DIR"
@@ -6781,7 +7033,10 @@ start_ms365_mcp() {
 
   if [[ "$RESTART_DOCKER_SERVICES" == "true" && "$ms365_port_in_use" == "true" ]]; then
     if port_in_use "$base_port"; then
-      if ms365_http_ping "http://localhost:${base_port}/mcp"; then
+      if ! ms365_port_listener_is_viventium_owned "$base_port"; then
+        log_warn "MS365 MCP port $base_port is occupied by a non-Viventium listener; reclaiming the port for Viventium"
+        kill_port_listeners "$base_port"
+      elif ms365_http_ping "http://localhost:${base_port}/mcp"; then
         MS365_MCP_PORT="$base_port"
         export MS365_MCP_PORT
         export MS365_MCP_TRANSPORT="streamable-http"
@@ -6849,6 +7104,155 @@ rag_api_http_ping() {
   curl -fsS --max-time 3 "http://localhost:${port}/health" >/dev/null 2>&1
 }
 
+# === VIVENTIUM START ===
+# Feature: Ollama embeddings runtime readiness for local RAG.
+# Purpose:
+# - Keep the local-first embeddings default honest on fresh installs.
+# - Start the local Ollama service when Conversation Recall depends on it instead of letting the
+#   RAG sidecar fail later with hidden runtime drift.
+# Added: 2026-04-09
+# === VIVENTIUM END ===
+ollama_embeddings_enabled_for_rag() {
+  [[ "${EMBEDDINGS_PROVIDER:-}" == "ollama" ]]
+}
+
+ollama_host_base_url() {
+  local base_url="${OLLAMA_BASE_URL:-http://localhost:11434}"
+  base_url="${base_url%/}"
+  base_url="${base_url/host.docker.internal/localhost}"
+  printf '%s\n' "$base_url"
+}
+
+ollama_http_ping() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  curl -fsS --max-time 3 "${base_url%/}/api/tags" >/dev/null 2>&1
+}
+
+ollama_tags_json() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  curl -fsS --max-time 10 "${base_url%/}/api/tags"
+}
+
+ollama_embedding_model_name() {
+  local model="${EMBEDDINGS_MODEL:-qwen3-embedding:0.6b}"
+  printf '%s\n' "$model"
+}
+
+ollama_model_present() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  local model="${2:-$(ollama_embedding_model_name)}"
+  local tags_json=""
+
+  if ! tags_json="$(ollama_tags_json "$base_url" 2>/dev/null)"; then
+    return 1
+  fi
+
+  OLLAMA_TAGS_JSON="$tags_json" "$PYTHON_BIN" - "$model" <<'PY'
+import json
+import os
+import sys
+
+target = str(sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not target:
+    raise SystemExit(1)
+
+targets = {target}
+if ":" not in target:
+    targets.add(f"{target}:latest")
+elif target.endswith(":latest"):
+    targets.add(target.rsplit(":", 1)[0])
+
+try:
+    payload = json.loads(os.environ.get("OLLAMA_TAGS_JSON", "") or "{}")
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+for entry in payload.get("models") or []:
+    name = str(entry.get("name") or entry.get("model") or "").strip()
+    if name in targets:
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+ollama_pull_model() {
+  local base_url="${1:-$(ollama_host_base_url)}"
+  local model="${2:-$(ollama_embedding_model_name)}"
+  local payload=""
+  payload="$("$PYTHON_BIN" - "$model" <<'PY'
+import json
+import sys
+
+model = sys.argv[1]
+print(json.dumps({"name": model, "stream": False}))
+PY
+)"
+
+  curl -fsS -H 'Content-Type: application/json' --data "$payload" "${base_url%/}/api/pull" >/dev/null
+}
+
+ensure_ollama_for_rag() {
+  if ! ollama_embeddings_enabled_for_rag; then
+    return 0
+  fi
+
+  local host_url=""
+  host_url="$(ollama_host_base_url)"
+
+  if ollama_http_ping "$host_url"; then
+    log_success "Ollama embeddings runtime ready at $host_url"
+    return 0
+  fi
+
+  if ! command -v ollama >/dev/null 2>&1; then
+    log_error "Ollama is required for the configured local embeddings runtime but is not installed"
+    return 1
+  fi
+
+  if command -v brew >/dev/null 2>&1 && brew list ollama >/dev/null 2>&1; then
+    log_info "Starting Ollama embeddings runtime..."
+    HOMEBREW_NO_AUTO_UPDATE=1 brew services start ollama >/dev/null 2>&1 || true
+  fi
+
+  if wait_for_http "${host_url%/}/api/tags" "Ollama embeddings runtime" 5; then
+    return 0
+  fi
+
+  log_error "Ollama embeddings runtime is not reachable at ${host_url}. Start it with 'brew services start ollama' or 'ollama serve' and retry."
+  return 1
+}
+
+ensure_ollama_embedding_model_for_rag() {
+  if ! ollama_embeddings_enabled_for_rag; then
+    return 0
+  fi
+
+  local host_url=""
+  local model=""
+  host_url="$(ollama_host_base_url)"
+  model="$(ollama_embedding_model_name)"
+
+  if ollama_model_present "$host_url" "$model"; then
+    log_success "Ollama embedding model ready: $model"
+    return 0
+  fi
+
+  log_info "Pulling Ollama embedding model $model from $host_url..."
+  if ! ollama_pull_model "$host_url" "$model"; then
+    log_error "Failed to pull Ollama embedding model $model from $host_url"
+    return 1
+  fi
+
+  if ollama_model_present "$host_url" "$model"; then
+    log_success "Ollama embedding model ready: $model"
+    return 0
+  fi
+
+  log_error "Ollama embedding model $model is still unavailable after pull"
+  return 1
+}
+
 start_rag_api() {
   if [[ "$START_RAG_API" != "true" || "$SKIP_LIBRECHAT" == "true" ]]; then
     log_info "Skipping local RAG API startup"
@@ -6860,6 +7264,12 @@ start_rag_api() {
     return 1
   fi
   if ! ensure_docker_daemon_for_service "local RAG API"; then
+    return 1
+  fi
+  if ! ensure_ollama_for_rag; then
+    return 1
+  fi
+  if ! ensure_ollama_embedding_model_for_rag; then
     return 1
   fi
 
@@ -7342,7 +7752,12 @@ start_searxng() {
   SEARXNG_PORT="$SEARXNG_PORT" docker compose -f "$compose_file" up -d
   SEARXNG_STARTED_BY_SCRIPT=true
 
-  for _ in $(seq 1 20); do
+  local ready_retries="${VIVENTIUM_SEARXNG_READY_RETRIES:-60}"
+  if ! [[ "$ready_retries" =~ ^[0-9]+$ ]] || [[ "$ready_retries" -lt 1 ]]; then
+    ready_retries=60
+  fi
+
+  for _ in $(seq 1 "$ready_retries"); do
     if searxng_http_ping; then
       log_success "SearxNG reachable at $SEARXNG_INSTANCE_URL"
       return 0
@@ -7473,6 +7888,8 @@ start_v1_agent() {
 }
 
 start_telegram_bot() {
+  rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
   if [[ "$START_TELEGRAM" != "true" ]]; then
     log_info "Skipping Telegram bot startup"
     return 0
@@ -7760,6 +8177,36 @@ PY
   return 0
 }
 
+schedule_deferred_telegram_bot_start() {
+  local existing_pid=""
+  local background_retries="${TELEGRAM_LIBRECHAT_DEFERRED_START_RETRIES:-${TELEGRAM_LIBRECHAT_START_RETRIES:-1800}}"
+
+  if telegram_deferred_pid_is_running; then
+    existing_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
+    if [[ -n "$existing_pid" ]]; then
+      log_success "Deferred Telegram bot startup already queued (PID: $existing_pid)"
+      return 0
+    fi
+  fi
+
+  : >"$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
+  rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  (
+    trap 'rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE" "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"' EXIT
+    if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "$background_retries"; then
+      if ! start_telegram_bot; then
+        log_warn "Telegram bot startup had issues - continuing anyway"
+      fi
+    else
+      log_warn "LibreChat API never became ready; skipping deferred Telegram bot startup"
+    fi
+  ) &
+  local deferred_pid=$!
+  printf '%s\n' "$deferred_pid" >"$TELEGRAM_BOT_DEFERRED_PID_FILE"
+  log_info "Queued deferred Telegram bot startup watcher (PID: $deferred_pid)"
+  return 0
+}
+
 start_telegram_codex() {
   if [[ "$START_TELEGRAM_CODEX" != "true" ]]; then
     log_info "Skipping Telegram Codex startup"
@@ -8044,9 +8491,9 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
   fi
 fi
 
-if ! prepare_remote_call_access; then
-  exit 1
-fi
+prepare_remote_call_access
+
+export LIVEKIT_NODE_IP="${LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}"
 
 if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" || -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
   echo -e "${CYAN}[viventium]${NC} Public remote access:"
@@ -8258,6 +8705,7 @@ if [[ "$START_TELEGRAM" == "true" ]]; then
   telegram_backend_preference="$(echo "${VIVENTIUM_TELEGRAM_BACKEND:-librechat}" | tr '[:upper:]' '[:lower:]')"
   if [[ "$telegram_backend_preference" == "librechat" && "$SKIP_LIBRECHAT" != "true" ]]; then
     DEFER_TELEGRAM_LIBRECHAT_START=true
+    : >"$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
     log_info "Deferring Telegram bot startup until LibreChat API is ready"
   fi
 fi
@@ -8499,12 +8947,15 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
 fi
 
 if [[ "$DEFER_TELEGRAM_LIBRECHAT_START" == "true" ]]; then
-  if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "${TELEGRAM_LIBRECHAT_START_RETRIES:-240}"; then
-    if ! start_telegram_bot; then
-      log_warn "Telegram bot startup had issues - continuing anyway"
+  if ! schedule_deferred_telegram_bot_start; then
+    log_warn "Unable to queue deferred Telegram bot startup; falling back to inline wait"
+    if wait_for_http "${LC_API_URL}/health" "LibreChat API before Telegram bot start" "${TELEGRAM_LIBRECHAT_START_RETRIES:-240}"; then
+      if ! start_telegram_bot; then
+        log_warn "Telegram bot startup had issues - continuing anyway"
+      fi
+    else
+      log_warn "LibreChat API never became ready; skipping deferred Telegram bot startup"
     fi
-  else
-    log_warn "LibreChat API never became ready; skipping deferred Telegram bot startup"
   fi
 fi
 
@@ -8975,6 +9426,8 @@ if [[ "$START_TELEGRAM" == "true" ]]; then
     echo -e "  ${CYAN}Telegram Bot:${NC}        invalid BotFather token"
   elif [[ "$TELEGRAM_STARTED_BY_SCRIPT" == "true" ]]; then
     echo -e "  ${CYAN}Telegram Bot:${NC}        running (PID: $TELEGRAM_BOT_PID)"
+  elif telegram_deferred_start_pending; then
+    echo -e "  ${CYAN}Telegram Bot:${NC}        starting (waiting for LibreChat API)"
   else
     echo -e "  ${CYAN}Telegram Bot:${NC}        enabled (check $LOG_DIR/telegram_bot.log)"
   fi

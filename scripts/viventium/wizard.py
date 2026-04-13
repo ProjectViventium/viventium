@@ -19,6 +19,12 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from installer_ui import CheckboxOption, InstallerUI, SelectOption
+from retrieval_config import (
+    DEFAULT_RETRIEVAL_EMBEDDINGS_MODEL,
+    DEFAULT_RETRIEVAL_EMBEDDINGS_PROFILE,
+    DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER,
+    DEFAULT_RETRIEVAL_OLLAMA_BASE_URL,
+)
 from telegram_tokens import telegram_bot_token_validation_error
 
 LOCAL_TTS_PROVIDER = "local_chatterbox_turbo_mlx_8bit"
@@ -31,7 +37,7 @@ FIRECRAWL_API_KEYS_URL = "https://docs.firecrawl.dev/introduction#api-key"
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
 DOCKER_FEATURES = {"ms365", "conversation_recall", "code_interpreter", "skyvern"}
 FEATURE_GUIDANCE = {
-    "conversation_recall": "Docker Desktop for local recall",
+    "conversation_recall": "Docker Desktop and Ollama for local recall",
     "code_interpreter": "Docker Desktop for the sandbox service",
     "web_search": "Serper + Firecrawl APIs, or let Viventium install Docker Desktop for local SearXNG and Firecrawl",
     "telegram": "Bot token from @BotFather",
@@ -95,7 +101,7 @@ def local_firecrawl_memory_note(docker_memory_bytes: int | None) -> str | None:
     recommended_gib = DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES / float(1024 * 1024 * 1024)
     return (
         "Docker Desktop is currently limited to about "
-        f"{current_gib:.1f} GB. Viventium now ships a lighter local Firecrawl profile, "
+        f"{current_gib:.1f} GB. Viventium now ships a bounded local Firecrawl profile, "
         f"but Firecrawl is more reliable with at least {recommended_gib:.0f} GB assigned. "
         "If you keep Docker smaller, prefer Firecrawl API for full-page scraping."
     )
@@ -268,6 +274,12 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     auth.setdefault("allow_password_reset", False)
     personalization = runtime.setdefault("personalization", {})
     personalization.setdefault("default_conversation_recall", False)
+    retrieval = runtime.setdefault("retrieval", {})
+    embeddings = retrieval.setdefault("embeddings", {})
+    embeddings.setdefault("provider", DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER)
+    embeddings.setdefault("model", DEFAULT_RETRIEVAL_EMBEDDINGS_MODEL)
+    embeddings.setdefault("profile", DEFAULT_RETRIEVAL_EMBEDDINGS_PROFILE)
+    embeddings.setdefault("ollama_base_url", DEFAULT_RETRIEVAL_OLLAMA_BASE_URL)
     llm = config.setdefault("llm", {})
     activation = llm.setdefault("activation", {})
     primary = llm.setdefault("primary", {})
@@ -395,6 +407,14 @@ def build_base_config(
                 "allow_password_reset": False,
             },
             "personalization": {"default_conversation_recall": False},
+            "retrieval": {
+                "embeddings": {
+                    "provider": DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER,
+                    "model": DEFAULT_RETRIEVAL_EMBEDDINGS_MODEL,
+                    "profile": DEFAULT_RETRIEVAL_EMBEDDINGS_PROFILE,
+                    "ollama_base_url": DEFAULT_RETRIEVAL_OLLAMA_BASE_URL,
+                }
+            },
         },
         "llm": {
             "activation": {
@@ -618,7 +638,7 @@ def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
             group="Advanced Features",
             value="conversation_recall",
             label="Conversation Recall",
-            note="Search past conversations locally; requires Docker",
+            note="Search past conversations locally; requires Docker and Ollama",
             checked=False,
         ),
         CheckboxOption(

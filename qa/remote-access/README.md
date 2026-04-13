@@ -22,6 +22,9 @@ honest separation between:
   the local Caddy edge and serve those pages successfully over HTTPS.
 - `public_https_edge` can publish secure app/API/playground/LiveKit signaling origins through the
   local Caddy edge, expose the required router mappings, and generate TURN/TLS-ready LiveKit state.
+- if `public_https_edge` cannot claim the required public ports, the local install must keep running
+  and `bin/viventium status` must show an action-required remote-access error instead of pretending
+  the whole install failed
 - The install/configure path must let a new user choose remote access in plain language without
   requiring manual YAML edits just to discover the supported modes.
 - `bin/viventium status` must report the actual live outside URL when remote access is active.

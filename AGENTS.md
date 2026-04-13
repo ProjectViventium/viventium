@@ -37,6 +37,10 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Keep secrets, personal data, customer data, private prompts, private docs, exports, screenshots,
   attachments, snapshots, logs, App Support state, generated runtime env files, and machine-local
   artifacts out of this repo.
+- Public docs, QA reports, fixtures, examples, and commit history must not expose local usernames,
+  hostnames, personal emails, home-directory paths, laptop names, or secret-bearing command lines.
+  Use public-safe placeholders such as `/path/to/viventium`, `~/Library/Application Support/...`,
+  `<temp>`, `example.com`, and synthetic non-personal values.
 - If something is useful but not public-safe, move it to the designated
   `<viventium-private-user>` or `<enterprise-deployment-repo>` outside this tree. If those repos
   are nested locally for workspace convenience, they must remain separate git repos, ignored by the
@@ -47,6 +51,8 @@ For installer, runtime, release, or publish-boundary work, also read:
   - `~/Library/Application Support/Viventium/state/*`
   - macOS Keychain
 - Generated runtime files are outputs, not authoring surfaces.
+- Secret-bearing QA presets or transfer files may exist only as temporary local files or in the
+  designated private repo, never as tracked public artifacts.
 
 ## Working Rules
 
@@ -57,6 +63,7 @@ For installer, runtime, release, or publish-boundary work, also read:
   output.
 - Prefer shared structural fixes over one-off patches, hacks, or owner-machine workarounds.
 - Do not hardcode on agent names, prompt text, tool substrings, provider labels, user identity, or one machine's state unless a source-of-truth doc explicitly requires it.
+- CRITICAL RULE: do not add regex or keyword matching in runtime code to detect user intent, provider selection, email phrasing, or productivity scope. Activation prompts in `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml` own that behavior; classifier outages are solved with `activation.fallbacks`, not heuristics.
 - If a proposed fix looks like the user's exact complaint turned into an `if` statement, widen the
   investigation first.
 - In the LibreChat fork, wrap upstream modifications with `VIVENTIUM START` / `VIVENTIUM END` plus
@@ -104,11 +111,33 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Keep scratch output, caches, local artifacts, temporary workspaces, and generated service state
   out of commits and public exports.
 - Do not blanket-stage when a surgical commit is required.
+- Before any public commit, push, or PR from this repo, verify author and committer identity are set
+  to an approved public-safe name/email. Never rely on shell or hostname-derived git defaults.
+- Before any public push or PR, scan staged diffs and QA/report files for local absolute paths,
+  personal identifiers, machine names, and private command examples.
+- If a leaked identity or private path has already entered branch history intended for public review,
+  create a fresh review branch from a clean base, recommit with sanitized metadata, push that clean
+  branch, and delete the leaked review branch instead of asking reviewers to use the dirty history.
 
 ## Agent Sync Safety
 
+- Before any user-level agent push, run `viventium-sync-agents.js compare --env=<env>` (or an
+  equivalent live-vs-source review) and inspect:
+  - A: current live user-level agent config
+  - B: tracked source-of-truth bundle
+  - C: current repo/source-of-truth edits still not in live
+- Present the A/B/C drift to the user before applying a sync when live user-managed fields differ.
+- If the reported symptom is capability availability, also inspect adjacent scaffold/runtime config
+  such as `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.librechat.yaml`; global
+  toggles like `interface.webSearch` can disable behavior even when the agent bundle still carries
+  the expected tool.
+- Non-dry-run pushes should fail closed when reviewed live-vs-source drift still exists; only use a
+  follow-up acknowledgement such as `--compare-reviewed` after you have already presented the drift
+  and intentionally accepted it.
 - Always dry-run first.
 - For prompt/instruction changes, use `--prompts-only`.
+- Treat live user edits to instructions, conversation starters, tools, model/provider, and
+  background cortex config as protected state until they are intentionally reconciled.
 - Do not use default push unless the synced fields were intentionally reviewed.
 - After sync changes, verify the target runtime actually reloaded the intended data.
 
@@ -132,9 +161,13 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Do not rely on mocked-only tests to justify end-to-end claims. Use synthetic non-personal test
   data, and never expose secrets, private chats, attachments, or customer data in QA artifacts.
 - When release or public-readiness is in scope, use `qa/` as the acceptance contract.
+- For installer/public-release QA, prove the product through supported public entrypoints and keep
+  public-safe QA writeups phrased in those terms. If an internal harness is needed for debugging,
+  keep it sanitized and clearly separate it from the public install story.
 - Before stopping on public-facing work, ask:
   1. Is this safe to go public now?
   2. Has fresh clone/install been proven in a new directory?
+  3. Did I verify that no private identity or local-path leakage is being published with this work?
 - Do not say "done" if verification is still theoretical.
 
 ## Useful Commands

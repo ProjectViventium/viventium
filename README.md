@@ -37,6 +37,16 @@ cd viventium
 
 On macOS, install also adds `Viventium Helper` to the status bar so you can open, start, and stop the local stack without going back to Terminal.
 
+First-run notes:
+
+- remote access stays optional; if public-edge setup hits a router-port conflict, the local install
+  now keeps running and `bin/viventium status` reports the exact blocker
+- the macOS helper now uses the shipped matching helper binary first on clean installs instead of
+  depending on opportunistic local Swift builds
+- after you create your local account, open `Settings -> Connected Accounts` and connect at least
+  one foundation model account (`OpenAI` or `Anthropic`); if you want Gmail/Drive or Outlook/MS365
+  tasks, connect those service accounts there too
+
 Then start or check the stack:
 
 ```bash

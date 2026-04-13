@@ -195,16 +195,24 @@ stop_pid_file() {
 }
 
 write_livekit_runtime_meta() {
+  local turn_domain="${LIVEKIT_TURN_DOMAIN:-}"
+  local turn_tls_port="${LIVEKIT_TURN_TLS_PORT:-}"
+  local turn_cert_file="${LIVEKIT_TURN_CERT_FILE:-}"
+  local turn_key_file="${LIVEKIT_TURN_KEY_FILE:-}"
   cat >"$LIVEKIT_META_FILE" <<EOF
 LIVEKIT_NODE_IP=${LIVEKIT_NODE_IP}
 LIVEKIT_HTTP_PORT=${LIVEKIT_HTTP_PORT}
 LIVEKIT_TCP_PORT=${LIVEKIT_TCP_PORT}
 LIVEKIT_UDP_PORT=${LIVEKIT_UDP_PORT}
-LIVEKIT_TURN_DOMAIN=${LIVEKIT_TURN_DOMAIN}
-LIVEKIT_TURN_TLS_PORT=${LIVEKIT_TURN_TLS_PORT}
-LIVEKIT_TURN_CERT_FILE=${LIVEKIT_TURN_CERT_FILE}
-LIVEKIT_TURN_KEY_FILE=${LIVEKIT_TURN_KEY_FILE}
 EOF
+  if [[ -n "$turn_domain" || -n "$turn_tls_port" || -n "$turn_cert_file" || -n "$turn_key_file" ]]; then
+    cat >>"$LIVEKIT_META_FILE" <<EOF
+LIVEKIT_TURN_DOMAIN=${turn_domain}
+LIVEKIT_TURN_TLS_PORT=${turn_tls_port}
+LIVEKIT_TURN_CERT_FILE=${turn_cert_file}
+LIVEKIT_TURN_KEY_FILE=${turn_key_file}
+EOF
+  fi
 }
 
 livekit_meta_matches_expected() {
@@ -221,14 +229,18 @@ livekit_meta_matches_expected() {
   actual_turn_tls_port="$(grep '^LIVEKIT_TURN_TLS_PORT=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_turn_cert_file="$(grep '^LIVEKIT_TURN_CERT_FILE=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
   actual_turn_key_file="$(grep '^LIVEKIT_TURN_KEY_FILE=' "$LIVEKIT_META_FILE" | head -1 | cut -d= -f2- || true)"
+  local expected_turn_domain="${LIVEKIT_TURN_DOMAIN:-}"
+  local expected_turn_tls_port="${LIVEKIT_TURN_TLS_PORT:-}"
+  local expected_turn_cert_file="${LIVEKIT_TURN_CERT_FILE:-}"
+  local expected_turn_key_file="${LIVEKIT_TURN_KEY_FILE:-}"
   [[ "$actual_node_ip" == "$LIVEKIT_NODE_IP" ]] &&
     [[ "$actual_http_port" == "$LIVEKIT_HTTP_PORT" ]] &&
     [[ "$actual_tcp_port" == "$LIVEKIT_TCP_PORT" ]] &&
     [[ "$actual_udp_port" == "$LIVEKIT_UDP_PORT" ]] &&
-    [[ "$actual_turn_domain" == "$LIVEKIT_TURN_DOMAIN" ]] &&
-    [[ "$actual_turn_tls_port" == "$LIVEKIT_TURN_TLS_PORT" ]] &&
-    [[ "$actual_turn_cert_file" == "$LIVEKIT_TURN_CERT_FILE" ]] &&
-    [[ "$actual_turn_key_file" == "$LIVEKIT_TURN_KEY_FILE" ]]
+    [[ "$actual_turn_domain" == "$expected_turn_domain" ]] &&
+    [[ "$actual_turn_tls_port" == "$expected_turn_tls_port" ]] &&
+    [[ "$actual_turn_cert_file" == "$expected_turn_cert_file" ]] &&
+    [[ "$actual_turn_key_file" == "$expected_turn_key_file" ]]
 }
 
 livekit_command_matches_expected() {
@@ -427,7 +439,12 @@ start_meili() {
 }
 
 start_livekit() {
-  if [[ "$NATIVE_STACK_SKIP_LIVEKIT" == "1" || "$NATIVE_STACK_SKIP_LIVEKIT" == "true" ]]; then
+  local skip_livekit="${NATIVE_STACK_SKIP_LIVEKIT:-0}"
+  local turn_domain="${LIVEKIT_TURN_DOMAIN:-}"
+  local turn_tls_port="${LIVEKIT_TURN_TLS_PORT:-}"
+  local turn_cert_file="${LIVEKIT_TURN_CERT_FILE:-}"
+  local turn_key_file="${LIVEKIT_TURN_KEY_FILE:-}"
+  if [[ "$skip_livekit" == "1" || "$skip_livekit" == "true" ]]; then
     echo "[native] Skipping native LiveKit during early bootstrap; launcher will own LiveKit startup"
     return 0
   fi
@@ -459,14 +476,14 @@ rtc:
   tcp_port: ${LIVEKIT_TCP_PORT}
   udp_port: ${LIVEKIT_UDP_PORT}
 EOF
-  if [[ -n "$LIVEKIT_TURN_DOMAIN" && -n "$LIVEKIT_TURN_TLS_PORT" && -n "$LIVEKIT_TURN_CERT_FILE" && -n "$LIVEKIT_TURN_KEY_FILE" ]]; then
+  if [[ -n "$turn_domain" && -n "$turn_tls_port" && -n "$turn_cert_file" && -n "$turn_key_file" ]]; then
     cat >>"$LIVEKIT_CFG_FILE" <<EOF
 turn:
   enabled: true
-  domain: "${LIVEKIT_TURN_DOMAIN}"
-  tls_port: ${LIVEKIT_TURN_TLS_PORT}
-  cert_file: "${LIVEKIT_TURN_CERT_FILE}"
-  key_file: "${LIVEKIT_TURN_KEY_FILE}"
+  domain: "${turn_domain}"
+  tls_port: ${turn_tls_port}
+  cert_file: "${turn_cert_file}"
+  key_file: "${turn_key_file}"
 EOF
   fi
   cat >>"$LIVEKIT_CFG_FILE" <<EOF

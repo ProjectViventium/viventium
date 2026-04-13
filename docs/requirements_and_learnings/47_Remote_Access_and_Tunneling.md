@@ -260,6 +260,14 @@ Router lease note:
 - startup may reclaim stale UPnP mappings that already point back to this same Mac but no longer
   have a reachable local target; active conflicting mappings still remain a fatal operator-visible
   error instead of being silently hijacked
+- if the router refuses a required mapping, or those public ports already belong to another LAN host,
+  Viventium must keep the local install running and record the exact blocker in
+  `public-network.json` for `bin/viventium status`
+- the launcher must also persist a fallback `last_error` itself when the helper exits before writing
+  failure state, so stale healthy mappings cannot survive into status or the refresh worker gate
+- a failed remote-access attempt must clear only the public-edge exports. Local startup must restore
+  a LAN-reachable `LIVEKIT_NODE_IP` before the local LiveKit path runs, so a blocked router mapping
+  cannot take down localhost startup
 - if the router does not support UPnP/NAT-PMP at all, or refuses renewal, manual forwarding is still
   the fallback
 
@@ -345,6 +353,8 @@ Learnings from public-edge validation:
   even while real outside devices still work.
 - The runtime-owned `public-network.json` file is the source of truth for the live outside URL, the
   current public IP, and the current mapping lease state after startup.
+- That state file must fail closed: any startup-time helper failure must leave an explicit `last_error`
+  instead of reusing a stale healthy mapping snapshot from an earlier run.
 
 ## Directory Discovery Layer
 

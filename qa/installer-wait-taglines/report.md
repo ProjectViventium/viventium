@@ -6,13 +6,10 @@
 
 ## Build Under Test
 
-- Branch: `main`
-- Base commit: `5099872`
-- Working tree included local changes to:
-  - `bin/viventium`
-  - `tests/release/test_cli_upgrade.py`
-  - `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md`
-  - `qa/installer-wait-taglines/*`
+- Branch context: historical installer-wait-tagline QA carried forward into the public review branch
+- Verification reference:
+  - `git rev-parse HEAD`
+  - use the checked-out branch revision that contains this report
 
 ## Steps Executed
 
