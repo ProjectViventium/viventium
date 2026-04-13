@@ -189,6 +189,50 @@ Scope note:
   remote-access claim in `remote_call_mode: disabled`; that path remains out of scope unless the
   supported remote voice mode is enabled
 
+## Installer/runtime hardening follow-up
+
+Date: 2026-04-13
+
+Validated against the current parent `main` after a remote clean-machine review showed the earlier
+publish only covered prompt-entry resilience, not the deeper launcher/runtime boundaries.
+
+Ran:
+
+```bash
+bash -n viventium_v0_4/viventium-librechat-start.sh
+python3 -m py_compile scripts/viventium/wizard.py scripts/viventium/preflight.py scripts/viventium/install_summary.py
+uv run --with pytest --with pyyaml pytest tests/release/test_wizard.py tests/release/test_preflight.py tests/release/test_install_summary.py tests/release/test_detached_librechat_supervision.py -q
+```
+
+Result:
+
+- syntax checks passed
+- focused release slice passed after the missing runtime hardening was merged
+
+Confirmed fixes:
+
+- Easy Install now treats Docker Desktop conservatively:
+  - a stray `docker` CLI on `PATH` is no longer enough to enable Docker-backed defaults
+  - if Docker Desktop is absent, Easy Install keeps local Web Search and local Conversation Recall
+    off and defers them to later configuration
+- `bin/viventium status` now distinguishes a stopped stack from a warming stack:
+  - missing local web surfaces show `Configured` after a recorded stop instead of `Starting`
+- install summary loopback health now prefers `curl` before Python urllib
+- local Meilisearch readiness now requires an authenticated probe using the configured key
+- stale Viventium-owned Meilisearch listeners with the wrong key are recycled automatically
+- partial LibreChat startup now repairs the missing surface instead of treating a lone healthy API
+  as proof that the frontend is already healthy
+- local conversation-search sync failures now log a warning and continue instead of aborting the
+  frontend path
+
+Why this matters:
+
+- the earlier piped-bootstrap fix only proved the installer could reach a prompt
+- the remote review showed a fresh user could still land in a broken runtime shape later because
+  launcher ownership and status honesty were incomplete
+- this follow-up closes that gap in the owning startup/status layers instead of relying on owner
+  machine leftovers or private repair steps
+
 ## Remote current-main audit
 
 Date: 2026-04-13

@@ -108,6 +108,21 @@ def test_password_falls_back_to_plain_prompt_when_questionary_password_raises(mo
     assert "falling back to plain prompts" in capsys.readouterr().out.lower()
 
 
+def test_password_falls_back_to_visible_input_when_getpass_cannot_attach(monkeypatch, capsys) -> None:
+    installer_ui = load_installer_ui_module()
+
+    ui = installer_ui.InstallerUI()
+    ui.questionary_enabled = False
+
+    monkeypatch.setattr(installer_ui.getpass, "getpass", lambda _prompt="": (_ for _ in ()).throw(EOFError()))
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "visible-secret")
+
+    result = ui.password("Enter secret")
+
+    assert result == "visible-secret"
+    assert "secure password input unavailable" in capsys.readouterr().out.lower()
+
+
 def test_checkbox_falls_back_to_plain_prompts_when_questionary_checkbox_raises(monkeypatch, capsys) -> None:
     installer_ui = load_installer_ui_module()
     installer_ui.questionary = types.SimpleNamespace(

@@ -8,6 +8,8 @@ classes:
    local Swift toolchains are unreliable
 3. Telegram bridge startup must survive long first-run LibreChat builds and self-recover once the
    API becomes healthy
+4. clean-machine launcher/runtime startup must repair partial local stacks and reject stale
+   local-search sidecars that only look healthy from an unauthenticated port probe
 
 ## Scenarios
 
@@ -54,3 +56,24 @@ Expected behavior:
 - `bin/viventium status` reports `Telegram Bridge: Starting` while the deferred watcher is pending
 - once the API becomes healthy, the deferred watcher starts the bridge automatically without a
   manual restart
+
+### 4. Partial-stack repair and Meilisearch key drift
+
+Repro surface:
+
+- clean/native install or restart on a Mac with:
+  - a healthy LibreChat API already listening on `:3180` while the frontend is not listening on
+    `:3190`
+  - or a stale Viventium-owned Meilisearch listener on `:7700` using the wrong master key
+  - or a local conversation-search sync failure during fallback startup
+
+Expected behavior:
+
+- startup detects partial LibreChat state and starts the missing service instead of treating the
+  whole stack as already healthy
+- Meilisearch readiness requires the configured key, not just unauthenticated `/health`
+- Viventium-owned stale-key Meilisearch listeners are recycled automatically
+- local conversation-search sync failures log a warning and do not block the frontend from coming
+  up
+- `bin/viventium status` reports `Configured` after a real stop instead of implying the stack is
+  still starting forever

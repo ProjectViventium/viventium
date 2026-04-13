@@ -13,6 +13,8 @@ with stdin attached to a consumed pipe but the user still has a controlling term
   `EOFError`.
 - Equivalent piped bootstrap entrypoints must also survive `questionary` / `prompt_toolkit`
   raw-mode attachment failures by falling back to plain prompts instead of aborting.
+- This QA area proves prompt-entry resilience only; later startup/runtime recovery stays covered by
+  `qa/installer-resilience/`.
 
 ## Environments
 

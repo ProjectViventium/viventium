@@ -84,3 +84,6 @@
 
 - Truly headless runs without a controlling terminal still need the documented preset-based
   non-interactive path.
+- This QA report does not by itself prove later launcher/runtime resilience; partial-stack repair,
+  Meilisearch-key readiness, and status honesty are covered separately under
+  `qa/installer-resilience/`.

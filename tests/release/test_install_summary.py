@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 from pathlib import Path
 
 
@@ -15,6 +16,23 @@ def load_install_summary_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_http_ok_prefers_curl_when_available(monkeypatch) -> None:
+    install_summary = load_install_summary_module()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(install_summary.shutil, "which", lambda command: "/usr/bin/curl" if command == "curl" else None)
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(install_summary.subprocess, "run", fake_run)
+    monkeypatch.setattr(install_summary.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("urllib fallback should not run when curl succeeds")))
+
+    assert install_summary.http_ok("http://localhost:3180/api/health") is True
+    assert calls == [["/usr/bin/curl", "-fsS", "-o", "/dev/null", "--max-time", "2", "http://localhost:3180/api/health"]]
 
 
 def test_build_service_rows_treats_localhost_api_health_as_running(monkeypatch) -> None:
@@ -294,13 +312,13 @@ def test_build_next_steps_mentions_optional_shell_init(monkeypatch) -> None:
         "integrations": {},
     }
 
-    monkeypatch.setattr(install_summary, "local_network_host", lambda: "192.168.1.44")
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: "198.51.100.44")
 
     steps = install_summary.build_next_steps(config, {})
 
     assert any("bin/viventium shell-init" in step for step in steps)
     assert any("viventium" in step and "viv" in step for step in steps)
-    assert any("192.168.1.44:3190" in step for step in steps)
+    assert any("198.51.100.44:3190" in step for step in steps)
 
 
 def test_build_next_steps_prioritizes_connected_accounts_when_no_foundation_api_keys(monkeypatch) -> None:
@@ -376,6 +394,7 @@ def test_build_service_rows_uses_live_public_network_state_for_remote_access(mon
         '{"public_client_url":"https://app.example.test"}',
         encoding="utf-8",
     )
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
 
     monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
@@ -432,6 +451,87 @@ def test_build_service_rows_reports_action_required_when_remote_access_state_sav
     assert remote_status == "Action Required"
     assert "Router already forwards TCP 80" in remote_detail
     assert "https://app.example.test" not in remote_detail
+
+
+def test_build_service_rows_treats_missing_core_surfaces_as_configured_after_recorded_stop(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "network": {"remote_call_mode": "public_https_edge"},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"stop"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+    heading, intro, table_title = install_summary.resolve_summary_heading(
+        True,
+        rows,
+        install_summary.stack_expected_live(config, {}, runtime_dir),
+    )
+
+    assert services["LibreChat Frontend"][0] == "Configured"
+    assert services["LibreChat API"][0] == "Configured"
+    assert services["Modern Playground"][0] == "Configured"
+    assert services["Remote Access"][0] == "Configured"
+    assert heading == "Viventium is configured"
+    assert table_title == "Configured Services"
+    assert "Start the stack" in intro
+
+
+def test_build_service_rows_marks_conversation_recall_starting_when_stack_should_be_live(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "personalization": {"default_conversation_recall": True},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {"RAG_API_URL": "http://localhost:8110"},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Conversation Recall"] == ("Starting", "http://localhost:8110")
 
 
 def test_build_service_rows_reports_auth_posture() -> None:
@@ -632,6 +732,7 @@ def test_resolve_summary_heading_reports_starting_until_core_surfaces_are_live()
             ("LibreChat API", "Running", "http://localhost:3180/api"),
             ("Modern Playground", "Running", "http://localhost:3300"),
         ],
+        True,
     )
 
     assert heading == "Viventium is still starting"
@@ -649,6 +750,7 @@ def test_resolve_summary_heading_reports_ready_once_core_surfaces_are_live() -> 
             ("LibreChat API", "Running", "http://localhost:3180/api"),
             ("Modern Playground", "Running", "http://localhost:3300"),
         ],
+        True,
     )
 
     assert heading == "Viventium is ready"

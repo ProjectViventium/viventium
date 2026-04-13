@@ -90,6 +90,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - the launcher must ensure the configured embeddings model exists before starting the RAG sidecar
   - doctor should report whether the configured model is already ready or will be pulled on first
     start
+- Easy Install must keep Docker-backed features on a minimal first-run contract:
+  - a stray `docker` CLI on `PATH` is not enough to treat Docker Desktop as available
+  - shared Docker availability checks in wizard and preflight must require the real Docker Desktop
+    app/cask install
+  - Easy Install may offer local Web Search only when Docker Desktop is actually present
+  - Easy Install keeps local Conversation Recall deferred by default instead of auto-enabling it
+    from ambient Docker detection
 - Built-in agent runtime truth must remain compatible with the selected install/runtime surface:
   - fresh installs and restarts rely on the seeded source-of-truth agent bundle
   - for nested managed components, fresh installs follow the pinned component ref in
@@ -225,6 +232,19 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     message, not the raw `No key found` fallback intended for direct API-key mode
   - registration success redirects must not update router state during render; even a harmless
     warning there makes a clean install look unstable during first-user onboarding
+- The same April 13, 2026 installer/runtime hardening pass closed the next launcher/status gaps:
+  - `bin/viventium status` must distinguish "configured but intentionally stopped" from "still
+    starting" by reading the recorded stack-owner state instead of treating any failed live probe as
+    startup in progress
+  - local loopback health checks in install summary should prefer `curl` before Python urllib on
+    macOS hosts where Python probing can misreport localhost reachability
+  - local Meilisearch readiness must require the configured API key, not only unauthenticated
+    `/health`, because stale listeners with the wrong key create a false green and then break local
+    search sync
+  - a healthy LibreChat API on `:3180` must not suppress starting a missing frontend on `:3190`;
+    partial-stack startup must repair the missing surface
+  - local conversation-search sync failures may degrade recall freshness, but they must not abort
+    frontend availability during first-run startup
 - On April 13, 2026, remote clean-machine onboarding exposed the next optional-service rule:
   - GlassHive is not part of the minimum public first-run contract
   - generated `librechat.yaml`, seeded built-in agent tools, and runtime MCP/tool loading must all

@@ -71,13 +71,7 @@ def docker_app_bundle_paths() -> list[Path]:
 
 
 def docker_desktop_installed() -> bool:
-    if any(path.is_dir() for path in docker_app_bundle_paths()):
-        return True
-    return shutil_which("docker") is not None
-
-
-def conversation_recall_enabled_by_default() -> bool:
-    return docker_desktop_installed()
+    return any(path.is_dir() for path in docker_app_bundle_paths())
 
 
 def docker_total_memory_bytes() -> int | None:
@@ -299,10 +293,7 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     auth.setdefault("bootstrap_registration_once", False)
     auth.setdefault("allow_password_reset", False)
     personalization = runtime.setdefault("personalization", {})
-    personalization.setdefault(
-        "default_conversation_recall",
-        conversation_recall_enabled_by_default(),
-    )
+    personalization.setdefault("default_conversation_recall", False)
     retrieval = runtime.setdefault("retrieval", {})
     embeddings = retrieval.setdefault("embeddings", {})
     embeddings.setdefault("provider", DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER)
@@ -436,9 +427,7 @@ def build_base_config(
                 "bootstrap_registration_once": False,
                 "allow_password_reset": False,
             },
-            "personalization": {
-                "default_conversation_recall": conversation_recall_enabled_by_default()
-            },
+            "personalization": {"default_conversation_recall": False},
             "retrieval": {
                 "embeddings": {
                     "provider": DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER,
@@ -1168,16 +1157,8 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
     )
     prompt_voice_settings(ui, config, advanced=False)
     docker_installed = docker_desktop_installed()
-    prompt_web_search(
-        ui,
-        config,
-        [],
-        easy=True,
-        docker_installed=docker_installed,
-        docker_memory_bytes=docker_total_memory_bytes() if docker_installed else None,
-    )
-
     deferred = [
+        "conversation_recall",
         "code_interpreter",
         "telegram_codex",
         "google_workspace",
@@ -1186,12 +1167,22 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
         "openclaw",
     ]
     if docker_installed:
-        config["runtime"]["personalization"]["default_conversation_recall"] = True
+        prompt_web_search(
+            ui,
+            config,
+            deferred,
+            easy=True,
+            docker_installed=True,
+            docker_memory_bytes=docker_total_memory_bytes(),
+        )
         ui.print_note(
-            "Conversation recall will be enabled automatically with the local Docker + Ollama path on this Mac."
+            "Conversation Recall stays off in Easy Install. Turn it on later from bin/viventium configure when you are ready to add the local Docker + Ollama path."
         )
     else:
-        mark_deferred(deferred, "conversation_recall")
+        ui.print_note(
+            "Easy Install keeps Web Search and Conversation Recall off until Docker Desktop is installed. Turn them on later from bin/viventium configure."
+        )
+        disable_feature(config, "web_search", deferred)
     if not resolve_bool((config["integrations"]["web_search"]).get("enabled"), False):
         mark_deferred(deferred, "web_search")
     if ui.confirm("Connect a Telegram bot now?", default=False):

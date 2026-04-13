@@ -595,6 +595,16 @@ def test_docker_daemon_ready_uses_bounded_timeout(monkeypatch: pytest.MonkeyPatc
     assert calls == [(["/fake/docker", "ps"], 1.5)]
 
 
+def test_docker_desktop_installed_ignores_stray_docker_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    preflight = load_preflight_module()
+
+    monkeypatch.setattr(preflight, "docker_app_bundle_paths", lambda: [])
+    monkeypatch.setattr(preflight, "brew_cask_installed", lambda _cask: False)
+    monkeypatch.setattr(preflight, "docker_cli_path", lambda: "/usr/local/bin/docker")
+
+    assert preflight.docker_desktop_installed() is False
+
+
 def test_wait_for_manual_items_keeps_rechecking_until_docker_is_ready(monkeypatch) -> None:
     preflight = load_preflight_module()
 

@@ -149,8 +149,6 @@ def docker_cli_path() -> str | None:
 
 
 def docker_desktop_installed() -> bool:
-    if docker_cli_path():
-        return True
     if any(bundle.is_dir() for bundle in docker_app_bundle_paths()):
         return True
     return brew_cask_installed("docker")

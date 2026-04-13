@@ -66,6 +66,14 @@ def test_build_secret_node_prefers_keychain_ref_when_available(monkeypatch) -> N
     }
 
 
+def test_docker_desktop_installed_requires_real_app_bundle(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard, "docker_app_bundle_paths", lambda: [])
+    monkeypatch.setattr(wizard, "shutil_which", lambda _command: "/usr/local/bin/docker")
+
+    assert wizard.docker_desktop_installed() is False
+
+
 def test_normalize_preset_keeps_local_secret_values_when_keychain_write_fails(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(wizard, "store_keychain_secret", lambda *_args, **_kwargs: None)
@@ -176,7 +184,7 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     assert "fast_llm_provider" not in config["voice"]
 
 
-def test_build_base_config_enables_recall_by_default_when_docker_desktop_present(monkeypatch) -> None:
+def test_build_base_config_keeps_recall_off_even_when_docker_desktop_present(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
 
@@ -187,10 +195,10 @@ def test_build_base_config_enables_recall_by_default_when_docker_desktop_present
         secondary_provider="none",
     )
 
-    assert config["runtime"]["personalization"]["default_conversation_recall"] is True
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
 
 
-def test_normalize_preset_enables_recall_by_default_when_docker_desktop_present(
+def test_normalize_preset_keeps_recall_off_even_when_docker_desktop_present(
     monkeypatch,
 ) -> None:
     wizard = load_wizard_module()
@@ -199,10 +207,10 @@ def test_normalize_preset_enables_recall_by_default_when_docker_desktop_present(
 
     normalized = wizard.normalize_preset({"version": 1, "runtime": {}, "llm": {}, "integrations": {}})
 
-    assert normalized["runtime"]["personalization"]["default_conversation_recall"] is True
+    assert normalized["runtime"]["personalization"]["default_conversation_recall"] is False
 
 
-def test_configure_easy_install_enables_conversation_recall_when_docker_desktop_present(
+def test_configure_easy_install_keeps_conversation_recall_deferred_when_docker_desktop_present(
     monkeypatch,
 ) -> None:
     wizard = load_wizard_module()
@@ -218,9 +226,15 @@ def test_configure_easy_install_enables_conversation_recall_when_docker_desktop_
         def print_note(self, *_args, **_kwargs) -> None:
             return None
 
+    prompt_web_search_calls: list[bool] = []
+
     monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
     monkeypatch.setattr(wizard, "docker_total_memory_bytes", lambda: None)
-    monkeypatch.setattr(wizard, "prompt_web_search", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        wizard,
+        "prompt_web_search",
+        lambda *_args, **_kwargs: prompt_web_search_calls.append(True),
+    )
     monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -231,8 +245,9 @@ def test_configure_easy_install_enables_conversation_recall_when_docker_desktop_
 
     config, deferred = wizard.configure_easy_install(FakeUI())
 
-    assert config["runtime"]["personalization"]["default_conversation_recall"] is True
-    assert "conversation_recall" not in deferred
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert "conversation_recall" in deferred
+    assert prompt_web_search_calls == [True]
 
 
 def test_configure_easy_install_defers_conversation_recall_without_docker(monkeypatch) -> None:
@@ -250,7 +265,11 @@ def test_configure_easy_install_defers_conversation_recall_without_docker(monkey
             return None
 
     monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: False)
-    monkeypatch.setattr(wizard, "prompt_web_search", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        wizard,
+        "prompt_web_search",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Easy Install should not prompt for web search without Docker Desktop")),
+    )
     monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -263,6 +282,7 @@ def test_configure_easy_install_defers_conversation_recall_without_docker(monkey
 
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
     assert "conversation_recall" in deferred
+    assert "web_search" in deferred
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:

@@ -4378,6 +4378,46 @@ meili_http_ping() {
   curl -fsS --max-time 3 "${host_url%/}/health" >/dev/null 2>&1
 }
 
+meili_http_auth_ping() {
+  local host_url="${1:-${MEILI_HOST:-}}"
+  if [[ -z "$host_url" || -z "${MEILI_MASTER_KEY:-}" ]]; then
+    return 1
+  fi
+  curl -fsS --max-time 3 \
+    -H "Authorization: Bearer ${MEILI_MASTER_KEY}" \
+    -H "X-Meili-API-Key: ${MEILI_MASTER_KEY}" \
+    "${host_url%/}/indexes?limit=1" >/dev/null 2>&1
+}
+
+restart_viventium_owned_meilisearch_listener() {
+  local restarted=false
+  local existing=""
+  local native_pid=""
+
+  if command -v docker >/dev/null 2>&1; then
+    existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
+    if [[ -n "$existing" ]]; then
+      log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the local container"
+      docker rm -f "$existing" >/dev/null 2>&1 || true
+      restarted=true
+    fi
+  fi
+
+  if [[ -f "$MEILI_NATIVE_PID_FILE" ]]; then
+    native_pid="$(tr -d '[:space:]' <"$MEILI_NATIVE_PID_FILE" 2>/dev/null || true)"
+    if [[ "$native_pid" =~ ^[0-9]+$ ]] && kill -0 "$native_pid" >/dev/null 2>&1; then
+      log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the native process"
+      kill "$native_pid" >/dev/null 2>&1 || true
+      sleep 1
+      kill -9 "$native_pid" >/dev/null 2>&1 || true
+      restarted=true
+    fi
+    rm -f "$MEILI_NATIVE_PID_FILE"
+  fi
+
+  [[ "$restarted" == "true" ]]
+}
+
 start_local_meilisearch_container() {
   if ! command -v docker >/dev/null 2>&1; then
     log_error "Docker not found (required for local Meilisearch auto-start)"
@@ -4443,9 +4483,13 @@ start_local_meilisearch_native() {
     return 1
   fi
 
-  if meili_http_ping "$MEILI_HOST"; then
+  if meili_http_auth_ping "$MEILI_HOST"; then
     log_success "Meilisearch already listening at ${MEILI_BIND_HOST}:${MEILI_PORT}"
     return 0
+  fi
+  if meili_http_ping "$MEILI_HOST"; then
+    log_warn "Meilisearch is already listening at ${MEILI_BIND_HOST}:${MEILI_PORT} but does not accept the configured Viventium key"
+    return 1
   fi
 
   mkdir -p "${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-$VIVENTIUM_STATE_ROOT/meili-data}"
@@ -4482,9 +4526,19 @@ ensure_meilisearch_ready() {
 
   resolve_meili_connection
 
-  if meili_http_ping "$MEILI_HOST"; then
+  if meili_http_auth_ping "$MEILI_HOST"; then
     log_success "Meilisearch ready at ${MEILI_BIND_HOST}:${MEILI_PORT}"
     return 0
+  fi
+
+  if meili_http_ping "$MEILI_HOST"; then
+    if [[ "$MEILI_IS_LOCAL" == "true" ]] && restart_viventium_owned_meilisearch_listener; then
+      log_info "Restarting local Meilisearch with the configured Viventium key..."
+    else
+      log_error "Meilisearch is reachable at ${MEILI_BIND_HOST}:${MEILI_PORT} but does not accept the configured Viventium key"
+      log_error "Stop the conflicting listener or restart the Viventium-owned Meilisearch process with the current runtime secrets"
+      return 1
+    fi
   fi
 
   if [[ "$MEILI_IS_LOCAL" != "true" ]]; then
@@ -4506,7 +4560,7 @@ ensure_meilisearch_ready() {
 
   local retries=45
   for _ in $(seq 1 "$retries"); do
-    if meili_http_ping "$MEILI_HOST"; then
+    if meili_http_auth_ping "$MEILI_HOST"; then
       log_success "Meilisearch ready at ${MEILI_BIND_HOST}:${MEILI_PORT}"
       return 0
     fi
@@ -8815,6 +8869,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   reconcile_google_workspace_local_oauth_state
 
   START_LIBRECHAT=true
+  LIBRECHAT_BACKEND_ALREADY_RUNNING=false
+  LIBRECHAT_FRONTEND_ALREADY_RUNNING=false
   if port_in_use "$LC_API_PORT"; then
     if curl -s --max-time 3 "${LC_API_URL}/health" >/dev/null 2>&1; then
       if [[ "$RESTART_SERVICES" == "true" ]]; then
@@ -8826,8 +8882,7 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
           START_LIBRECHAT=false
         fi
       else
-        log_success "LibreChat already running on port $LC_API_PORT"
-        START_LIBRECHAT=false
+        LIBRECHAT_BACKEND_ALREADY_RUNNING=true
       fi
     else
       if [[ "$RESTART_SERVICES" == "true" ]]; then
@@ -8846,16 +8901,38 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   fi
 
   if [[ "$START_LIBRECHAT" == "true" ]] && port_in_use "$LC_FRONTEND_PORT"; then
-    if [[ "$RESTART_SERVICES" == "true" ]]; then
-      log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
-      kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
-      if port_in_use "$LC_FRONTEND_PORT"; then
-        log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
-        START_LIBRECHAT=false
+    if curl -s --max-time 3 "${LC_FRONTEND_URL}" >/dev/null 2>&1; then
+      if [[ "$RESTART_SERVICES" == "true" ]]; then
+        log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
+        kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+        if port_in_use "$LC_FRONTEND_PORT"; then
+          log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
+          START_LIBRECHAT=false
+        fi
+      else
+        LIBRECHAT_FRONTEND_ALREADY_RUNNING=true
       fi
     else
-      log_warn "Port $LC_FRONTEND_PORT in use - skipping LibreChat startup"
+      if [[ "$RESTART_SERVICES" == "true" ]]; then
+        log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
+        kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+        if port_in_use "$LC_FRONTEND_PORT"; then
+          log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
+          START_LIBRECHAT=false
+        fi
+      else
+        log_warn "Port $LC_FRONTEND_PORT in use - skipping LibreChat startup"
+        START_LIBRECHAT=false
+      fi
+    fi
+  fi
+
+  if [[ "$START_LIBRECHAT" == "true" ]]; then
+    if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" && "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+      log_success "LibreChat already running on ports $LC_API_PORT/$LC_FRONTEND_PORT"
       START_LIBRECHAT=false
+    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+      log_warn "LibreChat partial stack already running; starting the missing service(s)"
     fi
   fi
 
@@ -8934,6 +9011,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     direct_librechat_reason=""
     if detached_start_requested; then
       direct_librechat_reason="detached launch"
+    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+      direct_librechat_reason="partial stack repair"
     elif should_rebuild_librechat_packages; then
       direct_librechat_reason="LibreChat package rebuild required"
     fi
@@ -8990,21 +9069,32 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
 
       if is_truthy "${SEARCH:-false}"; then
         echo -e "${YELLOW}[viventium]${NC} Ensuring local conversation search is fully indexed..."
-        node scripts/viventium-sync-local-search.js
+        if ! node scripts/viventium-sync-local-search.js; then
+          log_warn "Local conversation search sync failed; continuing without blocking frontend startup"
+        fi
       fi
 
       # Keep detached/direct launches supervised by this shell so a later
       # frontend exit cannot strand Telegram behind a dead LibreChat API.
-      npm run backend:dev &
-      BACKEND_PID=$!
-      sleep 5
-      librechat_dev_host="${HOST:-::}"
-      (
-        cd client
-        BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"
-      ) &
-      FRONTEND_PID=$!
-      wait "$BACKEND_PID" "$FRONTEND_PID"
+      STARTED_LIBRECHAT_PIDS=()
+      if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" ]]; then
+        npm run backend:dev &
+        BACKEND_PID=$!
+        STARTED_LIBRECHAT_PIDS+=("$BACKEND_PID")
+        sleep 5
+      fi
+      if [[ "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" != "true" ]]; then
+        librechat_dev_host="${HOST:-::}"
+        (
+          cd client
+          BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"
+        ) &
+        FRONTEND_PID=$!
+        STARTED_LIBRECHAT_PIDS+=("$FRONTEND_PID")
+      fi
+      if (( ${#STARTED_LIBRECHAT_PIDS[@]} > 0 )); then
+        wait "${STARTED_LIBRECHAT_PIDS[@]}"
+      fi
     ) &
     LIBRECHAT_PID=$!
   fi

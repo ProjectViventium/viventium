@@ -49,6 +49,7 @@ class InstallerUI:
         self.rich_enabled = Console is not None
         self.questionary_enabled = questionary is not None and self.interactive
         self._questionary_fallback_notified = False
+        self._password_fallback_notified = False
         self.console = Console() if self.rich_enabled else None
 
     def print_blank(self) -> None:
@@ -198,7 +199,15 @@ class InstallerUI:
                 return str(answer).strip()
 
         while True:
-            value = getpass.getpass(f"{prompt}: ").strip()
+            try:
+                value = getpass.getpass(f"{prompt}: ").strip()
+            except (EOFError, OSError):
+                if not self._password_fallback_notified:
+                    self.print_warning(
+                        "Secure password input unavailable; falling back to visible input."
+                    )
+                    self._password_fallback_notified = True
+                value = input(f"{prompt}: ").strip()
             if value or allow_empty:
                 return value
             print("Value required.")
