@@ -32,6 +32,11 @@
    - piped a shell wrapper into `bash` that `cd`'d into the current tree and ran `./install.sh`
    - confirmed the shared installer UI emitted `Interactive terminal UI unavailable; falling back to plain prompts.`
    - confirmed the installer reached the plain numbered setup prompt instead of aborting
+7. Post-publish acceptance against the live website bootstrap:
+   - reran `curl -fsSL https://www.viventium.ai/install.sh | bash` from a fresh temp directory after
+     publishing `main`
+   - confirmed the freshly cloned published build emitted the same fallback note
+   - confirmed the published installer reached the plain numbered setup prompt instead of aborting
 
 ## Evidence
 
@@ -63,6 +68,9 @@
   - all interactive prompt entrypoints now catch runtime `questionary` failures
   - the installer prints one fallback note
   - the installer continues through plain prompts instead of aborting
+- After publication, the live website bootstrap matched the current-branch acceptance result:
+  - the freshly cloned published build emitted the fallback note
+  - the freshly cloned published build reached the plain numbered setup prompt cleanly
 
 ## Findings
 
@@ -76,5 +84,3 @@
 
 - Truly headless runs without a controlling terminal still need the documented preset-based
   non-interactive path.
-- The public website/bootstrap URL must still be rechecked after the branch is published, because
-  the raw-mode fallback acceptance above was proven against the current working tree before release.
