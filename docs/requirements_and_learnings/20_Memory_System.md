@@ -206,6 +206,11 @@ both code and QA:
   provider token cannot silently regress in one resolver while still appearing valid in another.
 - If the memory writer fails before it starts, the system cannot rely on prompt rules like
   “NO DATA LOSS” or contradiction cleanup because the memory agent never gets to run.
+- Connected-account OpenAI Codex routes are a second runtime contract inside the memory writer:
+  - top-level `instructions` must be present on Responses requests
+  - `system` / `developer` messages must not remain inside Responses `input`
+- Therefore Codex compatibility is not only “does auth initialize”; QA must prove the saved-memory
+  run itself survives the live connected-account request shape.
 
 #### 2.6.3 Long-conversation corrections need explicit coverage
 
@@ -362,6 +367,8 @@ The April 13, 2026 remote QA pass added another concrete continuity boundary:
 - a local restart onto the generated runtime removes the prior unsupported-provider failure without
   requiring manual App Support or Mongo edits
 - connected-account installs still compile a valid memory writer without requiring extra API keys
+- connected-account Codex memory requests normalize instruction messages into top-level
+  `instructions` instead of leaving `system` / `developer` entries inside Responses `input`
 - long-conversation corrections do not disappear purely because they fell outside a tiny memory
   writer window
 - older-user-context limits remain bounded and token-efficient

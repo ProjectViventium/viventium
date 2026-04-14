@@ -159,6 +159,21 @@
   - `memory.agent.model: claude-sonnet-4-6`
   - no fresh unsupported-provider init failures in the recent helper log window
 
+### 2.1 OpenAI Codex connected-account memory runs also needed request-shape normalization
+
+- A later remote-machine repro showed a different saved-memory failure class from the earlier
+  provider-init issue:
+  - connected-account lookup succeeded
+  - the memory run still failed with live `400` responses from the Codex-backed Responses route
+- Public-safe request/response inspection isolated the contract mismatch:
+  - first repro without the Codex adapter failed with `Instructions are required`
+  - the actual memory path then showed `System messages are not allowed`
+- The implemented product fix keeps Codex instruction text in top-level `instructions` and strips
+  `system` / `developer` messages out of Responses `input` for that route.
+- Therefore connected-account memory acceptance must prove both:
+  - writer initialization/auth succeeds
+  - the live Responses request shape is accepted by the connected-account backend
+
 ### 3. Forgetting is now explicitly defined as a cross-key rewrite contract
 
 - Saved-memory instructions now explicitly define partial forgetting as:

@@ -12,6 +12,9 @@ them:
 
 - The generated runtime memory writer must initialize successfully with the compiler-emitted
   provider/model contract.
+- OpenAI connected-account memory runs on the Codex Responses bridge must lift instruction messages
+  into top-level `instructions`; `system` / `developer` messages must not remain inside Responses
+  `input`.
 - Saved-memory behavior must remain additive, contradiction-aware, and token-efficient.
 - Forgetting must correctly rewrite only the affected detail across all impacted keys without
   dropping unrelated history, tracking, or signals.
@@ -63,6 +66,8 @@ them:
      window
 8. Connected-account live continuity check
    - real connected-account chat can succeed while saved memory or conversation recall still fail
+   - the saved-memory writer must survive the Codex-connected Responses request shape rather than
+     failing with backend request-contract errors
    - QA must therefore verify:
      - chat success
      - saved-memory artifact presence
