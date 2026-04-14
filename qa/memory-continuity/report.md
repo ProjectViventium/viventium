@@ -68,6 +68,14 @@
     runtime actually imports.
 12. Added bundle-alignment regression coverage so the public release path checks the rebuild
     contract and built bundle path, not only the source file.
+13. On 2026-04-14, traced a deeper connected-account failure where the memory run returned
+    `status: "completed"` but `output: []` on the bridged non-stream Codex response.
+14. Verified with remote direct-processor evidence that the missing durable write was caused before
+    Mongo storage, even when the upstream request succeeded.
+15. Implemented the owning fix in the OpenAI Codex SSE-to-JSON adapter so streamed
+    `response.output_item.*` function-call events are reconstructed into non-stream `output`.
+16. Rebuilt the nested `packages/api/dist` bundle, deployed it to the remote runtime, restarted the
+    stack, and reran the direct and browser QA flow.
 
 ## Automated Checks Executed
 
@@ -88,6 +96,8 @@
   - Result: `114 passed`
 - `cd viventium_v0_4/LibreChat/packages/api && npx jest --runInBand src/memory/policy.spec.ts src/agents/__tests__/memory.test.ts src/agents/memory.spec.ts --no-cache`
   - Result: `48 passed`
+- `cd viventium_v0_4/LibreChat/packages/api && npx jest --config jest.config.mjs --runInBand src/endpoints/openai/config.spec.ts src/agents/memory.spec.ts src/agents/__tests__/memory.test.ts --no-cache`
+  - Result: `134 passed`
 
 ### Backend/runtime continuity surfaces
 
@@ -213,6 +223,40 @@
   - regression coverage that exercises the built bundle directly
   - a public release check from the parent repo side that verifies the launcher rebuild contract,
     plus nested repo regression coverage that exercises the built bundle path directly
+
+### 2.3 Non-stream Codex adaptation was still dropping streamed tool calls after successful runs
+
+- After the shipped bundle alignment fix, the remote machine still showed a deeper saved-memory
+  failure class:
+  - the memory-writer request could return HTTP `200`
+  - the response status could be `completed`
+  - the bridged non-stream JSON still exposed `output: []`
+  - the memory processor then returned no tool artifacts and wrote nothing durable
+- Direct remote processor invocation proved this was not a chat-controller or Mongo bug:
+  - invoking the same memory processor against the live DB still returned no memory rows when
+    `output` was empty
+- The owning root cause was in the Codex bridge:
+  - non-stream callers are adapted from streamed SSE
+  - the old adapter returned only the sparse `response.completed` payload
+  - the actual `function_call` item lived in streamed `response.output_item.*` and
+    `response.function_call_arguments.*` events
+- Therefore the fix belongs in `packages/api/src/endpoints/openai/config.ts`, not in memory
+  policy, Mongo storage, or user-level prompts.
+
+### 2.4 Remote connected-account memory now works end to end after the SSE output reconstruction fix
+
+- After rebuilding and deploying the corrected bundle to the remote runtime:
+  - direct debug showed the bridged non-stream Codex response now preserved a completed
+    `function_call` item for `apply_memory_changes`
+  - direct processor invocation against the live DB wrote a durable memory row for the user
+  - the real browser flow created a visible entry in the `Memories` panel
+  - database inspection showed `count: 1` with the stored lucky-number memory
+  - a brand-new conversation then recovered the stored value and answered `227`
+- One retrieval attempt hit a transient upstream model error before succeeding on regenerate.
+- This remaining transient was a provider/runtime availability issue on the main response path, not
+  a saved-memory write-path failure:
+  - the saved memory had already been written and was visible in both UI and DB
+  - the successful regenerate recovered the stored value from the next conversation
 
 ### 3. Forgetting is now explicitly defined as a cross-key rewrite contract
 

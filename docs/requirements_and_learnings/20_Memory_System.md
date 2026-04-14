@@ -373,6 +373,30 @@ The April 13, 2026 remote QA pass added another concrete continuity boundary:
     mtimes
   - keep a regression that exercises the built `dist` bundle, not only the source test path
 
+#### 2.9.5 Non-stream Codex runs must reconstruct streamed tool output
+
+- A later April 14, 2026 remote repro exposed a second connected-account boundary after the
+  instruction-normalization fix landed.
+- For the saved-memory writer, the product path uses non-stream processing, but the Codex bridge
+  still forces Responses requests to `stream: true` upstream and then adapts the SSE back into a
+  JSON response for the caller.
+- On the failing runtime, the upstream run could complete successfully while the bridged JSON
+  response still showed:
+  - `status: "completed"`
+  - `output: []`
+- The missing tool call was not a model decision bug. The actual function-call item existed only in
+  streamed `response.output_item.*` and argument-delta events; the non-stream adapter was dropping
+  them and returning only the sparse `response.completed` payload.
+- Product requirement:
+  - when Codex-connected Responses are adapted from SSE into JSON for non-stream callers, the bridge
+    must reconstruct `output` from streamed output-item events whenever the completed response omits
+    them
+  - this includes function-call items and their argument deltas, not only plain text deltas
+- QA for connected-account saved memory must therefore prove all three layers:
+  1. the request shape is accepted
+  2. the adapted non-stream JSON preserves the tool call in `output`
+  3. the tool artifact reaches the durable memory store in a real browser flow
+
 ---
 
 ## Part 3: Public-Safe QA Notes

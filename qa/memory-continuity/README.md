@@ -15,6 +15,9 @@ them:
 - OpenAI connected-account memory runs on the Codex Responses bridge must lift instruction messages
   into top-level `instructions`; `system` / `developer` messages must not remain inside Responses
   `input`.
+- When the Codex bridge adapts streamed Responses SSE back into JSON for a non-stream memory run,
+  the adapted payload must preserve streamed `response.output_item.*` tool calls instead of
+  returning `output: []`.
 - The locally built `packages/api/dist` bundle used by runtime must carry that same Codex
   normalization logic; a source-only fix does not pass QA if the supported rebuild path still
   leaves stale compiled code in place.
