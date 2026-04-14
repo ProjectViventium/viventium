@@ -9224,11 +9224,14 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
           export NEXT_PUBLIC_PLAYGROUND_VARIANT="$PLAYGROUND_VARIANT"
         fi
         if [[ "$PLAYGROUND_VARIANT" == "modern" ]]; then
-          next_dist_dir=".next"
+          export VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR="${VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR:-.next-viventium-dev}"
+          next_dist_dir="$VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR"
           if [[ -e "$next_dist_dir" ]]; then
             echo -e "${YELLOW}[viventium]${NC} Resetting stale modern-playground build cache..."
             rm -rf "$next_dist_dir"
           fi
+        else
+          unset VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR || true
         fi
         # Next.js parses `next dev [dir] [options]`. Passing an extra `--` causes
         # `--port` to be treated as the project directory (crash).

@@ -49,6 +49,9 @@ background-cortex behavior.
 - `GET /api/viventium/calls/:callSessionId/state` returns the current session state.
 - `POST /api/viventium/calls/:callSessionId/state` renews the session TTL and can update Wing Mode.
 - Voice gateway requests must carry the shared call-session secret and session identity.
+- Agent dispatch metadata for modern-playground calls must be hydrated from the authoritative
+  call-session voice settings server-side before dispatch creation; do not rely on the browser's
+  async voice-settings fetch completing first.
 
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.
@@ -59,6 +62,12 @@ background-cortex behavior.
 - The modern playground must choose the LiveKit URL by browser origin:
   - localhost callers keep `ws://localhost:7888`
   - configured public playground origins receive the configured public LiveKit WSS URL
+- The launcher-managed modern playground must keep its live `next dev` output isolated from normal
+  build output so local validation work does not corrupt the active browser voice surface into
+  `500 Internal Server Error`.
+- When the modern playground is served through configured public browser origins in development,
+  those origins must be explicitly allowed as Next dev origins instead of relying on implicit
+  cross-origin tolerance.
 - Public-browser access also needs the non-HTTP media path:
   - direct LiveKit TCP/UDP media where available
   - TURN/TLS fallback when the public HTTPS edge is active
