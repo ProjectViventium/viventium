@@ -76,6 +76,14 @@
     `response.output_item.*` function-call events are reconstructed into non-stream `output`.
 16. Rebuilt the nested `packages/api/dist` bundle, deployed it to the remote runtime, restarted the
     stack, and reran the direct and browser QA flow.
+17. Reran the supported remote `bin/viventium upgrade --restart` path after publish.
+18. Verified that the remote install still carried a dirty nested LibreChat checkout from an earlier
+    local hotfix, which blocked the pinned nested ref from landing even though parent upgrade
+    succeeded.
+19. Hardened the public upgrade path so dirty selected managed components now fail closed instead of
+    silently compiling and restarting on stale nested code.
+20. Hardened `doctor.sh` so it reports tolerated dirty/vendored checkout validation honestly
+    instead of always claiming the selected components are on pinned refs.
 
 ## Automated Checks Executed
 

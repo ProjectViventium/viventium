@@ -357,6 +357,38 @@ PY
 
 echo "[doctor] Generated config placeholders resolve against runtime.env."
 
+doctor_report_component_validation() {
+  local validation_output="${1:-}"
+  local mode="${2:-pinned}"
+
+  if [[ -z "$validation_output" ]]; then
+    if [[ "$mode" == "existing-checkout" ]]; then
+      echo "[doctor] Selected components passed bootstrap validation for the current local runtime checkout mode."
+    else
+      echo "[doctor] Selected components are present at the pinned refs."
+    fi
+    return 0
+  fi
+
+  if [[ "$mode" == "existing-checkout" ]]; then
+    if printf '%s\n' "$validation_output" | grep -Eq 'validated (local dirty checkout|vendored checkout)'; then
+      echo "[doctor] Selected components passed bootstrap validation, but at least one local component checkout is not a clean pinned ref."
+      printf '%s\n' "$validation_output" | sed 's/^/[doctor]   /'
+      return 0
+    fi
+    echo "[doctor] Selected components passed bootstrap validation for the current local runtime checkout mode."
+    return 0
+  fi
+
+  if printf '%s\n' "$validation_output" | grep -Eq 'validated (local dirty checkout|vendored checkout|existing clean branch checkout)'; then
+    echo "[doctor] Selected components passed bootstrap validation, but at least one component is not currently on a clean pinned checkout."
+    printf '%s\n' "$validation_output" | sed 's/^/[doctor]   /'
+    return 0
+  fi
+
+  echo "[doctor] Selected components are present at the pinned refs."
+}
+
 bootstrap_args=(
   --repo-root "$REPO_ROOT"
   --lock-file "$LOCK_FILE"
@@ -366,11 +398,10 @@ bootstrap_args=(
 if [[ "$PREFER_EXISTING_CHECKOUT_HEAD" == "1" ]]; then
   bootstrap_args+=(--prefer-existing-checkout-head)
 fi
-"$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/bootstrap_components.py" \
-  "${bootstrap_args[@]}" >/dev/null
+bootstrap_validation_output="$("$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/bootstrap_components.py" "${bootstrap_args[@]}")"
 
 if [[ "$PREFER_EXISTING_CHECKOUT_HEAD" == "1" ]]; then
-  echo "[doctor] Selected components passed bootstrap validation for the current local runtime checkout mode."
+  doctor_report_component_validation "$bootstrap_validation_output" "existing-checkout"
 else
-  echo "[doctor] Selected components are present at the pinned refs."
+  doctor_report_component_validation "$bootstrap_validation_output" "pinned"
 fi

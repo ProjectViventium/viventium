@@ -129,3 +129,29 @@ def test_doctor_check_ollama_embeddings_model_warns_when_model_missing(tmp_path:
 
     assert "first start will pull it" in completed.stdout
     assert "http://localhost:11434/api/tags" in curl_log.read_text(encoding="utf-8")
+
+
+def test_doctor_report_component_validation_warns_for_dirty_checkout() -> None:
+    doctor_text = DOCTOR_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(doctor_text, "doctor_report_component_validation")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "doctor_report_component_validation "
+                "\"validated local dirty checkout for LibreChat -> deadbeef\" "
+                "pinned\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "not currently on a clean pinned checkout" in completed.stdout
+    assert "validated local dirty checkout for LibreChat -> deadbeef" in completed.stdout

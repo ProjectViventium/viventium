@@ -205,6 +205,22 @@ bootstrap_components() {
     "$@"
 }
 
+bootstrap_components_upgrade_checked() {
+  local bootstrap_output=""
+  if ! bootstrap_output="$(bootstrap_components "$@")"; then
+    printf '%s\n' "$bootstrap_output"
+    return 1
+  fi
+
+  printf '%s\n' "$bootstrap_output"
+
+  if printf '%s\n' "$bootstrap_output" | grep -q 'kept local dirty checkout'; then
+    echo "Upgrade aborted because at least one selected component has local edits and could not refresh to the pinned ref." >&2
+    echo "Review the reported component checkout, clean or commit those edits, and rerun bin/viventium upgrade." >&2
+    return 1
+  fi
+}
+
 cleanup_cli_lock() {
   if [[ "${CLI_LOCK_OWNER:-0}" != "1" ]]; then
     return 0
@@ -2457,7 +2473,7 @@ case "$COMMAND" in
       fi
     fi
     run_preflight apply
-    bootstrap_components
+    bootstrap_components_upgrade_checked
     compile_config
     "$REPO_ROOT/scripts/viventium/doctor.sh" \
       --config "$CONFIG_FILE" \

@@ -249,6 +249,15 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     watching only top-level manifest mtimes
   - public release coverage should verify that rebuild contract plus a built-bundle regression, not
     assume a checked-in `dist` artifact exists in clean public clones
+- The same April 14, 2026 upgrade rerun clarified the nested-component refresh boundary:
+  - existing installs can carry a dirty managed component checkout from earlier local hotfixes or
+    debugging
+  - `bootstrap_components.py` may correctly refuse to overwrite that dirty checkout, but upgrade
+    must not continue as if the pinned component landed successfully
+  - `bin/viventium upgrade` must therefore fail closed when selected components remain in
+    `kept local dirty checkout` state after refresh
+  - `doctor.sh` must report the real validation mode instead of always claiming "present at the
+    pinned refs" when validation only passed because a dirty or vendored checkout was tolerated
 - On April 12-13, 2026, a real remote clean-machine install on Intel macOS clarified the next
   installer/runtime boundaries:
   - `bin/viventium status` and install summary must not claim "ready" while core web surfaces are

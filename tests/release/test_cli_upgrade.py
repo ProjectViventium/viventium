@@ -1382,6 +1382,99 @@ exit 1
     assert (tmp_path / "bootstrap-observed-stop.txt").read_text(encoding="utf-8") == "yes"
 
 
+def test_upgrade_refuses_dirty_selected_component_refresh(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "bin").mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+
+    common_sh = """#!/usr/bin/env bash
+set -euo pipefail
+
+prepend_path_if_dir() {
+  local candidate="$1"
+  if [[ -d "$candidate" && ":${PATH}:" != *":${candidate}:"* ]]; then
+    PATH="${candidate}:${PATH}"
+  fi
+}
+
+ensure_brew_paths_on_path() {
+  prepend_path_if_dir "${TEST_ROOT}/fakebrew/bin"
+  export PATH
+}
+
+ensure_app_support_layout() {
+  local dir="$1"
+  mkdir -p "$dir/runtime" "$dir/state"
+}
+
+viventium_port_listener_active() { return 1; }
+python_has_module() { return 0; }
+resolve_repo_python() { printf '%s\\n' "${TEST_PYTHON:-python3}"; }
+ensure_python_module() { return 0; }
+ensure_python_requirements_file() { printf '%s\\n' "${TEST_PYTHON:-$1}"; }
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "common.sh", common_sh)
+    write_executable(repo_root / "scripts" / "viventium" / "preflight.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
+    write_executable(
+        repo_root / "scripts" / "viventium" / "bootstrap_components.py",
+        "#!/usr/bin/env python3\nprint('kept local dirty checkout for LibreChat -> deadbeef')\n",
+    )
+
+    config_compiler_py = """#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--config", required=True)
+parser.add_argument("--output-dir", required=True)
+args = parser.parse_args()
+out = Path(args.output_dir)
+out.mkdir(parents=True, exist_ok=True)
+(out / "runtime.env").write_text("VIVENTIUM_CALL_SESSION_SECRET=test\\n", encoding="utf-8")
+(out / "runtime.local.env").write_text("", encoding="utf-8")
+(out / "librechat.yaml").write_text("version: 1\\n", encoding="utf-8")
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "config_compiler.py", config_compiler_py)
+    write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+    write_executable(repo_root / "scripts" / "viventium" / "install_macos_helper.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+    write_executable(repo_root / "viventium_v0_4" / "viventium-librechat-start.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+
+    fake_bin = tmp_path / "fakebrew" / "bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    (fake_bin / "lsof").write_text("#!/usr/bin/env bash\nset -euo pipefail\nexit 1\n", encoding="utf-8")
+    (fake_bin / "lsof").chmod(0o755)
+
+    config_path = tmp_path / "app-support" / "config.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("version: 1\ninstall:\n  mode: native\nvoice:\n  mode: local\n", encoding="utf-8")
+
+    init_git_repo(repo_root)
+
+    completed = subprocess.run(
+        [
+            str(repo_root / "bin" / "viventium"),
+            "--app-support-dir",
+            str(config_path.parent),
+            "upgrade",
+            "--skip-pull",
+            "--allow-dirty",
+        ],
+        cwd=repo_root,
+        check=False,
+        text=True,
+        capture_output=True,
+        env={**dict(os.environ), "TEST_ROOT": str(tmp_path), "VIVENTIUM_AUTO_APPROVE_PREREQS": "true"},
+    )
+
+    assert completed.returncode != 0
+    assert "kept local dirty checkout for LibreChat -> deadbeef" in completed.stdout
+    assert "could not refresh to the pinned ref" in completed.stderr
+
+
 def test_start_uses_generated_librechat_yaml_at_runtime(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True, exist_ok=True)
