@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -109,6 +110,134 @@ def test_meilisearch_readiness_requires_authenticated_probe_and_reclaims_stale_l
     assert 'Configured Meilisearch key does not match the Viventium-owned local listener' in launcher_text
     assert 'if meili_http_auth_ping "$MEILI_HOST"; then' in launcher_text
     assert 'if meili_http_ping "$MEILI_HOST"; then' in launcher_text
+
+
+def test_server_package_rebuild_detects_newer_source_than_ignored_dist(tmp_path: Path) -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    functions = "".join(
+        extract_shell_function(launcher_text, name)
+        for name in ("find_librechat_source_newer_than_dist", "should_rebuild_librechat_server_packages")
+    )
+
+    librechat_dir = tmp_path / "LibreChat"
+    dist_files = (
+        librechat_dir / "packages" / "data-provider" / "dist" / "index.js",
+        librechat_dir / "packages" / "data-schemas" / "dist" / "index.cjs",
+        librechat_dir / "packages" / "api" / "dist" / "index.js",
+    )
+    for file_path in dist_files:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("// dist\n", encoding="utf-8")
+
+    for file_path in (
+        librechat_dir / "package.json",
+        librechat_dir / "package-lock.json",
+        librechat_dir / "packages" / "data-provider" / "package.json",
+        librechat_dir / "packages" / "data-provider" / "rollup.config.js",
+        librechat_dir / "packages" / "data-provider" / "server-rollup.config.js",
+        librechat_dir / "packages" / "data-schemas" / "package.json",
+        librechat_dir / "packages" / "data-schemas" / "rollup.config.js",
+        librechat_dir / "packages" / "api" / "package.json",
+        librechat_dir / "packages" / "api" / "rollup.config.js",
+    ):
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("{}\n", encoding="utf-8")
+
+    stale_source = librechat_dir / "packages" / "api" / "src" / "endpoints" / "openai" / "config.ts"
+    stale_source.parent.mkdir(parents=True, exist_ok=True)
+    stale_source.write_text("// newer source\n", encoding="utf-8")
+
+    old_timestamp = 1_700_000_000
+    new_timestamp = old_timestamp + 30
+    for file_path in dist_files:
+        os.utime(file_path, (old_timestamp, old_timestamp))
+    for file_path in librechat_dir.rglob("*"):
+        if file_path.is_file() and file_path not in dist_files:
+            os.utime(file_path, (old_timestamp, old_timestamp))
+    os.utime(stale_source, (new_timestamp, new_timestamp))
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{functions}"
+                f'LIBRECHAT_DIR="{librechat_dir}"\n'
+                'if should_rebuild_librechat_server_packages; then\n'
+                "  printf 'rebuild\\n'\n"
+                "else\n"
+                "  printf 'skip\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "rebuild"
+
+
+def test_client_package_rebuild_detects_newer_source_than_ignored_dist(tmp_path: Path) -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    functions = "".join(
+        extract_shell_function(launcher_text, name)
+        for name in ("find_librechat_source_newer_than_dist", "should_rebuild_librechat_client_package")
+    )
+
+    librechat_dir = tmp_path / "LibreChat"
+    dist_file = librechat_dir / "packages" / "client" / "dist" / "index.js"
+    dist_file.parent.mkdir(parents=True, exist_ok=True)
+    dist_file.write_text("// dist\n", encoding="utf-8")
+    for file_path in (
+        librechat_dir / "package.json",
+        librechat_dir / "package-lock.json",
+        librechat_dir / "packages" / "client" / "package.json",
+        librechat_dir / "packages" / "client" / "rollup.config.js",
+    ):
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("{}\n", encoding="utf-8")
+
+    stale_source = librechat_dir / "packages" / "client" / "src" / "index.ts"
+    stale_source.parent.mkdir(parents=True, exist_ok=True)
+    stale_source.write_text("// newer source\n", encoding="utf-8")
+
+    old_timestamp = 1_700_000_000
+    new_timestamp = old_timestamp + 30
+    os.utime(dist_file, (old_timestamp, old_timestamp))
+    for file_path in librechat_dir.rglob("*"):
+        if file_path.is_file() and file_path != dist_file:
+            os.utime(file_path, (old_timestamp, old_timestamp))
+    os.utime(stale_source, (new_timestamp, new_timestamp))
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{functions}"
+                f'LIBRECHAT_DIR="{librechat_dir}"\n'
+                'if should_rebuild_librechat_client_package; then\n'
+                "  printf 'rebuild\\n'\n"
+                "else\n"
+                "  printf 'skip\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "rebuild"
 
 
 def test_scope_detection_matches_processes_by_working_directory(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@
 
 - 2026-04-08
 - 2026-04-09
+- 2026-04-14
 
 ## Build Under Test
 
@@ -11,6 +12,8 @@
 - Nested LibreChat working tree on 2026-04-09
 - Public-safe analysis of generated runtime config, launcher/runtime behavior, live saved-memory
   state, and targeted test suites
+- Remote follow-up on 2026-04-14 against the supported upgrade path plus local runtime-bundle
+  verification
 
 ## Verification Gate Claimed
 
@@ -59,6 +62,12 @@
    - Detail: one file-reading review call hung without returning, one constrained summary-only
      review hit a hard timeout, and an earlier no-tools fallback failed immediately with local-auth
      state (`Not logged in`)
+9. On 2026-04-14, reran the remote connected-account browser QA after the supported upgrade path.
+10. Captured the live memory-writer request/response shape on the upgraded remote machine.
+11. Compared the owning source file against the local compiled `packages/api/dist` bundle that
+    runtime actually imports.
+12. Added bundle-alignment regression coverage so the public release path checks the rebuild
+    contract and built bundle path, not only the source file.
 
 ## Automated Checks Executed
 
@@ -75,6 +84,8 @@
   - Result: passed
 - `cd viventium_v0_4/LibreChat/packages/api && npx jest --runInBand src/endpoints/config.spec.ts src/agents/__tests__/conversationRecallAvailability.test.ts src/agents/__tests__/memory.test.ts --no-cache`
   - Result: `33 passed`
+- `cd viventium_v0_4/LibreChat/packages/api && npx jest --runInBand src/endpoints/openai/config.spec.ts src/endpoints/openai/config.dist.spec.ts src/agents/__tests__/memory.test.ts --no-cache`
+  - Result: `114 passed`
 - `cd viventium_v0_4/LibreChat/packages/api && npx jest --runInBand src/memory/policy.spec.ts src/agents/__tests__/memory.test.ts src/agents/memory.spec.ts --no-cache`
   - Result: `48 passed`
 
@@ -174,6 +185,35 @@
   - writer initialization/auth succeeds
   - the live Responses request shape is accepted by the connected-account backend
 
+### 2.2 A source-only Codex fix did not repair the supported upgrade path
+
+- The April 14, 2026 remote follow-up showed that the supported upgrade path alone still did not
+  repair durable memory on the test machine:
+  - chat login succeeded
+  - a memory-worthy prompt got an in-thread acknowledgement
+  - the `Memories` panel stayed empty
+  - the saved-memory store remained at `0` entries for that user
+- Live remote debug then proved the deeper release bug:
+  - the request reached the Codex Responses route
+  - the Codex adapter was active and normalized `store`, `user`, `stream`, and top-level
+    `instructions`
+  - the provider still rejected the request with `400 "System messages are not allowed"`
+- Comparing the owning source file against the local runtime bundle isolated the reason:
+  - `packages/api/src/endpoints/openai/config.ts` contained the new system/developer stripping
+    logic
+  - `packages/api/dist/index.js`, which the runtime actually imports, still carried the older
+    adapter without that stripping logic
+- Therefore the prior release fix was incomplete as a product delivery:
+  - source/tests were updated
+  - the supported upgrade/start path could still leave the older local compiled runtime artifact in
+    place
+- The corrected release contract now requires:
+  - launcher/upgrade rebuild detection that compares package source trees against local `dist`
+    markers instead of watching only `package.json` / `package-lock.json`
+  - regression coverage that exercises the built bundle directly
+  - a public release check from the parent repo side that verifies the launcher rebuild contract,
+    plus nested repo regression coverage that exercises the built bundle path directly
+
 ### 3. Forgetting is now explicitly defined as a cross-key rewrite contract
 
 - Saved-memory instructions now explicitly define partial forgetting as:
@@ -212,6 +252,8 @@
 - Recall health/freshness and degraded lexical fallback have targeted coverage.
 - Compiler-emitted memory provider alias acceptance now has direct test coverage.
 - Memory writer older-user-context behavior now has direct controller coverage.
+- The built `packages/api/dist` bundle now has direct regression coverage for the Codex
+  instruction-normalization path instead of relying only on the source-file test path.
 - Memory forgetting/integrity behavior now has direct policy coverage for:
   - separator cleanup on write
   - expired temporal key refresh
@@ -281,7 +323,9 @@
    flows, and any relevant voice smoke path.
 2. Clear the current unrelated release-suite blockers, then run the `public release gate` from
    supported public entrypoints with a clean install story.
-3. Decide separately whether conversation recall needs an explicit, auditable forgetting/exclusion
+3. Keep the supported package-rebuild path under explicit release scrutiny for future
+   Codex-connected memory changes; source-only fixes do not pass this gate.
+4. Decide separately whether conversation recall needs an explicit, auditable forgetting/exclusion
    feature; that is not the same feature as saved-memory forgetting.
-4. Add broader public-safe synthetic QA/evals for contradiction replacement and durable-memory
+5. Add broader public-safe synthetic QA/evals for contradiction replacement and durable-memory
    update scenarios beyond the controller-level older-context coverage now in place.

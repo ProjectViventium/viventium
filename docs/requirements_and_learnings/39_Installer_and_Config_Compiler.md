@@ -240,6 +240,15 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - a visible recall toggle is only policy, not proof that the local recall runtime/index is live
   - when helper logs say the local RAG API is unavailable and recall sync is disabled, the product
     must present recall as unavailable even if the UI toggle still exists
+- On April 14, 2026, the same remote memory follow-up clarified the local package-build boundary:
+  - LibreChat `packages/*/dist` outputs are generated local runtime artifacts, not tracked public
+    release sources
+  - a source-only fix inside `packages/api/src/...` is therefore insufficient if the supported
+    upgrade/start path leaves an older local `dist` bundle in place
+  - launcher rebuild detection must compare package source trees against `dist` markers instead of
+    watching only top-level manifest mtimes
+  - public release coverage should verify that rebuild contract plus a built-bundle regression, not
+    assume a checked-in `dist` artifact exists in clean public clones
 - On April 12-13, 2026, a real remote clean-machine install on Intel macOS clarified the next
   installer/runtime boundaries:
   - `bin/viventium status` and install summary must not claim "ready" while core web surfaces are

@@ -351,6 +351,28 @@ The April 13, 2026 remote QA pass added another concrete continuity boundary:
   - conversation-recall retrieval
   are three separate acceptance surfaces and must be QA’d separately.
 
+#### 2.9.4 Connected-account memory fixes must land in the shipped runtime bundle
+
+- The runtime path that processes saved-memory requests imports the compiled `packages/api/dist`
+  bundle, not the TypeScript source files directly.
+- That compiled bundle is a generated local runtime artifact, not a tracked public-repo source of
+  truth.
+- Therefore a source-only fix inside `packages/api/src/...` is not a shipped product fix unless the
+  supported upgrade/start path rebuilds the local bundle to match it.
+- The April 14, 2026 remote-memory incident proved this boundary directly:
+  - the source file carried the Codex instruction-normalization fix
+  - the existing local compiled bundle still lacked that logic
+  - the remote upgraded runtime therefore continued to fail with live
+    `400 "System messages are not allowed"` responses
+- Release acceptance for Codex-connected memory now requires both:
+  1. source-level tests for the owning normalization logic
+  2. explicit verification that the locally built runtime bundle used by the product carries the
+     same behavior after the supported rebuild path runs
+- In practice, that means:
+  - keep launcher/upgrade rebuild detection tied to package source freshness, not only manifest
+    mtimes
+  - keep a regression that exercises the built `dist` bundle, not only the source test path
+
 ---
 
 ## Part 3: Public-Safe QA Notes

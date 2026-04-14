@@ -3993,6 +3993,33 @@ ensure_librechat_node_dependencies() {
 # Purpose: fresh installs need API package dist outputs before user-default reconciliation
 # and agent seeding can run, while the direct startup path should not rebuild the client
 # package twice during the same cold boot.
+find_librechat_source_newer_than_dist() {
+  local dist_file="${1:-}"
+  shift || true
+
+  if [[ -z "$dist_file" || ! -f "$dist_file" ]]; then
+    return 0
+  fi
+
+  local candidate=""
+  local newer_source=""
+  for candidate in "$@"; do
+    if [[ -f "$candidate" && "$candidate" -nt "$dist_file" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    if [[ -d "$candidate" ]]; then
+      newer_source="$(find "$candidate" -type f -newer "$dist_file" 2>/dev/null | head -n 1)"
+      if [[ -n "$newer_source" ]]; then
+        printf '%s\n' "$newer_source"
+        return 0
+      fi
+    fi
+  done
+
+  return 1
+}
+
 should_rebuild_librechat_server_packages() {
   if [[ "${VIVENTIUM_FORCE_PACKAGE_REBUILD:-0}" == "1" ]]; then
     return 0
@@ -4011,22 +4038,40 @@ should_rebuild_librechat_server_packages() {
     fi
   done
 
-  local freshness_refs=(
-    "$LIBRECHAT_DIR/package-lock.json"
-    "$LIBRECHAT_DIR/package.json"
-  )
+  if find_librechat_source_newer_than_dist \
+    "${markers[0]}" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/data-provider/src" \
+    "$LIBRECHAT_DIR/packages/data-provider/react-query" \
+    "$LIBRECHAT_DIR/packages/data-provider/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/data-provider/server-rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/data-provider/package.json" \
+    >/dev/null; then
+    return 0
+  fi
 
-  local ref
-  for ref in "${freshness_refs[@]}"; do
-    if [[ ! -f "$ref" ]]; then
-      continue
-    fi
-    for marker in "${markers[@]}"; do
-      if [[ "$ref" -nt "$marker" ]]; then
-        return 0
-      fi
-    done
-  done
+  if find_librechat_source_newer_than_dist \
+    "${markers[1]}" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/data-schemas/src" \
+    "$LIBRECHAT_DIR/packages/data-schemas/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/data-schemas/package.json" \
+    >/dev/null; then
+    return 0
+  fi
+
+  if find_librechat_source_newer_than_dist \
+    "${markers[2]}" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/api/src" \
+    "$LIBRECHAT_DIR/packages/api/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/api/package.json" \
+    >/dev/null; then
+    return 0
+  fi
 
   return 1
 }
@@ -4041,17 +4086,16 @@ should_rebuild_librechat_client_package() {
     return 0
   fi
 
-  local freshness_refs=(
-    "$LIBRECHAT_DIR/package-lock.json"
-    "$LIBRECHAT_DIR/package.json"
-  )
-
-  local ref
-  for ref in "${freshness_refs[@]}"; do
-    if [[ -f "$ref" && "$ref" -nt "$marker" ]]; then
-      return 0
-    fi
-  done
+  if find_librechat_source_newer_than_dist \
+    "$marker" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/client/src" \
+    "$LIBRECHAT_DIR/packages/client/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/client/package.json" \
+    >/dev/null; then
+    return 0
+  fi
 
   return 1
 }

@@ -15,6 +15,9 @@ them:
 - OpenAI connected-account memory runs on the Codex Responses bridge must lift instruction messages
   into top-level `instructions`; `system` / `developer` messages must not remain inside Responses
   `input`.
+- The locally built `packages/api/dist` bundle used by runtime must carry that same Codex
+  normalization logic; a source-only fix does not pass QA if the supported rebuild path still
+  leaves stale compiled code in place.
 - Saved-memory behavior must remain additive, contradiction-aware, and token-efficient.
 - Forgetting must correctly rewrite only the affected detail across all impacted keys without
   dropping unrelated history, tracking, or signals.
@@ -68,11 +71,14 @@ them:
    - real connected-account chat can succeed while saved memory or conversation recall still fail
    - the saved-memory writer must survive the Codex-connected Responses request shape rather than
      failing with backend request-contract errors
+   - the locally built runtime bundle used by the product must be verified after the supported
+     rebuild path runs, not just the source test path
    - QA must therefore verify:
      - chat success
      - saved-memory artifact presence
      - cross-conversation recovery
      - recall-runtime health
+     - compiled-bundle alignment for the owning Codex normalization path
 
 ## Expected Results
 
@@ -89,5 +95,7 @@ them:
   - remaining broader landing/release-gate work
 - Bounded older-user-context coverage proves long-conversation corrections are not lost purely
   because they fell outside the current chat window.
+- The built runtime bundle used by the supported install/upgrade path must match the reviewed
+  Codex memory normalization source path.
 - If unrelated legacy test failures exist elsewhere, the report must call them out explicitly
   instead of mixing them into the memory-continuity verdict.
