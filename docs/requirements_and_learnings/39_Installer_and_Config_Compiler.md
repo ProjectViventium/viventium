@@ -258,6 +258,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     `kept local dirty checkout` state after refresh
   - `doctor.sh` must report the real validation mode instead of always claiming "present at the
     pinned refs" when validation only passed because a dirty or vendored checkout was tolerated
+  - the parent component pin itself must be the exact published full commit SHA from the nested
+    component repo; a mistyped or locally copied hash is enough to break the supported fetch path
+    even when the intended nested fix is already live on origin
 - On April 12-13, 2026, a real remote clean-machine install on Intel macOS clarified the next
   installer/runtime boundaries:
   - `bin/viventium status` and install summary must not claim "ready" while core web surfaces are

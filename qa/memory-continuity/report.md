@@ -84,6 +84,8 @@
     silently compiling and restarting on stale nested code.
 20. Hardened `doctor.sh` so it reports tolerated dirty/vendored checkout validation honestly
     instead of always claiming the selected components are on pinned refs.
+21. Corrected the parent LibreChat pin to the exact published nested commit after remote upgrade
+    evidence proved the previously copied full SHA did not exist on origin.
 
 ## Automated Checks Executed
 
