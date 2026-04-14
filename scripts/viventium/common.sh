@@ -33,6 +33,115 @@ ensure_app_support_layout() {
   mkdir -p "$app_support_dir/logs"
 }
 
+path_is_git_repo_root() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" && -d "$candidate" ]] || return 1
+  local git_root=""
+  git_root="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$git_root" ]] || return 1
+  [[ "$(cd "$candidate" && pwd -P)" == "$(cd "$git_root" && pwd -P)" ]]
+}
+
+public_safe_path_label() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" ]] || return 1
+  if [[ "$candidate" == "$HOME" ]]; then
+    printf '%s\n' "~"
+    return 0
+  fi
+  case "$candidate" in
+    "$HOME"/*)
+      printf '~/%s\n' "${candidate#"$HOME"/}"
+      return 0
+      ;;
+  esac
+  local base=""
+  base="$(basename "$candidate")"
+  if [[ -n "$base" && "$base" != "/" && "$base" != "." ]]; then
+    printf '<local>/%s\n' "$base"
+  else
+    printf '%s\n' "<local>"
+  fi
+}
+
+discover_private_repo_dir() {
+  local workspace_root="$1"
+  local repo_root="${2:-$workspace_root}"
+  local candidate=""
+  local candidates=(
+    "$repo_root/private-companion-repo"
+    "$repo_root/.private-companion-repo"
+    "$workspace_root/private-companion-repo"
+    "$workspace_root/.private-companion-repo"
+  )
+  for candidate in "${candidates[@]}"; do
+    if path_is_git_repo_root "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+discover_workspace_repo_dir() {
+  local repo_name="$1"
+  local workspace_root="$2"
+  local repo_root="${3:-$workspace_root}"
+  local candidate=""
+  local candidates=(
+    "$repo_root/$repo_name"
+    "$workspace_root/$repo_name"
+  )
+  for candidate in "${candidates[@]}"; do
+    if path_is_git_repo_root "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+discover_private_curated_dir() {
+  local private_repo_dir="${1:-}"
+  if [[ -z "$private_repo_dir" ]]; then
+    return 1
+  fi
+
+  local candidate="$private_repo_dir/curated"
+  if [[ -d "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+discover_private_backup_root() {
+  local app_support_dir="$1"
+  local private_repo_dir="${2:-}"
+  if [[ -n "$private_repo_dir" ]]; then
+    printf '%s\n' "$private_repo_dir/backups/local-state"
+    return 0
+  fi
+  printf '%s\n' "$app_support_dir/snapshots"
+}
+
+continuity_state_dir() {
+  local app_support_dir="$1"
+  local runtime_profile="${2:-isolated}"
+  printf '%s\n' "$app_support_dir/state/runtime/${runtime_profile}/continuity"
+}
+
+continuity_audit_dir() {
+  local app_support_dir="$1"
+  printf '%s\n' "$app_support_dir/state/continuity"
+}
+
+recall_rebuild_required_file() {
+  local app_support_dir="$1"
+  local runtime_profile="${2:-isolated}"
+  printf '%s\n' "$(continuity_state_dir "$app_support_dir" "$runtime_profile")/recall-rebuild-required.json"
+}
+
 python_has_module() {
   local python_bin="$1"
   local module_name="$2"

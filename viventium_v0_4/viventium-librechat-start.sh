@@ -201,52 +201,40 @@ if [[ -f "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh" ]]; then
   source "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh"
 fi
 
-discover_private_repo_dir() {
-  local workspace_root="$1"
-  local repo_root="${2:-$workspace_root}"
-  local candidate=""
-  local candidates=(
-    "$repo_root/private-companion-repo"
-    "$repo_root/private-companion-repo"
-    "$repo_root/.private-companion-repo"
-    "$workspace_root/private-companion-repo"
-    "$workspace_root/private-companion-repo"
-    "$workspace_root/.private-companion-repo"
-  )
-  for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-discover_workspace_repo_dir() {
-  local repo_name="$1"
-  local workspace_root="$2"
-  local repo_root="${3:-$workspace_root}"
-  local candidate=""
-  local candidates=(
-    "$repo_root/$repo_name"
-    "$workspace_root/$repo_name"
-  )
-  for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
+if ! declare -F discover_workspace_repo_dir >/dev/null 2>&1; then
+  discover_workspace_repo_dir() {
+    local repo_name="$1"
+    local workspace_root="$2"
+    local repo_root="${3:-$workspace_root}"
+    local candidate=""
+    local candidates=(
+      "$repo_root/$repo_name"
+      "$workspace_root/$repo_name"
+    )
+    for candidate in "${candidates[@]}"; do
+      if declare -F path_is_git_repo_root >/dev/null 2>&1; then
+        if path_is_git_repo_root "$candidate"; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      elif [[ -d "$candidate" ]] && git -C "$candidate" rev-parse --show-toplevel >/dev/null 2>&1; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+    return 1
+  }
+fi
 
 VIVENTIUM_PRIVATE_REPO_DIR="${VIVENTIUM_PRIVATE_REPO_DIR:-$(discover_private_repo_dir "$VIVENTIUM_WORKSPACE_DIR" "$VIVENTIUM_CORE_DIR" || true)}"
 VIVENTIUM_DEPLOY_REPO_DIR="${VIVENTIUM_DEPLOY_REPO_DIR:-$(discover_workspace_repo_dir "enterprise-deployment-repo" "$VIVENTIUM_WORKSPACE_DIR" "$VIVENTIUM_CORE_DIR" || true)}"
-if [[ -z "$VIVENTIUM_DEPLOY_REPO_DIR" ]]; then
-  VIVENTIUM_DEPLOY_REPO_DIR="$VIVENTIUM_CORE_DIR/enterprise-deployment-repo"
+if [[ -n "$VIVENTIUM_PRIVATE_REPO_DIR" ]]; then
+  VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}"
+  VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/mirror}"
+else
+  VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-}"
+  VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-}"
 fi
-VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}"
-VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/mirror}"
 
 first_existing_path() {
   local candidate
@@ -374,7 +362,11 @@ LEGACY_V0_3_DIR="$(resolve_dir_or_default \
 # such as a clean port worktree, without relocating the rest of the Viventium stack.
 LIBRECHAT_DIR="${VIVENTIUM_LIBRECHAT_DIR:-$ROOT_DIR/LibreChat}"
 # === VIVENTIUM END ===
-LIBRECHAT_PRIVATE_CONFIG_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}/configs/librechat"
+if [[ -n "$VIVENTIUM_PRIVATE_CURATED_DIR" ]]; then
+  LIBRECHAT_PRIVATE_CONFIG_DIR="$VIVENTIUM_PRIVATE_CURATED_DIR/configs/librechat"
+else
+  LIBRECHAT_PRIVATE_CONFIG_DIR=""
+fi
 LIBRECHAT_CANONICAL_ENV_FILE="${VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE:-$(resolve_path_or_default \
   "$LIBRECHAT_PRIVATE_CONFIG_DIR/librechat.env" \
   "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/LibreChat/.env" \

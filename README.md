@@ -35,7 +35,8 @@ cd viventium
 ./install.sh
 ```
 
-On macOS, install also adds `Viventium Helper` to the status bar so you can open, start, and stop the local stack without going back to Terminal.
+On macOS, install also adds `Viventium Helper` to the status bar so you can open, start, stop,
+and snapshot the local stack without going back to Terminal.
 
 First-run notes:
 
@@ -61,6 +62,10 @@ Upgrade an existing install:
 ```bash
 bin/viventium upgrade --restart
 ```
+
+If upgrade detects continuity drift that could make restored recall or saved state misleading, it
+now writes pre/post continuity audits and can block the automatic restart until the operator
+reviews the issue.
 
 Stop the stack:
 
@@ -126,6 +131,7 @@ bin/viventium stop
 bin/viventium upgrade --restart
 bin/viventium install-helper
 bin/viventium uninstall-helper
+bin/viventium continuity-audit
 bin/viventium snapshot
 bin/viventium restore
 ```

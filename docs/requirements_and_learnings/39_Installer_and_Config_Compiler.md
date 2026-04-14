@@ -128,6 +128,47 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     not a shell-only or repo-local default
   - preflight must surface missing `telegram-bot-api` / `api_id` / `api_hash` before runtime start
 
+## Continuity-Aware Snapshot / Restore / Upgrade Boundary
+
+- `bin/viventium snapshot` is the supported manual snapshot entrypoint for local installs.
+- The public snapshot wrapper must always write a metadata-only `continuity-manifest.json` under
+  the selected snapshot root, even when no private companion helper exists.
+- That manifest is evidence, not authorship. It may include:
+  - sanitized path labels
+  - repo heads
+  - runtime-profile and embeddings metadata
+  - continuity-surface timestamps/counts
+  - warnings/errors about what could not be inspected
+- That manifest must not include:
+  - secrets
+  - raw message content
+  - raw prompts
+  - Mongo URIs
+  - personal emails
+  - absolute private home-directory paths
+- App Support is the primary machine-local manifest destination. A private companion helper may add
+  richer secret-bearing payload into the same machine-local snapshot flow or a private companion
+  backup root, but the public wrapper must not require that helper to succeed.
+- The product default is operator-triggered manual snapshots, not mandatory daily full backups.
+  Bounded private automation may exist later, but the shipped public contract must stay explicit and
+  storage-aware.
+- `bin/viventium restore` must capture a live continuity audit, compare the selected snapshot
+  manifest against live state, and refuse an older snapshot by default unless the operator passes
+  `--allow-older-snapshot`.
+- Restore must make a pre-apply safety copy of directly affected local state before overwriting it.
+- If restore follow-through can leave recall-derived state older than live continuity, restore must
+  write the recall rebuild-required marker and runtime must refuse vector-backed recall until the
+  operator rebuilds and intentionally clears that marker.
+- `bin/viventium continuity-audit` owns the operator review surface for current continuity metadata
+  and the explicit `--clear-recall-marker` acknowledgement after rebuild.
+- `bin/viventium upgrade` must capture pre/post continuity audits and treat their severity as part
+  of the supported upgrade contract:
+  - `error`: do not auto-restart
+  - `warning`: finish upgrade but require operator review
+  - `ok`: continue normally
+- The macOS helper may expose a manual `Create Backup Snapshot` action, but it must call the same
+  supported snapshot path as the CLI rather than inventing a second backup implementation.
+
 ## Learnings
 
 - First-run startup can honestly take minutes because local package builds and optional Docker sidecars
@@ -261,6 +302,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - the parent component pin itself must be the exact published full commit SHA from the nested
     component repo; a mistyped or locally copied hash is enough to break the supported fetch path
     even when the intended nested fix is already live on origin
+- The same April 14, 2026 continuity hardening pass clarified the operator-state boundary:
+  - chat history, saved memory, recall corpora, schedules, and runtime/provider state can drift
+    independently
+  - restore and upgrade must therefore compare continuity surfaces explicitly instead of assuming
+    any snapshot or restart is safe because one service is healthy
+  - recall after restore must fail closed until rebuild is intentionally acknowledged
+  - manual backup UX belongs on the supported helper/CLI path, not in hidden private scripts
 - On April 12-13, 2026, a real remote clean-machine install on Intel macOS clarified the next
   installer/runtime boundaries:
   - `bin/viventium status` and install summary must not claim "ready" while core web surfaces are

@@ -378,6 +378,15 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private nonisolated static func terminatePIDIfNeeded(" in source
     assert 'logFileName: "helper-stop.log"' in source
     assert 'self.log("Quit requested; stopping stack before helper exit")' in source
+    assert '@Published private(set) var snapshotInProgress: Bool = false' in source
+    assert "var backupActionLabel: String {" in source
+    assert 'self.snapshotInProgress ? "Creating Backup..." : "Create Backup Snapshot"' in source
+    assert "func createBackupSnapshot() {" in source
+    assert 'arguments: ["snapshot"]' in source
+    assert 'logFileName: "helper-snapshot.log"' in source
+    assert 'alert.messageText = "Backup snapshot created"' in source
+    assert 'alert.messageText = "Backup snapshot failed"' in source
+    assert 'private nonisolated static func latestSnapshotPath(appSupportDir: String) -> String?' in source
     assert '@Published private(set) var showInStatusBarEnabled: Bool = true' in source
     assert "private var config: HelperConfig?" in source
     assert 'self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true' in source
@@ -395,6 +404,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'Button("Quit") {' in source
     assert 'Button(self.controller.actionLabel) {' in source
     assert 'Button(self.controller.statusLabel) {}' in source
+    assert 'Button(self.controller.backupActionLabel) {' in source
     assert "MenuBarExtra(" in source
     assert "isInserted: Binding(" in source
     assert "if self.controller.showsStatusRow {" in source

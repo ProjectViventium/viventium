@@ -12,6 +12,7 @@ verification, and regression checks stay grounded in one place.
 - `qa/installer-resilience/README.md`
 - `qa/installer-piped-bootstrap/README.md`
 - `qa/installer-wait-taglines/README.md`
+- `qa/continuity-ops/README.md`
 - `qa/remote-access/README.md`
 
 Use these when changing:
@@ -22,6 +23,9 @@ Use these when changing:
 - public remote-access posture surfaced by the local runtime
 - first-account browser onboarding on clean installs
 - clean-install helper/bootstrap behavior
+- continuity-aware snapshot / restore / upgrade behavior
+- helper manual backup affordances
+- recall rebuild-marker behavior after restore or continuity repair
 
 ### Background Agents / Activation / Follow-Up
 

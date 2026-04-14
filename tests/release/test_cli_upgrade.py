@@ -172,7 +172,7 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
     assert "Starting Viventium..." in install_section
     assert "maybe_install_macos_helper --no-launch" in cli_source
     assert "if ! start_stack_for_install; then" in install_section
-    assert "print_install_summary 0" in install_section
+    assert "print_install_summary 1" in install_section
     assert "exit 1" in install_section
     assert "launch_macos_helper_app" in cli_source
     assert 'print_install_summary 1' in cli_source
@@ -197,6 +197,12 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     )[0]
 
     assert "restart_stack_after_upgrade() {" in cli_source
+    assert "capture_continuity_audit() {" in cli_source
+    assert "remove_recall_rebuild_marker() {" in cli_source
+    assert "continuity-audit  Capture continuity metadata for the current install." in cli_source
+    assert "Pre-upgrade continuity audit written to" in upgrade_section
+    assert "Post-upgrade continuity audit written to" in upgrade_section
+    assert 'if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "error" ]]; then' in upgrade_section
     assert "cleanup_cli_lock" in restart_section
     assert "launch_stack_detached" in restart_section
     assert "wait_for_install_stack_health" in restart_section

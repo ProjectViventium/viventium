@@ -92,33 +92,48 @@ PY
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VIVENTIUM_CORE_DIR="$(dirname "$ROOT_DIR")"
 VIVENTIUM_WORKSPACE_DIR="$(dirname "$VIVENTIUM_CORE_DIR")"
+if [[ -f "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh"
+fi
+if ! declare -F discover_private_repo_dir >/dev/null 2>&1; then
+  path_is_git_repo_root() {
+    local candidate="${1:-}"
+    [[ -n "$candidate" && -d "$candidate" ]] || return 1
+    local git_root=""
+    git_root="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
+    [[ -n "$git_root" ]] || return 1
+    [[ "$(cd "$candidate" && pwd -P)" == "$(cd "$git_root" && pwd -P)" ]]
+  }
 
-discover_private_repo_dir() {
-  local workspace_root="$1"
-  local repo_root="${2:-$workspace_root}"
-  local candidate=""
-  local candidates=(
-    "$repo_root/private-companion-repo"
-    "$repo_root/private-companion-repo"
-    "$repo_root/.private-companion-repo"
-    "$workspace_root/private-companion-repo"
-    "$workspace_root/private-companion-repo"
-    "$workspace_root/.private-companion-repo"
-    "$workspace_root/private-companion-repo"
-    "$workspace_root/.private-companion-repo"
-  )
-  for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
+  discover_private_repo_dir() {
+    local workspace_root="$1"
+    local repo_root="${2:-$workspace_root}"
+    local candidate=""
+    local candidates=(
+      "$repo_root/private-companion-repo"
+      "$repo_root/.private-companion-repo"
+      "$workspace_root/private-companion-repo"
+      "$workspace_root/.private-companion-repo"
+    )
+    for candidate in "${candidates[@]}"; do
+      if path_is_git_repo_root "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+    return 1
+  }
+fi
 
 VIVENTIUM_PRIVATE_REPO_DIR="${VIVENTIUM_PRIVATE_REPO_DIR:-$(discover_private_repo_dir "$VIVENTIUM_WORKSPACE_DIR" "$VIVENTIUM_CORE_DIR" || true)}"
-VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}"
-VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/mirror}"
+if [[ -n "$VIVENTIUM_PRIVATE_REPO_DIR" ]]; then
+  VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}"
+  VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/mirror}"
+else
+  VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-}"
+  VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-}"
+fi
 
 resolve_path_or_default() {
   local fallback="$1"

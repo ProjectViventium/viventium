@@ -534,6 +534,56 @@ def test_build_service_rows_marks_conversation_recall_starting_when_stack_should
     assert services["Conversation Recall"] == ("Starting", "http://localhost:8110")
 
 
+def test_resolve_summary_heading_reports_live_startup_when_stack_should_be_live(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    def fake_http_ok(url: str) -> bool:
+        return url in {
+            "http://localhost:3180/api/health",
+            "http://localhost:3300",
+        }
+
+    monkeypatch.setattr(install_summary, "http_ok", fake_http_ok)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    heading, intro, table_title = install_summary.resolve_summary_heading(
+        True,
+        rows,
+        install_summary.stack_expected_live(config, {}, runtime_dir),
+    )
+
+    services = {name: (status, detail) for name, status, detail in rows}
+    assert services["LibreChat Frontend"][0] == "Starting"
+    assert services["LibreChat API"][0] == "Running"
+    assert services["Modern Playground"][0] == "Running"
+    assert heading == "Viventium is still starting"
+    assert "live surfaces" in intro
+    assert table_title == "Live Services"
+
+
 def test_build_service_rows_reports_auth_posture() -> None:
     install_summary = load_install_summary_module()
 

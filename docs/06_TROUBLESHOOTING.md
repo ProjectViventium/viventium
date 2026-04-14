@@ -108,7 +108,7 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   - confirm `http://localhost:3180/health` and `http://localhost:3190` both return `200` before treating the install as healthy
 - Cold-start note:
   - the installer now waits up to `1800s` for first-run health and prints periodic progress while LibreChat builds
-  - if that budget still expires, it prints the recent `helper-start.log` tail plus the configured service summary so the user can tell whether the stack is still compiling or actually stuck
+  - if that budget still expires, it prints the recent `helper-start.log` tail plus the live-state service summary so the user can tell whether the stack is still compiling or actually stuck
 - Current status: `viventium_v0_4/viventium-librechat-start.sh` now prefers the direct-managed fallback for detached/helper launches and rebuild-required runs, and that fallback now backgrounds both backend and frontend so the shell continues supervising LibreChat after startup.
 
 ### Telegram says `Failed to reach Viventium. Please retry.`

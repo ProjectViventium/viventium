@@ -102,6 +102,10 @@ viventium_v0_3_py/archive/**/*
 /viventium-private-user/
 /viventium-private/
 /viventium-enterprise-deploy/
+/private-companion-repo/
+/.private-companion-repo/
+/enterprise-deployment-repo/
+/.enterprise-deployment-repo/
 viventium_v0_4/LibreChat/
 viventium_v0_4/agents-playground/
 viventium_v0_4/livekit/

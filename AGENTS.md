@@ -18,6 +18,7 @@ For installer, runtime, release, or publish-boundary work, also read:
 - `docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md`
 - `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`
 - `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md`
+- `qa/continuity-ops/README.md` when the work touches snapshots, restore, upgrade continuity, or helper backup UX
 - the relevant files under `qa/`, if they already exist for the feature or release surface
 
 ## Repo Topology
@@ -41,10 +42,14 @@ For installer, runtime, release, or publish-boundary work, also read:
   hostnames, personal emails, home-directory paths, laptop names, or secret-bearing command lines.
   Use public-safe placeholders such as `/path/to/viventium`, `~/Library/Application Support/...`,
   `<temp>`, `example.com`, and synthetic non-personal values.
+- Treat credentials, passwords, tokens, and secrets that appear in chat as transient secrets. They
+  must not be echoed into docs, tests, commits, QA artifacts, Claude prompts, or sub-agent handoffs.
 - If something is useful but not public-safe, move it to the designated
   `<viventium-private-user>` or `<enterprise-deployment-repo>` outside this tree. If those repos
   are nested locally for workspace convenience, they must remain separate git repos, ignored by the
   main repo, and excluded from public exports.
+- A plain folder named like a private companion or enterprise repo is not a valid boundary. It only
+  counts when it is the root of a separate git repo or worktree.
 - Canonical local config and runtime state live outside git:
   - `~/Library/Application Support/Viventium/config.yaml`
   - `~/Library/Application Support/Viventium/runtime/*`
@@ -61,6 +66,18 @@ For installer, runtime, release, or publish-boundary work, also read:
   test it, QA it, and document the resulting product truth.
 - Trace the real owning path before editing: trigger -> config/compiler -> runtime -> user-visible
   output.
+- For install/runtime/release fixes, classify the delivery surfaces separately:
+  - tracked source
+  - parent component pin / manifest
+  - compiled or prebuilt shipped artifact
+  - live installed or running artifact
+- For memory, recall, restore, or upgrade incidents, decompose the problem across:
+  - chat history
+  - saved memory
+  - recall / RAG corpus
+  - schedules / background tasks
+  - auth / provider state
+  - restore / backup state
 - Prefer shared structural fixes over one-off patches, hacks, or owner-machine workarounds.
 - Do not hardcode on agent names, prompt text, tool substrings, provider labels, user identity, or one machine's state unless a source-of-truth doc explicitly requires it.
 - CRITICAL RULE: do not add regex or keyword matching in runtime code to detect user intent, provider selection, email phrasing, or productivity scope. Activation prompts in `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml` own that behavior; classifier outages are solved with `activation.fallbacks`, not heuristics.
@@ -99,6 +116,8 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Give Claude the full picture: the relevant docs, exact files, runtime evidence, your provisional
   root cause, at least one alternative explanation already considered, and the exact decision you
   want validated or challenged.
+- Sanitize secrets, credentials, and private values before handing context to Claude or any sub-agent
+  unless the exact value is strictly required for a local machine-only step.
 - When useful, run the original user task or project prompt through the same review-only Claude
   pass to compare its reasoning against your own.
 - Treat Claude as a second opinion, not the source of truth.
@@ -106,6 +125,9 @@ For installer, runtime, release, or publish-boundary work, also read:
 ## Git And Repo Safety
 
 - Nested repos have separate histories. Parent repo commits do not deploy nested repo changes.
+- Before claiming a fix is shipped or release-ready, verify that the nested component commit, the
+  parent pin or manifest entry (for example `components.lock.json`), and any compiled/prebuilt
+  delivery artifact all reflect the intended change.
 - Commit and push nested repos independently to their configured `origin`, never `upstream`.
 - Treat `git-helper.sh push ... --include-public-components` as a workspace helper, not a backup.
 - Keep scratch output, caches, local artifacts, temporary workspaces, and generated service state
@@ -148,6 +170,8 @@ For installer, runtime, release, or publish-boundary work, also read:
   test all realistically affected paths around what you changed.
 - For installer, compiler, or runtime changes, inspect generated outputs and verify at least one
   real affected surface.
+- For helpers, bundled apps, compiled `dist/` outputs, or other prebuilt artifacts, verify the live
+  installed/shipped artifact independently. Source correctness is not enough.
 - Clean-machine acceptance beats "works on the owner laptop."
 - Use `qa/` as the home for end-to-end QA plans and reports. If the needed feature area does not
   exist yet, create it instead of scattering QA notes elsewhere.
@@ -167,7 +191,8 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Before stopping on public-facing work, ask:
   1. Is this safe to go public now?
   2. Has fresh clone/install been proven in a new directory?
-  3. Did I verify that no private identity or local-path leakage is being published with this work?
+  3. Did I verify that no private identity, secret, or local-path leakage is being published with this work?
+  4. If a nested component or shipped artifact changed, did I verify the parent pin, built artifact, and installed artifact all match?
 - Do not say "done" if verification is still theoretical.
 
 ## Useful Commands

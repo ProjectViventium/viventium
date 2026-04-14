@@ -23,7 +23,11 @@
 - the dedicated private companion repo is the only place for personal state, private prompts, private docs, backups, snapshots, machine-specific runtime data, and explicit user-approved secret-bearing transfer files
 - the dedicated enterprise deployment repo is the only place for deployment-as-a-service code, enterprise overlays, and operator runbooks
 - the private and enterprise companion repos may live locally either beside `viventium_core` or under its root for unified-workspace convenience, but when nested they must remain separate git repos, ignored by the main repo, and excluded from every public export or tracked public surface
+- a plain same-named folder is not a valid private boundary; a `<private-companion-repo>` or `<enterprise-deployment-repo>` only counts when it is the root of a separate git repo or worktree
 - If a file is not required to install, run, test, document, or release the v0.4 product surface, it does not belong in the tracked public-facing repo roots or any publishable export generated from them
+- credentials, passwords, tokens, and secrets that appear in chat are transient secrets:
+  - use them only for the immediate local task
+  - do not restate them in docs, tests, commits, QA artifacts, support notes, or second-opinion prompts
 - When in doubt:
   - personal / confidential / owner-specific / machine-specific -> private repo
   - deployment / infra / customer-ops / enterprise-only -> enterprise repo
@@ -52,6 +56,32 @@
   - recompile generated runtime files
   - rerun doctor before restart
 
+### 2.3.1 Shipped Artifact and Pin Discipline
+- A source fix is not shipped just because the tracked file changed.
+- When a feature is delivered through a nested component, compiled `dist/` output, prebuilt helper, shipped binary, or pinned component ref, release readiness requires all relevant surfaces to match:
+  - tracked source change
+  - nested component commit, when applicable
+  - parent pin/manifest entry such as `components.lock.json`
+  - compiled/prebuilt delivery artifact and any source hash that validates it
+  - live installed or running artifact used in QA
+- Source-level inspection is insufficient for these cases:
+  - verify the installed helper bundle, shipped binary, or compiled runtime that the product actually runs
+  - do not assume source correctness implies artifact correctness
+- If a nested component or shipped artifact changed, verify the parent pin and the installed artifact together before claiming release readiness
+
+### 2.3.2 Continuity and Restore Discipline
+- Continuity incidents must be decomposed before fixing them. At minimum, classify which of these surfaces is failing:
+  - chat history
+  - saved memory
+  - recall / RAG corpus
+  - schedules / background tasks
+  - auth / provider state
+  - restore / backup state
+- Recall/vector state is derived state, not canonical truth.
+- Restore and upgrade paths must be continuity-aware:
+  - do not silently trust rolled-back recall/vector state
+  - rebuild, invalidate, or block stale derived continuity surfaces until they are proven current again
+
 ### 2.4 Installer and QA Discipline
 - A clean-machine install must be proven through the public product paths only:
   - `./install.sh`
@@ -67,6 +97,8 @@
 - Installer acceptance is not complete until the product is validated from another device or machine over LAN/public origin where relevant:
   - API/config inspection alone is insufficient
   - real browser QA must confirm the visible surface, login flow, provider picker, connected-account actions, and remote call routing
+- For helper apps, prebuilt binaries, and compiled runtime bundles, QA must prove the live installed artifact:
+  - verifying source code or the local repo tree alone is not enough
 - Cold-start behavior must be treated as part of product quality:
   - honest progress and timeouts for first-build Docker paths
   - honest health checks during first package builds
@@ -157,6 +189,7 @@ A developer referring to a single document about a respective feature **must per
 4. **You need to have complete concrete evidence** only after you've gone through EVERYTHING
 5. **Then finally refer to web** for additional context if needed
 6. **LEAVE NO STONE UNTURNED**
+7. When asking a second model or sub-agent to review the issue, sanitize private values whenever a placeholder will preserve the reasoning task
 
 ### Priority-Based Approach
 - Address issues in priority order based on severity (Critical → High → Medium → Low)

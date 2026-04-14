@@ -77,6 +77,7 @@ final class HelperController: ObservableObject {
             }
         }
     }
+    @Published private(set) var snapshotInProgress: Bool = false
     @Published private(set) var openURLString: String = "http://localhost:3190"
     @Published private(set) var launchAtLoginEnabled: Bool = false
     @Published private(set) var showInStatusBarEnabled: Bool = true
@@ -127,6 +128,14 @@ final class HelperController: ObservableObject {
 
     var actionDisabled: Bool {
         self.stackState.actionBusy || self.config == nil
+    }
+
+    var backupActionLabel: String {
+        self.snapshotInProgress ? "Creating Backup..." : "Create Backup Snapshot"
+    }
+
+    var backupActionDisabled: Bool {
+        self.snapshotInProgress || self.stackState.actionBusy || self.config == nil
     }
 
     var showsStatusRow: Bool {
@@ -231,6 +240,62 @@ final class HelperController: ObservableObject {
             self.startStack(openWhenReady: false)
         case .starting, .stopping:
             return
+        }
+    }
+
+    func createBackupSnapshot() {
+        guard let config else {
+            let alert = NSAlert()
+            alert.messageText = "Missing helper config"
+            alert.informativeText = "Reinstall the Viventium helper from this checkout, then try again."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        guard !self.snapshotInProgress else {
+            return
+        }
+
+        self.snapshotInProgress = true
+        self.log("Manual backup snapshot requested")
+
+        Task.detached(priority: .userInitiated) {
+            let exitStatus = Self.runCLI(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["snapshot"],
+                logFileName: "helper-snapshot.log"
+            )
+            let snapshotPath = Self.latestSnapshotPath(appSupportDir: config.appSupportDir)
+            await MainActor.run {
+                self.snapshotInProgress = false
+                if exitStatus == 0 {
+                    self.log("Manual backup snapshot completed")
+                    let alert = NSAlert()
+                    alert.messageText = "Backup snapshot created"
+                    alert.informativeText =
+                        snapshotPath.map { "Saved to \($0)" } ??
+                        "The snapshot completed, but the latest snapshot path was not recorded."
+                    alert.alertStyle = .informational
+                    if snapshotPath != nil {
+                        alert.addButton(withTitle: "Reveal")
+                    }
+                    alert.addButton(withTitle: "OK")
+                    let response = alert.runModal()
+                    if response == .alertFirstButtonReturn, let snapshotPath {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: snapshotPath)])
+                    }
+                } else {
+                    self.log("Manual backup snapshot failed with status \(exitStatus)")
+                    let alert = NSAlert()
+                    alert.messageText = "Backup snapshot failed"
+                    alert.informativeText = "Check helper-snapshot.log and try again."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
         }
     }
 
@@ -1452,6 +1517,20 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
     }
 
+    private nonisolated static func latestSnapshotPath(appSupportDir: String) -> String? {
+        let latestPathURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("snapshots/LATEST_PATH")
+        guard
+            let data = try? Data(contentsOf: latestPathURL),
+            let value = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
     private func openBrowser() {
         guard let url = URL(string: self.openURLString) else { return }
         NSWorkspace.shared.open(url)
@@ -1754,6 +1833,10 @@ struct ViventiumHelperApp: App {
                 Button(self.controller.statusLabel) {}
                     .disabled(true)
             }
+            Button(self.controller.backupActionLabel) {
+                self.controller.createBackupSnapshot()
+            }
+            .disabled(self.controller.backupActionDisabled)
             Toggle(
                 "Start at Login",
                 isOn: Binding(
