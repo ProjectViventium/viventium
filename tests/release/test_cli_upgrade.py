@@ -740,6 +740,126 @@ def test_install_wait_log_activity_summary_reports_current_build_phase(tmp_path:
     assert completed.stdout.strip() == "Building LibreChat web app"
 
 
+def test_detached_launch_process_group_running_detects_active_group(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    pgid_file_def = extract_shell_function(cli_source, "detached_launch_process_group_file")
+    read_pgid_def = extract_shell_function(cli_source, "read_detached_launch_process_group")
+    group_running_def = extract_shell_function(cli_source, "detached_launch_process_group_running")
+
+    fake_bin = tmp_path / "bin"
+    write_executable(
+        fake_bin / "ps",
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-Ao" ]]; then
+  printf '10078 94626 S\\n'
+  printf '10085 94626 S\\n'
+  exit 0
+fi
+exit 1
+""",
+    )
+
+    app_support_dir = tmp_path / "app-support"
+    pgid_file = app_support_dir / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+    pgid_file.parent.mkdir(parents=True, exist_ok=True)
+    pgid_file.write_text("94626\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"PATH='{fake_bin}':\"$PATH\"\n"
+                f"APP_SUPPORT_DIR='{app_support_dir}'\n"
+                "VIVENTIUM_RUNTIME_PROFILE=isolated\n"
+                f"{pgid_file_def}"
+                f"{read_pgid_def}"
+                f"{group_running_def}"
+                "detached_launch_process_group_running\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0
+
+
+def test_detached_start_failed_early_keeps_waiting_while_detached_group_is_alive() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "detached_start_failed_early")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "DETACHED_START_PID=12345\n"
+                "pid_is_running() { return 1; }\n"
+                "detached_launch_process_group_running() { return 0; }\n"
+                "is_stack_running() { return 1; }\n"
+                "user_surface_healthy() { return 1; }\n"
+                "launch_log_indicates_startup_failure() { return 0; }\n"
+                "if detached_start_failed_early /tmp/missing.log; then\n"
+                "  printf 'result=failed\\n'\n"
+                "else\n"
+                "  printf 'result=waiting\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "result=waiting"
+
+
+def test_launch_stack_detached_skips_restart_while_detached_group_is_alive() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "APP_SUPPORT_DIR=/tmp/app-support\n"
+                "CONFIG_FILE=/tmp/config.yaml\n"
+                "touch \"$CONFIG_FILE\"\n"
+                "ensure_app_support_layout() { :; }\n"
+                "user_surface_healthy() { return 1; }\n"
+                "detached_launch_process_group_running() { return 0; }\n"
+                "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
+                "stop_stack_for_upgrade() { printf 'restarted\\n'; }\n"
+                "if launch_stack_detached; then\n"
+                "  printf 'ok\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "Viventium is already starting.",
+        "ok",
+    ]
+    assert "stack-check" not in completed.stderr
+    assert "restarted" not in completed.stdout
+
+
 def test_install_wait_current_tagline_types_text_quickly() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     pick_def = extract_shell_function(cli_source, "install_wait_pick_next_tagline")

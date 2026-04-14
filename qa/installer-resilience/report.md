@@ -233,6 +233,48 @@ Why this matters:
 - this follow-up closes that gap in the owning startup/status layers instead of relying on owner
   machine leftovers or private repair steps
 
+## Detached-launch follow-up
+
+Date: 2026-04-13
+
+Observed on the private remote macOS clean-install test path:
+
+- install wait reached the timeout/failure branch even though the detached launch had already handed
+  off correctly and background LibreChat build output was still progressing
+- the detached launch wrapper pid had exited, but the recorded detached launch process group was
+  still alive under `state/runtime/<profile>/detached-launch.pgid`
+- a re-entrant launch during that same warm-up window could restart the stack instead of honoring
+  the in-flight detached startup
+- detached LibreChat API watchdog initial wait was still shorter than real first-run Intel clean
+  build time
+
+Root cause:
+
+- `bin/viventium` install/start wait logic treated the short-lived detached wrapper pid as the main
+  ownership signal
+- once that wrapper exited, the handoff gap before healthy listeners appeared could be misread as
+  `startup stopped`, even though the detached launch process group was still alive
+- the detached LibreChat API watchdog initial health wait budget was shorter than real clean-machine
+  build time on the remote Intel Mac
+
+Fixes applied:
+
+- `bin/viventium` now reads the recorded detached launch process group and keeps waiting while that
+  group is still alive
+- `bin/viventium launch` now returns `Viventium is already starting.` instead of restarting the
+  stack when the detached launch process group is still warming
+- detached LibreChat API watchdog initial wait now defaults to the longer clean-build budget
+  (`1800` retries)
+
+Focused verification:
+
+- `python3 -m pytest tests/release/test_cli_upgrade.py tests/release/test_detached_librechat_api_watchdog.py -q`
+- targeted assertions prove:
+  - detached launch process-group detection in `bin/viventium`
+  - `detached_start_failed_early()` continues waiting while the detached process group is alive
+  - re-entrant detached launch requests return `already starting`
+  - the longer detached LibreChat API watchdog initial wait budget is wired into the launcher
+
 ## Remote current-main audit
 
 Date: 2026-04-13

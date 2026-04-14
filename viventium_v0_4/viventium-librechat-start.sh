@@ -5605,7 +5605,7 @@ start_detached_librechat_api_watchdog() {
 
   local interval_s="${LIBRECHAT_API_WATCHDOG_INTERVAL_S:-5}"
   local failure_threshold="${LIBRECHAT_API_WATCHDOG_FAILURE_THRESHOLD:-3}"
-  local initial_retries="${LIBRECHAT_API_WATCHDOG_INITIAL_RETRIES:-240}"
+  local initial_retries="${LIBRECHAT_API_WATCHDOG_INITIAL_RETRIES:-1800}"
   local recovery_retries="${LIBRECHAT_API_WATCHDOG_RECOVERY_RETRIES:-120}"
 
   (

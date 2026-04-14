@@ -165,6 +165,24 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     produce a false skipped/stopped state for enabled installs
   - the launcher must retry Telegram in the background and expose that pending state through
     `bin/viventium status`
+- Detached installer startup must track the detached launch ownership boundary, not only the
+  short-lived wrapper pid:
+  - `bin/viventium start` is allowed to hand control off to a detached process group and exit while
+    background builds continue
+  - install/start wait logic must therefore follow the recorded detached launch process group under
+    `state/runtime/<profile>/detached-launch.pgid` before declaring early failure
+  - otherwise clean first builds can be reported as `stopped during startup` during a valid warm-up
+    handoff
+- Re-entrant launch requests during detached startup must be treated as the same in-flight boot:
+  - helper/login-item auto-start can legitimately invoke `bin/viventium launch` while the detached
+    install-owned startup is still warming
+  - if the recorded detached launch process group is still alive, `bin/viventium launch` must
+    return `already starting` instead of tearing the stack down and restarting it mid-boot
+- Detached LibreChat API watchdog budgeting must match real clean-machine build time:
+  - first-run API readiness on slower Intel Macs can take well beyond the short historical
+    watchdog budget
+  - the watchdog's initial health wait must therefore survive the same clean-build envelope as the
+    installer instead of exiting before the API ever has a chance to come up
 - The shipped macOS helper binary is the reliable clean-install path on April 7, 2026:
   - clean x86_64 CommandLineTools hosts can fail SwiftPM manifest linking before any app code builds
   - when `apps/macos/ViventiumHelper/prebuilt/source.sha256` matches current helper sources, the

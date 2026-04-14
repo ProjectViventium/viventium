@@ -123,6 +123,16 @@ def test_password_falls_back_to_visible_input_when_getpass_cannot_attach(monkeyp
     assert "secure password input unavailable" in capsys.readouterr().out.lower()
 
 
+def test_questionary_is_disabled_when_term_is_dumb(monkeypatch) -> None:
+    installer_ui = load_installer_ui_module()
+
+    monkeypatch.setenv("TERM", "dumb")
+    ui = installer_ui.InstallerUI()
+
+    assert ui.interactive is False
+    assert ui.questionary_enabled is False
+
+
 def test_checkbox_falls_back_to_plain_prompts_when_questionary_checkbox_raises(monkeypatch, capsys) -> None:
     installer_ui = load_installer_ui_module()
     installer_ui.questionary = types.SimpleNamespace(

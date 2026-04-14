@@ -18,6 +18,7 @@ def test_detached_launch_installs_librechat_api_watchdog_contract() -> None:
     assert "start_detached_librechat_api_watchdog() {" in launcher_text
     assert "stop_detached_librechat_api_watchdog() {" in launcher_text
     assert 'while [[ "$port_release_tries" -lt 10 ]] && port_has_listener "$LC_API_PORT"; do' in launcher_text
+    assert 'local initial_retries="${LIBRECHAT_API_WATCHDOG_INITIAL_RETRIES:-1800}"' in launcher_text
     assert 'wait_for_http "${LC_API_URL}/health" "Detached LibreChat API watchdog initial probe"' in launcher_text
     assert 'wait_for_http "${LC_API_URL}/health" "LibreChat API after detached backend restart"' in launcher_text
     assert 'failed_recoveries=$((failed_recoveries + 1))' in launcher_text

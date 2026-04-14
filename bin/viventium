@@ -221,6 +221,34 @@ stack_owner_state_file() {
   printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/stack-owner.json"
 }
 
+detached_launch_process_group_file() {
+  local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/detached-launch.pgid"
+}
+
+read_detached_launch_process_group() {
+  local pgid_file=""
+  pgid_file="$(detached_launch_process_group_file)"
+  if [[ -f "$pgid_file" ]]; then
+    tr -d '[:space:]' <"$pgid_file"
+  fi
+}
+
+detached_launch_process_group_running() {
+  local recorded_pgid=""
+  local running_pids=""
+
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  running_pids="$(
+    ps -Ao pid=,pgid=,state= 2>/dev/null | \
+      awk -v target="$recorded_pgid" '$2 == target && $3 !~ /Z/ { print $1 }' | \
+      xargs 2>/dev/null || true
+  )"
+  [[ -n "$running_pids" ]]
+}
+
 write_stack_owner_state() {
   local command_name="${1:-unknown}"
   local owner_file=""
@@ -1470,6 +1498,10 @@ launch_stack_detached() {
     echo "Viventium is already running."
     return 0
   fi
+  if detached_launch_process_group_running; then
+    echo "Viventium is already starting."
+    return 0
+  fi
   if is_stack_running; then
     echo "Detected Viventium processes, but no healthy user-facing surface. Restarting the local stack..."
     stop_stack_for_upgrade
@@ -1615,13 +1647,13 @@ detached_start_failed_early() {
     if pid_is_running "$DETACHED_START_PID"; then
       return 1
     fi
-    if is_stack_running || user_surface_healthy; then
+    if detached_launch_process_group_running || is_stack_running || user_surface_healthy; then
       return 1
     fi
     return 0
   fi
 
-  if is_stack_running || user_surface_healthy; then
+  if detached_launch_process_group_running || is_stack_running || user_surface_healthy; then
     return 1
   fi
   launch_log_indicates_startup_failure "$launch_log"

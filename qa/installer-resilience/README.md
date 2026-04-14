@@ -10,6 +10,8 @@ classes:
    API becomes healthy
 4. clean-machine launcher/runtime startup must repair partial local stacks and reject stale
    local-search sidecars that only look healthy from an unauthenticated port probe
+5. install/start wait logic must keep following a valid detached startup handoff instead of
+   reporting a false early stop while the real stack is still warming
 
 ## Scenarios
 
@@ -77,3 +79,24 @@ Expected behavior:
   up
 - `bin/viventium status` reports `Configured` after a real stop instead of implying the stack is
   still starting forever
+
+### 5. Detached launch handoff on a clean first build
+
+Repro surface:
+
+- clean/native install on a slower Mac
+- detached launcher path where `bin/viventium start` exits after handing off to the real detached
+  launch process group
+- background LibreChat package/client builds continue for several more minutes before API/frontend
+  listeners are healthy
+
+Expected behavior:
+
+- install/start wait continues while the detached launch process group recorded in
+  `state/runtime/<profile>/detached-launch.pgid` is still alive
+- install does not print `stopped during startup` just because the short-lived detached wrapper pid
+  has exited
+- a re-entrant `bin/viventium launch` returns `already starting` instead of tearing down the same
+  warming stack
+- detached LibreChat API watchdog keeps waiting through the clean-build window instead of giving up
+  before the first healthy API response

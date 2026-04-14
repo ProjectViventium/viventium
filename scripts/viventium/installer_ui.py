@@ -45,7 +45,9 @@ class CheckboxOption:
 
 class InstallerUI:
     def __init__(self) -> None:
-        self.interactive = bool(sys.stdin.isatty() and sys.stdout.isatty())
+        self.interactive = bool(
+            sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get("TERM", "") != "dumb"
+        )
         self.rich_enabled = Console is not None
         self.questionary_enabled = questionary is not None and self.interactive
         self._questionary_fallback_notified = False
