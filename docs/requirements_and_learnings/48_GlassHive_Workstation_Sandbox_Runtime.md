@@ -142,18 +142,21 @@ container and data).
   continuity
 - Least-resistance v1 action model:
   - `Open workspace`
+  - `Duplicate workspace`
   - `New workspace`
-- `Duplicate workspace` is **not** a default v1 action; clone semantics for browser sessions are
-  too risky to treat as the streamlined path for non-technical users
+- `Duplicate workspace` is allowed in the default v1 action set only with safe semantics:
+  - copy workspace files/context
+  - do not clone browser-session state by default
 - Parent systems should auto-reuse the correct workspace when they already know the stable alias
   for the relevant service or job
 - `Open workspace` should automatically resume paused workspaces
-- workspace rename in user-facing UI should update the display label, not silently rewrite the
+- if workspace rename is added later, it should update the display label, not silently rewrite the
   stable routing alias used by the parent
 
 ### Practical Product Promise
 
 - reopen the same workspace and you return to the same environment
+- duplicate a workspace when you want a branch that starts from the same files/context
 - create a new workspace when you want a clean start
 - do not promise that every website will keep the login forever; site-side expiry and MFA can still
   happen
