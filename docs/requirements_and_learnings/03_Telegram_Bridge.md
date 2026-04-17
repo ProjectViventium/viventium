@@ -1,10 +1,12 @@
 # Telegram Bridge - Requirements, Specs, and Learnings
 
 ## Overview
+
 Telegram messages must route through the main LibreChat Agents pipeline by default. Responses
 stream back to Telegram through the existing bridge.
 
 ## Core Requirements
+
 - Telegram users receive complete responses or a clear error if the agent or voice stack disconnects.
 - Connection loss mid-response must not leave users hanging on a partial holding message.
 - Retry should be user-initiated to avoid duplicate tool actions.
@@ -32,6 +34,7 @@ stream back to Telegram through the existing bridge.
   contract.
 
 ## Telegram Voice and Call Behavior
+
 - Voice-note transcription must use the configured runtime STT provider.
 - Voice-note and video-note download/transcription failures must return one clean Telegram error and
   stop before chat submission.
@@ -43,6 +46,7 @@ stream back to Telegram through the existing bridge.
   explicitly known-good for the current deployment.
 
 ## Telegram Media Prerequisites
+
 - Telegram voice notes and video notes are part of the supported bridge surface, so their media
   decoding requirements must be treated as first-class installer/runtime prerequisites.
 - When Telegram is enabled, `ffmpeg` must be available on the host:
@@ -82,13 +86,38 @@ stream back to Telegram through the existing bridge.
 Any file generated in LibreChat must be sent to the Telegram user as a Telegram photo/document,
 not silently dropped.
 
+Inbound Telegram message attachments must follow the same shared message-file contract as the web
+UI. If the active model/provider supports a file through LibreChat's native "Upload to Provider"
+path, the bridge must preserve the normal raw message attachment so downstream client code can send
+it provider-natively. If the file is parseable but not valid for provider-native upload on that
+surface, the runtime must promote it into the context-extraction pipeline instead of storing it as
+an opaque upload the agent cannot read. If neither provider-native upload nor readable
+context-extraction can handle the file on that surface, Telegram must fail the turn with a clear
+attachment-processing error rather than silently dropping to caption-only behavior.
+
+### Major file-type rule
+
+- Text-like files must extract into readable context:
+  - examples: `.txt`, `.md`, `.json`, `.csv`, `.xml`, `.yaml`, code/config text
+- Provider-native raw attachments must stay raw when the current runtime can truly serialize them:
+  - examples: images, PDFs, Google/OpenRouter audio/video, Bedrock document types
+- Office/OpenDocument binaries that require OCR or a document parser must either:
+  - use the configured OCR/document-parser path, or
+  - fail honestly with a clear message when that extraction path is unavailable
+- Unsupported binary/archive leftovers must not be accepted as inert message attachments.
+
 ### Fix pattern
+
 - parse attachment events from the LibreChat stream
 - download bytes through the gateway
 - send images as albums when appropriate
 - send non-image files as documents
+- preserve provider-native message attachments and only auto-promote the non-provider-native
+  parseable remainder into context extraction before the agent run
+- reject files that are neither provider-native nor readable through context extraction
 
 ## Evidence to Capture
+
 - helper logs
 - Telegram bot logs
 - Mongo proof of the exact user and assistant turns
