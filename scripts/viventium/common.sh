@@ -33,6 +33,115 @@ ensure_app_support_layout() {
   mkdir -p "$app_support_dir/logs"
 }
 
+path_is_git_repo_root() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" && -d "$candidate" ]] || return 1
+  local git_root=""
+  git_root="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$git_root" ]] || return 1
+  [[ "$(cd "$candidate" && pwd -P)" == "$(cd "$git_root" && pwd -P)" ]]
+}
+
+public_safe_path_label() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" ]] || return 1
+  if [[ "$candidate" == "$HOME" ]]; then
+    printf '%s\n' "~"
+    return 0
+  fi
+  case "$candidate" in
+    "$HOME"/*)
+      printf '~/%s\n' "${candidate#"$HOME"/}"
+      return 0
+      ;;
+  esac
+  local base=""
+  base="$(basename "$candidate")"
+  if [[ -n "$base" && "$base" != "/" && "$base" != "." ]]; then
+    printf '<local>/%s\n' "$base"
+  else
+    printf '%s\n' "<local>"
+  fi
+}
+
+discover_private_repo_dir() {
+  local workspace_root="$1"
+  local repo_root="${2:-$workspace_root}"
+  local candidate=""
+  local candidates=(
+    "$repo_root/private-companion-repo"
+    "$repo_root/.private-companion-repo"
+    "$workspace_root/private-companion-repo"
+    "$workspace_root/.private-companion-repo"
+  )
+  for candidate in "${candidates[@]}"; do
+    if path_is_git_repo_root "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+discover_workspace_repo_dir() {
+  local repo_name="$1"
+  local workspace_root="$2"
+  local repo_root="${3:-$workspace_root}"
+  local candidate=""
+  local candidates=(
+    "$repo_root/$repo_name"
+    "$workspace_root/$repo_name"
+  )
+  for candidate in "${candidates[@]}"; do
+    if path_is_git_repo_root "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+discover_private_curated_dir() {
+  local private_repo_dir="${1:-}"
+  if [[ -z "$private_repo_dir" ]]; then
+    return 1
+  fi
+
+  local candidate="$private_repo_dir/curated"
+  if [[ -d "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+discover_private_backup_root() {
+  local app_support_dir="$1"
+  local private_repo_dir="${2:-}"
+  if [[ -n "$private_repo_dir" ]]; then
+    printf '%s\n' "$private_repo_dir/backups/local-state"
+    return 0
+  fi
+  printf '%s\n' "$app_support_dir/snapshots"
+}
+
+continuity_state_dir() {
+  local app_support_dir="$1"
+  local runtime_profile="${2:-isolated}"
+  printf '%s\n' "$app_support_dir/state/runtime/${runtime_profile}/continuity"
+}
+
+continuity_audit_dir() {
+  local app_support_dir="$1"
+  printf '%s\n' "$app_support_dir/state/continuity"
+}
+
+recall_rebuild_required_file() {
+  local app_support_dir="$1"
+  local runtime_profile="${2:-isolated}"
+  printf '%s\n' "$(continuity_state_dir "$app_support_dir" "$runtime_profile")/recall-rebuild-required.json"
+}
+
 python_has_module() {
   local python_bin="$1"
   local module_name="$2"
@@ -236,4 +345,61 @@ ensure_python_requirements_file() {
 
   printf '%s\n' "$requirements_hash" >"$stamp_path"
   printf '%s\n' "$target_python"
+}
+
+viventium_port_listener_active() {
+  local port="$1"
+  [[ -n "$port" ]] || return 1
+
+  local python_bin="${VIVENTIUM_PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
+  local host="${VIVENTIUM_PORT_CHECK_HOST:-localhost}"
+  local timeout_seconds="${VIVENTIUM_PORT_CHECK_TIMEOUT_SECONDS:-1}"
+
+  if [[ -n "$python_bin" ]]; then
+    "$python_bin" - "$host" "$port" "$timeout_seconds" <<'PY' 2>/dev/null
+import socket
+import sys
+
+host = str(sys.argv[1]).strip() or "localhost"
+port = int(sys.argv[2])
+try:
+    timeout_seconds = max(0.2, float(sys.argv[3]))
+except Exception:
+    timeout_seconds = 1.0
+
+seen = set()
+for family, socktype, proto, _, sockaddr in socket.getaddrinfo(
+    host,
+    port,
+    type=socket.SOCK_STREAM,
+):
+    key = (family, sockaddr)
+    if key in seen:
+        continue
+    seen.add(key)
+    sock = socket.socket(family, socktype, proto)
+    sock.settimeout(timeout_seconds)
+    try:
+        if sock.connect_ex(sockaddr) == 0:
+            raise SystemExit(0)
+    except Exception:
+        pass
+    finally:
+        sock.close()
+
+raise SystemExit(1)
+PY
+    return $?
+  fi
+
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z -w "$timeout_seconds" "$host" "$port" >/dev/null 2>&1; then
+      return 0
+    fi
+    if nc -z -G "$timeout_seconds" "$host" "$port" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  return 1
 }

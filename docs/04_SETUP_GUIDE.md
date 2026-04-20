@@ -79,6 +79,8 @@ macOS helper note:
 - on clean supported installs, Viventium now uses the shipped matching menu-bar helper binary first
   when it matches the tracked helper sources
 - local Swift helper builds remain a development override, not the default end-user dependency path
+- the helper also exposes `Create Backup Snapshot`, which runs the same supported snapshot flow as
+  `bin/viventium snapshot` and reveals the latest snapshot folder when it completes
 
 Refresh an existing local install after new published changes:
 
@@ -91,6 +93,9 @@ Optional restart as part of the same upgrade:
 ```bash
 bin/viventium upgrade --restart
 ```
+
+Upgrade now captures pre/post continuity audits. If the post-upgrade audit reports an `error`,
+automatic restart is blocked until the operator reviews the drift.
 
 Important:
 
@@ -110,11 +115,24 @@ Snapshot local state:
 bin/viventium snapshot
 ```
 
+Capture the current continuity metadata without taking a full payload snapshot:
+
+```bash
+bin/viventium continuity-audit
+```
+
 Inspect or apply restore actions:
 
 ```bash
 bin/viventium restore --snapshot-dir <path>
 ```
+
+Restore notes:
+
+- snapshots always include a metadata-only `continuity-manifest.json`
+- restore refuses an older snapshot by default unless you pass `--allow-older-snapshot`
+- if you restore Mongo or other recall-derived state, rerun restore with `--mark-recall-stale`
+  before trusting vector-backed recall again, then clear the marker intentionally after rebuild
 
 ## What the New Surface Does
 

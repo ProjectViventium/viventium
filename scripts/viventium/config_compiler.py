@@ -78,6 +78,8 @@ DEFAULT_GOOGLE_WORKSPACE_MCP_SCOPE = (
     "https://www.googleapis.com/auth/cse"
 )
 LOCAL_MCP_ALLOWED_DOMAINS = ["localhost", "127.0.0.1", "host.docker.internal"]
+REPO_ROOT = SCRIPT_DIR.parent.parent
+GLASSHIVE_RUNTIME_DIR = REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
 LEGACY_CANONICAL_ENV_IMPORT_KEYS = (
     "AZURE_AI_FOUNDRY_API_KEY",
     "AZURE_AI_FOUNDRY_API_VERSION",
@@ -140,6 +142,12 @@ KEYCHAIN_SERVICE_ENV_FALLBACKS = {
     "viventium/telegram_codex_bot_token": ("TELEGRAM_CODEX_BOT_TOKEN",),
     "viventium/x_ai_api_key": ("XAI_API_KEY",),
 }
+
+
+def glasshive_enabled(config: dict[str, Any]) -> bool:
+    integrations = config.get("integrations", {}) or {}
+    configured = resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False)
+    return configured and GLASSHIVE_RUNTIME_DIR.is_dir()
 
 VOICE_PROVIDER_KEYCHAIN_SERVICES = {
     "assemblyai": "viventium/assemblyai_api_key",
@@ -647,6 +655,8 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
             mcp_servers.pop("ms-365", None)
         if not resolve_bool(env.get("START_GOOGLE_MCP"), False):
             mcp_servers.pop("google_workspace", None)
+        if not resolve_bool(env.get("START_GLASSHIVE"), False):
+            mcp_servers.pop("glasshive-workers-projects", None)
 
     web_search = cleaned.get("webSearch")
     if isinstance(web_search, dict):
@@ -907,6 +917,18 @@ def optional_nested_secret(node: dict[str, Any], key: str) -> str:
     if isinstance(value, dict):
         return resolve_optional_secret(value.get("secret_ref") or value.get("secret_value") or "")
     return resolve_optional_secret(value)
+
+
+def positive_int_or_default(value: Any, default: int, label: str) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"{label} must be an integer") from exc
+    if parsed < 1:
+        raise SystemExit(f"{label} must be greater than 0")
+    return parsed
 
 
 def resolve_voice_provider_secret(
@@ -1246,6 +1268,9 @@ def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
     auth = runtime.get("auth", {}) or {}
     return {
         "allow_registration": resolve_bool(auth.get("allow_registration"), True),
+        "bootstrap_registration_once": resolve_bool(
+            auth.get("bootstrap_registration_once"), False
+        ),
         "allow_password_reset": resolve_bool(auth.get("allow_password_reset"), False),
     }
 
@@ -1296,6 +1321,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     start_searxng = web_search_is_enabled and web_search_settings["search_provider"] == "searxng"
     start_firecrawl = web_search_is_enabled and web_search_settings["scraper_provider"] == "firecrawl"
     telegram_is_enabled = telegram_enabled(config)
+    glasshive_is_enabled = glasshive_enabled(config)
 
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
@@ -1345,6 +1371,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_MAIN_AGENT_ID": default_main_agent_id,
         "START_GOOGLE_MCP": "true" if integrations.get("google_workspace", {}).get("enabled") else "false",
         "START_MS365_MCP": "true" if integrations.get("ms365", {}).get("enabled") else "false",
+        "START_GLASSHIVE": "true" if glasshive_is_enabled else "false",
         "START_SCHEDULING_MCP": "true",
         "START_RAG_API": start_rag_api,
         "START_SKYVERN": "true" if integrations.get("skyvern", {}).get("enabled") else "false",
@@ -1357,6 +1384,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_OPENCLAW_ENABLED": "true" if integrations.get("openclaw", {}).get("enabled") else "false",
         "ALLOW_EMAIL_LOGIN": "true",
         "ALLOW_REGISTRATION": "true" if auth_settings["allow_registration"] else "false",
+        "VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE": "true"
+        if auth_settings["bootstrap_registration_once"]
+        else "false",
         "ALLOW_PASSWORD_RESET": "true" if auth_settings["allow_password_reset"] else "false",
         "ALLOW_SOCIAL_LOGIN": "false",
         "ALLOW_SOCIAL_REGISTRATION": "false",
@@ -1441,6 +1471,56 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             integrations["telegram"],
             "integrations.telegram",
         )
+        telegram_settings = integrations.get("telegram", {}) or {}
+        telegram_local_bot_api = telegram_settings.get("local_bot_api", {}) or {}
+        telegram_local_bot_api_enabled = resolve_bool(
+            telegram_local_bot_api.get("enabled"),
+            False,
+        )
+        bot_api_origin = str(telegram_settings.get("bot_api_origin", "") or "").strip()
+        bot_api_base_url = str(telegram_settings.get("bot_api_base_url", "") or "").strip()
+        bot_api_base_file_url = str(
+            telegram_settings.get("bot_api_base_file_url", "") or ""
+        ).strip()
+        if telegram_local_bot_api_enabled and (
+            bot_api_origin or bot_api_base_url or bot_api_base_file_url
+        ):
+            raise SystemExit(
+                "integrations.telegram.local_bot_api.enabled cannot be combined with "
+                "integrations.telegram.bot_api_origin/bot_api_base_url/bot_api_base_file_url"
+            )
+        telegram_max_file_size = positive_int_or_default(
+            telegram_settings.get("max_file_size_bytes"),
+            104_857_600 if telegram_local_bot_api_enabled else 10_485_760,
+            "integrations.telegram.max_file_size_bytes",
+        )
+        env["VIVENTIUM_TELEGRAM_MAX_FILE_SIZE"] = str(telegram_max_file_size)
+        if telegram_local_bot_api_enabled:
+            local_host = str(telegram_local_bot_api.get("host", "") or "").strip() or "127.0.0.1"
+            local_port = positive_int_or_default(
+                telegram_local_bot_api.get("port"),
+                8084,
+                "integrations.telegram.local_bot_api.port",
+            )
+            local_binary_path = str(
+                telegram_local_bot_api.get("binary_path", "") or ""
+            ).strip()
+            local_api_id = resolve_secret(telegram_local_bot_api.get("api_id") or "")
+            local_api_hash = resolve_secret(telegram_local_bot_api.get("api_hash") or "")
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED"] = "true"
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST"] = local_host
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT"] = str(local_port)
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID"] = local_api_id
+            env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH"] = local_api_hash
+            if local_binary_path:
+                env["VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH"] = local_binary_path
+            bot_api_origin = f"http://{local_host}:{local_port}"
+        if bot_api_origin:
+            env["VIVENTIUM_TELEGRAM_BOT_API_ORIGIN"] = bot_api_origin
+        if bot_api_base_url:
+            env["VIVENTIUM_TELEGRAM_BOT_API_BASE_URL"] = bot_api_base_url
+        if bot_api_base_file_url:
+            env["VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL"] = bot_api_base_file_url
 
     telegram_codex = integrations.get("telegram_codex", {}) or {}
     if telegram_codex_enabled(config):
@@ -1717,7 +1797,10 @@ def build_mcp_servers(
                 "Scheduling Cortex MCP for reminders, recurring jobs, and schedule management."
             ),
         },
-        "glasshive-workers-projects": {
+    }
+
+    if glasshive_enabled(config):
+        servers["glasshive-workers-projects"] = {
             "type": "streamable-http",
             "url": "${GLASSHIVE_MCP_URL}",
             "headers": {
@@ -1732,8 +1815,7 @@ def build_mcp_servers(
                 "sandboxes, and live operator takeover. Use it when work needs delegation, "
                 "persistence, or a human handoff into a live sandbox."
             ),
-        },
-    }
+        }
 
     if integrations.get("ms365", {}).get("enabled"):
         servers["ms-365"] = {
@@ -1923,6 +2005,16 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_LIBRECHAT_ORIGIN",
         "VIVENTIUM_TELEGRAM_SECRET",
         "VIVENTIUM_CALL_SESSION_SECRET",
+        "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE",
+        "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN",
+        "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL",
+        "VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID",
+        "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH",
     ]
     telegram_codex_keys = ["TELEGRAM_CODEX_BOT_TOKEN", "TELEGRAM_CODEX_BOT_USERNAME"]
     skyvern_keys = ["START_SKYVERN"]

@@ -12,6 +12,15 @@ them:
 
 - The generated runtime memory writer must initialize successfully with the compiler-emitted
   provider/model contract.
+- OpenAI connected-account memory runs on the Codex Responses bridge must lift instruction messages
+  into top-level `instructions`; `system` / `developer` messages must not remain inside Responses
+  `input`.
+- When the Codex bridge adapts streamed Responses SSE back into JSON for a non-stream memory run,
+  the adapted payload must preserve streamed `response.output_item.*` tool calls instead of
+  returning `output: []`.
+- The locally built `packages/api/dist` bundle used by runtime must carry that same Codex
+  normalization logic; a source-only fix does not pass QA if the supported rebuild path still
+  leaves stale compiled code in place.
 - Saved-memory behavior must remain additive, contradiction-aware, and token-efficient.
 - Forgetting must correctly rewrite only the affected detail across all impacted keys without
   dropping unrelated history, tracking, or signals.
@@ -41,6 +50,8 @@ them:
 2. Durable memory writer behavior
    - memory policy and memory agent tests pass for additive updates, overwrite handling, and noise
      rejection
+   - a real browser pass on a connected account proves that an explicit memory-worthy prompt creates
+     a visible entry in the `Memories` panel; an in-thread success reply alone does not pass
 3. Forgetting + integrity behavior
    - partial forgetting is defined as a cross-key `set_memory` rewrite contract, not a whole-key
      delete shortcut
@@ -59,6 +70,18 @@ them:
 7. Long-conversation correction coverage
    - important corrections do not disappear purely because they fell outside a tiny memory writer
      window
+8. Connected-account live continuity check
+   - real connected-account chat can succeed while saved memory or conversation recall still fail
+   - the saved-memory writer must survive the Codex-connected Responses request shape rather than
+     failing with backend request-contract errors
+   - the locally built runtime bundle used by the product must be verified after the supported
+     rebuild path runs, not just the source test path
+   - QA must therefore verify:
+     - chat success
+     - saved-memory artifact presence
+     - cross-conversation recovery
+     - recall-runtime health
+     - compiled-bundle alignment for the owning Codex normalization path
 
 ## Expected Results
 
@@ -75,5 +98,7 @@ them:
   - remaining broader landing/release-gate work
 - Bounded older-user-context coverage proves long-conversation corrections are not lost purely
   because they fell outside the current chat window.
+- The built runtime bundle used by the supported install/upgrade path must match the reviewed
+  Codex memory normalization source path.
 - If unrelated legacy test failures exist elsewhere, the report must call them out explicitly
   instead of mixing them into the memory-continuity verdict.

@@ -196,53 +196,45 @@ librechat_client_build_node_options() {
 ROOT_DIR="${VIVENTIUM_HELPER_V0_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 VIVENTIUM_CORE_DIR="${VIVENTIUM_HELPER_CORE_ROOT:-$(dirname "$ROOT_DIR")}"
 VIVENTIUM_WORKSPACE_DIR="${VIVENTIUM_HELPER_WORKSPACE_ROOT:-$(dirname "$VIVENTIUM_CORE_DIR")}"
+if [[ -f "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh"
+fi
 
-discover_private_repo_dir() {
-  local workspace_root="$1"
-  local repo_root="${2:-$workspace_root}"
-  local candidate=""
-  local candidates=(
-    "$repo_root/private-companion-repo"
-    "$repo_root/private-companion-repo"
-    "$repo_root/.private-companion-repo"
-    "$workspace_root/private-companion-repo"
-    "$workspace_root/private-companion-repo"
-    "$workspace_root/.private-companion-repo"
-  )
-  for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-discover_workspace_repo_dir() {
-  local repo_name="$1"
-  local workspace_root="$2"
-  local repo_root="${3:-$workspace_root}"
-  local candidate=""
-  local candidates=(
-    "$repo_root/$repo_name"
-    "$workspace_root/$repo_name"
-  )
-  for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
+if ! declare -F discover_workspace_repo_dir >/dev/null 2>&1; then
+  discover_workspace_repo_dir() {
+    local repo_name="$1"
+    local workspace_root="$2"
+    local repo_root="${3:-$workspace_root}"
+    local candidate=""
+    local candidates=(
+      "$repo_root/$repo_name"
+      "$workspace_root/$repo_name"
+    )
+    for candidate in "${candidates[@]}"; do
+      if declare -F path_is_git_repo_root >/dev/null 2>&1; then
+        if path_is_git_repo_root "$candidate"; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      elif [[ -d "$candidate" ]] && git -C "$candidate" rev-parse --show-toplevel >/dev/null 2>&1; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+    return 1
+  }
+fi
 
 VIVENTIUM_PRIVATE_REPO_DIR="${VIVENTIUM_PRIVATE_REPO_DIR:-$(discover_private_repo_dir "$VIVENTIUM_WORKSPACE_DIR" "$VIVENTIUM_CORE_DIR" || true)}"
 VIVENTIUM_DEPLOY_REPO_DIR="${VIVENTIUM_DEPLOY_REPO_DIR:-$(discover_workspace_repo_dir "enterprise-deployment-repo" "$VIVENTIUM_WORKSPACE_DIR" "$VIVENTIUM_CORE_DIR" || true)}"
-if [[ -z "$VIVENTIUM_DEPLOY_REPO_DIR" ]]; then
-  VIVENTIUM_DEPLOY_REPO_DIR="$VIVENTIUM_CORE_DIR/enterprise-deployment-repo"
+if [[ -n "$VIVENTIUM_PRIVATE_REPO_DIR" ]]; then
+  VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}"
+  VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/mirror}"
+else
+  VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-}"
+  VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-}"
 fi
-VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}"
-VIVENTIUM_PRIVATE_MIRROR_DIR="${VIVENTIUM_PRIVATE_MIRROR_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/mirror}"
 
 first_existing_path() {
   local candidate
@@ -370,7 +362,11 @@ LEGACY_V0_3_DIR="$(resolve_dir_or_default \
 # such as a clean port worktree, without relocating the rest of the Viventium stack.
 LIBRECHAT_DIR="${VIVENTIUM_LIBRECHAT_DIR:-$ROOT_DIR/LibreChat}"
 # === VIVENTIUM END ===
-LIBRECHAT_PRIVATE_CONFIG_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$VIVENTIUM_PRIVATE_REPO_DIR/curated}/configs/librechat"
+if [[ -n "$VIVENTIUM_PRIVATE_CURATED_DIR" ]]; then
+  LIBRECHAT_PRIVATE_CONFIG_DIR="$VIVENTIUM_PRIVATE_CURATED_DIR/configs/librechat"
+else
+  LIBRECHAT_PRIVATE_CONFIG_DIR=""
+fi
 LIBRECHAT_CANONICAL_ENV_FILE="${VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE:-$(resolve_path_or_default \
   "$LIBRECHAT_PRIVATE_CONFIG_DIR/librechat.env" \
   "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/LibreChat/.env" \
@@ -393,11 +389,16 @@ TELEGRAM_DIR_PRIMARY="$ROOT_DIR/telegram-viventium"
 TELEGRAM_DIR_FALLBACK="$LEGACY_V0_3_DIR/interfaces/telegram-viventium"
 TELEGRAM_CODEX_DIR="$ROOT_DIR/telegram-codex"
 CODE_INTERPRETER_DIR="$LIBRECHAT_DIR/viventium/services/librecodeinterpreter"
-TELEGRAM_CONFIG_ENV_FILE="${VIVENTIUM_TELEGRAM_ENV_FILE:-$(resolve_path_or_default \
-  "$TELEGRAM_DIR_PRIMARY/config.env" \
-  "$TELEGRAM_DIR_PRIMARY/config.env" \
-  "$VIVENTIUM_PRIVATE_CURATED_DIR/configs/telegram/config.env" \
-  "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/telegram-viventium/config.env")}"
+VIVENTIUM_APP_SUPPORT_ROOT="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
+TELEGRAM_RUNTIME_CONFIG_ENV_FILE="${VIVENTIUM_TELEGRAM_RUNTIME_ENV_FILE:-}"
+if [[ -z "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE" ]]; then
+  if [[ -n "${VIVENTIUM_ENV_FILE:-}" ]]; then
+    TELEGRAM_RUNTIME_CONFIG_ENV_FILE="$(dirname "$VIVENTIUM_ENV_FILE")/service-env/telegram.config.env"
+  else
+    TELEGRAM_RUNTIME_CONFIG_ENV_FILE="$VIVENTIUM_APP_SUPPORT_ROOT/runtime/service-env/telegram.config.env"
+  fi
+fi
+TELEGRAM_CONFIG_ENV_FILE="${VIVENTIUM_TELEGRAM_ENV_FILE:-$(resolve_path_or_default   "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE"   "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE"   "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/service-env/telegram.config.env"   "$TELEGRAM_DIR_PRIMARY/config.env"   "$VIVENTIUM_PRIVATE_CURATED_DIR/configs/telegram/config.env"   "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/telegram-viventium/config.env")}"
 TELEGRAM_CODEX_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_ENV_FILE:-$TELEGRAM_CODEX_DIR/.env}"
 TELEGRAM_CODEX_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE:-$TELEGRAM_CODEX_DIR/config/settings.yaml}"
 TELEGRAM_CODEX_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE:-$TELEGRAM_CODEX_DIR/config/projects.yaml}"
@@ -458,6 +459,12 @@ GLASSHIVE_RUNTIME_PID_FILE="$LOG_ROOT/glasshive_runtime.pid"
 GLASSHIVE_MCP_PID_FILE="$LOG_ROOT/glasshive_mcp.pid"
 GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
+TELEGRAM_LOCAL_BOT_API_PID_FILE="$LOG_ROOT/telegram-local-bot-api.pid"
+TELEGRAM_LOCAL_BOT_API_LOG_FILE="$LOG_DIR/telegram-local-bot-api.log"
+TELEGRAM_LOCAL_BOT_API_STATE_DIR="$VIVENTIUM_STATE_ROOT/telegram-local-bot-api"
+TELEGRAM_LOCAL_BOT_API_WORK_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/work"
+TELEGRAM_LOCAL_BOT_API_TEMP_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/tmp"
+TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/hosted-logout.sha256"
 TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
@@ -961,6 +968,8 @@ TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
+LIBRECHAT_API_WATCHDOG_PID_FILE="$LOG_ROOT/librechat-api-watchdog.pid"
+LIBRECHAT_API_WATCHDOG_LOG_FILE="$LOG_DIR/librechat-api-watchdog.log"
 MONGO_NATIVE_PID_FILE="$LOG_ROOT/mongodb-native.pid"
 MONGO_NATIVE_LOG_FILE="$LOG_DIR/mongodb-native.log"
 MEILI_NATIVE_PID_FILE="$LOG_ROOT/meilisearch-native.pid"
@@ -1723,6 +1732,7 @@ MS365_STARTED_BY_SCRIPT=false
 RAG_API_STARTED_BY_SCRIPT=false
 MS365_CALLBACK_STARTED_BY_SCRIPT=false
 TELEGRAM_STARTED_BY_SCRIPT=false
+TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=false
 V1_AGENT_STARTED_BY_SCRIPT=false
 CODE_INTERPRETER_STARTED_BY_SCRIPT=false
 SEARXNG_STARTED_BY_SCRIPT=false
@@ -1736,6 +1746,7 @@ GOOGLE_MCP_PID=""
 SCHEDULING_MCP_PID=""
 MS365_MCP_CALLBACK_PID=""
 TELEGRAM_BOT_PID=""
+TELEGRAM_LOCAL_BOT_API_PID=""
 V1_AGENT_PID=""
 
 require_cmd() {
@@ -2092,41 +2103,42 @@ is_truthy() {
 
 # === VIVENTIUM START ===
 # Feature: Smarter process scope detection for restarts.
-# Purpose: Match by command OR cwd so LibreChat restarts don't skip in-scope processes.
+# Purpose: Match by working directory first, then command, so restarts do not
+# misclassify normal Node/Python processes that run from the right checkout but
+# use relative entrypoints like `api/server/index.js`.
 # === VIVENTIUM END ===
 read_pid_cwd() {
-  local pid="$1"
-  if ! command -v lsof >/dev/null 2>&1; then
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+
+  local cwd=""
+  if command -v lsof >/dev/null 2>&1; then
+    cwd="$(
+      lsof -a -d cwd -p "$pid" -Fn 2>/dev/null \
+        | sed -n 's/^n//p' \
+        | head -n 1
+    )"
+  fi
+
+  if [[ -z "$cwd" ]] && command -v pwdx >/dev/null 2>&1; then
+    cwd="$(pwdx "$pid" 2>/dev/null | sed 's/^[^:]*: //' | head -n 1 || true)"
+  fi
+
+  if [[ -n "$cwd" ]]; then
+    printf '%s\n' "$cwd"
+  fi
+}
+
+normalize_scope_path() {
+  local path="${1:-}"
+  path="${path%/}"
+  if [[ -d "$path" ]]; then
+    (
+      cd "$path" >/dev/null 2>&1 && pwd -P
+    ) || printf '%s\n' "$path"
     return 0
   fi
-  local python_bin="${PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
-  if [[ -z "$python_bin" ]]; then
-    return 0
-  fi
-  "$python_bin" - "$pid" <<'PY' 2>/dev/null || true
-import subprocess
-import sys
-
-pid = str(sys.argv[1]).strip()
-if not pid:
-    raise SystemExit(0)
-
-try:
-    result = subprocess.run(
-        ["lsof", "-a", "-p", pid, "-d", "cwd", "-F", "n"],
-        capture_output=True,
-        text=True,
-        timeout=2,
-        check=False,
-    )
-except Exception:
-    raise SystemExit(0)
-
-for line in result.stdout.splitlines():
-    if line.startswith("n") and line[1:]:
-        print(line[1:])
-        break
-PY
+  printf '%s\n' "$path"
 }
 
 path_is_trashed_checkout() {
@@ -2157,6 +2169,7 @@ pid_matches_trashed_scope_variant() {
   local pid="$1"
   local scope="$2"
   [[ -n "$scope" ]] || return 1
+  scope="$(normalize_scope_path "$scope")"
 
   local signature=""
   signature="$(scope_component_signature "$scope")"
@@ -2168,7 +2181,7 @@ pid_matches_trashed_scope_variant() {
   cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
   cwd="$(read_pid_cwd "$pid")"
 
-  for candidate in "$cmd" "$cwd"; do
+  for candidate in "$cwd" "$cmd"; do
     [[ -n "$candidate" ]] || continue
     if path_is_trashed_checkout "$candidate" && [[ "$candidate" == *"/$signature"* ]]; then
       return 0
@@ -2184,6 +2197,16 @@ pid_matches_scope() {
   if [[ -z "$scope" ]]; then
     return 0
   fi
+  scope="$(normalize_scope_path "$scope")"
+  local cwd
+  cwd="$(read_pid_cwd "$pid")"
+  if [[ -n "$cwd" ]]; then
+    case "$cwd" in
+      "$scope"|"$scope"/*)
+        return 0
+        ;;
+    esac
+  fi
   local cmd
   cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
   if [[ -n "$cmd" ]]; then
@@ -2192,13 +2215,6 @@ pid_matches_scope() {
         return 0
         ;;
     esac
-  fi
-  if command -v lsof >/dev/null 2>&1; then
-    local cwd
-    cwd="$(read_pid_cwd "$pid")"
-    if [[ -n "$cwd" && "$cwd" == *"$scope"* ]]; then
-      return 0
-    fi
   fi
   return 1
 }
@@ -2453,56 +2469,6 @@ find_scope_runtime_pids() {
     esac
   done < <(ps -Ao pid=,command= 2>/dev/null || true)
 
-  if command -v lsof >/dev/null 2>&1; then
-    local python_bin="${PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
-    if [[ -n "$python_bin" ]]; then
-      local cwd_pids=""
-      cwd_pids="$("$python_bin" - "$scope" <<'PY' 2>/dev/null || true
-import subprocess
-import sys
-
-scope = str(sys.argv[1]).strip()
-if not scope:
-    raise SystemExit(0)
-
-try:
-    result = subprocess.run(
-        ["lsof", "-a", "-d", "cwd", "-F", "pn", "+d", scope],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
-except Exception:
-    raise SystemExit(0)
-
-pids = []
-current_pid = None
-for line in result.stdout.splitlines():
-    if line.startswith("p") and line[1:].isdigit():
-        current_pid = line[1:]
-        if current_pid not in pids:
-            pids.append(current_pid)
-
-for pid in pids:
-    print(pid)
-PY
-)"
-      if [[ -n "$cwd_pids" ]]; then
-        while read -r pid; do
-          [[ -n "$pid" ]] && collected+=("$pid")
-        done <<<"$cwd_pids"
-      fi
-    fi
-  elif declare -F pid_matches_scope >/dev/null 2>&1; then
-    while read -r pid; do
-      [[ -z "$pid" ]] && continue
-      if pid_matches_scope "$pid" "$scope"; then
-        collected+=("$pid")
-      fi
-    done < <(ps -Ao pid= 2>/dev/null || true)
-  fi
-
   if [[ "${#collected[@]}" -gt 0 ]]; then
     printf '%s\n' "${collected[@]}" | sort -u | xargs 2>/dev/null || true
   fi
@@ -2519,16 +2485,20 @@ find_scope_pattern_pids() {
   local pid
   while read -r pid; do
     [[ -z "$pid" ]] && continue
-    local cmd
-    cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    if [[ -n "$cmd" ]] && printf '%s\n' "$cmd" | grep -E -- "$pattern" >/dev/null 2>&1; then
+    if pid_matches_scope "$pid" "$scope" || pid_matches_trashed_scope_variant "$pid" "$scope"; then
       collected+=("$pid")
     fi
-  done < <(find_scope_runtime_pids "$scope")
+  done < <(pgrep -f "$pattern" 2>/dev/null || true)
 
   if [[ "${#collected[@]}" -gt 0 ]]; then
     printf '%s\n' "${collected[@]}" | sort -u | xargs 2>/dev/null || true
   fi
+}
+
+find_port_listener_pids() {
+  local port="${1:-}"
+  [[ -n "$port" ]] || return 0
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u | xargs 2>/dev/null || true
 }
 
 find_scope_orphan_pids() {
@@ -2618,21 +2588,48 @@ find_voice_gateway_runtime_pids() {
 kill_port_listeners() {
   local port="$1"
   local scope="${2:-}"
-  local pids
-  pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
-  if [[ -n "$pids" ]]; then
-    log_warn "Stopping processes listening on port $port"
-    if [[ -n "$scope" ]]; then
-      kill_pids_scoped "$pids" "$scope"
-    else
-      kill_pids "$pids"
-    fi
+  local pids=""
+
+  if ! viventium_port_listener_active "$port"; then
+    return 0
   fi
+
+  if [[ -z "$scope" ]]; then
+    log_warn "Port $port is in use but no safe scope was provided; skipping direct port-based stop"
+    return 0
+  fi
+
+  pids="$(find_port_listener_pids "$port")"
+  if [[ -z "$pids" ]]; then
+    log_warn "Port $port is in use but no scoped runtime processes were found under $scope"
+    return 0
+  fi
+
+  local scoped_port_pids=()
+  local pid=""
+  for pid in $pids; do
+    if pid_matches_scope "$pid" "$scope"; then
+      scoped_port_pids+=("$pid")
+    elif pid_matches_trashed_scope_variant "$pid" "$scope"; then
+      log_warn "Stopping stale trashed PID $pid for scope: $scope"
+      scoped_port_pids+=("$pid")
+    else
+      log_warn "Skipping PID $pid (outside scope: $scope)"
+    fi
+  done
+
+  if [[ "${#scoped_port_pids[@]}" -eq 0 ]]; then
+    log_warn "Port $port is in use but no scoped runtime processes were found under $scope"
+    return 0
+  fi
+
+  log_warn "Stopping scoped processes that may own port $port"
+  kill_pids "${scoped_port_pids[*]}"
 }
 
 port_has_listener() {
   local port="$1"
-  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  viventium_port_listener_active "$port"
 }
 
 stop_pid_file_scoped() {
@@ -2654,6 +2651,10 @@ stop_pid_file_scoped() {
     fi
   fi
   rm -f "$pid_file"
+}
+
+stop_detached_librechat_api_watchdog() {
+  stop_pid_file_scoped "$LIBRECHAT_API_WATCHDOG_PID_FILE" "$VIVENTIUM_CORE_DIR"
 }
 
 cleanup_code_interpreter_exec_containers() {
@@ -3984,6 +3985,33 @@ ensure_librechat_node_dependencies() {
 # Purpose: fresh installs need API package dist outputs before user-default reconciliation
 # and agent seeding can run, while the direct startup path should not rebuild the client
 # package twice during the same cold boot.
+find_librechat_source_newer_than_dist() {
+  local dist_file="${1:-}"
+  shift || true
+
+  if [[ -z "$dist_file" || ! -f "$dist_file" ]]; then
+    return 0
+  fi
+
+  local candidate=""
+  local newer_source=""
+  for candidate in "$@"; do
+    if [[ -f "$candidate" && "$candidate" -nt "$dist_file" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    if [[ -d "$candidate" ]]; then
+      newer_source="$(find "$candidate" -type f -newer "$dist_file" 2>/dev/null | head -n 1)"
+      if [[ -n "$newer_source" ]]; then
+        printf '%s\n' "$newer_source"
+        return 0
+      fi
+    fi
+  done
+
+  return 1
+}
+
 should_rebuild_librechat_server_packages() {
   if [[ "${VIVENTIUM_FORCE_PACKAGE_REBUILD:-0}" == "1" ]]; then
     return 0
@@ -4002,22 +4030,40 @@ should_rebuild_librechat_server_packages() {
     fi
   done
 
-  local freshness_refs=(
-    "$LIBRECHAT_DIR/package-lock.json"
-    "$LIBRECHAT_DIR/package.json"
-  )
+  if find_librechat_source_newer_than_dist \
+    "${markers[0]}" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/data-provider/src" \
+    "$LIBRECHAT_DIR/packages/data-provider/react-query" \
+    "$LIBRECHAT_DIR/packages/data-provider/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/data-provider/server-rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/data-provider/package.json" \
+    >/dev/null; then
+    return 0
+  fi
 
-  local ref
-  for ref in "${freshness_refs[@]}"; do
-    if [[ ! -f "$ref" ]]; then
-      continue
-    fi
-    for marker in "${markers[@]}"; do
-      if [[ "$ref" -nt "$marker" ]]; then
-        return 0
-      fi
-    done
-  done
+  if find_librechat_source_newer_than_dist \
+    "${markers[1]}" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/data-schemas/src" \
+    "$LIBRECHAT_DIR/packages/data-schemas/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/data-schemas/package.json" \
+    >/dev/null; then
+    return 0
+  fi
+
+  if find_librechat_source_newer_than_dist \
+    "${markers[2]}" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/api/src" \
+    "$LIBRECHAT_DIR/packages/api/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/api/package.json" \
+    >/dev/null; then
+    return 0
+  fi
 
   return 1
 }
@@ -4032,17 +4078,16 @@ should_rebuild_librechat_client_package() {
     return 0
   fi
 
-  local freshness_refs=(
-    "$LIBRECHAT_DIR/package-lock.json"
-    "$LIBRECHAT_DIR/package.json"
-  )
-
-  local ref
-  for ref in "${freshness_refs[@]}"; do
-    if [[ -f "$ref" && "$ref" -nt "$marker" ]]; then
-      return 0
-    fi
-  done
+  if find_librechat_source_newer_than_dist \
+    "$marker" \
+    "$LIBRECHAT_DIR/package-lock.json" \
+    "$LIBRECHAT_DIR/package.json" \
+    "$LIBRECHAT_DIR/packages/client/src" \
+    "$LIBRECHAT_DIR/packages/client/rollup.config.js" \
+    "$LIBRECHAT_DIR/packages/client/package.json" \
+    >/dev/null; then
+    return 0
+  fi
 
   return 1
 }
@@ -4123,8 +4168,36 @@ resolve_mongo_connection() {
 
 mongo_ping() {
   local uri="$1"
+  if [[ "${MONGO_IS_LOCAL:-false}" == "true" ]] && [[ -n "${MONGO_PORT:-}" ]]; then
+    if VIVENTIUM_PORT_CHECK_HOST="$MONGO_HOST" viventium_port_listener_active "$MONGO_PORT"; then
+      return 0
+    fi
+  fi
+
   if command -v mongosh >/dev/null 2>&1; then
-    mongosh "$uri" --eval "db.runCommand({ping:1})" --quiet >/dev/null 2>&1
+    local timeout_seconds="${VIVENTIUM_MONGOSH_PING_TIMEOUT_SECONDS:-3}"
+    "$PYTHON_BIN" - "$timeout_seconds" "$uri" <<'PY' >/dev/null 2>&1
+import subprocess
+import sys
+
+try:
+    timeout_seconds = max(0.5, float(sys.argv[1]))
+except Exception:
+    timeout_seconds = 3.0
+uri = sys.argv[2]
+
+try:
+    completed = subprocess.run(
+        ["mongosh", uri, "--eval", "db.runCommand({ping:1})", "--quiet"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=timeout_seconds,
+    )
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+
+raise SystemExit(completed.returncode)
+PY
     return $?
   fi
 
@@ -4341,6 +4414,46 @@ meili_http_ping() {
   curl -fsS --max-time 3 "${host_url%/}/health" >/dev/null 2>&1
 }
 
+meili_http_auth_ping() {
+  local host_url="${1:-${MEILI_HOST:-}}"
+  if [[ -z "$host_url" || -z "${MEILI_MASTER_KEY:-}" ]]; then
+    return 1
+  fi
+  curl -fsS --max-time 3 \
+    -H "Authorization: Bearer ${MEILI_MASTER_KEY}" \
+    -H "X-Meili-API-Key: ${MEILI_MASTER_KEY}" \
+    "${host_url%/}/indexes?limit=1" >/dev/null 2>&1
+}
+
+restart_viventium_owned_meilisearch_listener() {
+  local restarted=false
+  local existing=""
+  local native_pid=""
+
+  if command -v docker >/dev/null 2>&1; then
+    existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
+    if [[ -n "$existing" ]]; then
+      log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the local container"
+      docker rm -f "$existing" >/dev/null 2>&1 || true
+      restarted=true
+    fi
+  fi
+
+  if [[ -f "$MEILI_NATIVE_PID_FILE" ]]; then
+    native_pid="$(tr -d '[:space:]' <"$MEILI_NATIVE_PID_FILE" 2>/dev/null || true)"
+    if [[ "$native_pid" =~ ^[0-9]+$ ]] && kill -0 "$native_pid" >/dev/null 2>&1; then
+      log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the native process"
+      kill "$native_pid" >/dev/null 2>&1 || true
+      sleep 1
+      kill -9 "$native_pid" >/dev/null 2>&1 || true
+      restarted=true
+    fi
+    rm -f "$MEILI_NATIVE_PID_FILE"
+  fi
+
+  [[ "$restarted" == "true" ]]
+}
+
 start_local_meilisearch_container() {
   if ! command -v docker >/dev/null 2>&1; then
     log_error "Docker not found (required for local Meilisearch auto-start)"
@@ -4406,9 +4519,13 @@ start_local_meilisearch_native() {
     return 1
   fi
 
-  if meili_http_ping "$MEILI_HOST"; then
+  if meili_http_auth_ping "$MEILI_HOST"; then
     log_success "Meilisearch already listening at ${MEILI_BIND_HOST}:${MEILI_PORT}"
     return 0
+  fi
+  if meili_http_ping "$MEILI_HOST"; then
+    log_warn "Meilisearch is already listening at ${MEILI_BIND_HOST}:${MEILI_PORT} but does not accept the configured Viventium key"
+    return 1
   fi
 
   mkdir -p "${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-$VIVENTIUM_STATE_ROOT/meili-data}"
@@ -4445,9 +4562,19 @@ ensure_meilisearch_ready() {
 
   resolve_meili_connection
 
-  if meili_http_ping "$MEILI_HOST"; then
+  if meili_http_auth_ping "$MEILI_HOST"; then
     log_success "Meilisearch ready at ${MEILI_BIND_HOST}:${MEILI_PORT}"
     return 0
+  fi
+
+  if meili_http_ping "$MEILI_HOST"; then
+    if [[ "$MEILI_IS_LOCAL" == "true" ]] && restart_viventium_owned_meilisearch_listener; then
+      log_info "Restarting local Meilisearch with the configured Viventium key..."
+    else
+      log_error "Meilisearch is reachable at ${MEILI_BIND_HOST}:${MEILI_PORT} but does not accept the configured Viventium key"
+      log_error "Stop the conflicting listener or restart the Viventium-owned Meilisearch process with the current runtime secrets"
+      return 1
+    fi
   fi
 
   if [[ "$MEILI_IS_LOCAL" != "true" ]]; then
@@ -4469,7 +4596,7 @@ ensure_meilisearch_ready() {
 
   local retries=45
   for _ in $(seq 1 "$retries"); do
-    if meili_http_ping "$MEILI_HOST"; then
+    if meili_http_auth_ping "$MEILI_HOST"; then
       log_success "Meilisearch ready at ${MEILI_BIND_HOST}:${MEILI_PORT}"
       return 0
     fi
@@ -4899,11 +5026,32 @@ stop_remote_call_tunnels() {
     >/dev/null 2>&1 || true
 }
 
+stop_telegram_local_bot_api() {
+  local pid
+  pid="$(read_pid_file "$TELEGRAM_LOCAL_BOT_API_PID_FILE")"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then
+    log_warn "Stopping Telegram local Bot API server (PID: $pid)"
+    kill "$pid" 2>/dev/null || true
+    local tries=0
+    while [[ "$tries" -lt 10 ]] && ps -p "$pid" >/dev/null 2>&1; do
+      sleep 0.5
+      tries=$((tries + 1))
+    done
+    if ps -p "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+  TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=false
+  TELEGRAM_LOCAL_BOT_API_PID=""
+}
+
 stop_running_services() {
   local reason="${1:-Restart requested - stopping running services}"
   local done_msg="${2:-Restart cleanup complete}"
   local stop_excluded_pids=("$$" "${BASHPID:-}" "$PPID")
   log_warn "$reason"
+  stop_detached_librechat_api_watchdog
 
   # LibreChat backend/frontend
   if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
@@ -4980,6 +5128,7 @@ stop_running_services() {
     kill_pids "$telegram_pid"
     rm -f "$TELEGRAM_BOT_PID_FILE"
   fi
+  stop_telegram_local_bot_api
   local telegram_deferred_pid
   telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
   if [[ -n "$telegram_deferred_pid" ]]; then
@@ -5236,7 +5385,7 @@ fi
 
 port_in_use() {
   local port="$1"
-  lsof -Pi :"$port" -sTCP:LISTEN -t >/dev/null 2>&1
+  port_has_listener "$port"
 }
 
 find_free_port() {
@@ -5279,6 +5428,262 @@ wait_for_http() {
   done
   log_warn "$label did not respond in time"
   return 1
+}
+
+librechat_api_healthy() {
+  curl -fsS --max-time 3 "${LC_API_URL}/health" >/dev/null 2>&1
+}
+
+telegram_local_bot_api_enabled() {
+  is_truthy "${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED:-false}"
+}
+
+telegram_local_bot_api_host() {
+  printf '%s\n' "${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST:-127.0.0.1}"
+}
+
+telegram_local_bot_api_port() {
+  printf '%s\n' "${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT:-8084}"
+}
+
+resolve_telegram_local_bot_api_binary() {
+  local configured="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH:-}"
+  if [[ -n "$configured" ]]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  if command -v telegram-bot-api >/dev/null 2>&1; then
+    command -v telegram-bot-api
+    return 0
+  fi
+  return 1
+}
+
+telegram_local_bot_api_pid_is_running() {
+  local pid
+  pid="$(read_pid_file "$TELEGRAM_LOCAL_BOT_API_PID_FILE")"
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+  if ps -p "$pid" >/dev/null 2>&1; then
+    TELEGRAM_LOCAL_BOT_API_PID="$pid"
+    return 0
+  fi
+  rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+  return 1
+}
+
+telegram_local_bot_api_ready() {
+  local port
+  port="$(telegram_local_bot_api_port)"
+  VIVENTIUM_PORT_CHECK_HOST="$(telegram_local_bot_api_host)" viventium_port_listener_active "$port"
+}
+
+telegram_bot_token_fingerprint() {
+  if [[ -z "${BOT_TOKEN:-}" ]]; then
+    return 1
+  fi
+  printf '%s' "$BOT_TOKEN" | shasum -a 256 | awk '{print $1}'
+}
+
+ensure_telegram_local_bot_api_hosted_logout() {
+  if ! telegram_local_bot_api_enabled; then
+    return 0
+  fi
+  if [[ -z "${BOT_TOKEN:-}" ]]; then
+    log_error "Telegram local Bot API mode requires BOT_TOKEN before logout handoff"
+    return 1
+  fi
+
+  mkdir -p "$TELEGRAM_LOCAL_BOT_API_STATE_DIR"
+  local token_fingerprint=""
+  token_fingerprint="$(telegram_bot_token_fingerprint)" || true
+  if [[ -n "$token_fingerprint" ]] && [[ -f "$TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE" ]]; then
+    local saved_fingerprint=""
+    saved_fingerprint="$(tr -d '\r\n' <"$TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE" 2>/dev/null || true)"
+    if [[ -n "$saved_fingerprint" && "$saved_fingerprint" == "$token_fingerprint" ]]; then
+      return 0
+    fi
+  fi
+
+  local logout_response=""
+  logout_response="$(curl -fsS --max-time 10 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/logOut" 2>/dev/null || true)"
+  if [[ "$logout_response" == *'"ok":true'* ]]; then
+    printf '%s\n' "$token_fingerprint" >"$TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE"
+    log_success "Telegram hosted Bot API session logged out for local-server mode"
+    return 0
+  fi
+
+  log_error "Failed to log out Telegram hosted Bot API session before local-server mode"
+  return 1
+}
+
+start_telegram_local_bot_api() {
+  if ! telegram_local_bot_api_enabled; then
+    return 0
+  fi
+
+  local local_host=""
+  local local_port=""
+  local local_binary=""
+  local local_api_id="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID:-}"
+  local local_api_hash="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH:-}"
+  local_host="$(telegram_local_bot_api_host)"
+  local_port="$(telegram_local_bot_api_port)"
+
+  if [[ -z "$local_api_id" || -z "$local_api_hash" ]]; then
+    log_error "Telegram local Bot API is enabled but api_id/api_hash are missing"
+    return 1
+  fi
+
+  if ! local_binary="$(resolve_telegram_local_bot_api_binary)"; then
+    log_error "Telegram local Bot API is enabled but the telegram-bot-api binary is unavailable"
+    return 1
+  fi
+  if [[ ! -x "$local_binary" ]]; then
+    log_error "Telegram local Bot API binary is not executable: $local_binary"
+    return 1
+  fi
+
+  if telegram_local_bot_api_pid_is_running; then
+    log_success "Telegram local Bot API already running (PID: $TELEGRAM_LOCAL_BOT_API_PID)"
+    return 0
+  fi
+
+  if telegram_local_bot_api_ready; then
+    log_error "Telegram local Bot API port ${local_port} is already occupied by another process"
+    return 1
+  fi
+
+  if ! ensure_telegram_local_bot_api_hosted_logout; then
+    return 1
+  fi
+
+  mkdir -p "$TELEGRAM_LOCAL_BOT_API_WORK_DIR" "$TELEGRAM_LOCAL_BOT_API_TEMP_DIR"
+  log_info "Starting Telegram local Bot API server on ${local_host}:${local_port}..."
+  "$local_binary" \
+    --local \
+    --api-id="$local_api_id" \
+    --api-hash="$local_api_hash" \
+    --http-ip-address="$local_host" \
+    --http-port="$local_port" \
+    --dir="$TELEGRAM_LOCAL_BOT_API_WORK_DIR" \
+    --temp-dir="$TELEGRAM_LOCAL_BOT_API_TEMP_DIR" \
+    >"$TELEGRAM_LOCAL_BOT_API_LOG_FILE" 2>&1 &
+  TELEGRAM_LOCAL_BOT_API_PID=$!
+  TELEGRAM_LOCAL_BOT_API_STARTED_BY_SCRIPT=true
+  printf '%s\n' "$TELEGRAM_LOCAL_BOT_API_PID" >"$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+
+  local start_tries=0
+  while [[ "$start_tries" -lt 15 ]]; do
+    if telegram_local_bot_api_ready; then
+      log_success "Telegram local Bot API server started (PID: $TELEGRAM_LOCAL_BOT_API_PID)"
+      return 0
+    fi
+    if ! ps -p "$TELEGRAM_LOCAL_BOT_API_PID" >/dev/null 2>&1; then
+      rm -f "$TELEGRAM_LOCAL_BOT_API_PID_FILE"
+      log_error "Telegram local Bot API server failed to start (see $TELEGRAM_LOCAL_BOT_API_LOG_FILE)"
+      tail -30 "$TELEGRAM_LOCAL_BOT_API_LOG_FILE" 2>/dev/null || true
+      return 1
+    fi
+    sleep 1
+    start_tries=$((start_tries + 1))
+  done
+
+  if telegram_local_bot_api_ready; then
+    log_success "Telegram local Bot API server started (PID: $TELEGRAM_LOCAL_BOT_API_PID)"
+    return 0
+  fi
+
+  log_error "Telegram local Bot API server did not listen on ${local_host}:${local_port} in time"
+  return 1
+}
+
+restart_detached_librechat_backend() {
+  if [[ "$SKIP_LIBRECHAT" == "true" || ! -d "$LIBRECHAT_DIR" ]]; then
+    return 0
+  fi
+
+  log_warn "Detached LibreChat API watchdog restarting backend"
+  kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
+  kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"
+  kill_by_pattern_scoped "npm run backend:dev" "$LIBRECHAT_DIR"
+  kill_by_pattern_scoped "npm exec nodemon api/server/index.js" "$LIBRECHAT_DIR"
+  kill_by_pattern_scoped "cross-env NODE_ENV=development npx nodemon api/server/index.js" "$LIBRECHAT_DIR"
+  kill_by_pattern_scoped "node .*nodemon api/server/index.js" "$LIBRECHAT_DIR"
+
+  local port_release_tries=0
+  while [[ "$port_release_tries" -lt 10 ]] && port_has_listener "$LC_API_PORT"; do
+    sleep 0.5
+    port_release_tries=$((port_release_tries + 1))
+  done
+  if port_has_listener "$LC_API_PORT"; then
+    log_warn "Detached LibreChat API watchdog is restarting backend before port ${LC_API_PORT} fully released"
+  fi
+
+  (
+    trap - INT TERM EXIT HUP
+    cd "$LIBRECHAT_DIR"
+    if [[ "${USE_LIBRECHAT_WRAPPER:-false}" == "true" && -x "./viventium-start.sh" ]]; then
+      exec ./viventium-start.sh --backend-only
+    fi
+    exec npm run backend:dev
+  ) >>"$LIBRECHAT_API_WATCHDOG_LOG_FILE" 2>&1 &
+}
+
+start_detached_librechat_api_watchdog() {
+  if [[ "$SKIP_LIBRECHAT" == "true" || ! -d "$LIBRECHAT_DIR" ]]; then
+    return 0
+  fi
+
+  stop_detached_librechat_api_watchdog
+  mkdir -p "$(dirname "$LIBRECHAT_API_WATCHDOG_LOG_FILE")"
+
+  local interval_s="${LIBRECHAT_API_WATCHDOG_INTERVAL_S:-5}"
+  local failure_threshold="${LIBRECHAT_API_WATCHDOG_FAILURE_THRESHOLD:-3}"
+  local initial_retries="${LIBRECHAT_API_WATCHDOG_INITIAL_RETRIES:-1800}"
+  local recovery_retries="${LIBRECHAT_API_WATCHDOG_RECOVERY_RETRIES:-120}"
+
+  (
+    trap 'exit 0' INT TERM HUP
+    if ! wait_for_http "${LC_API_URL}/health" "Detached LibreChat API watchdog initial probe" "$initial_retries"; then
+      log_warn "Detached LibreChat API watchdog never observed initial API health; exiting"
+      exit 0
+    fi
+
+    local consecutive_failures=0
+    local failed_recoveries=0
+    while true; do
+      sleep "$interval_s"
+      if librechat_api_healthy; then
+        consecutive_failures=0
+        failed_recoveries=0
+        continue
+      fi
+
+      consecutive_failures=$((consecutive_failures + 1))
+      if [[ "$consecutive_failures" -lt "$failure_threshold" ]]; then
+        continue
+      fi
+
+      log_warn "Detached LibreChat API watchdog detected ${consecutive_failures} failed health checks"
+      restart_detached_librechat_backend
+      if wait_for_http "${LC_API_URL}/health" "LibreChat API after detached backend restart" "$recovery_retries"; then
+        consecutive_failures=0
+        failed_recoveries=0
+        continue
+      fi
+      failed_recoveries=$((failed_recoveries + 1))
+      log_warn "Detached LibreChat API watchdog restart did not restore API health in time (failed recoveries: ${failed_recoveries})"
+      if [[ "$failed_recoveries" -ge 3 ]]; then
+        log_warn "Detached LibreChat API watchdog has failed ${failed_recoveries} recoveries; manual investigation is required if this persists"
+      fi
+      consecutive_failures="$failure_threshold"
+    done
+  ) >>"$LIBRECHAT_API_WATCHDOG_LOG_FILE" 2>&1 &
+
+  printf '%s\n' "$!" >"$LIBRECHAT_API_WATCHDOG_PID_FILE"
+  log_info "Started detached LibreChat API watchdog (pid: $!, interval: ${interval_s}s)"
 }
 
 start_native_livekit_fallback() {
@@ -6147,6 +6552,8 @@ cleanup() {
   fi
   echo ""
   echo -e "${YELLOW}[viventium]${NC} Shutting down..."
+  stop_detached_librechat_api_watchdog
+  stop_telegram_local_bot_api
   [[ "$VOICE_GATEWAY_STARTED_BY_SCRIPT" == "true" && -n "${VOICE_GATEWAY_PID:-}" ]] && kill "${VOICE_GATEWAY_PID}" 2>/dev/null || true
   local cleanup_voice_gateway_runtime_pids=""
   cleanup_voice_gateway_runtime_pids="$(find_voice_gateway_runtime_pids "$VOICE_GATEWAY_DIR")"
@@ -7660,6 +8067,16 @@ start_telegram_bot() {
   local _saved_call_session_secret="${VIVENTIUM_CALL_SESSION_SECRET-$_env_unset_marker}"
   local _saved_telegram_secret="${VIVENTIUM_TELEGRAM_SECRET-$_env_unset_marker}"
   local _saved_telegram_backend="${VIVENTIUM_TELEGRAM_BACKEND-$_env_unset_marker}"
+  local _saved_telegram_max_file_size="${VIVENTIUM_TELEGRAM_MAX_FILE_SIZE-$_env_unset_marker}"
+  local _saved_telegram_bot_api_origin="${VIVENTIUM_TELEGRAM_BOT_API_ORIGIN-$_env_unset_marker}"
+  local _saved_telegram_bot_api_base_url="${VIVENTIUM_TELEGRAM_BOT_API_BASE_URL-$_env_unset_marker}"
+  local _saved_telegram_bot_api_base_file_url="${VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_enabled="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_host="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_port="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_binary_path="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_api_id="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID-$_env_unset_marker}"
+  local _saved_telegram_local_bot_api_api_hash="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH-$_env_unset_marker}"
 
   restore_telegram_env() {
     if [[ "$_saved_api_key" == "$_env_unset_marker" ]]; then unset API_KEY; else export API_KEY="$_saved_api_key"; fi
@@ -7676,6 +8093,16 @@ start_telegram_bot() {
     if [[ "$_saved_call_session_secret" == "$_env_unset_marker" ]]; then unset VIVENTIUM_CALL_SESSION_SECRET; else export VIVENTIUM_CALL_SESSION_SECRET="$_saved_call_session_secret"; fi
     if [[ "$_saved_telegram_secret" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_SECRET; else export VIVENTIUM_TELEGRAM_SECRET="$_saved_telegram_secret"; fi
     if [[ "$_saved_telegram_backend" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BACKEND; else export VIVENTIUM_TELEGRAM_BACKEND="$_saved_telegram_backend"; fi
+    if [[ "$_saved_telegram_max_file_size" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_MAX_FILE_SIZE; else export VIVENTIUM_TELEGRAM_MAX_FILE_SIZE="$_saved_telegram_max_file_size"; fi
+    if [[ "$_saved_telegram_bot_api_origin" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BOT_API_ORIGIN; else export VIVENTIUM_TELEGRAM_BOT_API_ORIGIN="$_saved_telegram_bot_api_origin"; fi
+    if [[ "$_saved_telegram_bot_api_base_url" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BOT_API_BASE_URL; else export VIVENTIUM_TELEGRAM_BOT_API_BASE_URL="$_saved_telegram_bot_api_base_url"; fi
+    if [[ "$_saved_telegram_bot_api_base_file_url" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL; else export VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL="$_saved_telegram_bot_api_base_file_url"; fi
+    if [[ "$_saved_telegram_local_bot_api_enabled" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED="$_saved_telegram_local_bot_api_enabled"; fi
+    if [[ "$_saved_telegram_local_bot_api_host" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOST="$_saved_telegram_local_bot_api_host"; fi
+    if [[ "$_saved_telegram_local_bot_api_port" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_PORT="$_saved_telegram_local_bot_api_port"; fi
+    if [[ "$_saved_telegram_local_bot_api_binary_path" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH="$_saved_telegram_local_bot_api_binary_path"; fi
+    if [[ "$_saved_telegram_local_bot_api_api_id" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID="$_saved_telegram_local_bot_api_api_id"; fi
+    if [[ "$_saved_telegram_local_bot_api_api_hash" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH="$_saved_telegram_local_bot_api_api_hash"; fi
   }
 
   local telegram_dir
@@ -7726,6 +8153,11 @@ start_telegram_bot() {
   fi
   if ! ensure_telegram_media_prereqs; then
     log_error "Telegram bot cannot start without ffmpeg for supported voice/video media"
+    restore_telegram_env
+    popd >/dev/null
+    return 1
+  fi
+  if ! start_telegram_local_bot_api; then
     restore_telegram_env
     popd >/dev/null
     return 1
@@ -8172,7 +8604,6 @@ fi
 echo ""
 
 require_cmd curl
-require_cmd lsof
 
 ## === VIVENTIUM START ===
 # Feature: Startup preflight guard
@@ -8314,7 +8745,7 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
             exit 1
           fi
         else
-          if lsof -Pi :"$LIVEKIT_HTTP_PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
+          if port_in_use "$LIVEKIT_HTTP_PORT"; then
             echo -e "${YELLOW}[viventium]${NC} Port $LIVEKIT_HTTP_PORT in use by another container; using external LiveKit if available"
             if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
               log_error "LiveKit did not respond at ${LIVEKIT_API_HOST}; stop the other service or set LIVEKIT_URL"
@@ -8474,6 +8905,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   reconcile_google_workspace_local_oauth_state
 
   START_LIBRECHAT=true
+  LIBRECHAT_BACKEND_ALREADY_RUNNING=false
+  LIBRECHAT_FRONTEND_ALREADY_RUNNING=false
   if port_in_use "$LC_API_PORT"; then
     if curl -s --max-time 3 "${LC_API_URL}/health" >/dev/null 2>&1; then
       if [[ "$RESTART_SERVICES" == "true" ]]; then
@@ -8485,8 +8918,7 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
           START_LIBRECHAT=false
         fi
       else
-        log_success "LibreChat already running on port $LC_API_PORT"
-        START_LIBRECHAT=false
+        LIBRECHAT_BACKEND_ALREADY_RUNNING=true
       fi
     else
       if [[ "$RESTART_SERVICES" == "true" ]]; then
@@ -8505,16 +8937,38 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   fi
 
   if [[ "$START_LIBRECHAT" == "true" ]] && port_in_use "$LC_FRONTEND_PORT"; then
-    if [[ "$RESTART_SERVICES" == "true" ]]; then
-      log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
-      kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
-      if port_in_use "$LC_FRONTEND_PORT"; then
-        log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
-        START_LIBRECHAT=false
+    if curl -s --max-time 3 "${LC_FRONTEND_URL}" >/dev/null 2>&1; then
+      if [[ "$RESTART_SERVICES" == "true" ]]; then
+        log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
+        kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+        if port_in_use "$LC_FRONTEND_PORT"; then
+          log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
+          START_LIBRECHAT=false
+        fi
+      else
+        LIBRECHAT_FRONTEND_ALREADY_RUNNING=true
       fi
     else
-      log_warn "Port $LC_FRONTEND_PORT in use - skipping LibreChat startup"
+      if [[ "$RESTART_SERVICES" == "true" ]]; then
+        log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
+        kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+        if port_in_use "$LC_FRONTEND_PORT"; then
+          log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
+          START_LIBRECHAT=false
+        fi
+      else
+        log_warn "Port $LC_FRONTEND_PORT in use - skipping LibreChat startup"
+        START_LIBRECHAT=false
+      fi
+    fi
+  fi
+
+  if [[ "$START_LIBRECHAT" == "true" ]]; then
+    if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" && "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+      log_success "LibreChat already running on ports $LC_API_PORT/$LC_FRONTEND_PORT"
       START_LIBRECHAT=false
+    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+      log_warn "LibreChat partial stack already running; starting the missing service(s)"
     fi
   fi
 
@@ -8593,6 +9047,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     direct_librechat_reason=""
     if detached_start_requested; then
       direct_librechat_reason="detached launch"
+    elif [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" == "true" || "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" == "true" ]]; then
+      direct_librechat_reason="partial stack repair"
     elif should_rebuild_librechat_packages; then
       direct_librechat_reason="LibreChat package rebuild required"
     fi
@@ -8649,21 +9105,32 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
 
       if is_truthy "${SEARCH:-false}"; then
         echo -e "${YELLOW}[viventium]${NC} Ensuring local conversation search is fully indexed..."
-        node scripts/viventium-sync-local-search.js
+        if ! node scripts/viventium-sync-local-search.js; then
+          log_warn "Local conversation search sync failed; continuing without blocking frontend startup"
+        fi
       fi
 
       # Keep detached/direct launches supervised by this shell so a later
       # frontend exit cannot strand Telegram behind a dead LibreChat API.
-      npm run backend:dev &
-      BACKEND_PID=$!
-      sleep 5
-      librechat_dev_host="${HOST:-::}"
-      (
-        cd client
-        BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"
-      ) &
-      FRONTEND_PID=$!
-      wait "$BACKEND_PID" "$FRONTEND_PID"
+      STARTED_LIBRECHAT_PIDS=()
+      if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" ]]; then
+        npm run backend:dev &
+        BACKEND_PID=$!
+        STARTED_LIBRECHAT_PIDS+=("$BACKEND_PID")
+        sleep 5
+      fi
+      if [[ "$LIBRECHAT_FRONTEND_ALREADY_RUNNING" != "true" ]]; then
+        librechat_dev_host="${HOST:-::}"
+        (
+          cd client
+          BACKEND_PORT="$LC_API_PORT" VIVENTIUM_LC_API_PORT="$LC_API_PORT" npm run dev -- --host "$librechat_dev_host" --port "$LC_FRONTEND_PORT"
+        ) &
+        FRONTEND_PID=$!
+        STARTED_LIBRECHAT_PIDS+=("$FRONTEND_PID")
+      fi
+      if (( ${#STARTED_LIBRECHAT_PIDS[@]} > 0 )); then
+        wait "${STARTED_LIBRECHAT_PIDS[@]}"
+      fi
     ) &
     LIBRECHAT_PID=$!
   fi
@@ -8757,11 +9224,14 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
           export NEXT_PUBLIC_PLAYGROUND_VARIANT="$PLAYGROUND_VARIANT"
         fi
         if [[ "$PLAYGROUND_VARIANT" == "modern" ]]; then
-          next_dist_dir=".next"
+          export VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR="${VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR:-.next-viventium-dev}"
+          next_dist_dir="$VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR"
           if [[ -e "$next_dist_dir" ]]; then
             echo -e "${YELLOW}[viventium]${NC} Resetting stale modern-playground build cache..."
             rm -rf "$next_dist_dir"
           fi
+        else
+          unset VIVENTIUM_PLAYGROUND_NEXT_DIST_DIR || true
         fi
         # Next.js parses `next dev [dir] [options]`. Passing an extra `--` causes
         # `--port` to be treated as the project directory (crash).
@@ -9085,7 +9555,8 @@ start_optional_docker_recovery_worker
 sleep 3
 
 if detached_start_requested; then
-  log_info "Skipping blocking post-start health checks for detached launch; helper/user surfaces will monitor readiness"
+  start_detached_librechat_api_watchdog
+  log_info "Skipping blocking post-start health checks for detached launch; detached watchdog will monitor LibreChat API health while helper/user surfaces monitor readiness"
 elif [[ "$SKIP_HEALTH_CHECKS" != "true" ]]; then
   run_health_checks
 else
@@ -9136,6 +9607,15 @@ else
   echo -e "  ${CYAN}V1 Agent:${NC}            disabled"
 fi
 if [[ "$START_TELEGRAM" == "true" ]]; then
+  if telegram_local_bot_api_enabled; then
+    if telegram_local_bot_api_pid_is_running || telegram_local_bot_api_ready; then
+      echo -e "  ${CYAN}Telegram Local API:${NC}  running"
+    else
+      echo -e "  ${CYAN}Telegram Local API:${NC}  enabled (check $TELEGRAM_LOCAL_BOT_API_LOG_FILE)"
+    fi
+  else
+    echo -e "  ${CYAN}Telegram Local API:${NC}  disabled"
+  fi
   if [[ -z "${BOT_TOKEN:-}" ]]; then
     echo -e "  ${CYAN}Telegram Bot:${NC}        BOT_TOKEN not set"
   elif ! telegram_bot_token_looks_valid "${BOT_TOKEN:-}"; then

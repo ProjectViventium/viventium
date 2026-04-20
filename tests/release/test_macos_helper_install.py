@@ -378,6 +378,15 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private nonisolated static func terminatePIDIfNeeded(" in source
     assert 'logFileName: "helper-stop.log"' in source
     assert 'self.log("Quit requested; stopping stack before helper exit")' in source
+    assert '@Published private(set) var snapshotInProgress: Bool = false' in source
+    assert "var backupActionLabel: String {" in source
+    assert 'self.snapshotInProgress ? "Creating Backup..." : "Create Backup Snapshot"' in source
+    assert "func createBackupSnapshot() {" in source
+    assert 'arguments: ["snapshot"]' in source
+    assert 'logFileName: "helper-snapshot.log"' in source
+    assert 'alert.messageText = "Backup snapshot created"' in source
+    assert 'alert.messageText = "Backup snapshot failed"' in source
+    assert 'private nonisolated static func latestSnapshotPath(appSupportDir: String) -> String?' in source
     assert '@Published private(set) var showInStatusBarEnabled: Bool = true' in source
     assert "private var config: HelperConfig?" in source
     assert 'self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true' in source
@@ -395,6 +404,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'Button("Quit") {' in source
     assert 'Button(self.controller.actionLabel) {' in source
     assert 'Button(self.controller.statusLabel) {}' in source
+    assert 'Button(self.controller.backupActionLabel) {' in source
     assert "MenuBarExtra(" in source
     assert "isInserted: Binding(" in source
     assert "if self.controller.showsStatusRow {" in source
@@ -466,6 +476,15 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private let busyStateHandoffGraceSeconds: TimeInterval = 8" in source
     assert "private let delayedQuitWatchTimeoutSeconds: Int = 420" in source
     assert "private var busyStateGraceDeadline: Date?" in source
+    assert "private var launchAtLoginRefreshTask: Task<Void, Never>?" in source
+    assert "private func refreshLaunchAtLoginState(force: Bool = false) {" in source
+    assert "self.refreshLaunchAtLoginState(force: force)" in source
+    assert "self.launchAtLoginRefreshTask = Task.detached(priority: .utility)" in source
+    assert "private nonisolated static func launchAtLoginFastPathEnabled() -> Bool" in source
+    assert "self.launchAtLoginFastPathEnabled() || self.loginItemExists()" in source
+    assert "timeoutSeconds: 5" in source
+    assert 'self.launchAtLoginEnabled = Self.launchAtLoginIsEnabled()' not in refresh_section
+    assert 'self.launchAtLoginEnabled = Self.launchAtLoginIsEnabled()' not in source
     assert "cleanup_legacy_terminal_helper_launchers()" in install_script
     assert '"showInStatusBar": bool(existing.get("showInStatusBar", True)),' in install_script
     assert 'helper_script_dir.glob("*.command")' in install_script

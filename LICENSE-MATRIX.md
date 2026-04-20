@@ -6,12 +6,13 @@ the project as if one top-level license governs every component.
 | Surface | License | Why |
 |---|---|---|
 | `viventium` main repo | FSL 1.1 with Apache-2.0 future license | This repo contains Viventium-owned orchestration, product docs, installer, config compiler, and public release tooling. |
-| `viventium-lc-v1` | MIT | LibreChat is MIT-licensed. The public component repo must preserve MIT compatibility and notices. |
+| `GlassHive` | FSL 1.1 with Apache-2.0 future license | This first-party component repo contains Viventium-owned sandbox/runtime code and has no external upstream fork boundary. |
+| `viventium-librechat` | MIT | LibreChat is MIT-licensed. The public component repo must preserve MIT compatibility and notices. |
 | `viventium-openclaw` | MIT | OpenClaw is MIT-licensed. |
 | `skyvern-source` | AGPL-3.0 | Skyvern is AGPL and must remain isolated in its own repo. |
 | `google_workspace_mcp` | MIT | Preserve upstream license. |
 | `ms-365-mcp-server` | MIT | Preserve upstream license. |
-| `mcp-youtube-transcript` | Upstream license | Preserve upstream notice in the component repo. |
+| `mcp-youtube-transcript` | MIT | Preserve upstream license and notice in the component repo. |
 | `agents-playground` | Apache-2.0 | Preserve upstream license and NOTICE. |
 | `livekit` | Apache-2.0 | Preserve upstream license and NOTICE. |
 | `cartesia-voice-agent` | Apache-2.0 | Preserve upstream license. |
@@ -24,7 +25,11 @@ the project as if one top-level license governs every component.
 1. The root `LICENSE` in `viventium` applies only to Viventium-owned files in
    that repo.
 2. Every public component repo keeps its own upstream-compatible license file.
-3. `components.lock.json` is the public contract for which component repo and
+3. Placeholder public component repos must clearly say they are placeholders and
+   must carry the required upstream legal files before upstream-derived source lands there.
+4. `components.lock.json` is the public contract for which component repo and
    commit the product expects.
-4. `skyvern-source` must stay separately published and separately licensed.
-5. Private repos are not part of the public licensing surface.
+5. `skyvern-source` must stay separately published and separately licensed.
+6. FSL repos are source-available today; public docs must not describe them as
+   OSI open source before the future Apache-2.0 conversion date applies.
+7. Private repos are not part of the public licensing surface.

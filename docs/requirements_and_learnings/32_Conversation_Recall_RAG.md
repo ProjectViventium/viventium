@@ -51,7 +51,7 @@ This feature adds two user-facing controls:
   supported local path exists.
 - Model selection must be driven by explicit config or installer tier metadata, not by runtime
   guessing, provider-label remaps, or one-off user complaints turned into code branches.
-- Default-eligible models must have a public-safe license posture for the open-source install story.
+- Default-eligible models must have a public-safe license posture for the public install story.
   Non-commercial, research-only, or otherwise restricted licenses are not valid defaults.
 - Any change to embeddings provider, model, quantization family, output dimension, or normalization
   contract requires an index-version change and a full re-embed before cutover.
@@ -243,6 +243,14 @@ query-intent classifier.
   present vector recall as healthy/current evidence for that run.
 - In that degraded state, the supported path is a source-only recall attachment plus tool-level
   fallback through `file_search`, not proactive runtime recall snippets.
+- If restore or manual continuity repair marks recall as stale, runtime must fail closed on the
+  vector-backed path with an explicit stale-restore reason until the operator rebuilds recall and
+  intentionally clears the marker.
+- The April 13, 2026 remote QA pass clarified the user-visible side of this rule:
+  - the recall toggle existing in Settings or the Memories panel is only policy state
+  - it is not proof that the local recall runtime/index is live
+  - if helper/runtime logs say local recall sync was disabled because the local RAG API was absent,
+    QA must treat recall as unavailable for that run
 
 ### Freshness gate
 
@@ -353,6 +361,17 @@ Another follow-up bug showed the next ownership boundary:
   - compile phase prefers private curated source-of-truth when present
   - otherwise compile phase prefers tracked `local.librechat.yaml`
   - previously generated runtime YAML is runtime input for launch, not source input for compile
+
+## 2026-04-14 Learning
+
+Restore and upgrade operations introduced one more recall-truth boundary:
+
+- older local snapshots can make vector recall look fresh while the underlying message history or
+  saved-memory state is actually rolled back
+- the supported path is to mark recall as stale after recall-derived restore work and keep the
+  runtime on explicit degraded behavior until rebuild completes
+- clearing that stale-restore marker must be an intentional operator acknowledgement, not an
+  implicit side effect from an unrelated startup
 
 The same incident also clarified a non-bug-but-important behavior:
 

@@ -354,3 +354,158 @@ Observed results:
   - conversation-history reuse
   - MCP reconnect churn
   - background-cortex startup policy for voice calls
+
+---
+
+## Date
+
+- 2026-04-14
+
+## Build Under Test
+
+- Repo branch: `main`
+- Repo commit: `1a97f27`
+- Nested LibreChat branch: `main`
+- Nested LibreChat commit: `155180d5`
+- Nested modern-playground repo base commit: `a791a46`
+- Runtime profile: `isolated`
+
+## Scope
+
+- Investigate why the public modern playground page loads on a phone but `Start chat` fails before
+  the voice agent joins, with browser error:
+  - `could not establish signal connection: Failed to fetch`
+
+## Checks Executed
+
+1. Reviewed the owning product docs and QA surfaces for voice calls and remote access:
+   - `docs/requirements_and_learnings/06_Voice_Calls.md`
+   - `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md`
+   - `qa/remote-access/README.md`
+   - `qa/modern-playground-voice/README.md`
+2. Inspected the live remote-access runtime state.
+   - Result: `public-network.json` still advertised healthy public surfaces for:
+     - `https://app.viventium.ai`
+     - `https://api.app.viventium.ai`
+     - `https://playground.app.viventium.ai`
+     - `wss://livekit.app.viventium.ai`
+3. Inspected the live voice-worker log.
+   - Result: the worker was healthy and registered on `ws://localhost:7888`.
+   - Result: there was no corresponding join attempt when reproducing the phone symptom.
+4. Reproduced the failing boundary directly against the running modern playground before the fix.
+   - Result: `POST /api/connection-details` returned:
+     - `serverUrl=ws://localhost:7888` for a localhost request
+     - `serverUrl=ws://localhost:7888` again for a request carrying public
+       `Origin` / `Referer` values for `https://playground.app.viventium.ai`
+5. Patched `agent-starter-react` `app/api/connection-details/route.ts` so the route:
+   - returns `VIVENTIUM_PUBLIC_LIVEKIT_URL` only when the request origin matches the configured
+     public playground origin
+   - otherwise keeps the localhost LiveKit URL
+6. Added a release-contract regression assertion in:
+   - `tests/release/test_voice_playground_dispatch_contract.py`
+7. Verified the patched route on a clean standalone playground dev server using the real runtime env.
+   - Localhost-origin probe result:
+     - `serverUrl=ws://localhost:7888`
+   - Public-origin probe result:
+     - `serverUrl=wss://livekit.app.viventium.ai`
+   - Spoofed-host / wrong-origin probe result:
+     - `serverUrl=ws://localhost:7888`
+
+## Findings
+
+- The failure was not caused by the public edge itself, router mappings, or the voice worker.
+- The regression was inside the modern playground signaling bootstrap route:
+  - the page could load over the public HTTPS edge
+  - but `/api/connection-details` always returned the localhost LiveKit URL
+  - a phone browser then tried to signal against `ws://localhost:7888`, which is unreachable from
+    the phone, producing the observed `Failed to fetch` signal error before the agent could join
+- The fix belongs in the modern playground route, not in the config compiler or public-edge helper.
+  - compiler/runtime should continue seeding localhost as the canonical default
+  - the route must perform the documented localhost-vs-public origin split at request time
+
+## QA Conclusion
+
+- Root cause identified and fixed at the correct ownership boundary.
+- Verified contract after the fix:
+  - localhost callers keep `ws://localhost:7888`
+  - configured public playground callers receive `wss://livekit.app.viventium.ai`
+  - arbitrary spoofed hosts do not get upgraded to the public signaling URL
+
+## Follow-Ups
+
+- Restart the launcher-managed playground/runtime so the live `:3300` instance picks up the fix.
+- Re-run the full real-phone `Start chat` join flow on the restored live stack.
+
+---
+
+## Date
+
+- 2026-04-14
+
+## Build Under Test
+
+- Repo branch: `main`
+- Repo commit: `1a97f27`
+- Nested modern-playground repo base commit: `a791a46`
+- Runtime profile: `isolated`
+
+## Scope
+
+- Investigate why public call-button launches can hit `INTERNAL SERVER ERROR` on the modern
+  playground before a voice session can start.
+
+## Checks Executed
+
+1. Correlated the live call-launch path across logs and Mongo.
+   - Result: `POST /api/viventium/calls` still returned valid public modern-playground deep links.
+   - Result: fresh `viventiumcallsessions` rows still persisted the expected `callSessionId`,
+     `roomName`, and requested voice route state.
+2. Probed the live launcher-managed playground root.
+   - Result: `curl http://localhost:3300/` returned `500 Internal Server Error`.
+3. Reproduced the failure mode on an isolated throwaway dev server in `agent-starter-react`.
+   - Result: a clean `next dev` served `/` with `200`.
+   - Result: running `npm run build` in the same app while that dev server stayed alive flipped the
+     same root request to `500`.
+   - Result: the dev server then logged the same stale Next runtime failures already seen in the
+     live launcher-managed surface:
+     - `Could not find the module ... SegmentViewNode in the React Client Manifest`
+     - `TypeError: __webpack_modules__[moduleId] is not a function`
+4. Patched the ownership boundary that serves the live modern playground:
+   - `agent-starter-react/next.config.ts`
+   - `viventium-librechat-start.sh`
+5. Added a release-contract regression assertion in:
+   - `tests/release/test_voice_playground_dispatch_contract.py`
+6. Restarted the canonical launcher-managed runtime after the patch.
+7. Re-ran the same build-vs-live-runtime proof against the patched local stack.
+   - Result: the live launcher-managed `:3300` playground stayed healthy while `npm run build`
+     completed separately.
+
+## Findings
+
+- The `INTERNAL SERVER ERROR` was not a call-session creation bug.
+  - logs and Mongo both showed the call button still creating valid modern-playground deep links
+    and persisted call sessions
+- The primary break was a launcher-managed Next output collision.
+  - the live modern-playground dev server and standalone `next build` work shared the same default
+    `.next` output tree
+  - once build artifacts rewrote that tree, the already-running dev server could serve a corrupted
+    module graph and fail at `/` with stale React/webpack manifest errors
+- The correct fix is to isolate the launcher-managed dev runtime output.
+  - the patched launcher now exports a dedicated modern-playground dev dist dir
+  - the Next config now honors that env override and also explicitly allows the configured public
+    Viventium origins as dev origins for remote browser access
+
+## QA Conclusion
+
+- Root cause identified and fixed at the modern-playground launcher/config boundary.
+- Verified after the fix:
+  - launcher-managed `http://localhost:3300/` returns `200`
+  - the live `:3300` dev server stays healthy after a separate `npm run build`
+  - the public-origin-aware signaling-route fix remains in place for remote phone access
+
+## Follow-Ups
+
+- Re-run the full real-phone call-button launch and `Start chat` flow on the repaired launcher
+  stack to validate both:
+  - page-load health
+  - downstream voice join behavior

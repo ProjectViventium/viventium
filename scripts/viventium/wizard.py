@@ -71,9 +71,7 @@ def docker_app_bundle_paths() -> list[Path]:
 
 
 def docker_desktop_installed() -> bool:
-    if any(path.is_dir() for path in docker_app_bundle_paths()):
-        return True
-    return shutil_which("docker") is not None
+    return any(path.is_dir() for path in docker_app_bundle_paths())
 
 
 def docker_total_memory_bytes() -> int | None:
@@ -116,7 +114,28 @@ def shutil_which(command: str) -> str | None:
         return None
 
 
+KEYCHAIN_WRITES_ENABLED = True
+KEYCHAIN_SKIP_NOTICE_EMITTED = False
+
+
+def set_keychain_writes_enabled(enabled: bool) -> None:
+    global KEYCHAIN_WRITES_ENABLED
+    global KEYCHAIN_SKIP_NOTICE_EMITTED
+    KEYCHAIN_WRITES_ENABLED = enabled
+    KEYCHAIN_SKIP_NOTICE_EMITTED = False
+
+
 def store_keychain_secret(service: str, value: str) -> str | None:
+    global KEYCHAIN_SKIP_NOTICE_EMITTED
+    if not KEYCHAIN_WRITES_ENABLED:
+        if not KEYCHAIN_SKIP_NOTICE_EMITTED:
+            print(
+                "[wizard] INFO: non-interactive setup stores secrets in local config state for "
+                "this machine instead of macOS Keychain.",
+                file=sys.stderr,
+            )
+            KEYCHAIN_SKIP_NOTICE_EMITTED = True
+        return None
     try:
         subprocess.run(
             [
@@ -271,6 +290,7 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     network.setdefault("livekit_node_ip", "")
     auth = runtime.setdefault("auth", {})
     auth.setdefault("allow_registration", True)
+    auth.setdefault("bootstrap_registration_once", False)
     auth.setdefault("allow_password_reset", False)
     personalization = runtime.setdefault("personalization", {})
     personalization.setdefault("default_conversation_recall", False)
@@ -404,6 +424,7 @@ def build_base_config(
             },
             "auth": {
                 "allow_registration": True,
+                "bootstrap_registration_once": False,
                 "allow_password_reset": False,
             },
             "personalization": {"default_conversation_recall": False},
@@ -450,6 +471,7 @@ def build_base_config(
             "telegram_codex": {"enabled": False},
             "google_workspace": {"enabled": False},
             "ms365": {"enabled": False},
+            "glasshive": {"enabled": False},
             "skyvern": {"enabled": False},
             "openclaw": {"enabled": False},
         },
@@ -578,6 +600,9 @@ def prompt_browser_auth_controls(ui: InstallerUI, config: dict[str, Any]) -> Non
 
     auth = runtime.setdefault("auth", {})
     current_allow_registration = bool(auth.get("allow_registration", True))
+    current_bootstrap_registration_once = bool(
+        auth.get("bootstrap_registration_once", remote_call_mode == "custom_domain")
+    )
     current_allow_password_reset = bool(auth.get("allow_password_reset", False))
 
     ui.print_note(
@@ -587,6 +612,17 @@ def prompt_browser_auth_controls(ui: InstallerUI, config: dict[str, Any]) -> Non
         "Keep browser sign-up open?",
         default=current_allow_registration,
     )
+
+    if remote_call_mode == "custom_domain" and auth["allow_registration"]:
+        ui.print_note(
+            "Public browser installs can automatically close sign-up after the first real account is created."
+        )
+        auth["bootstrap_registration_once"] = ui.confirm(
+            "Auto-close browser sign-up after the first account?",
+            default=current_bootstrap_registration_once,
+        )
+    else:
+        auth["bootstrap_registration_once"] = False
 
     ui.print_note(
         "Leave browser password reset off unless real email delivery is configured. You can always issue a one-time reset link locally with bin/viventium password-reset-link <email>."
@@ -639,7 +675,7 @@ def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
             value="conversation_recall",
             label="Conversation Recall",
             note="Search past conversations locally; requires Docker and Ollama",
-            checked=False,
+            checked=docker_installed,
         ),
         CheckboxOption(
             group="Advanced Features",
@@ -1121,15 +1157,6 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
     )
     prompt_voice_settings(ui, config, advanced=False)
     docker_installed = docker_desktop_installed()
-    prompt_web_search(
-        ui,
-        config,
-        [],
-        easy=True,
-        docker_installed=docker_installed,
-        docker_memory_bytes=docker_total_memory_bytes() if docker_installed else None,
-    )
-
     deferred = [
         "conversation_recall",
         "code_interpreter",
@@ -1139,6 +1166,23 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
         "skyvern",
         "openclaw",
     ]
+    if docker_installed:
+        prompt_web_search(
+            ui,
+            config,
+            deferred,
+            easy=True,
+            docker_installed=True,
+            docker_memory_bytes=docker_total_memory_bytes(),
+        )
+        ui.print_note(
+            "Conversation Recall stays off in Easy Install. Turn it on later from bin/viventium configure when you are ready to add the local Docker + Ollama path."
+        )
+    else:
+        ui.print_note(
+            "Easy Install keeps Web Search and Conversation Recall off until Docker Desktop is installed. Turn them on later from bin/viventium configure."
+        )
+        disable_feature(config, "web_search", deferred)
     if not resolve_bool((config["integrations"]["web_search"]).get("enabled"), False):
         mark_deferred(deferred, "web_search")
     if ui.confirm("Connect a Telegram bot now?", default=False):
@@ -1355,6 +1399,8 @@ def main() -> None:
     preset_path = Path(args.preset).expanduser().resolve() if args.preset else None
     if args.non_interactive and preset_path is None:
         raise SystemExit("--non-interactive requires --preset")
+
+    set_keychain_writes_enabled(not (args.non_interactive or not sys.stdin.isatty()))
 
     if preset_path is not None and (args.non_interactive or not sys.stdin.isatty()):
         config = normalize_preset(load_yaml_file(preset_path))

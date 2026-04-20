@@ -29,6 +29,13 @@ def extract_shell_function(text: str, name: str) -> str:
     return "\n".join(collected) + "\n"
 
 
+def first_line_number_containing(text: str, needle: str) -> int:
+    for index, line in enumerate(text.splitlines(), start=1):
+        if needle in line:
+            return index
+    raise AssertionError(f"Missing line containing: {needle}")
+
+
 def test_ensure_telegram_media_prereqs_installs_ffmpeg_via_brew(tmp_path: Path) -> None:
     script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
     function_def = extract_shell_function(script_text, "ensure_telegram_media_prereqs")
@@ -94,3 +101,26 @@ def test_start_telegram_bot_checks_media_prereqs_before_launch() -> None:
 
     assert "if ! ensure_telegram_media_prereqs; then" in script_text
     assert "Telegram bot cannot start without ffmpeg for supported voice/video media" in script_text
+    assert "if ! start_telegram_local_bot_api; then" in script_text
+
+
+def test_launcher_includes_managed_local_telegram_bot_api_runtime() -> None:
+    script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "start_telegram_local_bot_api() {" in script_text
+    assert "stop_telegram_local_bot_api() {" in script_text
+    assert "ensure_telegram_local_bot_api_hosted_logout() {" in script_text
+    assert 'TELEGRAM_LOCAL_BOT_API_PID_FILE="$LOG_ROOT/telegram-local-bot-api.pid"' in script_text
+    assert 'TELEGRAM_LOCAL_BOT_API_LOG_FILE="$LOG_DIR/telegram-local-bot-api.log"' in script_text
+    assert '--local \\' in script_text
+    assert '--http-port="$local_port" \\' in script_text
+    assert 'https://api.telegram.org/bot${BOT_TOKEN}/logOut' in script_text
+
+
+def test_launcher_defines_local_telegram_stop_helper_before_stop_path_calls_it() -> None:
+    script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
+
+    definition_line = first_line_number_containing(script_text, "stop_telegram_local_bot_api() {")
+    invocation_line = first_line_number_containing(script_text, "  stop_telegram_local_bot_api")
+
+    assert definition_line < invocation_line

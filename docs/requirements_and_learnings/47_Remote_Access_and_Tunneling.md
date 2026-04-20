@@ -257,6 +257,9 @@ Router lease note:
 - Viventium now treats those mappings as renewable runtime state, not one-time setup
 - the launcher keeps a lightweight background refresh worker alive for `public_https_edge` /
   `custom_domain` so leased mappings are renewed before they expire
+- startup may reclaim stale UPnP mappings that already point back to this same Mac but no longer
+  have a reachable local target; active conflicting mappings still remain a fatal operator-visible
+  error instead of being silently hijacked
 - if the router refuses a required mapping, or those public ports already belong to another LAN host,
   Viventium must keep the local install running and record the exact blocker in
   `public-network.json` for `bin/viventium status`

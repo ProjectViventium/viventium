@@ -12,8 +12,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python3 scripts/release/build_release_manifests.py --output-dir tmp/release-prep/ci
-      - run: test -f tmp/release-prep/ci/public-retain-manifest.csv
-      - run: test -f tmp/release-prep/ci/private-export-manifest.csv
-      - run: test -f tmp/release-prep/ci/enterprise-export-manifest.csv
-      - run: test -f tmp/release-prep/ci/docs-visibility-matrix.md
+      - run: python -m pip install pytest pyyaml
+      - run: python -m pytest tests/release/test_public_bootstrap_manifests.py tests/release/test_private_repo_resolution_contract.py -q

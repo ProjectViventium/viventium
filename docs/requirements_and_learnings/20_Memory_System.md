@@ -206,6 +206,11 @@ both code and QA:
   provider token cannot silently regress in one resolver while still appearing valid in another.
 - If the memory writer fails before it starts, the system cannot rely on prompt rules like
   “NO DATA LOSS” or contradiction cleanup because the memory agent never gets to run.
+- Connected-account OpenAI Codex routes are a second runtime contract inside the memory writer:
+  - top-level `instructions` must be present on Responses requests
+  - `system` / `developer` messages must not remain inside Responses `input`
+- Therefore Codex compatibility is not only “does auth initialize”; QA must prove the saved-memory
+  run itself survives the live connected-account request shape.
 
 #### 2.6.3 Long-conversation corrections need explicit coverage
 
@@ -314,6 +319,84 @@ The April 9, 2026 memory-integrity investigation added five concrete product tru
 - Later maintenance passes must preserve previously archived draft entries instead of silently
   dropping them on re-compaction.
 
+### 2.9 2026-04-13 Remote Connected-Account QA
+
+The April 13, 2026 remote QA pass added another concrete continuity boundary:
+
+#### 2.9.1 Connected-account chat success is not memory success
+
+- A real connected OpenAI account on the stale remote install produced successful live chat.
+- An explicit memory-worthy prompt also got an in-thread success response (`SAVED`).
+- But the durable-memory surfaces still failed:
+  - the browser `Memories` panel stayed at `0% used` / `No memories yet`
+  - the saved-memory store still had `0` entries for that user
+  - a brand-new conversation answered `Unknown` instead of recovering the stored preference
+
+#### 2.9.2 Same-thread success is not acceptable memory evidence
+
+- A product QA pass must not treat “the assistant answered correctly in the same thread” as proof
+  that memory works.
+- Durable-memory acceptance now requires all three:
+  1. successful chat on a real connected account
+  2. a real saved-memory artifact appearing in the durable memory surface
+  3. cross-conversation recovery of that stored fact
+
+#### 2.9.3 Memory and recall still fail independently
+
+- The same remote run also showed recall remained unavailable because the local recall runtime was
+  not live on that machine.
+- Therefore:
+  - connected foundation-model auth
+  - durable saved-memory writing
+  - conversation-recall retrieval
+  are three separate acceptance surfaces and must be QA’d separately.
+
+#### 2.9.4 Connected-account memory fixes must land in the shipped runtime bundle
+
+- The runtime path that processes saved-memory requests imports the compiled `packages/api/dist`
+  bundle, not the TypeScript source files directly.
+- That compiled bundle is a generated local runtime artifact, not a tracked public-repo source of
+  truth.
+- Therefore a source-only fix inside `packages/api/src/...` is not a shipped product fix unless the
+  supported upgrade/start path rebuilds the local bundle to match it.
+- The April 14, 2026 remote-memory incident proved this boundary directly:
+  - the source file carried the Codex instruction-normalization fix
+  - the existing local compiled bundle still lacked that logic
+  - the remote upgraded runtime therefore continued to fail with live
+    `400 "System messages are not allowed"` responses
+- Release acceptance for Codex-connected memory now requires both:
+  1. source-level tests for the owning normalization logic
+  2. explicit verification that the locally built runtime bundle used by the product carries the
+     same behavior after the supported rebuild path runs
+- In practice, that means:
+  - keep launcher/upgrade rebuild detection tied to package source freshness, not only manifest
+    mtimes
+  - keep a regression that exercises the built `dist` bundle, not only the source test path
+
+#### 2.9.5 Non-stream Codex runs must reconstruct streamed tool output
+
+- A later April 14, 2026 remote repro exposed a second connected-account boundary after the
+  instruction-normalization fix landed.
+- For the saved-memory writer, the product path uses non-stream processing, but the Codex bridge
+  still forces Responses requests to `stream: true` upstream and then adapts the SSE back into a
+  JSON response for the caller.
+- On the failing runtime, the upstream run could complete successfully while the bridged JSON
+  response still showed:
+  - `status: "completed"`
+  - `output: []`
+- The missing tool call was not a model decision bug. The actual function-call item existed only in
+  streamed `response.output_item.*` and argument-delta events; the non-stream adapter was dropping
+  them and returning only the sparse `response.completed` payload.
+- Product requirement:
+  - when Codex-connected Responses are adapted from SSE into JSON for non-stream callers, the bridge
+    must reconstruct `output` from streamed output-item events whenever the completed response omits
+    them
+  - this includes function-call items and their argument deltas, not only plain text deltas
+- QA for connected-account saved memory must therefore prove all three layers:
+  1. the request shape is accepted
+  2. the adapted non-stream JSON preserves the tool call in `output`
+  3. the tool artifact reaches the durable memory store in a real browser flow
+
 ---
 
 ## Part 3: Public-Safe QA Notes
@@ -330,6 +413,8 @@ The April 9, 2026 memory-integrity investigation added five concrete product tru
 - a local restart onto the generated runtime removes the prior unsupported-provider failure without
   requiring manual App Support or Mongo edits
 - connected-account installs still compile a valid memory writer without requiring extra API keys
+- connected-account Codex memory requests normalize instruction messages into top-level
+  `instructions` instead of leaving `system` / `developer` entries inside Responses `input`
 - long-conversation corrections do not disappear purely because they fell outside a tiny memory
   writer window
 - older-user-context limits remain bounded and token-efficient

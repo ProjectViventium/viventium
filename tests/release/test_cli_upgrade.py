@@ -85,6 +85,8 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     install_surfaces_function = extract_shell_function(cli_source, "install_surfaces_healthy")
 
     assert "wait_for_install_stack_health() {" in cli_source
+    assert "sanitize_macos_locale() {" in cli_source
+    assert "sanitize_macos_locale" in cli_source.split("refresh_repo_python() {", 1)[0]
     assert "optional_install_surfaces_healthy() {" in cli_source
     assert "install_surfaces_healthy() {" in cli_source
     assert "render_install_wait_progress() {" in cli_source
@@ -106,6 +108,30 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert 'http_url_healthy "http://localhost:${port}${path_suffix}"' in cli_source
     assert 'http_url_healthy "http://127.0.0.1:${port}${path_suffix}"' in cli_source
     assert 'local timeout_seconds="${2:-2}"' in cli_source
+
+
+def test_destructive_flows_drain_native_stack_before_removing_app_support() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    install_section = cli_source.split('if [[ "$AUTO_START" == "1" ]]; then', 1)[1].split(
+        "INSTALL_TRAP_ACTIVE=0",
+        1,
+    )[0]
+    detached_section = cli_source.split("start_stack_for_install() {", 1)[1].split(
+        "stop_stack_for_upgrade() {",
+        1,
+    )[0]
+    install_surfaces_function = extract_shell_function(cli_source, "install_surfaces_healthy")
+    drain_function = extract_shell_function(cli_source, "drain_native_stack_before_state_removal")
+    reset_function = extract_shell_function(cli_source, "reset_local_install_state")
+    uninstall_function = extract_shell_function(cli_source, "uninstall_local_installation")
+
+    assert "prepare_runtime_exports" in drain_function
+    assert 'source "$GENERATED_ENV"' in drain_function
+    assert 'scripts/viventium/native_stack.sh" stop' in drain_function
+    assert "drain_native_stack_before_state_removal" in reset_function
+    assert "drain_native_stack_before_state_removal" in uninstall_function
+    assert reset_function.index("drain_native_stack_before_state_removal") < reset_function.index('rm -rf "$APP_SUPPORT_DIR"')
+    assert uninstall_function.index("drain_native_stack_before_state_removal") < uninstall_function.index('rm -rf "$APP_SUPPORT_DIR"')
     assert 'local_http_surface_healthy "$port" "/api/health"' in cli_source
     assert 'local_http_surface_healthy "$port" "/"' in cli_source
     assert 'http_url_healthy "${base_url}/" 5' in cli_source
@@ -146,7 +172,7 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert "Starting Viventium..." in install_section
     assert "maybe_install_macos_helper --no-launch" in cli_source
     assert "if ! start_stack_for_install; then" in install_section
-    assert "print_install_summary 0" in install_section
+    assert "print_install_summary 1" in install_section
     assert "exit 1" in install_section
     assert "launch_macos_helper_app" in cli_source
     assert 'print_install_summary 1' in cli_source
@@ -171,6 +197,12 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     )[0]
 
     assert "restart_stack_after_upgrade() {" in cli_source
+    assert "capture_continuity_audit() {" in cli_source
+    assert "remove_recall_rebuild_marker() {" in cli_source
+    assert "continuity-audit  Capture continuity metadata for the current install." in cli_source
+    assert "Pre-upgrade continuity audit written to" in upgrade_section
+    assert "Post-upgrade continuity audit written to" in upgrade_section
+    assert 'if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "error" ]]; then' in upgrade_section
     assert "cleanup_cli_lock" in restart_section
     assert "launch_stack_detached" in restart_section
     assert "wait_for_install_stack_health" in restart_section
@@ -714,6 +746,126 @@ def test_install_wait_log_activity_summary_reports_current_build_phase(tmp_path:
     assert completed.stdout.strip() == "Building LibreChat web app"
 
 
+def test_detached_launch_process_group_running_detects_active_group(tmp_path: Path) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    pgid_file_def = extract_shell_function(cli_source, "detached_launch_process_group_file")
+    read_pgid_def = extract_shell_function(cli_source, "read_detached_launch_process_group")
+    group_running_def = extract_shell_function(cli_source, "detached_launch_process_group_running")
+
+    fake_bin = tmp_path / "bin"
+    write_executable(
+        fake_bin / "ps",
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-Ao" ]]; then
+  printf '10078 94626 S\\n'
+  printf '10085 94626 S\\n'
+  exit 0
+fi
+exit 1
+""",
+    )
+
+    app_support_dir = tmp_path / "app-support"
+    pgid_file = app_support_dir / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+    pgid_file.parent.mkdir(parents=True, exist_ok=True)
+    pgid_file.write_text("94626\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"PATH='{fake_bin}':\"$PATH\"\n"
+                f"APP_SUPPORT_DIR='{app_support_dir}'\n"
+                "VIVENTIUM_RUNTIME_PROFILE=isolated\n"
+                f"{pgid_file_def}"
+                f"{read_pgid_def}"
+                f"{group_running_def}"
+                "detached_launch_process_group_running\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0
+
+
+def test_detached_start_failed_early_keeps_waiting_while_detached_group_is_alive() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "detached_start_failed_early")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "DETACHED_START_PID=12345\n"
+                "pid_is_running() { return 1; }\n"
+                "detached_launch_process_group_running() { return 0; }\n"
+                "is_stack_running() { return 1; }\n"
+                "user_surface_healthy() { return 1; }\n"
+                "launch_log_indicates_startup_failure() { return 0; }\n"
+                "if detached_start_failed_early /tmp/missing.log; then\n"
+                "  printf 'result=failed\\n'\n"
+                "else\n"
+                "  printf 'result=waiting\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "result=waiting"
+
+
+def test_launch_stack_detached_skips_restart_while_detached_group_is_alive() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                "APP_SUPPORT_DIR=/tmp/app-support\n"
+                "CONFIG_FILE=/tmp/config.yaml\n"
+                "touch \"$CONFIG_FILE\"\n"
+                "ensure_app_support_layout() { :; }\n"
+                "user_surface_healthy() { return 1; }\n"
+                "detached_launch_process_group_running() { return 0; }\n"
+                "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
+                "stop_stack_for_upgrade() { printf 'restarted\\n'; }\n"
+                "if launch_stack_detached; then\n"
+                "  printf 'ok\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "Viventium is already starting.",
+        "ok",
+    ]
+    assert "stack-check" not in completed.stderr
+    assert "restarted" not in completed.stdout
+
+
 def test_install_wait_current_tagline_types_text_quickly() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     pick_def = extract_shell_function(cli_source, "install_wait_pick_next_tagline")
@@ -996,6 +1148,11 @@ set -euo pipefail
 exit 0
 """
     write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", doctor_sh)
+    helper_install_sh = """#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "install_macos_helper.sh", helper_install_sh)
 
     start_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1070,6 +1227,8 @@ ensure_app_support_layout() {
   local dir="$1"
   mkdir -p "$dir/runtime" "$dir/state"
 }
+
+viventium_port_listener_active() { return 0; }
 
 python_has_module() { return 0; }
 resolve_repo_python() { printf '%s\\n' "${TEST_PYTHON:-python3}"; }
@@ -1154,6 +1313,44 @@ printf '1234\\n'
     )
     fake_lsof.chmod(0o755)
 
+    fake_curl = tmp_path / "fakebrew" / "bin" / "curl"
+    fake_curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+
+write_code_only=0
+url=""
+while (($#)); do
+  case "$1" in
+    -w)
+      shift
+      [[ "${1:-}" == "%{http_code}" ]] && write_code_only=1
+      ;;
+    http://*|https://*)
+      url="$1"
+      ;;
+  esac
+  shift || true
+done
+
+case "$url" in
+  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/)
+    if [[ "$write_code_only" == "1" ]]; then
+      printf '200'
+    fi
+    exit 0
+    ;;
+esac
+
+if [[ "$write_code_only" == "1" ]]; then
+  printf '000'
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
     config_path = tmp_path / "app-support" / "config.yaml"
     runtime_dir = config_path.parent / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -1189,6 +1386,99 @@ printf '1234\\n'
     assert "Running Viventium stack detected. Stopping before component refresh..." in completed.stdout
     assert (tmp_path / "stop-called").exists()
     assert (tmp_path / "bootstrap-observed-stop.txt").read_text(encoding="utf-8") == "yes"
+
+
+def test_upgrade_refuses_dirty_selected_component_refresh(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "bin").mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+
+    common_sh = """#!/usr/bin/env bash
+set -euo pipefail
+
+prepend_path_if_dir() {
+  local candidate="$1"
+  if [[ -d "$candidate" && ":${PATH}:" != *":${candidate}:"* ]]; then
+    PATH="${candidate}:${PATH}"
+  fi
+}
+
+ensure_brew_paths_on_path() {
+  prepend_path_if_dir "${TEST_ROOT}/fakebrew/bin"
+  export PATH
+}
+
+ensure_app_support_layout() {
+  local dir="$1"
+  mkdir -p "$dir/runtime" "$dir/state"
+}
+
+viventium_port_listener_active() { return 1; }
+python_has_module() { return 0; }
+resolve_repo_python() { printf '%s\\n' "${TEST_PYTHON:-python3}"; }
+ensure_python_module() { return 0; }
+ensure_python_requirements_file() { printf '%s\\n' "${TEST_PYTHON:-$1}"; }
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "common.sh", common_sh)
+    write_executable(repo_root / "scripts" / "viventium" / "preflight.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
+    write_executable(
+        repo_root / "scripts" / "viventium" / "bootstrap_components.py",
+        "#!/usr/bin/env python3\nprint('kept local dirty checkout for LibreChat -> deadbeef')\n",
+    )
+
+    config_compiler_py = """#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--config", required=True)
+parser.add_argument("--output-dir", required=True)
+args = parser.parse_args()
+out = Path(args.output_dir)
+out.mkdir(parents=True, exist_ok=True)
+(out / "runtime.env").write_text("VIVENTIUM_CALL_SESSION_SECRET=test\\n", encoding="utf-8")
+(out / "runtime.local.env").write_text("", encoding="utf-8")
+(out / "librechat.yaml").write_text("version: 1\\n", encoding="utf-8")
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "config_compiler.py", config_compiler_py)
+    write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+    write_executable(repo_root / "scripts" / "viventium" / "install_macos_helper.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+    write_executable(repo_root / "viventium_v0_4" / "viventium-librechat-start.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+
+    fake_bin = tmp_path / "fakebrew" / "bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    (fake_bin / "lsof").write_text("#!/usr/bin/env bash\nset -euo pipefail\nexit 1\n", encoding="utf-8")
+    (fake_bin / "lsof").chmod(0o755)
+
+    config_path = tmp_path / "app-support" / "config.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("version: 1\ninstall:\n  mode: native\nvoice:\n  mode: local\n", encoding="utf-8")
+
+    init_git_repo(repo_root)
+
+    completed = subprocess.run(
+        [
+            str(repo_root / "bin" / "viventium"),
+            "--app-support-dir",
+            str(config_path.parent),
+            "upgrade",
+            "--skip-pull",
+            "--allow-dirty",
+        ],
+        cwd=repo_root,
+        check=False,
+        text=True,
+        capture_output=True,
+        env={**dict(os.environ), "TEST_ROOT": str(tmp_path), "VIVENTIUM_AUTO_APPROVE_PREREQS": "true"},
+    )
+
+    assert completed.returncode != 0
+    assert "kept local dirty checkout for LibreChat -> deadbeef" in completed.stdout
+    assert "could not refresh to the pinned ref" in completed.stderr
 
 
 def test_start_uses_generated_librechat_yaml_at_runtime(tmp_path: Path) -> None:
@@ -1282,6 +1572,15 @@ printf '%s' "${VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH:-}" > "${TEST_ROOT}/runtime-s
     private_source.parent.mkdir(parents=True, exist_ok=True)
     private_source.write_text("private: true\n", encoding="utf-8")
 
+    test_python = tmp_path / "with-pyyaml-python"
+    write_executable(
+        test_python,
+        """#!/usr/bin/env bash
+set -euo pipefail
+exec uv run --with pyyaml python "$@"
+""",
+    )
+
     config_path = tmp_path / "app-support" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -1294,7 +1593,7 @@ printf '%s' "${VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH:-}" > "${TEST_ROOT}/runtime-s
     env = {
         **dict(os.environ),
         "TEST_ROOT": str(tmp_path),
-        "TEST_PYTHON": sys.executable,
+        "TEST_PYTHON": str(test_python),
         "VIVENTIUM_PRIVATE_REPO_DIR": str(private_root),
         "VIVENTIUM_PRIVATE_CURATED_DIR": str(private_root / "curated"),
     }
@@ -1646,6 +1945,8 @@ ensure_app_support_layout() {
   mkdir -p "$dir/runtime" "$dir/state"
 }
 
+viventium_port_listener_active() { return 0; }
+
 python_has_module() { return 0; }
 resolve_repo_python() { printf 'python3\\n'; }
 ensure_python_module() { return 0; }
@@ -1655,6 +1956,7 @@ ensure_python_module() { return 0; }
     write_executable(repo_root / "scripts" / "viventium" / "bootstrap_components.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     write_executable(repo_root / "scripts" / "viventium" / "config_compiler.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     write_executable(repo_root / "scripts" / "viventium" / "doctor.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+    write_executable(repo_root / "scripts" / "viventium" / "install_macos_helper.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
     write_executable(repo_root / "viventium_v0_4" / "viventium-librechat-start.sh", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
 
     fake_lsof = tmp_path / "fakebrew" / "bin" / "lsof"

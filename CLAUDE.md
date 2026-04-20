@@ -56,6 +56,7 @@ For install/runtime/release work, also read:
 - `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md`
 - `docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md`
 - `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`
+- `qa/continuity-ops/README.md` when the work touches snapshots, restore, upgrade continuity, or helper backup UX
 
 ## Quick Doc Map
 
@@ -88,9 +89,17 @@ Before changing code:
    - prompt/model-generated
    - source-of-truth drift
    - stale local state
-5. Prefer the shared fix path over a local or one-surface workaround.
-6. Read at least three files in the causal chain before proposing a fix.
-7. Investigate at least one plausible alternative explanation before locking onto a root cause.
+   - shipped-artifact / installed-bundle drift
+5. If the issue involves memory, recall, restore, or upgrades, decompose it into distinct surfaces:
+   - chat history
+   - saved memory
+   - recall / RAG corpus
+   - schedules / background tasks
+   - auth / provider state
+   - restore / backup state
+6. Prefer the shared fix path over a local or one-surface workaround.
+7. Read at least three files in the causal chain before proposing a fix.
+8. Investigate at least one plausible alternative explanation before locking onto a root cause.
 
 ## Non-Negotiables
 
@@ -106,10 +115,18 @@ Before changing code:
 - Do not claim success after partial verification.
 - If the fix mirrors the user's exact complaint as a one-off special case, widen the investigation.
 - Do not weaken snapshots, fixtures, baselines, or expected outputs just to make checks pass.
+- Treat any credential, password, token, or secret that appears in chat as a transient secret. Use
+  it only for the immediate local task and never echo it into docs, tests, commits, QA artifacts,
+  Claude prompts, or sub-agent handoffs.
 
 ## Things That Will Bite You
 
 - `viventium_v0_4/LibreChat/` has separate git history. Parent repo commits do not deploy it.
+- A nested component source fix is not shipped until the delivery surface that carries it is also
+  updated and verified:
+  - `components.lock.json` or other parent pin
+  - compiled `dist/` outputs when the runtime executes them
+  - prebuilt binaries and their source hashes when the product ships them
 - Agent sync default push can overwrite tool arrays and break MCP links. Dry-run first and use the
   narrowest safe mode.
 - Before any user-level agent push, review A/B/C drift:
@@ -129,6 +146,10 @@ Before changing code:
   A/B/C diff and they intend to proceed.
 - Generated runtime files in `~/Library/Application Support/Viventium/` are outputs, not canonical
   authoring inputs.
+- Installed helpers, compiled bundles, and other shipped artifacts can drift from source. For those
+  surfaces, verify the installed/running artifact, not just the source tree.
+- Private companion and enterprise repos only count as private boundaries when they are separate git
+  repo roots/worktrees, not plain same-named folders.
 - A historically healthy owner machine is not the source of truth. Fresh compile/start on the
   current branch is.
 - Raw LAN/IP browser voice is not valid local-install acceptance for microphone/WebRTC flows.
@@ -150,12 +171,17 @@ Before changing code:
 - Run the smallest relevant automated tests, but run them.
 - Inspect generated outputs for installer/compiler/runtime changes.
 - Verify the real user-visible surface when the change affects UX.
+- For components with prebuilt binaries, compiled `dist/` bundles, or shipped helper apps, prove the
+  live installed/shipped artifact independently. Source correctness does not imply artifact
+  correctness.
 - Name the verification gate you are claiming before you say a task is done:
   - `local dev gate`
   - `landing gate`
   - `release gate`
 - Completion means verified, not merely edited: run checks, inspect generated artifacts when
   relevant, and confirm at least one real affected surface for user-visible changes.
+- If a nested repo or shipped artifact changed, verification is incomplete until the parent pin, the
+  built artifact, and the installed artifact all match the intended fix.
 - Use the QA docs as the acceptance contract, especially:
   - `qa/launch_readiness.md`
   - `qa/result_artifact_standard.md`
@@ -184,6 +210,8 @@ Before changing code:
 - Compact early and include a focus string when the session gets large.
 - Escalate effort for architecture, debugging, and verification-heavy work; use lighter effort for
   small mechanical edits.
+- Before handing context to Claude or another sub-agent, sanitize private values when a redacted
+  placeholder is sufficient. Do not forward live secrets just because they appeared in chat.
 - In shared workspaces, do not stash, switch branches, or touch another agent's worktree or
   unowned changes.
 - Keep this file lean. If new guidance is path-specific or deeply specialized, prefer separate

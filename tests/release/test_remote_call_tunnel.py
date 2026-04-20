@@ -175,6 +175,8 @@ def test_ensure_upnp_mapping_passes_requested_lease_seconds(monkeypatch) -> None
 
     assert captured == [[
         "/opt/homebrew/bin/upnpc",
+        "-e",
+        "Viventium public HTTPS",
         "-a",
         "10.0.0.2",
         "64823",
@@ -182,6 +184,100 @@ def test_ensure_upnp_mapping_passes_requested_lease_seconds(monkeypatch) -> None
         "TCP",
         "7200",
     ]]
+
+
+def test_ensure_upnp_mapping_reclaims_dead_same_host_conflict(monkeypatch) -> None:
+    module = load_module()
+    events: list[tuple[str, int | list[str]]] = []
+
+    monkeypatch.setattr(
+        module,
+        "list_upnpc_state",
+        lambda _bin: {"mappings": {("TCP", 80): ("10.0.0.2", 50779)}},
+    )
+    monkeypatch.setattr(module, "mapping_target_reachable", lambda host, port, **_kwargs: False)
+    monkeypatch.setattr(
+        module,
+        "remove_upnp_mapping",
+        lambda _bin, *, external_port, protocol: events.append(("remove", external_port)),
+    )
+
+    def fake_run_checked(command: list[str], **_kwargs):
+        events.append(("add", command))
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "run_checked", fake_run_checked)
+
+    module.ensure_upnp_mapping(
+        "/opt/homebrew/bin/upnpc",
+        protocol="TCP",
+        external_port=80,
+        internal_host="10.0.0.2",
+        internal_port=4080,
+        description="Viventium public HTTP",
+        lease_seconds=7200,
+    )
+
+    assert events == [
+        ("remove", 80),
+        (
+            "add",
+            [
+                "/opt/homebrew/bin/upnpc",
+                "-e",
+                "Viventium public HTTP",
+                "-a",
+                "10.0.0.2",
+                "4080",
+                "80",
+                "TCP",
+                "7200",
+            ],
+        ),
+    ]
+
+
+def test_ensure_upnp_mapping_preserves_active_conflict(monkeypatch) -> None:
+    module = load_module()
+
+    monkeypatch.setattr(
+        module,
+        "list_upnpc_state",
+        lambda _bin: {"mappings": {("TCP", 80): ("10.0.0.2", 50779)}},
+    )
+    monkeypatch.setattr(module, "mapping_target_reachable", lambda host, port, **_kwargs: True)
+
+    with pytest.raises(RuntimeError, match=r"Router already forwards TCP 80 to 10\.0\.0\.2:50779"):
+        module.ensure_upnp_mapping(
+            "/opt/homebrew/bin/upnpc",
+            protocol="TCP",
+            external_port=80,
+            internal_host="10.0.0.2",
+            internal_port=4080,
+            description="Viventium public HTTP",
+            lease_seconds=7200,
+        )
+
+
+def test_ensure_upnp_mapping_rejects_foreign_host_conflict(monkeypatch) -> None:
+    module = load_module()
+
+    monkeypatch.setattr(
+        module,
+        "list_upnpc_state",
+        lambda _bin: {"mappings": {("TCP", 80): ("10.0.0.99", 50779)}},
+    )
+
+    with pytest.raises(RuntimeError, match=r"Router already forwards TCP 80 to 10\.0\.0\.99:50779"):
+        module.ensure_upnp_mapping(
+            "/opt/homebrew/bin/upnpc",
+            protocol="TCP",
+            external_port=80,
+            internal_host="10.0.0.2",
+            internal_port=4080,
+            description="Viventium public HTTP",
+            lease_seconds=7200,
+        )
 
 
 def test_tailscale_state_ready_requires_matching_dns_name(monkeypatch) -> None:

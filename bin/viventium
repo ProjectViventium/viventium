@@ -17,10 +17,50 @@ resolve_script_source() {
 SCRIPT_SOURCE="$(resolve_script_source)"
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/scripts/viventium/common.sh"
 ensure_brew_paths_on_path
+
+sanitize_macos_locale() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+
+  local needs_sanitization=0
+  case "${LC_ALL:-}" in
+    C.UTF-8|c.utf-8) needs_sanitization=1 ;;
+  esac
+  case "${LC_CTYPE:-}" in
+    C.UTF-8|c.utf-8) needs_sanitization=1 ;;
+  esac
+  case "${LANG:-}" in
+    C.UTF-8|c.utf-8) needs_sanitization=1 ;;
+  esac
+  (( needs_sanitization == 1 )) || return 0
+
+  local available_locales=""
+  local fallback_locale=""
+  available_locales="$(locale -a 2>/dev/null || true)"
+
+  if printf '%s\n' "$available_locales" | grep -Eiq '^C\.UTF-8$'; then
+    return 0
+  fi
+
+  fallback_locale="$(
+    printf '%s\n' "$available_locales" | grep -Ei 'utf-8$|utf8$' | head -n 1 || true
+  )"
+
+  [[ "${LC_ALL:-}" == "C.UTF-8" || "${LC_ALL:-}" == "c.utf-8" ]] && unset LC_ALL
+  [[ "${LC_CTYPE:-}" == "C.UTF-8" || "${LC_CTYPE:-}" == "c.utf-8" ]] && unset LC_CTYPE
+
+  if [[ -n "$fallback_locale" ]]; then
+    export LANG="$fallback_locale"
+  elif [[ "${LANG:-}" == "C.UTF-8" || "${LANG:-}" == "c.utf-8" ]]; then
+    unset LANG
+  fi
+}
+
+sanitize_macos_locale
 
 refresh_repo_python() {
   ensure_brew_paths_on_path
@@ -77,6 +117,22 @@ INSTALL_WAIT_TAGLINES=(
 
 PRIVATE_REPO_DIR_DEFAULT=""
 PRIVATE_CURATED_DIR_DEFAULT=""
+
+refresh_private_repo_defaults() {
+  if declare -F discover_private_repo_dir >/dev/null 2>&1; then
+    PRIVATE_REPO_DIR_DEFAULT="$(discover_private_repo_dir "$WORKSPACE_ROOT" "$REPO_ROOT" || true)"
+  else
+    PRIVATE_REPO_DIR_DEFAULT=""
+  fi
+
+  if declare -F discover_private_curated_dir >/dev/null 2>&1; then
+    PRIVATE_CURATED_DIR_DEFAULT="$(discover_private_curated_dir "$PRIVATE_REPO_DIR_DEFAULT" || true)"
+  else
+    PRIVATE_CURATED_DIR_DEFAULT=""
+  fi
+}
+
+refresh_private_repo_defaults
 
 helper_config_file() {
   printf '%s\n' "$APP_SUPPORT_DIR/helper-config.json"
@@ -166,6 +222,22 @@ bootstrap_components() {
     "$@"
 }
 
+bootstrap_components_upgrade_checked() {
+  local bootstrap_output=""
+  if ! bootstrap_output="$(bootstrap_components "$@")"; then
+    printf '%s\n' "$bootstrap_output"
+    return 1
+  fi
+
+  printf '%s\n' "$bootstrap_output"
+
+  if printf '%s\n' "$bootstrap_output" | grep -q 'kept local dirty checkout'; then
+    echo "Upgrade aborted because at least one selected component has local edits and could not refresh to the pinned ref." >&2
+    echo "Review the reported component checkout, clean or commit those edits, and rerun bin/viventium upgrade." >&2
+    return 1
+  fi
+}
+
 cleanup_cli_lock() {
   if [[ "${CLI_LOCK_OWNER:-0}" != "1" ]]; then
     return 0
@@ -180,6 +252,34 @@ cleanup_cli_lock() {
 stack_owner_state_file() {
   local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
   printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/stack-owner.json"
+}
+
+detached_launch_process_group_file() {
+  local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  printf '%s\n' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/detached-launch.pgid"
+}
+
+read_detached_launch_process_group() {
+  local pgid_file=""
+  pgid_file="$(detached_launch_process_group_file)"
+  if [[ -f "$pgid_file" ]]; then
+    tr -d '[:space:]' <"$pgid_file"
+  fi
+}
+
+detached_launch_process_group_running() {
+  local recorded_pgid=""
+  local running_pids=""
+
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  running_pids="$(
+    ps -Ao pid=,pgid=,state= 2>/dev/null | \
+      awk -v target="$recorded_pgid" '$2 == target && $3 !~ /Z/ { print $1 }' | \
+      xargs 2>/dev/null || true
+  )"
+  [[ -n "$running_pids" ]]
 }
 
 write_stack_owner_state() {
@@ -381,6 +481,7 @@ Commands:
   reset             Factory-reset the local Viventium install state under App Support.
   start             Start the current Viventium stack using generated runtime env.
   status            Show live service health and access URLs.
+  continuity-audit  Capture continuity metadata for the current install.
   stop              Stop the current Viventium stack.
   snapshot          Capture a local state snapshot into App Support.
   restore           Inspect a snapshot and print or apply restore actions.
@@ -448,6 +549,15 @@ Usage:
   bin/viventium status
 
 Shows the current live Viventium service health, including localhost and LAN URLs when available.
+USAGE
+      ;;
+    continuity-audit)
+      cat <<'USAGE'
+Usage:
+  bin/viventium continuity-audit
+  bin/viventium continuity-audit --clear-recall-marker
+
+Captures metadata-only continuity state for the current install under App Support state.
 USAGE
       ;;
     doctor)
@@ -559,9 +669,10 @@ USAGE
     snapshot)
       cat <<'USAGE'
 Usage:
-  bin/viventium snapshot
+  bin/viventium snapshot [--output-root <path>]
 
-Captures a local state snapshot under the current App Support directory.
+Captures a local state snapshot under the current App Support directory and always writes a
+metadata-only continuity manifest even when no private companion snapshot helper is present.
 USAGE
       ;;
     restore)
@@ -600,6 +711,76 @@ compile_config() {
   if [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
   fi
+}
+
+continuity_audit_root() {
+  if declare -F continuity_audit_dir >/dev/null 2>&1; then
+    continuity_audit_dir "$APP_SUPPORT_DIR"
+    return 0
+  fi
+  printf '%s\n' "$APP_SUPPORT_DIR/state/continuity"
+}
+
+continuity_audit_path() {
+  local label="${1:-continuity-audit}"
+  printf '%s\n' "$(continuity_audit_root)/${label}.json"
+}
+
+capture_continuity_audit() {
+  local label="${1:-continuity-audit}"
+  local output_path="${2:-$(continuity_audit_path "$label")}"
+  refresh_repo_python
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  prepare_runtime_exports
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/continuity_audit.py" capture \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --config-file "$CONFIG_FILE" \
+    --runtime-dir "$RUNTIME_DIR" \
+    --label "$label" \
+    --output "$output_path" >/dev/null
+  printf '%s\n' "$output_path"
+}
+
+display_safe_path() {
+  local candidate="${1:-}"
+  if declare -F public_safe_path_label >/dev/null 2>&1; then
+    public_safe_path_label "$candidate"
+  else
+    printf '%s\n' "$candidate"
+  fi
+}
+
+continuity_audit_status() {
+  local audit_path="$1"
+  if [[ ! -f "$audit_path" ]]; then
+    printf '%s\n' "unknown"
+    return 0
+  fi
+  "$PYTHON_BIN" - "$audit_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(payload.get("status") or "unknown"))
+PY
+}
+
+remove_recall_rebuild_marker() {
+  local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  local marker_file=""
+  if declare -F recall_rebuild_required_file >/dev/null 2>&1; then
+    marker_file="$(recall_rebuild_required_file "$APP_SUPPORT_DIR" "$runtime_profile")"
+  else
+    marker_file="$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/continuity/recall-rebuild-required.json"
+  fi
+  if [[ -f "$marker_file" ]]; then
+    rm -f "$marker_file"
+    printf '%s\n' "$marker_file"
+    return 0
+  fi
+  return 1
 }
 
 run_macos_helper_installer() {
@@ -777,16 +958,22 @@ PY
 }
 
 prepare_runtime_exports() {
+  local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
   export VIVENTIUM_ENV_FILE="$GENERATED_ENV"
   export VIVENTIUM_ENV_LOCAL_FILE="$GENERATED_LOCAL_ENV"
   export VIVENTIUM_CANONICAL_ENV_LOCK_EXISTING_KEYS="1"
   export VIVENTIUM_BASE_STATE_DIR="$APP_SUPPORT_DIR/state"
-  export VIVENTIUM_STATE_ROOT="${VIVENTIUM_STATE_ROOT:-$APP_SUPPORT_DIR/state/runtime/${VIVENTIUM_RUNTIME_PROFILE:-isolated}}"
+  export VIVENTIUM_STATE_ROOT="${VIVENTIUM_STATE_ROOT:-$APP_SUPPORT_DIR/state/runtime/${runtime_profile}}"
   export VIVENTIUM_PUBLIC_NETWORK_STATE_FILE="${VIVENTIUM_PUBLIC_NETWORK_STATE_FILE:-$VIVENTIUM_STATE_ROOT/public-network.json}"
   export VIVENTIUM_CALL_TUNNEL_LOG_DIR="${VIVENTIUM_CALL_TUNNEL_LOG_DIR:-$VIVENTIUM_STATE_ROOT/logs}"
   export VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT="${VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT:-$REPO_ROOT/scripts/viventium/remote_call_tunnel.py}"
   export VIVENTIUM_PRIVATE_REPO_DIR="${VIVENTIUM_PRIVATE_REPO_DIR:-$PRIVATE_REPO_DIR_DEFAULT}"
   export VIVENTIUM_PRIVATE_CURATED_DIR="${VIVENTIUM_PRIVATE_CURATED_DIR:-$PRIVATE_CURATED_DIR_DEFAULT}"
+  if declare -F recall_rebuild_required_file >/dev/null 2>&1; then
+    export VIVENTIUM_RECALL_REBUILD_REQUIRED_FILE="${VIVENTIUM_RECALL_REBUILD_REQUIRED_FILE:-$(recall_rebuild_required_file "$APP_SUPPORT_DIR" "$runtime_profile")}"
+  else
+    export VIVENTIUM_RECALL_REBUILD_REQUIRED_FILE="${VIVENTIUM_RECALL_REBUILD_REQUIRED_FILE:-$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/continuity/recall-rebuild-required.json}"
+  fi
 
   local source_phase="${VIVENTIUM_LIBRECHAT_SOURCE_PHASE:-runtime}"
   local private_root_env_local=""
@@ -794,6 +981,7 @@ prepare_runtime_exports() {
   local private_source_of_truth=""
   local private_agents_bundle=""
   local private_telegram_env=""
+  local generated_telegram_env="$RUNTIME_DIR/service-env/telegram.config.env"
   local generated_telegram_codex_env="$RUNTIME_DIR/service-env/telegram-codex.env"
   local generated_telegram_codex_settings="$RUNTIME_DIR/telegram-codex/settings.yaml"
   local generated_telegram_codex_projects="$RUNTIME_DIR/telegram-codex/projects.yaml"
@@ -843,7 +1031,9 @@ prepare_runtime_exports() {
       unset LIBRECHAT_AGENTS_BUNDLE_FILE
     fi
   fi
-  if [[ -f "$private_telegram_env" ]]; then
+  if [[ -f "$generated_telegram_env" ]]; then
+    export VIVENTIUM_TELEGRAM_ENV_FILE="$generated_telegram_env"
+  elif [[ -f "$private_telegram_env" ]]; then
     export VIVENTIUM_TELEGRAM_ENV_FILE="$private_telegram_env"
   fi
   if [[ -f "$generated_telegram_codex_env" ]]; then
@@ -1081,6 +1271,24 @@ confirm_destructive_action() {
   fi
 }
 
+drain_native_stack_before_state_removal() {
+  # Destructive flows cannot rely on helper-detached cleanup alone because the
+  # helper can return before native services have drained and before App Support
+  # state is still present for command-line matching.
+  prepare_runtime_exports
+  if [[ -f "$GENERATED_ENV" ]]; then
+    set +u
+    # shellcheck disable=SC1090
+    source "$GENERATED_ENV"
+    if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+      # shellcheck disable=SC1090
+      source "$GENERATED_LOCAL_ENV"
+    fi
+    set -u
+  fi
+  "$REPO_ROOT/scripts/viventium/native_stack.sh" stop >/dev/null 2>&1 || true
+}
+
 reset_local_install_state() {
   local backup_dir=""
   if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
@@ -1091,6 +1299,7 @@ reset_local_install_state() {
     echo "Stopping the current Viventium stack before reset..."
     stop_stack_for_upgrade
   fi
+  drain_native_stack_before_state_removal
 
   rm -rf "$APP_SUPPORT_DIR"
   if [[ -n "$backup_dir" ]]; then
@@ -1109,6 +1318,7 @@ uninstall_local_installation() {
     echo "Stopping the current Viventium stack before uninstall..."
     stop_stack_for_upgrade
   fi
+  drain_native_stack_before_state_removal
 
   run_macos_helper_installer uninstall || true
   rm -rf "$APP_SUPPORT_DIR"
@@ -1217,7 +1427,7 @@ runtime_env_true() {
 runtime_port_listening() {
   local port="${1:-}"
   [[ -n "$port" ]] || return 1
-  lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  viventium_port_listener_active "$port"
 }
 
 http_url_healthy() {
@@ -1333,42 +1543,6 @@ pid_matches_repo_scope() {
     esac
   fi
 
-  if command -v lsof >/dev/null 2>&1; then
-    local cwd
-    local python_bin="${PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
-    if [[ -z "$python_bin" ]]; then
-      return 1
-    fi
-    cwd="$("$python_bin" - "$pid" <<'PY' 2>/dev/null || true
-import subprocess
-import sys
-
-pid = str(sys.argv[1]).strip()
-if not pid:
-    raise SystemExit(0)
-
-try:
-    result = subprocess.run(
-        ["lsof", "-a", "-p", pid, "-d", "cwd", "-F", "n"],
-        capture_output=True,
-        text=True,
-        timeout=2,
-        check=False,
-    )
-except Exception:
-    raise SystemExit(0)
-
-for line in result.stdout.splitlines():
-    if line.startswith("n") and line[1:]:
-        print(line[1:])
-        break
-PY
-)"
-    if [[ -n "$cwd" && "$cwd" == *"$REPO_ROOT"* ]]; then
-      return 0
-    fi
-  fi
-
   return 1
 }
 
@@ -1442,6 +1616,10 @@ launch_stack_detached() {
   fi
   if user_surface_healthy; then
     echo "Viventium is already running."
+    return 0
+  fi
+  if detached_launch_process_group_running; then
+    echo "Viventium is already starting."
     return 0
   fi
   if is_stack_running; then
@@ -1589,13 +1767,13 @@ detached_start_failed_early() {
     if pid_is_running "$DETACHED_START_PID"; then
       return 1
     fi
-    if is_stack_running || user_surface_healthy; then
+    if detached_launch_process_group_running || is_stack_running || user_surface_healthy; then
       return 1
     fi
     return 0
   fi
 
-  if is_stack_running || user_surface_healthy; then
+  if detached_launch_process_group_running || is_stack_running || user_surface_healthy; then
     return 1
   fi
   launch_log_indicates_startup_failure "$launch_log"
@@ -2336,7 +2514,7 @@ case "$COMMAND" in
       CURRENT_INSTALL_STAGE="start"
       write_install_stage "$CURRENT_INSTALL_STAGE"
       if ! start_stack_for_install; then
-        print_install_summary 0
+        print_install_summary 1
         exit 1
       fi
       INSTALL_TRAP_ACTIVE=0
@@ -2398,8 +2576,11 @@ case "$COMMAND" in
         exit 1
       fi
     fi
+    UPGRADE_AUDIT_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+    PRE_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "pre-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
+    echo "Pre-upgrade continuity audit written to $(display_safe_path "$PRE_UPGRADE_CONTINUITY_AUDIT")"
     run_preflight apply
-    bootstrap_components
+    bootstrap_components_upgrade_checked
     compile_config
     "$REPO_ROOT/scripts/viventium/doctor.sh" \
       --config "$CONFIG_FILE" \
@@ -2407,6 +2588,21 @@ case "$COMMAND" in
       --repo-root "$REPO_ROOT" \
       --lock-file "$LOCK_FILE"
     maybe_install_macos_helper
+    POST_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "post-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
+    POST_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status "$POST_UPGRADE_CONTINUITY_AUDIT")"
+    echo "Post-upgrade continuity audit written to $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT")"
+    if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "error" ]]; then
+      echo "Upgrade completed, but the post-upgrade continuity audit reported an error state." >&2
+      echo "Review $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT") before trusting restored recall or auto-restarting." >&2
+      if [[ "$AUTO_RESTART" == "1" ]]; then
+        exit 1
+      fi
+      echo "Next: fix the continuity issue, then run bin/viventium start"
+      exit 1
+    fi
+    if [[ "$POST_UPGRADE_CONTINUITY_STATUS" == "warning" ]]; then
+      echo "Upgrade continuity audit reported warnings. Review $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT") before concluding the install is fully aligned." >&2
+    fi
     if [[ "$AUTO_RESTART" == "1" ]]; then
       if ! restart_stack_after_upgrade; then
         exit 1
@@ -2549,6 +2745,36 @@ case "$COMMAND" in
       exit 0
     fi
     run_shell_init "$@"
+    ;;
+  continuity-audit)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage continuity-audit
+      exit 0
+    fi
+    CLEAR_RECALL_MARKER=0
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --clear-recall-marker)
+          CLEAR_RECALL_MARKER=1
+          shift
+          ;;
+        *)
+          echo "Unknown continuity-audit option: $1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    audit_path="$(capture_continuity_audit "manual-$(date -u +%Y%m%dT%H%M%SZ)")"
+    echo "Continuity audit written to $(display_safe_path "$audit_path")"
+    if [[ "$CLEAR_RECALL_MARKER" == "1" ]]; then
+      if cleared_marker="$(remove_recall_rebuild_marker)"; then
+        echo "Cleared recall rebuild-required marker at $(display_safe_path "$cleared_marker")"
+      else
+        echo "No recall rebuild-required marker was present."
+      fi
+    fi
     ;;
   status-bar)
     acquire_cli_lock "$COMMAND"
@@ -2698,21 +2924,25 @@ case "$COMMAND" in
     exit "$stop_status"
     ;;
   snapshot)
+    acquire_cli_lock "$COMMAND"
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage snapshot
       exit 0
     fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
+    prepare_runtime_exports
     exec "$REPO_ROOT/viventium_v0_4/viventium-local-state-snapshot.sh" \
       --output-root "$APP_SUPPORT_DIR/snapshots" \
       "$@"
     ;;
   restore)
+    acquire_cli_lock "$COMMAND"
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage restore
       exit 0
     fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
+    prepare_runtime_exports
     exec "$REPO_ROOT/scripts/viventium/restore.sh" \
       --config-home "$APP_SUPPORT_DIR" \
       "$@"

@@ -35,6 +35,24 @@ def test_store_keychain_secret_returns_none_on_failure(monkeypatch, capsys) -> N
     assert "keeping it in local config state" in captured.err
 
 
+def test_store_keychain_secret_skips_keychain_in_non_interactive_mode(monkeypatch, capsys) -> None:
+    wizard = load_wizard_module()
+    called = False
+
+    def should_not_run(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("security CLI should not run when keychain writes are disabled")
+
+    monkeypatch.setattr(wizard.subprocess, "run", should_not_run)
+    wizard.set_keychain_writes_enabled(False)
+
+    assert wizard.store_keychain_secret("viventium/test_secret", "value") is None
+    captured = capsys.readouterr()
+    assert "non-interactive setup stores secrets in local config state" in captured.err
+    assert called is False
+
+
 def test_build_secret_node_prefers_keychain_ref_when_available(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(
@@ -48,10 +66,19 @@ def test_build_secret_node_prefers_keychain_ref_when_available(monkeypatch) -> N
     }
 
 
+def test_docker_desktop_installed_requires_real_app_bundle(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard, "docker_app_bundle_paths", lambda: [])
+    monkeypatch.setattr(wizard, "shutil_which", lambda _command: "/usr/local/bin/docker")
+
+    assert wizard.docker_desktop_installed() is False
+
+
 def test_normalize_preset_keeps_local_secret_values_when_keychain_write_fails(monkeypatch) -> None:
     wizard = load_wizard_module()
     monkeypatch.setattr(wizard, "store_keychain_secret", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: False)
 
     config = {
         "version": 1,
@@ -128,6 +155,7 @@ def test_normalize_preset_keeps_local_secret_values_when_keychain_write_fails(mo
 
 def test_build_base_config_matches_easy_install_defaults() -> None:
     wizard = load_wizard_module()
+    wizard.docker_desktop_installed = lambda: False
 
     config = wizard.build_base_config(
         install_mode="native",
@@ -146,6 +174,7 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     )
     assert config["runtime"]["network"]["remote_call_mode"] == "disabled"
     assert config["runtime"]["auth"]["allow_registration"] is True
+    assert config["runtime"]["auth"]["bootstrap_registration_once"] is False
     assert config["runtime"]["auth"]["allow_password_reset"] is False
     assert config["integrations"]["code_interpreter"]["enabled"] is False
     assert config["integrations"]["web_search"]["enabled"] is False
@@ -153,6 +182,107 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     assert config["integrations"]["web_search"]["scraper_provider"] == "firecrawl"
     assert config["llm"]["primary"]["auth_mode"] == "connected_account"
     assert "fast_llm_provider" not in config["voice"]
+
+
+def test_build_base_config_keeps_recall_off_even_when_docker_desktop_present(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
+
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+
+
+def test_normalize_preset_keeps_recall_off_even_when_docker_desktop_present(
+    monkeypatch,
+) -> None:
+    wizard = load_wizard_module()
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
+    monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
+
+    normalized = wizard.normalize_preset({"version": 1, "runtime": {}, "llm": {}, "integrations": {}})
+
+    assert normalized["runtime"]["personalization"]["default_conversation_recall"] is False
+
+
+def test_configure_easy_install_keeps_conversation_recall_deferred_when_docker_desktop_present(
+    monkeypatch,
+) -> None:
+    wizard = load_wizard_module()
+
+    class FakeUI:
+        def password(self, _prompt: str, allow_empty: bool = False) -> str:
+            assert allow_empty is False
+            return "groq-test"
+
+        def confirm(self, _prompt: str, default: bool = False) -> bool:
+            return False
+
+        def print_note(self, *_args, **_kwargs) -> None:
+            return None
+
+    prompt_web_search_calls: list[bool] = []
+
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
+    monkeypatch.setattr(wizard, "docker_total_memory_bytes", lambda: None)
+    monkeypatch.setattr(
+        wizard,
+        "prompt_web_search",
+        lambda *_args, **_kwargs: prompt_web_search_calls.append(True),
+    )
+    monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        wizard,
+        "build_secret_node",
+        lambda _service, value: {"secret_value": value},
+    )
+
+    config, deferred = wizard.configure_easy_install(FakeUI())
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert "conversation_recall" in deferred
+    assert prompt_web_search_calls == [True]
+
+
+def test_configure_easy_install_defers_conversation_recall_without_docker(monkeypatch) -> None:
+    wizard = load_wizard_module()
+
+    class FakeUI:
+        def password(self, _prompt: str, allow_empty: bool = False) -> str:
+            assert allow_empty is False
+            return "groq-test"
+
+        def confirm(self, _prompt: str, default: bool = False) -> bool:
+            return False
+
+        def print_note(self, *_args, **_kwargs) -> None:
+            return None
+
+    monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: False)
+    monkeypatch.setattr(
+        wizard,
+        "prompt_web_search",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Easy Install should not prompt for web search without Docker Desktop")),
+    )
+    monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        wizard,
+        "build_secret_node",
+        lambda _service, value: {"secret_value": value},
+    )
+
+    config, deferred = wizard.configure_easy_install(FakeUI())
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert "conversation_recall" in deferred
+    assert "web_search" in deferred
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:
@@ -519,11 +649,13 @@ def test_prompt_browser_auth_controls_sets_remote_browser_auth_flags() -> None:
         secondary_provider="none",
     )
     wizard.apply_remote_access_choice(config, remote_call_mode="custom_domain", public_app_hostname="app.example.com")
-    ui = _FakeWizardUI(selects=[], confirms=[False, False])
+    ui = _FakeWizardUI(selects=[], confirms=[True, True, False])
 
     wizard.prompt_browser_auth_controls(ui, config)
 
-    assert config["runtime"]["auth"]["allow_registration"] is False
+    assert config["runtime"]["auth"]["allow_registration"] is True
+    assert config["runtime"]["auth"]["bootstrap_registration_once"] is True
     assert config["runtime"]["auth"]["allow_password_reset"] is False
     assert any("leave browser sign-up on until you create it" in note for note in ui.notes)
+    assert any("automatically close sign-up after the first real account" in note for note in ui.notes)
     assert any("one-time reset link locally" in note for note in ui.notes)

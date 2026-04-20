@@ -149,8 +149,6 @@ def docker_cli_path() -> str | None:
 
 
 def docker_desktop_installed() -> bool:
-    if docker_cli_path():
-        return True
     if any(bundle.is_dir() for bundle in docker_app_bundle_paths()):
         return True
     return brew_cask_installed("docker")
@@ -510,6 +508,8 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
     network = runtime.get("network", {}) or {}
     remote_call_mode = normalize_remote_call_mode(network)
     integrations = config.get("integrations", {}) or {}
+    telegram = integrations.get("telegram") or {}
+    telegram_local_bot_api = telegram.get("local_bot_api") or {}
     return {
         "install_mode": install_mode,
         "voice_mode": voice_mode,
@@ -520,7 +520,17 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
         "web_search_local_services": web_search_local_services_requested(config),
         "google_workspace": resolve_bool((integrations.get("google_workspace") or {}).get("enabled"), False),
         "ms365": resolve_bool((integrations.get("ms365") or {}).get("enabled"), False),
-        "telegram": resolve_bool((integrations.get("telegram") or {}).get("enabled"), False),
+        "telegram": resolve_bool(telegram.get("enabled"), False),
+        "telegram_local_bot_api": resolve_bool(telegram_local_bot_api.get("enabled"), False),
+        "telegram_local_bot_api_binary_path": str(
+            telegram_local_bot_api.get("binary_path", "") or ""
+        ).strip(),
+        "telegram_local_bot_api_api_id": str(
+            telegram_local_bot_api.get("api_id", "") or ""
+        ).strip(),
+        "telegram_local_bot_api_api_hash": str(
+            telegram_local_bot_api.get("api_hash", "") or ""
+        ).strip(),
         "skyvern": resolve_bool((integrations.get("skyvern") or {}).get("enabled"), False),
     }
 
@@ -635,6 +645,51 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 command="ffmpeg",
             )
         )
+        if ctx["telegram_local_bot_api"]:
+            telegram_local_bot_api_command = (
+                ctx["telegram_local_bot_api_binary_path"] or "telegram-bot-api"
+            )
+            items.append(
+                PreflightItem(
+                    key="telegram_bot_api",
+                    label="telegram-bot-api",
+                    category="telegram media",
+                    reason=(
+                        "Telegram large-media downloads need a local Telegram Bot API server "
+                        "running on the same Mac"
+                    ),
+                    status=(
+                        "ok"
+                        if command_exists(telegram_local_bot_api_command)
+                        else "missing"
+                    ),
+                    install_kind="manual",
+                    command=telegram_local_bot_api_command,
+                    manual_command=(
+                        "Install telegram-bot-api locally and rerun preflight"
+                    ),
+                )
+            )
+            telegram_local_bot_api_credentials_ready = bool(
+                ctx["telegram_local_bot_api_api_id"] and ctx["telegram_local_bot_api_api_hash"]
+            )
+            items.append(
+                PreflightItem(
+                    key="telegram_local_bot_api_credentials",
+                    label="Telegram local Bot API credentials",
+                    category="telegram media",
+                    reason=(
+                        "A local Telegram Bot API server needs api_id and api_hash from "
+                        "my.telegram.org to remove Telegram's hosted download ceiling"
+                    ),
+                    status="ok" if telegram_local_bot_api_credentials_ready else "missing",
+                    install_kind="manual",
+                    manual_command=(
+                        "Add integrations.telegram.local_bot_api.api_id and api_hash in config.yaml, "
+                        "preferably via keychain:// refs, then rerun preflight"
+                    ),
+                )
+            )
 
     install_mode = ctx["install_mode"]
     voice_enabled = ctx["voice_mode"] != "disabled"

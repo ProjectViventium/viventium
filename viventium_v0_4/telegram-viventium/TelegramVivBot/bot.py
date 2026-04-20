@@ -136,7 +136,67 @@ def _strip_placeholder_prefix(text: str) -> str:
     remainder = stripped[match.end():].lstrip()
     return remainder
 # === VIVENTIUM END ===
-# === VIVENTIUM END ===
+
+
+async def _resolve_voice_input_message(
+    context,
+    *,
+    chatid,
+    messageid,
+    message_thread_id,
+    message,
+    voice_text,
+    voice_error_text,
+    show_transcription: bool = True,
+):
+    if voice_error_text:
+        # Keep transcription failures plain text so Telegram does not need
+        # Markdown escaping for runtime-generated error details.
+        await context.bot.send_message(
+            chat_id=chatid,
+            message_thread_id=message_thread_id,
+            text=voice_error_text,
+            reply_to_message_id=messageid,
+        )
+        if message is not None:
+            return message, False
+        return None, True
+
+    if message is None and voice_text and show_transcription:
+        transcription_display = f"🎤 Transcription:\n> {voice_text}"
+        escaped_display = escape(transcription_display, italic=False)
+        if len(escaped_display) <= 4096:
+            await context.bot.send_message(
+                chat_id=chatid,
+                message_thread_id=message_thread_id,
+                text=escaped_display,
+                parse_mode='MarkdownV2',
+                reply_to_message_id=messageid,
+            )
+        else:
+            preview_text = voice_text[:3500] + "…" if len(voice_text) > 3500 else voice_text
+            preview_display = f"🎤 Transcription (preview):\n> {preview_text}"
+            await context.bot.send_message(
+                chat_id=chatid,
+                message_thread_id=message_thread_id,
+                text=escape(preview_display, italic=False),
+                parse_mode='MarkdownV2',
+                reply_to_message_id=messageid,
+            )
+            transcript_io = BytesIO(voice_text.encode('utf-8'))
+            transcript_io.name = 'transcription.txt'
+            transcript_io.seek(0)
+            await context.bot.send_document(
+                chat_id=chatid,
+                message_thread_id=message_thread_id,
+                document=transcript_io,
+                filename='transcription.txt',
+                reply_to_message_id=messageid,
+            )
+
+    if message is None:
+        return voice_text, False
+    return message, False
 
 from telegram.constants import ChatAction
 from telegram import BotCommand, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto, InlineKeyboardButton
@@ -329,7 +389,7 @@ async def command_bot(update, context, title="", has_command=True):
     # === VIVENTIUM END ===
     # === VIVENTIUM START ===
     # Updated to capture file_data_list for LibreChat agent file upload
-    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, file_data_list = await GetMesageInfo(update, context)
+    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesageInfo(update, context)
     # === VIVENTIUM END ===
     # === VIVENTIUM START ===
     trace_id = f"tg-{chatid}-{messageid}-{uuid.uuid4().hex[:6]}"
@@ -369,45 +429,17 @@ async def command_bot(update, context, title="", has_command=True):
         if has_command:
             message = ' '.join(context.args)
         # REMOVED: pass_history - Not used by LiveKit Bridge, Viventium handles conversation history
-        
-        # Handle voice note transcription
-        if message == None and voice_text:
-            transcription_display = f"🎤 Transcription:\n> {voice_text}"
-            escaped_display = escape(transcription_display, italic=False)
-            if len(escaped_display) <= 4096:
-                await context.bot.send_message(
-                    chat_id=chatid,
-                    message_thread_id=message_thread_id,
-                    text=escaped_display,
-                    parse_mode='MarkdownV2',
-                    reply_to_message_id=messageid,
-                )
-            else:
-                preview_text = voice_text[:3500] + "…" if len(voice_text) > 3500 else voice_text
-                preview_display = f"🎤 Transcription (preview):\n> {preview_text}"
-                await context.bot.send_message(
-                    chat_id=chatid,
-                    message_thread_id=message_thread_id,
-                    text=escape(preview_display, italic=False),
-                    parse_mode='MarkdownV2',
-                    reply_to_message_id=messageid,
-                )
-                transcript_io = BytesIO(voice_text.encode('utf-8'))
-                transcript_io.name = 'transcription.txt'
-                transcript_io.seek(0)
-                await context.bot.send_document(
-                    chat_id=chatid,
-                    message_thread_id=message_thread_id,
-                    document=transcript_io,
-                    filename='transcription.txt',
-                    reply_to_message_id=messageid,
-                )
-            # === VIVENTIUM START ===
-            # Voice mode metadata is passed to LibreChat; keep the user text clean.
-            message = voice_text
-            # === VIVENTIUM END ===
-        elif message == None:
-            message = voice_text
+        message, voice_input_failed = await _resolve_voice_input_message(
+            context,
+            chatid=chatid,
+            messageid=messageid,
+            message_thread_id=message_thread_id,
+            message=message,
+            voice_text=voice_text,
+            voice_error_text=voice_error_text,
+        )
+        if voice_input_failed:
+            return
             
         if message and len(message) == 1 and is_emoji(message):
             return
@@ -1688,7 +1720,19 @@ async def button_press(update, context):
 async def handle_file(update, context):
     # === VIVENTIUM START ===
     # Handle file-only messages by sending attachments to LibreChat agent.
-    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, file_data_list = await GetMesageInfo(update, context)
+    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesageInfo(update, context)
+    if voice_error_text:
+        await _resolve_voice_input_message(
+            context,
+            chatid=chatid,
+            messageid=messageid,
+            message_thread_id=message_thread_id,
+            message=message,
+            voice_text=voice_text,
+            voice_error_text=voice_error_text,
+            show_transcription=False,
+        )
+        return
     robot, _, api_key, api_url = get_robot(convo_id)  # api_key/api_url only for document extraction
     engine = Users.get_config(convo_id, "engine")  # Default value used for document extraction only
 
@@ -1770,7 +1814,7 @@ reset_mess_id = 9999
 @decorators.Authorization
 async def reset_chat(update, context):
     global target_convo_id, reset_mess_id
-    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _ = await GetMesageInfo(update, context)
+    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context)
     reset_mess_id = user_message_id
     target_convo_id = convo_id
     stop_event.set()
@@ -1794,7 +1838,7 @@ async def reset_chat(update, context):
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def info(update, context):
-    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, voice_text, _ = await GetMesageInfo(update, context)
+    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, voice_text, _, _ = await GetMesageInfo(update, context)
     info_message = update_info_message(convo_id)
     message = await context.bot.send_message(
         chat_id=chatid,
@@ -1811,7 +1855,7 @@ async def info(update, context):
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def call(update, context):
-    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _ = await GetMesageInfo(
+    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(
         update, context
     )
     call_link = get_telegram_call_link_result(convo_id)
@@ -1868,7 +1912,7 @@ async def start(update, context):
     # Feature: Route /start through getViventiumResponse for dynamic agent-driven onboarding.
     # Preserves legacy API key arg handling for residual features.
     # === VIVENTIUM NOTE ===
-    _, _, _, chatid, messageid, _, update_message, message_thread_id, convo_id, _, _, _, _ = await GetMesageInfo(update, context)
+    _, _, _, chatid, messageid, _, update_message, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context)
 
     if len(context.args) == 2 and context.args[1].startswith("sk-"):
         api_url = context.args[0]
@@ -1990,9 +2034,29 @@ if __name__ == '__main__':
     # See config.py for detailed documentation on each setting.
     # Defaults are optimized for small deployments (1-10 users).
     # ========================================================================
-    application = (
+    telegram_bot_api_base_url = (
+        getattr(config, "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL", "") or ""
+    ).strip()
+    telegram_bot_api_base_file_url = (
+        getattr(config, "VIVENTIUM_TELEGRAM_BOT_API_BASE_FILE_URL", "") or ""
+    ).strip()
+    telegram_bot_local_mode = bool(
+        getattr(config, "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED", False)
+    )
+
+    builder = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
+    )
+    if telegram_bot_api_base_url:
+        builder = builder.base_url(telegram_bot_api_base_url)
+    if telegram_bot_api_base_file_url:
+        builder = builder.base_file_url(telegram_bot_api_base_file_url)
+    if telegram_bot_local_mode:
+        builder = builder.local_mode(True)
+
+    application = (
+        builder
         # Enable/disable concurrent update processing
         # Set CONCURRENT_UPDATES in config.env (default: false for small deployments)
         .concurrent_updates(CONCURRENT_UPDATES)

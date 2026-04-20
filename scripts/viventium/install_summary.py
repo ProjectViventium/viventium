@@ -115,6 +115,21 @@ def runtime_port(config: dict[str, Any], runtime_env: dict[str, str], env_key: s
 
 
 def http_ok(url: str) -> bool:
+    curl_cmd = shutil.which("curl")
+    if curl_cmd:
+        try:
+            completed = subprocess.run(
+                [curl_cmd, "-fsS", "-o", "/dev/null", "--max-time", "2", url],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+        except Exception:
+            completed = None
+        if completed is not None and completed.returncode == 0:
+            return True
+
     request = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=2) as response:
@@ -202,6 +217,54 @@ def runtime_state_root(
     return runtime_dir.parent / "state" / "runtime" / runtime_profile_name(config, runtime_env)
 
 
+def stack_owner_state_file(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+) -> Path | None:
+    state_root = runtime_state_root(config, runtime_env, runtime_dir)
+    if state_root is None:
+        return None
+    return state_root / "stack-owner.json"
+
+
+def load_stack_owner_state(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+) -> dict[str, Any]:
+    owner_file = stack_owner_state_file(config, runtime_env, runtime_dir)
+    if owner_file is None or not owner_file.is_file():
+        return {}
+    try:
+        payload = json.loads(owner_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def stack_owner_command(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+) -> str:
+    owner_state = load_stack_owner_state(config, runtime_env, runtime_dir)
+    command = str(owner_state.get("command") or "").strip().lower()
+    if command == "launch":
+        return "bin/viventium launch"
+    return "bin/viventium start"
+
+
+def stack_expected_live(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+) -> bool:
+    owner_state = load_stack_owner_state(config, runtime_env, runtime_dir)
+    command = str(owner_state.get("command") or "").strip().lower()
+    return command in {"install", "start", "launch", "upgrade", "update"}
+
+
 def load_public_network_state(
     config: dict[str, Any],
     runtime_env: dict[str, str],
@@ -238,6 +301,10 @@ def resolve_runtime_auth(config: dict[str, Any], runtime_env: dict[str, str]) ->
             runtime_env.get("ALLOW_REGISTRATION"),
             resolve_bool(auth.get("allow_registration"), True),
         ),
+        "bootstrap_registration_once": resolve_bool(
+            runtime_env.get("VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE"),
+            resolve_bool(auth.get("bootstrap_registration_once"), False),
+        ),
         "allow_password_reset": resolve_bool(
             runtime_env.get("ALLOW_PASSWORD_RESET"),
             resolve_bool(auth.get("allow_password_reset"), False),
@@ -261,6 +328,7 @@ def remote_access_status_and_detail(
     runtime_dir: Path | None,
     *,
     probe_live: bool,
+    stack_should_be_live: bool,
 ) -> tuple[str, str]:
     remote_call_mode = normalize_remote_call_mode(config)
     if remote_call_mode == "disabled":
@@ -275,7 +343,7 @@ def remote_access_status_and_detail(
         public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
     ).strip()
     if public_client_url:
-        status = "Running" if probe_live else "Configured"
+        status = "Running" if probe_live and stack_should_be_live else "Configured"
         return status, f"{remote_access_label(remote_call_mode)}: {public_client_url}"
 
     if remote_call_mode == "tailscale_tailnet_https":
@@ -437,11 +505,13 @@ def build_service_rows(
     api_url = f"http://localhost:{api_port}/api"
     playground_url = runtime_env.get("VIVENTIUM_PLAYGROUND_URL") or f"http://localhost:{playground_port}"
     livekit_url = runtime_env.get("LIVEKIT_URL", "ws://localhost:7880")
+    stack_should_be_live = stack_expected_live(config, runtime_env, runtime_dir)
     remote_status, remote_detail = remote_access_status_and_detail(
         config,
         runtime_env,
         runtime_dir,
         probe_live=probe_live,
+        stack_should_be_live=stack_should_be_live,
     )
     auth_settings = resolve_runtime_auth(config, runtime_env)
     code_interpreter_url = runtime_env.get("LIBRECHAT_CODE_BASEURL", "")
@@ -477,17 +547,22 @@ def build_service_rows(
         if probe_live
         else False
     )
+    missing_core_status = (
+        "Starting"
+        if probe_live and stack_should_be_live
+        else ("Configured" if probe_live else "Ready")
+    )
 
     frontend_detail = frontend_url
     if lan_url:
         frontend_detail = f"Local: {frontend_url} | Network: {lan_url}"
 
     rows: list[tuple[str, str, str]] = [
-        ("LibreChat Frontend", "Running" if frontend_ok else ("Starting" if probe_live else "Ready"), frontend_detail),
-        ("LibreChat API", "Running" if api_ok else ("Starting" if probe_live else "Ready"), api_url),
+        ("LibreChat Frontend", "Running" if frontend_ok else missing_core_status, frontend_detail),
+        ("LibreChat API", "Running" if api_ok else missing_core_status, api_url),
         (
             "Modern Playground",
-            "Running" if playground_ok else ("Starting" if probe_live else "Ready"),
+            "Running" if playground_ok else missing_core_status,
             playground_url,
         ),
         (
@@ -506,20 +581,41 @@ def build_service_rows(
     integrations = config.get("integrations", {}) or {}
     primary = ((config.get("llm", {}) or {}).get("primary", {}) or {})
     primary_auth_mode = str(primary.get("auth_mode") or "api_key").strip().lower()
+    primary_provider = str(primary.get("provider") or "").strip().lower()
+    primary_label = {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+    }.get(primary_provider, "your model provider")
+    primary_status = "Configured"
+    primary_detail = "API key"
+    if primary_auth_mode == "connected_account":
+        if foundation_api_key_present(config):
+            primary_detail = f"{primary_label} connected account or API-key fallback"
+        else:
+            primary_status = "Action Required"
+            primary_detail = (
+                f"Connect {primary_label} in Settings > Account > Connected Accounts"
+            )
     rows.append(
         (
             "Primary AI",
-            "Configured",
-            "Connected account" if primary_auth_mode == "connected_account" else "API key",
+            primary_status,
+            primary_detail,
         )
     )
     rows.append(
         (
             "Account Sign-up",
-            "Open" if auth_settings["allow_registration"] else "Closed",
-            "Anyone can create an account in the browser"
-            if auth_settings["allow_registration"]
-            else "Only existing accounts can sign in",
+            "Bootstrap Only"
+            if auth_settings["allow_registration"] and auth_settings["bootstrap_registration_once"]
+            else ("Open" if auth_settings["allow_registration"] else "Closed"),
+            "Browser sign-up stays open only until the first account is created, then closes automatically"
+            if auth_settings["allow_registration"] and auth_settings["bootstrap_registration_once"]
+            else (
+                "Anyone can create an account in the browser"
+                if auth_settings["allow_registration"]
+                else "Only existing accounts can sign in"
+            ),
         )
     )
     rows.append(
@@ -560,10 +656,16 @@ def build_service_rows(
         )
         rows.append(("Telegram Codex", telegram_codex_status, telegram_codex_detail))
     if resolve_bool((((config.get("runtime") or {}).get("personalization") or {}).get("default_conversation_recall")), False):
+        conversation_recall_running = probe_live and rag_api_url and http_ok(rag_api_url)
+        conversation_recall_status = (
+            "Running"
+            if conversation_recall_running
+            else ("Starting" if probe_live and stack_should_be_live and rag_api_url else "Configured")
+        )
         rows.append(
             (
                 "Conversation Recall",
-                "Running" if (probe_live and rag_api_url and http_ok(rag_api_url)) else ("Configured" if rag_api_url else "Configured"),
+                conversation_recall_status,
                 rag_api_url or "Local recall sidecar",
             )
         )
@@ -611,6 +713,47 @@ def build_service_rows(
         rows.append(("OpenClaw", "Configured", "Exposure monitoring integration"))
 
     return rows
+
+
+def live_core_services_ready(rows: list[tuple[str, str, str]]) -> bool:
+    statuses = {name: status for name, status, _detail in rows}
+    return all(
+        statuses.get(name) == "Running"
+        for name in ("LibreChat Frontend", "LibreChat API", "Modern Playground")
+    )
+
+
+def resolve_summary_heading(
+    probe_live: bool,
+    rows: list[tuple[str, str, str]],
+    stack_should_be_live: bool,
+) -> tuple[str, str, str]:
+    if not probe_live:
+        return (
+            "Viventium is configured",
+            "The table below shows the services this install is set up to run.",
+            "Configured Services",
+        )
+
+    if live_core_services_ready(rows):
+        return (
+            "Viventium is ready",
+            "The table below reflects the live surfaces Viventium can currently reach on this Mac.",
+            "Live Services",
+        )
+
+    if not stack_should_be_live:
+        return (
+            "Viventium is configured",
+            "The table below shows the services this install is set up to run. Start the stack when you want the local surfaces live on this Mac.",
+            "Configured Services",
+        )
+
+    return (
+        "Viventium is still starting",
+        "The table below reflects the live surfaces Viventium can currently reach on this Mac. Core services are still warming up.",
+        "Live Services",
+    )
 
 
 def build_setup_later_rows(config: dict[str, Any]) -> list[tuple[str, str]]:
@@ -673,7 +816,12 @@ def build_next_steps(
         public_state.get("public_client_url") or runtime_env.get("VIVENTIUM_PUBLIC_CLIENT_URL") or ""
     ).strip()
     remote_call_mode = normalize_remote_call_mode(config)
+    stack_should_be_live = stack_expected_live(config, runtime_env, runtime_dir)
     next_steps: list[str] = []
+    if not stack_should_be_live:
+        next_steps.append(
+            f"Run [cyan]{stack_owner_command(config, runtime_env, runtime_dir)}[/cyan] to bring this configured install live on this Mac."
+        )
     next_steps.extend(
         [
             "Run [cyan]bin/viventium status[/cyan] any time to recheck live service health.",
@@ -717,6 +865,11 @@ def build_next_steps(
         "Remote access is optional. For private-device or public-browser setup, see "
         "[cyan]docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md[/cyan]."
     )
+    auth_settings = resolve_runtime_auth(config, runtime_env)
+    if auth_settings["allow_registration"] and auth_settings["bootstrap_registration_once"]:
+        next_steps.append(
+            "Browser sign-up is in bootstrap-only mode for this install: it closes automatically after the first account is created."
+        )
     next_steps.append(
         "Keep [cyan]ALLOW_PASSWORD_RESET[/cyan] off for public installs unless real email delivery is configured. For a one-time operator-issued reset link, run [cyan]bin/viventium password-reset-link <email>[/cyan] locally."
     )
@@ -791,22 +944,17 @@ def main() -> None:
     probe_live = args.probe_live or args.stack_started
     ui = InstallerUI()
 
-    if probe_live:
-        intro = (
-            "The table below reflects the live surfaces Viventium can currently reach on this Mac."
-        )
-        table_title = "Live Services"
-    else:
-        intro = (
-            "Your workspace is configured. The table below shows the services this install is set up to run."
-        )
-        table_title = "Configured Services"
-
-    ui.print_section("Viventium is ready", intro, style="green")
+    service_rows = build_service_rows(config, runtime_env, runtime_dir=runtime_dir, probe_live=probe_live)
+    heading, intro, table_title = resolve_summary_heading(
+        probe_live,
+        service_rows,
+        stack_expected_live(config, runtime_env, runtime_dir),
+    )
+    ui.print_section(heading, intro, style="green")
     ui.print_table(
         table_title,
         ("Component", "Status", "Details"),
-        build_service_rows(config, runtime_env, runtime_dir=runtime_dir, probe_live=probe_live),
+        service_rows,
         style="green",
     )
 

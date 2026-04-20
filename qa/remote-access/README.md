@@ -54,6 +54,9 @@ honest separation between:
   clean external acceptance path; it can rewrite the host routing table and invalidate the test.
 - If the router grants leased UPnP mappings, QA must confirm those mappings are still present after
   initial startup or that the renewal worker is active.
+- If the router still holds stale same-machine UPnP mappings from an older Viventium run, startup
+  should reclaim those dead mappings instead of aborting; active foreign/live conflicts must still
+  fail loudly.
 - Preflight clearly explains missing provider prerequisites instead of failing silently:
   - NetBird client not installed/joined
   - Tailscale daemon/tailnet not connected

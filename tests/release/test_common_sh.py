@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -169,3 +170,52 @@ exit 0
     assert completed.returncode == 0
     assert marker.exists()
     assert completed.stdout.strip() == str(bootstrap_root / "bin" / "python3")
+
+
+def test_viventium_port_listener_active_detects_open_socket() -> None:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    port = server.getsockname()[1]
+
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                (
+                    f"source '{REPO_ROOT / 'scripts/viventium/common.sh'}' && "
+                    f"if viventium_port_listener_active '{port}'; then printf 'active\\n'; "
+                    "else printf 'inactive\\n'; fi"
+                ),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        server.close()
+
+    assert completed.stdout.strip() == "active"
+
+
+def test_viventium_port_listener_active_rejects_closed_socket() -> None:
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f"source '{REPO_ROOT / 'scripts/viventium/common.sh'}' && "
+                "if viventium_port_listener_active '9'; then printf 'active\\n'; "
+                "else printf 'inactive\\n'; fi"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "inactive"

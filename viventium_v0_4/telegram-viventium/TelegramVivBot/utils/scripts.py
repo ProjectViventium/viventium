@@ -28,6 +28,7 @@ import asyncio
 import logging
 import time
 import base64
+from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict
 try:
     import config
@@ -69,12 +70,136 @@ SUPPORTED_IMAGE_MIMES = {
     "image/bmp", "image/tiff", "image/heic", "image/heif"
 }
 
+
+@dataclass
+class TelegramDownloadResult:
+    file_bytes: Optional[bytes] = None
+    mime_type: str = ""
+    filename: str = ""
+    error_code: Optional[str] = None
+
+
+@dataclass
+class TelegramTranscriptionResult:
+    text: Optional[str] = None
+    error_text: Optional[str] = None
+    error_code: Optional[str] = None
+
 def detect_mime_from_path(file_path: str) -> str:
     """Detect MIME type from file path extension."""
     if not file_path:
         return "application/octet-stream"
     ext = "." + file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
     return EXTENSION_TO_MIME.get(ext, "application/octet-stream")
+
+
+def _transcription_download_error(media_label: str, error_code: Optional[str]) -> TelegramTranscriptionResult:
+    if error_code == "file_too_large":
+        return TelegramTranscriptionResult(
+            error_text=f"This {media_label} is too large to transcribe in Telegram right now.",
+            error_code=error_code,
+        )
+    if error_code == "download_timeout":
+        return TelegramTranscriptionResult(
+            error_text=f"Timed out downloading this {media_label} from Telegram. Please retry.",
+            error_code=error_code,
+        )
+    return TelegramTranscriptionResult(
+        error_text=f"Temporarily unable to download this {media_label} from Telegram. Please retry.",
+        error_code=error_code or "download_failed",
+    )
+
+
+def _transcription_runtime_error(
+    media_label: str,
+    error_code: str = "transcription_failed",
+) -> TelegramTranscriptionResult:
+    return TelegramTranscriptionResult(
+        error_text=f"Temporarily unable to transcribe this {media_label}. Please retry.",
+        error_code=error_code,
+    )
+
+
+def classify_telegram_download_error(exc: Exception) -> str:
+    message = str(exc or "").strip().lower()
+    oversize_markers = (
+        "file is too big",
+        "file too large",
+        "request entity too large",
+        "payload too large",
+        "entity_content_too_large",
+    )
+    if any(marker in message for marker in oversize_markers):
+        return "file_too_large"
+    if "timed out" in message or "timeout" in message:
+        return "download_timeout"
+    return "download_failed"
+
+
+async def download_telegram_file_result(
+    bot,
+    file_id: str,
+    max_bytes: Optional[int] = None,
+    filename_hint: Optional[str] = None,
+    mime_type_hint: Optional[str] = None,
+) -> TelegramDownloadResult:
+    """
+    Download file from Telegram servers with structured failure metadata.
+    """
+    try:
+        if max_bytes is None:
+            max_bytes = getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760)
+        file = await bot.get_file(
+            file_id,
+            read_timeout=time_out,
+            write_timeout=time_out,
+            connect_timeout=time_out,
+            pool_timeout=time_out,
+        )
+        file_path = file.file_path
+        if not file_path:
+            logger.warning(f"No file_path returned for file_id={file_id}")
+            return TelegramDownloadResult(error_code="missing_file_path")
+
+        if hasattr(file, "file_size") and file.file_size and file.file_size > max_bytes:
+            logger.warning(f"File too large: {file.file_size} > {max_bytes} bytes")
+            return TelegramDownloadResult(error_code="file_too_large")
+
+        file_bytes = await file.download_as_bytearray()
+        if not file_bytes:
+            logger.warning(f"Downloaded file is empty for file_id={file_id}")
+            return TelegramDownloadResult(error_code="empty_file")
+
+        if len(file_bytes) > max_bytes:
+            logger.warning(f"Downloaded file too large: {len(file_bytes)} > {max_bytes} bytes")
+            return TelegramDownloadResult(error_code="file_too_large")
+
+        mime_type = (mime_type_hint or "").strip()
+        if not mime_type:
+            mime_type = detect_mime_from_path(file_path)
+        if mime_type == "application/octet-stream" and filename_hint:
+            mime_type = detect_mime_from_path(filename_hint)
+
+        filename = (filename_hint or "").strip()
+        if not filename:
+            filename = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+
+        logger.debug(f"Downloaded file: {filename}, {len(file_bytes)} bytes, {mime_type}")
+        return TelegramDownloadResult(
+            file_bytes=bytes(file_bytes),
+            mime_type=mime_type,
+            filename=filename,
+        )
+
+    except asyncio.TimeoutError:
+        logger.warning(f"Timed out downloading file {file_id}")
+        return TelegramDownloadResult(error_code="download_timeout")
+    except TimeoutError:
+        logger.warning(f"Timed out downloading file {file_id}")
+        return TelegramDownloadResult(error_code="download_timeout")
+    except Exception as e:
+        logger.warning(f"Failed to download file {file_id}: {e}")
+        return TelegramDownloadResult(error_code=classify_telegram_download_error(e))
 
 
 async def download_telegram_file(
@@ -91,56 +216,14 @@ async def download_telegram_file(
         Tuple of (file_bytes, mime_type, filename)
         Returns (None, "", "") if download fails or file is too large.
     """
-    try:
-        if max_bytes is None:
-            max_bytes = getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760)
-        # Get file info from Telegram
-        file = await bot.get_file(
-            file_id,
-            read_timeout=time_out,
-            write_timeout=time_out,
-            connect_timeout=time_out,
-            pool_timeout=time_out,
-        )
-        file_path = file.file_path
-        if not file_path:
-            logger.warning(f"No file_path returned for file_id={file_id}")
-            return None, "", ""
-
-        # Check file size before downloading (if available)
-        if hasattr(file, "file_size") and file.file_size and file.file_size > max_bytes:
-            logger.warning(f"File too large: {file.file_size} > {max_bytes} bytes")
-            return None, "", ""
-
-        # Download file bytes
-        file_bytes = await file.download_as_bytearray()
-        if not file_bytes:
-            logger.warning(f"Downloaded file is empty for file_id={file_id}")
-            return None, "", ""
-
-        # Check size after download
-        if len(file_bytes) > max_bytes:
-            logger.warning(f"Downloaded file too large: {len(file_bytes)} > {max_bytes} bytes")
-            return None, "", ""
-
-        # Detect MIME type from hints or file path
-        mime_type = (mime_type_hint or "").strip()
-        if not mime_type:
-            mime_type = detect_mime_from_path(file_path)
-        if mime_type == "application/octet-stream" and filename_hint:
-            mime_type = detect_mime_from_path(filename_hint)
-
-        # Extract filename from path
-        filename = (filename_hint or "").strip()
-        if not filename:
-            filename = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
-
-        logger.debug(f"Downloaded file: {filename}, {len(file_bytes)} bytes, {mime_type}")
-        return bytes(file_bytes), mime_type, filename
-
-    except Exception as e:
-        logger.warning(f"Failed to download file {file_id}: {e}")
-        return None, "", ""
+    download_result = await download_telegram_file_result(
+        bot,
+        file_id,
+        max_bytes=max_bytes,
+        filename_hint=filename_hint,
+        mime_type_hint=mime_type_hint,
+    )
+    return download_result.file_bytes, download_result.mime_type, download_result.filename
 
 
 def encode_file_for_agent(
@@ -168,20 +251,23 @@ def is_image_mime(mime_type: str) -> bool:
 
 logger = logging.getLogger(__name__)
 
-async def get_voice(file_id: str, context) -> str:
+async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
     """Transcribe a voice message using Whisper (local or API)"""
     logger.info(f"Starting voice transcription for file_id={file_id}")
 
     try:
-        # Download file from Telegram
-        logger.debug(f"Downloading file {file_id} from Telegram")
-        file = await context.bot.get_file(file_id)
-        file_bytes = await file.download_as_bytearray()
-        logger.debug(f"Downloaded {len(file_bytes)} bytes from Telegram")
+        download_result = await download_telegram_file_result(
+            context.bot,
+            file_id,
+            max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
+            filename_hint="voice.ogg",
+            mime_type_hint="audio/ogg",
+        )
+        if not download_result.file_bytes:
+            return _transcription_download_error("voice note", download_result.error_code)
 
-        if not file_bytes:
-            logger.error("Downloaded file is empty")
-            return "error: Downloaded audio file is empty"
+        file_bytes = download_result.file_bytes
+        logger.debug(f"Downloaded {len(file_bytes)} bytes from Telegram")
 
         # Use the proper transcription function that handles both local and API modes
         # This matches the pattern from telegram-bot-standalone
@@ -196,21 +282,22 @@ async def get_voice(file_id: str, context) -> str:
             )
         except asyncio.TimeoutError:
             logger.exception("Transcription timed out after %ss", timeout_s)
-            return f"error: Transcription timed out after {timeout_s}s"
+            return _transcription_runtime_error("voice note", "timeout")
         finally:
             elapsed = time.monotonic() - start_ts
             logger.info("Transcription elapsed=%.2fs bytes=%d", elapsed, len(file_bytes))
-        
-        if not transcript or transcript.startswith("error:"):
-            logger.warning(f"Transcription failed or returned error: {transcript}")
-        else:
-            logger.info(f"Transcription successful, length: {len(transcript)} characters")
 
-        return transcript
+        transcript_text = str(transcript or "").strip()
+        if not transcript_text or transcript_text.startswith("error:"):
+            logger.warning(f"Transcription failed or returned error: {transcript_text}")
+            return _transcription_runtime_error("voice note")
+
+        logger.info(f"Transcription successful, length: {len(transcript_text)} characters")
+        return TelegramTranscriptionResult(text=transcript_text)
 
     except Exception as e:
         logger.exception(f"Exception during voice transcription: {e}")
-        return f"error: Temporarily unable to use voice function: {str(e)}"
+        return _transcription_runtime_error("voice note")
 
 import os
 import sys
@@ -218,14 +305,28 @@ import tempfile
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-async def transcribe_video(file_id: str, context) -> str:
+async def transcribe_video(
+    file_id: str,
+    context,
+    *,
+    media_label: str = "video note",
+) -> TelegramTranscriptionResult:
     from aient.aient.utils.scripts import extract_audio_from_video, transcribe_audio_file
 
     try:
-        file = await context.bot.get_file(file_id)
-        file_bytes = await file.download_as_bytearray()
+        download_result = await download_telegram_file_result(
+            context.bot,
+            file_id,
+            max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
+            filename_hint="video.mp4",
+            mime_type_hint="video/mp4",
+        )
+        if not download_result.file_bytes:
+            return _transcription_download_error(media_label, download_result.error_code)
 
-        file_ext = os.path.splitext(file.file_path or "")[1]
+        file_bytes = download_result.file_bytes
+
+        file_ext = os.path.splitext(download_result.filename or "")[1]
         if not file_ext:
             file_ext = ".mp4"
 
@@ -243,10 +344,16 @@ async def transcribe_video(file_id: str, context) -> str:
             if os.path.exists(temp_video_path):
                 os.remove(temp_video_path)
 
-        return transcript
+        transcript_text = str(transcript or "").strip()
+        if not transcript_text or transcript_text.startswith("error:"):
+            logger.warning(f"Video transcription failed or returned error: {transcript_text}")
+            return _transcription_runtime_error(media_label)
+
+        return TelegramTranscriptionResult(text=transcript_text)
 
     except Exception as e:
-        return f"error: Temporarily unable to process video note: {str(e)}"
+        logger.exception(f"Exception during {media_label} transcription: {e}")
+        return _transcription_runtime_error(media_label)
 
 async def GetMesage(update_message, context, voice=True, *, override_user_id: Optional[str] = None):
     from aient.aient.utils.scripts import Document_extract
@@ -256,6 +363,7 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
     message = None
     rawtext = None
     voice_text = None
+    voice_error_text = None
     reply_to_message_file_content = None
     # === VIVENTIUM START ===
     # Feature: File upload to LibreChat agent - track file data for vision models
@@ -341,26 +449,32 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
         if update_message.caption:
             message = rawtext = CutNICK(update_message.caption, update_message)
 
-    if voice and update_message.voice:
-        voice = update_message.voice.file_id
-        voice_text = await get_voice(voice, context)
+    if voice:
+        voice_result = None
+        if update_message.voice:
+            voice_file_id = update_message.voice.file_id
+            voice_result = await get_voice(voice_file_id, context)
+        elif update_message.video_note:
+            video_note_file_id = update_message.video_note.file_id
+            voice_result = await transcribe_video(
+                video_note_file_id,
+                context,
+                media_label="video note",
+            )
+        elif update_message.video:
+            video_file_id = update_message.video.file_id
+            voice_result = await transcribe_video(
+                video_file_id,
+                context,
+                media_label="video",
+            )
 
-        if update_message.caption:
-            message = rawtext = CutNICK(update_message.caption, update_message)
+        if voice_result is not None:
+            voice_text = voice_result.text
+            voice_error_text = voice_result.error_text
 
-    if voice and update_message.video_note:
-        video_note = update_message.video_note.file_id
-        voice_text = await transcribe_video(video_note, context)
-
-        if update_message.caption:
-            message = rawtext = CutNICK(update_message.caption, update_message)
-
-    if voice and update_message.video:
-        video = update_message.video.file_id
-        voice_text = await transcribe_video(video, context)
-
-        if update_message.caption:
-            message = rawtext = CutNICK(update_message.caption, update_message)
+            if update_message.caption:
+                message = rawtext = CutNICK(update_message.caption, update_message)
 
     if update_message.document:
         file = update_message.document
@@ -406,14 +520,14 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
 
     # === VIVENTIUM START ===
     # Return file_data_list for LibreChat agent file upload support
-    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, file_data_list
+    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list
     # === VIVENTIUM END ===
 
 async def GetMesageInfo(update, context, voice=True):
     # === VIVENTIUM START ===
     # Updated to include file_data_list return value
     if update.edited_message:
-        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, file_data_list = await GetMesage(update.edited_message, context, voice)
+        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesage(update.edited_message, context, voice)
         update_message = update.edited_message
     elif update.callback_query:
         # === VIVENTIUM START ===
@@ -423,7 +537,7 @@ async def GetMesageInfo(update, context, voice=True):
             if update.callback_query and update.callback_query.from_user
             else None
         )
-        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, file_data_list = await GetMesage(
+        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesage(
             update.callback_query.message,
             context,
             voice,
@@ -432,11 +546,11 @@ async def GetMesageInfo(update, context, voice=True):
         # === VIVENTIUM END ===
         update_message = update.callback_query.message
     elif update.message:
-        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, file_data_list = await GetMesage(update.message, context, voice)
+        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesage(update.message, context, voice)
         update_message = update.message
     else:
-        return None, None, None, None, None, None, None, None, None, None, None, None, []
-    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, file_data_list
+        return None, None, None, None, None, None, None, None, None, None, None, None, None, []
+    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list
     # === VIVENTIUM END ===
 
 # === VIVENTIUM START ===

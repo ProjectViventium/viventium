@@ -35,10 +35,13 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
 ## Notes
 - Installer UX contract:
   - if Docker Desktop is already available, Easy Install should enable local SearXNG + Firecrawl without extra friction
-  - if Docker Desktop is not available, the wizard must still treat web search as first-class:
-    - explain that choosing local search/scraping will make preflight install Docker Desktop automatically
-    - offer the hosted Serper + Firecrawl API path with direct key URLs
-    - explain that Firecrawl is what gives Viventium the full page content behind search results
+  - if Docker Desktop is not available, Easy Install must stay minimal instead of detouring a lazy
+    first-run user into Docker-backed setup:
+    - keep local Web Search off by default
+    - keep local Conversation Recall off by default
+    - explain that both can be enabled later through `bin/viventium configure` after Docker Desktop
+      is installed
+    - advanced/custom install paths may still choose hosted or Docker-backed search explicitly
 - Firecrawl expects a valid `fc-` API key format (or UUID). LibreChat sends `FIRECRAWL_API_KEY`.
 - If Firecrawl expects a different API version, update `FIRECRAWL_VERSION` and
   `FIRECRAWL_API_URL` together to keep v0.4 and v0.3 aligned.

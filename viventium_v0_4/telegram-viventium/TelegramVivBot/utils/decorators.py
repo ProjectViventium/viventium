@@ -20,7 +20,7 @@ def ban_message(update, convo_id):
 def Authorization(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
         if config.BLACK_LIST and chatid in config.BLACK_LIST:
             message = ban_message(update, convo_id)
             await context.bot.send_message(chat_id=chatid, message_thread_id=message_thread_id, text=message, parse_mode='MarkdownV2')
@@ -38,7 +38,7 @@ def Authorization(func):
 def GroupAuthorization(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
         if config.GROUP_LIST == None:
             return await func(*args, **kwargs)
         if update.effective_chat == None or chatid[0] != "-":
@@ -56,7 +56,7 @@ def GroupAuthorization(func):
 def AdminAuthorization(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
         if config.ADMIN_LIST == None:
             return await func(*args, **kwargs)
         if (str(update.effective_user.id) not in config.ADMIN_LIST):
@@ -69,7 +69,7 @@ def AdminAuthorization(func):
 def APICheck(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
         from config import (
             Users,
             get_robot,
