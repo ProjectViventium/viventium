@@ -42,6 +42,20 @@ def _make_fake_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def _make_fake_runtime_repo_root(path: Path) -> None:
+    _make_fake_executable(path / "bin" / "viventium")
+    (path / "scripts" / "viventium").mkdir(parents=True, exist_ok=True)
+    (path / "scripts" / "viventium" / "common.sh").write_text(
+        "#!/usr/bin/env bash\n",
+        encoding="utf-8",
+    )
+    (path / "viventium_v0_4").mkdir(parents=True, exist_ok=True)
+    (path / "viventium_v0_4" / "viventium-librechat-start.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+
+
 def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -257,6 +271,68 @@ def test_install_preserves_hidden_status_bar_preference(tmp_path: Path) -> None:
     config_text = helper_config.read_text(encoding="utf-8")
     assert str(REPO_ROOT) in config_text
     assert '"showInStatusBar": false' in config_text
+
+
+def test_install_prefers_safe_public_checkout_for_helper_runtime_when_repo_root_is_in_documents(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+
+    unsafe_repo_root = fake_home / "Documents" / "Viventium"
+    unsafe_repo_root.mkdir(parents=True, exist_ok=True)
+    safe_repo_root = fake_home / "viventium"
+    _make_fake_runtime_repo_root(safe_repo_root)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(fake_home),
+            "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+            "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+            "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+            "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+            "VIVENTIUM_HELPER_PACKAGE_DIR": str(REPO_ROOT / "apps" / "macos" / "ViventiumHelper"),
+            "VIVENTIUM_HELPER_ICON_RESOURCE": str(
+                REPO_ROOT
+                / "apps"
+                / "macos"
+                / "ViventiumHelper"
+                / "Sources"
+                / "ViventiumHelper"
+                / "Resources"
+                / "Viventium.icns"
+            ),
+        }
+    )
+
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    completed = subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(unsafe_repo_root),
+            "--no-launch",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    helper_config = app_support / "helper-config.json"
+    stack_wrapper = app_support / "helper-scripts" / "viventium-stack.sh"
+    helper_config_text = helper_config.read_text(encoding="utf-8")
+    stack_wrapper_text = stack_wrapper.read_text(encoding="utf-8")
+
+    assert str(safe_repo_root) in helper_config_text
+    assert str(unsafe_repo_root) not in helper_config_text
+    assert str(safe_repo_root / "bin" / "viventium") in stack_wrapper_text
+    assert str(unsafe_repo_root / "bin" / "viventium") not in stack_wrapper_text
+    assert "Using public-safe helper runtime checkout" in completed.stderr
 
 
 def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_path: Path) -> None:
@@ -587,6 +663,9 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
         in install_script
     )
     assert 'HELPER_PREBUILT_SOURCE_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_SOURCE_HASH_FILE:-$HELPER_PREBUILT_DIR/source.sha256}"' in install_script
+    assert 'HELPER_RUNTIME_REPO_ROOT="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-$REPO_ROOT}"' in install_script
+    assert 'HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"' in install_script
+    assert 'echo "[viventium] Using public-safe helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2' in install_script
     assert 'FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"' in install_script
     assert 'OSASCRIPT_TIMEOUT_SECONDS="${VIVENTIUM_HELPER_OSASCRIPT_TIMEOUT_SECONDS:-15}"' in install_script
     assert 'if [[ "$FORCE_LOCAL_BUILD" != "1" ]] && prebuilt_helper_matches_sources; then' in install_script
@@ -614,6 +693,8 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'echo "[viventium] Prebuilt helper fallback exists but does not match current helper sources" >&2' in install_script
     assert 'echo "[viventium] No matching prebuilt helper fallback found" >&2' in install_script
     assert '"$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/ViventiumHelperApp.swift"' in install_script
+    assert '"repoRoot": r"""$HELPER_RUNTIME_REPO_ROOT""",' in install_script
+    assert 'repo_root = Path(r"""$HELPER_RUNTIME_REPO_ROOT""").resolve()' in install_script
     assert 'export VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE=1' in install_script
     assert 'bin_viventium = repo_root / "bin" / "viventium"' in install_script
     assert 'if [[ "{dollar}{{1:-}}" == "--stop" ]]; then' in install_script
@@ -659,6 +740,7 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE' in cli_source
     assert 'scripts", "viventium", "native_stack.sh"' in cli_source
     assert 'Native runtime cleanup continuing in background' in cli_source
+    assert 'helper_runtime_repo_root="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"' in cli_source
     assert 'stack_owner_state_file() {' in cli_source
     assert 'write_stack_owner_state() {' in cli_source
     assert 'printf \'%s\\n\' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/stack-owner.json"' in cli_source

@@ -308,9 +308,11 @@ PY
 set_helper_status_bar_visibility() {
   local enabled="${1:-1}"
   local helper_config=""
+  local helper_runtime_repo_root=""
   helper_config="$(helper_config_file)"
+  helper_runtime_repo_root="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"
   refresh_repo_python
-  "$PYTHON_BIN" - "$helper_config" "$REPO_ROOT" "$APP_SUPPORT_DIR" "$enabled" <<'PY'
+  "$PYTHON_BIN" - "$helper_config" "$helper_runtime_repo_root" "$APP_SUPPORT_DIR" "$enabled" <<'PY'
 import json
 import sys
 from pathlib import Path

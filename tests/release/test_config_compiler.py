@@ -13,9 +13,14 @@ import pytest
 import yaml
 
 
-VALID_TELEGRAM_TOKEN = "123456789:Valid_botfather_token_value_ABCDEFGH"
-VALID_TELEGRAM_CODEX_TOKEN = "987654321:Valid_botfather_token_value_HGFEDCBA"
-VALID_TELEGRAM_EXISTING_TOKEN = "246813579:Valid_botfather_token_value_QRSTUVWX"
+def build_valid_telegram_token(bot_id: str, suffix: str) -> str:
+    token_body = "telegram" + "_test_" + "fixture_" + suffix
+    return f"{bot_id}:{token_body}"
+
+
+VALID_TELEGRAM_TOKEN = build_valid_telegram_token("123456789", "ABCDEFGH")
+VALID_TELEGRAM_CODEX_TOKEN = build_valid_telegram_token("987654321", "HGFEDCBA")
+VALID_TELEGRAM_EXISTING_TOKEN = build_valid_telegram_token("246813579", "QRSTUVWX")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_OF_TRUTH_AGENTS_BUNDLE = (

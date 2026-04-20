@@ -394,3 +394,58 @@ Interpretation:
 
 5. Clean-machine cold-start time is still a friction source on slower Macs.
    - Fresh users can wait through a long staged build before the API/frontend are actually ready.
+
+## Helper protected-folder binding follow-up
+
+Date: 2026-04-19
+
+Automated verification:
+
+Ran:
+
+```bash
+bash -n scripts/viventium/common.sh
+bash -n scripts/viventium/install_macos_helper.sh
+bash -n bin/viventium
+uv run --with pytest pytest tests/release/test_macos_helper_install.py -q
+uv run --with pytest pytest tests/release/test_cli_upgrade.py -k 'test_maybe_install_macos_helper_accepts_explicit_no_launch_override or test_cli_usage_documents_status_bar_and_shell_init_commands' -q
+```
+
+Result:
+
+- syntax checks passed
+- `test_macos_helper_install.py`: `8 passed`
+- targeted CLI helper/status-bar slice: `2 passed`
+
+Coverage added:
+
+- helper install now prefers the supported safe public checkout when invoked from a checkout under
+  `~/Documents`
+- generated helper-config and helper launcher scripts no longer rebind the helper back to a
+  protected-folder checkout in that scenario
+- the `status-bar` config-writing path uses the same resolver as helper install
+
+Live-machine verification:
+
+Machine:
+
+- local macOS install with:
+  - current working checkout under `~/Documents/<repo>`
+  - supported public checkout present at `~/viventium`
+
+Ran:
+
+```bash
+bin/viventium install-helper --no-launch
+bin/viventium status-bar on
+```
+
+Observed:
+
+- helper install logged:
+  - `Using public-safe helper runtime checkout: ~/viventium`
+- `~/Library/Application Support/Viventium/helper-config.json` now stores:
+  - `repoRoot: ~/viventium`
+- `~/Library/Application Support/Viventium/helper-scripts/viventium-stack.sh` now launches:
+  - `~/viventium/bin/viventium`
+- the helper binding no longer points at the checkout under `~/Documents/<repo>`

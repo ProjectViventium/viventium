@@ -323,7 +323,7 @@ A developer referring to a single document about a respective feature **must per
 #### Model Governance Rule (Launch-Ready Baseline)
 - Out-of-the-box Viventium background agents must stay within the current launch-ready model families unless a newer documented evaluation replaces them:
   - `anthropic / claude-sonnet-4-6`
-  - `anthropic / claude-opus-4-6`
+  - `anthropic / claude-opus-4-7`
   - `openAI / gpt-5.4`
 - Foundation provider rule:
   - Groq is the current launch-ready primary for activation detection under the shipped 2-second

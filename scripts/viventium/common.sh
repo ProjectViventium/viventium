@@ -42,6 +42,81 @@ path_is_git_repo_root() {
   [[ "$(cd "$candidate" && pwd -P)" == "$(cd "$git_root" && pwd -P)" ]]
 }
 
+canonicalize_existing_dir() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" && -d "$candidate" ]] || return 1
+  (
+    cd "$candidate" >/dev/null 2>&1 && pwd -P
+  )
+}
+
+path_is_within_dir() {
+  local candidate="${1:-}"
+  local parent_dir="${2:-}"
+  local normalized_candidate=""
+  local normalized_parent=""
+
+  normalized_candidate="$(canonicalize_existing_dir "$candidate" 2>/dev/null || true)"
+  normalized_parent="$(canonicalize_existing_dir "$parent_dir" 2>/dev/null || true)"
+  [[ -n "$normalized_candidate" && -n "$normalized_parent" ]] || return 1
+
+  case "${normalized_candidate}/" in
+    "${normalized_parent}/"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+path_is_viventium_runtime_repo_root() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" && -d "$candidate" ]] || return 1
+  [[ -x "$candidate/bin/viventium" ]] || return 1
+  [[ -f "$candidate/scripts/viventium/common.sh" ]] || return 1
+  [[ -f "$candidate/viventium_v0_4/viventium-librechat-start.sh" ]] || return 1
+}
+
+repo_root_uses_macos_protected_folder_access() {
+  local repo_root="${1:-}"
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+
+  local protected_root=""
+  for protected_root in "$HOME/Documents" "$HOME/Desktop" "$HOME/Downloads"; do
+    if path_is_within_dir "$repo_root" "$protected_root"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+default_public_install_repo_root() {
+  printf '%s\n' "${VIVENTIUM_PUBLIC_INSTALL_DIR:-${VIVENTIUM_INSTALL_DIR:-$HOME/viventium}}"
+}
+
+resolve_helper_runtime_repo_root() {
+  local repo_root="${1:-}"
+  local override="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-}"
+  local candidate=""
+
+  if [[ -n "$override" ]] && path_is_viventium_runtime_repo_root "$override"; then
+    canonicalize_existing_dir "$override"
+    return 0
+  fi
+
+  if [[ -n "$repo_root" ]] && ! repo_root_uses_macos_protected_folder_access "$repo_root"; then
+    canonicalize_existing_dir "$repo_root" 2>/dev/null || printf '%s\n' "$repo_root"
+    return 0
+  fi
+
+  candidate="$(default_public_install_repo_root)"
+  if [[ -n "$candidate" ]] && path_is_viventium_runtime_repo_root "$candidate" && ! repo_root_uses_macos_protected_folder_access "$candidate"; then
+    canonicalize_existing_dir "$candidate"
+    return 0
+  fi
+
+  canonicalize_existing_dir "$repo_root" 2>/dev/null || printf '%s\n' "$repo_root"
+}
+
 public_safe_path_label() {
   local candidate="${1:-}"
   [[ -n "$candidate" ]] || return 1

@@ -45,6 +45,36 @@
   - Telegram media errors now stop before LibreChat chat submission instead of being rendered as transcript text
 
 ## Notes
-- Full live detached-runtime kill/recovery QA was not re-executed in this turn.
-- Existing runtime evidence from `telegram_bot.log` and `helper-start.log` was used to confirm the
-  original failure mode before implementing the structural fix.
+- 2026-04-19 live helper-path re-verification completed on the installed checkout under
+  `~/viventium`.
+- The live installed launcher had drifted from tracked source and was missing the detached
+  LibreChat API watchdog until the installed artifact was re-aligned.
+- After re-alignment, detached launch created the watchdog pid contract, and a live fault-injection
+  test killed only the real `node api/server/index.js` child while leaving nodemon wrappers alive.
+- `http://localhost:3180/health` failed immediately after the kill, then recovered to `OK` about
+  22 seconds later with helper/runtime logs reporting `LibreChat API after detached backend restart
+  ready`.
+- A signed synthetic `POST /api/viventium/telegram/chat` request returned `200` with
+  `status=started`, a `streamId`, and a `conversationId` after the recovery.
+
+## 2026-04-19 Verification Addendum
+
+### Automated Verification
+- Passed:
+  - `uv run --with pytest pytest tests/release/test_detached_librechat_supervision.py tests/release/test_detached_librechat_api_watchdog.py -q`
+  - `uv run --with pytest --with httpx --with pytest-asyncio pytest viventium_v0_4/telegram-viventium/tests/test_librechat_bridge.py -q`
+
+### Runtime Verification
+- Detached/helper launch path used:
+  - `~/viventium/bin/viventium launch`
+- Detached watchdog evidence:
+  - watchdog pid file existed at
+    `~/Library/Application Support/Viventium/state/runtime/isolated/librechat-api-watchdog.pid`
+  - helper log reported `Started detached LibreChat API watchdog`
+- Failure-mode reproduction:
+  - killing only the real backend child left wrapper processes alive and dropped `3180`
+  - after recovery, a fresh backend child existed and `curl http://localhost:3180/health`
+    returned `OK`
+- Telegram bridge verification:
+  - a signed `POST /api/viventium/telegram/chat` returned `200`
+  - response included `status=started`, `streamId`, and `conversationId`

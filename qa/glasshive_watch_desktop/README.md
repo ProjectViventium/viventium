@@ -71,21 +71,18 @@ Observed after launching a new `codex-cli` worker project:
 
 ### 4. Browser QA: live desktop contents
 
-Running-state screenshot:
+Public repo note:
 
-![GlassHive watch running](watch-running.png)
+- local visual evidence was captured during QA but is intentionally not tracked here because live
+  screenshots are machine-local artifacts
 
-Observed:
+Observed while the run was active:
 
 - left side showed the GlassHive placeholder Chromium window, not the Selenium Grid splash
 - right side showed `WPR Live Run`
 - terminal content was the actual live run stream, not a blank shell
 
-Completed-state screenshot:
-
-![GlassHive watch completed](watch-completed.png)
-
-Observed:
+Observed after completion:
 
 - worker state moved to `ready`
 - completed run output stayed visible in the desktop terminal window

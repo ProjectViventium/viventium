@@ -171,16 +171,16 @@ MODEL_MAP = {
         "memory": "gpt-5.4",
     },
     "anthropic": {
-        "conscious": "claude-opus-4-6",
+        "conscious": "claude-opus-4-7",
         "background_analysis": "claude-sonnet-4-6",
         "confirmation_bias": "claude-sonnet-4-6",
-        "red_team": "claude-opus-4-6",
-        "deep_research": "claude-sonnet-4-6",
+        "red_team": "claude-opus-4-7",
+        "deep_research": "claude-opus-4-7",
         "productivity": "claude-sonnet-4-6",
         "parietal": "claude-sonnet-4-6",
         "pattern_recognition": "claude-sonnet-4-6",
-        "emotional_resonance": "claude-opus-4-6",
-        "strategic_planning": "claude-opus-4-6",
+        "emotional_resonance": "claude-sonnet-4-6",
+        "strategic_planning": "claude-opus-4-7",
         "support": "claude-sonnet-4-6",
         "memory": "claude-sonnet-4-6",
     },
@@ -1415,6 +1415,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
 
     if retrieval_embeddings["provider"] == "ollama":
         env["OLLAMA_BASE_URL"] = retrieval_embeddings["ollama_base_url"]
+
+    if glasshive_is_enabled:
+        env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
+        env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
+        env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()

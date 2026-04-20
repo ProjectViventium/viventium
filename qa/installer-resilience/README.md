@@ -7,11 +7,13 @@ classes:
 2. the macOS helper must default to the shipped matching prebuilt binary on clean installs when
    local Swift toolchains are unreliable
 3. Telegram bridge startup must survive long first-run LibreChat builds and self-recover once the
-   API becomes healthy
+  API becomes healthy
 4. clean-machine launcher/runtime startup must repair partial local stacks and reject stale
    local-search sidecars that only look healthy from an unauthenticated port probe
 5. install/start wait logic must keep following a valid detached startup handoff instead of
    reporting a false early stop while the real stack is still warming
+6. helper install from a checkout inside a macOS protected folder must bind the helper runtime to
+   the supported safe checkout instead of retriggering Documents/Desktop/Downloads access prompts
 
 ## Scenarios
 
@@ -100,3 +102,20 @@ Expected behavior:
   warming stack
 - detached LibreChat API watchdog keeps waiting through the clean-build window instead of giving up
   before the first healthy API response
+
+### 6. Helper install from a protected-folder checkout
+
+Repro surface:
+
+- supported public checkout exists at `~/viventium`
+- helper install or `bin/viventium status-bar on` is invoked from another checkout under a macOS
+  protected folder such as `~/Documents/<repo>`
+
+Expected behavior:
+
+- helper-config.json stores `repoRoot` as the safe public checkout, not the protected-folder
+  checkout
+- generated helper launcher scripts point at the safe public checkout for `bin/viventium`
+- helper install/status-bar output makes the rebinding explicit
+- the helper app no longer needs ongoing Documents-folder access just to poll/start/stop the local
+  stack

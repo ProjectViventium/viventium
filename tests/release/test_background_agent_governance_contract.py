@@ -24,11 +24,11 @@ RUNTIME_MODELS_SCRIPT_PATH = (
 
 APPROVED_EXECUTION_FAMILIES = {
     ("anthropic", "claude-sonnet-4-6"),
-    ("anthropic", "claude-opus-4-6"),
+    ("anthropic", "claude-opus-4-7"),
     ("openAI", "gpt-5.4"),
 }
 APPROVED_ACTIVATION_FAMILY = ("groq", "meta-llama/llama-4-scout-17b-16e-instruct")
-APPROVED_MAIN_AGENT_FAMILY = ("anthropic", "claude-opus-4-6")
+APPROVED_MAIN_AGENT_FAMILY = ("anthropic", "claude-opus-4-7")
 
 
 def _load_source_of_truth() -> dict:
@@ -209,6 +209,6 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
         if spec.get("preset", {}).get("endpoint") == "anthropic"
     ]
 
-    assert anthropic_names == ["claude-sonnet-4-6", "claude-opus-4-6"]
+    assert anthropic_names == ["claude-sonnet-4-6", "claude-opus-4-7"]
     assert source.get("endpoints", {}).get("anthropic", {}).get("summaryModel") == "claude-sonnet-4-6"
     assert source.get("balance", {}).get("enabled") is False

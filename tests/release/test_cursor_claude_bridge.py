@@ -139,7 +139,7 @@ def test_select_backend_for_model_routes_custom_and_native_aliases() -> None:
     module = load_module()
 
     assert module._select_backend_for_model("SUBSCRIPTION OPUS") == "claude"
-    assert module._select_backend_for_model("claude-opus-4-6") == "claude"
+    assert module._select_backend_for_model("claude-opus-4-7") == "claude"
     assert module._select_backend_for_model("CODEX_SUBSCRIPTION") == "codex"
     assert module._select_backend_for_model("SUBSCRIPTION GPT 5.4 XHIGH") == "codex"
     assert module._select_backend_for_model("gpt-5.4") == "codex"

@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SUMMARY_PATH = REPO_ROOT / "scripts" / "viventium" / "install_summary.py"
+VALID_TELEGRAM_TOKEN = "123456789:" + "telegram_test_fixture_" + "ABCDEFGH"
 
 
 def load_install_summary_module():
@@ -167,7 +168,7 @@ def test_build_service_rows_marks_running_telegram_bridge_from_pid_file(monkeypa
     rows = install_summary.build_service_rows(
         config,
         {
-            "BOT_TOKEN": "123456789:Valid_botfather_token_value_ABCDEFGH",
+            "BOT_TOKEN": VALID_TELEGRAM_TOKEN,
             "VIVENTIUM_RUNTIME_PROFILE": "isolated",
         },
         runtime_dir=runtime_dir,
@@ -213,7 +214,7 @@ def test_build_service_rows_marks_pending_telegram_bridge_as_starting(monkeypatc
     rows = install_summary.build_service_rows(
         config,
         {
-            "BOT_TOKEN": "123456789:Valid_botfather_token_value_ABCDEFGH",
+            "BOT_TOKEN": VALID_TELEGRAM_TOKEN,
             "VIVENTIUM_RUNTIME_PROFILE": "isolated",
         },
         runtime_dir=runtime_dir,
@@ -343,6 +344,26 @@ def test_build_next_steps_prioritizes_connected_accounts_when_no_foundation_api_
     assert "Settings -> Connected Accounts" in notice
     assert "OpenAI" in notice
     assert all("Connected Accounts" not in step for step in steps)
+
+
+def test_build_connected_accounts_notice_matches_anthropic_only_foundation_contract() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"ports": {"lc_frontend_port": 3190}},
+        "llm": {
+            "primary": {"provider": "anthropic", "auth_mode": "connected_account"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+
+    notice = install_summary.build_connected_accounts_notice(config)
+
+    assert "Anthropic" in notice
+    assert "OpenAI" not in notice
 
 
 def test_build_connected_accounts_notice_mentions_workspace_accounts_when_enabled() -> None:

@@ -193,8 +193,8 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
         "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.4"),
         "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.4"),
         "agent_viventium_pattern_recognition_95aeb3": ("anthropic", "claude-sonnet-4-6"),
-        "agent_viventium_emotional_resonance_95aeb3": ("anthropic", "claude-opus-4-6"),
-        "agent_viventium_strategic_planning_95aeb3": ("anthropic", "claude-opus-4-6"),
+        "agent_viventium_emotional_resonance_95aeb3": ("anthropic", "claude-sonnet-4-6"),
+        "agent_viventium_strategic_planning_95aeb3": ("anthropic", "claude-opus-4-7"),
         "agent_viventium_support_95aeb3": ("anthropic", "claude-sonnet-4-6"),
         "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.4"),
     }
@@ -206,12 +206,21 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
         assert agent["model_parameters"]["model"] == model
 
 
+def test_deep_research_ships_with_web_search_and_openai_reasoning_effort() -> None:
+    agents_by_id = _load_background_agents_by_id()
+    deep_research = agents_by_id["agent_viventium_deep_research_95aeb3"]
+
+    assert "web_search" in deep_research["tools"]
+    assert deep_research["model_parameters"]["reasoning_effort"] == "xhigh"
+    assert "thinkingBudget" not in deep_research["model_parameters"]
+
+
 def test_background_agent_execution_models_stay_within_launch_ready_families() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     allowed = {
         ("anthropic", "claude-sonnet-4-6"),
-        ("anthropic", "claude-opus-4-6"),
+        ("anthropic", "claude-opus-4-7"),
         ("openAI", "gpt-5.4"),
     }
 

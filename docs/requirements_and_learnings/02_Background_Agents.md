@@ -20,11 +20,64 @@ For the manager-readable handbook, start with:
 - Activation is fast, accurate, and low-noise.
 - Execution is non-blocking and does not delay the main response.
 - Background agents retain full capabilities: tools, MCPs, code interpreter, web search.
+- Deep Research is a shipped web-research cortex:
+  - its built-in source-of-truth contract must include `web_search`
+  - when its execution family is `openAI / gpt-5.4`, its shipped `model_parameters` must use
+    `reasoning_effort: xhigh`, not Anthropic/Google-only thinking fields such as `thinkingBudget`
 - Background agents must receive the same user memory context as the main agent when memories are
   enabled, so insights do not regress to fresh-chat behavior.
 - Output is merged as background insights and can be voiced in playground mode.
 - Follow-up realizations should still surface shortly after the original request within a
   configurable grace window.
+
+## Execution Matrix
+
+Background-agent execution-family selection is part of the install/compiler/runtime contract, not a
+browser-only post-connect side effect.
+
+- The tracked source-of-truth bundle in
+  `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml` is the mixed
+  launch baseline.
+- `scripts/viventium/config_compiler.py` chooses the provider/model mix for the local install.
+- `viventium-agent-runtime-models.js` must then normalize each built-in background agent onto the
+  canonical execution bag for that target provider family.
+- Connecting OpenAI or Anthropic later in the browser unlocks auth for the configured provider mix;
+  it does not currently recompute the built-in background-agent roster by itself.
+
+Authoritative execution matrix:
+
+| Agent | Shipped Mixed Baseline | OpenAI-only install | Anthropic-only install | OpenAI + Anthropic install |
+| --- | --- | --- | --- | --- |
+| Background Analysis | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
+| Confirmation Bias | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
+| Red Team | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` |
+| Deep Research | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` |
+| MS365 | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` |
+| Parietal Cortex | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` |
+| Pattern Recognition | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
+| Emotional Resonance | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
+| Strategic Planning | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `anthropic / claude-opus-4-7` |
+| Viventium User Help | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
+| Google | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` |
+
+Anthropic Opus budgeting rule:
+
+- For background agents, Anthropic Opus is reserved for:
+  - `Red Team`
+  - `Deep Research`
+  - `Strategic Planning`
+- Other background agents must stay on Anthropic Sonnet when Anthropic is the selected execution
+  family so the install does not silently waste Opus tokens.
+
+Canonical model-parameter rule:
+
+- Built-in background agents must not carry provider-family-specific execution parameters across a
+  provider rewrite.
+- Illegal examples:
+  - `reasoning_effort` surviving on an Anthropic execution bag
+  - `thinkingBudget` or `thinking` surviving on an OpenAI execution bag
+- The runtime normalization and built-in seed/upsert path must both resolve the canonical
+  model-parameter bag for the final provider family instead of blindly merging stale keys.
 
 ## Public-Safe Implementation Notes
 
@@ -102,6 +155,11 @@ Use this order so the fix stays surgical:
   deterministic runtime heuristics.
 - Activation and execution must be diagnosed separately. A productivity cortex can activate
   correctly and still fail later if its execution-model credential or connected account is expired.
+- On April 14, 2026, a shipped-source audit caught a Deep Research drift:
+  - the built-in bundle still carried `web_search`, but its OpenAI execution bag was using
+    `thinkingBudget` instead of the documented OpenAI `reasoning_effort`
+  - the supported fix is source-of-truth correction plus reseed/runtime tests proving upgrades and
+    restarts restore the intended tool surface for built-in users
 - Activation-provider benchmarks must use the same auth/runtime path as the product:
   - connected-account providers must be measured through their connected-account initializer path
   - standalone eval scripts must bootstrap Mongo/runtime dependencies before running activation

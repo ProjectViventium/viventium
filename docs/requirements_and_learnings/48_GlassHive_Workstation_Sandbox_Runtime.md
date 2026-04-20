@@ -227,6 +227,9 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
 - **Idle desktop priming**: fresh worker desktops are primed with a GlassHive-owned placeholder page so operators do not land on the inherited Selenium splash as the default visible surface
 - **Launch failure audit trail**: if a project launch fails after worker creation but before the first run is queued, the worker is marked failed and a `worker.launch_failed` event is recorded instead of leaving an orphaned ready worker
 - **User-facing naming**: the glossy/operator UI should present persistent personal environments as `Workspaces` rather than exposing raw worker IDs or `sandbox` terminology in the primary flow
+- **Steer redirect semantics**: the glossy watch footer `Steer + send` path must interrupt the active run, kill the exact live run session/process tree, auto-start the replacement steer run, and keep that replacement run in execution mode until the redirected action is actually performed or a blocker is raised
+- **Queue follow-up gestures**: the same footer must also support non-interrupting queued follow-ups through long-press `Send` and `Cmd/Ctrl+Enter` or modifier-click send; those gestures route through `worker_message`, preserve the current active run, and visibly explain the queue behavior in the footer UI
+- **Queue follow-up lifecycle**: once a queued follow-up becomes the active run, GlassHive must keep the worker in `running` until that follow-up itself settles; healing/recovery paths must not regress the worker to `ready` while the replacement run is still executing
 
 Operator brief is derived from the project goal and success criteria. Workers treat success criteria
 as hard acceptance gates and pause before risky or irreversible external actions.

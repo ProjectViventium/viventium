@@ -162,6 +162,12 @@ class _RecordingModel:
         yield SimpleNamespace(sample_rate=24000, audio=np.array([0.1, -0.1], dtype=np.float32))
 
 
+class _MultiChunkModel:
+    def generate(self, **_: object):
+        yield SimpleNamespace(sample_rate=24000, audio=np.array([0.2, -0.1], dtype=np.float32))
+        yield SimpleNamespace(sample_rate=24000, audio=np.array([0.4, -0.3], dtype=np.float32))
+
+
 # ---------------------------------------------------------------------------
 # Sample rate handling
 # ---------------------------------------------------------------------------
@@ -258,6 +264,28 @@ class TestMlxChatterboxEmptyInput(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(emitter.push_calls), 0)
         # Empty inputs should initialize the emitter so LiveKit can safely finalize the stream.
         self.assertEqual(len(emitter.initialize_calls), 1)
+
+    async def test_emits_all_generated_chunks_without_dropping_tail_audio(self) -> None:
+        tts = MlxChatterboxTTS(
+            config=MlxChatterboxConfig(
+                model_id="fake-model",
+                stream=True,
+                streaming_interval_s=0.05,
+                prebuffer_ms=0.0,
+            )
+        )
+        stream = tts.synthesize("hello world")
+        emitter = _DummyEmitter()
+
+        with mock.patch("mlx_chatterbox_tts._load_mlx_model", return_value=_MultiChunkModel()):
+            await stream._run(emitter)
+
+        self.assertEqual(len(emitter.initialize_calls), 1)
+        self.assertEqual(len(emitter.push_calls), 2)
+        self.assertEqual(
+            b"".join(emitter.push_calls),
+            _audio_to_pcm_s16le(np.array([0.2, -0.1, 0.4, -0.3], dtype=np.float32)),
+        )
 
     async def test_whitespace_only_produces_no_audio(self) -> None:
         tts = MlxChatterboxTTS(

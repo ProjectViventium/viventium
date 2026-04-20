@@ -104,6 +104,25 @@ def foundation_api_key_present(config: dict[str, Any]) -> bool:
     )
 
 
+def configured_foundation_connected_account_labels(config: dict[str, Any]) -> list[str]:
+    llm = config.get("llm", {}) or {}
+    primary = llm.get("primary", {}) or {}
+    secondary = llm.get("secondary", {}) or {}
+    labels: list[str] = []
+    for node in (primary, secondary):
+        provider = str(node.get("provider") or "").strip().lower()
+        auth_mode = str(node.get("auth_mode") or "").strip().lower()
+        if auth_mode != "connected_account":
+            continue
+        label = {
+            "openai": "OpenAI",
+            "anthropic": "Anthropic",
+        }.get(provider)
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
 def runtime_port(config: dict[str, Any], runtime_env: dict[str, str], env_key: str, key: str, default: int) -> int:
     raw_env = str(runtime_env.get(env_key, "") or "").strip()
     if raw_env.isdigit():
@@ -897,8 +916,15 @@ def build_connected_accounts_notice(config: dict[str, Any]) -> str | None:
     next_step = 3
 
     if foundation_needed:
+        foundation_labels = configured_foundation_connected_account_labels(config)
+        if not foundation_labels:
+            foundation_labels = ["OpenAI", "Anthropic"]
+        if len(foundation_labels) == 1:
+            foundation_label = f"[bold]{foundation_labels[0]}[/bold]"
+        else:
+            foundation_label = " and ".join(f"[bold]{label}[/bold]" for label in foundation_labels)
         lines.append(
-            f"{next_step}. Connect [bold]OpenAI[/bold], and optionally [bold]Anthropic[/bold], so the shipped Viventium and background agents can run."
+            f"{next_step}. Connect {foundation_label} so the shipped Viventium and background agents can run on this install."
         )
         next_step += 1
 

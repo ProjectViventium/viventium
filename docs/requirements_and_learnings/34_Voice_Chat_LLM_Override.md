@@ -1,7 +1,7 @@
 # Voice Chat LLM Override
 
 ## Overview
-Voice calls (LiveKit Playground) can use a different LLM model than text chat. For voice, latency matters more than reasoning depth — users can assign a faster model (e.g., xAI `grok-4-1-fast`) for voice while keeping a smarter model (e.g., `claude-opus-4-6`) for text.
+Voice calls (LiveKit Playground) can use a different LLM model than text chat. For voice, latency matters more than reasoning depth — users can assign a faster model (e.g., xAI `grok-4-1-fast`) for voice while keeping a smarter model (e.g., `claude-opus-4-7`) for text.
 
 ## Requirements
 1. Agent entity gains `voice_llm_model` (string|null), `voice_llm_provider` (string|null), and a

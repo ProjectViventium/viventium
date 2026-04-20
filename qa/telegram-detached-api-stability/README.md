@@ -50,9 +50,21 @@ frontend dev server exits later.
     degraded-state proof for Telegram.
   - A synthetic `POST /api/viventium/telegram/chat` request returned `200` with a new `streamId`
     and `conversationId`.
-  - Mongo `viventiumtelegramingressevents` recorded the new ingress at
-    `2026-04-03T17:39:12.370Z` for Telegram user/chat `160553220`.
+  - Mongo `viventiumtelegramingressevents` recorded the new ingress for the linked Telegram test
+    account.
 - 2026-04-07 automated verification:
   - release contract tests now assert the detached watchdog pid/log contract and restart probes
   - Telegram voice-media tests now assert oversized/download-failure paths return structured media
     errors instead of raw transcript text
+- 2026-04-19 live helper-path re-verification:
+  - The live installed checkout under `~/viventium` had drifted from tracked source and was missing
+    the detached watchdog launcher logic until it was re-aligned with the current source launcher.
+  - `bin/viventium launch` on the installed checkout created the detached watchdog pid contract and
+    helper logs reported `Started detached LibreChat API watchdog`.
+  - Killing only the real `node api/server/index.js` child dropped `http://localhost:3180/health`
+    immediately while nodemon wrapper processes still survived.
+  - About 22 seconds later the detached watchdog had restored a fresh backend child, logs reported
+    `LibreChat API after detached backend restart ready`, and `http://localhost:3180/health`
+    returned `OK` again.
+  - A signed synthetic `POST /api/viventium/telegram/chat` request returned `200` with
+    `status=started`, a `streamId`, and a `conversationId` after the recovery.

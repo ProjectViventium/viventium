@@ -29,6 +29,7 @@ HELPER_LOG_FILE="${VIVENTIUM_HELPER_LOG_FILE:-$APP_SUPPORT_DIR/logs/viventium-he
 HELPER_SCRIPT_DIR="${VIVENTIUM_HELPER_SCRIPT_DIR:-$APP_SUPPORT_DIR/helper-scripts}"
 HELPER_STACK_SCRIPT_COPY="${VIVENTIUM_HELPER_STACK_SCRIPT_COPY:-$HELPER_SCRIPT_DIR/viventium-librechat-start.sh}"
 HELPER_STACK_WRAPPER="${VIVENTIUM_HELPER_STACK_WRAPPER:-$HELPER_SCRIPT_DIR/viventium-stack.sh}"
+HELPER_RUNTIME_REPO_ROOT="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-$REPO_ROOT}"
 SKIP_BUILD="${VIVENTIUM_HELPER_SKIP_BUILD:-0}"
 FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"
 SKIP_LAUNCHCTL="${VIVENTIUM_HELPER_SKIP_LAUNCHCTL:-0}"
@@ -69,6 +70,11 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
+HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"
+if [[ "$HELPER_RUNTIME_REPO_ROOT" != "$REPO_ROOT" ]]; then
+  echo "[viventium] Using public-safe helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2
+fi
+
 mkdir -p "$APP_SUPPORT_DIR" "$APP_SUPPORT_DIR/logs" "$HELPER_APP_DIR" "$LAUNCH_AGENT_DIR"
 
 write_helper_config() {
@@ -90,7 +96,7 @@ if path.exists():
 config = dict(existing)
 config.update(
     {
-        "repoRoot": r"""$REPO_ROOT""",
+        "repoRoot": r"""$HELPER_RUNTIME_REPO_ROOT""",
         "appSupportDir": r"""$APP_SUPPORT_DIR""",
         "showInStatusBar": bool(existing.get("showInStatusBar", True)),
     }
@@ -106,7 +112,7 @@ write_helper_launcher_scripts() {
 from pathlib import Path
 import shlex
 
-repo_root = Path(r"""$REPO_ROOT""").resolve()
+repo_root = Path(r"""$HELPER_RUNTIME_REPO_ROOT""").resolve()
 app_support_dir = Path(r"""$APP_SUPPORT_DIR""").resolve()
 helper_script_dir = Path(r"""$HELPER_SCRIPT_DIR""").resolve()
 stack_script_copy = Path(r"""$HELPER_STACK_SCRIPT_COPY""").resolve()

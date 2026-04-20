@@ -190,6 +190,46 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(updated.tts_provider, "openai")
         self.assertEqual(updated.xai_voice, "Sal")
 
+    def test_apply_requested_voice_route_keeps_machine_default_when_requested_route_missing(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CARTESIA_API_KEY": "cartesia-key",
+                "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
+                "VIVENTIUM_CARTESIA_MODEL_ID": "sonic-2",
+            },
+            clear=False,
+        ):
+            env = load_env()
+            capabilities = _build_voice_capability_catalog(env)
+
+            updated = _apply_requested_voice_route(env, {"stt": {}, "tts": {}}, capabilities)
+
+        self.assertEqual(updated.tts_provider, "local_chatterbox_turbo_mlx_8bit")
+        self.assertEqual(updated.cartesia_model_id, "sonic-2")
+
+    def test_apply_requested_voice_route_switches_from_local_default_to_cartesia_variant(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CARTESIA_API_KEY": "cartesia-key",
+                "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
+                "VIVENTIUM_CARTESIA_MODEL_ID": "sonic-2",
+            },
+            clear=False,
+        ):
+            env = load_env()
+            capabilities = _build_voice_capability_catalog(env)
+            requested = {
+                "stt": {},
+                "tts": {"provider": "cartesia", "variant": "sonic-3"},
+            }
+
+            updated = _apply_requested_voice_route(env, requested, capabilities)
+
+        self.assertEqual(updated.tts_provider, "cartesia")
+        self.assertEqual(updated.cartesia_model_id, "sonic-3")
+
     def test_build_voice_capability_catalog_marks_missing_keys_as_unavailable(self) -> None:
         with patch.dict(
             os.environ,

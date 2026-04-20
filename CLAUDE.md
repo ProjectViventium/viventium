@@ -72,6 +72,8 @@ For install/runtime/release work, also read:
 - Auth, MCP, productivity: `docs/requirements_and_learnings/07_MCPs.md`,
   `docs/requirements_and_learnings/35_OAuth_Subscription_Auth.md`,
   `qa/mcp_oauth_and_productivity_integrations.md`
+- GlassHive (workstation sandbox): `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`,
+  `viventium_v0_4/GlassHive/docs/`
 - Installer and publish safety: `docs/05_ENVIRONMENT.md`,
   `docs/06_TROUBLESHOOTING.md`,
   `qa/launch_readiness.md`,
