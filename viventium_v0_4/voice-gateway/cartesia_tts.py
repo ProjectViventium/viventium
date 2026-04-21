@@ -3,12 +3,17 @@
 # Added: 2026-01-10
 #
 # Design:
-# - Call Cartesia /tts/bytes to synthesize audio.
-# - Request WAV (PCM S16LE) and stream raw PCM frames into LiveKit AudioEmitter.
+# - Keep `synthesize()` on Cartesia `/tts/bytes` for full-text, one-request surfaces.
+# - Implement native LiveKit `stream()` on Cartesia WebSocket contexts so incremental LLM
+#   text can begin speaking immediately without sentence-buffering in LiveKit's StreamAdapter.
+# - Use a low explicit `max_buffer_delay_ms` for streaming voice calls to avoid Cartesia's
+#   multi-second default token buffer while still allowing minor prosody smoothing.
 # === VIVENTIUM END ===
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import io
 import json
 import logging
@@ -19,11 +24,12 @@ import uuid
 import wave
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 
 from livekit.agents import APIError
-from livekit.agents.tts import AudioEmitter, ChunkedStream, TTS, TTSCapabilities
+from livekit.agents.tts import AudioEmitter, ChunkedStream, SynthesizeStream, TTS, TTSCapabilities
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
 
 # === VIVENTIUM START ===
@@ -35,11 +41,18 @@ logger = logging.getLogger("voice-gateway.cartesia_tts")
 
 
 DEFAULT_URL = "https://api.cartesia.ai/tts/bytes"
+DEFAULT_WS_URL = "wss://api.cartesia.ai/tts/websocket"
 DEFAULT_VERSION = "2025-04-16"
 DEFAULT_MODEL_ID = "sonic-3"
 DEFAULT_VOICE_ID = "e8e5fffb-252c-436d-b842-8879b84445b6"
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_NUM_CHANNELS = 1
+# === VIVENTIUM START ===
+# Feature: Low-latency Cartesia token buffering for live voice.
+# Purpose: The docs note a default token buffer that can be multiple seconds for continuations.
+# We keep a small explicit delay to start speech quickly while still smoothing micro-fragments.
+DEFAULT_MAX_BUFFER_DELAY_MS = 120
+# === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
 # Feature: Cartesia emotion-tag segmentation + nonverbal normalization
@@ -103,6 +116,7 @@ class CartesiaConfig:
     model_id: str = DEFAULT_MODEL_ID
     voice_id: str = DEFAULT_VOICE_ID
     api_url: str = DEFAULT_URL
+    ws_url: str = DEFAULT_WS_URL
     api_version: str = DEFAULT_VERSION
     sample_rate: int = DEFAULT_SAMPLE_RATE
     num_channels: int = DEFAULT_NUM_CHANNELS
@@ -111,6 +125,7 @@ class CartesiaConfig:
     emotion: str = "neutral"
     segment_silence_ms: int = DEFAULT_SEGMENT_SILENCE_MS
     language: str = "en"
+    max_buffer_delay_ms: int = DEFAULT_MAX_BUFFER_DELAY_MS
 
 
 @dataclass(frozen=True)
@@ -124,12 +139,29 @@ class CartesiaTTS(TTS):
     def __init__(self, *, config: CartesiaConfig) -> None:
         if not config.api_key:
             raise ValueError("CartesiaTTS requires a non-empty api_key")
+        ws_url = (config.ws_url or "").strip() or _default_ws_url(config.api_url)
+        max_buffer_delay_ms = max(0, int(config.max_buffer_delay_ms))
         super().__init__(
-            capabilities=TTSCapabilities(streaming=False),
+            capabilities=TTSCapabilities(streaming=True),
             sample_rate=int(config.sample_rate),
             num_channels=int(config.num_channels),
         )
-        self._config = config
+        self._config = CartesiaConfig(
+            api_key=config.api_key,
+            model_id=config.model_id,
+            voice_id=config.voice_id,
+            api_url=config.api_url,
+            ws_url=ws_url,
+            api_version=config.api_version,
+            sample_rate=config.sample_rate,
+            num_channels=config.num_channels,
+            speed=config.speed,
+            volume=config.volume,
+            emotion=config.emotion,
+            segment_silence_ms=config.segment_silence_ms,
+            language=config.language,
+            max_buffer_delay_ms=max_buffer_delay_ms,
+        )
 
     @property
     def provider(self) -> str:
@@ -144,11 +176,27 @@ class CartesiaTTS(TTS):
     ) -> ChunkedStream:
         return _CartesiaChunkedStream(tts=self, input_text=text, conn_options=conn_options)
 
+    def stream(
+        self, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
+    ) -> SynthesizeStream:
+        return _CartesiaSynthesizeStream(tts=self, conn_options=conn_options)
+
 
 # === VIVENTIUM START ===
 # Feature: Cartesia text normalization helpers
 def _should_debug() -> bool:
     return (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+
+
+def _default_ws_url(api_url: str) -> str:
+    raw = (api_url or "").strip()
+    if not raw:
+        return DEFAULT_WS_URL
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return DEFAULT_WS_URL
+    ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+    return urlunparse((ws_scheme, parsed.netloc, "/tts/websocket", "", "", ""))
 
 
 def _strip_non_cartesia_tags(text: str) -> str:
@@ -269,6 +317,79 @@ def _split_emotion_segments(text: str) -> list[EmotionSegment]:
     return segments
     # === VIVENTIUM END ===
 # === VIVENTIUM END ===
+
+
+def _build_ws_generation_request(
+    *,
+    cfg: CartesiaConfig,
+    context_id: str,
+    transcript: str,
+    continue_generation: bool,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "model_id": cfg.model_id,
+        "transcript": transcript,
+        "voice": {"mode": "id", "id": cfg.voice_id},
+        "output_format": {
+            "container": "raw",
+            "encoding": "pcm_s16le",
+            "sample_rate": int(cfg.sample_rate),
+        },
+        "language": cfg.language or "en",
+        "generation_config": {
+            "speed": float(cfg.speed),
+            "volume": float(cfg.volume),
+            "emotion": (cfg.emotion or "neutral").strip() or "neutral",
+        },
+        "context_id": context_id,
+        "continue": bool(continue_generation),
+    }
+    if int(cfg.max_buffer_delay_ms) > 0:
+        payload["max_buffer_delay_ms"] = int(cfg.max_buffer_delay_ms)
+    return payload
+
+
+def _extract_ws_audio_chunk(event: dict[str, object]) -> Optional[bytes]:
+    if not isinstance(event, dict):
+        return None
+    if event.get("type") != "chunk":
+        return None
+    raw = event.get("data")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return base64.b64decode(raw, validate=False)
+    except Exception:
+        return None
+
+
+def _is_ws_done(event: dict[str, object], *, context_id: str) -> bool:
+    if not isinstance(event, dict):
+        return False
+    if event.get("type") != "done":
+        return False
+    event_context_id = event.get("context_id")
+    if isinstance(event_context_id, str) and event_context_id and event_context_id != context_id:
+        return False
+    return True
+
+
+def _ws_api_error(event: dict[str, object]) -> APIError:
+    status_code = -1
+    raw_status = event.get("status_code")
+    if isinstance(raw_status, int):
+        status_code = raw_status
+    elif isinstance(raw_status, str):
+        try:
+            status_code = int(raw_status)
+        except ValueError:
+            status_code = -1
+    retryable = status_code < 0 or status_code >= 500 or status_code == 429
+    return APIError(
+        f"Cartesia WebSocket TTS failed ({status_code if status_code >= 0 else 'unknown'})",
+        body=event,
+        retryable=retryable,
+    )
 
 
 class _CartesiaChunkedStream(ChunkedStream):
@@ -396,6 +517,140 @@ class _CartesiaChunkedStream(ChunkedStream):
             raise
         except Exception as exc:
             raise APIError(f"Cartesia TTS failed: {exc}", retryable=True) from exc
+
+
+class _CartesiaSynthesizeStream(SynthesizeStream):
+    async def _run(self, output_emitter: AudioEmitter) -> None:
+        tts: CartesiaTTS = self._tts  # type: ignore[assignment]
+        cfg = tts._config
+
+        request_id = f"cartesia_{uuid.uuid4().hex[:12]}"
+        context_id = request_id
+        output_emitter.initialize(
+            request_id=request_id,
+            sample_rate=tts.sample_rate,
+            num_channels=tts.num_channels,
+            mime_type="audio/pcm",
+            frame_size_ms=200,
+            stream=True,
+        )
+        output_emitter.start_segment(segment_id=context_id)
+
+        total_timeout_s = max(120.0, float(self._conn_options.timeout))
+        timeout = aiohttp.ClientTimeout(total=total_timeout_s)
+        input_ready = asyncio.Event()
+        sent_any_input = False
+        context_done = False
+
+        headers = {
+            "Cartesia-Version": cfg.api_version,
+            "X-API-Key": cfg.api_key,
+        }
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.ws_connect(cfg.ws_url, headers=headers, heartbeat=20) as ws:
+
+                async def _input_task() -> None:
+                    nonlocal sent_any_input
+                    async for data in self._input_ch:
+                        if isinstance(data, self._FlushSentinel):
+                            continue
+                        chunk = sanitize_voice_text(data or "")
+                        if not chunk:
+                            continue
+                        if _should_debug():
+                            logger.info(
+                                "Cartesia ws push len=%s buffer_ms=%s chunk=%s",
+                                len(chunk),
+                                cfg.max_buffer_delay_ms,
+                                chunk[:200],
+                            )
+                        await ws.send_str(
+                            json.dumps(
+                                _build_ws_generation_request(
+                                    cfg=cfg,
+                                    context_id=context_id,
+                                    transcript=chunk,
+                                    continue_generation=True,
+                                )
+                            )
+                        )
+                        sent_any_input = True
+                        self._mark_started()
+                        input_ready.set()
+
+                    input_ready.set()
+                    if not sent_any_input:
+                        return
+
+                    await ws.send_str(
+                        json.dumps(
+                            _build_ws_generation_request(
+                                cfg=cfg,
+                                context_id=context_id,
+                                transcript="",
+                                continue_generation=False,
+                            )
+                        )
+                    )
+
+                async def _recv_task() -> None:
+                    nonlocal context_done
+                    await input_ready.wait()
+                    if not sent_any_input:
+                        return
+
+                    while True:
+                        msg = await ws.receive(timeout=total_timeout_s)
+                        if msg.type in (
+                            aiohttp.WSMsgType.CLOSED,
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSING,
+                        ):
+                            raise APIError("Cartesia WebSocket closed unexpectedly", retryable=True)
+                        if msg.type == aiohttp.WSMsgType.ERROR:
+                            raise APIError("Cartesia WebSocket errored unexpectedly", retryable=True)
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+
+                        try:
+                            event = json.loads(msg.data)
+                        except Exception as exc:
+                            raise APIError(
+                                f"Cartesia WebSocket returned invalid JSON: {exc}",
+                                retryable=True,
+                            ) from exc
+
+                        if isinstance(event, dict) and event.get("type") == "error":
+                            raise _ws_api_error(event)
+
+                        audio = _extract_ws_audio_chunk(event) if isinstance(event, dict) else None
+                        if audio:
+                            output_emitter.push(audio)
+                            continue
+
+                        if isinstance(event, dict) and _is_ws_done(event, context_id=context_id):
+                            context_done = True
+                            return
+
+                tasks = [
+                    asyncio.create_task(_input_task(), name="cartesia_tts_input"),
+                    asyncio.create_task(_recv_task(), name="cartesia_tts_recv"),
+                ]
+                try:
+                    await asyncio.gather(*tasks)
+                except asyncio.CancelledError:
+                    if sent_any_input and not context_done:
+                        try:
+                            await ws.send_str(json.dumps({"context_id": context_id, "cancel": True}))
+                        except Exception:
+                            logger.debug("Cartesia WebSocket cancel failed", exc_info=True)
+                    raise
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _wav_to_pcm(wav_bytes: bytes, *, expected_rate: int, expected_channels: int) -> Optional[bytes]:

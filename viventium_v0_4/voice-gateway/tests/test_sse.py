@@ -163,9 +163,9 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sanitize_voice_delta_text("{NTA}hello"), " hello")
 
     # === VIVENTIUM START ===
-    # Feature: Tests for strip_voice_control_tags (SSML + bracket nonverbal stripping for TTS fallback).
-    # Updated 2026-02-22: Bracket nonverbal markers are now stripped alongside SSML tags
-    # to prevent literal reading by non-expressive fallback providers.
+    # Feature: Tests for strip_voice_control_tags (SSML + structural stage-direction stripping).
+    # Updated 2026-04-20: Lowercase bracket stage directions are stripped generically instead of
+    # matching a hardcoded token vocabulary.
     def test_strip_voice_control_tags_self_closing_emotion(self) -> None:
         text = '<emotion value="excited"/>Hello there.'
         self.assertEqual(strip_voice_control_tags(text), "Hello there.")
@@ -187,9 +187,9 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Hello", cleaned)
         self.assertIn("world", cleaned)
 
-    def test_strip_voice_control_tags_strips_all_known_nonverbals(self) -> None:
-        """All known bracket nonverbal variants are stripped."""
-        text = "[laugh] [giggle] [chuckle] [soft laugh] [breath] [inhale] [exhale] [hmm] [hm] [whisper]"
+    def test_strip_voice_control_tags_strips_structural_stage_directions(self) -> None:
+        """Lowercase bracket stage directions are stripped generically."""
+        text = "[laugh] [giggle] [chuckle] [soft laugh] [breath] [inhale] [exhale] [hmm] [whisper] [smiles]"
         cleaned = strip_voice_control_tags(text)
         self.assertNotIn("[", cleaned)
         self.assertNotIn("]", cleaned)
@@ -198,6 +198,10 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         """Legitimate bracket usage must never be broken."""
         text = "See [note: important] for details."
         self.assertEqual(strip_voice_control_tags(text), "See [note: important] for details.")
+
+    def test_strip_voice_control_tags_preserves_short_or_non_lowercase_brackets(self) -> None:
+        text = "Choose [A] or [ok] depending on context."
+        self.assertEqual(strip_voice_control_tags(text), text)
 
     def test_strip_voice_control_tags_mixed_ssml_and_brackets(self) -> None:
         """Both SSML tags and bracket nonverbals are stripped."""

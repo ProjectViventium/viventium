@@ -52,11 +52,22 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - If no follow-up exists, the gateway falls back to a formatted summary of insights.
 - Voice follow-up requests set `suppressBackgroundCortices=true` to prevent recursion.
 
+## Streaming-First TTS Contract
+- Live voice calls must begin speech from incremental LLM output; they must not wait for the full
+  final assistant answer before TTS starts.
+- If a provider supports native incremental input streaming, the voice gateway must use that native
+  stream directly.
+- If a provider does not support native incremental input streaming, the gateway may adapt it to a
+  streaming surface, but wrapper layers must not downgrade a native-streaming provider back to
+  sentence-buffered fallback behavior.
+
 ## Voice-Mode Prompt Contract (Provider-Aware)
 Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvider)` in
 `surfacePrompts.js`. Each TTS provider gets its own branch:
 
 ### Cartesia (Sonic 3)
+- Live voice calls use Cartesia WebSocket contexts (`/tts/websocket`) so text deltas can be pushed
+  as they arrive from the LLM. The bytes endpoint remains for one-request/full-text surfaces.
 - Recommended emotions: `neutral`, `excited`, `content`, `sad`, `angry`, `scared`, `curious`, `calm`, `surprised`, `contemplative`.
 - Preferred tag form: self-closing `<emotion value="excited"/>` (state change applies to subsequent text).
 - Wrapper form also supported: `<emotion value="excited">TEXT</emotion>` (scoped to wrapped text).
@@ -76,13 +87,19 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 ### ElevenLabs / OpenAI (Fallback)
 - No emotion tags, no bracket stage directions.
 - Prompt explicitly prohibits both to prevent literal readout.
+- Fallback routing is streaming-aware: if the primary provider fails before audio starts, the
+  gateway preserves streaming with the next provider instead of forcing the whole turn back through
+  a non-streaming wrapper.
+- Fallback sanitization is capability-driven and uses structural parsing of completed markup
+  regions; runtime wrappers must not own hardcoded provider-name or token-vocabulary logic.
 
 ## Cartesia Emotion Handling
 - Cartesia accepts one `generation_config.emotion` per API request.
 - The voice gateway splits `<emotion>` segments and synthesizes each with its own emotion.
 - Self-closing `<emotion value="..."/>` acts as a state change for subsequent text.
 - Nonverbal markers (`[laughter]`) are split into their own mini synthesis calls.
-- Non-Cartesia HTML tags and bracket nonverbal markers are stripped for fallback providers.
+- Non-Cartesia HTML tags and structural bracket stage directions are stripped for fallback
+  providers.
 
 ## Call Session Security
 - Voice gateway requests are authenticated via:
@@ -158,6 +175,8 @@ Added: 2026-01-11
 - `VIVENTIUM_VOICE_FOLLOWUP_INTERVAL_S`
 - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S`
 - `VIVENTIUM_CALL_SESSION_TTL_MS` (override call session TTL)
+- `VIVENTIUM_CARTESIA_WS_URL`
+- `VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS` (default `120` for live voice)
 - `VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS`
 - `VIVENTIUM_VOICE_LOG_LATENCY=1`
 - `VIVENTIUM_VOICE_DEBUG_TTS=1`

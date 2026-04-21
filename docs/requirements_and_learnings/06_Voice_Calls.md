@@ -56,6 +56,15 @@ background-cortex behavior.
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.
 - The gateway should not wait for the full final LLM answer before starting speech.
+- Native provider streaming must be preserved end to end. Fallback wrappers or route-selection
+  layers must not downgrade a provider that supports incremental speech continuations back to a
+  non-streaming sentence-buffered path.
+- When a TTS provider does not support native incremental text input, runtime may adapt it to an
+  incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
+  for voice-first providers.
+- Fallback speech sanitization must be capability-driven and limited to deterministic structural
+  parsing of voice-control markup. Do not scatter provider-name heuristics or hardcoded stage-token
+  vocabularies across runtime wrapper layers.
 
 ### Remote Browser Voice Contract
 - Enabling remote access must not break the canonical localhost voice path.

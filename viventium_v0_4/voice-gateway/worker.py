@@ -191,6 +191,7 @@ class Env:
     openai_tts_instructions: str
     # Cartesia TTS settings
     cartesia_api_url: str
+    cartesia_ws_url: str
     cartesia_api_version: str
     cartesia_model_id: str
     cartesia_voice_id: str
@@ -198,6 +199,7 @@ class Env:
     cartesia_speed: float
     cartesia_volume: float
     cartesia_emotion: str
+    cartesia_max_buffer_delay_ms: int
     # === VIVENTIUM START ===
     # Feature: per-emotion segment silence (Cartesia)
     cartesia_segment_silence_ms: int
@@ -473,6 +475,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "isLocal": False,
             "available": bool(openai_api_key),
             "unavailableReason": None if openai_api_key else "OPENAI_API_KEY not set",
+            "acceptsInlineVoiceControls": False,
             "variantLabel": _provider_variant_type("openai", modality="tts"),
             "variants": _dedupe_variants(env.openai_tts_model, "gpt-4o-mini-tts"),
         },
@@ -485,6 +488,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "unavailableReason": None
             if HAS_ELEVENLABS and eleven_api_key
             else "ElevenLabs plugin or ELEVEN_API_KEY missing",
+            "acceptsInlineVoiceControls": False,
             "variantLabel": _provider_variant_type("elevenlabs", modality="tts"),
             "variants": _dedupe_variants(env.elevenlabs_voice_id, env.elevenlabs_voice_id_fallback),
         },
@@ -495,6 +499,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "isLocal": False,
             "available": bool(cartesia_api_key),
             "unavailableReason": None if cartesia_api_key else "CARTESIA_API_KEY not set",
+            "acceptsInlineVoiceControls": True,
             "variantLabel": _provider_variant_type("cartesia", modality="tts"),
             "variants": _dedupe_variants(env.cartesia_model_id, "sonic-3", "sonic-2"),
         },
@@ -505,6 +510,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "isLocal": False,
             "available": bool(xai_api_key),
             "unavailableReason": None if xai_api_key else "XAI_API_KEY not set",
+            "acceptsInlineVoiceControls": True,
             "variantLabel": _provider_variant_type("xai", modality="tts"),
             "variants": _dedupe_variants(env.xai_voice, "Ara", "Rex", "Sal", "Eve", "Leo"),
         },
@@ -517,6 +523,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "unavailableReason": None
             if apple_silicon and has_mlx_audio
             else "Apple Silicon + mlx-audio required",
+            "acceptsInlineVoiceControls": True,
             "variantLabel": _provider_variant_type("local_chatterbox_turbo_mlx_8bit", modality="tts"),
             "variants": _dedupe_variants(env.mlx_audio_model_id),
         },
@@ -554,6 +561,21 @@ def _resolve_requested_variant(
         if isinstance(variant, dict) and isinstance(variant.get("id"), str):
             return variant["id"]
     return fallback_variant
+
+
+def _build_tts_provider_attempt(
+    *,
+    capabilities: list[dict[str, Any]],
+    provider: str,
+    tts_impl: Any,
+) -> ProviderAttempt:
+    capability = _find_voice_capability(capabilities, modality="tts", provider=provider)
+    accepts_inline_voice_controls = bool((capability or {}).get("acceptsInlineVoiceControls"))
+    return ProviderAttempt(
+        label=provider,
+        tts=tts_impl,
+        sanitize_voice_markup=not accepts_inline_voice_controls,
+    )
 
 
 def _apply_requested_voice_route(
@@ -935,6 +957,8 @@ def load_env() -> Env:
         # Cartesia TTS settings
         cartesia_api_url=os.getenv("VIVENTIUM_CARTESIA_API_URL", "https://api.cartesia.ai/tts/bytes").strip()
         or "https://api.cartesia.ai/tts/bytes",
+        cartesia_ws_url=os.getenv("VIVENTIUM_CARTESIA_WS_URL", "wss://api.cartesia.ai/tts/websocket").strip()
+        or "wss://api.cartesia.ai/tts/websocket",
         cartesia_api_version=os.getenv("VIVENTIUM_CARTESIA_API_VERSION", "2025-04-16").strip() or "2025-04-16",
         cartesia_model_id=os.getenv("VIVENTIUM_CARTESIA_MODEL_ID", "sonic-3").strip() or "sonic-3",
         cartesia_voice_id=os.getenv(
@@ -945,6 +969,7 @@ def load_env() -> Env:
         cartesia_speed=float(os.getenv("VIVENTIUM_CARTESIA_SPEED", "1.0")),
         cartesia_volume=float(os.getenv("VIVENTIUM_CARTESIA_VOLUME", "1.0")),
         cartesia_emotion=os.getenv("VIVENTIUM_CARTESIA_EMOTION", "neutral").strip() or "neutral",
+        cartesia_max_buffer_delay_ms=_parse_int_env("VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS", 120),
         # === VIVENTIUM START ===
         # Feature: Cartesia emotion segment spacing
         cartesia_segment_silence_ms=int(float(os.getenv("VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS", "80"))),
@@ -1679,17 +1704,20 @@ async def entrypoint(ctx: JobContext) -> None:
                 return (_build_openai_tts(), actual_voice_provider)
 
             _log_selection(
-                "Using Cartesia TTS (model=%s, voice=%s, sample_rate=%s, emotion=%s)",
+                "Using Cartesia TTS (model=%s, voice=%s, sample_rate=%s, emotion=%s, ws=%s, buffer_ms=%s)",
                 env.cartesia_model_id,
                 env.cartesia_voice_id,
                 env.cartesia_sample_rate,
                 env.cartesia_emotion,
+                env.cartesia_ws_url,
+                env.cartesia_max_buffer_delay_ms,
             )
             return (
                 CartesiaTTS(
                     config=CartesiaConfig(
                         api_key=cartesia_api_key,
                         api_url=env.cartesia_api_url,
+                        ws_url=env.cartesia_ws_url,
                         api_version=env.cartesia_api_version,
                         model_id=env.cartesia_model_id,
                         voice_id=env.cartesia_voice_id,
@@ -1698,6 +1726,7 @@ async def entrypoint(ctx: JobContext) -> None:
                         speed=env.cartesia_speed,
                         volume=env.cartesia_volume,
                         emotion=env.cartesia_emotion,
+                        max_buffer_delay_ms=env.cartesia_max_buffer_delay_ms,
                         segment_silence_ms=env.cartesia_segment_silence_ms,
                         language=env.cartesia_language,
                     )
@@ -1795,7 +1824,13 @@ async def entrypoint(ctx: JobContext) -> None:
         primary_tts_impl.prewarm()
     # === VIVENTIUM END ===
 
-    attempts: list[ProviderAttempt] = [ProviderAttempt(label=primary_voice_provider, tts=primary_tts_impl)]
+    attempts: list[ProviderAttempt] = [
+        _build_tts_provider_attempt(
+            capabilities=capabilities,
+            provider=primary_voice_provider,
+            tts_impl=primary_tts_impl,
+        )
+    ]
     configured_fallback_tts_impl: Optional[Any] = None
     configured_fallback_voice_provider: Optional[str] = None
 
@@ -1820,7 +1855,13 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         if fallback_voice_provider != "elevenlabs":
             return
-        attempts.append(ProviderAttempt(label=voice_provider, tts=fallback_voice_tts))
+        attempts.append(
+            _build_tts_provider_attempt(
+                capabilities=capabilities,
+                provider=voice_provider,
+                tts_impl=fallback_voice_tts,
+            )
+        )
 
     _maybe_add_elevenlabs_voice_fallback(voice_provider=primary_voice_provider)
 
@@ -1830,7 +1871,13 @@ async def entrypoint(ctx: JobContext) -> None:
             selection_role="fallback",
         )
         if fallback_voice_provider != primary_voice_provider:
-            attempts.append(ProviderAttempt(label=fallback_voice_provider, tts=fallback_tts_impl))
+            attempts.append(
+                _build_tts_provider_attempt(
+                    capabilities=capabilities,
+                    provider=fallback_voice_provider,
+                    tts_impl=fallback_tts_impl,
+                )
+            )
             _maybe_add_elevenlabs_voice_fallback(voice_provider=fallback_voice_provider)
             configured_fallback_tts_impl = fallback_tts_impl
             configured_fallback_voice_provider = fallback_voice_provider

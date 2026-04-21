@@ -57,10 +57,13 @@ This service is the **voice bridge** between:
     - Set to `none|off|false|0` to disable.
     - Default behavior: when primary is `cartesia` and fallback is unset, fallback defaults to `elevenlabs`
       (or `openai` if ElevenLabs plugin is unavailable).
+    - Fallback routing is streaming-aware. Native streaming providers stay native-streaming; non-native
+      providers are adapted only when necessary instead of downgrading the whole turn.
   - **Cartesia Sonic-3**
     - Requires: `CARTESIA_API_KEY`
     - Optional knobs:
       - `VIVENTIUM_CARTESIA_API_URL` (default `https://api.cartesia.ai/tts/bytes`)
+      - `VIVENTIUM_CARTESIA_WS_URL` (default `wss://api.cartesia.ai/tts/websocket`)
       - `VIVENTIUM_CARTESIA_API_VERSION` (default `2025-04-16`)
       - `VIVENTIUM_CARTESIA_MODEL_ID` (default `sonic-3`)
       - `VIVENTIUM_CARTESIA_VOICE_ID` (default `e8e5fffb-252c-436d-b842-8879b84445b6`)
@@ -68,8 +71,11 @@ This service is the **voice bridge** between:
       - `VIVENTIUM_CARTESIA_SPEED` (default `1.0`)
       - `VIVENTIUM_CARTESIA_VOLUME` (default `1.0`)
       - `VIVENTIUM_CARTESIA_EMOTION` (default `neutral`)
+      - `VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS` (default `120` for live voice streaming)
       - `VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS` (default `80`)
         - Silence inserted between `<emotion>` segments (used when multiple emotions appear in one response).
+    - Live voice calls use Cartesia WebSocket contexts so TTS can start from incremental LLM deltas.
+      `/tts/bytes` remains the full-text path for one-request surfaces.
     - Nonverbal markers (Cartesia-specific parsing):
       - Supported tokens: `[laughter]`, `[sigh]`, `[gasp]`, `[breath]`, `[hmm]`
       - Tokens are split into their own mini-synthesis requests to maximize audibility.

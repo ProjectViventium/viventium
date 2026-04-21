@@ -70,7 +70,7 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertIn("Speak naturally and warmly", env.openai_tts_instructions)
 
     def test_missing_path_rejected(self) -> None:
-        valid, warning = _validate_ref_audio_path("/tmp/does_not_exist_ref_audio.wav")
+        valid, warning = _validate_ref_audio_path("/path/to/does_not_exist_ref_audio.wav")
         self.assertIsNone(valid)
         self.assertIn("does not exist", warning or "")
 
@@ -249,6 +249,8 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertIn("OPENAI_API_KEY", by_key[("stt", "openai")]["unavailableReason"])
         self.assertFalse(by_key[("tts", "xai")]["available"])
         self.assertIn("XAI_API_KEY", by_key[("tts", "xai")]["unavailableReason"])
+        self.assertFalse(by_key[("tts", "openai")]["acceptsInlineVoiceControls"])
+        self.assertTrue(by_key[("tts", "cartesia")]["acceptsInlineVoiceControls"])
 
     def test_build_voice_capability_catalog_labels_local_whisper_recommended_model(self) -> None:
         with patch.dict(

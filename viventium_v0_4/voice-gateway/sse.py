@@ -150,16 +150,14 @@ def sanitize_voice_followup_text(text: str, *, preserve_leading_space: bool = Fa
 
 
 # === VIVENTIUM START ===
-# Feature: Strip Cartesia SSML tags + bracket nonverbal markers for non-expressive TTS providers.
+# Feature: Strip Cartesia SSML tags + structural bracket stage directions for non-expressive TTS providers.
 #
 # Purpose: When FallbackTTS routes to a provider that does not support Cartesia
 # SSML (e.g., ElevenLabs, OpenAI), strip structural XML tags AND bracket-form
 # nonverbal markers so they are not spoken literally.
 #
-# Updated 2026-02-22: Also strip bracket nonverbal markers ([laughter], [sigh], etc.)
-# during same-turn fallback. Previous design assumed prompt update happens immediately,
-# but during the one-turn fallback gap the LLM may have already generated Cartesia-style
-# bracket tokens that non-expressive providers would speak literally as words.
+# Updated 2026-04-20: Replaced hardcoded bracket token vocabularies with a structural
+# stage-direction parser so runtime no longer depends on enumerating individual words.
 _VCT_SPEAK_TAG_RE = re.compile(r"</?speak[^>]*>", re.IGNORECASE)
 _VCT_EMOTION_SELF_CLOSING_RE = re.compile(
     r"<emotion\s+value=[\"']?[^\"'>]+[\"']?\s*/>", re.IGNORECASE
@@ -173,22 +171,68 @@ _VCT_BREAK_TAG_RE = re.compile(r"<break\s+time=[\"']?[^\"'>]+[\"']?\s*/>", re.IG
 _VCT_SPEED_TAG_RE = re.compile(r"<speed\s+ratio=[\"']?[^\"'>]+[\"']?\s*/>", re.IGNORECASE)
 _VCT_VOLUME_TAG_RE = re.compile(r"<volume\s+ratio=[\"']?[^\"'>]+[\"']?\s*/>", re.IGNORECASE)
 _VCT_SPELL_TAG_RE = re.compile(r"<spell>(.*?)</spell>", re.IGNORECASE | re.DOTALL)
-# Bracket nonverbal markers: [laughter], [sigh], [gasp], [whisper], [breath], [hmm] and common variants.
-# Keep aligned with surfacePrompts.js _DISPLAY_BRACKET_NONVERBAL_RE and xAI prompt markers.
-_VCT_BRACKET_NONVERBAL_RE = re.compile(
-    r"\["
-    r"(?:laugh(?:ter)?|giggle|chuckle|soft laugh|gentle laugh|quiet laugh|nervous laugh|"
-    r"awkward laugh|light laugh|"
-    r"sigh|gentle sigh|soft sigh|"
-    r"breath|breath in|breath out|inhale|exhale|"
-    r"gasp|whisper|hmm|hm)"
-    r"\]",
-    re.IGNORECASE,
-)
+_VCT_STAGE_DIRECTION_MIN_ALPHA = 3
+_VCT_STAGE_DIRECTION_MAX_ALPHA = 24
+_VCT_STAGE_DIRECTION_MAX_WORDS = 3
+
+
+def _is_stage_direction_boundary(ch: str) -> bool:
+    return not ch or ch.isspace() or ch in ".,!?;:(){}<>\"'"
+
+
+def _is_bracket_stage_direction(content: str) -> bool:
+    candidate = (content or "").strip()
+    if not candidate or candidate != candidate.lower():
+        return False
+    if any(ch.isdigit() for ch in candidate):
+        return False
+    if any(ch not in "abcdefghijklmnopqrstuvwxyz -'" for ch in candidate):
+        return False
+
+    alpha_count = sum(1 for ch in candidate if "a" <= ch <= "z")
+    if alpha_count < _VCT_STAGE_DIRECTION_MIN_ALPHA or alpha_count > _VCT_STAGE_DIRECTION_MAX_ALPHA:
+        return False
+
+    words = [word for word in candidate.replace("-", " ").split() if word]
+    if not words or len(words) > _VCT_STAGE_DIRECTION_MAX_WORDS:
+        return False
+    return all(word.isalpha() for word in words)
+
+
+def _strip_bracket_stage_directions(text: str) -> str:
+    if not text:
+        return ""
+
+    out: list[str] = []
+    index = 0
+    text_len = len(text)
+    while index < text_len:
+        if text[index] != "[":
+            out.append(text[index])
+            index += 1
+            continue
+
+        closing = text.find("]", index + 1)
+        if closing < 0:
+            out.append(text[index])
+            index += 1
+            continue
+
+        content = text[index + 1 : closing]
+        left = text[index - 1] if index > 0 else ""
+        right = text[closing + 1] if closing + 1 < text_len else ""
+        if _is_bracket_stage_direction(content) and _is_stage_direction_boundary(left) and _is_stage_direction_boundary(right):
+            index = closing + 1
+            continue
+
+        out.append(text[index : closing + 1])
+        index = closing + 1
+
+    return "".join(out)
 
 
 def strip_voice_control_tags(text: str) -> str:
-    """Strip Cartesia SSML tags and bracket nonverbal markers from text.
+    """Strip Cartesia SSML tags and structural bracket stage directions from text.
 
     For use when synthesizing text through providers that do not support
     Cartesia-specific SSML (e.g., ElevenLabs, OpenAI TTS).
@@ -203,7 +247,7 @@ def strip_voice_control_tags(text: str) -> str:
     cleaned = _VCT_SPEED_TAG_RE.sub("", cleaned)
     cleaned = _VCT_VOLUME_TAG_RE.sub("", cleaned)
     cleaned = _VCT_SPELL_TAG_RE.sub(lambda m: m.group(1) or "", cleaned)
-    cleaned = _VCT_BRACKET_NONVERBAL_RE.sub("", cleaned)
+    cleaned = _strip_bracket_stage_directions(cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned
 # === VIVENTIUM END ===

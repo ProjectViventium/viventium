@@ -10,7 +10,7 @@ import sys
 import unittest
 
 from livekit.agents import APIError
-from livekit.agents.tts import AudioEmitter, ChunkedStream, TTS, TTSCapabilities
+from livekit.agents.tts import AudioEmitter, ChunkedStream, SynthesizeStream, TTS, TTSCapabilities
 
 # Ensure voice-gateway root is on sys.path so `import fallback_tts` works
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -81,7 +81,80 @@ class FakeTTS(TTS):
         )
 
 
+class _FakeStreamingSynthesizeStream(SynthesizeStream):
+    def __init__(self, *, tts: TTS, conn_options, should_fail: bool) -> None:
+        super().__init__(tts=tts, conn_options=conn_options)
+        self._should_fail = should_fail
+
+    async def _run(self, output_emitter: AudioEmitter) -> None:
+        output_emitter.initialize(
+            request_id="fake-stream",
+            sample_rate=self._tts.sample_rate,
+            num_channels=self._tts.num_channels,
+            mime_type="audio/pcm",
+            frame_size_ms=200,
+            stream=True,
+        )
+        output_emitter.start_segment(segment_id="seg")
+        async for data in self._input_ch:
+            if isinstance(data, str):
+                self._tts.last_stream_chunks.append(data)  # type: ignore[attr-defined]
+        if self._should_fail:
+            raise APIError("boom", retryable=True)
+        output_emitter.push(
+            _silence_pcm(
+                sample_rate=self._tts.sample_rate,
+                num_channels=self._tts.num_channels,
+                duration_ms=200,
+            )
+        )
+
+
+class FakeStreamingTTS(TTS):
+    def __init__(self, *, sample_rate: int, should_fail: bool = False) -> None:
+        super().__init__(
+            capabilities=TTSCapabilities(streaming=True),
+            sample_rate=sample_rate,
+            num_channels=1,
+        )
+        self._should_fail = should_fail
+        self.last_stream_chunks: list[str] = []
+
+    @property
+    def provider(self) -> str:
+        return "fake-streaming"
+
+    @property
+    def model(self) -> str:
+        return "fake-streaming"
+
+    def synthesize(self, text: str, *, conn_options) -> ChunkedStream:
+        return _FakeChunkedStream(
+            tts=self,
+            input_text=text,
+            conn_options=conn_options,
+            should_fail=self._should_fail,
+        )
+
+    def stream(self, *, conn_options) -> SynthesizeStream:
+        return _FakeStreamingSynthesizeStream(
+            tts=self,
+            conn_options=conn_options,
+            should_fail=self._should_fail,
+        )
+
+
 class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
+    async def test_wrapper_reports_streaming_capability(self) -> None:
+        wrapper = FallbackTTS(
+            attempts=[
+                ProviderAttempt(label="primary", tts=FakeTTS(sample_rate=44100, should_fail=False)),
+                ProviderAttempt(label="fallback", tts=FakeStreamingTTS(sample_rate=44100, should_fail=False)),
+            ]
+        )
+
+        self.assertTrue(wrapper.capabilities.streaming)
+
     async def test_primary_success_does_not_invoke_fallback(self) -> None:
         selected: list[str] = []
         wrapper = FallbackTTS(
@@ -141,7 +214,7 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         wrapper = FallbackTTS(
             attempts=[
                 ProviderAttempt(label="cartesia", tts=primary),
-                ProviderAttempt(label="elevenlabs", tts=fallback),
+                ProviderAttempt(label="elevenlabs", tts=fallback, sanitize_voice_markup=True),
             ],
             on_provider_selected=lambda provider, _tts: selected.append(provider),
         )
@@ -164,7 +237,7 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         wrapper = FallbackTTS(
             attempts=[
                 ProviderAttempt(label="cartesia", tts=primary),
-                ProviderAttempt(label="openai", tts=fallback),
+                ProviderAttempt(label="openai", tts=fallback, sanitize_voice_markup=True),
             ],
             on_provider_selected=lambda provider, _tts: selected.append(provider),
         )
@@ -198,6 +271,58 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected, ["cartesia"])
         # Cartesia should receive the original text with tags intact.
         self.assertEqual(primary.last_synth_text, tagged_text)
+
+    async def test_streaming_primary_failure_uses_fallback(self) -> None:
+        selected: list[str] = []
+        primary = FakeStreamingTTS(sample_rate=44100, should_fail=True)
+        fallback = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(
+            attempts=[
+                ProviderAttempt(label="primary", tts=primary),
+                ProviderAttempt(label="fallback", tts=fallback),
+            ],
+            on_provider_selected=lambda provider, _tts: selected.append(provider),
+        )
+
+        stream = wrapper.stream()
+        stream.push_text("hello ")
+        stream.push_text("world")
+        stream.end_input()
+
+        frames = []
+        async with stream:
+            async for ev in stream:
+                frames.append(ev.frame)
+
+        self.assertGreater(len(frames), 0)
+        self.assertEqual(selected, ["fallback"])
+        self.assertEqual(fallback.last_stream_chunks, ["hello ", "world"])
+
+    async def test_streaming_fallback_strips_control_tags_for_openai(self) -> None:
+        selected: list[str] = []
+        primary = FakeStreamingTTS(sample_rate=44100, should_fail=True)
+        fallback = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(
+            attempts=[
+                ProviderAttempt(label="cartesia", tts=primary),
+                ProviderAttempt(label="openai", tts=fallback, sanitize_voice_markup=True),
+            ],
+            on_provider_selected=lambda provider, _tts: selected.append(provider),
+        )
+
+        stream = wrapper.stream()
+        stream.push_text('<emotion value="exc')
+        stream.push_text('ited"/>Hello ')
+        stream.push_text("[laughter")
+        stream.push_text("] world")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(selected, ["openai"])
+        self.assertEqual("".join(fallback.last_stream_chunks), "Hello  world")
     # === VIVENTIUM END ===
 
 

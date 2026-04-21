@@ -13,10 +13,23 @@ import unittest
 # Ensure voice-gateway root is on sys.path so `import cartesia_tts` works
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from cartesia_tts import _STAGE_PROMPTS, _normalize_nonverbal_tokens, _split_emotion_segments
+from cartesia_tts import (
+    CartesiaConfig,
+    CartesiaTTS,
+    _STAGE_PROMPTS,
+    _build_ws_generation_request,
+    _extract_ws_audio_chunk,
+    _is_ws_done,
+    _normalize_nonverbal_tokens,
+    _split_emotion_segments,
+)
 
 
 class TestCartesiaNormalization(unittest.TestCase):
+    def test_cartesia_reports_streaming_capability(self) -> None:
+        tts = CartesiaTTS(config=CartesiaConfig(api_key="cartesia-key"))
+        self.assertTrue(tts.capabilities.streaming)
+
     def test_laughter_stage_prompt_uses_cartesia_token(self) -> None:
         # Cartesia docs: the token `[laughter]` triggers actual laughter. We should not
         # approximate it as spoken "ha ha ha" text.
@@ -72,6 +85,34 @@ class TestCartesiaNormalization(unittest.TestCase):
         self.assertIn("Hello", normalized)
         self.assertIn("bold", normalized)
         self.assertIn("world", normalized)
+
+    def test_build_ws_generation_request_sets_context_and_buffer(self) -> None:
+        cfg = CartesiaConfig(
+            api_key="cartesia-key",
+            voice_id="voice-123",
+            sample_rate=44100,
+            max_buffer_delay_ms=120,
+        )
+        payload = _build_ws_generation_request(
+            cfg=cfg,
+            context_id="ctx-123",
+            transcript="Hello there. ",
+            continue_generation=True,
+        )
+        self.assertEqual(payload["context_id"], "ctx-123")
+        self.assertEqual(payload["transcript"], "Hello there. ")
+        self.assertEqual(payload["continue"], True)
+        self.assertEqual(payload["max_buffer_delay_ms"], 120)
+        self.assertEqual(payload["output_format"]["container"], "raw")
+        self.assertEqual(payload["output_format"]["encoding"], "pcm_s16le")
+
+    def test_extract_ws_audio_chunk_decodes_base64(self) -> None:
+        chunk = _extract_ws_audio_chunk({"type": "chunk", "data": "AQID"})
+        self.assertEqual(chunk, b"\x01\x02\x03")
+
+    def test_is_ws_done_matches_context(self) -> None:
+        self.assertTrue(_is_ws_done({"type": "done", "context_id": "ctx-123"}, context_id="ctx-123"))
+        self.assertFalse(_is_ws_done({"type": "done", "context_id": "ctx-999"}, context_id="ctx-123"))
     # === VIVENTIUM END ===
 
 
