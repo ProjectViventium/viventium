@@ -12,5 +12,5 @@
 #   main requirements.txt (MLX is macOS-only).
 # === VIVENTIUM END ===
 
-livekit-agents==1.2.18
-mlx-audio[tts]==0.3.1
+livekit-agents==1.5.5
+mlx-audio[tts]==0.4.2

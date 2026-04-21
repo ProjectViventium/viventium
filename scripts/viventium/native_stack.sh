@@ -204,15 +204,11 @@ LIVEKIT_NODE_IP=${LIVEKIT_NODE_IP}
 LIVEKIT_HTTP_PORT=${LIVEKIT_HTTP_PORT}
 LIVEKIT_TCP_PORT=${LIVEKIT_TCP_PORT}
 LIVEKIT_UDP_PORT=${LIVEKIT_UDP_PORT}
-EOF
-  if [[ -n "$turn_domain" || -n "$turn_tls_port" || -n "$turn_cert_file" || -n "$turn_key_file" ]]; then
-    cat >>"$LIVEKIT_META_FILE" <<EOF
 LIVEKIT_TURN_DOMAIN=${turn_domain}
 LIVEKIT_TURN_TLS_PORT=${turn_tls_port}
 LIVEKIT_TURN_CERT_FILE=${turn_cert_file}
 LIVEKIT_TURN_KEY_FILE=${turn_key_file}
 EOF
-  fi
 }
 
 livekit_meta_matches_expected() {

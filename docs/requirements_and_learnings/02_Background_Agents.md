@@ -26,9 +26,10 @@ For the manager-readable handbook, start with:
     `reasoning_effort: xhigh`, not Anthropic/Google-only thinking fields such as `thinkingBudget`
 - Background agents must receive the same user memory context as the main agent when memories are
   enabled, so insights do not regress to fresh-chat behavior.
-- Output is merged as background insights and can be voiced in playground mode.
+- Output is merged as background insights and can influence a later voiced follow-up in playground
+  mode, but raw insight text must remain background-only.
 - Follow-up realizations should still surface shortly after the original request within a
-  configurable grace window.
+  configurable background follow-up window.
 
 ## Execution Matrix
 
@@ -93,9 +94,10 @@ Canonical model-parameter rule:
   just explicit `thinking` fields already present in the source-of-truth YAML.
 - Background-cortex execution should therefore re-check the final initialized Anthropic config before
   Phase B execution and remove `temperature` if thinking is active.
-- When a shipped Anthropic cortex is intentionally temperature-tuned rather than thinking-enabled,
-  its source-of-truth `model_parameters` must set `thinking: false` explicitly so fresh installs and
-  runtime reseeding preserve the intended behavior.
+- Current shipped Anthropic Sonnet 4.6 built-ins should not carry explicit `temperature` at all.
+- If a future Anthropic built-in ever intentionally reintroduces temperature tuning, it must set
+  `thinking: false` explicitly and be re-validated against the current Anthropic API contract before
+  shipping.
 
 ## Memory Context Parity
 

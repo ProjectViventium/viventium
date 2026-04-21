@@ -141,6 +141,9 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-session-test" in runtime_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-session-test" in runtime_env
+    assert "VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S=30" in runtime_env
+    assert "VIVENTIUM_VOICE_FOLLOWUP_GRACE_S=30" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S=30" in runtime_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
@@ -1481,6 +1484,303 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in telegram_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-secret-2" in telegram_env
     assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in telegram_codex_env
+
+
+def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "assemblyai",
+            "stt": {
+                "secret_value": "assemblyai-test",
+                "end_of_turn_confidence_threshold": 0.31,
+                "min_end_of_turn_silence_when_confident_ms": 240,
+                "max_turn_silence_ms": 1500,
+                "format_turns": True,
+                "vad_min_speech_s": 0.12,
+                "vad_min_silence_s": 0.72,
+                "vad_activation_threshold": 0.33,
+            },
+            "tts_provider": "cartesia",
+            "tts": {"secret_value": "cartesia-test"},
+            "turn_detection": "turn_detector",
+            "turn_handling": {
+                "min_interruption_duration_s": 0.4,
+                "min_interruption_words": 2,
+                "min_endpointing_delay_s": 0.2,
+                "max_endpointing_delay_s": 2.1,
+                "false_interruption_timeout_s": 1.8,
+                "resume_false_interruption": True,
+                "min_consecutive_speech_delay_s": 0.25,
+            },
+            "worker": {
+                "initialize_process_timeout_s": 55,
+                "idle_processes": 2,
+                "load_threshold": 0.82,
+                "job_memory_warn_mb": 1600,
+                "job_memory_limit_mb": 2400,
+                "prewarm_local_tts": False,
+            },
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_TURN_DETECTION=turn_detector" in runtime_env
+    assert "VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S=0.4" in runtime_env
+    assert "VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS=2" in runtime_env
+    assert "VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S=0.2" in runtime_env
+    assert "VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S=2.1" in runtime_env
+    assert "VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S=1.8" in runtime_env
+    assert "VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION=true" in runtime_env
+    assert "VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S=0.25" in runtime_env
+    assert "VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S=55" in runtime_env
+    assert "VIVENTIUM_VOICE_IDLE_PROCESSES=2" in runtime_env
+    assert "VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=0.82" in runtime_env
+    assert "VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB=1600" in runtime_env
+    assert "VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB=2400" in runtime_env
+    assert "VIVENTIUM_VOICE_PREWARM_LOCAL_TTS=false" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD=0.31" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS=240" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1500" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS=true" in runtime_env
+    assert "VIVENTIUM_STT_VAD_MIN_SPEECH=0.12" in runtime_env
+    assert "VIVENTIUM_STT_VAD_MIN_SILENCE=0.72" in runtime_env
+    assert "VIVENTIUM_STT_VAD_ACTIVATION=0.33" in runtime_env
+
+
+def test_config_compiler_emits_background_followup_window_override(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "background_followup_window_s": 45,
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S=45" in runtime_env
+    assert "VIVENTIUM_VOICE_FOLLOWUP_GRACE_S=45" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S=45" in runtime_env
+
+
+def test_config_compiler_emits_assemblyai_turn_detection_defaults_when_unset(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "assemblyai",
+            "stt": {"secret_value": "assemblyai-test"},
+            "tts_provider": "cartesia",
+            "tts": {"secret_value": "cartesia-test"},
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD=0.01" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS=100" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1000" in runtime_env
+
+
+def test_config_compiler_emits_assemblyai_turn_detection_defaults_for_override_paths(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "whisper_local",
+            "tts_provider": "cartesia",
+            "tts": {"secret_value": "cartesia-test"},
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD=0.01" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS=100" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1000" in runtime_env
 
 
 def test_config_compiler_renders_structured_telegram_bot_api_settings(tmp_path: Path) -> None:

@@ -32,6 +32,7 @@ runtime:
     livekit_node_ip: ""
   personalization:
     default_conversation_recall: false
+  background_followup_window_s: 30
   ports:
     lc_api_port: 3180
     lc_frontend_port: 3190

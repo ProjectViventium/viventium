@@ -200,6 +200,33 @@ This feature adds two user-facing controls:
 - During short indexing lag or prolonged vector outage, degraded lexical recall is the continuity
   contract.
 
+### 2026-04-21 continuity incident clarification
+
+- A real local voice-call incident on April 21, 2026 clarified the user-visible ownership split:
+  - the global recall corpus was genuinely stale for that turn
+  - degraded/source-backed recall still recovered the relevant same-day context in background cortex
+  - the visible correction still failed because the Phase B follow-up path returned no persisted
+    message
+- A follow-up local voice repro on April 21, 2026 narrowed the missing visible correction one step
+  further:
+  - non-replacement Phase B follow-ups could still suppress on raw `{NTA}` from the follow-up LLM
+    even when the recovered cortex insight contained substantive user-visible facts
+  - therefore non-replacement follow-up persistence must try the same deterministic visible
+    fallback path after `{NTA}` that it already uses after empty synthesis, and only stay silent when
+    no visible fallback remains after cleanup
+- Therefore:
+  - stale vector recall and missing visible follow-up are separate bugs
+  - a successful degraded recall hit must not be allowed to die silently after retrieval
+  - QA for conversation recall must verify both retrieval and visible delivery
+- The same pass also widened the proactive sync contract:
+  - direct `recordMessage` writes and text-only `updateMessageText` writes must schedule recall sync,
+    not only the higher-level `saveMessage` / `updateMessage` surfaces
+  - otherwise some product surfaces can drift behind recent writes even when the recall corpus logic
+    itself is correct
+- For future incident forensics:
+  - non-vector-ready recall attachment decisions (`missing_corpus`, `stale_corpus`, runtime failures)
+    must log at info level, not only debug
+
 ## Runtime Attachment Rules
 
 Conversation recall is a runtime-owned attachment/plumbing feature, not a runtime-owned

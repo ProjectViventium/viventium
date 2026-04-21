@@ -137,6 +137,41 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - Telegram max media size comes from canonical config (`integrations.telegram.max_file_size_bytes`),
     not a shell-only or repo-local default
   - preflight must surface missing `telegram-bot-api` / `api_id` / `api_hash` before runtime start
+- Voice turn-taking follows the same compiler/runtime ownership rule:
+  - canonical runtime config owns the shared background follow-up window:
+    - `runtime.background_followup_window_s`
+    - compiles to:
+      - `VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S`
+      - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S`
+      - `VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S`
+    - note:
+      - the umbrella product phrase is now `background follow-up window`
+      - the env var names intentionally keep the older `FOLLOWUP_GRACE` suffix for backward compatibility
+  - canonical voice config owns `VIVENTIUM_TURN_DETECTION`
+  - canonical voice turn-handling config owns:
+    - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`
+    - `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS`
+    - `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S`
+    - `VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S`
+    - `VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S`
+    - `VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION`
+    - `VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S`
+  - canonical voice STT config owns the surfaced AssemblyAI endpointing knobs:
+    - `VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD`
+    - `VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS`
+    - `VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS`
+    - `VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS`
+  - canonical `voice.worker` config owns the worker/runtime controls:
+    - `VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S`
+    - `VIVENTIUM_VOICE_IDLE_PROCESSES`
+    - `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD`
+    - `VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB`
+    - `VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB`
+    - `VIVENTIUM_VOICE_PREWARM_LOCAL_TTS`
+  - generated runtime must not rely on one machine's shell exports or App Support hand edits to
+    change end-of-turn behavior
+  - when the optional semantic turn-detector plugin is installed, launcher startup owns the model
+    pre-download so a fresh boot does not die on a missing turn-detector ONNX cache
 
 ## Continuity-Aware Snapshot / Restore / Upgrade Boundary
 

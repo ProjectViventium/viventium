@@ -5,6 +5,7 @@
 - 2026-04-08
 - 2026-04-09
 - 2026-04-14
+- 2026-04-21
 
 ## Build Under Test
 
@@ -14,6 +15,8 @@
   state, and targeted test suites
 - Remote follow-up on 2026-04-14 against the supported upgrade path plus local runtime-bundle
   verification
+- Local follow-up on 2026-04-21 against the canonical repo runtime, live Mongo state, live recall
+  corpus state, and focused continuity replay evidence
 
 ## Verification Gate Claimed
 
@@ -86,6 +89,28 @@
     instead of always claiming the selected components are on pinned refs.
 21. Corrected the parent LibreChat pin to the exact published nested commit after remote upgrade
     evidence proved the previously copied full SHA did not exist on origin.
+22. On 2026-04-21, traced a live same-day continuity failure where:
+    - the main assistant claimed it did not remember today's conversation
+    - Pattern Recognition still surfaced the correct same-day context
+    - the visible Phase B correction never appeared in chat or voice playback
+23. Confirmed from Mongo that:
+    - durable memory rows existed for the affected user, so saved memory was not literally empty,
+      but those rows did not explain the same-day conversation continuity the user was asking for
+    - the global recall corpus `updatedAt` lagged the relevant earlier conversation by more than an
+      hour at the time of the failure
+    - the affected assistant messages already contained completed `cortex_insight` parts with the
+      correct recovered context
+24. Reproduced the Anthropic memory-writer request-shape failure locally through a direct runtime
+    probe and fixed the Anthropic default-thinking + forced-tool-use config sanitization.
+25. Fixed the background cortex follow-up persistence path so empty synthesis now falls back to a
+    deterministic visible insight instead of silently dropping a substantive correction.
+25a. Corrected a second-order Phase B bug where truly empty LLM synthesis was still being
+     auto-normalized into `{NTA}`, which would have kept the non-replacement follow-up silent even
+     after the deterministic fallback fix.
+26. Widened conversation-recall sync coverage so direct `recordMessage` writes and text-only
+    `updateMessageText` writes also schedule proactive recall refresh.
+27. Re-ran focused tests plus a live synthetic-user recall refresh to prove the real recall
+    service still builds and uploads corpora outside mocked test boundaries.
 
 ## Automated Checks Executed
 
@@ -115,12 +140,24 @@
   - Result: `124 passed`
 - `cd viventium_v0_4/LibreChat/api && npx jest --runInBand server/controllers/agents/client.test.js server/routes/__tests__/memories.write.spec.js --no-cache`
   - Result: `78 passed`
+- `cd viventium_v0_4/LibreChat/api && npm run test:ci -- --runTestsByPath models/Message.spec.js server/services/viventium/__tests__/BackgroundCortexFollowUpService.spec.js`
+  - Result: `43 passed`
+- `cd viventium_v0_4/LibreChat/api && npm run test:ci -- --runTestsByPath models/Message.spec.js server/services/viventium/__tests__/BackgroundCortexFollowUpService.spec.js test/services/viventium/backgroundCortexFollowUpService.test.js`
+  - Result: `111 passed`
+- `cd viventium_v0_4/LibreChat/packages/api && npm run test:ci -- --runTestsByPath src/agents/memory.spec.ts src/agents/__tests__/memory.test.ts src/agents/__tests__/initialize.test.ts`
+  - Result: `56 passed`
 - `bash -n scripts/viventium/doctor.sh && bash -n viventium_v0_4/viventium-librechat-start.sh`
   - Result: passed
 - `python3 - <<'PY' ... yaml.safe_load('viventium_v0_4/LibreChat/viventium/source_of_truth/local.librechat.yaml') ... PY`
   - Result: `YAML_OK`
 - `bin/viventium start --restart --modern-playground`
   - Result: local stack restarted onto the current generated runtime
+- Direct local runtime probes:
+  - Anthropic memory no-op replay against the live runtime/user auth path
+    - Result: request now completes without the earlier Anthropic `thinking` request-shape error
+  - Synthetic-user `refreshConversationRecallForUser(...)` replay against the live Mongo + RAG path
+    - Result: recall corpus file `conversation_recall:<synthetic-user-id>:all` exists and was
+      freshly updated on 2026-04-21 after the replay
 
 ### Broader release smoke
 
@@ -258,6 +295,25 @@
 - After rebuilding and deploying the corrected bundle to the remote runtime:
   - direct debug showed the bridged non-stream Codex response now preserved a completed
     `function_call` item for `apply_memory_changes`
+
+### 2.5 April 21 local continuity incident was a combined saved-memory, stale-recall, and delivery failure
+
+- The affected same-day continuity complaint was not one single “memory is broken” bug.
+- Public-safe DB inspection showed three separate truths:
+  - durable memory had not been updated that day
+  - the global recall corpus was stale at the time of the failed turn
+  - background cortex still recovered the right same-day context
+- The user-visible miss happened because the recovery insight never got a visible follow-up message.
+- Therefore the owned local fixes were:
+  - Anthropic memory writer request-shape hardening for default thinking + forced tool use
+  - deterministic visible fallback when substantive cortex follow-up synthesis comes back empty
+  - deterministic visible fallback when a non-replacement cortex follow-up incorrectly returns
+    `{NTA}` even though a substantive visible insight remains
+  - recall sync scheduling widened to additional message write surfaces
+- This means future QA for continuity must separately verify:
+  - saved-memory writes
+  - recall freshness
+  - visible/speakable follow-up persistence after recall-backed background insights
   - direct processor invocation against the live DB wrote a durable memory row for the user
   - the real browser flow created a visible entry in the `Memories` panel
   - database inspection showed `count: 1` with the stored lucky-number memory

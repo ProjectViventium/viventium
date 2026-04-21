@@ -49,7 +49,16 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - After the main response completes, the voice gateway polls:
   - `GET /api/viventium/voice/cortex/:messageId`
 - If a follow-up message exists, it is spoken verbatim for natural parity.
-- If no follow-up exists, the gateway falls back to a formatted summary of insights.
+- If no follow-up exists, the gateway keeps raw background insights silent in live voice and ends
+  the turn without an extra spoken message.
+- The shipped background follow-up window is shared with LibreChat and Telegram:
+  - `runtime.background_followup_window_s`
+  - default `30` seconds
+- This preserves the Phase A / Phase B contract:
+  - Phase A: immediate main-agent response is heard right away
+  - Phase B: only a true main-agent follow-up conclusion is heard later
+- Internal `cortex_insight` content remains available in LibreChat's background-insight UI, but it
+  must not be voiced directly into the modern playground transcript/TTS path.
 - Voice follow-up requests set `suppressBackgroundCortices=true` to prevent recursion.
 
 ## Streaming-First TTS Contract
@@ -60,6 +69,47 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - If a provider does not support native incremental input streaming, the gateway may adapt it to a
   streaming surface, but wrapper layers must not downgrade a native-streaming provider back to
   sentence-buffered fallback behavior.
+
+## Turn Stability and Endpointing
+- Voice ingress requests that resolve to the same `(callSessionId, conversationId, parentMessageId)`
+  within the coalescing window are merged onto one launched stream instead of forking sibling turns.
+- Coalesced text must preserve ingress order, not whichever request wins the Mongo race first.
+- Canonical saved assistant history strips voice-control tags after synthesis so reloads, exports,
+  and downstream surfaces do not retain raw `<emotion .../>` markup.
+- AssemblyAI-backed calls now default to provider endpointing plus VAD:
+  - `VIVENTIUM_TURN_DETECTION=stt` when the active STT provider supports endpointing
+  - Silero VAD remains attached for interruption responsiveness
+  - the default `AgentSession` endpointing guardrail is reduced for this mode so runtime does not
+    stack a second large delay on top of AssemblyAI end-of-turn detection
+  - the compiler now emits explicit AssemblyAI endpointing defaults for the shipped path using the
+    documented Universal Streaming baseline rather than leaving plugin/API defaults ambiguous:
+    - `VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD=0.01`
+    - `VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS=100`
+    - `VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1000`
+  - the env/config surface still uses the older `MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT` name for
+    backward compatibility, but the worker now maps that value onto AssemblyAI's current
+    `min_turn_silence` provider parameter
+- Default turn-handling profile:
+  - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S=0.5`
+  - `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S=0.0` for `stt`
+  - `VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S=1.8` for `stt`
+  - `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS=1` for `stt` / `turn_detector`
+  - `VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S=2.0`
+  - `VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION=true`
+  - `VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S=0.2` for `stt` / `turn_detector`
+- Pure `vad` mode remains available when explicitly configured or when the active STT path does not
+  expose endpointing support.
+- Semantic turn detection is available through explicit config/env (`turn_detector`), but it is not
+  silently forced on for every AssemblyAI install.
+- If explicit `turn_detector` mode is requested but the detector weights are not cached locally,
+  runtime falls back cleanly to `stt` and logs the downgrade instead of failing mid-call.
+- Worker logs emit normalized turn-end reasons so real calls can be debugged without guessing:
+  - `vad_silence`
+  - `stt_end_of_turn`
+  - `semantic_turn_detector`
+- Durable per-call turn logs also come from the LibreChat voice route:
+  - `[VIVENTIUM][voice/chat] user_turn_completed ...`
+  - keyed by `callSessionId`, `conversationId`, `parentMessageId`, and `requestId`
 
 ## Voice-Mode Prompt Contract (Provider-Aware)
 Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvider)` in
@@ -147,6 +197,15 @@ VAD tuning (shared with v1):
 Notes:
 - Silero VAD requires `livekit-plugins-silero` and Python <= 3.12.
 - The launcher rebuilds the voice-gateway venv if Silero is missing or Python 3.13+ is detected.
+- The semantic turn detector plugin is optional. When installed, the launcher pre-downloads the
+  exact multilingual detector assets (`onnx/model_q8.onnx` and `languages.json`) before worker
+  boot. The voice gateway also loads that plugin lazily, only when semantic turn detection is
+  actually selected, so a normal local `vad` route does not boot-noise on an unused detector cache.
+- AssemblyAI endpointing knobs are config-owned and optional. If not set, Viventium leaves the
+  provider/plugin defaults intact instead of hardcoding additional silence thresholds.
+- `whisper_local` / `pywhispercpp` inherits the shared interruption knobs and saved-route contract,
+  but it remains a StreamAdapter + Silero VAD path. It does not get AssemblyAI-native endpointing
+  knobs or semantic turn-detector behavior.
 
 <!-- === VIVENTIUM START ===
 Section: Voice concurrency bypass + LiveKit idempotency
@@ -178,6 +237,30 @@ Added: 2026-01-11
 - `VIVENTIUM_CARTESIA_WS_URL`
 - `VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS` (default `120` for live voice)
 - `VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS`
+- `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`
+- `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS`
+- `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S`
+- `VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S`
+- `VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S`
+- `VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION`
+- `VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S`
+- `VIVENTIUM_TURN_DETECTION` (`vad`, `stt`, `turn_detector`)
+- `VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD`
+- `VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS`
+- `VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS`
+- `VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS`
+- `VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S`
+- `VIVENTIUM_VOICE_IDLE_PROCESSES`
+- `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD`
+- `VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB`
+- `VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB`
+- `VIVENTIUM_VOICE_PREWARM_LOCAL_TTS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_ENABLED`
+- `VIVENTIUM_VOICE_TURN_COALESCE_WINDOW_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_WAIT_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_POLL_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_RETURN_WINDOW_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_TTL_S`
 - `VIVENTIUM_VOICE_LOG_LATENCY=1`
 - `VIVENTIUM_VOICE_DEBUG_TTS=1`
 
@@ -187,6 +270,9 @@ Added: 2026-01-11
 - Live call LLM selection follows the agent primary model by default and only changes when the agent
   has an explicit Voice Chat Model configured.
 - Voice transport settings such as STT/TTS provider selection do not change the call LLM route.
+- Per-call voice-route overrides recompute the effective turn-taking defaults from the final STT
+  provider for that call. A call that overrides from `whisper_local` to `assemblyai` must not keep
+  stale VAD-only defaults from the machine route.
 - If you previously relied on legacy machine-level `voice.fast_llm_provider`, migrate that choice to
   the agent `Voice Chat Model` fields instead; the machine-level field is ignored for call LLM
   selection.

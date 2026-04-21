@@ -36,6 +36,10 @@ DEFAULT_OPENAI_TTS_INSTRUCTIONS = (
     "Speak naturally and warmly with clear pacing. Keep the delivery conversational, "
     "grounded, and human. Avoid robotic emphasis or exaggerated pauses."
 )
+DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
+DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD = "0.01"
+DEFAULT_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS = "100"
+DEFAULT_ASSEMBLYAI_MAX_TURN_SILENCE_MS = "1000"
 DEFAULT_LOCAL_CODE_INTERPRETER_API_KEY = "viventium-local-code-access"
 DEFAULT_LOCAL_FIRECRAWL_API_KEY = "viventium-local-firecrawl-access"
 DEFAULT_AGENT_RECURSION_LIMIT = 2000
@@ -1297,6 +1301,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     llm = config["llm"]
     voice = config.get("voice", {})
     tts_config = voice.get("tts", {}) or {}
+    stt_config = voice.get("stt", {}) or {}
+    if not isinstance(stt_config, dict):
+        stt_config = {}
     integrations = config.get("integrations", {})
     runtime = config.get("runtime", {})
     network = runtime.get("network", {}) or {}
@@ -1558,6 +1565,16 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if skyvern.get("app_url"):
             env["SKYVERN_APP_URL"] = str(skyvern.get("app_url", "")).strip()
 
+    configured_background_followup_window_s = runtime.get("background_followup_window_s")
+    background_followup_window_s = (
+        DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S
+        if configured_background_followup_window_s in (None, "")
+        else str(configured_background_followup_window_s).strip()
+    )
+    env["VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S"] = background_followup_window_s
+    env["VIVENTIUM_VOICE_FOLLOWUP_GRACE_S"] = background_followup_window_s
+    env["VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S"] = background_followup_window_s
+
     env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"], env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] = assignments["conscious"]
     env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] = assignments["background_analysis"]
     env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_LLM_MODEL"] = assignments["confirmation_bias"]
@@ -1586,6 +1603,67 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_STT_PROVIDER"] = resolved_voice["stt_provider"]
     env["VIVENTIUM_TTS_PROVIDER"] = resolved_voice["tts_provider"]
     env["TTS_PROVIDER_PRIMARY"] = resolved_voice["tts_provider"]
+    turn_handling = voice.get("turn_handling", {}) or {}
+    if not isinstance(turn_handling, dict):
+        turn_handling = {}
+    voice_worker = voice.get("worker", {}) or {}
+    if not isinstance(voice_worker, dict):
+        voice_worker = {}
+    configured_turn_detection = str(voice.get("turn_detection", "") or "").strip()
+    if configured_turn_detection:
+        env["VIVENTIUM_TURN_DETECTION"] = configured_turn_detection
+    if turn_handling.get("min_interruption_duration_s") not in (None, ""):
+        env["VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S"] = str(
+            turn_handling.get("min_interruption_duration_s")
+        ).strip()
+    if turn_handling.get("min_interruption_words") not in (None, ""):
+        env["VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS"] = str(
+            turn_handling.get("min_interruption_words")
+        ).strip()
+    if turn_handling.get("min_endpointing_delay_s") not in (None, ""):
+        env["VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S"] = str(
+            turn_handling.get("min_endpointing_delay_s")
+        ).strip()
+    if turn_handling.get("max_endpointing_delay_s") not in (None, ""):
+        env["VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S"] = str(
+            turn_handling.get("max_endpointing_delay_s")
+        ).strip()
+    if turn_handling.get("false_interruption_timeout_s") not in (None, ""):
+        env["VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S"] = str(
+            turn_handling.get("false_interruption_timeout_s")
+        ).strip()
+    if "resume_false_interruption" in turn_handling:
+        env["VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION"] = (
+            "true" if resolve_bool(turn_handling.get("resume_false_interruption"), True) else "false"
+        )
+    if turn_handling.get("min_consecutive_speech_delay_s") not in (None, ""):
+        env["VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S"] = str(
+            turn_handling.get("min_consecutive_speech_delay_s")
+        ).strip()
+    if voice_worker.get("initialize_process_timeout_s") not in (None, ""):
+        env["VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S"] = str(
+            voice_worker.get("initialize_process_timeout_s")
+        ).strip()
+    if voice_worker.get("idle_processes") not in (None, ""):
+        env["VIVENTIUM_VOICE_IDLE_PROCESSES"] = str(
+            voice_worker.get("idle_processes")
+        ).strip()
+    if voice_worker.get("load_threshold") not in (None, ""):
+        env["VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD"] = str(
+            voice_worker.get("load_threshold")
+        ).strip()
+    if voice_worker.get("job_memory_warn_mb") not in (None, ""):
+        env["VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB"] = str(
+            voice_worker.get("job_memory_warn_mb")
+        ).strip()
+    if voice_worker.get("job_memory_limit_mb") not in (None, ""):
+        env["VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB"] = str(
+            voice_worker.get("job_memory_limit_mb")
+        ).strip()
+    if "prewarm_local_tts" in voice_worker:
+        env["VIVENTIUM_VOICE_PREWARM_LOCAL_TTS"] = (
+            "true" if resolve_bool(voice_worker.get("prewarm_local_tts"), True) else "false"
+        )
     wing_mode = voice.get("wing_mode", voice.get("shadow_mode", {})) or {}
     wing_mode_default_enabled = "true" if wing_mode.get("default_enabled") is True else "false"
     env["VIVENTIUM_WING_MODE_DEFAULT_ENABLED"] = wing_mode_default_enabled
@@ -1618,6 +1696,33 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     assemblyai_key = resolve_voice_provider_secret(voice, resolved_voice, "assemblyai")
     if assemblyai_key:
         env["ASSEMBLYAI_API_KEY"] = assemblyai_key
+    env["VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD"] = (
+        DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD
+        if stt_config.get("end_of_turn_confidence_threshold") in (None, "")
+        else str(stt_config.get("end_of_turn_confidence_threshold")).strip()
+    )
+    env["VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS"] = (
+        DEFAULT_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS
+        if stt_config.get("min_end_of_turn_silence_when_confident_ms") in (None, "")
+        else str(stt_config.get("min_end_of_turn_silence_when_confident_ms")).strip()
+    )
+    env["VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS"] = (
+        DEFAULT_ASSEMBLYAI_MAX_TURN_SILENCE_MS
+        if stt_config.get("max_turn_silence_ms") in (None, "")
+        else str(stt_config.get("max_turn_silence_ms")).strip()
+    )
+    if "format_turns" in stt_config:
+        env["VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS"] = (
+            "true" if resolve_bool(stt_config.get("format_turns"), False) else "false"
+        )
+    if stt_config.get("vad_min_speech_s") not in (None, ""):
+        env["VIVENTIUM_STT_VAD_MIN_SPEECH"] = str(stt_config.get("vad_min_speech_s")).strip()
+    if stt_config.get("vad_min_silence_s") not in (None, ""):
+        env["VIVENTIUM_STT_VAD_MIN_SILENCE"] = str(stt_config.get("vad_min_silence_s")).strip()
+    if stt_config.get("vad_activation_threshold") not in (None, ""):
+        env["VIVENTIUM_STT_VAD_ACTIVATION"] = str(
+            stt_config.get("vad_activation_threshold")
+        ).strip()
 
     eleven_key = resolve_voice_provider_secret(voice, resolved_voice, "elevenlabs")
     if eleven_key:

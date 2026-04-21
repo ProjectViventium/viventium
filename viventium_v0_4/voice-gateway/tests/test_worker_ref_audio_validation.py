@@ -69,6 +69,30 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(env.openai_tts_speed, 1.12)
         self.assertIn("Speak naturally and warmly", env.openai_tts_instructions)
 
+    def test_load_env_sets_voice_endpointing_defaults(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            env = load_env()
+
+        self.assertEqual(env.voice_min_interruption_duration_s, 0.5)
+        self.assertEqual(env.voice_min_endpointing_delay_s, 0.9)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
+
+    def test_load_env_respects_voice_endpointing_overrides(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S": "0.8",
+                "VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S": "1.2",
+                "VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S": "4.5",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_min_interruption_duration_s, 0.8)
+        self.assertEqual(env.voice_min_endpointing_delay_s, 1.2)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 4.5)
+
     def test_missing_path_rejected(self) -> None:
         valid, warning = _validate_ref_audio_path("/path/to/does_not_exist_ref_audio.wav")
         self.assertIsNone(valid)
@@ -106,7 +130,17 @@ class TestRefAudioValidation(unittest.TestCase):
 
         with (
             patch("worker.start_health_server"),
-            patch("worker.load_env", return_value=SimpleNamespace(livekit_agent_name="librechat-voice-gateway")),
+            patch(
+                "worker.load_env",
+                return_value=SimpleNamespace(
+                    livekit_agent_name="librechat-voice-gateway",
+                    voice_initialize_process_timeout_s=45.0,
+                    voice_idle_processes=1,
+                    voice_worker_load_threshold=0.995,
+                    voice_job_memory_warn_mb=1400.0,
+                    voice_job_memory_limit_mb=2200.0,
+                ),
+            ),
             patch("worker.cli.run_app", side_effect=_fake_run_app),
         ):
             run()
@@ -114,6 +148,8 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertIn("opts", captured)
         self.assertEqual(captured["opts"].agent_name, "librechat-voice-gateway")
         self.assertEqual(captured["opts"].worker_type, WorkerType.PUBLISHER)
+        self.assertEqual(captured["opts"].job_memory_warn_mb, 1400.0)
+        self.assertEqual(captured["opts"].job_memory_limit_mb, 2200.0)
 
     def test_prewarm_process_prewarms_local_chatterbox_at_startup(self) -> None:
         proc = SimpleNamespace(userdata={})
@@ -127,6 +163,7 @@ class TestRefAudioValidation(unittest.TestCase):
                     tts_provider="local_chatterbox_turbo_mlx_8bit",
                     tts_provider_fallback="",
                     mlx_audio_model_id="mlx-community/chatterbox-turbo-8bit",
+                    voice_prewarm_local_tts=True,
                 ),
             ),
             patch("worker.load_vad", return_value=None),
@@ -141,6 +178,28 @@ class TestRefAudioValidation(unittest.TestCase):
         tts_cls.assert_called_once()
         fake_tts.prewarm.assert_called_once_with()
         self.assertIs(proc.userdata["prewarmed_local_chatterbox_tts"], fake_tts)
+
+    def test_prewarm_process_skips_local_chatterbox_when_opted_out(self) -> None:
+        proc = SimpleNamespace(userdata={})
+
+        with (
+            patch(
+                "worker.load_env",
+                return_value=SimpleNamespace(
+                    stt_provider="openai",
+                    tts_provider="local_chatterbox_turbo_mlx_8bit",
+                    tts_provider_fallback="",
+                    mlx_audio_model_id="mlx-community/chatterbox-turbo-8bit",
+                    voice_prewarm_local_tts=False,
+                ),
+            ),
+            patch("worker.load_vad", return_value=None),
+            patch("worker.MlxChatterboxTTS") as tts_cls,
+        ):
+            prewarm_process(proc)
+
+        tts_cls.assert_not_called()
+        self.assertNotIn("prewarmed_local_chatterbox_tts", proc.userdata)
 
     def test_apply_requested_voice_route_uses_available_requested_variants(self) -> None:
         with patch.dict(
