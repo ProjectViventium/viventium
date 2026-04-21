@@ -135,6 +135,12 @@ class EmotionSegment:
     stage: Optional[str] = None
 
 
+@dataclass
+class StreamingEmotionState:
+    current_emotion: Optional[str] = None
+    buffer: str = ""
+
+
 class CartesiaTTS(TTS):
     def __init__(self, *, config: CartesiaConfig) -> None:
         if not config.api_key:
@@ -248,7 +254,9 @@ def _split_stage_segments(text: str, emotion: Optional[str]) -> list[EmotionSegm
     return segments
 
 
-def _split_emotion_segments(text: str) -> list[EmotionSegment]:
+def _split_emotion_segments_with_state(
+    text: str, *, initial_emotion: Optional[str] = None
+) -> tuple[list[EmotionSegment], Optional[str]]:
     # === VIVENTIUM START ===
     # Feature: Support Cartesia SSML emotion tags (block + self-closing).
     #
@@ -262,7 +270,7 @@ def _split_emotion_segments(text: str) -> list[EmotionSegment]:
 
     segments: list[EmotionSegment] = []
     cursor = 0
-    current_emotion: Optional[str] = None
+    current_emotion: Optional[str] = initial_emotion
 
     while cursor < len(cleaned):
         block_match = _EMOTION_TAG_RE.search(cleaned, cursor)
@@ -314,8 +322,87 @@ def _split_emotion_segments(text: str) -> list[EmotionSegment]:
     if not segments:
         segments.extend(_split_stage_segments(cleaned, current_emotion))
 
-    return segments
+    return segments, current_emotion
     # === VIVENTIUM END ===
+
+
+def _split_emotion_segments(text: str) -> list[EmotionSegment]:
+    segments, _ = _split_emotion_segments_with_state(text, initial_emotion=None)
+    return segments
+
+
+_EMOTION_WRAPPER_OPEN_RE = re.compile(
+    r"<emotion\s+value=[\"']?([^\"'>]+)[\"']?\s*>",
+    re.IGNORECASE,
+)
+
+
+def _partition_streamable_emotion_text(text: str) -> tuple[str, str]:
+    if not text:
+        return "", ""
+
+    safe_len = len(text)
+    last_lt = text.rfind("<")
+    last_gt = text.rfind(">")
+    if last_lt > last_gt:
+        safe_len = last_lt
+
+    unmatched_wrapper_start: Optional[int] = None
+    safe_text = text[:safe_len]
+    for match in _EMOTION_WRAPPER_OPEN_RE.finditer(safe_text):
+        if safe_text.find("</emotion>", match.end()) == -1:
+            unmatched_wrapper_start = match.start()
+            break
+
+    if unmatched_wrapper_start is not None:
+        safe_len = min(safe_len, unmatched_wrapper_start)
+
+    return text[:safe_len], text[safe_len:]
+
+
+def _normalize_streaming_emotion_tail(text: str) -> str:
+    if not text:
+        return ""
+
+    tail = text
+    last_lt = tail.rfind("<")
+    last_gt = tail.rfind(">")
+    if last_lt > last_gt:
+        tail = tail[:last_lt]
+
+    tail = re.sub(
+        r"<emotion\s+value=[\"']?([^\"'>]+)[\"']?\s*>",
+        lambda match: f'<emotion value="{match.group(1)}"/>',
+        tail,
+        flags=re.IGNORECASE,
+    )
+    tail = tail.replace("</emotion>", "")
+    tail = _SPEAK_TAG_RE.sub("", tail)
+    return tail
+
+
+def _consume_streaming_emotion_chunk(
+    state: StreamingEmotionState, chunk: str, *, final: bool = False
+) -> list[EmotionSegment]:
+    if chunk:
+        state.buffer += chunk
+
+    if final:
+        streamable, pending = _partition_streamable_emotion_text(state.buffer)
+        process_text = streamable + _normalize_streaming_emotion_tail(pending)
+        state.buffer = ""
+    else:
+        process_text, state.buffer = _partition_streamable_emotion_text(state.buffer)
+
+    if not process_text:
+        return []
+
+    segments, current_emotion = _split_emotion_segments_with_state(
+        process_text,
+        initial_emotion=state.current_emotion,
+    )
+    state.current_emotion = current_emotion
+    return segments
 # === VIVENTIUM END ===
 
 
@@ -325,6 +412,7 @@ def _build_ws_generation_request(
     context_id: str,
     transcript: str,
     continue_generation: bool,
+    emotion: Optional[str] = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "model_id": cfg.model_id,
@@ -339,7 +427,7 @@ def _build_ws_generation_request(
         "generation_config": {
             "speed": float(cfg.speed),
             "volume": float(cfg.volume),
-            "emotion": (cfg.emotion or "neutral").strip() or "neutral",
+            "emotion": ((emotion or cfg.emotion or "neutral").strip() or "neutral"),
         },
         "context_id": context_id,
         "continue": bool(continue_generation),
@@ -549,35 +637,70 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.ws_connect(cfg.ws_url, headers=headers, heartbeat=20) as ws:
+                emotion_state = StreamingEmotionState()
+
+                async def _emit_segment(segment: EmotionSegment) -> None:
+                    nonlocal sent_any_input
+
+                    if segment.stage:
+                        stage_prompt = _STAGE_PROMPTS.get(
+                            segment.stage,
+                            (f"[{segment.stage}]", None),
+                        )
+                        chunk = stage_prompt[0]
+                        emotion = (stage_prompt[1] or segment.emotion or cfg.emotion).strip() or "neutral"
+                    else:
+                        chunk = _normalize_nonverbal_tokens(segment.text)
+                        emotion = (segment.emotion or cfg.emotion).strip() or "neutral"
+
+                    if not chunk:
+                        return
+
+                    if _should_debug():
+                        logger.info(
+                            "Cartesia ws push len=%s emotion=%s buffer_ms=%s chunk=%s",
+                            len(chunk),
+                            emotion,
+                            cfg.max_buffer_delay_ms,
+                            chunk[:200],
+                        )
+
+                    await ws.send_str(
+                        json.dumps(
+                            _build_ws_generation_request(
+                                cfg=cfg,
+                                context_id=context_id,
+                                transcript=chunk,
+                                continue_generation=True,
+                                emotion=emotion,
+                            )
+                        )
+                    )
+                    sent_any_input = True
+                    self._mark_started()
+                    input_ready.set()
 
                 async def _input_task() -> None:
-                    nonlocal sent_any_input
                     async for data in self._input_ch:
                         if isinstance(data, self._FlushSentinel):
                             continue
                         chunk = sanitize_voice_text(data or "")
                         if not chunk:
                             continue
-                        if _should_debug():
-                            logger.info(
-                                "Cartesia ws push len=%s buffer_ms=%s chunk=%s",
-                                len(chunk),
-                                cfg.max_buffer_delay_ms,
-                                chunk[:200],
-                            )
-                        await ws.send_str(
-                            json.dumps(
-                                _build_ws_generation_request(
-                                    cfg=cfg,
-                                    context_id=context_id,
-                                    transcript=chunk,
-                                    continue_generation=True,
-                                )
-                            )
-                        )
-                        sent_any_input = True
-                        self._mark_started()
-                        input_ready.set()
+
+                        for segment in _consume_streaming_emotion_chunk(
+                            emotion_state,
+                            chunk,
+                            final=False,
+                        ):
+                            await _emit_segment(segment)
+
+                    for segment in _consume_streaming_emotion_chunk(
+                        emotion_state,
+                        "",
+                        final=True,
+                    ):
+                        await _emit_segment(segment)
 
                     input_ready.set()
                     if not sent_any_input:

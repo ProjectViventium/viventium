@@ -61,6 +61,17 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
   streaming surface, but wrapper layers must not downgrade a native-streaming provider back to
   sentence-buffered fallback behavior.
 
+## Turn Stability and Endpointing
+- Voice ingress requests that resolve to the same `(callSessionId, conversationId, parentMessageId)`
+  within the coalescing window are merged onto one launched stream instead of forking sibling turns.
+- Coalesced text must preserve ingress order, not whichever request wins the Mongo race first.
+- Canonical saved assistant history strips voice-control tags after synthesis so reloads, exports,
+  and downstream surfaces do not retain raw `<emotion .../>` markup.
+- AgentSession endpointing defaults are tuned for continuous speech:
+  - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S=0.5`
+  - `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S=0.9`
+  - `VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S=3.0`
+
 ## Voice-Mode Prompt Contract (Provider-Aware)
 Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvider)` in
 `surfacePrompts.js`. Each TTS provider gets its own branch:
@@ -178,6 +189,15 @@ Added: 2026-01-11
 - `VIVENTIUM_CARTESIA_WS_URL`
 - `VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS` (default `120` for live voice)
 - `VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS`
+- `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`
+- `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S`
+- `VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S`
+- `VIVENTIUM_VOICE_TURN_COALESCE_ENABLED`
+- `VIVENTIUM_VOICE_TURN_COALESCE_WINDOW_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_WAIT_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_POLL_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_RETURN_WINDOW_MS`
+- `VIVENTIUM_VOICE_TURN_COALESCE_TTL_S`
 - `VIVENTIUM_VOICE_LOG_LATENCY=1`
 - `VIVENTIUM_VOICE_DEBUG_TTS=1`
 

@@ -217,6 +217,9 @@ class Env:
     voice_initialize_process_timeout_s: float
     voice_idle_processes: int
     voice_worker_load_threshold: float
+    voice_min_interruption_duration_s: float
+    voice_min_endpointing_delay_s: float
+    voice_max_endpointing_delay_s: float
     # === VIVENTIUM END ===
 
 
@@ -995,6 +998,18 @@ def load_env() -> Env:
         voice_worker_load_threshold=min(
             0.999,
             max(0.1, _parse_float_env("VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD", default_load_threshold)),
+        ),
+        voice_min_interruption_duration_s=_parse_float_env(
+            "VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S",
+            0.5,
+        ),
+        voice_min_endpointing_delay_s=_parse_float_env(
+            "VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S",
+            0.9,
+        ),
+        voice_max_endpointing_delay_s=_parse_float_env(
+            "VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S",
+            3.0,
         ),
         # === VIVENTIUM END ===
     )
@@ -1941,7 +1956,16 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=tts_impl,
         turn_detection=load_turn_detection(vad is not None),
         allow_interruptions=True,
+        min_interruption_duration=env.voice_min_interruption_duration_s,
+        min_endpointing_delay=env.voice_min_endpointing_delay_s,
+        max_endpointing_delay=env.voice_max_endpointing_delay_s,
         preemptive_generation=False,
+    )
+    logger.info(
+        "[voice-gateway] AgentSession timing min_interrupt=%ss min_endpoint=%ss max_endpoint=%ss",
+        env.voice_min_interruption_duration_s,
+        env.voice_min_endpointing_delay_s,
+        env.voice_max_endpointing_delay_s,
     )
 
     # === VIVENTIUM START ===

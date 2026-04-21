@@ -18,10 +18,12 @@ from cartesia_tts import (
     CartesiaTTS,
     _STAGE_PROMPTS,
     _build_ws_generation_request,
+    _consume_streaming_emotion_chunk,
     _extract_ws_audio_chunk,
     _is_ws_done,
     _normalize_nonverbal_tokens,
     _split_emotion_segments,
+    StreamingEmotionState,
 )
 
 
@@ -106,6 +108,17 @@ class TestCartesiaNormalization(unittest.TestCase):
         self.assertEqual(payload["output_format"]["container"], "raw")
         self.assertEqual(payload["output_format"]["encoding"], "pcm_s16le")
 
+    def test_build_ws_generation_request_supports_emotion_override(self) -> None:
+        cfg = CartesiaConfig(api_key="cartesia-key", emotion="neutral")
+        payload = _build_ws_generation_request(
+            cfg=cfg,
+            context_id="ctx-123",
+            transcript="Hello there.",
+            continue_generation=True,
+            emotion="calm",
+        )
+        self.assertEqual(payload["generation_config"]["emotion"], "calm")
+
     def test_extract_ws_audio_chunk_decodes_base64(self) -> None:
         chunk = _extract_ws_audio_chunk({"type": "chunk", "data": "AQID"})
         self.assertEqual(chunk, b"\x01\x02\x03")
@@ -154,6 +167,42 @@ class TestCartesiaEmotionSegments(unittest.TestCase):
         self.assertEqual(data[0], ("Hi", None, None))
         self.assertEqual(data[1], ("", None, "laughter"))
         self.assertEqual(data[2], ("there", None, None))
+
+    def test_streaming_emotion_state_handles_partial_self_closing_tag(self) -> None:
+        state = StreamingEmotionState()
+        self.assertEqual(
+            _consume_streaming_emotion_chunk(state, '<emotion value="con', final=False),
+            [],
+        )
+
+        segments = _consume_streaming_emotion_chunk(
+            state,
+            'tent"/>Yeah, feels smoother.',
+            final=False,
+        )
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data, [("Yeah, feels smoother.", "content", None)])
+
+    def test_streaming_emotion_state_preserves_emotion_across_chunks(self) -> None:
+        state = StreamingEmotionState()
+        _consume_streaming_emotion_chunk(state, '<emotion value="calm"/>', final=False)
+        segments = _consume_streaming_emotion_chunk(state, 'Go rest.', final=False)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data, [("Go rest.", "calm", None)])
+
+    def test_streaming_emotion_state_flushes_unclosed_wrapper_on_final(self) -> None:
+        state = StreamingEmotionState()
+        self.assertEqual(
+            _consume_streaming_emotion_chunk(
+                state,
+                '<emotion value="curious">Anything else',
+                final=False,
+            ),
+            [],
+        )
+        segments = _consume_streaming_emotion_chunk(state, '', final=True)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data, [("Anything else", "curious", None)])
 
 
 if __name__ == "__main__":

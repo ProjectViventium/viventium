@@ -9,8 +9,10 @@ background-cortex behavior.
 - Call sessions must survive process restarts and multi-instance deployments.
 - Voice gateway authentication must rely on a shared secret plus call-session identity.
 - Conversation continuity must be preserved.
+- Premature endpointing must not fork one spoken sentence into multiple sibling user turns.
 - Background insights must be surfaced after the main response.
 - Voice-mode output must be plain conversational text and strip citation markers before TTS.
+- Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
 - Wing Mode must be a simple opt-in voice behavior, not a separate hardcoded agent path.
@@ -59,6 +61,10 @@ background-cortex behavior.
 - Native provider streaming must be preserved end to end. Fallback wrappers or route-selection
   layers must not downgrade a provider that supports incremental speech continuations back to a
   non-streaming sentence-buffered path.
+- Rapid same-parent voice ingress requests must coalesce onto one launched stream in ingress order
+  when they land inside the configured turn-coalescing window.
+- Voice persistence may keep provider markup in the live synthesis path, but the canonical saved
+  assistant text/content used for history and reloads must not retain raw voice-control tags.
 - When a TTS provider does not support native incremental text input, runtime may adapt it to an
   incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
   for voice-first providers.

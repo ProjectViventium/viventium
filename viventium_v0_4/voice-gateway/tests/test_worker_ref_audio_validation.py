@@ -69,6 +69,30 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(env.openai_tts_speed, 1.12)
         self.assertIn("Speak naturally and warmly", env.openai_tts_instructions)
 
+    def test_load_env_sets_voice_endpointing_defaults(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            env = load_env()
+
+        self.assertEqual(env.voice_min_interruption_duration_s, 0.5)
+        self.assertEqual(env.voice_min_endpointing_delay_s, 0.9)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
+
+    def test_load_env_respects_voice_endpointing_overrides(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S": "0.8",
+                "VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S": "1.2",
+                "VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S": "4.5",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_min_interruption_duration_s, 0.8)
+        self.assertEqual(env.voice_min_endpointing_delay_s, 1.2)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 4.5)
+
     def test_missing_path_rejected(self) -> None:
         valid, warning = _validate_ref_audio_path("/path/to/does_not_exist_ref_audio.wav")
         self.assertIsNone(valid)
