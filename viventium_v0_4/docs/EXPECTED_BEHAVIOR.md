@@ -56,7 +56,8 @@ Conversation exports must render background events as readable text (not raw JSO
 
 ## Voice Parity Rules
 - Voice calls must follow the same non-blocking contract as text chat.
-- Background insights should be spoken after the main response, using the follow-up text when available.
+- After the main response, voice should speak only a persisted main-agent follow-up message.
+- Raw background insights must never be spoken directly as a fallback in modern-playground voice.
 - Background processing should never interrupt or block speech generation.
 - Voice-mode prompt instructions are provider-aware via `buildVoiceModeInstructions(voiceProvider)`:
   - Cartesia: `<emotion value="..."/>` (self-closing), `[laughter]`, `<break>`, `<speed>`, `<volume>`, recommended emotion list.

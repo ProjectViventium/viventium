@@ -42,6 +42,8 @@ properties:
         properties:
           default_conversation_recall:
             type: boolean
+      background_followup_window_s:
+        type: number
       network:
         type: object
         properties:
@@ -134,6 +136,15 @@ properties:
         description: Legacy ignored field. Voice-call LLM selection comes from the agent's explicit Voice Call LLM fields, otherwise the agent primary LLM is used.
       stt:
         type: object
+        properties:
+          secret_ref:
+            type: string
+          end_of_turn_confidence_threshold:
+            type: number
+          min_end_of_turn_silence_when_confident_ms:
+            type: integer
+          max_turn_silence_ms:
+            type: integer
       tts:
         type: object
         properties:

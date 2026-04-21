@@ -235,6 +235,45 @@ both code and QA:
 - If Viventium adds a future “continuity state” or consolidation layer, it must be explicit,
   bounded, auditable, and separate from saved-memory semantics.
 
+#### 2.6.5 Anthropic default-thinking memory writer contract
+
+- The April 21, 2026 local continuity investigation found a second memory-writer failure class on
+  the Anthropic path:
+  - Anthropic default thinking was active even when runtime did not explicitly set a `thinking`
+    object.
+  - The memory writer also forces tool use for deterministic `apply_memory_changes`.
+  - Sending `temperature` with active/default Anthropic thinking is invalid.
+  - Sending `thinking: false` on that forced-tool path is also invalid for the live request shape.
+- The owned product fix is:
+  - treat Anthropic default thinking as active when sanitizing memory-writer config
+  - remove `temperature` whenever Anthropic thinking is active by default or explicitly
+  - for adaptive-era Anthropic models currently used by Viventium memory (`claude-sonnet-4-6`),
+    omit explicit `temperature` entirely from the shipped memory-writer config so fresh installs do
+    not rely on runtime stripping to stay valid
+  - if the memory run is also forcing tool use, remove `thinking` entirely instead of setting it to
+    `false`
+  - keep one retry for transient upstream failures, but log the exact provider/model/thinking mode
+    on hard failure
+- This is a runtime contract fix, not a prompt fix. If the writer request shape is illegal, the
+  saved-memory prompt never gets a chance to help.
+
+#### 2.6.6 Missing visible follow-up can masquerade as memory failure
+
+- The same April 21, 2026 incident showed a separate user-visible failure:
+  - background cortex recall recovered the correct same-day context
+  - but the user-facing follow-up message could still disappear if follow-up synthesis returned an
+    empty string
+- Product rule:
+  - `{NTA}` remains the only legal silent outcome for a non-replacement follow-up
+  - a truly empty follow-up generation must not be auto-normalized into `{NTA}` and suppressed
+  - raw `{NTA}` from the follow-up LLM must not silence a non-replacement follow-up when a
+    substantive visible fallback still exists after cleanup
+  - if synthesis fails, returns empty, or incorrectly returns `{NTA}` while substantive background
+    insight exists, persist a deterministic visible fallback instead of dropping the correction on
+    the floor
+- Otherwise the user experiences “memory did not work” even though the recovery layer actually found
+  the right context.
+
 ### 2.7 Strict Memory Rules
 
 The following rules are product requirements. They preserve the user wording, normalized only for

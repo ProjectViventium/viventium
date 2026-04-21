@@ -859,7 +859,7 @@ class LibreChatBridge:
         )
         self.followup_grace_s = _parse_positive_float(
             (os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S") or "").strip(),
-            8.0,
+            30.0,
         )
         self.followup_timeout_s = _parse_positive_float(
             (os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S") or "").strip(),

@@ -89,9 +89,12 @@ This service is the **voice bridge** between:
     - Docs: `https://docs.x.ai/docs/guides/voice/agent`
 
 - **Turn detection (optional)**
-  - `VIVENTIUM_TURN_DETECTION` (defaults to `vad`)
+  - `VIVENTIUM_TURN_DETECTION`
     - Allowed: `stt`, `vad`, `realtime_llm`, `manual`
-    - Note: we default to `vad`, but fall back to `stt` if Silero isn't available.
+    - Shipped default depends on the active STT route:
+      - `assemblyai` defaults to `stt`
+      - local `whisper_local` / `pywhispercpp` defaults to `vad`
+    - If `vad` is requested while Silero is unavailable, runtime falls back to `stt`.
   - Silero VAD requires Python <= 3.12 and `livekit-plugins-silero`.
   - `VIVENTIUM_STT_VAD_MAX_BUFFERED_SPEECH` (defaults to `600`)
     - Maximum duration of one uninterrupted speech segment kept in the Silero buffer.
@@ -103,13 +106,10 @@ This service is the **voice bridge** between:
     - How long the worker will poll in the background for completed insights/follow-up text.
   - `VIVENTIUM_VOICE_FOLLOWUP_INTERVAL_S` (defaults to `1.0`)
     - Poll interval while waiting for cortex insights to be persisted to the DB.
-  - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S` (defaults to `15.0`)
-    - Minimum delay after the DB poller first discovers insights before speaking the raw fallback. Gives the backend follow-up LLM time to generate the merged follow-up text. Grace timer starts from the first DB poll with insights, not from SSE-captured insights.
-  - `VIVENTIUM_VOICE_INSIGHT_PREAMBLE` (defaults to empty)
-    - Optional preamble for fallback spoken insights (e.g., "Quick note.").
-  - `VIVENTIUM_VOICE_INSIGHT_INCLUDE_CORTEX_NAME` (defaults to `0`)
-    - Set to `1` to prefix insights with the cortex name (e.g., "Pattern Recognition: ...").
+  - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S` (defaults to `30.0`)
+    - Background follow-up window after the DB poller first discovers persisted insights. This gives the backend follow-up LLM time to persist a true Phase B main-agent continuation. Grace timer starts from the first DB poll with insights, not from SSE-captured insights.
   - Follow-ups are delivered asynchronously and never block the main response.
+  - Raw background insights stay silent in live voice if no persisted follow-up arrives inside the window.
 
 - **Voice stream resilience (optional)**
   - `VIVENTIUM_VOICE_SSE_MAX_RETRIES` (defaults to `2`)

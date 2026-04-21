@@ -53,6 +53,10 @@ runtime:
     # New installs should ship with "Recall all conversations" enabled so
     # runtime recall and vector recall can activate without extra manual toggles.
     default_conversation_recall: true
+  # Shared background follow-up window for LibreChat, live voice, and Telegram.
+  # This is the Phase B window that still allows a late main-agent follow-up to surface
+  # after background insights finish.
+  background_followup_window_s: 30
   extra_env:
     # Advanced/private local carry-over for legacy provider settings that still need
     # environment-based LibreChat runtime wiring. Public installs can usually leave this empty.
@@ -100,6 +104,15 @@ voice:
   # stt_provider: assemblyai
   # stt:
   #   secret_ref: keychain://viventium/assemblyai_api_key
+  #   # The shipped AssemblyAI `stt` path keeps local endpointing delay near zero and
+  #   # lets provider endpointing own turn timing. When these are left unset, the
+  #   # compiler emits the current documented Universal Streaming defaults so runtime
+  #   # behavior is explicit and reproducible. The existing config key below is kept
+  #   # for backward compatibility and maps to AssemblyAI's current `min_turn_silence`
+  #   # provider knob.
+  #   end_of_turn_confidence_threshold: 0.01
+  #   min_end_of_turn_silence_when_confident_ms: 100
+  #   max_turn_silence_ms: 1000
   tts_provider: browser
   wing_mode:
     default_enabled: false
@@ -107,6 +120,8 @@ voice:
       WING MODE:
       - You are in Wing Mode during a live voice call: quietly aware, helpful, and unobtrusive.
       - Treat TV, podcasts, videos, songs, meetings, and nearby chatter as background context unless the user is clearly talking to you.
+      - A live call does not mean every spoken sentence is addressed to you; a bare spoken question, comment, or thought in the room is background unless the user directly addresses you or it clearly requires your memory, tools, or role in the call.
+      - If you do not have a clear, useful, additive contribution, output exactly {NTA}.
       - If you are not sure the user is addressing you, output exactly {NTA}.
       - Err aggressively on the side of silence.
   tts:

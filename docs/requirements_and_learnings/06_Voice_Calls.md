@@ -10,7 +10,13 @@ background-cortex behavior.
 - Voice gateway authentication must rely on a shared secret plus call-session identity.
 - Conversation continuity must be preserved.
 - Premature endpointing must not fork one spoken sentence into multiple sibling user turns.
-- Background insights must be surfaced after the main response.
+- Turn-taking must balance two failure modes across short and long speech:
+  - do not interrupt the user mid-thought because a short reflective pause looked like end-of-turn
+  - do not wait so long after a true stop that the system feels sluggish or unresponsive
+- Background insights must be surfaced after the main response without leaking raw internal insight
+  text into live voice speech.
+- The shipped background follow-up window should stay in parity across LibreChat, live voice, and
+  Telegram unless a future doc explicitly splits those defaults.
 - Voice-mode output must be plain conversational text and strip citation markers before TTS.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
@@ -40,6 +46,11 @@ background-cortex behavior.
 
 ### Wing Mode
 - Wing Mode is a passive companion mode for live voice calls.
+- A live call must not be treated as blanket permission to answer every overheard utterance.
+  Bare spoken questions or comments in the room default to silence unless they are clearly addressed
+  to the assistant or obviously require the assistant's memory, tools, or role in the call.
+- Even when the user is talking to the assistant, Wing Mode should default to `{NTA}` unless the
+  assistant has a clear, useful, additive contribution to make.
 - The first-enable disclosure should show the current STT route, TTS route, and effective assistant
   call LLM route for the owning agent.
 - The assistant disclosure must show the concrete provider/model and whether that route comes from
@@ -71,6 +82,54 @@ background-cortex behavior.
 - Fallback speech sanitization must be capability-driven and limited to deterministic structural
   parsing of voice-control markup. Do not scatter provider-name heuristics or hardcoded stage-token
   vocabularies across runtime wrapper layers.
+- In live voice, only the main agent's user-facing outputs may be spoken:
+  - the immediate Phase A main response
+  - a persisted Phase B `cortex_followup` main-agent continuation, when one exists
+- Raw `cortex_insight` content is background cognition. It may be shown in LibreChat's
+  background-insight UI, but it must not be spoken directly into the modern playground transcript
+  or TTS path as a fallback.
+
+### Turn-Taking Ownership Contract
+- AssemblyAI-backed voice calls must default to provider endpointing (`turn_detection=stt`) instead
+  of pure VAD-only turn ending.
+- Silero VAD remains attached even when STT endpointing owns turn completion so the runtime keeps
+  responsive interruption handling.
+- Viventium must not silently stack a second large endpointing delay on top of provider endpointing.
+  When AssemblyAI STT endpointing is active, the local `AgentSession` endpointing delay should stay
+  near-zero/small and act only as a guardrail.
+- Semantic turn detection is a higher-capability option, but it is an explicit config/runtime choice,
+  not the default fallback for every AssemblyAI install.
+- When the semantic turn-detector plugin is installed, launcher/runtime checks must verify the exact
+  required cached assets, not just the presence of a generic Hugging Face cache directory.
+- The turn-detector plugin must load lazily. Installing the package alone must not make an unrelated
+  local `vad` route boot with inference-runner initialization errors for an unused detector path.
+- Local whisper.cpp (`whisper_local` / `pywhispercpp`) remains a StreamAdapter + Silero VAD path:
+  - it inherits shared interruption handling and saved-route plumbing
+  - it does not gain AssemblyAI-native endpointing knobs or semantic turn-detector behavior
+- Turn-ending behavior must be config-owned and observable:
+  - LiveKit interruption knobs compile from canonical config
+  - AssemblyAI endpointing knobs compile from canonical config
+    - when unset, the shipped compiler now emits the documented Universal Streaming baseline rather
+      than relying on implicit plugin/API defaults
+  - the background follow-up window compiles from canonical config
+  - worker/runtime capacity knobs compile from canonical config:
+    - `VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S`
+    - `VIVENTIUM_VOICE_IDLE_PROCESSES`
+    - `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD`
+    - `VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB`
+    - `VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB`
+    - `VIVENTIUM_VOICE_PREWARM_LOCAL_TTS`
+  - runtime logs must state why a user turn completed, using normalized reason labels such as
+    `vad_silence`, `stt_end_of_turn`, or `semantic_turn_detector`
+- Per-call requested voice-route overrides must recompute the effective turn-taking defaults from the
+  final STT provider for that call. Do not keep VAD/STT defaults derived from the machine default
+  provider when a call overrides onto a different STT route.
+- For AssemblyAI `stt`, the shipped default should follow current LiveKit guidance:
+  - keep local `min_endpointing_delay` near zero
+  - let AssemblyAI own endpointing timing with explicit provider knobs
+  - prefer explicit compiler-emitted defaults over leaving the plugin/API path ambiguous
+- The same ownership contract must work for both short exchanges and long continuous speech; fixes
+  must widen the structural runtime contract, not hardcode one reproduced sentence shape.
 
 ### Remote Browser Voice Contract
 - Enabling remote access must not break the canonical localhost voice path.

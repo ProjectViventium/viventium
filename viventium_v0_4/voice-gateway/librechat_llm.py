@@ -34,7 +34,6 @@ from sse import (
     # === VIVENTIUM END ===
     extract_cortex_insight,
     extract_text_deltas,
-    format_insight_speech_prompt,
     iter_sse_json_events,
     sanitize_voice_followup_text,
 )
@@ -733,91 +732,3 @@ class _LibreChatLLMStream(llm.LLMStream):
                 except Exception as e:
                     logger.warning("[LibreChatLLM] follow-up handler failed: %s", e)
             # === VIVENTIUM END ===
-
-    async def _speak_pending_insights(
-        self,
-        *,
-        session: aiohttp.ClientSession,
-        headers: dict[str, str],
-        insights: list[dict[str, Any]],
-        recent_response: Optional[str],
-    ) -> None:
-        """
-        Make a follow-up request to speak cortex insights naturally.
-
-        This mirrors v1's ResponseController._speak_proactively() pattern:
-        when background cortices complete with insights, we prompt the agent
-        to share them as if they just occurred to them mid-conversation.
-        """
-        if not insights:
-            return
-
-        prompt = format_insight_speech_prompt(insights, recent_response=recent_response)
-        if not prompt:
-            return
-
-        logger.info(
-            "[LibreChatLLM] Speaking %d pending cortex insight(s) proactively",
-            len(insights),
-        )
-
-        chat_url = f"{self._origin}/api/viventium/voice/chat"
-
-        try:
-            # Request a follow-up response with the insight prompt
-            async with session.post(
-                chat_url,
-                headers=headers,
-                json={
-                    "text": "",
-                    "systemPrompt": prompt,
-                    "speakInsights": True,
-                    # === VIVENTIUM START ===
-                    # Ensure voice-mode prompt injection applies to insight speech.
-                    "voiceMode": self._llm_impl._voice_mode,
-                    "voiceProvider": self._llm_impl._voice_provider,
-                    "viventiumInputMode": "voice_call",
-                    "viventiumSurface": "voice",
-                    # === VIVENTIUM END ===
-                },
-            ) as resp:
-                if resp.status >= 400:
-                    body = await resp.text()
-                    logger.warning(
-                        "[LibreChatLLM] Failed to speak insights: %s %s",
-                        resp.status,
-                        body,
-                    )
-                    return
-                payload = await resp.json()
-                stream_id = payload.get("streamId")
-
-            if not isinstance(stream_id, str) or not stream_id:
-                logger.warning("[LibreChatLLM] Insight follow-up returned no streamId")
-                return
-
-            # Subscribe to the follow-up stream
-            sse_url = f"{self._origin}/api/viventium/voice/stream/{stream_id}"
-            first = True
-
-            async with session.get(
-                sse_url,
-                headers=headers,
-                params={"resume": "true"},
-            ) as sse_resp:
-                if sse_resp.status >= 400:
-                    return
-
-                async for event in iter_sse_json_events(content=sse_resp.content):
-                    if event.get("final"):
-                        break
-
-                    for delta in extract_text_deltas(event):
-                        if not delta:
-                            continue
-                        cd = ChoiceDelta(role="assistant" if first else None, content=delta)
-                        first = False
-                        self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=cd))
-
-        except Exception as e:
-            logger.warning("[LibreChatLLM] Error speaking pending insights: %s", e)

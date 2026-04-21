@@ -65,6 +65,8 @@ except ImportError:
     HAS_SILERO = False
     silero_vad = None
 
+HAS_TURN_DETECTOR = importlib.util.find_spec("livekit.plugins.turn_detector.multilingual") is not None
+
 # Optional import - handle gracefully if elevenlabs is not available
 try:
     from livekit.plugins import elevenlabs
@@ -73,7 +75,7 @@ except ImportError:
     HAS_ELEVENLABS = False
     elevenlabs = None
 
-from librechat_llm import LibreChatAuth, LibreChatLLM, format_insights_for_direct_speech
+from librechat_llm import LibreChatAuth, LibreChatLLM
 from sse import sanitize_voice_followup_text
 from cartesia_tts import CartesiaConfig, CartesiaTTS
 from local_chatterbox_config import (
@@ -217,9 +219,26 @@ class Env:
     voice_initialize_process_timeout_s: float
     voice_idle_processes: int
     voice_worker_load_threshold: float
+    voice_job_memory_warn_mb: float
+    voice_job_memory_limit_mb: float
+    voice_prewarm_local_tts: bool
+    voice_requested_turn_detection: str
+    voice_turn_detection: str
+    voice_configured_min_interruption_words: Optional[int]
+    voice_configured_min_endpointing_delay_s: Optional[float]
+    voice_configured_max_endpointing_delay_s: Optional[float]
+    voice_configured_min_consecutive_speech_delay_s: Optional[float]
     voice_min_interruption_duration_s: float
+    voice_min_interruption_words: int
     voice_min_endpointing_delay_s: float
     voice_max_endpointing_delay_s: float
+    voice_false_interruption_timeout_s: Optional[float]
+    voice_resume_false_interruption: bool
+    voice_min_consecutive_speech_delay_s: float
+    assemblyai_end_of_turn_confidence_threshold: Optional[float]
+    assemblyai_min_end_of_turn_silence_when_confident_ms: Optional[int]
+    assemblyai_max_turn_silence_ms: Optional[int]
+    assemblyai_format_turns: bool
     # === VIVENTIUM END ===
 
 
@@ -250,6 +269,47 @@ def _parse_int_env(name: str, fallback: int) -> int:
     return value
 
 
+def _parse_optional_float_env(name: str) -> Optional[float]:
+    raw = (os.getenv(name, "") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if value < 0 or value == float("inf"):
+        return None
+    return value
+
+
+def _parse_optional_int_env(name: str) -> Optional[int]:
+    raw = (os.getenv(name, "") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(float(raw))
+    except ValueError:
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def _parse_optional_timeout_env(name: str, fallback: Optional[float]) -> Optional[float]:
+    raw = (os.getenv(name, "") or "").strip().lower()
+    if not raw:
+        return fallback
+    if raw in {"off", "none", "false", "disabled"}:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return fallback
+    if value < 0 or value == float("inf"):
+        return fallback
+    return value
+
+
 # === VIVENTIUM START ===
 # Feature: Shared bool env parsing for VAD/STT controls
 def _parse_bool_env(name: str, fallback: bool) -> bool:
@@ -258,6 +318,155 @@ def _parse_bool_env(name: str, fallback: bool) -> bool:
         return fallback
     return raw in {"1", "true", "yes", "y", "on"}
 # === VIVENTIUM END ===
+
+
+def _normalize_turn_detection(mode: str) -> str:
+    normalized = (mode or "").strip().lower()
+    if normalized in {"turn_detector", "semantic", "semantic_turn_detector", "multilingual"}:
+        return "turn_detector"
+    if normalized in {"stt", "vad", "realtime_llm", "manual"}:
+        return normalized
+    return ""
+
+
+def _supports_stt_endpointing(provider: str) -> bool:
+    return _normalize_stt_provider(provider) == "assemblyai"
+
+
+def _supports_semantic_turn_detector(provider: str) -> bool:
+    return _supports_stt_endpointing(provider)
+
+
+def _default_turn_detection(stt_provider: str) -> str:
+    normalized_provider = _normalize_stt_provider(stt_provider)
+    if _supports_stt_endpointing(normalized_provider):
+        return "stt"
+    return "vad"
+
+
+def _default_min_endpointing_delay(turn_detection: str) -> float:
+    if turn_detection == "stt":
+        return 0.0
+    if turn_detection == "turn_detector":
+        return 0.35
+    return 0.9
+
+
+def _default_max_endpointing_delay(turn_detection: str) -> float:
+    if turn_detection in {"stt", "turn_detector"}:
+        return 1.8
+    return 3.0
+
+
+def _default_job_memory_warn_mb(stt_provider: str, tts_provider: str) -> float:
+    normalized_stt = _normalize_stt_provider(stt_provider)
+    normalized_tts = _normalize_voice_provider(tts_provider)
+    if normalized_stt in {"pywhispercpp", "whisper_local"} or normalized_tts == "local_chatterbox_turbo_mlx_8bit":
+        return 1400.0
+    return 500.0
+
+
+def _resolve_turn_handling_profile(
+    *,
+    stt_provider: str,
+    requested_turn_detection: str,
+    configured_min_interruption_words: Optional[int],
+    configured_min_endpointing_delay_s: Optional[float],
+    configured_max_endpointing_delay_s: Optional[float],
+    configured_min_consecutive_speech_delay_s: Optional[float],
+) -> dict[str, float | int | str]:
+    voice_turn_detection = _normalize_turn_detection(requested_turn_detection) or _default_turn_detection(
+        stt_provider,
+    )
+    default_min_endpointing_delay = _default_min_endpointing_delay(voice_turn_detection)
+    default_max_endpointing_delay = _default_max_endpointing_delay(voice_turn_detection)
+    default_min_interruption_words = 1 if voice_turn_detection in {"stt", "turn_detector"} else 0
+    default_min_consecutive_speech_delay = 0.2 if voice_turn_detection in {"stt", "turn_detector"} else 0.0
+    return {
+        "voice_turn_detection": voice_turn_detection,
+        "voice_min_interruption_words": configured_min_interruption_words
+        if configured_min_interruption_words is not None
+        else default_min_interruption_words,
+        "voice_min_endpointing_delay_s": configured_min_endpointing_delay_s
+        if configured_min_endpointing_delay_s is not None
+        else default_min_endpointing_delay,
+        "voice_max_endpointing_delay_s": configured_max_endpointing_delay_s
+        if configured_max_endpointing_delay_s is not None
+        else default_max_endpointing_delay,
+        "voice_min_consecutive_speech_delay_s": configured_min_consecutive_speech_delay_s
+        if configured_min_consecutive_speech_delay_s is not None
+        else default_min_consecutive_speech_delay,
+    }
+
+
+def _apply_effective_turn_handling_profile(env: Env) -> Env:
+    profile = _resolve_turn_handling_profile(
+        stt_provider=env.stt_provider,
+        requested_turn_detection=env.voice_requested_turn_detection,
+        configured_min_interruption_words=env.voice_configured_min_interruption_words,
+        configured_min_endpointing_delay_s=env.voice_configured_min_endpointing_delay_s,
+        configured_max_endpointing_delay_s=env.voice_configured_max_endpointing_delay_s,
+        configured_min_consecutive_speech_delay_s=env.voice_configured_min_consecutive_speech_delay_s,
+    )
+    return replace(
+        env,
+        voice_turn_detection=str(profile["voice_turn_detection"]),
+        voice_min_interruption_words=int(profile["voice_min_interruption_words"]),
+        voice_min_endpointing_delay_s=float(profile["voice_min_endpointing_delay_s"]),
+        voice_max_endpointing_delay_s=float(profile["voice_max_endpointing_delay_s"]),
+        voice_min_consecutive_speech_delay_s=float(profile["voice_min_consecutive_speech_delay_s"]),
+    )
+
+
+def _turn_detector_model_is_cached() -> bool:
+    manifest = _get_turn_detector_cache_manifest()
+    if not manifest:
+        return False
+    try:
+        from huggingface_hub import hf_hub_download
+
+        hf_hub_download(
+            manifest["repo_id"],
+            manifest["onnx_filename"],
+            subfolder="onnx",
+            revision=manifest["revision"],
+            local_files_only=True,
+        )
+        hf_hub_download(
+            manifest["repo_id"],
+            "languages.json",
+            revision=manifest["revision"],
+            local_files_only=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _get_turn_detector_cache_manifest() -> Optional[dict[str, str]]:
+    if not HAS_TURN_DETECTOR:
+        return None
+    try:
+        from livekit.plugins.turn_detector.models import HG_MODEL, MODEL_REVISIONS, ONNX_FILENAME
+
+        return {
+            "repo_id": HG_MODEL,
+            "revision": MODEL_REVISIONS["multilingual"],
+            "onnx_filename": ONNX_FILENAME,
+        }
+    except Exception:
+        return None
+
+
+def _load_turn_detector_model_class() -> Any:
+    if not HAS_TURN_DETECTOR:
+        return None
+    try:
+        from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+        return MultilingualModel
+    except Exception:
+        return None
 
 
 # === VIVENTIUM START ===
@@ -694,7 +903,7 @@ def _apply_requested_voice_route(
                 requested_tts_provider,
             )
 
-    return runtime_env
+    return _apply_effective_turn_handling_profile(runtime_env)
 
 
 def _current_stt_variant(env: Env, provider: str) -> Optional[str]:
@@ -893,6 +1102,9 @@ def load_env() -> Env:
         or "whisper_local"
     )
     normalized_stt_provider = _normalize_stt_provider(stt_provider)
+    requested_turn_detection = _normalize_turn_detection(
+        os.getenv("VIVENTIUM_TURN_DETECTION", "")
+    )
     default_initialize_process_timeout_s = (
         120.0
         if normalized_stt_provider in {"pywhispercpp", "whisper_local"}
@@ -911,6 +1123,30 @@ def load_env() -> Env:
         default_load_threshold = 0.999 if platform.machine().lower() == "x86_64" else 0.995
     else:
         default_load_threshold = 0.7
+    configured_min_interruption_words = _parse_optional_int_env(
+        "VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS",
+    )
+    configured_min_endpointing_delay_s = _parse_optional_float_env(
+        "VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S",
+    )
+    configured_max_endpointing_delay_s = _parse_optional_float_env(
+        "VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S",
+    )
+    configured_min_consecutive_speech_delay_s = _parse_optional_float_env(
+        "VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S",
+    )
+    turn_handling_profile = _resolve_turn_handling_profile(
+        stt_provider=normalized_stt_provider,
+        requested_turn_detection=requested_turn_detection,
+        configured_min_interruption_words=configured_min_interruption_words,
+        configured_min_endpointing_delay_s=configured_min_endpointing_delay_s,
+        configured_max_endpointing_delay_s=configured_max_endpointing_delay_s,
+        configured_min_consecutive_speech_delay_s=configured_min_consecutive_speech_delay_s,
+    )
+    default_job_memory_warn_mb = _default_job_memory_warn_mb(
+        normalized_stt_provider,
+        tts_provider,
+    )
     # === VIVENTIUM END ===
     # === VIVENTIUM END ===
     
@@ -983,10 +1219,10 @@ def load_env() -> Env:
             or "mlx-community/chatterbox-turbo-8bit"
         ),
         # === VIVENTIUM START ===
-        # Feature: non-blocking follow-up polling knobs
+        # Feature: non-blocking background follow-up window
         voice_followup_timeout_s=_parse_float_env("VIVENTIUM_VOICE_FOLLOWUP_TIMEOUT_S", 60.0),
         voice_followup_interval_s=_parse_float_env("VIVENTIUM_VOICE_FOLLOWUP_INTERVAL_S", 1.0),
-        voice_followup_grace_s=_parse_float_env("VIVENTIUM_VOICE_FOLLOWUP_GRACE_S", 15.0),
+        voice_followup_grace_s=_parse_float_env("VIVENTIUM_VOICE_FOLLOWUP_GRACE_S", 30.0),
         voice_initialize_process_timeout_s=_parse_float_env(
             "VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S",
             default_initialize_process_timeout_s,
@@ -999,37 +1235,104 @@ def load_env() -> Env:
             0.999,
             max(0.1, _parse_float_env("VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD", default_load_threshold)),
         ),
+        voice_job_memory_warn_mb=_parse_float_env(
+            "VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB",
+            default_job_memory_warn_mb,
+        ),
+        voice_job_memory_limit_mb=_parse_float_env(
+            "VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB",
+            0.0,
+        ),
+        voice_prewarm_local_tts=_parse_bool_env(
+            "VIVENTIUM_VOICE_PREWARM_LOCAL_TTS",
+            True,
+        ),
+        voice_requested_turn_detection=requested_turn_detection,
+        voice_turn_detection=str(turn_handling_profile["voice_turn_detection"]),
+        voice_configured_min_interruption_words=configured_min_interruption_words,
+        voice_configured_min_endpointing_delay_s=configured_min_endpointing_delay_s,
+        voice_configured_max_endpointing_delay_s=configured_max_endpointing_delay_s,
+        voice_configured_min_consecutive_speech_delay_s=configured_min_consecutive_speech_delay_s,
         voice_min_interruption_duration_s=_parse_float_env(
             "VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S",
             0.5,
         ),
-        voice_min_endpointing_delay_s=_parse_float_env(
-            "VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S",
-            0.9,
+        voice_min_interruption_words=int(turn_handling_profile["voice_min_interruption_words"]),
+        voice_min_endpointing_delay_s=float(turn_handling_profile["voice_min_endpointing_delay_s"]),
+        voice_max_endpointing_delay_s=float(turn_handling_profile["voice_max_endpointing_delay_s"]),
+        voice_false_interruption_timeout_s=_parse_optional_timeout_env(
+            "VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S",
+            2.0,
         ),
-        voice_max_endpointing_delay_s=_parse_float_env(
-            "VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S",
-            3.0,
+        voice_resume_false_interruption=_parse_bool_env(
+            "VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION",
+            True,
+        ),
+        voice_min_consecutive_speech_delay_s=float(
+            turn_handling_profile["voice_min_consecutive_speech_delay_s"]
+        ),
+        assemblyai_end_of_turn_confidence_threshold=_parse_optional_float_env(
+            "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD",
+        ),
+        assemblyai_min_end_of_turn_silence_when_confident_ms=_parse_optional_int_env(
+            "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS"
+        ),
+        assemblyai_max_turn_silence_ms=_parse_optional_int_env(
+            "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS"
+        ),
+        assemblyai_format_turns=_parse_bool_env(
+            "VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS",
+            False,
         ),
         # === VIVENTIUM END ===
     )
 
-def load_turn_detection(has_vad: bool) -> str:
+def load_turn_detection(env: Env, has_vad: bool) -> tuple[Any, str]:
     """
     LiveKit Agents `AgentSession(turn_detection=...)` accepts string modes:
       - "stt" | "vad" | "realtime_llm" | "manual"
 
-    We default to "vad" for a reliable, dependency-light dev experience.
+    Viventium defaults to context-aware paths when the configured STT/runtime supports them:
+      - semantic turn detector when installed for supported STT providers
+      - STT endpointing next
+      - VAD fallback otherwise
     """
-    mode = (os.getenv("VIVENTIUM_TURN_DETECTION", "vad") or "vad").strip().lower()
+    mode = env.voice_turn_detection
+    if mode == "turn_detector":
+        if HAS_TURN_DETECTOR and _supports_semantic_turn_detector(env.stt_provider):
+            if not _turn_detector_model_is_cached():
+                logger.warning(
+                    "VIVENTIUM_TURN_DETECTION=%s requested but turn detector model weights are not cached; falling back.",
+                    mode,
+                )
+                return "stt", "stt_end_of_turn"
+            detector_model_cls = _load_turn_detector_model_class()
+            if detector_model_cls is not None:
+                return detector_model_cls(), "semantic_turn_detector"
+        logger.warning(
+            "VIVENTIUM_TURN_DETECTION=%s requested but turn detector is unavailable for provider=%s; falling back.",
+            mode,
+            env.stt_provider,
+        )
+        mode = "stt" if _supports_stt_endpointing(env.stt_provider) else "vad"
+
     if mode in {"stt", "vad", "realtime_llm", "manual"}:
         if mode == "vad" and not has_vad:
             logger.warning(
                 "VIVENTIUM_TURN_DETECTION=vad but silero VAD is unavailable; falling back to 'stt'."
             )
-            return "stt"
-        return mode
-    return "vad" if has_vad else "stt"
+            return "stt", "stt_end_of_turn"
+        if mode == "stt":
+            return "stt", "stt_end_of_turn"
+        if mode == "vad":
+            return "vad", "vad_silence"
+        if mode == "realtime_llm":
+            return "realtime_llm", "realtime_llm"
+        return "manual", "manual"
+
+    fallback_mode = "vad" if has_vad else "stt"
+    fallback_reason = "vad_silence" if fallback_mode == "vad" else "stt_end_of_turn"
+    return fallback_mode, fallback_reason
 
 
 def _parse_call_session_id(metadata: str) -> Optional[str]:
@@ -1204,6 +1507,21 @@ def load_vad() -> Optional[Any]:
 # Feature: STT provider selection (AssemblyAI + local whisper.cpp)
 # Added: 2026-01-11
 # === VIVENTIUM END ===
+def _build_assemblyai_stt_kwargs(env: Env) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if env.assemblyai_end_of_turn_confidence_threshold is not None:
+        kwargs["end_of_turn_confidence_threshold"] = env.assemblyai_end_of_turn_confidence_threshold
+    if env.assemblyai_min_end_of_turn_silence_when_confident_ms is not None:
+        # Keep the existing env/config surface for backward compatibility, but map it onto the
+        # current provider knob name so we do not rely on AssemblyAI's deprecated alias.
+        kwargs["min_turn_silence"] = env.assemblyai_min_end_of_turn_silence_when_confident_ms
+    if env.assemblyai_max_turn_silence_ms is not None:
+        kwargs["max_turn_silence"] = env.assemblyai_max_turn_silence_ms
+    if env.assemblyai_format_turns:
+        kwargs["format_turns"] = True
+    return kwargs
+
+
 def build_stt_selection(env: Env, vad: Optional[Any]) -> tuple[Any, str]:
     provider = _normalize_stt_provider(env.stt_provider)
 
@@ -1216,8 +1534,14 @@ def build_stt_selection(env: Env, vad: Optional[Any]) -> tuple[Any, str]:
         elif not (os.getenv("ASSEMBLYAI_API_KEY") or "").strip():
             logger.warning("ASSEMBLYAI_API_KEY not set; falling back to local/openai STT.")
         else:
-            logger.info("Using AssemblyAI STT")
-            return assemblyai_stt.STT(), "assemblyai"
+            assemblyai_kwargs = _build_assemblyai_stt_kwargs(env)
+            logger.info(
+                "Using AssemblyAI STT%s",
+                ""
+                if not assemblyai_kwargs
+                else " with " + ", ".join(f"{key}={value}" for key, value in assemblyai_kwargs.items()),
+            )
+            return assemblyai_stt.STT(**assemblyai_kwargs), "assemblyai"
 
     if provider in {"pywhispercpp", "whisper_local"}:
         try:
@@ -1279,7 +1603,7 @@ def prewarm_process(proc: JobProcess) -> None:
         _normalize_voice_provider(env.tts_provider),
         _normalize_voice_provider(env.tts_provider_fallback),
     }
-    if "local_chatterbox_turbo_mlx_8bit" in tts_providers:
+    if "local_chatterbox_turbo_mlx_8bit" in tts_providers and env.voice_prewarm_local_tts:
         try:
             config, ref_audio_warning = _build_local_chatterbox_config(env.mlx_audio_model_id)
             if ref_audio_warning:
@@ -1317,6 +1641,26 @@ def _merge_insights(
         seen.add(key)
         base.append(item)
     return base
+
+
+def _turn_detection_label(turn_detection: Any) -> str:
+    if isinstance(turn_detection, str):
+        return turn_detection
+    if turn_detection is not None:
+        return "turn_detector"
+    return "unknown"
+
+
+def _turn_end_reason_label(turn_detection: Any) -> str:
+    if isinstance(turn_detection, str):
+        if turn_detection == "stt":
+            return "stt_end_of_turn"
+        if turn_detection == "vad":
+            return "vad_silence"
+        return turn_detection
+    if turn_detection is not None:
+        return "semantic_turn_detector"
+    return "unknown"
 
 
 # === VIVENTIUM START ===
@@ -1366,21 +1710,21 @@ class CortexFollowupScheduler:
             deadline = started_at + self._timeout_s
             merged_insights: list[dict[str, Any]] = list(pending_insights or [])
             # === VIVENTIUM START ===
-            # Fix: Do NOT start the grace timer from SSE-captured pending_insights.
-            # Updated: 2026-02-24
+            # Feature: Speak only main-agent Phase B follow-ups in live voice.
+            # Updated: 2026-04-21
             #
-            # Why: SSE captures cortex "complete" events during the main stream, so
-            # pending_insights is typically non-empty when the poller starts. The old
-            # code set first_insight_at = started_at, starting the 6s grace countdown
-            # immediately. But the backend follow-up LLM call (generateFollowUpText)
-            # hasn't even started yet at this point — it runs AFTER cortex parts are
-            # persisted to the DB. By the time the follow-up is ready (~5-10s later),
-            # the grace window already expired and format_insights_for_direct_speech()
-            # spoke the raw individual insights as a fallback, bypassing the merged
-            # follow-up entirely.
+            # Why:
+            # - SSE captures cortex completion during the main stream, so pending_insights
+            #   is often already non-empty when the poller starts.
+            # - Those insight rows are internal background cognition, not user-facing speech.
+            # - Modern playground/TTS should only hear the main agent's conscious outputs:
+            #   (1) the immediate Phase A response and (2) a persisted main-agent Phase B
+            #   follow-up message when one is actually generated.
             #
-            # Fix: Only start the grace timer when the POLLER first discovers insights
-            # in the DB (by which time the follow-up is closer to being ready).
+            # Contract:
+            # - start the grace timer only when the poller first sees persisted insights
+            # - if a real follow-up arrives, speak it
+            # - if no follow-up arrives by grace/timeout, stay silent
             first_insight_at: Optional[float] = None
             # === VIVENTIUM END ===
 
@@ -1415,19 +1759,21 @@ class CortexFollowupScheduler:
                     if merged_insights and first_insight_at is not None:
                         grace_deadline = first_insight_at + self._grace_s
                         if time.monotonic() >= grace_deadline:
-                            fallback = format_insights_for_direct_speech(merged_insights)
-                            if fallback:
-                                self._speak(fallback, seq)
-                                return
+                            logger.info(
+                                "[voice-gateway] No persisted follow-up before insight grace window expired; keeping background insights silent: message_id=%s",
+                                message_id,
+                            )
+                            return
 
                     await asyncio.sleep(self._interval_s)
 
             if seq != self._seq:
                 return
-
-            fallback = format_insights_for_direct_speech(merged_insights)
-            if fallback:
-                self._speak(fallback, seq)
+            if merged_insights:
+                logger.info(
+                    "[voice-gateway] Follow-up polling timed out after insights with no persisted follow-up; keeping background insights silent: message_id=%s",
+                    message_id,
+                )
         except asyncio.CancelledError:
             return
         except Exception as exc:
@@ -1833,6 +2179,7 @@ async def entrypoint(ctx: JobContext) -> None:
     if (
         primary_voice_provider in local_tts_providers
         and primary_tts_impl is not prewarmed_local_tts
+        and env.voice_prewarm_local_tts
         and hasattr(primary_tts_impl, "prewarm")
     ):
         logger.info("[voice-gateway] Prewarming TTS model (%s)...", primary_voice_provider)
@@ -1949,24 +2296,59 @@ async def entrypoint(ctx: JobContext) -> None:
     llm_impl.set_voice_provider(primary_voice_provider)
     # === VIVENTIUM END ===
 
+    turn_detection, turn_end_reason = load_turn_detection(env, vad is not None)
+
     session = AgentSession(
         vad=vad,
         stt=stt_impl,
         llm=llm_impl,
         tts=tts_impl,
-        turn_detection=load_turn_detection(vad is not None),
+        turn_detection=turn_detection,
         allow_interruptions=True,
         min_interruption_duration=env.voice_min_interruption_duration_s,
+        min_interruption_words=env.voice_min_interruption_words,
         min_endpointing_delay=env.voice_min_endpointing_delay_s,
         max_endpointing_delay=env.voice_max_endpointing_delay_s,
+        false_interruption_timeout=env.voice_false_interruption_timeout_s,
+        resume_false_interruption=env.voice_resume_false_interruption,
+        min_consecutive_speech_delay=env.voice_min_consecutive_speech_delay_s,
         preemptive_generation=False,
     )
     logger.info(
-        "[voice-gateway] AgentSession timing min_interrupt=%ss min_endpoint=%ss max_endpoint=%ss",
+        "[voice-gateway] AgentSession callSessionId=%s turn_detection=%s turn_end_reason=%s min_interrupt=%ss min_interrupt_words=%s min_endpoint=%ss max_endpoint=%ss false_interrupt_timeout=%s resume_false_interrupt=%s min_consecutive_speech_delay=%ss",
+        call_session_id,
+        _turn_detection_label(turn_detection),
+        turn_end_reason,
         env.voice_min_interruption_duration_s,
+        env.voice_min_interruption_words,
         env.voice_min_endpointing_delay_s,
         env.voice_max_endpointing_delay_s,
+        env.voice_false_interruption_timeout_s,
+        env.voice_resume_false_interruption,
+        env.voice_min_consecutive_speech_delay_s,
     )
+
+    @session.on("metrics_collected")
+    def _on_metrics_collected(event: Any) -> None:
+        metrics = getattr(event, "metrics", None)
+        if getattr(metrics, "type", "") != "eou_metrics":
+            return
+        logger.info(
+            "[voice-gateway] user_turn_completed source=livekit_metrics callSessionId=%s reason=%s detection=%s eou_delay=%ss transcription_delay=%ss",
+            call_session_id,
+            _turn_end_reason_label(turn_detection),
+            _turn_detection_label(turn_detection),
+            round(float(getattr(metrics, "end_of_utterance_delay", 0.0)), 3),
+            round(float(getattr(metrics, "transcription_delay", 0.0)), 3),
+        )
+
+    @session.on("agent_false_interruption")
+    def _on_agent_false_interruption(event: Any) -> None:
+        logger.info(
+            "[voice-gateway] agent_false_interruption resumed=%s timeout=%s",
+            bool(getattr(event, "resumed", False)),
+            env.voice_false_interruption_timeout_s,
+        )
 
     # === VIVENTIUM START ===
     # Feature: Async insight follow-up scheduling (non-blocking).
@@ -2042,6 +2424,8 @@ def run() -> None:
         initialize_process_timeout=initialize_process_timeout_s,
         num_idle_processes=idle_processes,
         load_threshold=load_threshold,
+        job_memory_warn_mb=float(getattr(env, "voice_job_memory_warn_mb", 500.0)),
+        job_memory_limit_mb=float(getattr(env, "voice_job_memory_limit_mb", 0.0)),
     )
     cli.run_app(worker_opts)
 
