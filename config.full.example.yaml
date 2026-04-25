@@ -62,6 +62,8 @@ runtime:
     lookback_days: 7
     min_user_idle_minutes: 60
     max_changes_per_user: 3
+    max_input_chars: 500000
+    require_full_lookback: true
     dry_run_first: true
     provider_profile: launch_ready_only
     anthropic_model: claude-opus-4-7

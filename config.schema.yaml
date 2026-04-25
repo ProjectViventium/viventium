@@ -57,6 +57,10 @@ properties:
             type: integer
           max_changes_per_user:
             type: integer
+          max_input_chars:
+            type: integer
+          require_full_lookback:
+            type: boolean
           dry_run_first:
             type: boolean
           provider_profile:

@@ -20,6 +20,10 @@ bin/viventium memory-harden rollback --run-id <run-id>
 - Rollback restores the pre-apply key/value state for each affected user.
 - Summary artifacts contain only hashed user ids, counts, key names, timestamps, model/provider,
   and validator outcomes.
+- Redacted run logs prove the generated Memory Archivist instructions were imported and show
+  lookback coverage counts without raw memory or conversation text.
+- `messages_fed_to_model` equals `messages_in_lookback` by default; partial lookback requires an
+  explicit operator override.
 - Raw proposals and rollback snapshots stay under local App Support state and are not copied into
   this QA directory.
 

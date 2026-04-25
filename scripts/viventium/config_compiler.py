@@ -215,6 +215,8 @@ DEFAULT_MEMORY_HARDENING = {
     "lookback_days": 7,
     "min_user_idle_minutes": 60,
     "max_changes_per_user": 3,
+    "max_input_chars": 500000,
+    "require_full_lookback": True,
     "dry_run_first": True,
     "provider_profile": "launch_ready_only",
     "anthropic_model": "claude-opus-4-7",
@@ -1294,6 +1296,7 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.update(raw)
     settings["enabled"] = resolve_bool(settings.get("enabled"), False)
     settings["dry_run_first"] = resolve_bool(settings.get("dry_run_first"), True)
+    settings["require_full_lookback"] = resolve_bool(settings.get("require_full_lookback"), True)
     settings["schedule"] = str(settings.get("schedule") or DEFAULT_MEMORY_HARDENING["schedule"])
     settings["timezone"] = str(settings.get("timezone") or DEFAULT_MEMORY_HARDENING["timezone"])
     settings["provider_profile"] = str(
@@ -1307,6 +1310,9 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     )
     settings["max_changes_per_user"] = positive_int(
         settings.get("max_changes_per_user"), "runtime.memory_hardening.max_changes_per_user"
+    )
+    settings["max_input_chars"] = positive_int(
+        settings.get("max_input_chars"), "runtime.memory_hardening.max_input_chars"
     )
     settings["anthropic_model"] = str(
         settings.get("anthropic_model") or DEFAULT_MEMORY_HARDENING["anthropic_model"]
@@ -1445,6 +1451,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_MEMORY_HARDENING_MAX_CHANGES_PER_USER": str(
             memory_hardening["max_changes_per_user"]
         ),
+        "VIVENTIUM_MEMORY_HARDENING_MAX_INPUT_CHARS": str(memory_hardening["max_input_chars"]),
+        "VIVENTIUM_MEMORY_HARDENING_REQUIRE_FULL_LOOKBACK": "true"
+        if memory_hardening["require_full_lookback"]
+        else "false",
         "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true"
         if memory_hardening["dry_run_first"]
         else "false",

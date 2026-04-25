@@ -458,13 +458,20 @@ Product contract:
 - default schedule is daily `0 5 * * *` when enabled
 - default lookback is 7 days
 - default idle gate skips users active in the last 60 minutes
+- default input cap is 500,000 estimated characters and full-lookback mode is on by default
 - the job imports the generated runtime memory instructions for key semantics, but uses a separate
   batch hardener prompt
+- if the 7-day corpus exceeds the configured input cap, the job fails closed for that user unless
+  the operator explicitly allows partial lookback
 - the batch hardener must not rewrite `working`, because `working` is owned by the current
   conversation
 - model output is a proposal only; database writes go through the existing memory methods and
   shared memory policy
 - raw proposals and rollback snapshots stay under App Support state
+- redacted run logs record memory-instruction presence/hash, lookback coverage, message counts,
+  conversation counts, prompt size, and changed key names without storing raw conversation text
+- macOS installs reconcile the LaunchAgent from generated config; non-macOS installs need an
+  operator-managed cron/systemd equivalent
 - public docs and QA artifacts must contain only hashed user ids, counts, key names, and policy
   outcomes
 

@@ -91,6 +91,15 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - default lookback is 7 days
   - default idle gate is 60 minutes
   - default max semantic edits is 3 keys per user per run
+  - default maximum prompt input is 500,000 estimated characters
+  - full-lookback enforcement is on by default; runs fail closed instead of silently clipping the
+    7-day corpus unless an operator explicitly allows partial lookback
+  - install, configure, upgrade, compile-config, and start reconcile the macOS LaunchAgent from
+    the generated env: enabled configs install the daily schedule, disabled configs remove it
+  - disabling the schedule clears the dry-run-first marker so a later re-enable gets the same
+    first-run guard
+  - non-macOS operators must wire an equivalent cron/systemd timer; the public CLI currently
+    auto-installs schedules only through macOS LaunchAgents
   - `provider_profile` must stay `launch_ready_only`
   - default Anthropic hardening model is `claude-opus-4-7`
   - default OpenAI hardening model is `gpt-5.4`

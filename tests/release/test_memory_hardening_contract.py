@@ -23,6 +23,8 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["lookback_days"] == 7
     assert settings["min_user_idle_minutes"] == 60
     assert settings["max_changes_per_user"] == 3
+    assert settings["max_input_chars"] == 500000
+    assert settings["require_full_lookback"] is True
     assert settings["provider_profile"] == "launch_ready_only"
     assert settings["anthropic_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["anthropic"]
     assert settings["openai_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]

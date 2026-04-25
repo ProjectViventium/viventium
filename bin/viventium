@@ -730,6 +730,41 @@ compile_config() {
   fi
 }
 
+sync_memory_hardening_schedule() {
+  if [[ "$(uname -s)" != "Darwin" || ! -f "$GENERATED_ENV" ]]; then
+    return 0
+  fi
+  local enabled schedule plist_path
+  enabled="$(
+    awk -F= '$1=="VIVENTIUM_MEMORY_HARDENING_ENABLED"{print $2; exit}' "$GENERATED_ENV" | sed "s/^'//;s/'$//"
+  )"
+  schedule="$(
+    awk -F= '$1=="VIVENTIUM_MEMORY_HARDENING_SCHEDULE"{value=$0; sub(/^VIVENTIUM_MEMORY_HARDENING_SCHEDULE=/, "", value); print value; exit}' "$GENERATED_ENV" | sed "s/^'//;s/'$//"
+  )"
+  plist_path="$HOME/Library/LaunchAgents/ai.viventium.memory-harden.plist"
+  if [[ "$enabled" == "true" ]]; then
+    if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/memory_harden.py" \
+      --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR" \
+      --runtime-dir "$RUNTIME_DIR" \
+      install-schedule --schedule "${schedule:-0 5 * * *}" --json >/dev/null; then
+      echo "Warning: failed to install memory hardening schedule." >&2
+      return 1
+    fi
+    echo "Memory hardening schedule installed."
+  elif [[ -f "$plist_path" ]]; then
+    if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/memory_harden.py" \
+      --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR" \
+      --runtime-dir "$RUNTIME_DIR" \
+      uninstall-schedule --json >/dev/null; then
+      echo "Warning: failed to uninstall disabled memory hardening schedule." >&2
+      return 1
+    fi
+    echo "Memory hardening schedule disabled."
+  fi
+}
+
 continuity_audit_root() {
   if declare -F continuity_audit_dir >/dev/null 2>&1; then
     continuity_audit_dir "$APP_SUPPORT_DIR"
@@ -2523,6 +2558,7 @@ case "$COMMAND" in
       --runtime-dir "$RUNTIME_DIR" \
       --repo-root "$REPO_ROOT" \
       --lock-file "$LOCK_FILE"
+    sync_memory_hardening_schedule
     CURRENT_INSTALL_STAGE="install-helper"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     maybe_install_macos_helper --no-launch
@@ -2605,6 +2641,7 @@ case "$COMMAND" in
       --repo-root "$REPO_ROOT" \
       --lock-file "$LOCK_FILE"
     maybe_install_macos_helper
+    sync_memory_hardening_schedule
     POST_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "post-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
     POST_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status "$POST_UPGRADE_CONTINUITY_AUDIT")"
     echo "Post-upgrade continuity audit written to $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT")"
@@ -2665,6 +2702,7 @@ case "$COMMAND" in
     fi
     "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
     compile_config
+    sync_memory_hardening_schedule
     ;;
   bootstrap-components)
     acquire_cli_lock "$COMMAND"
@@ -2673,6 +2711,7 @@ case "$COMMAND" in
   compile-config)
     acquire_cli_lock "$COMMAND"
     compile_config "$@"
+    sync_memory_hardening_schedule
     ;;
   doctor)
     ensure_app_support_layout "$APP_SUPPORT_DIR"
@@ -2798,6 +2837,7 @@ case "$COMMAND" in
       subcommand_usage memory-harden
       exit 0
     fi
+    acquire_cli_lock "$COMMAND"
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     if [[ ! -f "$CONFIG_FILE" ]]; then
       echo "Missing config: $CONFIG_FILE" >&2
@@ -2862,6 +2902,7 @@ case "$COMMAND" in
     # compile_config is cheap relative to stack startup and keeps start deterministic.
     # === VIVENTIUM END ===
     compile_config
+    sync_memory_hardening_schedule
     prepare_runtime_exports
 
     EXTRA_ARGS=()

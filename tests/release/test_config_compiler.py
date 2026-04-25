@@ -168,6 +168,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_LOOKBACK_DAYS=7" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MIN_USER_IDLE_MINUTES=60" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MAX_CHANGES_PER_USER=3" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MAX_INPUT_CHARS=500000" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_REQUIRE_FULL_LOOKBACK=true" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST=true" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-4-7" in runtime_env

@@ -90,15 +90,29 @@ def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> d
     with plist_path.open("wb") as handle:
         plistlib.dump(payload, handle)
     subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)], check=False)
-    subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)], check=False)
+    bootstrap = subprocess.run(
+        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if bootstrap.returncode != 0:
+        detail = (bootstrap.stderr or bootstrap.stdout or "").strip()
+        raise SystemExit(
+            "failed to install memory hardening LaunchAgent"
+            + (f": {detail}" if detail else "")
+        )
     return {"installed": True, "label": LAUNCH_AGENT_LABEL, "schedule": schedule, "plist": str(plist_path)}
 
 
-def uninstall_schedule() -> dict[str, object]:
+def uninstall_schedule(args: argparse.Namespace) -> dict[str, object]:
     plist_path = launch_agent_path()
     subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)], check=False)
     if plist_path.exists():
         plist_path.unlink()
+    marker = args.app_support_dir / "state" / "memory-hardening" / "dry-run-first-complete"
+    if marker.exists():
+        marker.unlink()
     return {"installed": False, "label": LAUNCH_AGENT_LABEL, "plist": str(plist_path)}
 
 
@@ -135,6 +149,8 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
         command.extend(["--min-user-idle-minutes", str(args.min_user_idle_minutes)])
     if args.max_changes_per_user is not None:
         command.extend(["--max-changes-per-user", str(args.max_changes_per_user)])
+    if args.max_input_chars is not None:
+        command.extend(["--max-input-chars", str(args.max_input_chars)])
     if args.provider:
         command.extend(["--provider", args.provider])
     if args.model:
@@ -147,6 +163,8 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
         command.append("--ignore-idle-gate")
     if args.skip_model_probe:
         command.append("--skip-model-probe")
+    if args.allow_partial_lookback:
+        command.append("--allow-partial-lookback")
     if args.json:
         command.append("--json")
     return command
@@ -203,12 +221,14 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--lookback-days", type=int)
         sub.add_argument("--min-user-idle-minutes", type=int)
         sub.add_argument("--max-changes-per-user", type=int)
+        sub.add_argument("--max-input-chars", type=int)
         sub.add_argument("--provider")
         sub.add_argument("--model")
         sub.add_argument("--proposal-file")
         sub.add_argument("--allow-delete", action="store_true")
         sub.add_argument("--ignore-idle-gate", action="store_true")
         sub.add_argument("--skip-model-probe", action="store_true")
+        sub.add_argument("--allow-partial-lookback", action="store_true")
         sub.add_argument("--scheduled", action="store_true")
         sub.add_argument("--json", action="store_true")
     install = subparsers.add_parser("install-schedule")
@@ -235,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0
     if args.command == "uninstall-schedule":
-        result = uninstall_schedule()
+        result = uninstall_schedule(args)
         print(json.dumps(result, indent=2))
         return 0
     return run_node(args, runtime_env)
