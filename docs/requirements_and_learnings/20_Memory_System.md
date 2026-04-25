@@ -1,7 +1,7 @@
 # Memory System: v0_3 vs v0_4 Analysis + Improvement Notes
 
-**Document Version:** 2.6
-**Date:** 2026-04-09
+**Document Version:** 2.7
+**Date:** 2026-04-25
 **Owner:** Viventium Core
 **Scope:** High-level comparison of memory UX in v0_3 (Python) vs v0_4 (LibreChat), with public-safe lessons and implementation notes.
 
@@ -439,6 +439,38 @@ The April 13, 2026 remote QA pass added another concrete continuity boundary:
 ---
 
 ## Part 3: Public-Safe QA Notes
+
+### 3.0 Scheduled Memory Hardening
+
+Viventium now has a separate local operator job for saved-memory hardening. This is not the live
+Memory Archivist and not conversation recall.
+
+The supported entrypoint is:
+
+```bash
+bin/viventium memory-harden dry-run
+bin/viventium memory-harden apply --run-id <run-id>
+```
+
+Product contract:
+
+- semantic hardening is opt-in and default-off
+- default schedule is daily `0 5 * * *` when enabled
+- default lookback is 7 days
+- default idle gate skips users active in the last 60 minutes
+- the job imports the generated runtime memory instructions for key semantics, but uses a separate
+  batch hardener prompt
+- the batch hardener must not rewrite `working`, because `working` is owned by the current
+  conversation
+- model output is a proposal only; database writes go through the existing memory methods and
+  shared memory policy
+- raw proposals and rollback snapshots stay under App Support state
+- public docs and QA artifacts must contain only hashed user ids, counts, key names, and policy
+  outcomes
+
+The job may use host-authenticated Claude Code or Codex CLI sessions. That is a privacy and billing
+boundary different from the live user-connected memory writer, so semantic hardening must remain
+explicitly enabled by the operator and covered by the public/private boundary doc.
 
 ### What to check
 

@@ -73,6 +73,19 @@ def source_of_truth_built_in_agent_map() -> dict[str, str]:
     }
 
 
+def test_memory_hardening_rejects_non_launch_ready_openai_model() -> None:
+    with pytest.raises(SystemExit, match="openai_model must stay in launch-ready"):
+        config_compiler.resolve_memory_hardening_settings(
+            {
+                "runtime": {
+                    "memory_hardening": {
+                        "openai_model": "gpt-5.5",
+                    }
+                }
+            }
+        )
+
+
 def test_config_compiler_minimal(tmp_path: Path) -> None:
     config = {
         "version": 1,
@@ -150,6 +163,15 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MAIN_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ENABLED=false" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_SCHEDULE='0 5 * * *'" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_LOOKBACK_DAYS=7" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MIN_USER_IDLE_MINUTES=60" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MAX_CHANGES_PER_USER=3" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST=true" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-4-7" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.4" in runtime_env
     assert "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE=owner" in runtime_env
     assert "START_RAG_API=false" in runtime_env
     assert "EMBEDDINGS_PROVIDER=ollama" in runtime_env

@@ -42,6 +42,30 @@ properties:
         properties:
           default_conversation_recall:
             type: boolean
+      memory_hardening:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          schedule:
+            type: string
+          timezone:
+            type: string
+          lookback_days:
+            type: integer
+          min_user_idle_minutes:
+            type: integer
+          max_changes_per_user:
+            type: integer
+          dry_run_first:
+            type: boolean
+          provider_profile:
+            type: string
+            enum: [launch_ready_only]
+          anthropic_model:
+            type: string
+          openai_model:
+            type: string
       background_followup_window_s:
         type: number
       network:

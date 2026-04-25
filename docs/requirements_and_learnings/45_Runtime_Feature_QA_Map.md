@@ -55,6 +55,20 @@ Use this when changing:
 - thinking / temperature compatibility
 - shipped Anthropic background-agent defaults
 
+### Memory Continuity And Hardening
+
+- `qa/memory-continuity/README.md`
+- `qa/memory-hardening/README.md`
+
+Use these when changing:
+
+- saved-memory writer policy
+- memory maintenance and compaction
+- scheduled memory hardening
+- memory hardening model governance
+- rollback/audit handling for saved-memory changes
+- QA-account parity used to test memory continuity without dirtying the owner account
+
 ## Minimum Release Check Expectation
 
 When a change touches one of the runtime surfaces above:

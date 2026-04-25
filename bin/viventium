@@ -484,6 +484,7 @@ Commands:
   start             Start the current Viventium stack using generated runtime env.
   status            Show live service health and access URLs.
   continuity-audit  Capture continuity metadata for the current install.
+  memory-harden     Dry-run, apply, schedule, status, or roll back saved-memory hardening.
   stop              Stop the current Viventium stack.
   snapshot          Capture a local state snapshot into App Support.
   restore           Inspect a snapshot and print or apply restore actions.
@@ -560,6 +561,20 @@ Usage:
   bin/viventium continuity-audit --clear-recall-marker
 
 Captures metadata-only continuity state for the current install under App Support state.
+USAGE
+      ;;
+    memory-harden)
+      cat <<'USAGE'
+Usage:
+  bin/viventium memory-harden dry-run [--user-email <email>]
+  bin/viventium memory-harden apply [--run-id <id>] [--user-email <email>]
+  bin/viventium memory-harden rollback --run-id <id>
+  bin/viventium memory-harden status
+  bin/viventium memory-harden install-schedule [--schedule "0 5 * * *"]
+  bin/viventium memory-harden uninstall-schedule
+
+Runs local saved-memory hardening as an operator job. Raw proposals and rollback
+snapshots stay under App Support state, not inside the public repo.
 USAGE
       ;;
     doctor)
@@ -2777,6 +2792,39 @@ case "$COMMAND" in
         echo "No recall rebuild-required marker was present."
       fi
     fi
+    ;;
+  memory-harden)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage memory-harden
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+      echo "Missing config: $CONFIG_FILE" >&2
+      echo "Run: bin/viventium install" >&2
+      exit 1
+    fi
+    compile_config >/dev/null
+    prepare_runtime_exports
+    if [[ -f "$GENERATED_ENV" ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      source "$GENERATED_ENV"
+      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LOCAL_ENV"
+      fi
+      if [[ -f "$GENERATED_LIBRECHAT_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LIBRECHAT_ENV"
+      fi
+      set +a
+    fi
+    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/memory_harden.py" \
+      --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR" \
+      --runtime-dir "$RUNTIME_DIR" \
+      "$@"
     ;;
   status-bar)
     acquire_cli_lock "$COMMAND"

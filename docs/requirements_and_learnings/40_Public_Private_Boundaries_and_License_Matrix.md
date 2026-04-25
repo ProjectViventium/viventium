@@ -28,6 +28,14 @@ This document defines what belongs in public, private personal, and private ente
 - Secret-bearing snapshot payloads, backup archives, restore pre-backups, and companion-enriched
   continuity bundles must stay machine-local or in the private companion repo. They must never land
   in `docs/`, `qa/`, `tests/`, fixtures, or git history for the public repo.
+- Memory hardening raw workpacks, model proposals, rollback snapshots, and local account backup
+  manifests are private runtime artifacts. They may exist under App Support or an operator-chosen
+  private local backup directory, but must never be copied into public docs, QA evidence, fixtures,
+  commits, or release bundles.
+- Semantic memory hardening uses host-authenticated Claude Code or Codex CLI sessions when enabled.
+  That means per-user conversation context and saved-memory text may transit the operator's CLI
+  provider account. This is different from the live memory writer's user-connected-account path and
+  must remain opt-in, documented, and auditable.
 - Operator-only deployment or service runbooks belong in the private companion repo or enterprise
   repo, not in the public product docs.
 - A nested `<private-companion-repo>` or `<enterprise-deployment-repo>` subtree is not an acceptable
@@ -54,6 +62,11 @@ This document defines what belongs in public, private personal, and private ente
     usable without that helper and must never require private payload to function
   - restore pre-backups, Telegram safety copies, Mongo exports, and recall rebuild markers are
     machine-local runtime artifacts and must not be promoted into public git history
+- Unsafe memory-hardening artifacts:
+  - `proposal.private.json` and `*.rollback.private.json` contain raw saved-memory values and must
+    stay private
+  - public summaries may include only hashed user ids, key names, counts, model family, timestamps,
+    and validator outcomes
 
 ## License Rules
 

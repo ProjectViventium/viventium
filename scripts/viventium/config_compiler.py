@@ -204,6 +204,23 @@ MODEL_MAP = {
     },
 }
 
+MEMORY_HARDENING_LAUNCH_READY_MODELS = {
+    "anthropic": {"claude-opus-4-7", "claude-sonnet-4-6"},
+    "openai": {"gpt-5.4"},
+}
+DEFAULT_MEMORY_HARDENING = {
+    "enabled": False,
+    "schedule": "0 5 * * *",
+    "timezone": "America/Toronto",
+    "lookback_days": 7,
+    "min_user_idle_minutes": 60,
+    "max_changes_per_user": 3,
+    "dry_run_first": True,
+    "provider_profile": "launch_ready_only",
+    "anthropic_model": "claude-opus-4-7",
+    "openai_model": "gpt-5.4",
+}
+
 CURRENT_BACKGROUND_ACTIVATION_PROVIDER = "groq"
 CURRENT_BACKGROUND_ACTIVATION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
@@ -1267,6 +1284,49 @@ def conversation_recall_enabled(config: dict[str, Any]) -> bool:
     return resolve_bool(personalization.get("default_conversation_recall"), False)
 
 
+def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
+    runtime = config.get("runtime", {}) or {}
+    raw = runtime.get("memory_hardening", {}) or {}
+    if raw and not isinstance(raw, dict):
+        raise SystemExit("runtime.memory_hardening must be a mapping when provided")
+
+    settings = dict(DEFAULT_MEMORY_HARDENING)
+    settings.update(raw)
+    settings["enabled"] = resolve_bool(settings.get("enabled"), False)
+    settings["dry_run_first"] = resolve_bool(settings.get("dry_run_first"), True)
+    settings["schedule"] = str(settings.get("schedule") or DEFAULT_MEMORY_HARDENING["schedule"])
+    settings["timezone"] = str(settings.get("timezone") or DEFAULT_MEMORY_HARDENING["timezone"])
+    settings["provider_profile"] = str(
+        settings.get("provider_profile") or DEFAULT_MEMORY_HARDENING["provider_profile"]
+    )
+    settings["lookback_days"] = positive_int(
+        settings.get("lookback_days"), "runtime.memory_hardening.lookback_days"
+    )
+    settings["min_user_idle_minutes"] = positive_int(
+        settings.get("min_user_idle_minutes"), "runtime.memory_hardening.min_user_idle_minutes"
+    )
+    settings["max_changes_per_user"] = positive_int(
+        settings.get("max_changes_per_user"), "runtime.memory_hardening.max_changes_per_user"
+    )
+    settings["anthropic_model"] = str(
+        settings.get("anthropic_model") or DEFAULT_MEMORY_HARDENING["anthropic_model"]
+    )
+    settings["openai_model"] = str(settings.get("openai_model") or DEFAULT_MEMORY_HARDENING["openai_model"])
+
+    if settings["provider_profile"] != "launch_ready_only":
+        raise SystemExit(
+            "runtime.memory_hardening.provider_profile must be launch_ready_only for public builds"
+        )
+    if settings["anthropic_model"] not in MEMORY_HARDENING_LAUNCH_READY_MODELS["anthropic"]:
+        raise SystemExit(
+            "runtime.memory_hardening.anthropic_model must stay in launch-ready Anthropic families"
+        )
+    if settings["openai_model"] not in MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]:
+        raise SystemExit("runtime.memory_hardening.openai_model must stay in launch-ready OpenAI families")
+
+    return settings
+
+
 def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
     runtime = config.get("runtime", {}) or {}
     auth = runtime.get("auth", {}) or {}
@@ -1319,6 +1379,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         agents.get("default_main_agent_id") or DEFAULT_MAIN_AGENT_ID
     ).strip() or DEFAULT_MAIN_AGENT_ID
     default_conversation_recall = conversation_recall_enabled(config)
+    memory_hardening = resolve_memory_hardening_settings(config)
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
     start_rag_api = "true" if default_conversation_recall else "false"
@@ -1372,6 +1433,24 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_DEFAULT_CONVERSATION_RECALL": "true"
         if default_conversation_recall
         else "false",
+        "VIVENTIUM_MEMORY_HARDENING_ENABLED": "true"
+        if memory_hardening["enabled"]
+        else "false",
+        "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": memory_hardening["schedule"],
+        "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": memory_hardening["timezone"],
+        "VIVENTIUM_MEMORY_HARDENING_LOOKBACK_DAYS": str(memory_hardening["lookback_days"]),
+        "VIVENTIUM_MEMORY_HARDENING_MIN_USER_IDLE_MINUTES": str(
+            memory_hardening["min_user_idle_minutes"]
+        ),
+        "VIVENTIUM_MEMORY_HARDENING_MAX_CHANGES_PER_USER": str(
+            memory_hardening["max_changes_per_user"]
+        ),
+        "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true"
+        if memory_hardening["dry_run_first"]
+        else "false",
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE": memory_hardening["provider_profile"],
+        "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL": memory_hardening["anthropic_model"],
+        "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": memory_hardening["openai_model"],
         "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE": "owner",
         "VIVENTIUM_TELEGRAM_BACKEND": "librechat",
         "VIVENTIUM_TELEGRAM_AGENT_ID": default_main_agent_id,

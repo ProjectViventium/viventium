@@ -53,6 +53,19 @@ runtime:
     # New installs should ship with "Recall all conversations" enabled so
     # runtime recall and vector recall can activate without extra manual toggles.
     default_conversation_recall: true
+  memory_hardening:
+    # Semantic hardening is opt-in because it sends local memory/conversation context
+    # through the host-authenticated Claude Code or Codex CLI session.
+    enabled: false
+    schedule: "0 5 * * *"
+    timezone: America/Toronto
+    lookback_days: 7
+    min_user_idle_minutes: 60
+    max_changes_per_user: 3
+    dry_run_first: true
+    provider_profile: launch_ready_only
+    anthropic_model: claude-opus-4-7
+    openai_model: gpt-5.4
   # Shared background follow-up window for LibreChat, live voice, and Telegram.
   # This is the Phase B window that still allows a late main-agent follow-up to surface
   # after background insights finish.

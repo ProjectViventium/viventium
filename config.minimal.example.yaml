@@ -32,6 +32,17 @@ runtime:
     livekit_node_ip: ""
   personalization:
     default_conversation_recall: false
+  memory_hardening:
+    enabled: false
+    schedule: "0 5 * * *"
+    timezone: America/Toronto
+    lookback_days: 7
+    min_user_idle_minutes: 60
+    max_changes_per_user: 3
+    dry_run_first: true
+    provider_profile: launch_ready_only
+    anthropic_model: claude-opus-4-7
+    openai_model: gpt-5.4
   background_followup_window_s: 30
   ports:
     lc_api_port: 3180

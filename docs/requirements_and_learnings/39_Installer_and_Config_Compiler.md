@@ -84,6 +84,18 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - the generated provider token is part of the public product contract; downstream runtime
     initialization must accept the compiler-emitted canonical value instead of requiring a
     different alias such as `openAI`
+- `runtime.memory_hardening` is the canonical source for the local saved-memory hardening operator
+  job:
+  - default is `enabled: false`
+  - default schedule is `0 5 * * *`
+  - default lookback is 7 days
+  - default idle gate is 60 minutes
+  - default max semantic edits is 3 keys per user per run
+  - `provider_profile` must stay `launch_ready_only`
+  - default Anthropic hardening model is `claude-opus-4-7`
+  - default OpenAI hardening model is `gpt-5.4`
+  - introducing a newer model family such as `gpt-5.5` requires updating model governance and
+    release contract tests first
 - Endpoint helper config must not hide unavailable provider dependencies:
   - Anthropic conversation-title generation must stay on Anthropic instead of routing through xAI
 - Retrieval-runtime prerequisites must stay honest across install/start surfaces:
