@@ -9,6 +9,7 @@ Additional current QA artifacts:
 
 - `qa/background_agents/report.md` — historical April 5, 2026 Anthropic execution compatibility report
 - `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
+- `qa/background_agents/telegram_scheduler_fallback_2026-04-24.md` — scheduled Telegram degraded-delivery regression for deferred fallback provenance
 
 ## Requirements Under Test
 
@@ -79,3 +80,6 @@ Additional current QA artifacts:
   - one connected-account user must complete a real Google Workspace or Microsoft 365 task
   - any duplicate/local QA user used for realism must have those service connections reseeded or
     reconnected explicitly before it is treated as parity coverage
+- Scheduled Telegram runs must not deliver the generic deferred failure sentence when a `scheduleId`
+  is available. They must either suppress the empty fallback or record visible fallback insight text
+  as `fallback_delivered` in `last_delivery_outcome`.

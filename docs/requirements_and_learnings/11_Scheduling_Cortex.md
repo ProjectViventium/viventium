@@ -50,6 +50,30 @@ We will implement a dedicated Scheduling MCP server that:
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
 - Do not start a second agent run through the Telegram chat route just for scheduled tasks.
+- Scheduler follow-up polling must pass the originating `scheduleId` into the LibreChat cortex-state
+  endpoint. The cortex fallback helper uses that structured schedule context to suppress the generic
+  "couldn't finish" text for scheduled runs instead of sending it to Telegram.
+- When a scheduled run can only surface deferred fallback text, the cortex-state endpoint must expose
+  structured provenance (`canonicalTextSource`, `canonicalTextFallbackReason`). Delivery ledgers must
+  record this as `fallback_delivered` or `suppressed` with the fallback reason, not as ordinary
+  `sent/delivered`.
+
+Current owning implementation points:
+
+- `api/server/services/viventium/cortexFallbackText.js:74` suppresses the generic deferred fallback
+  sentence when a structured `scheduleId` is present.
+- `api/server/services/viventium/cortexMessageState.js:214` returns empty scheduled fallback text with
+  `deferred_fallback` / `empty_deferred_response` provenance when no usable insight exists.
+- `api/server/routes/viventium/scheduler.js:563` and
+  `api/server/routes/viventium/telegram.js:1259` thread the query `scheduleId` into cortex-state
+  recovery.
+- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1213` sends `scheduleId` during
+  scheduler polling, and `dispatch.py:1298` converts deferred fallback provenance into either
+  canonical fallback text or a suppressed fallback reason.
+- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1901` and `dispatch.py:2235`
+  classify suppressed/degraded fallback visibility separately from ordinary delivery.
+- `viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py:29` and `scheduler.py:231` persist
+  deferred fallback degradation metadata while preserving compatible scheduler success semantics.
 
 ## Summary-Safe Browsing Contract
 

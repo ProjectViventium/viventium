@@ -157,6 +157,17 @@ Use this order so the fix stays surgical:
   deterministic runtime heuristics.
 - Activation and execution must be diagnosed separately. A productivity cortex can activate
   correctly and still fail later if its execution-model credential or connected account is expired.
+- On April 24, 2026, a scheduled Telegram check exposed two separate issues: an Anthropic malformed
+  thinking-content execution failure and a scheduler ledger that treated the resulting deferred
+  fallback as ordinary `sent/delivered`. Scheduled cortex polling must thread `scheduleId` into
+  cortex-state recovery and preserve structured fallback provenance so degraded fallback delivery is
+  either suppressed or recorded as `fallback_delivered`, never hidden as a normal successful result.
+  The owning boundaries are the deferred fallback helper
+  (`api/server/services/viventium/cortexFallbackText.js:74`), cortex-state provenance
+  (`api/server/services/viventium/cortexMessageState.js:214`), scheduler polling
+  (`viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1213`), fallback visibility
+  classification (`viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1901`), and
+  persisted degradation metadata (`viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py:29`).
 - On April 14, 2026, a shipped-source audit caught a Deep Research drift:
   - the built-in bundle still carried `web_search`, but its OpenAI execution bag was using
     `thinkingBudget` instead of the documented OpenAI `reasoning_effort`
