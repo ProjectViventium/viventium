@@ -64,12 +64,17 @@ normal scheduled message.
   - Follow-up fixes applied from review: scheduler guard now survives env overrides and pre-baked
     self-prompts; all shipped background cortices now include a live-fact truthfulness guard.
 
-## Remaining Acceptance Before Release Claim
+## Installed Runtime Validation
 
-- Commit and push the nested component fix.
-- Update the parent component pin and push the parent repo.
-- Refresh the installed local runtime from the pushed source and restart.
-- Run one synthetic scheduled-prompt live validation against the refreshed runtime.
+- Nested component commit pushed: `25134b3f` (`Enforce scheduled live-fact truthfulness`).
+- Parent commit pushed: `061b4c4` (`Enforce scheduled live-fact truthfulness`).
+- Installed runtime refreshed from pushed `main` and restarted through `bin/viventium upgrade --restart`.
+- Installed parent checkout verified at `061b4c4`; installed LibreChat component verified at `25134b3f`.
+- Installed scheduler source verified to contain the live-fact contract.
+- Live service status after restart: LibreChat API, frontend, Modern Playground, Telegram bridge, web search, Google Workspace MCP, and MS365 MCP reported running/configured.
+- Post-upgrade continuity audit status: warning only; warning was limited to Mongo continuity introspection being skipped because `MONGO_URI` was unavailable to the audit process; audit errors were empty.
+- Live Mongo verification after restart: main agent and every shipped background cortex had the weather/news/markets/web omit-instead-of-guess guard in persisted instructions.
+- Synthetic scheduled generation through the installed scheduler/LibreChat route used public-safe QA prompts and did not produce the prior live-weather placeholder. One broader briefing prompt returned `{NTA}` instead of a guessed weather line; one weather-only prompt returned no placeholder text.
 
 ## Public-Safe Boundary
 
