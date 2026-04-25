@@ -102,6 +102,13 @@ def _load_runtime_models_contract() -> dict:
     return yaml.safe_load(result.stdout)
 
 
+def _background_agent_by_name(bundle: dict, name: str) -> dict:
+    for agent in bundle.get("backgroundAgents", []):
+        if agent.get("name") == name:
+            return agent
+    raise AssertionError(f"Missing background agent named {name!r}")
+
+
 def test_background_agent_docs_stay_in_sync_with_source_of_truth() -> None:
     bundle = _load_source_of_truth()
     source_names = [agent["name"] for agent in bundle.get("backgroundAgents", [])]
@@ -197,6 +204,35 @@ def test_background_cortex_activation_models_stay_on_llama_4_scout() -> None:
         activation_family = (activation.get("provider"), activation.get("model"))
         assert activation_family == APPROVED_ACTIVATION_FAMILY, (
             f"{agent.get('name')} activation drifted to {activation_family}"
+        )
+
+
+def test_live_fact_truthfulness_guard_stays_in_shipped_agent_prompts() -> None:
+    bundle = _load_source_of_truth()
+    main_instructions = (bundle.get("mainAgent", {}).get("instructions") or "").lower()
+
+    assert "never invent email, calendar, weather, news, markets" in main_instructions
+    assert "weather/news/markets/web facts" in main_instructions
+    assert "verified tool result" in main_instructions
+    assert "omit that section" in main_instructions
+
+    for agent_name, owned_scope, excluded_scope in [
+        ("MS365", "verified ms365 results only", "non-ms365 live facts"),
+        ("Google", "verified google workspace results only", "non-google live facts"),
+    ]:
+        instructions = (_background_agent_by_name(bundle, agent_name).get("instructions") or "").lower()
+        assert owned_scope in instructions
+        assert excluded_scope in instructions
+        assert "omit it from your synthesis" in instructions
+        assert "do not guess" in instructions
+
+    for agent in bundle.get("backgroundAgents", []):
+        instructions = (agent.get("instructions") or "").lower()
+        assert "weather/news/markets/web facts" in instructions, (
+            f"{agent.get('name')} is missing the live-fact category guard"
+        )
+        assert "omit" in instructions and "guess" in instructions, (
+            f"{agent.get('name')} must omit unverified live facts instead of guessing"
         )
 
 

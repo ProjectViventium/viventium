@@ -10,6 +10,7 @@ Additional current QA artifacts:
 - `qa/background_agents/report.md` — historical April 5, 2026 Anthropic execution compatibility report
 - `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
 - `qa/background_agents/telegram_scheduler_fallback_2026-04-24.md` — scheduled Telegram degraded-delivery regression for deferred fallback provenance
+- `qa/background_agents/scheduled_live_fact_truthfulness_2026-04-25.md` — scheduled live-fact truthfulness regression for weather/news/markets/web facts without verified tool evidence
 
 ## Requirements Under Test
 
@@ -83,3 +84,6 @@ Additional current QA artifacts:
 - Scheduled Telegram runs must not deliver the generic deferred failure sentence when a `scheduleId`
   is available. They must either suppress the empty fallback or record visible fallback insight text
   as `fallback_delivered` in `last_delivery_outcome`.
+- Scheduled live-fact sections such as weather/news/markets/web facts must only be included when a
+  verified tool/cortex result exists; productivity cortices must omit out-of-scope live facts instead
+  of guessing.

@@ -29,6 +29,10 @@ We will implement a dedicated Scheduling MCP server that:
 - Lightweight and scalable.
 - Reliable scheduling with misfire handling.
 - Easy deployment.
+- Truthful live-data handling: scheduled prompts must not guess fresh external facts such as
+  weather, news, markets, or web facts. If no verified tool/cortex result is available for a
+  requested live section, the generated user-visible answer should omit that section instead of
+  inventing a degraded placeholder or advice.
 
 ## Public-Safe Policy Notes
 
@@ -50,6 +54,9 @@ We will implement a dedicated Scheduling MCP server that:
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
 - Do not start a second agent run through the Telegram chat route just for scheduled tasks.
+- Scheduled Telegram delivery must classify transport/runtime fallback separately from
+  model-generated content. If a model or background cortex guesses at a live fact, the correct fix is
+  the scheduled prompt/source-of-truth truthfulness contract, not a Telegram text filter.
 - Scheduler follow-up polling must pass the originating `scheduleId` into the LibreChat cortex-state
   endpoint. The cortex fallback helper uses that structured schedule context to suppress the generic
   "couldn't finish" text for scheduled runs instead of sending it to Telegram.
@@ -60,6 +67,9 @@ We will implement a dedicated Scheduling MCP server that:
 
 Current owning implementation points:
 
+- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:30` injects the default scheduled
+  self-prompt contract, including the rule that live external facts require verified tool/cortex
+  evidence and should otherwise be omitted.
 - `api/server/services/viventium/cortexFallbackText.js:74` suppresses the generic deferred fallback
   sentence when a structured `scheduleId` is present.
 - `api/server/services/viventium/cortexMessageState.js:214` returns empty scheduled fallback text with

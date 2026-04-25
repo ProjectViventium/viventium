@@ -86,6 +86,14 @@ Canonical model-parameter rule:
 - Keep runtime plumbing generic and reusable.
 - Use explicit tests and evidence collection to verify activation and follow-up behavior.
 - Do not encode private names, machine names, or client examples into the runtime contract.
+- Every shipped background cortex must carry an explicit live-fact truthfulness guard for
+  weather/news/markets/web facts. If the cortex lacks verified evidence for that category, it must
+  omit the item rather than guess.
+- Productivity cortices must scope their synthesis to verified results from their owned provider.
+  Google Workspace and MS365 cortices must not answer weather, news, markets, web, or opposite-provider
+  facts just because the scheduled prompt also mentions them. If a requested item is outside the
+  verified provider result set, omit it from the cortex insight instead of guessing or adding a
+  placeholder.
 
 ## Anthropic Runtime Compatibility
 
