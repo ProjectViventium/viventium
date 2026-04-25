@@ -58,9 +58,26 @@ Validate the scheduled Telegram path for deferred cortex failures:
 - `cd viventium_v0_4/LibreChat/api && npx jest --runInBand test/services/viventium/cortexMessageState.test.js server/routes/viventium/__tests__/scheduler.spec.js server/routes/viventium/__tests__/telegram.spec.js server/services/viventium/__tests__/anthropicThinkingPatch.spec.js server/services/viventium/__tests__/normalizeTextContentParts.spec.js server/services/viventium/__tests__/sanitizeAggregatedContentParts.spec.js`
   - `6 test suites passed, 70 tests passed`
 
+## Installed Runtime Evidence
+
+- Public parent commit `81690956c961f005892cc6b125ccc4fdd57c1578` pins LibreChat commit
+  `25124bd7d76e1068dab3c1b3353dd61defaf70e7`.
+- Installed runtime was upgraded and restarted through the supported `bin/viventium upgrade --restart`
+  entrypoint.
+- Upgrade doctor verified selected components were present at pinned refs.
+- Post-upgrade continuity audit reported status `warning` with no errors; the warning was limited to
+  Mongo continuity introspection being skipped because `MONGO_URI` was not available to the audit.
+- Runtime status reported LibreChat API, LibreChat frontend, Modern Playground, Telegram Bridge,
+  SearXNG, and Firecrawl running after restart.
+- The running API log confirmed `[Anthropic Thinking Patch] Installed thinking-block sanitizer` after
+  the restart.
+- The same targeted test set was rerun against the installed checkout:
+  - scheduling-cortex compile + pytest: `68 passed`
+  - API/Jest fallback and sanitizer suites: `6 test suites passed, 70 tests passed`
+
 ## Residual
 
-- The installed runtime tree was inspected separately and still used an older LibreChat checkout that
-  did not contain `anthropicThinkingPatch.js`. Live rollout was not attempted in this QA pass because
-  that installed tree had substantial unrelated local modifications that require explicit
-  reconciliation before upgrade/restart.
+- A real model-backed scheduled Telegram task was not executed in this pass because the installed
+  status reported foundation-model account connection as action-required. The installed code,
+  restarted runtime, sanitizer load, scheduler fallback classification, and ledger persistence were
+  validated with the installed checkout and runtime status.
