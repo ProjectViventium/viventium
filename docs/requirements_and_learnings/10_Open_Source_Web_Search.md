@@ -50,6 +50,11 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
   the live switch. If `integrations.web_search.enabled` is false or missing, the compiler will emit
   `interface.webSearch: false`, remove the top-level `webSearch` block, and the built-in agent tool
   surface will drift accordingly on restart.
+- The current Viventium-owned `web_search` wrapper defaults to `strategies: ['no_extraction']` in
+  `viventium_v0_4/LibreChat/api/app/clients/tools/util/viventiumSearchTool.js`. In practice, that
+  means latest/headline-style search prompts can still succeed with SearXNG-only search results.
+  Firecrawl remains the owning scraper for extraction/highlight phases, so a down Firecrawl service
+  is a degraded web-search state, not automatically a universal "search is dead" state.
 - Runtime auth must accept both `${ENV_VAR}` references in tracked YAML and the
   already-interpolated literal values returned by LibreChat's loaded AppConfig.
 - `rerankerType` is optional. If source-of-truth config does not declare a reranker,

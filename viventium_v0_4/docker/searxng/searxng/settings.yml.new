@@ -426,18 +426,21 @@ engines:
     search_type: search
     categories: [general]
     shortcut: aol
+    disabled: true
 
   - name: aol images
     engine: aol
     search_type: image
     categories: [images]
     shortcut: aoli
+    disabled: true
 
   - name: aol videos
     engine: aol
     search_type: video
     categories: [videos]
     shortcut: aolv
+    disabled: true
 
   - name: arch linux wiki
     engine: archlinux
@@ -1031,6 +1034,11 @@ engines:
     engine: gitea
     base_url: https://gitea.com
     shortcut: gitea
+    disabled: true
+
+  - name: gmx
+    engine: gmx
+    shortcut: gmx
     disabled: true
 
   - name: goodreads

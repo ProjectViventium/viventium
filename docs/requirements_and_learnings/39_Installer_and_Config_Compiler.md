@@ -124,6 +124,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     enabled for the install or not actually present in the checked-out component set
   - seeded built-in agents must not keep dead GlassHive tool IDs on installs where
     `START_GLASSHIVE=false`, or fresh-user chat can fail before any real task begins
+  - startup reseed for existing installs must preserve live user-managed tool choices except for
+    runtime-disabled tool gates:
+    - if the compiler/runtime disabled Web Search, Code Interpreter, or an optional MCP surface,
+      persisted built-in agents must prune only those dead tool IDs from live Mongo state
+    - that repair path must not use the scaffold bundle to silently restore other live tool choices
   - public checkout bootstrap must accept vendored component source trees that were shipped inside
     the reviewed repo export; installer correctness must not depend on nested `.git` metadata being
     present on end-user machines
@@ -468,3 +473,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     machine live
   - the right fix was to update canonical config and restart, not to patch generated
     `librechat.yaml`
+- On April 21, 2026, built-in agent continuity exposed the adjacent persisted-tool boundary:
+  - existing-install startup reseed correctly preserved live tool arrays, but that alone was not
+    enough when global runtime gates disabled a capability such as Web Search
+  - the fix belongs in runtime-field repair: prune only the tools the current machine cannot back,
+    while still preserving all other live user-managed tool choices
