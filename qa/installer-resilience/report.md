@@ -26,6 +26,50 @@ Coverage added:
 - Telegram bridge defers cleanly during long LibreChat builds, surfaces `Starting`, and self-starts
   after API health without a manual restart
 
+## Native CLI dependency-drift follow-up
+
+Date: 2026-04-26
+
+Incident driver:
+
+- Telegram voice transcription failed even though `ffmpeg` was present on `PATH`
+- the binary aborted at runtime after Homebrew dependency drift left it linked to an older x265
+  dylib than the one installed on the host
+
+Fix contract:
+
+- preflight validates runnable Homebrew CLI prerequisites with bounded executable probes
+- formula install handling retries with `brew reinstall` when install succeeds but the runtime
+  probe still fails
+- if install plus reinstall cannot make the binary execute, the installer reports likely Homebrew
+  dependency drift and points the operator at `brew upgrade`, `brew reinstall <formula>`, and
+  `brew doctor`
+- `bin/viventium status` surfaces a `Runtime Checkout` warning when the live stack owner checkout
+  differs from the checkout running the status command
+- Telegram bot startup now uses `nohup` plus `disown`, and detached launcher cleanup skips child
+  termination, so narrow launcher runs do not report a successful Telegram start and then lose the
+  bot when the launcher shell exits
+
+Verification:
+
+```bash
+uv run --with pytest --with PyYAML python -m pytest tests/release/test_preflight.py tests/release/test_install_summary.py tests/release/test_telegram_media_prereqs.py tests/release/test_telegram_transcription_error_contract.py -q
+uv run --with pytest --with PyYAML python -m pytest tests/release/test_detached_librechat_supervision.py -q
+cd viventium_v0_4/telegram-viventium/TelegramVivBot && uv run --with pytest python -m pytest ../tests/test_voice_preferences.py ../tests/test_stt_telegram_assemblyai.py ../tests/test_stt_env.py -q
+python3 -m py_compile scripts/viventium/preflight.py scripts/viventium/install_summary.py
+bash -n bin/viventium
+git diff --check
+```
+
+Result:
+
+- combined release preflight/install-summary/Telegram/detached-supervision slice: `99 passed, 1 skipped`
+- repeated preflight/install-summary slice: `80 passed`
+- Telegram bot STT slice: `31 passed`
+- syntax and whitespace checks passed
+- broader `tests/release/test_cli_upgrade.py` was also sampled; its isolated temp-repo cases fail
+  before this change is exercised because those fixtures omit `scripts/viventium/memory_harden.py`
+
 ## Public-review follow-up
 
 Date: 2026-04-08

@@ -123,6 +123,15 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - Easy Install may offer local Web Search only when Docker Desktop is actually present
   - Easy Install keeps local Conversation Recall deferred by default instead of auto-enabling it
     from ambient Docker detection
+- Homebrew-installed CLI prerequisites must be validated as runnable tools, not just files on
+  `PATH`:
+  - preflight and post-install formula validation must share the same bounded runtime probe
+  - broken dynamic-link state after a Homebrew dependency upgrade must surface as a missing
+    prerequisite so `bin/viventium install` and `bin/viventium upgrade` can repair or fail clearly
+  - domain-specific tools may need stronger probes than `--version`; for example Telegram media
+    support validates `ffmpeg` with a tiny decode/filter run
+  - daemon, account, model, router, and service readiness remain separate feature checks; a binary
+    probe only proves the local CLI can execute
 - Built-in agent runtime truth must remain compatible with the selected install/runtime surface:
   - fresh installs and restarts rely on the seeded source-of-truth agent bundle
   - the authoritative background-agent provider/model matrix is documented in

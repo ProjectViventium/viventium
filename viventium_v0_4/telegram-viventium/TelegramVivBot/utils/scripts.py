@@ -28,6 +28,8 @@ import asyncio
 import logging
 import time
 import base64
+import shutil
+import subprocess
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict
 try:
@@ -114,6 +116,14 @@ def _transcription_runtime_error(
     media_label: str,
     error_code: str = "transcription_failed",
 ) -> TelegramTranscriptionResult:
+    if error_code == "media_decoder_unavailable":
+        return TelegramTranscriptionResult(
+            error_text=(
+                f"Temporarily unable to transcribe this {media_label} because Telegram media "
+                "decoding is not ready. Run bin/viventium upgrade, then retry."
+            ),
+            error_code=error_code,
+        )
     return TelegramTranscriptionResult(
         error_text=f"Temporarily unable to transcribe this {media_label}. Please retry.",
         error_code=error_code,
@@ -134,6 +144,43 @@ def classify_telegram_download_error(exc: Exception) -> str:
     if "timed out" in message or "timeout" in message:
         return "download_timeout"
     return "download_failed"
+
+
+def ffmpeg_runtime_ready(timeout_s: float = 5.0) -> bool:
+    if shutil.which("ffmpeg") is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=mono:sample_rate=16000",
+                "-t",
+                "0.05",
+                "-f",
+                "null",
+                "-",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout_s,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("ffmpeg runtime probe failed: %s", exc)
+        return False
+    if completed.returncode != 0:
+        logger.warning(
+            "ffmpeg runtime probe exited with code %s",
+            completed.returncode,
+        )
+        return False
+    return True
 
 
 async def download_telegram_file_result(
@@ -269,6 +316,11 @@ async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
         file_bytes = download_result.file_bytes
         logger.debug(f"Downloaded {len(file_bytes)} bytes from Telegram")
 
+        whisper_mode = str(getattr(config, "WHISPER_MODE", "") or "").strip().lower()
+        if whisper_mode in ("local", "pywhispercpp") and not ffmpeg_runtime_ready():
+            logger.error("ffmpeg is not runnable for local Telegram voice transcription")
+            return _transcription_runtime_error("voice note", "media_decoder_unavailable")
+
         # Use the proper transcription function that handles both local and API modes
         # This matches the pattern from telegram-bot-standalone
         logger.debug("Calling get_audio_message for transcription")
@@ -314,6 +366,10 @@ async def transcribe_video(
     from aient.aient.utils.scripts import extract_audio_from_video, transcribe_audio_file
 
     try:
+        if not ffmpeg_runtime_ready():
+            logger.error("ffmpeg is not runnable for Telegram %s transcription", media_label)
+            return _transcription_runtime_error(media_label, "media_decoder_unavailable")
+
         download_result = await download_telegram_file_result(
             context.bot,
             file_id,

@@ -49,9 +49,11 @@ stream back to Telegram through the existing bridge.
 
 - Telegram voice notes and video notes are part of the supported bridge surface, so their media
   decoding requirements must be treated as first-class installer/runtime prerequisites.
-- When Telegram is enabled, `ffmpeg` must be available on the host:
+- When Telegram is enabled, `ffmpeg` must be available and runnable on the host:
   - local `pywhispercpp` transcription needs it to decode Telegram's non-WAV voice-note media
   - Telegram video-note extraction already depends on it before transcription
+- Presence alone is not enough. Startup/preflight must run a small ffmpeg media probe so broken
+  Homebrew dynamic-library links fail honestly before Telegram is reported healthy.
 - If the install needs Telegram media downloads beyond the hosted Bot API ceiling, the Telegram bot
   must be pointed at a local Telegram Bot API server instead of `https://api.telegram.org`.
 - Canonical config owns that choice under `integrations.telegram`:
@@ -76,10 +78,12 @@ stream back to Telegram through the existing bridge.
 - `integrations.telegram.max_file_size_bytes` is the canonical Telegram bridge media ceiling.
   Hosted Telegram defaults to 10 MB; managed local Bot API mode defaults to 100 MB unless the
   operator sets a different value explicitly.
-- Public install flows must detect and install `ffmpeg` automatically through preflight when
-  Telegram is enabled.
-- Telegram startup must fail honestly instead of reporting a healthy bridge when `ffmpeg` is still
-  unavailable.
+- Public install flows must detect, install, and recheck `ffmpeg` automatically through preflight
+  when Telegram is enabled.
+- Telegram startup must fail honestly instead of reporting a healthy bridge when `ffmpeg` is
+  unavailable or installed but not runnable.
+- If a running bridge still encounters a non-runnable decoder, Telegram should return one clean
+  media-decoder error and stop before chat submission.
 
 ## Telegram Attachments
 

@@ -13,9 +13,9 @@
 
 1. `python3 -m pytest tests/release/test_telegram_lazy_startup_contract.py tests/release/test_telegram_media_prereqs.py -q`
    - Result: `4 passed`
-2. `python3 -m venv /tmp/viventium-testenv && /tmp/viventium-testenv/bin/pip install -q pytest PyYAML`
+2. `python3 -m venv <temp>/viventium-testenv && <temp>/viventium-testenv/bin/pip install -q pytest PyYAML`
    - Result: temporary isolated test env created for subprocess-based preflight tests
-3. `/tmp/viventium-testenv/bin/python -m pytest tests/release/test_preflight.py tests/release/test_telegram_lazy_startup_contract.py tests/release/test_telegram_media_prereqs.py -q`
+3. `<temp>/viventium-testenv/bin/python -m pytest tests/release/test_preflight.py tests/release/test_telegram_lazy_startup_contract.py tests/release/test_telegram_media_prereqs.py -q`
    - Result: `20 passed`
 
 ## Independent QA Pass
@@ -71,3 +71,23 @@ Observed results:
 - Full clean-machine `bin/viventium install` acceptance on a brand-new macOS environment is still
   recommended before public release, but the public-safe installer/runtime contract is now covered by
   automated tests plus the synthetic QA evidence above.
+
+## 2026-04-26 Regression Addendum
+
+### Incident Class
+
+Telegram voice-note transcription reached local whisper successfully, but the host ffmpeg binary
+aborted before decoding Telegram OGG audio into WAV. The failure was a present-but-not-runnable
+Homebrew ffmpeg, not a missing binary and not LibreChat chat routing.
+
+### Added Acceptance
+
+- Preflight treats ffmpeg as healthy only after a real media probe succeeds.
+- Installer formula handling rechecks runtime usability after Homebrew install and retries with a
+  clean reinstall when a formula reports installed but remains unusable.
+- Telegram launcher checks the same media probe and can repair a present-but-broken Homebrew ffmpeg
+  when automatic ffmpeg repair is enabled.
+- Telegram runtime returns a structured media-decoder error before chat submission if decoder health
+  fails during voice/video transcription.
+- Mongo evidence for the reproduced class showed zero LibreChat messages/conversations in the
+  failed voice-note window, confirming the failed transcript was not forwarded as user input.

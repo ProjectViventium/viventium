@@ -53,6 +53,182 @@ def test_public_edge_cgnat_details_ignores_matching_public_ip(monkeypatch) -> No
     assert module.public_edge_cgnat_details() == (False, "203.0.113.42", "203.0.113.42")
 
 
+def test_ffmpeg_runtime_ready_rejects_present_broken_binary(monkeypatch) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "command_exists", lambda command: command == "ffmpeg")
+    monkeypatch.setattr(
+        module,
+        "run_checked",
+        lambda args, timeout_seconds=None: subprocess.CompletedProcess(
+            args=args,
+            returncode=-6,
+            stdout="",
+            stderr="Library not loaded",
+        ),
+    )
+
+    assert module.ffmpeg_runtime_ready() is False
+
+
+def test_ffmpeg_runtime_ready_accepts_successful_probe(monkeypatch) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "command_exists", lambda command: command == "ffmpeg")
+    monkeypatch.setattr(
+        module,
+        "run_checked",
+        lambda args, timeout_seconds=None: subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+    )
+
+    assert module.ffmpeg_runtime_ready() is True
+
+
+def test_command_runtime_ready_rejects_present_broken_binary(monkeypatch) -> None:
+    module = load_preflight_module()
+    calls: list[tuple[list[str], float | None]] = []
+
+    def fake_run_checked(args: list[str], *, timeout_seconds: float | None = None):
+        calls.append((args, timeout_seconds))
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=-6,
+            stdout="",
+            stderr="Library not loaded",
+        )
+
+    monkeypatch.setattr(module, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(module, "command_exists", lambda command: command == "pnpm")
+    monkeypatch.setattr(module, "run_checked", fake_run_checked)
+
+    assert module.command_runtime_ready("pnpm", ["--version"]) is False
+    assert calls == [(["pnpm", "--version"], module.DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS)]
+
+
+def test_command_runtime_ready_times_out_cleanly(monkeypatch) -> None:
+    module = load_preflight_module()
+
+    monkeypatch.setattr(module, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(module, "command_exists", lambda command: command == "meilisearch")
+    monkeypatch.setattr(
+        module,
+        "run_checked",
+        lambda args, timeout_seconds=None: subprocess.CompletedProcess(
+            args=args,
+            returncode=124,
+            stdout="",
+            stderr="Timed out",
+        ),
+    )
+
+    assert module.command_runtime_ready("meilisearch", ["--version"]) is False
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "item_key", "formula", "config"),
+    [
+        ("pnpm_runtime_ready", "pnpm", "pnpm", {}),
+        ("uv_runtime_ready", "uv", "uv", {}),
+        (
+            "ollama_cli_runtime_ready",
+            "ollama",
+            "ollama",
+            {
+                "runtime": {"personalization": {"default_conversation_recall": True}},
+            },
+        ),
+        (
+            "mongod_runtime_ready",
+            "mongod",
+            "mongodb/brew/mongodb-community@8.0",
+            {"install": {"mode": "native"}},
+        ),
+        (
+            "meilisearch_runtime_ready",
+            "meilisearch",
+            "meilisearch",
+            {"install": {"mode": "native"}},
+        ),
+        (
+            "livekit_runtime_ready",
+            "livekit",
+            "livekit",
+            {"install": {"mode": "native"}, "voice": {"mode": "local"}},
+        ),
+        (
+            "cloudflared_runtime_ready",
+            "cloudflared",
+            "cloudflared",
+            {
+                "voice": {"mode": "local"},
+                "runtime": {"network": {"remote_call_mode": "cloudflare_quick_tunnel"}},
+            },
+        ),
+        (
+            "tailscale_cli_runtime_ready",
+            "tailscale",
+            "tailscale",
+            {"runtime": {"network": {"remote_call_mode": "tailscale_tailnet_https"}}},
+        ),
+        (
+            "caddy_runtime_ready",
+            "public_edge_caddy",
+            "caddy",
+            {"runtime": {"network": {"remote_call_mode": "public_https_edge"}}},
+        ),
+        (
+            "upnpc_runtime_ready",
+            "public_edge_upnpc",
+            "miniupnpc",
+            {"runtime": {"network": {"remote_call_mode": "public_https_edge"}}},
+        ),
+    ],
+)
+def test_preflight_uses_runtime_probes_for_brew_prereqs(
+    monkeypatch,
+    helper_name: str,
+    item_key: str,
+    formula: str,
+    config: dict,
+) -> None:
+    module = load_preflight_module()
+
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, helper_name, lambda: False)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "netbird"})
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "docker_desktop_installed", lambda: True)
+    monkeypatch.setattr(module, "docker_daemon_ready", lambda: True)
+    monkeypatch.setattr(module, "tailscale_service_ready", lambda: True)
+    monkeypatch.setattr(module, "netbird_missing_remote_origin_fields", lambda config: [])
+    monkeypatch.setattr(module, "netbird_livekit_node_ip_ready", lambda config: True)
+    monkeypatch.setattr(module, "upnpc_router_ready", lambda: True)
+    monkeypatch.setattr(module, "public_edge_cgnat_details", lambda: (False, "", ""))
+
+    items = module.build_preflight_items(config)
+    target = next(item for item in items if item.key == item_key)
+
+    assert target.status == "missing"
+    assert target.install_kind == "brew_formula"
+    assert target.formula == formula
+
+
 def test_preflight_aggregates_missing_native_prereqs(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -576,6 +752,81 @@ def test_install_brew_formulas_accepts_runtime_when_homebrew_returns_nonzero(mon
     preflight.install_brew_formulas(["node@20"])
 
     assert calls == [["brew", "install", "node@20"]]
+
+
+def test_install_brew_formulas_retries_when_installed_binary_cannot_execute(monkeypatch) -> None:
+    preflight = load_preflight_module()
+
+    calls: list[list[str]] = []
+    usable_results = iter([False, True])
+
+    def fake_run_checked(args: list[str]):
+        calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(preflight, "run_checked", fake_run_checked)
+    monkeypatch.setattr(preflight, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(preflight, "formula_usable", lambda _formula: next(usable_results))
+
+    preflight.install_brew_formulas(["ffmpeg"])
+
+    assert calls == [["brew", "install", "ffmpeg"], ["brew", "reinstall", "ffmpeg"]]
+
+
+def test_install_brew_formulas_reports_homebrew_drift_when_reinstall_cannot_fix_runtime(
+    monkeypatch,
+) -> None:
+    preflight = load_preflight_module()
+
+    calls: list[list[str]] = []
+
+    def fake_run_checked(args: list[str]):
+        calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(preflight, "run_checked", fake_run_checked)
+    monkeypatch.setattr(preflight, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(preflight, "formula_usable", lambda _formula: False)
+
+    with pytest.raises(SystemExit) as excinfo:
+        preflight.install_brew_formulas(["ffmpeg"])
+
+    assert calls == [["brew", "install", "ffmpeg"], ["brew", "reinstall", "ffmpeg"]]
+    message = str(excinfo.value)
+    assert "Homebrew dependency drift" in message
+    assert "brew upgrade" in message
+    assert "brew doctor" in message
+
+
+@pytest.mark.parametrize(
+    ("formula", "helper_name"),
+    [
+        ("pnpm", "pnpm_runtime_ready"),
+        ("uv", "uv_runtime_ready"),
+        ("ollama", "ollama_cli_runtime_ready"),
+        ("ffmpeg", "ffmpeg_runtime_ready"),
+        ("mongodb/brew/mongodb-community@8.0", "mongod_runtime_ready"),
+        ("meilisearch", "meilisearch_runtime_ready"),
+        ("livekit", "livekit_runtime_ready"),
+        ("cloudflared", "cloudflared_runtime_ready"),
+        ("tailscale", "tailscale_cli_runtime_ready"),
+        ("caddy", "caddy_runtime_ready"),
+        ("miniupnpc", "upnpc_runtime_ready"),
+    ],
+)
+def test_formula_usable_delegates_to_runtime_probe(monkeypatch, formula: str, helper_name: str) -> None:
+    preflight = load_preflight_module()
+    calls: list[str] = []
+
+    def fake_probe() -> bool:
+        calls.append(helper_name)
+        return True
+
+    monkeypatch.setattr(preflight, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(preflight, helper_name, fake_probe)
+
+    assert preflight.formula_usable(formula) is True
+    assert calls == [helper_name]
 
 
 def test_docker_daemon_ready_uses_bounded_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

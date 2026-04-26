@@ -1184,7 +1184,7 @@ print_install_recovery_guidance() {
 
 print_install_summary() {
   local stack_started="${1:-0}"
-  local args=(--config "$CONFIG_FILE" --runtime-dir "$RUNTIME_DIR")
+  local args=(--config "$CONFIG_FILE" --runtime-dir "$RUNTIME_DIR" --repo-root "$REPO_ROOT")
   if [[ "$stack_started" == "1" ]]; then
     args+=(--probe-live)
   fi
@@ -2736,6 +2736,7 @@ case "$COMMAND" in
     exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/install_summary.py" \
       --config "$CONFIG_FILE" \
       --runtime-dir "$RUNTIME_DIR" \
+      --repo-root "$REPO_ROOT" \
       --probe-live
     ;;
   register-link)

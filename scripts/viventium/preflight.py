@@ -42,6 +42,7 @@ DEFAULT_DOCKER_READINESS_TIMEOUT_SECONDS = 3.0
 DEFAULT_DOCKER_AUTOSTART_GRACE_SECONDS = 12.0
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
 UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
+DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS = 3.0
 
 
 @dataclass
@@ -91,6 +92,97 @@ def resolve_bool(value: Any, default: bool) -> bool:
 
 def command_exists(command: str) -> bool:
     return shutil.which(command) is not None
+
+
+def command_runtime_ready(
+    command: str,
+    args: list[str] | None = None,
+    *,
+    timeout_seconds: float = DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS,
+    acceptable_returncodes: set[int] | None = None,
+) -> bool:
+    refresh_brew_paths()
+    if not command_exists(command):
+        return False
+    completed = run_checked(
+        [command] + (args if args is not None else ["--version"]),
+        timeout_seconds=timeout_seconds,
+    )
+    return completed.returncode in (acceptable_returncodes or {0})
+
+
+def any_command_runtime_ready(probes: list[tuple[str, list[str]]]) -> bool:
+    return any(command_runtime_ready(command, args) for command, args in probes)
+
+
+def pnpm_runtime_ready() -> bool:
+    return command_runtime_ready("pnpm", ["--version"])
+
+
+def uv_runtime_ready() -> bool:
+    return command_runtime_ready("uv", ["--version"])
+
+
+def ollama_cli_runtime_ready() -> bool:
+    return command_runtime_ready("ollama", ["--version"])
+
+
+def ffmpeg_runtime_ready() -> bool:
+    refresh_brew_paths()
+    if not command_exists("ffmpeg"):
+        return False
+    completed = run_checked(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=mono:sample_rate=16000",
+            "-t",
+            "0.05",
+            "-f",
+            "null",
+            "-",
+        ],
+        timeout_seconds=5.0,
+    )
+    return completed.returncode == 0
+
+
+def mongod_runtime_ready() -> bool:
+    return command_runtime_ready("mongod", ["--version"])
+
+
+def meilisearch_runtime_ready() -> bool:
+    return command_runtime_ready("meilisearch", ["--version"])
+
+
+def livekit_runtime_ready() -> bool:
+    return any_command_runtime_ready(
+        [
+            ("livekit", ["--version"]),
+            ("livekit-server", ["--version"]),
+        ]
+    )
+
+
+def cloudflared_runtime_ready() -> bool:
+    return command_runtime_ready("cloudflared", ["--version"])
+
+
+def tailscale_cli_runtime_ready() -> bool:
+    return command_runtime_ready("tailscale", ["version"])
+
+
+def caddy_runtime_ready() -> bool:
+    return command_runtime_ready("caddy", ["version"])
+
+
+def upnpc_runtime_ready() -> bool:
+    return command_runtime_ready("upnpc", ["-h"])
 
 
 def run_checked(
@@ -589,31 +681,34 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
             command="node",
         )
     )
+    pnpm_ready = pnpm_runtime_ready()
     items.append(
         PreflightItem(
             key="pnpm",
             label="pnpm",
             category="runtime",
             reason="install and manage JS workspaces",
-            status="ok" if command_exists("pnpm") else "missing",
-            install_kind="brew_formula" if not command_exists("pnpm") else "none",
-            formula="pnpm" if not command_exists("pnpm") else "",
+            status="ok" if pnpm_ready else "missing",
+            install_kind="brew_formula" if not pnpm_ready else "none",
+            formula="pnpm" if not pnpm_ready else "",
             command="pnpm",
         )
     )
+    uv_ready = uv_runtime_ready()
     items.append(
         PreflightItem(
             key="uv",
             label="uv",
             category="runtime",
             reason="run MCP and Python service environments",
-            status="ok" if command_exists("uv") else "missing",
-            install_kind="brew_formula" if not command_exists("uv") else "none",
-            formula="uv" if not command_exists("uv") else "",
+            status="ok" if uv_ready else "missing",
+            install_kind="brew_formula" if not uv_ready else "none",
+            formula="uv" if not uv_ready else "",
             command="uv",
         )
     )
     if ctx["conversation_recall"] and retrieval_embeddings["provider"] == "ollama":
+        ollama_ready = ollama_cli_runtime_ready()
         items.append(
             PreflightItem(
                 key="ollama",
@@ -623,25 +718,26 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     "Conversation Recall uses local Ollama embeddings on this Mac while the "
                     "current recall sidecar keeps its vector/index path in Docker"
                 ),
-                status="ok" if command_exists("ollama") else "missing",
-                install_kind="brew_formula" if not command_exists("ollama") else "none",
-                formula="ollama" if not command_exists("ollama") else "",
+                status="ok" if ollama_ready else "missing",
+                install_kind="brew_formula" if not ollama_ready else "none",
+                formula="ollama" if not ollama_ready else "",
                 command="ollama",
             )
         )
     if ctx["telegram"]:
+        ffmpeg_ready = ffmpeg_runtime_ready()
         items.append(
             PreflightItem(
                 key="ffmpeg",
                 label="ffmpeg",
                 category="telegram media",
                 reason=(
-                    "Telegram voice notes and video notes need ffmpeg so local transcription and "
-                    "video-audio extraction work on a clean Mac"
+                    "Telegram voice notes and video notes need a runnable ffmpeg so local "
+                    "transcription and video-audio extraction work on a clean Mac"
                 ),
-                status="ok" if command_exists("ffmpeg") else "missing",
-                install_kind="brew_formula" if not command_exists("ffmpeg") else "none",
-                formula="ffmpeg" if not command_exists("ffmpeg") else "",
+                status="ok" if ffmpeg_ready else "missing",
+                install_kind="brew_formula" if not ffmpeg_ready else "none",
+                formula="ffmpeg" if not ffmpeg_ready else "",
                 command="ffmpeg",
             )
         )
@@ -700,6 +796,8 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     public_edge_remote_requested = remote_call_mode == "public_https_edge"
 
     if install_mode == "native":
+        mongod_ready = mongod_runtime_ready()
+        meilisearch_ready = meilisearch_runtime_ready()
         items.extend(
             [
                 PreflightItem(
@@ -707,9 +805,9 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     label="mongodb-community@8.0",
                     category="native services",
                     reason="local LibreChat and Viventium state storage",
-                    status="ok" if command_exists("mongod") else "missing",
-                    install_kind="brew_formula" if not command_exists("mongod") else "none",
-                    formula="mongodb/brew/mongodb-community@8.0" if not command_exists("mongod") else "",
+                    status="ok" if mongod_ready else "missing",
+                    install_kind="brew_formula" if not mongod_ready else "none",
+                    formula="mongodb/brew/mongodb-community@8.0" if not mongod_ready else "",
                     command="mongod",
                 ),
                 PreflightItem(
@@ -717,9 +815,9 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     label="meilisearch",
                     category="native services",
                     reason="local conversation and search indexing",
-                    status="ok" if command_exists("meilisearch") else "missing",
-                    install_kind="brew_formula" if not command_exists("meilisearch") else "none",
-                    formula="meilisearch" if not command_exists("meilisearch") else "",
+                    status="ok" if meilisearch_ready else "missing",
+                    install_kind="brew_formula" if not meilisearch_ready else "none",
+                    formula="meilisearch" if not meilisearch_ready else "",
                     command="meilisearch",
                 ),
             ]
@@ -791,7 +889,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     command="python3.12",
                 )
             )
-            livekit_ready = command_exists("livekit") or command_exists("livekit-server")
+            livekit_ready = livekit_runtime_ready()
             items.append(
                 PreflightItem(
                     key="livekit",
@@ -833,7 +931,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 )
 
     if cloudflare_remote_voice_requested:
-        cloudflared_ready = command_exists("cloudflared")
+        cloudflared_ready = cloudflared_runtime_ready()
         items.append(
             PreflightItem(
                 key="cloudflared",
@@ -848,7 +946,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
         )
 
     if tailscale_remote_requested:
-        tailscale_ready = command_exists("tailscale")
+        tailscale_ready = tailscale_cli_runtime_ready()
         items.append(
             PreflightItem(
                 key="tailscale",
@@ -894,7 +992,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 command="netbird",
             )
         )
-        caddy_ready = command_exists("caddy")
+        caddy_ready = caddy_runtime_ready()
         items.append(
             PreflightItem(
                 key="caddy",
@@ -948,7 +1046,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
             )
 
     if public_edge_remote_requested:
-        caddy_ready = command_exists("caddy")
+        caddy_ready = caddy_runtime_ready()
         items.append(
             PreflightItem(
                 key="public_edge_caddy",
@@ -961,7 +1059,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 command="caddy",
             )
         )
-        upnpc_ready = command_exists("upnpc")
+        upnpc_ready = upnpc_runtime_ready()
         items.append(
             PreflightItem(
                 key="public_edge_upnpc",
@@ -1194,14 +1292,18 @@ def formula_usable(formula: str) -> bool:
     refresh_brew_paths()
     checks: dict[str, Any] = {
         "node@20": node_runtime_supported,
-        "pnpm": lambda: command_exists("pnpm"),
-        "uv": lambda: command_exists("uv"),
-        "ffmpeg": lambda: command_exists("ffmpeg"),
-        "mongodb/brew/mongodb-community@8.0": lambda: command_exists("mongod"),
-        "meilisearch": lambda: command_exists("meilisearch"),
+        "pnpm": pnpm_runtime_ready,
+        "uv": uv_runtime_ready,
+        "ollama": ollama_cli_runtime_ready,
+        "ffmpeg": ffmpeg_runtime_ready,
+        "mongodb/brew/mongodb-community@8.0": mongod_runtime_ready,
+        "meilisearch": meilisearch_runtime_ready,
         "python@3.12": modern_voice_python_ready,
-        "livekit": lambda: command_exists("livekit") or command_exists("livekit-server"),
-        "cloudflared": lambda: command_exists("cloudflared"),
+        "livekit": livekit_runtime_ready,
+        "cloudflared": cloudflared_runtime_ready,
+        "tailscale": tailscale_cli_runtime_ready,
+        "caddy": caddy_runtime_ready,
+        "miniupnpc": upnpc_runtime_ready,
     }
     check = checks.get(formula)
     if check is not None:
@@ -1216,8 +1318,17 @@ def install_brew_formulas(formulas: list[str], ui: InstallerUI | None = None) ->
         completed = run_checked(["brew", "install", formula])
         if completed.returncode == 0:
             refresh_brew_paths()
-            ui.print_success(f"{formula} is ready.")
-            continue
+            if formula_usable(formula):
+                ui.print_success(f"{formula} is ready.")
+                continue
+            ui.print_warning(
+                f"{formula} installed but its runtime check still fails; trying a clean reinstall."
+            )
+            completed = run_checked(["brew", "reinstall", formula])
+            refresh_brew_paths()
+            if completed.returncode == 0 and formula_usable(formula):
+                ui.print_success(f"{formula} is ready.")
+                continue
         if formula_usable(formula):
             ui.print_warning(
                 f"{formula} finished with warnings, but the required runtime is usable, so Viventium will continue."
@@ -1228,7 +1339,9 @@ def install_brew_formulas(formulas: list[str], ui: InstallerUI | None = None) ->
         if completed.stderr:
             print(completed.stderr, end="", file=sys.stderr)
         raise SystemExit(
-            f"Homebrew could not finish installing {formula}. Fix the issue above, then rerun the Viventium installer."
+            f"Homebrew could not finish installing {formula}, or the installed binary still cannot execute "
+            "after install and reinstall. This usually means Homebrew dependency drift. Run "
+            f"`brew upgrade`, `brew reinstall {formula}`, and `brew doctor`, then rerun the Viventium installer."
         )
 
 

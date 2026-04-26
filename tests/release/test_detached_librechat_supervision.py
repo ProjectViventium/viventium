@@ -80,6 +80,16 @@ def test_deferred_telegram_start_retries_in_background_until_librechat_api_is_re
     assert 'starting (waiting for LibreChat API)' in launcher_text
 
 
+def test_telegram_bot_survives_detached_launcher_exit() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "cleanup() {\n  if detached_start_requested; then\n    return\n  fi" in launcher_text
+    assert 'nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &' in launcher_text
+    assert 'if detached_start_requested; then\n    disown "$TELEGRAM_BOT_PID" 2>/dev/null || true\n  fi' in launcher_text
+
+
 def test_searxng_readiness_probe_uses_root_endpoint() -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"

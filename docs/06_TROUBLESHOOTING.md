@@ -167,6 +167,33 @@ This is the shared troubleshooting index. For stack-specific detail, see:
 - Current status: when Telegram is enabled, preflight now installs `ffmpeg` automatically and the
   Telegram launcher refuses to start a partially broken bridge without it.
 
+### Telegram says `Temporarily unable to transcribe this voice note. Please retry.`
+- Root cause found in live logs: Telegram downloaded the voice note and local whisper initialized,
+  but the host `ffmpeg` binary aborted before decoding the OGG audio into WAV. In the reproduced
+  case, Homebrew had upgraded an ffmpeg dependency while the ffmpeg binary was still linked to the
+  previous dynamic-library ABI.
+- Fix:
+  - preflight and launcher now treat `ffmpeg` as healthy only after a real media probe succeeds
+  - installer/preflight rechecks formula usability after Homebrew install and retries with a clean
+    reinstall if the runtime probe still fails
+  - Telegram startup can repair a present-but-broken Homebrew ffmpeg when automatic ffmpeg repair is
+    enabled
+  - if a running bridge still sees a broken decoder, the Telegram reply names the media-decoder
+    problem instead of telling the user to retry blindly
+- DB evidence for this class: failed transcription stops before LibreChat chat submission; no user
+  turn should be created for the failed voice note.
+
+### Native CLI is installed but Viventium still marks it missing
+- Root cause: the executable is present on `PATH`, but it cannot actually run. Common causes are
+  Homebrew dependency ABI drift, broken shims, or a partial formula upgrade.
+- Fix:
+  - run `bin/viventium upgrade` so preflight can repair the affected prerequisite
+  - if it still fails, run `brew upgrade`, `brew reinstall <formula>`, and `brew doctor`, then rerun
+    `bin/viventium upgrade`
+- Current status: Homebrew-installed CLI prerequisites use bounded executable probes in preflight
+  and formula validation. Daemon readiness remains separate, so a binary probe does not mean Docker,
+  Tailscale, Ollama models, router mappings, or service listeners are ready.
+
 ### Modern LiveKit says `I'm having trouble reaching the service right now. Please try again.`
 - Root cause: the voice call was reaching LibreChat, but a hidden machine-level fast-voice LLM route
   could still rewrite the run onto a different provider than the agent-visible selection. That

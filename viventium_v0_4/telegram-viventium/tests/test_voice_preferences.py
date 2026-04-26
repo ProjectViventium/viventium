@@ -185,6 +185,7 @@ def test_transcribe_video_surfaces_download_failure_as_structured_error(monkeypa
         return scripts.TelegramDownloadResult(error_code="download_failed")
 
     monkeypatch.setattr(scripts, "download_telegram_file_result", _fake_download)
+    monkeypatch.setattr(scripts, "ffmpeg_runtime_ready", lambda: True)
 
     result = asyncio.run(
         scripts.transcribe_video(
@@ -197,6 +198,43 @@ def test_transcribe_video_surfaces_download_failure_as_structured_error(monkeypa
     assert result.text is None
     assert result.error_code == "download_failed"
     assert result.error_text == "Temporarily unable to download this video note from Telegram. Please retry."
+
+
+def test_get_voice_surfaces_broken_local_decoder_as_structured_error(monkeypatch):
+    async def _fake_download(*_args, **_kwargs):
+        return scripts.TelegramDownloadResult(file_bytes=b"voice-bytes")
+
+    monkeypatch.setattr(scripts, "download_telegram_file_result", _fake_download)
+    monkeypatch.setattr(scripts.config, "WHISPER_MODE", "pywhispercpp", raising=False)
+    monkeypatch.setattr(scripts, "ffmpeg_runtime_ready", lambda: False)
+
+    result = asyncio.run(scripts.get_voice("voice-file", types.SimpleNamespace(bot=object())))
+
+    assert result.text is None
+    assert result.error_code == "media_decoder_unavailable"
+    assert (
+        result.error_text
+        == "Temporarily unable to transcribe this voice note because Telegram media decoding is not ready. Run bin/viventium upgrade, then retry."
+    )
+
+
+def test_transcribe_video_surfaces_broken_decoder_as_structured_error(monkeypatch):
+    monkeypatch.setattr(scripts, "ffmpeg_runtime_ready", lambda: False)
+
+    result = asyncio.run(
+        scripts.transcribe_video(
+            "video-file",
+            types.SimpleNamespace(bot=object()),
+            media_label="video note",
+        )
+    )
+
+    assert result.text is None
+    assert result.error_code == "media_decoder_unavailable"
+    assert (
+        result.error_text
+        == "Temporarily unable to transcribe this video note because Telegram media decoding is not ready. Run bin/viventium upgrade, then retry."
+    )
 
 
 def test_get_voice_surfaces_download_timeout_as_structured_error(monkeypatch):

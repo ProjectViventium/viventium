@@ -262,6 +262,41 @@ def load_stack_owner_state(
     return payload if isinstance(payload, dict) else {}
 
 
+def display_path(path: Path) -> str:
+    try:
+        home = Path.home().resolve()
+        resolved = path.expanduser().resolve()
+        relative = resolved.relative_to(home)
+        return f"~/{relative}"
+    except Exception:
+        return str(path)
+
+
+def stack_owner_checkout_row(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+    repo_root: Path | None,
+) -> tuple[str, str, str] | None:
+    if repo_root is None:
+        return None
+    owner_state = load_stack_owner_state(config, runtime_env, runtime_dir)
+    owner_repo_raw = str(owner_state.get("repoRoot") or "").strip()
+    if not owner_repo_raw:
+        return None
+
+    current_repo = repo_root.expanduser().resolve()
+    owner_repo = Path(owner_repo_raw).expanduser().resolve()
+    if owner_repo == current_repo:
+        return None
+
+    return (
+        "Runtime Checkout",
+        "Different Checkout",
+        f"Live stack owner: {display_path(owner_repo)} | this command: {display_path(current_repo)}",
+    )
+
+
 def stack_owner_command(
     config: dict[str, Any],
     runtime_env: dict[str, str],
@@ -500,6 +535,7 @@ def build_service_rows(
     runtime_env: dict[str, str],
     *,
     runtime_dir: Path | None = None,
+    repo_root: Path | None = None,
     probe_live: bool,
 ) -> list[tuple[str, str, str]]:
     frontend_port = runtime_port(
@@ -731,6 +767,10 @@ def build_service_rows(
     if resolve_bool((integrations.get("openclaw") or {}).get("enabled"), False):
         rows.append(("OpenClaw", "Configured", "Exposure monitoring integration"))
 
+    checkout_row = stack_owner_checkout_row(config, runtime_env, runtime_dir, repo_root)
+    if checkout_row is not None:
+        rows.insert(0, checkout_row)
+
     return rows
 
 
@@ -952,6 +992,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Render the Viventium install or runtime summary.")
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument("--runtime-dir", help="Path to generated runtime dir")
+    parser.add_argument("--repo-root", help="Checkout running this summary command")
     parser.add_argument(
         "--stack-started",
         action="store_true",
@@ -966,11 +1007,18 @@ def main() -> None:
 
     config = load_config(Path(args.config).expanduser().resolve())
     runtime_dir = Path(args.runtime_dir).expanduser().resolve() if args.runtime_dir else None
+    repo_root = Path(args.repo_root).expanduser().resolve() if args.repo_root else None
     runtime_env = load_runtime_env(runtime_dir)
     probe_live = args.probe_live or args.stack_started
     ui = InstallerUI()
 
-    service_rows = build_service_rows(config, runtime_env, runtime_dir=runtime_dir, probe_live=probe_live)
+    service_rows = build_service_rows(
+        config,
+        runtime_env,
+        runtime_dir=runtime_dir,
+        repo_root=repo_root,
+        probe_live=probe_live,
+    )
     heading, intro, table_title = resolve_summary_heading(
         probe_live,
         service_rows,

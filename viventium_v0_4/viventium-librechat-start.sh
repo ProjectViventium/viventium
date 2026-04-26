@@ -6547,6 +6547,9 @@ run_health_checks() {
 }
 
 cleanup() {
+  if detached_start_requested; then
+    return
+  fi
   if [[ "$CLEANUP_ENABLED" != "true" ]]; then
     return
   fi
@@ -6707,13 +6710,29 @@ resolve_telegram_codex_dir() {
   return 1
 }
 
+ffmpeg_is_usable() {
+  command -v ffmpeg >/dev/null 2>&1 || return 1
+  ffmpeg \
+    -hide_banner \
+    -loglevel error \
+    -f lavfi \
+    -i anullsrc=channel_layout=mono:sample_rate=16000 \
+    -t 0.05 \
+    -f null \
+    - >/dev/null 2>&1
+}
+
 ensure_telegram_media_prereqs() {
-  if command -v ffmpeg >/dev/null 2>&1; then
+  if ffmpeg_is_usable; then
     return 0
+  fi
+  local ffmpeg_present="false"
+  if command -v ffmpeg >/dev/null 2>&1; then
+    ffmpeg_present="true"
   fi
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    log_error "Telegram voice/video media requires ffmpeg in PATH on this host"
+    log_error "Telegram voice/video media requires a runnable ffmpeg in PATH on this host"
     return 1
   fi
 
@@ -6744,15 +6763,22 @@ ensure_telegram_media_prereqs() {
   fi
 
   local ffmpeg_log="$LOG_DIR/telegram_bot_ffmpeg_install.log"
-  log_warn "ffmpeg missing; attempting automatic install for Telegram media support"
-  if ! HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg >"$ffmpeg_log" 2>&1; then
-    log_error "Failed to install ffmpeg for Telegram media support"
+  local brew_action="install"
+  if [[ "$ffmpeg_present" == "true" ]]; then
+    brew_action="reinstall"
+    log_warn "ffmpeg is installed but not runnable; attempting automatic reinstall for Telegram media support"
+  else
+    log_warn "ffmpeg missing; attempting automatic install for Telegram media support"
+  fi
+  if ! HOMEBREW_NO_AUTO_UPDATE=1 brew "$brew_action" ffmpeg >"$ffmpeg_log" 2>&1; then
+    log_error "Failed to $brew_action ffmpeg for Telegram media support"
     tail -20 "$ffmpeg_log" 2>/dev/null || true
     return 1
   fi
 
-  if ! command -v ffmpeg >/dev/null 2>&1; then
-    log_error "ffmpeg install finished but the binary is still unavailable to Telegram"
+  if ! ffmpeg_is_usable; then
+    log_error "ffmpeg $brew_action finished but the binary is still not runnable for Telegram media"
+    ffmpeg -hide_banner -version 2>&1 | tail -20 || true
     return 1
   fi
 
@@ -8312,8 +8338,11 @@ PY
   fi
   # === VIVENTIUM END ===
 
-  "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 &
+  nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
   TELEGRAM_BOT_PID=$!
+  if detached_start_requested; then
+    disown "$TELEGRAM_BOT_PID" 2>/dev/null || true
+  fi
   TELEGRAM_STARTED_BY_SCRIPT=true
   printf '%s\n' "$TELEGRAM_BOT_PID" >"$TELEGRAM_BOT_PID_FILE"
   popd >/dev/null

@@ -520,6 +520,51 @@ def test_build_service_rows_treats_missing_core_surfaces_as_configured_after_rec
     assert "Start the stack" in intro
 
 
+def test_build_service_rows_warns_when_status_runs_from_different_checkout(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "disabled"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    owner_repo = tmp_path / "live-checkout"
+    current_repo = tmp_path / "review-checkout"
+    owner_repo.mkdir()
+    current_repo.mkdir()
+    (state_root / "stack-owner.json").write_text(
+        f'{{"command":"start","repoRoot":"{owner_repo}"}}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {},
+        runtime_dir=runtime_dir,
+        repo_root=current_repo,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    checkout_status, checkout_detail = services["Runtime Checkout"]
+    assert checkout_status == "Different Checkout"
+    assert "live-checkout" in checkout_detail
+    assert "review-checkout" in checkout_detail
+
+
 def test_build_service_rows_marks_conversation_recall_starting_when_stack_should_be_live(
     monkeypatch, tmp_path: Path
 ) -> None:

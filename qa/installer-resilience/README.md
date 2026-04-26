@@ -14,6 +14,7 @@ classes:
    reporting a false early stop while the real stack is still warming
 6. helper install from a checkout inside a macOS protected folder must bind the helper runtime to
    the supported safe checkout instead of retriggering Documents/Desktop/Downloads access prompts
+7. native CLI prerequisite drift must be caught by executable probes instead of `PATH` presence
 
 ## Scenarios
 
@@ -60,6 +61,8 @@ Expected behavior:
 - `bin/viventium status` reports `Telegram Bridge: Starting` while the deferred watcher is pending
 - once the API becomes healthy, the deferred watcher starts the bridge automatically without a
   manual restart
+- the launched Telegram bot process survives detached launcher exit instead of depending on the
+  parent shell staying alive
 
 ### 4. Partial-stack repair and Meilisearch key drift
 
@@ -119,3 +122,21 @@ Expected behavior:
 - helper install/status-bar output makes the rebinding explicit
 - the helper app no longer needs ongoing Documents-folder access just to poll/start/stop the local
   stack
+
+### 7. Native CLI dependency drift
+
+Repro surface:
+
+- a Homebrew-installed CLI is still present on `PATH`
+- one of its shared-library dependencies has changed underneath it, so the binary aborts or cannot
+  execute
+
+Expected behavior:
+
+- preflight marks the affected prerequisite missing instead of healthy
+- `bin/viventium install` / `bin/viventium upgrade` attempts install, then reinstall, and fails
+  with a Homebrew drift hint if the binary still cannot execute
+- `bin/viventium status` warns when the live stack owner checkout differs from the checkout running
+  the status command
+- daemon readiness remains feature-specific; binary probes do not pretend that Docker, Tailscale,
+  Ollama models, router mappings, or service listeners are ready
