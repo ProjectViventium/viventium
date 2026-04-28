@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import sys
+import wave
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
 
@@ -87,6 +89,13 @@ _VCT_BRACKET_RE = re.compile(
     r"\]",
     re.IGNORECASE,
 )
+_CARTESIA_EMOTION_EVENT_RE = re.compile(
+    r'<emotion\s+value=["\']?(?P<wvalue>[^"\'>]+)["\']?\s*>(?P<wtext>[\s\S]*?)</emotion>'
+    r"|"
+    r'<emotion\s+value=["\']?(?P<svalue>[^"\'>]+)["\']?\s*/>',
+    re.IGNORECASE,
+)
+_CARTESIA_EMOTION_VALUE_RE = re.compile(r"^[A-Za-z][A-Za-z /-]{0,48}$")
 
 
 def _strip_voice_control_tags(text: str) -> str:
@@ -103,6 +112,96 @@ def _strip_voice_control_tags(text: str) -> str:
     cleaned = _VCT_BRACKET_RE.sub("", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned.strip()
+# === VIVENTIUM END ===
+
+
+# === VIVENTIUM START ===
+# Feature: Cartesia Sonic-3 emotion config parity.
+# Purpose: The LLM owns emotion markup. Telegram TTS only parses selected
+# `<emotion value="...">` tags so Cartesia gets matching transcript and config.
+def _normalize_cartesia_emotion(value: Optional[str], default: str) -> str:
+    fallback = (default or "neutral").strip().lower() or "neutral"
+    candidate = (value or "").strip().lower()
+    candidate = re.sub(r"\s+", " ", candidate)
+    if not candidate or not _CARTESIA_EMOTION_VALUE_RE.match(candidate):
+        return fallback
+    return candidate
+
+
+def _cartesia_segments_for_text(text: str, default_emotion: str) -> list[tuple[str, str]]:
+    if not text:
+        return []
+    default_value = _normalize_cartesia_emotion(default_emotion, "neutral")
+    segments: list[tuple[str, str]] = []
+    current_emotion = default_value
+    pos = 0
+
+    for match in _CARTESIA_EMOTION_EVENT_RE.finditer(text):
+        if match.start() > pos:
+            prefix = text[pos:match.start()]
+            if prefix.strip():
+                segments.append((prefix, current_emotion))
+
+        wrapped_value = match.group("wvalue")
+        self_closing_value = match.group("svalue")
+        if wrapped_value is not None:
+            segment_text = match.group(0)
+            emotion = _normalize_cartesia_emotion(wrapped_value, default_value)
+            if segment_text.strip():
+                segments.append((segment_text, emotion))
+            pos = match.end()
+            continue
+
+        current_emotion = _normalize_cartesia_emotion(self_closing_value, default_value)
+        pos = match.start()
+
+    if pos < len(text):
+        suffix = text[pos:]
+        if suffix.strip():
+            segments.append((suffix, current_emotion))
+
+    return segments or [(text, default_value)]
+
+
+def _merge_wav_chunks(chunks: list[bytes]) -> bytes:
+    if not chunks:
+        return b""
+    if len(chunks) == 1:
+        return chunks[0]
+    try:
+        frames: list[bytes] = []
+        params = None
+        for chunk in chunks:
+            with wave.open(BytesIO(chunk), "rb") as wav_file:
+                current_params = wav_file.getparams()
+                if params is None:
+                    params = current_params
+                elif current_params[:3] != params[:3]:
+                    logger.warning("Cartesia WAV segment params differ; returning raw concatenation")
+                    return b"".join(chunks)
+                frames.append(wav_file.readframes(wav_file.getnframes()))
+        output = BytesIO()
+        with wave.open(output, "wb") as out_file:
+            out_file.setparams(params)
+            out_file.writeframes(b"".join(frames))
+        return output.getvalue()
+    except Exception:
+        logger.exception("Failed to merge Cartesia WAV chunks; returning raw concatenation")
+        return b"".join(chunks)
+
+
+def _tts_debug_enabled() -> bool:
+    return (
+        os.getenv("VIVENTIUM_VOICE_DEBUG_TTS") == "1"
+        or os.getenv("VIVENTIUM_TELEGRAM_DEBUG_TTS") == "1"
+    )
+
+
+def _debug_text(text: str, limit: int = 1200) -> str:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3] + "..."
 # === VIVENTIUM END ===
 
 
@@ -407,25 +506,6 @@ async def synthesize_speech(
                 )
                 cartesia_model_id = _CARTESIA_SONIC3_MODEL_ID
 
-            # Updated 2026-02-22: Removed deprecated Sonic-2 top-level "speed": "normal"
-            # (conflicts with generation_config.speed). Made language configurable.
-            payload = {
-                "model_id": cartesia_model_id,
-                "transcript": synth_text,
-                "voice": {"mode": "id", "id": cartesia_voice_id},
-                "output_format": {
-                    "container": "wav",
-                    "encoding": "pcm_s16le",
-                    "sample_rate": int(VIVENTIUM_CARTESIA_SAMPLE_RATE),
-                },
-                "language": VIVENTIUM_CARTESIA_LANGUAGE or "en",
-                "generation_config": {
-                    "speed": float(VIVENTIUM_CARTESIA_SPEED),
-                    "volume": float(VIVENTIUM_CARTESIA_VOLUME),
-                    "emotion": VIVENTIUM_CARTESIA_EMOTION or "neutral",
-                },
-            }
-
             headers = {
                 "Cartesia-Version": VIVENTIUM_CARTESIA_API_VERSION,
                 "X-API-Key": CARTESIA_API_KEY,
@@ -434,12 +514,48 @@ async def synthesize_speech(
             }
 
             try:
+                default_emotion = VIVENTIUM_CARTESIA_EMOTION or "neutral"
+                segments = _cartesia_segments_for_text(synth_text, default_emotion)
+                audio_chunks: list[bytes] = []
                 async with httpx.AsyncClient(timeout=timeout_config) as client:
-                    response = await client.post(
-                        VIVENTIUM_CARTESIA_API_URL, headers=headers, content=json.dumps(payload)
-                    )
-                    response.raise_for_status()
-                    return response.content
+                    for index, (segment_text, segment_emotion) in enumerate(segments, start=1):
+                        # Updated 2026-02-22: Removed deprecated Sonic-2 top-level "speed": "normal"
+                        # (conflicts with generation_config.speed). Made language configurable.
+                        payload = {
+                            "model_id": cartesia_model_id,
+                            "transcript": segment_text,
+                            "voice": {"mode": "id", "id": cartesia_voice_id},
+                            "output_format": {
+                                "container": "wav",
+                                "encoding": "pcm_s16le",
+                                "sample_rate": int(VIVENTIUM_CARTESIA_SAMPLE_RATE),
+                            },
+                            "language": VIVENTIUM_CARTESIA_LANGUAGE or "en",
+                            "generation_config": {
+                                "speed": float(VIVENTIUM_CARTESIA_SPEED),
+                                "volume": float(VIVENTIUM_CARTESIA_VOLUME),
+                                "emotion": segment_emotion,
+                            },
+                        }
+                        if _tts_debug_enabled():
+                            logger.info(
+                                "[VoiceMarkup][telegram] cartesia_request segment=%s/%s "
+                                "model=%s voice_id=%s emotion=%s transcript=%s",
+                                index,
+                                len(segments),
+                                cartesia_model_id,
+                                cartesia_voice_id,
+                                segment_emotion,
+                                _debug_text(segment_text),
+                            )
+                        response = await client.post(
+                            VIVENTIUM_CARTESIA_API_URL,
+                            headers=headers,
+                            content=json.dumps(payload),
+                        )
+                        response.raise_for_status()
+                        audio_chunks.append(response.content)
+                return _merge_wav_chunks(audio_chunks)
             except asyncio.TimeoutError:
                 logger.warning("Cartesia TTS timed out for conversation %s", convo_id)
             except httpx.HTTPStatusError as err:

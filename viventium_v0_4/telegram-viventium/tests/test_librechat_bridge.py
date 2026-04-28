@@ -26,6 +26,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     LibreChatBridge,
     LibreChatSession,
     render_telegram_markdown,
+    sanitize_telegram_display_text,
     sanitize_telegram_text,
 )
 
@@ -89,6 +90,22 @@ def test_render_telegram_markdown_converts_basic_markdown():
     rendered = render_telegram_markdown(text)
     assert "<b>bold</b>" in rendered
     assert "\u2022 item" in rendered
+
+
+def test_voice_markup_display_sanitizer_preserves_default_markdown_rendering():
+    text = '<emotion value="excited"/>Hello [laughter] **there**'
+
+    rendered_default = render_telegram_markdown(text)
+    rendered_voice = render_telegram_markdown(text, strip_voice_markup=True)
+    display_text = sanitize_telegram_display_text(text)
+
+    assert "emotion value" in rendered_default
+    assert "[laughter]" in rendered_default
+    assert "<emotion" not in rendered_voice
+    assert "[laughter]" not in rendered_voice
+    assert "Hello" in rendered_voice
+    assert "<b>there</b>" in rendered_voice
+    assert display_text == "Hello **there**"
 # === VIVENTIUM END ===
 
 
@@ -350,6 +367,59 @@ async def test_deliver_callback_sends_voice_audio_when_preference_gate_passes(mo
     assert captured["message"] == "hello"
     assert captured["parse_mode"] == "MarkdownV2"
     assert captured["voice_audio"] == b"voice-bytes"
+
+
+@pytest.mark.asyncio
+async def test_deliver_callback_uses_raw_voice_markup_for_tts_and_sanitizes_display(monkeypatch):
+    bridge = _make_bridge()
+    captured = {}
+    tts_seen = {}
+
+    async def _capture(chat_id, message, parse_mode=None, voice_audio=None):
+        captured["chat_id"] = chat_id
+        captured["message"] = message
+        captured["parse_mode"] = parse_mode
+        captured["voice_audio"] = voice_audio
+
+    bridge.set_on_message_callback(_capture)
+
+    fake_config = types.SimpleNamespace(
+        Users=types.SimpleNamespace(
+            get_config=lambda _convo_id, key: True if key == "ALWAYS_VOICE_RESPONSE" else True,
+        )
+    )
+    monkeypatch.setitem(sys.modules, "config", fake_config)
+    fake_utils_pkg = types.ModuleType("utils")
+    fake_voice_mod = types.ModuleType("utils.voice")
+    fake_tts_mod = types.ModuleType("utils.tts")
+    fake_voice_mod.should_send_voice_reply = lambda **_kwargs: True
+
+    async def _fake_tts(text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        tts_seen["text"] = text
+        return b"voice-bytes"
+
+    fake_tts_mod.synthesize_speech = _fake_tts
+    monkeypatch.setitem(sys.modules, "utils", fake_utils_pkg)
+    monkeypatch.setitem(sys.modules, "utils.voice", fake_voice_mod)
+    monkeypatch.setitem(sys.modules, "utils.tts", fake_tts_mod)
+
+    raw = '<emotion value="frustrated"/>Hmm... [laughter] **okay**.'
+
+    await bridge._deliver_callback(
+        321,
+        render_telegram_markdown(raw),
+        parse_mode="HTML",
+        preference_convo_id="321",
+        raw_message=raw,
+    )
+
+    assert tts_seen["text"] == raw
+    assert captured["voice_audio"] == b"voice-bytes"
+    assert captured["parse_mode"] == "HTML"
+    assert "<emotion" not in captured["message"]
+    assert "[laughter]" not in captured["message"]
+    assert "<b>okay</b>" in captured["message"]
 
 
 @pytest.mark.asyncio

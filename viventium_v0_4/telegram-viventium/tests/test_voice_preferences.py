@@ -50,7 +50,7 @@ _fake_aient_inner_pkg.utils = _fake_aient_utils_pkg
 _fake_aient_utils_pkg.scripts = _fake_aient_scripts
 sys.modules["aient.aient.utils.scripts"] = _fake_aient_scripts
 
-from TelegramVivBot.utils.voice import should_send_voice_reply
+from TelegramVivBot.utils.voice import should_request_voice_mode, should_send_voice_reply
 
 # === VIVENTIUM START ===
 # Feature: Provide a minimal config stub so utils.scripts avoids full config import.
@@ -132,6 +132,39 @@ def test_should_send_voice_reply_always_voice():
             text="hello",
         )
         is True
+    )
+
+
+def test_should_request_voice_mode_for_voice_note():
+    assert (
+        should_request_voice_mode(
+            voice_note_detected=True,
+            always_voice=False,
+            voice_enabled=True,
+        )
+        is True
+    )
+
+
+def test_should_request_voice_mode_for_always_voice_text():
+    assert (
+        should_request_voice_mode(
+            voice_note_detected=False,
+            always_voice=True,
+            voice_enabled=True,
+        )
+        is True
+    )
+
+
+def test_should_request_voice_mode_honors_string_disabled_value():
+    assert (
+        should_request_voice_mode(
+            voice_note_detected=True,
+            always_voice=True,
+            voice_enabled="false",
+        )
+        is False
     )
 
 

@@ -103,6 +103,7 @@ All chat messages route through the LibreChat Agents pipeline (same brain as the
 - `VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S` - Seconds to wait for background insights after the main response
 - `VIVENTIUM_TELEGRAM_INSIGHT_MAX_S` - Maximum seconds to keep insight listener alive
 - `VIVENTIUM_TELEGRAM_USER_EMAIL` - Resolve LibreChat user by email if userId is not set
+- `VIVENTIUM_TELEGRAM_DEBUG_TTS` - Set to `1` for non-secret Telegram voice markup/TTS QA logs
 
 See `config.env.example` for all available options.
 
@@ -110,6 +111,8 @@ See `config.env.example` for all available options.
 
 - ✅ **Text Chat**: Send messages via Telegram, receive responses from Viventium
 - ✅ **Voice Notes**: Transcribe voice messages and send to Viventium
+- ✅ **Voice Replies**: Uses the linked user's saved modern Speaking route for voice notes and
+  always-voice text replies
 - ✅ **Image Support**: Send images, extract text, and process with Viventium
 - ✅ **Document Processing**: Extract text from PDFs and documents
 - ✅ **Multi-user Support**: Each Telegram user gets their own LiveKit room
@@ -123,6 +126,10 @@ This bot uses **LibreChat Agents**, meaning:
 - Same system prompts, tools, MCPs, and capabilities as the web UI
 - Consistent behavior across Telegram and LibreChat
 - No LiveKit dependency for text chat
+- Voice output preferences are routed before generation. A voice note or always-voice text turn
+  requests LibreChat `voiceMode=true`; disabled voice replies request text-only output.
+- Cartesia Speaking routes always use Sonic-3 with the selected voice persona. Model-authored
+  Cartesia SSML/emotion markers are preserved for TTS and sanitized from Telegram-visible text.
 
 ### LiveKit Bridge Mode (Legacy)
 

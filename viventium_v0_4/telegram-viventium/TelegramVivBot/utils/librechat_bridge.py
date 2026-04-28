@@ -81,6 +81,22 @@ _BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|$)")
 _MARKDOWN_CODE_SPAN_RE = re.compile(r"```[\s\S]*?```|`[^`\n]*`")
 _EM_DASH_RE = re.compile("—")
 _EM_DASH_OPENERS = "\"'“‘([{"
+# Voice-control markup is model-authored text for expressive TTS. It must not be
+# shown to Telegram users when a voice-routed response is displayed as text.
+_VOICE_SPEAK_RE = re.compile(r"</?speak[^>]*>", re.IGNORECASE)
+_VOICE_EMOTION_SELF_CLOSING_RE = re.compile(
+    r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*/>',
+    re.IGNORECASE,
+)
+_VOICE_EMOTION_WRAP_RE = re.compile(
+    r'<emotion\s+value=["\']?[^"\'>]+["\']?\s*>([\s\S]*?)</emotion>',
+    re.IGNORECASE,
+)
+_VOICE_BREAK_RE = re.compile(r'<break\s+time=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
+_VOICE_SPEED_RE = re.compile(r'<speed\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
+_VOICE_VOLUME_RE = re.compile(r'<volume\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
+_VOICE_SPELL_RE = re.compile(r"<spell>([\s\S]*?)</spell>", re.IGNORECASE)
+_VOICE_BRACKET_RE = re.compile(r"\[([A-Za-z][A-Za-z' -]{1,40})\]")
 # === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
@@ -185,6 +201,42 @@ def sanitize_telegram_text(text: str) -> str:
     return cleaned
 
 
+def strip_voice_control_tags_for_display(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _VOICE_SPEAK_RE.sub("", text)
+    cleaned = _VOICE_EMOTION_WRAP_RE.sub(r"\1", cleaned)
+    cleaned = _VOICE_EMOTION_SELF_CLOSING_RE.sub("", cleaned)
+    cleaned = _VOICE_BREAK_RE.sub("", cleaned)
+    cleaned = _VOICE_SPEED_RE.sub("", cleaned)
+    cleaned = _VOICE_VOLUME_RE.sub("", cleaned)
+    cleaned = _VOICE_SPELL_RE.sub(r"\1", cleaned)
+    cleaned = _VOICE_BRACKET_RE.sub(_strip_voice_bracket_marker, cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
+def _strip_voice_bracket_marker(match: re.Match[str]) -> str:
+    marker = match.group(1).strip()
+    if not marker:
+        return match.group(0)
+    if marker != marker.lower():
+        return match.group(0)
+    if any(char.isdigit() for char in marker):
+        return match.group(0)
+    words = [word for word in marker.split() if word]
+    if len(words) > 3:
+        return match.group(0)
+    alpha_count = sum(1 for char in marker if char.isalpha())
+    if alpha_count < 3 or alpha_count > 24:
+        return match.group(0)
+    return ""
+
+
+def sanitize_telegram_display_text(text: str) -> str:
+    return strip_voice_control_tags_for_display(sanitize_telegram_text(text))
+
+
 def _apply_outside_markdown_code(text: str, transform: Callable[[str], str]) -> str:
     if not text:
         return ""
@@ -258,8 +310,10 @@ def _strip_markdown(text: str) -> str:
 # Feature: Convert standard Markdown to Telegram HTML (robust replacement for MarkdownV2).
 # MarkdownV2 required 17 characters to be perfectly escaped — any miss caused total parse failure.
 # HTML only needs 3 (<, >, &) and degrades gracefully on edge cases.
-def render_telegram_markdown(text: str) -> str:
+def render_telegram_markdown(text: str, *, strip_voice_markup: bool = False) -> str:
     cleaned = sanitize_telegram_text(text)
+    if strip_voice_markup:
+        cleaned = strip_voice_control_tags_for_display(cleaned)
     if not cleaned:
         return ""
     return markdown_to_html(cleaned)
@@ -1172,7 +1226,13 @@ class LibreChatBridge:
         voice_audio: Optional[bytes] = None
         convo_id = preference_convo_id or str(target_chat_id)
         voice_route = self._stream_voice_route(stream_id) or self.get_cached_voice_route(str(target_chat_id))
-        if message and convo_id:
+        voice_text = (
+            raw_message
+            if isinstance(raw_message, str) and raw_message.strip()
+            else message
+        )
+        should_send_voice = False
+        if voice_text and convo_id:
             try:
                 from config import Users  # local import to avoid circular dependency
                 from utils.tts import synthesize_speech
@@ -1184,12 +1244,15 @@ class LibreChatBridge:
                     voice_note_detected=False,
                     always_voice=always_voice,
                     voice_enabled=voice_responses_enabled,
-                    text=message,
+                    text=voice_text,
                 )
                 if should_send_voice:
-                    voice_audio = await synthesize_speech(message, convo_id, voice_route=voice_route)
+                    voice_audio = await synthesize_speech(voice_text, convo_id, voice_route=voice_route)
             except Exception as exc:
                 logger.warning("Failed proactive voice synthesis, falling back to text: %s", exc)
+        if should_send_voice and isinstance(raw_message, str) and raw_message.strip():
+            message = render_telegram_markdown(raw_message, strip_voice_markup=True)
+            parse_mode = "HTML"
         # === VIVENTIUM END ===
 
         async def _invoke_callback(
@@ -1250,7 +1313,10 @@ class LibreChatBridge:
                     last_index = len(chunks) - 1
                     for index, chunk in enumerate(chunks):
                         await _invoke_callback(
-                            render_telegram_markdown(chunk),
+                            render_telegram_markdown(
+                                chunk,
+                                strip_voice_markup=should_send_voice,
+                            ),
                             payload_parse_mode="HTML",
                             payload_voice_audio=voice_audio if index == last_index else None,
                         )

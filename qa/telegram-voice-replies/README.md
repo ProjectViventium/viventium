@@ -40,6 +40,42 @@ Fix:
 - Blocked: requested ClaudeViv second-opinion review could not run because the local Claude CLI was
   rate-limited during this QA pass.
 
+## 2026-04-28 Parity Follow-Up
+
+Observed drift:
+
+- Telegram voice-note turns requested LibreChat `voiceMode=true`, but text turns with
+  `ALWAYS_VOICE_RESPONSE=true` only synthesized audio after the LLM completed.
+- That meant always-voice text replies could be spoken without the main agent receiving the
+  voice-mode Cartesia prompt before generation.
+- Proactive follow-up voice synthesis used rendered display text instead of the raw assistant text,
+  so Cartesia voice-control tags could be lost before TTS.
+- Telegram display rendering did not have the modern voice display sanitizer, so model-authored
+  voice-control markers could appear in user-visible text.
+- Telegram Cartesia TTS preserved SSML in the transcript, but did not set
+  `generation_config.emotion` from the LLM-selected `<emotion value="..."/>` tag.
+
+Fix:
+
+- Telegram now computes the voice-mode generation route from the same preferences used for final
+  audio delivery:
+  - voice note + voice enabled -> `voiceMode=true`
+  - text + always voice + voice enabled -> `voiceMode=true`
+  - voice disabled -> no voice-mode prompt and no audio reply
+- `input_mode` stays tied to actual input type, so always-voice text messages still send
+  `input_mode=text`.
+- Raw assistant text is preserved for TTS while Telegram-visible text uses a deterministic display
+  sanitizer for Cartesia markup.
+- Proactive callbacks use `raw_message` for TTS and sanitized HTML for display.
+- Telegram Cartesia requests parse model-authored emotion tags and set the matching
+  `generation_config.emotion`; multiple emotion regions are synthesized as separate WAV segments
+  and merged.
+
+Verification:
+
+- Passed: `python3 -m py_compile TelegramVivBot/bot.py TelegramVivBot/utils/voice.py TelegramVivBot/utils/librechat_bridge.py TelegramVivBot/utils/tts.py`
+- Passed: `uv run --with pytest --with pytest-asyncio --with httpx --with requests --with pillow --with fastapi python -m pytest tests/test_tts.py tests/test_voice_preferences.py tests/test_librechat_bridge.py -q`
+
 ## Acceptance Contract
 
 - Change the modern voice Speaking route to Cartesia / Lyra.
@@ -49,3 +85,15 @@ Fix:
   - LibreChat receives the turn with `voiceMode=true`.
   - Telegram receives the text reply.
   - Telegram also receives an audio reply synthesized with Cartesia Sonic-3 and the Lyra voice ID.
+- Turn on always-voice replies and send a Telegram text message.
+- Expected:
+  - LibreChat receives the turn with `voiceMode=true` and `input_mode=text`.
+  - The main agent may emit Cartesia Sonic-3 markup because the voice prompt was present before
+    generation.
+  - Telegram text hides voice-control markup.
+  - Telegram audio preserves the raw markup for Cartesia and uses the selected saved Speaking
+    voice.
+- Turn off voice replies and send either text or voice input.
+- Expected:
+  - No Telegram audio reply is sent.
+  - LibreChat is not put into voice-mode output for that turn.

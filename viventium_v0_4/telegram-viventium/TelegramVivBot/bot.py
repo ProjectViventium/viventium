@@ -1,4 +1,5 @@
 import re
+import os
 import sys
 import warnings
 sys.dont_write_bytecode = True
@@ -52,13 +53,14 @@ from utils.tts import synthesize_speech
 from utils.livekit_bridge import LiveKitBridge
 # === VIVENTIUM START ===
 # Feature: Centralized voice reply gating helper.
-from utils.voice import should_send_voice_reply
+from utils.voice import normalize_voice_preference, should_request_voice_mode, should_send_voice_reply
 # === VIVENTIUM END ===
 # === VIVENTIUM START ===
 # Feature: Telegram account linking flow + citation-safe formatting helpers.
 from utils.librechat_bridge import (
     TelegramLinkRequired,
     render_telegram_markdown,
+    sanitize_telegram_display_text,
     sanitize_telegram_text,
     is_no_response_only,
     strip_trailing_nta,
@@ -135,6 +137,23 @@ def _strip_placeholder_prefix(text: str) -> str:
         return text
     remainder = stripped[match.end():].lstrip()
     return remainder
+# === VIVENTIUM END ===
+
+
+# === VIVENTIUM START ===
+# Feature: Non-secret voice markup debug logging for Telegram parity QA.
+def _voice_debug_enabled() -> bool:
+    return (
+        os.getenv("VIVENTIUM_VOICE_DEBUG_TTS") == "1"
+        or os.getenv("VIVENTIUM_TELEGRAM_DEBUG_TTS") == "1"
+    )
+
+
+def _voice_debug_text(text: str, limit: int = 1200) -> str:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3] + "..."
 # === VIVENTIUM END ===
 
 
@@ -707,21 +726,45 @@ async def getViventiumResponse(
     telegram_user_id = str(update_message.from_user.id) if update_message.from_user else ""
     telegram_username = update_message.from_user.username if update_message.from_user else ""
 
-    # Voice vs text surface formatting (voice mode = no markdown).
-    voice_mode = bool(voice_note_detected)
+    # Voice output preference controls both prompt routing and final audio send.
+    always_voice = False
+    voice_responses_enabled = True
+    try:
+        always_voice = Users.get_config(convo_id, "ALWAYS_VOICE_RESPONSE")
+    except Exception:
+        pass  # Default to False if preference is unset/unavailable.
+    try:
+        voice_responses_enabled = Users.get_config(convo_id, "VOICE_RESPONSES_ENABLED")
+    except Exception:
+        pass  # Default to True if preference is unset/unavailable.
+    always_voice_active = normalize_voice_preference(always_voice, False)
+    voice_responses_active = normalize_voice_preference(voice_responses_enabled, True)
+
+    voice_mode = should_request_voice_mode(
+        voice_note_detected=voice_note_detected,
+        always_voice=always_voice_active,
+        voice_enabled=voice_responses_active,
+    )
+    input_mode = "voice_note" if voice_note_detected else "text"
     # === VIVENTIUM START ===
     _tg_timing_log(
         trace_id,
         "response_start",
         response_start_ts,
-        extra=f"voice={int(voice_mode)} files={len(files) if files else 0}",
+        extra=(
+            f"voice={int(voice_mode)} input_voice={int(bool(voice_note_detected))} "
+            f"always_voice={int(always_voice_active)} files={len(files) if files else 0}"
+        ),
     )
     _tg_deep_log(
         trace_id,
         "response_start",
         response_start_ts,
         base_ts=response_start_ts,
-        extra=f"voice={int(voice_mode)} files={len(files) if files else 0}",
+        extra=(
+            f"voice={int(voice_mode)} input_voice={int(bool(voice_note_detected))} "
+            f"always_voice={int(always_voice_active)} files={len(files) if files else 0}"
+        ),
     )
     # === VIVENTIUM END ===
     # Feature: Pass per-chat timezone when available for accurate time context.
@@ -747,7 +790,7 @@ async def getViventiumResponse(
         # Fix: Always render HTML for text display, even when input was a voice note.
         # Voice-note input should NOT degrade text readability.
         # TTS synthesis has its own sanitization path (prepare_tts_text in tts.py).
-        return render_telegram_markdown(text), "HTML"
+        return render_telegram_markdown(text, strip_voice_markup=voice_mode), "HTML"
         # === VIVENTIUM NOTE END ===
     # === VIVENTIUM END ===
 
@@ -1003,7 +1046,7 @@ async def getViventiumResponse(
             telegram_message_id=telegram_message_id,
             telegram_update_id=telegram_update_id,
             voice_mode=voice_mode,
-            input_mode="voice_note" if voice_mode else "text",
+            input_mode=input_mode,
             files=files if files else None,  # File data for vision models
             message_timestamp=message_timestamp,  # Time context for scheduling
             client_timezone=client_timezone,  # Timezone for time context formatting
@@ -1397,7 +1440,15 @@ async def getViventiumResponse(
                     )
                 except Exception as e:
                     if now_parse_mode and "parse entities" in str(e):
-                        fallback = strip_html_tags(now_result) if now_parse_mode == "HTML" else sanitize_telegram_text(tmpresult)
+                        fallback = (
+                            strip_html_tags(now_result)
+                            if now_parse_mode == "HTML"
+                            else (
+                                sanitize_telegram_display_text(tmpresult)
+                                if voice_mode
+                                else sanitize_telegram_text(tmpresult)
+                            )
+                        )
                         await context.bot.edit_message_text(
                             chat_id=chatid,
                             message_id=answer_messageid,
@@ -1413,30 +1464,21 @@ async def getViventiumResponse(
                 await _ensure_answer_message(
                     now_result,
                     now_parse_mode,
-                    fallback_text=sanitize_telegram_text(tmpresult),
+                    fallback_text=(
+                        sanitize_telegram_display_text(tmpresult)
+                        if voice_mode
+                        else sanitize_telegram_text(tmpresult)
+                    ),
                 )
 
-    # Check if user wants voice responses (either sent voice note OR always_voice_response enabled)
-    always_voice = False
-    voice_responses_enabled = True
-    try:
-        always_voice = Users.get_config(convo_id, "ALWAYS_VOICE_RESPONSE")
-    except Exception:
-        pass  # Default to False if preference not set
     # === VIVENTIUM START ===
-    # Feature: Allow per-chat enable/disable of voice replies.
-    try:
-        voice_responses_enabled = Users.get_config(convo_id, "VOICE_RESPONSES_ENABLED")
-    except Exception:
-        pass  # Default to True if preference not set
-    # === VIVENTIUM END ===
-
-    # === VIVENTIUM START ===
-    # Feature: Centralized gating for voice replies (honors user preference).
+    # Feature: Centralized gating for voice replies.
+    # Reuse the same preference snapshot used before generation so prompt routing
+    # and final audio delivery cannot disagree during one Telegram turn.
     should_send_voice = should_send_voice_reply(
         voice_note_detected=voice_note_detected,
-        always_voice=always_voice,
-        voice_enabled=voice_responses_enabled,
+        always_voice=always_voice_active,
+        voice_enabled=voice_responses_active,
         text=tmpresult,
     )
     _tg_timing_log(
@@ -1445,8 +1487,8 @@ async def getViventiumResponse(
         response_start_ts,
         extra=(
             f"voice_note={int(bool(voice_note_detected))} "
-            f"always_voice={int(bool(always_voice))} "
-            f"voice_enabled={int(bool(voice_responses_enabled))} "
+            f"always_voice={int(always_voice_active)} "
+            f"voice_enabled={int(voice_responses_active)} "
             f"send={int(bool(should_send_voice))}"
         ),
     )
@@ -1457,8 +1499,8 @@ async def getViventiumResponse(
         base_ts=response_start_ts,
         extra=(
             f"voice_note={int(bool(voice_note_detected))} "
-            f"always_voice={int(bool(always_voice))} "
-            f"voice_enabled={int(bool(voice_responses_enabled))} "
+            f"always_voice={int(always_voice_active)} "
+            f"voice_enabled={int(voice_responses_active)} "
             f"send={int(bool(should_send_voice))}"
         ),
     )
@@ -1468,6 +1510,14 @@ async def getViventiumResponse(
         cleaned_voice = config.prepare_tts_text(tmpresult)
         if cleaned_voice:
             try:
+                if _voice_debug_enabled():
+                    logger.info(
+                        "[VoiceMarkup][telegram] trace=%s raw_llm=%s tts_text=%s display_text=%s",
+                        trace_id,
+                        _voice_debug_text(tmpresult),
+                        _voice_debug_text(cleaned_voice),
+                        _voice_debug_text(sanitize_telegram_display_text(tmpresult)),
+                    )
                 voice_route = robot.get_cached_voice_route(str(chatid)) if hasattr(robot, "get_cached_voice_route") else None
                 tts_provider = ""
                 if isinstance(voice_route, dict):
@@ -1484,7 +1534,7 @@ async def getViventiumResponse(
                 # Split by sentences to maintain natural flow
                 # Note: 're' is already imported at top of file
                 max_chunk_size = 800
-                if "chatterbox" in tts_provider:
+                if "chatterbox" in tts_provider or tts_provider == "cartesia":
                     chunks = [cleaned_voice]
                 elif len(cleaned_voice) > max_chunk_size:
                     # Split by sentences (periods, exclamation, question marks followed by space)

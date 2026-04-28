@@ -45,6 +45,29 @@ stream back to Telegram through the existing bridge.
   playground. The LibreChat Telegram route resolves `resolveUserVoiceRoute(...)` for the linked
   user and returns that route to the bot; the bot must treat Cartesia variants as voice IDs
   (Megan/Lyra), not as Sonic model names. Cartesia model selection is Sonic-3-only.
+- Telegram voice output preferences must stay aligned before and after generation:
+  - `VOICE_RESPONSES_ENABLED=false` disables both Telegram audio replies and voice-mode prompt
+    routing.
+  - A Telegram voice note requests LibreChat `voiceMode=true` and should receive an audio reply
+    when voice replies are enabled.
+  - `ALWAYS_VOICE_RESPONSE=true` requests LibreChat `voiceMode=true` even for text messages, so
+    the main agent receives the same voice-surface instructions before it generates the answer.
+  - `input_mode` remains structural: only actual voice-note input is sent as `voice_note`; text
+    messages with always-voice output still use `input_mode=text`.
+- When the resolved Speaking route is Cartesia, Telegram follows the same Sonic-3 voice markup
+  contract as modern calls:
+  - the main agent may emit Cartesia SSML-like tags and bracket nonverbal markers only because the
+    voice-mode prompt instructed it to do so
+  - runtime must not invent emotion tags or infer emotion from user intent
+  - raw LLM text with Cartesia markup is preserved for TTS
+  - user-visible Telegram text is sanitized so `<emotion>`, `<break>`, `<speed>`, `<volume>`,
+    `<spell>`, and structural bracket stage directions do not appear
+  - Cartesia `/tts/bytes` requests include both the model-authored tag in `transcript` and the same
+    parsed emotion value in `generation_config.emotion`; multiple model-authored emotion regions
+    are synthesized as separate WAV segments and merged
+  - opt-in non-secret debugging (`VIVENTIUM_VOICE_DEBUG_TTS=1` or
+    `VIVENTIUM_TELEGRAM_DEBUG_TTS=1`) may log raw LLM text, TTS text, display-sanitized text, and
+    Cartesia request transcripts without API keys
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
   explicitly known-good for the current deployment.

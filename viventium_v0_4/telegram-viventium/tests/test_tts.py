@@ -1,7 +1,9 @@
 from pathlib import Path
+from io import BytesIO
 import json
 import sys
 import types
+import wave
 
 import pytest
 
@@ -13,6 +15,16 @@ if str(TELEGRAM_ROOT) not in sys.path:
     sys.path.insert(0, str(TELEGRAM_ROOT))
 
 from TelegramVivBot.utils import tts as tts_module
+
+
+def _test_wav_bytes(frame_value: bytes = b"\x00\x00") -> bytes:
+    output = BytesIO()
+    with wave.open(output, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(44100)
+        wav_file.writeframes(frame_value)
+    return output.getvalue()
 
 
 def _fake_config(**overrides):
@@ -315,3 +327,112 @@ async def test_synthesize_speech_cartesia_ignores_legacy_model_variant(monkeypat
     assert voice_bytes == b"wav-bytes"
     assert seen["payload"]["model_id"] == "sonic-3"
     assert seen["payload"]["voice"] == {"mode": "id", "id": "default-voice-id"}
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_cartesia_preserves_voice_markup_and_sets_emotion(monkeypatch):
+    seen = {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="cartesia",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_EMOTION="neutral",
+            VIVENTIUM_CARTESIA_VOICE_ID="voice-id",
+        ),
+    )
+
+    class _Response:
+        content = b"wav-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, _url, *, content=None, **_kwargs):
+            seen["payload"] = json.loads(content)
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+    raw = '<emotion value="frustrated"/>Hmm... okay. [laughter]'
+
+    voice_bytes = await tts_module.synthesize_speech(raw, "conv-1")
+
+    assert voice_bytes == b"wav-bytes"
+    assert seen["payload"]["transcript"] == raw
+    assert seen["payload"]["generation_config"]["emotion"] == "frustrated"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_cartesia_splits_model_authored_emotion_states(monkeypatch):
+    payloads = []
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="cartesia",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_EMOTION="neutral",
+            VIVENTIUM_CARTESIA_VOICE_ID="voice-id",
+        ),
+    )
+
+    class _Response:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, _url, *, content=None, **_kwargs):
+            payloads.append(json.loads(content))
+            return _Response(_test_wav_bytes(len(payloads).to_bytes(2, "little")))
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech(
+        '<emotion value="frustrated"/>Hmm. <emotion value="calm"/>Okay.',
+        "conv-1",
+    )
+
+    assert [payload["generation_config"]["emotion"] for payload in payloads] == [
+        "frustrated",
+        "calm",
+    ]
+    assert payloads[0]["transcript"].startswith('<emotion value="frustrated"/>')
+    assert payloads[1]["transcript"].startswith('<emotion value="calm"/>')
+    with wave.open(BytesIO(voice_bytes), "rb") as wav_file:
+        assert wav_file.getnframes() == 2
+
+
+def test_strip_voice_control_tags_for_non_cartesia_fallback():
+    assert (
+        tts_module._strip_voice_control_tags(
+            '<emotion value="excited"/>Hi [laughter] <break time="1s"/><spell>ABC</spell>'
+        )
+        == "Hi ABC"
+    )
