@@ -76,6 +76,26 @@ background-cortex behavior.
   when they land inside the configured turn-coalescing window.
 - Voice persistence may keep provider markup in the live synthesis path, but the canonical saved
   assistant text/content used for history and reloads must not retain raw voice-control tags.
+- When Cartesia is the call-mode TTS provider, the model-facing voice prompt may instruct the LLM
+  to emit Sonic-3 SSML-like tags. Runtime must not invent emotion tags from heuristics; it may only
+  preserve, segment, sanitize-for-display, and route LLM-selected provider markup.
+- Cartesia live calls must use the WebSocket continuation path for incremental LLM deltas. The
+  `/tts/bytes` WAV endpoint is reserved for full-text one-request surfaces and must not become the
+  default live-call path.
+- The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
+  and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
+  voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
+  (`6ccbfb76-1fc6-48f7-b71d-91ac6298247b`).
+- Cartesia emotion handling must pass both surfaces when the LLM selected an emotion tag:
+  the `<emotion value="..."/>` prefix remains in the transcript sent to Cartesia, and the same value
+  is sent as `generation_config.emotion`.
+- Modern playground transcript display must use a stateful structural filter for provider markup.
+  Incomplete streaming fragments such as `<em` or `[laugh` must be buffered until they can be
+  classified, then stripped from user-visible text while the original LLM text continues to feed
+  Cartesia TTS.
+- Debug logging for voice markup must be opt-in and non-secret-bearing. With
+  `VIVENTIUM_VOICE_DEBUG_TTS=1`, logs should show LLM raw text, TTS text, display-sanitized text,
+  and Cartesia request transcripts without API keys.
 - When a TTS provider does not support native incremental text input, runtime may adapt it to an
   incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
   for voice-first providers.
@@ -106,6 +126,14 @@ background-cortex behavior.
 - Local whisper.cpp (`whisper_local` / `pywhispercpp`) remains a StreamAdapter + Silero VAD path:
   - it inherits shared interruption handling and saved-route plumbing
   - it does not gain AssemblyAI-native endpointing knobs or semantic turn-detector behavior
+- Optional voice-gateway plugins must never crash worker boot at module import time:
+  - plugin availability checks must treat a missing parent package the same as a missing leaf module
+  - semantic turn detection may downgrade at runtime, but the LiveKit worker must still register
+    for `stt` and `vad` routes
+- Voice-gateway dependency installation must compare installed package versions against
+  `voice-gateway/requirements.txt`, not just test package presence. An already-created venv with
+  older LiveKit packages must be refreshed during startup/upgrade instead of silently reusing stale
+  packages.
 - Turn-ending behavior must be config-owned and observable:
   - LiveKit interruption knobs compile from canonical config
   - AssemblyAI endpointing knobs compile from canonical config
@@ -119,6 +147,10 @@ background-cortex behavior.
     - `VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB`
     - `VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB`
     - `VIVENTIUM_VOICE_PREWARM_LOCAL_TTS`
+  - local Whisper routes default to an unlimited LiveKit worker load threshold because CPU load is
+    expected during model warm-up and must not make the worker disappear from dispatch
+  - local Whisper routes default to a longer initialization timeout so cold-start model loading does
+    not kill the idle process before the worker can accept calls
   - runtime logs must state why a user turn completed, using normalized reason labels such as
     `vad_silence`, `stt_end_of_turn`, or `semantic_turn_detector`
 - Per-call requested voice-route overrides must recompute the effective turn-taking defaults from the

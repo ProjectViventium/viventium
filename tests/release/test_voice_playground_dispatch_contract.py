@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_FILE = ROOT / "viventium_v0_4" / "agent-starter-react" / "components" / "app" / "app.tsx"
+VOICE_ROUTE_HOOK_FILE = ROOT / "viventium_v0_4" / "agent-starter-react" / "hooks" / "useVoiceRoute.ts"
 ROUTE_FILE = (
     ROOT / "viventium_v0_4" / "agent-starter-react" / "app" / "api" / "connection-details" / "route.ts"
 )
@@ -217,6 +218,34 @@ def test_connection_details_route_recovers_agent_dispatch_inputs_from_deeplink_r
     assert "const metadata = JSON.stringify({ callSessionId: deepLinkFallbacks.callSessionId });" in content
 
 
+def test_call_session_deeplink_requires_browser_mic_gesture_before_connect() -> None:
+    content = APP_FILE.read_text()
+
+    assert "const shouldAutoConnect = params.get('autoConnect') === '1';" in content
+    assert "autoConnect: shouldAutoConnect && !callSessionId," in content
+    assert "Tap Start chat to turn on your mic. Viventium joins right after." in content
+
+
+def test_call_session_playground_extends_agent_join_timeout_for_local_cold_starts() -> None:
+    content = APP_FILE.read_text()
+
+    assert "const VIVENTIUM_CALL_AGENT_CONNECT_TIMEOUT_MS = 90_000;" in content
+    assert "agentConnectTimeoutMilliseconds: expectedCallSessionId" in content
+    assert "? VIVENTIUM_CALL_AGENT_CONNECT_TIMEOUT_MS" in content
+
+
+def test_cartesia_playground_selector_exposes_named_voices_not_model_choices() -> None:
+    content = VOICE_ROUTE_HOOK_FILE.read_text()
+
+    assert "const CARTESIA_MEGAN_VOICE_ID = 'e8e5fffb-252c-436d-b842-8879b84445b6';" in content
+    assert "const CARTESIA_LYRA_VOICE_ID = '6ccbfb76-1fc6-48f7-b71d-91ac6298247b';" in content
+    assert "{ id: CARTESIA_MEGAN_VOICE_ID, label: 'Megan' }" in content
+    assert "{ id: CARTESIA_LYRA_VOICE_ID, label: 'Lyra' }" in content
+    assert "variantLabel: 'Voice'" in content
+    assert "{ id: 'sonic-2', label: 'sonic-2' }" not in content
+    assert "{ id: 'sonic-3', label: 'sonic-3' }" not in content
+
+
 def test_connection_details_route_hydrates_requested_voice_route_from_call_session_settings() -> None:
     content = ROUTE_FILE.read_text()
 
@@ -267,12 +296,15 @@ def test_connection_details_route_runtime_hydrates_dispatch_metadata_from_call_s
                 "match": "/api/viventium/calls/call-123/voice-settings",
                 "status": 200,
                 "json": {
-                    "requestedVoiceRoute": {
-                        "stt": {"provider": "assemblyai", "variant": "universal-streaming"},
-                        "tts": {"provider": "cartesia", "variant": "sonic-3"},
-                    }
+                        "requestedVoiceRoute": {
+                            "stt": {"provider": "assemblyai", "variant": "universal-streaming"},
+                            "tts": {
+                                "provider": "cartesia",
+                                "variant": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+                            },
+                        }
+                    },
                 },
-            },
             {
                 "match": "/api/viventium/calls/call-123/dispatch/claim",
                 "status": 200,
@@ -292,7 +324,7 @@ def test_connection_details_route_runtime_hydrates_dispatch_metadata_from_call_s
     assert metadata["callSessionId"] == "call-123"
     assert metadata["requestedVoiceRoute"]["tts"] == {
         "provider": "cartesia",
-        "variant": "sonic-3",
+        "variant": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
     }
     assert metadata["requestedVoiceRoute"]["stt"] == {
         "provider": "assemblyai",

@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from cartesia_tts import (
     CartesiaConfig,
     CartesiaTTS,
+    DEFAULT_VERSION,
+    DEFAULT_VOICE_ID,
     _STAGE_PROMPTS,
     _build_ws_generation_request,
     _consume_streaming_emotion_chunk,
@@ -23,6 +25,7 @@ from cartesia_tts import (
     _is_ws_done,
     _normalize_nonverbal_tokens,
     _split_emotion_segments,
+    _with_emotion_ssml,
     StreamingEmotionState,
 )
 
@@ -31,6 +34,14 @@ class TestCartesiaNormalization(unittest.TestCase):
     def test_cartesia_reports_streaming_capability(self) -> None:
         tts = CartesiaTTS(config=CartesiaConfig(api_key="cartesia-key"))
         self.assertTrue(tts.capabilities.streaming)
+
+    def test_cartesia_sonic3_defaults_match_current_public_contract(self) -> None:
+        cfg = CartesiaConfig(api_key="cartesia-key")
+        self.assertEqual(cfg.model_id, "sonic-3")
+        self.assertEqual(cfg.voice_id, DEFAULT_VOICE_ID)
+        self.assertEqual(DEFAULT_VOICE_ID, "e8e5fffb-252c-436d-b842-8879b84445b6")
+        self.assertEqual(cfg.api_version, DEFAULT_VERSION)
+        self.assertEqual(DEFAULT_VERSION, "2026-03-01")
 
     def test_laughter_stage_prompt_uses_cartesia_token(self) -> None:
         # Cartesia docs: the token `[laughter]` triggers actual laughter. We should not
@@ -46,11 +57,14 @@ class TestCartesiaNormalization(unittest.TestCase):
         self.assertNotIn("[gentle laugh]", normalized)
         self.assertNotIn("[giggle]", normalized)
 
-    def test_normalizes_sigh_variants(self) -> None:
+    def test_removes_unsupported_non_laughter_stage_directions(self) -> None:
         text = "Hmm [sigh] okay [gentle sigh] noted"
         normalized = _normalize_nonverbal_tokens(text)
-        self.assertIn("[sigh]", normalized)
+        self.assertNotIn("[sigh]", normalized)
         self.assertNotIn("[gentle sigh]", normalized)
+        self.assertIn("Hmm", normalized)
+        self.assertIn("okay", normalized)
+        self.assertIn("noted", normalized)
 
     def test_removes_unknown_tokens(self) -> None:
         text = "[whisper] hello [snort] world"
@@ -118,6 +132,29 @@ class TestCartesiaNormalization(unittest.TestCase):
             emotion="calm",
         )
         self.assertEqual(payload["generation_config"]["emotion"], "calm")
+
+    def test_llm_selected_emotion_is_kept_as_ssml_transcript_prefix(self) -> None:
+        transcript = _with_emotion_ssml("Hmm... okay.", "frustrated")
+        self.assertEqual(transcript, '<emotion value="frustrated"/>Hmm... okay.')
+
+    def test_llm_selected_emotion_is_escaped_when_reattached(self) -> None:
+        transcript = _with_emotion_ssml("Careful.", 'calm" bad')
+        self.assertEqual(transcript, '<emotion value="calm&quot; bad"/>Careful.')
+
+    def test_ws_request_keeps_llm_emotion_in_ssml_and_generation_config(self) -> None:
+        cfg = CartesiaConfig(api_key="cartesia-key")
+        transcript = _with_emotion_ssml("This is not fun.", "frustrated")
+        payload = _build_ws_generation_request(
+            cfg=cfg,
+            context_id="ctx-123",
+            transcript=transcript,
+            continue_generation=True,
+            emotion="frustrated",
+        )
+        self.assertEqual(payload["model_id"], "sonic-3")
+        self.assertEqual(payload["voice"], {"mode": "id", "id": DEFAULT_VOICE_ID})
+        self.assertEqual(payload["transcript"], '<emotion value="frustrated"/>This is not fun.')
+        self.assertEqual(payload["generation_config"]["emotion"], "frustrated")
 
     def test_extract_ws_audio_chunk_decodes_base64(self) -> None:
         chunk = _extract_ws_audio_chunk({"type": "chunk", "data": "AQID"})

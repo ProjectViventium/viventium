@@ -64,9 +64,9 @@ This service is the **voice bridge** between:
     - Optional knobs:
       - `VIVENTIUM_CARTESIA_API_URL` (default `https://api.cartesia.ai/tts/bytes`)
       - `VIVENTIUM_CARTESIA_WS_URL` (default `wss://api.cartesia.ai/tts/websocket`)
-      - `VIVENTIUM_CARTESIA_API_VERSION` (default `2025-04-16`)
-      - `VIVENTIUM_CARTESIA_MODEL_ID` (default `sonic-3`)
-      - `VIVENTIUM_CARTESIA_VOICE_ID` (default `e8e5fffb-252c-436d-b842-8879b84445b6`)
+      - `VIVENTIUM_CARTESIA_API_VERSION` (default `2026-03-01`)
+      - `VIVENTIUM_CARTESIA_MODEL_ID` (Sonic-3 only)
+      - `VIVENTIUM_CARTESIA_VOICE_ID` (default Megan: `e8e5fffb-252c-436d-b842-8879b84445b6`; Lyra option: `6ccbfb76-1fc6-48f7-b71d-91ac6298247b`)
       - `VIVENTIUM_CARTESIA_SAMPLE_RATE` (default `44100`)
       - `VIVENTIUM_CARTESIA_SPEED` (default `1.0`)
       - `VIVENTIUM_CARTESIA_VOLUME` (default `1.0`)
@@ -76,9 +76,11 @@ This service is the **voice bridge** between:
         - Silence inserted between `<emotion>` segments (used when multiple emotions appear in one response).
     - Live voice calls use Cartesia WebSocket contexts so TTS can start from incremental LLM deltas.
       `/tts/bytes` remains the full-text path for one-request surfaces.
-    - Nonverbal markers (Cartesia-specific parsing):
-      - Supported tokens: `[laughter]`, `[sigh]`, `[gasp]`, `[breath]`, `[hmm]`
-      - Tokens are split into their own mini-synthesis requests to maximize audibility.
+    - The Cartesia call-mode prompt allows Sonic-3 SSML-like `<emotion>`, `<speed>`,
+      `<volume>`, `<break>`, and `<spell>` tags. The LLM chooses those markers; the
+      adapter preserves LLM-selected emotion tags in the Cartesia transcript and also
+      passes the same value as `generation_config.emotion`.
+    - Cartesia-documented nonverbal marker: `[laughter]`.
   - **xAI Grok Voice ("Voice Agent API")**
     - Requires: `XAI_API_KEY`
     - Optional knobs:
@@ -131,7 +133,7 @@ This service is the **voice bridge** between:
   - `VIVENTIUM_VOICE_LOG_LATENCY=1`
     - Enables voice latency logs in both the Voice Gateway and LibreChat voice routes.
   - `VIVENTIUM_VOICE_DEBUG_TTS=1`
-    - Logs Cartesia text normalization, emotion segments, and truncations.
+    - Logs LLM raw/voice/display deltas and Cartesia request transcripts without API keys.
 
 ### Run
 

@@ -43,23 +43,36 @@ def _write_wav(path: Path, *, sample_rate: int, duration_s: float) -> None:
 
 
 class TestRefAudioValidation(unittest.TestCase):
-    def test_load_env_prefers_looser_intel_threshold_for_local_whisper(self) -> None:
+    def test_load_env_disables_cpu_load_gate_for_local_whisper_on_intel(self) -> None:
         with (
             patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=False),
             patch("worker.platform.machine", return_value="x86_64"),
         ):
             env = load_env()
 
-        self.assertEqual(env.voice_worker_load_threshold, 0.999)
+        self.assertEqual(env.voice_worker_load_threshold, float("inf"))
 
-    def test_load_env_keeps_existing_threshold_on_apple_silicon(self) -> None:
+    def test_load_env_disables_cpu_load_gate_for_local_whisper_on_apple_silicon(self) -> None:
         with (
             patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=False),
             patch("worker.platform.machine", return_value="arm64"),
         ):
             env = load_env()
 
-        self.assertEqual(env.voice_worker_load_threshold, 0.995)
+        self.assertEqual(env.voice_worker_load_threshold, float("inf"))
+
+    def test_load_env_accepts_unlimited_voice_worker_load_threshold(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_PROVIDER": "assemblyai",
+                "VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD": "inf",
+            },
+            clear=False,
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_worker_load_threshold, float("inf"))
 
     def test_load_env_uses_more_human_openai_tts_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -68,6 +81,15 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(env.openai_tts_voice, "coral")
         self.assertEqual(env.openai_tts_speed, 1.12)
         self.assertIn("Speak naturally and warmly", env.openai_tts_instructions)
+
+    def test_load_env_uses_cold_start_timeout_for_local_whisper(self) -> None:
+        with (
+            patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=True),
+            patch("worker.platform.machine", return_value="arm64"),
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_initialize_process_timeout_s, 120.0)
 
     def test_load_env_sets_voice_endpointing_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -265,9 +287,10 @@ class TestRefAudioValidation(unittest.TestCase):
             updated = _apply_requested_voice_route(env, {"stt": {}, "tts": {}}, capabilities)
 
         self.assertEqual(updated.tts_provider, "local_chatterbox_turbo_mlx_8bit")
-        self.assertEqual(updated.cartesia_model_id, "sonic-2")
+        self.assertEqual(updated.cartesia_model_id, "sonic-3")
 
-    def test_apply_requested_voice_route_switches_from_local_default_to_cartesia_variant(self) -> None:
+    def test_apply_requested_voice_route_switches_from_local_default_to_cartesia_voice(self) -> None:
+        lyra_voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
         with patch.dict(
             os.environ,
             {
@@ -281,13 +304,14 @@ class TestRefAudioValidation(unittest.TestCase):
             capabilities = _build_voice_capability_catalog(env)
             requested = {
                 "stt": {},
-                "tts": {"provider": "cartesia", "variant": "sonic-3"},
+                "tts": {"provider": "cartesia", "variant": lyra_voice_id},
             }
 
             updated = _apply_requested_voice_route(env, requested, capabilities)
 
         self.assertEqual(updated.tts_provider, "cartesia")
         self.assertEqual(updated.cartesia_model_id, "sonic-3")
+        self.assertEqual(updated.cartesia_voice_id, lyra_voice_id)
 
     def test_build_voice_capability_catalog_marks_missing_keys_as_unavailable(self) -> None:
         with patch.dict(
@@ -310,6 +334,19 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertIn("XAI_API_KEY", by_key[("tts", "xai")]["unavailableReason"])
         self.assertFalse(by_key[("tts", "openai")]["acceptsInlineVoiceControls"])
         self.assertTrue(by_key[("tts", "cartesia")]["acceptsInlineVoiceControls"])
+        self.assertEqual(by_key[("tts", "cartesia")]["variantLabel"], "Voice")
+        self.assertIn(
+            {"id": "e8e5fffb-252c-436d-b842-8879b84445b6", "label": "Megan"},
+            by_key[("tts", "cartesia")]["variants"],
+        )
+        self.assertIn(
+            {"id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b", "label": "Lyra"},
+            by_key[("tts", "cartesia")]["variants"],
+        )
+        self.assertNotIn(
+            {"id": "sonic-2", "label": "sonic-2"},
+            by_key[("tts", "cartesia")]["variants"],
+        )
 
     def test_build_voice_capability_catalog_labels_local_whisper_recommended_model(self) -> None:
         with patch.dict(
@@ -362,6 +399,27 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(metadata["tts"]["variant"], "Eve")
         self.assertEqual(metadata["ttsFallback"]["provider"], "openai")
         self.assertTrue(any(item["id"] == "xai" for item in metadata["capabilities"]))
+
+    def test_build_configured_voice_route_metadata_labels_cartesia_voice(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CARTESIA_API_KEY": "cartesia-key",
+                "VIVENTIUM_TTS_PROVIDER": "cartesia",
+                "VIVENTIUM_CARTESIA_VOICE_ID": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+                "VIVENTIUM_CARTESIA_MODEL_ID": "sonic-2",
+            },
+            clear=False,
+        ):
+            env = load_env()
+            capabilities = _build_voice_capability_catalog(env)
+            metadata = _build_configured_voice_route_metadata(env=env, capabilities=capabilities)
+
+        self.assertEqual(metadata["tts"]["provider"], "cartesia")
+        self.assertEqual(metadata["tts"]["variant"], "6ccbfb76-1fc6-48f7-b71d-91ac6298247b")
+        self.assertEqual(metadata["tts"]["variantLabel"], "Lyra")
+        self.assertEqual(metadata["tts"]["displayLabel"], "Cartesia • Lyra")
+        self.assertEqual(env.cartesia_model_id, "sonic-3")
 
     def test_build_voice_route_metadata_uses_effective_provider_variant(self) -> None:
         with patch.dict(

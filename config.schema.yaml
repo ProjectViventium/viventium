@@ -176,10 +176,38 @@ properties:
       tts:
         type: object
         properties:
-          voice:
+          api_version:
             type: string
+          model_id:
+            type: string
+          model:
+            type: string
+          voice:
+            oneOf:
+              - type: string
+              - type: object
+                properties:
+                  mode:
+                    type: string
+                    enum: [id]
+                  id:
+                    type: string
+          voice_id:
+            type: string
+          sample_rate:
+            type: integer
           speed:
             type: number
+          volume:
+            type: number
+          emotion:
+            type: string
+          language:
+            type: string
+          max_buffer_delay_ms:
+            type: integer
+          segment_silence_ms:
+            type: integer
           instructions:
             type: string
       wing_mode:

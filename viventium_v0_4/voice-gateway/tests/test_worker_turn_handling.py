@@ -16,10 +16,18 @@ from worker import (
     build_stt_selection,
     load_env,
     load_turn_detection,
+    optional_module_available,
 )
 
 
 class TestWorkerTurnHandling(unittest.TestCase):
+    def test_optional_module_available_handles_missing_parent_package(self) -> None:
+        with patch(
+            "worker.importlib.util.find_spec",
+            side_effect=ModuleNotFoundError("No module named 'livekit.plugins.turn_detector'"),
+        ):
+            self.assertFalse(optional_module_available("livekit.plugins.turn_detector.multilingual"))
+
     def test_load_env_defaults_to_stt_for_assemblyai_when_turn_detector_missing(self) -> None:
         with (
             patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "assemblyai"}, clear=True),

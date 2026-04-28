@@ -221,7 +221,11 @@ def _strip_bracket_stage_directions(text: str) -> str:
         content = text[index + 1 : closing]
         left = text[index - 1] if index > 0 else ""
         right = text[closing + 1] if closing + 1 < text_len else ""
-        if _is_bracket_stage_direction(content) and _is_stage_direction_boundary(left) and _is_stage_direction_boundary(right):
+        if (
+            _is_bracket_stage_direction(content)
+            and _is_stage_direction_boundary(left)
+            and _is_stage_direction_boundary(right)
+        ):
             index = closing + 1
             continue
 
@@ -250,6 +254,136 @@ def strip_voice_control_tags(text: str) -> str:
     cleaned = _strip_bracket_stage_directions(cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned
+
+
+_VOICE_CONTROL_TAG_NAMES = frozenset(
+    {"emotion", "break", "speed", "volume", "spell", "speak"}
+)
+_VOICE_CONTROL_PENDING_MAX = 512
+
+
+def _voice_control_tag_name(tag: str) -> str:
+    candidate = (tag or "").strip()
+    if not candidate.startswith("<") or not candidate.endswith(">"):
+        return ""
+    inner = candidate[1:-1].strip()
+    if inner.startswith("/"):
+        inner = inner[1:].lstrip()
+    if inner.endswith("/"):
+        inner = inner[:-1].rstrip()
+    name = []
+    for ch in inner:
+        if ch.isalpha():
+            name.append(ch.lower())
+            continue
+        break
+    return "".join(name)
+
+
+def _is_voice_control_tag(tag: str) -> bool:
+    return _voice_control_tag_name(tag) in _VOICE_CONTROL_TAG_NAMES
+
+
+def _could_be_voice_control_tag_prefix(text: str) -> bool:
+    candidate = (text or "").lstrip()
+    if not candidate.startswith("<"):
+        return False
+    inner = candidate[1:].lstrip()
+    if inner.startswith("/"):
+        inner = inner[1:].lstrip()
+    if not inner:
+        return True
+    if not inner[0].isalpha():
+        return False
+    name = []
+    for ch in inner:
+        if ch.isalpha():
+            name.append(ch.lower())
+            continue
+        break
+    partial = "".join(name)
+    if not partial:
+        return True
+    return any(tag_name.startswith(partial) for tag_name in _VOICE_CONTROL_TAG_NAMES)
+
+
+class VoiceControlDisplayFilter:
+    """Streaming display filter for Cartesia voice-control markup.
+
+    TTS receives the original LLM text, including Cartesia SSML-like tags. The
+    LiveKit transcript display receives this filtered stream so incomplete tag
+    fragments never briefly render to the user while token deltas are arriving.
+    """
+
+    def __init__(self) -> None:
+        self._pending = ""
+
+    def feed(self, text: str, *, final: bool = False) -> str:
+        if not text and not final:
+            return ""
+
+        source = f"{self._pending}{text or ''}"
+        self._pending = ""
+        output: list[str] = []
+        index = 0
+        source_len = len(source)
+
+        while index < source_len:
+            char = source[index]
+
+            if char == "<":
+                closing = source.find(">", index + 1)
+                if closing < 0:
+                    pending = source[index:]
+                    if not final and _could_be_voice_control_tag_prefix(pending):
+                        self._pending = pending[-_VOICE_CONTROL_PENDING_MAX:]
+                        break
+                    if final and _could_be_voice_control_tag_prefix(pending):
+                        break
+                    output.append(char)
+                    index += 1
+                    continue
+
+                tag = source[index : closing + 1]
+                if _is_voice_control_tag(tag):
+                    index = closing + 1
+                    continue
+
+                output.append(tag)
+                index = closing + 1
+                continue
+
+            if char == "[":
+                closing = source.find("]", index + 1)
+                if closing < 0:
+                    pending = source[index:]
+                    if not final:
+                        self._pending = pending[-_VOICE_CONTROL_PENDING_MAX:]
+                        break
+                    output.append(pending)
+                    break
+
+                content = source[index + 1 : closing]
+                left = source[index - 1] if index > 0 else ""
+                right = source[closing + 1] if closing + 1 < source_len else ""
+                if (
+                    _is_bracket_stage_direction(content)
+                    and _is_stage_direction_boundary(left)
+                    and _is_stage_direction_boundary(right)
+                ):
+                    index = closing + 1
+                    continue
+
+                output.append(source[index : closing + 1])
+                index = closing + 1
+                continue
+
+            output.append(char)
+            index += 1
+
+        cleaned = "".join(output)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        return cleaned
 # === VIVENTIUM END ===
 
 
@@ -343,9 +477,9 @@ async def iter_sse_json_events(
             # === VIVENTIUM END ===
 
 
-def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
+def extract_raw_text_deltas(payload: dict[str, Any]) -> list[str]:
     """
-    Extract assistant text deltas from a LibreChat SSE payload.
+    Extract unsanitized assistant text deltas from a LibreChat SSE payload.
 
     Handles:
     - `{ type, text }` legacy/alternate chunks
@@ -356,7 +490,7 @@ def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
     # Legacy: direct content deltas
     text = payload.get("text")
     if isinstance(text, str) and text:
-        out.append(sanitize_voice_delta_text(text))
+        out.append(text)
         return out
 
     event = payload.get("event")
@@ -386,15 +520,22 @@ def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
         # Typical shape: { type: 'text', text: '...' }
         ptext = part.get("text")
         if isinstance(ptext, str) and ptext:
-            out.append(sanitize_voice_delta_text(ptext))
+            out.append(ptext)
             continue
         # Defensive: sometimes nested { text: { value: '...' } }
         if isinstance(ptext, dict):
             val = ptext.get("value")
             if isinstance(val, str) and val:
-                out.append(sanitize_voice_delta_text(val))
+                out.append(val)
 
     return out
+
+
+def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
+    """
+    Extract assistant text deltas from a LibreChat SSE payload with voice-safe citation cleanup.
+    """
+    return [sanitize_voice_delta_text(text) for text in extract_raw_text_deltas(payload) if text]
 
 
 def extract_cortex_insight(payload: dict[str, Any]) -> Optional[dict[str, Any]]:

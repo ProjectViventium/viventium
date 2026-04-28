@@ -14,6 +14,7 @@ import asyncio
 import importlib.util
 import json
 import logging
+import math
 import os
 import platform
 import sys
@@ -45,6 +46,7 @@ from livekit.plugins import openai
 # (no audio frames), the modern playground can appear "stuck" with no visible assistant text.
 # We allow disabling transcript sync so text is published as soon as LLM deltas arrive.
 from livekit.agents.voice import room_io
+from livekit.agents.voice.io import TimedString
 # === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
@@ -65,7 +67,15 @@ except ImportError:
     HAS_SILERO = False
     silero_vad = None
 
-HAS_TURN_DETECTOR = importlib.util.find_spec("livekit.plugins.turn_detector.multilingual") is not None
+
+def optional_module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
+HAS_TURN_DETECTOR = optional_module_available("livekit.plugins.turn_detector.multilingual")
 
 # Optional import - handle gracefully if elevenlabs is not available
 try:
@@ -76,8 +86,15 @@ except ImportError:
     elevenlabs = None
 
 from librechat_llm import LibreChatAuth, LibreChatLLM
-from sse import sanitize_voice_followup_text
-from cartesia_tts import CartesiaConfig, CartesiaTTS
+from sse import VoiceControlDisplayFilter, sanitize_voice_followup_text
+from cartesia_tts import (
+    CARTESIA_VOICE_PRESETS,
+    DEFAULT_MODEL_ID as DEFAULT_CARTESIA_MODEL_ID,
+    DEFAULT_VERSION as DEFAULT_CARTESIA_API_VERSION,
+    DEFAULT_VOICE_ID as DEFAULT_CARTESIA_VOICE_ID,
+    CartesiaConfig,
+    CartesiaTTS,
+)
 from local_chatterbox_config import (
     build_local_chatterbox_config as shared_build_local_chatterbox_config,
     validate_ref_audio_path as shared_validate_ref_audio_path,
@@ -258,6 +275,21 @@ def _parse_float_env(name: str, fallback: float) -> float:
 # === VIVENTIUM END ===
 
 
+def _parse_worker_load_threshold_env(name: str, fallback: float) -> float:
+    raw = (os.getenv(name, "") or "").strip().lower()
+    if not raw:
+        return fallback
+    if raw in {"inf", "infinity", "unlimited", "off", "none", "disabled"}:
+        return math.inf
+    try:
+        value = float(raw)
+    except ValueError:
+        return fallback
+    if value < 0:
+        return fallback
+    return value
+
+
 def _parse_int_env(name: str, fallback: int) -> int:
     raw = (os.getenv(name, "") or "").strip()
     if not raw:
@@ -308,6 +340,17 @@ def _parse_optional_timeout_env(name: str, fallback: Optional[float]) -> Optiona
     if value < 0 or value == float("inf"):
         return fallback
     return value
+
+
+def _cartesia_model_id_from_env() -> str:
+    configured = (os.getenv("VIVENTIUM_CARTESIA_MODEL_ID", "") or "").strip()
+    if configured and configured != DEFAULT_CARTESIA_MODEL_ID:
+        logger.warning(
+            "Ignoring unsupported Cartesia model_id=%s; voice calls always use %s",
+            configured,
+            DEFAULT_CARTESIA_MODEL_ID,
+        )
+    return DEFAULT_CARTESIA_MODEL_ID
 
 
 # === VIVENTIUM START ===
@@ -518,6 +561,14 @@ def _dedupe_variants(*values: Any) -> list[dict[str, str]]:
     return variants
 
 
+def _cartesia_voice_label(voice_id: str) -> str:
+    normalized = (voice_id or "").strip()
+    for preset_id, preset_label in CARTESIA_VOICE_PRESETS:
+        if normalized == preset_id:
+            return preset_label
+    return normalized
+
+
 def _local_whisper_variant_label(model_id: str, *, recommended_model: str) -> str:
     model_key = (model_id or "").strip()
     labels = {
@@ -599,7 +650,7 @@ def _provider_variant_type(provider: str, *, modality: str) -> str:
         if provider_key == "assemblyai":
             return "Engine"
         return "Model"
-    if provider_key in {"xai", "elevenlabs"}:
+    if provider_key in {"xai", "elevenlabs", "cartesia"}:
         return "Voice"
     return "Model"
 
@@ -713,7 +764,10 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "unavailableReason": None if cartesia_api_key else "CARTESIA_API_KEY not set",
             "acceptsInlineVoiceControls": True,
             "variantLabel": _provider_variant_type("cartesia", modality="tts"),
-            "variants": _dedupe_variants(env.cartesia_model_id, "sonic-3", "sonic-2"),
+            "variants": _dedupe_variants(
+                *CARTESIA_VOICE_PRESETS,
+                (env.cartesia_voice_id, _cartesia_voice_label(env.cartesia_voice_id)),
+            ),
         },
         {
             "id": "xai",
@@ -868,12 +922,13 @@ def _apply_requested_voice_route(
                 runtime_env = replace(
                     runtime_env,
                     tts_provider="cartesia",
-                    cartesia_model_id=_resolve_requested_variant(
+                    cartesia_voice_id=_resolve_requested_variant(
                         capability,
                         tts_selection["variant"],
-                        runtime_env.cartesia_model_id,
+                        runtime_env.cartesia_voice_id,
                     )
-                    or runtime_env.cartesia_model_id,
+                    or runtime_env.cartesia_voice_id,
+                    cartesia_model_id=DEFAULT_CARTESIA_MODEL_ID,
                 )
             elif requested_tts_provider == "xai":
                 runtime_env = replace(
@@ -922,7 +977,9 @@ def _current_tts_variant(env: Env, provider: str, tts_impl: Optional[Any] = None
     if normalized_provider == "openai":
         return getattr(tts_impl, "model", None) or env.openai_tts_model
     if normalized_provider == "cartesia":
-        return getattr(tts_impl, "model", None) or env.cartesia_model_id
+        cfg = getattr(tts_impl, "_config", None)
+        voice_id = getattr(cfg, "voice_id", None)
+        return voice_id or env.cartesia_voice_id
     if normalized_provider == "xai":
         cfg = getattr(tts_impl, "_config", None)
         voice = getattr(cfg, "voice", None)
@@ -948,14 +1005,19 @@ def _build_route_entry(
     variant_type = _provider_variant_type(normalized_provider, modality=modality)
     provider_label = _provider_display_label(normalized_provider, modality=modality)
     variant_text = variant.strip() if isinstance(variant, str) and variant.strip() else None
-    display_label = provider_label if not variant_text else f"{provider_label} • {variant_text}"
+    variant_display = (
+        _cartesia_voice_label(variant_text)
+        if modality == "tts" and normalized_provider == "cartesia" and variant_text
+        else variant_text
+    )
+    display_label = provider_label if not variant_display else f"{provider_label} • {variant_display}"
     return {
         "provider": normalized_provider,
         "label": provider_label,
         "displayLabel": display_label,
         "isLocal": _is_local_provider(normalized_provider),
         "variant": variant_text,
-        "variantLabel": variant_text,
+        "variantLabel": variant_display,
         "variantType": variant_type,
     }
 
@@ -1106,21 +1168,16 @@ def load_env() -> Env:
         os.getenv("VIVENTIUM_TURN_DETECTION", "")
     )
     default_initialize_process_timeout_s = (
-        120.0
-        if normalized_stt_provider in {"pywhispercpp", "whisper_local"}
-        and platform.machine().lower() == "x86_64"
-        else 45.0
-        if normalized_stt_provider in {"pywhispercpp", "whisper_local"}
-        else 20.0
+        120.0 if normalized_stt_provider in {"pywhispercpp", "whisper_local"} else 20.0
     )
     default_idle_processes = 1 if normalized_stt_provider in {"pywhispercpp", "whisper_local"} else 0
     # === VIVENTIUM START ===
-    # Feature: Intel-safe LiveKit worker availability defaults for local whisper.
-    # Purpose: clean Intel Macs can stay near 100% CPU during first-run build/install work.
-    # Keep the threshold slightly looser there so the first voice call is not rejected while
-    # the worker is otherwise healthy and ready to accept a job.
+    # Feature: Local-whisper dispatch must not race transient machine load.
+    # Purpose: local first-run builds and model warmup can briefly push host load to ~100% after
+    # the worker has already registered. Refusing the first explicit user call in that window is
+    # worse than accepting it with potentially higher latency, so local STT defaults to no CPU gate.
     if normalized_stt_provider in {"pywhispercpp", "whisper_local"}:
-        default_load_threshold = 0.999 if platform.machine().lower() == "x86_64" else 0.995
+        default_load_threshold = math.inf
     else:
         default_load_threshold = 0.7
     configured_min_interruption_words = _parse_optional_int_env(
@@ -1198,12 +1255,17 @@ def load_env() -> Env:
         or "https://api.cartesia.ai/tts/bytes",
         cartesia_ws_url=os.getenv("VIVENTIUM_CARTESIA_WS_URL", "wss://api.cartesia.ai/tts/websocket").strip()
         or "wss://api.cartesia.ai/tts/websocket",
-        cartesia_api_version=os.getenv("VIVENTIUM_CARTESIA_API_VERSION", "2025-04-16").strip() or "2025-04-16",
-        cartesia_model_id=os.getenv("VIVENTIUM_CARTESIA_MODEL_ID", "sonic-3").strip() or "sonic-3",
-        cartesia_voice_id=os.getenv(
-            "VIVENTIUM_CARTESIA_VOICE_ID", "e8e5fffb-252c-436d-b842-8879b84445b6"
+        cartesia_api_version=os.getenv(
+            "VIVENTIUM_CARTESIA_API_VERSION",
+            DEFAULT_CARTESIA_API_VERSION,
         ).strip()
-        or "e8e5fffb-252c-436d-b842-8879b84445b6",
+        or DEFAULT_CARTESIA_API_VERSION,
+        cartesia_model_id=_cartesia_model_id_from_env(),
+        cartesia_voice_id=os.getenv(
+            "VIVENTIUM_CARTESIA_VOICE_ID",
+            DEFAULT_CARTESIA_VOICE_ID,
+        ).strip()
+        or DEFAULT_CARTESIA_VOICE_ID,
         cartesia_sample_rate=int(float(os.getenv("VIVENTIUM_CARTESIA_SAMPLE_RATE", "44100"))),
         cartesia_speed=float(os.getenv("VIVENTIUM_CARTESIA_SPEED", "1.0")),
         cartesia_volume=float(os.getenv("VIVENTIUM_CARTESIA_VOLUME", "1.0")),
@@ -1231,9 +1293,12 @@ def load_env() -> Env:
             0,
             _parse_int_env("VIVENTIUM_VOICE_IDLE_PROCESSES", default_idle_processes),
         ),
-        voice_worker_load_threshold=min(
-            0.999,
-            max(0.1, _parse_float_env("VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD", default_load_threshold)),
+        voice_worker_load_threshold=max(
+            0.1,
+            _parse_worker_load_threshold_env(
+                "VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD",
+                default_load_threshold,
+            ),
         ),
         voice_job_memory_warn_mb=_parse_float_env(
             "VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB",
@@ -1661,6 +1726,35 @@ def _turn_end_reason_label(turn_detection: Any) -> str:
     if turn_detection is not None:
         return "semantic_turn_detector"
     return "unknown"
+
+
+# === VIVENTIUM START ===
+# Feature: Cartesia voice-control tags are TTS-only, never user transcript text.
+class ViventiumVoiceAgent(Agent):
+    async def transcription_node(self, text: Any, model_settings: Any) -> Any:
+        display_filter = VoiceControlDisplayFilter()
+        async for delta in text:
+            cleaned = display_filter.feed(str(delta))
+            if not cleaned:
+                continue
+            if isinstance(delta, TimedString):
+                yield TimedString(
+                    cleaned,
+                    start_time=delta.start_time,
+                    end_time=delta.end_time,
+                    confidence=delta.confidence,
+                    start_time_offset=delta.start_time_offset,
+                    speaker_id=delta.speaker_id,
+                )
+            else:
+                yield cleaned
+
+        trailing = display_filter.feed("", final=True)
+        if trailing:
+            yield trailing
+
+
+# === VIVENTIUM END ===
 
 
 # === VIVENTIUM START ===
@@ -2363,7 +2457,7 @@ async def entrypoint(ctx: JobContext) -> None:
     llm_impl.set_followup_handler(followup_scheduler.schedule)
     # === VIVENTIUM END ===
 
-    agent = Agent(
+    agent = ViventiumVoiceAgent(
         instructions=(
             "You are the Viventium Voice Gateway. "
             "You must speak the LibreChat agent's responses naturally and concisely."

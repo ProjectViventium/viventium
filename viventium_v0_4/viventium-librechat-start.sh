@@ -2811,6 +2811,71 @@ PY
   return 1
 }
 
+voice_requirements_need_install() {
+  local voice_python="${1:-}"
+  local requirements_file="${2:-}"
+  if [[ -z "$voice_python" || -z "$requirements_file" || ! -f "$requirements_file" ]]; then
+    return 0
+  fi
+
+  "$voice_python" - "$requirements_file" <<'PY'
+from __future__ import annotations
+
+import importlib.metadata as metadata
+import sys
+
+try:
+    from packaging.markers import default_environment
+    from packaging.requirements import Requirement
+except Exception:
+    try:
+        from pip._vendor.packaging.markers import default_environment
+        from pip._vendor.packaging.requirements import Requirement
+    except Exception as exc:
+        print(f"could not import requirement parser: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+requirements_file = sys.argv[1]
+environment = default_environment()
+problems: list[str] = []
+
+with open(requirements_file, "r", encoding="utf-8") as handle:
+    for line_number, raw_line in enumerate(handle, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if " #" in line:
+            line = line.split(" #", 1)[0].strip()
+        if not line or line.startswith(("-r", "--requirement", "-c", "--constraint")):
+            problems.append(f"line {line_number}: unsupported nested requirement directive")
+            continue
+        try:
+            requirement = Requirement(line)
+        except Exception as exc:
+            problems.append(f"line {line_number}: could not parse requirement ({exc})")
+            continue
+        if requirement.marker and not requirement.marker.evaluate(environment):
+            continue
+        try:
+            installed_version = metadata.version(requirement.name)
+        except metadata.PackageNotFoundError:
+            problems.append(f"{requirement.name} missing")
+            continue
+        if requirement.specifier and installed_version not in requirement.specifier:
+            problems.append(f"{requirement.name} {installed_version} does not satisfy {requirement.specifier}")
+
+if problems:
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    sys.exit(1)
+PY
+  local result=$?
+  if [[ "$result" == "0" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 default_stt_thread_count() {
   local detected_cpu_count=""
   detected_cpu_count="$(sysctl -n hw.ncpu 2>/dev/null || printf '4')"
@@ -2859,11 +2924,7 @@ default_voice_initialize_process_timeout() {
   local provider="${1:-${VIVENTIUM_STT_PROVIDER:-whisper_local}}"
   provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
   if [[ "$provider" == "whisper_local" || "$provider" == "pywhispercpp" ]]; then
-    if [[ "$(uname -m)" == "x86_64" ]]; then
-      printf '%s\n' "120"
-    else
-      printf '%s\n' "45"
-    fi
+    printf '%s\n' "120"
     return 0
   fi
 
@@ -2893,15 +2954,11 @@ default_voice_worker_load_threshold() {
   provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
   if [[ "$provider" == "whisper_local" || "$provider" == "pywhispercpp" ]]; then
     # === VIVENTIUM START ===
-    # Feature: Intel-safe LiveKit worker availability for local whisper.
-    # Purpose: clean Intel Macs can still be under heavy first-run CPU load while LibreChat
-    # finishes dependency install/build work. A slightly looser threshold keeps the worker
-    # available long enough to accept the first real call instead of flapping unavailable.
-    if [[ "$(uname -m)" == "x86_64" ]]; then
-      printf '%s\n' "0.999"
-    else
-      printf '%s\n' "0.995"
-    fi
+    # Feature: Local-whisper dispatch must not race transient machine load.
+    # Purpose: local model warmup and frontend/backend builds can briefly push host load to
+    # 100% after the worker has registered. The first explicit user call should still dispatch;
+    # memory guardrails remain the protection against runaway local jobs.
+    printf '%s\n' "inf"
     # === VIVENTIUM END ===
     return 0
   fi
@@ -9408,30 +9465,12 @@ PY
                   ;;
               esac
             fi
-            if ! "$voice_python" -m pip show livekit-agents >/dev/null 2>&1; then
+            if voice_requirements_need_install "$voice_python" "requirements.txt"; then
               needs_install=true
-            fi
-            if ! "$voice_python" -m pip show livekit-plugins-elevenlabs >/dev/null 2>&1; then
-              needs_install=true
-            fi
-            if [[ "${VIVENTIUM_STT_PROVIDER:-}" == "assemblyai" ]]; then
-              if ! "$voice_python" -m pip show livekit-plugins-assemblyai >/dev/null 2>&1; then
-                needs_install=true
-              fi
-            fi
-            if [[ "${VIVENTIUM_STT_PROVIDER:-}" == "whisper_local" || "${VIVENTIUM_STT_PROVIDER:-}" == "pywhispercpp" ]]; then
-              if ! "$voice_python" -m pip show pywhispercpp >/dev/null 2>&1; then
-                needs_install=true
-              fi
-            fi
-            if [[ "$wants_voice_turn_detector" == "true" ]]; then
-              if ! "$voice_python" -m pip show livekit-plugins-turn-detector >/dev/null 2>&1; then
-                needs_install=true
-              fi
             fi
             if [[ "$needs_install" == "true" ]]; then
-              echo -e "${YELLOW}[viventium]${NC} Installing voice gateway dependencies..."
-              "$voice_python" -m pip install -r requirements.txt -q || {
+              echo -e "${YELLOW}[viventium]${NC} Installing or refreshing voice gateway dependencies..."
+              "$voice_python" -m pip install --upgrade -r requirements.txt -q || {
                 log_error "Voice gateway dependency install failed"
                 exit 1
               }
@@ -9590,7 +9629,7 @@ PY
         # Cartesia Sonic-3 configuration
         export CARTESIA_API_KEY="${CARTESIA_API_KEY:-}"
         export VIVENTIUM_CARTESIA_API_URL="${VIVENTIUM_CARTESIA_API_URL:-https://api.cartesia.ai/tts/bytes}"
-        export VIVENTIUM_CARTESIA_API_VERSION="${VIVENTIUM_CARTESIA_API_VERSION:-2025-04-16}"
+        export VIVENTIUM_CARTESIA_API_VERSION="${VIVENTIUM_CARTESIA_API_VERSION:-2026-03-01}"
         export VIVENTIUM_CARTESIA_MODEL_ID="${VIVENTIUM_CARTESIA_MODEL_ID:-sonic-3}"
         export VIVENTIUM_CARTESIA_VOICE_ID="${VIVENTIUM_CARTESIA_VOICE_ID:-e8e5fffb-252c-436d-b842-8879b84445b6}"
         export VIVENTIUM_CARTESIA_SAMPLE_RATE="${VIVENTIUM_CARTESIA_SAMPLE_RATE:-44100}"

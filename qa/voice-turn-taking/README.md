@@ -202,6 +202,46 @@ Observed result:
   styles should now be done by adjusting surfaced config knobs rather than patching complaint-shaped
   heuristics into runtime code.
 
+## 2026-04-28 Optional Plugin Import + Venv Drift RCA
+
+### Incident Class
+
+The modern playground could create call sessions, but the LiveKit voice worker was not running. The
+worker crashed at module import while probing the optional semantic turn-detector package. In the
+same runtime, the voice-gateway venv had older LiveKit packages than the pinned
+`voice-gateway/requirements.txt` and did not include the turn-detector package.
+
+### Evidence Contract
+
+- Runtime logs showed a `ModuleNotFoundError` from
+  `importlib.util.find_spec("livekit.plugins.turn_detector.multilingual")` before worker
+  registration.
+- Process inspection showed LiveKit and the modern playground running, but no voice-gateway worker
+  process.
+- Mongo call-session records were created, but the newest failed sessions had no active worker/job
+  lease and no dispatch confirmation. Older successful sessions did have those fields populated.
+
+### Fix Contract
+
+- Optional plugin detection must catch missing parent packages and set
+  `HAS_TURN_DETECTOR=false` instead of crashing worker import.
+- Launcher dependency checks must compare installed package versions against
+  `voice-gateway/requirements.txt` and refresh stale venvs with `pip install --upgrade -r`.
+- Missing optional semantic turn detection should downgrade to the supported `stt` or `vad` route;
+  it must not prevent the LiveKit worker from registering.
+
+### Browser Join Verification Contract
+
+- A server-side `POST /api/connection-details` success only proves that a LiveKit dispatch was
+  created. It does not prove the browser joined the room or that LiveKit assigned an agent job.
+- Accepted local browser QA must click the `Start chat` mic gate, then verify:
+  - the LiveKit room has both a browser participant and an agent participant
+  - the call-session record has an active job id, active worker id, and live lease
+  - `voice_gateway.log` contains a `received job request` for the same room
+- A call-session deep link with `autoConnect=1` intentionally still lands on the `Start chat` gate
+  when it carries a `callSessionId`, because browser microphone publication requires a user
+  gesture.
+
 ## 2026-04-21 Background Follow-Up Window + Endpointing Evidence
 
 ### Scope

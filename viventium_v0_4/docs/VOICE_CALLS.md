@@ -118,7 +118,16 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 ### Cartesia (Sonic 3)
 - Live voice calls use Cartesia WebSocket contexts (`/tts/websocket`) so text deltas can be pushed
   as they arrive from the LLM. The bytes endpoint remains for one-request/full-text surfaces.
-- Recommended emotions: `neutral`, `excited`, `content`, `sad`, `angry`, `scared`, `curious`, `calm`, `surprised`, `contemplative`.
+- Current default request contract:
+  - `Cartesia-Version: 2026-03-01`
+  - `model_id: sonic-3`
+  - `voice.mode: id`
+  - default `voice.id: e8e5fffb-252c-436d-b842-8879b84445b6` (Megan)
+- The playground Cartesia submenu is a voice selector, not a model selector. Cartesia calls always
+  use Sonic-3; the public voice choices are Megan and Lyra
+  (`6ccbfb76-1fc6-48f7-b71d-91ac6298247b`).
+- Prompt instructions expose the complete Sonic-3 emotion list from Cartesia docs. Primary
+  high-reliability values are `neutral`, `angry`, `excited`, `content`, `sad`, and `scared`.
 - Preferred tag form: self-closing `<emotion value="excited"/>` (state change applies to subsequent text).
 - Wrapper form also supported: `<emotion value="excited">TEXT</emotion>` (scoped to wrapped text).
 - SSML tags: `<break time="1s"/>`, `<speed ratio="1.2"/>`, `<volume ratio="0.8"/>`, `<spell>TEXT</spell>`.
@@ -145,11 +154,21 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 
 ## Cartesia Emotion Handling
 - Cartesia accepts one `generation_config.emotion` per API request.
+- The LLM owns emotional markup generation. Runtime does not infer user intent or invent emotion
+  tags; it only parses LLM-selected Cartesia tags so provider requests stay valid.
 - The voice gateway splits `<emotion>` segments and synthesizes each with its own emotion.
+- For LLM-selected emotion segments, the Cartesia request includes both:
+  - the selected `<emotion value="..."/>` SSML prefix in `transcript`
+  - the same value in `generation_config.emotion`
 - Self-closing `<emotion value="..."/>` acts as a state change for subsequent text.
 - Nonverbal markers (`[laughter]`) are split into their own mini synthesis calls.
 - Non-Cartesia HTML tags and structural bracket stage directions are stripped for fallback
   providers.
+- Modern playground transcript display uses a separate stateful structural filter:
+  - TTS receives the original LLM text with Cartesia markup.
+  - The user-visible transcript receives display-sanitized deltas.
+  - Partial fragments such as `<em` or `[laugh` are buffered until the tag/stage direction can be
+    classified, so voice-control markup never flashes in the transcript.
 
 ## Call Session Security
 - Voice gateway requests are authenticated via:
@@ -197,15 +216,24 @@ VAD tuning (shared with v1):
 Notes:
 - Silero VAD requires `livekit-plugins-silero` and Python <= 3.12.
 - The launcher rebuilds the voice-gateway venv if Silero is missing or Python 3.13+ is detected.
+- The launcher refreshes the voice-gateway venv when installed package versions no longer satisfy
+  `voice-gateway/requirements.txt`; package presence alone is not a valid health check.
 - The semantic turn detector plugin is optional. When installed, the launcher pre-downloads the
   exact multilingual detector assets (`onnx/model_q8.onnx` and `languages.json`) before worker
   boot. The voice gateway also loads that plugin lazily, only when semantic turn detection is
   actually selected, so a normal local `vad` route does not boot-noise on an unused detector cache.
+- A missing optional turn-detector package must not crash worker import. The worker treats that as
+  `HAS_TURN_DETECTOR=false` and continues with the configured `stt` or `vad` path.
 - AssemblyAI endpointing knobs are config-owned and optional. If not set, Viventium leaves the
   provider/plugin defaults intact instead of hardcoding additional silence thresholds.
 - `whisper_local` / `pywhispercpp` inherits the shared interruption knobs and saved-route contract,
   but it remains a StreamAdapter + Silero VAD path. It does not get AssemblyAI-native endpointing
   knobs or semantic turn-detector behavior.
+- Local Whisper routes default `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=inf`; CPU load during model
+  warm-up is not a reliable overload signal and must not make LiveKit stop dispatching jobs to a
+  healthy local worker.
+- Local Whisper routes default `VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S=120` so cold-start
+  model loading can complete before the idle process is considered failed.
 
 <!-- === VIVENTIUM START ===
 Section: Voice concurrency bypass + LiveKit idempotency
@@ -234,6 +262,9 @@ Added: 2026-01-11
 - `VIVENTIUM_VOICE_FOLLOWUP_INTERVAL_S`
 - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S`
 - `VIVENTIUM_CALL_SESSION_TTL_MS` (override call session TTL)
+- `VIVENTIUM_CARTESIA_API_VERSION` (default `2026-03-01`)
+- `VIVENTIUM_CARTESIA_MODEL_ID` (Sonic-3 only; non-`sonic-3` values are rejected by compiled config and ignored with a warning at runtime)
+- `VIVENTIUM_CARTESIA_VOICE_ID` (default Megan: `e8e5fffb-252c-436d-b842-8879b84445b6`; Lyra: `6ccbfb76-1fc6-48f7-b71d-91ac6298247b`)
 - `VIVENTIUM_CARTESIA_WS_URL`
 - `VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS` (default `120` for live voice)
 - `VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS`

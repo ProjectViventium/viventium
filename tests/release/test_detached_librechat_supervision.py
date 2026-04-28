@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -88,6 +90,70 @@ def test_telegram_bot_survives_detached_launcher_exit() -> None:
     assert "cleanup() {\n  if detached_start_requested; then\n    return\n  fi" in launcher_text
     assert 'nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &' in launcher_text
     assert 'if detached_start_requested; then\n    disown "$TELEGRAM_BOT_PID" 2>/dev/null || true\n  fi' in launcher_text
+
+
+def test_voice_gateway_requirements_check_detects_version_drift(tmp_path: Path) -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    function = extract_shell_function(launcher_text, "voice_requirements_need_install")
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("pip==0.0.0\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function}"
+                f"if voice_requirements_need_install {shlex.quote(sys.executable)} {shlex.quote(str(requirements))}; then\n"
+                "  printf 'needs-install\\n'\n"
+                "else\n"
+                "  printf 'satisfied\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "needs-install"
+
+
+def test_voice_gateway_requirements_check_accepts_satisfied_pins(tmp_path: Path) -> None:
+    import importlib.metadata as metadata
+
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    function = extract_shell_function(launcher_text, "voice_requirements_need_install")
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text(f"pip=={metadata.version('pip')}\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function}"
+                f"if voice_requirements_need_install {shlex.quote(sys.executable)} {shlex.quote(str(requirements))}; then\n"
+                "  printf 'needs-install\\n'\n"
+                "else\n"
+                "  printf 'satisfied\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "satisfied"
 
 
 def test_searxng_readiness_probe_uses_root_endpoint() -> None:

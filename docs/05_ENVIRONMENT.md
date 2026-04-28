@@ -219,6 +219,24 @@ For live voice calls, `voice.tts_provider` controls the server-side voice-gatewa
 - `local_automatic` is the explicit opt-in for the local MLX Chatterbox path on supported Apple Silicon Macs
 - `local_chatterbox_turbo_mlx_8bit` remains an advanced direct override rather than a hidden default
 
+For Cartesia, `voice.tts` may declare the public Sonic-3 call options that compile into
+`runtime.env`:
+
+```yaml
+voice:
+  tts_provider: cartesia
+  tts:
+    model_id: sonic-3
+    voice:
+      mode: id
+      id: 6ccbfb76-1fc6-48f7-b71d-91ac6298247b
+```
+
+If omitted, the compiler and launcher use `Cartesia-Version=2026-03-01`, `model_id=sonic-3`,
+and the Megan voice id (`e8e5fffb-252c-436d-b842-8879b84445b6`). The modern playground exposes
+Cartesia as a Sonic-3-only provider and lets users choose named voice personas such as Megan and
+Lyra, without showing raw voice IDs in the picker.
+
 This keeps the canonical config aligned with `01_Key_Principles.md`: no hidden mode switches, no misleading config values, and reliability-first defaults.
 
 Live response timing contract:

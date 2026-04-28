@@ -36,6 +36,16 @@ DEFAULT_OPENAI_TTS_INSTRUCTIONS = (
     "Speak naturally and warmly with clear pacing. Keep the delivery conversational, "
     "grounded, and human. Avoid robotic emphasis or exaggerated pauses."
 )
+DEFAULT_CARTESIA_API_VERSION = "2026-03-01"
+DEFAULT_CARTESIA_MODEL_ID = "sonic-3"
+DEFAULT_CARTESIA_VOICE_ID = "e8e5fffb-252c-436d-b842-8879b84445b6"
+DEFAULT_CARTESIA_SAMPLE_RATE = "44100"
+DEFAULT_CARTESIA_SPEED = "1.0"
+DEFAULT_CARTESIA_VOLUME = "1.0"
+DEFAULT_CARTESIA_EMOTION = "neutral"
+DEFAULT_CARTESIA_LANGUAGE = "en"
+DEFAULT_CARTESIA_MAX_BUFFER_DELAY_MS = "120"
+DEFAULT_CARTESIA_SEGMENT_SILENCE_MS = "80"
 DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
 DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD = "0.01"
 DEFAULT_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS = "100"
@@ -994,6 +1004,37 @@ def resolve_voice_provider_secret(
     return resolve_optional_secret(f"keychain://{service}")
 
 
+def cartesia_tts_settings(tts_config: dict[str, Any]) -> dict[str, Any]:
+    """Return Cartesia-specific TTS settings while preserving legacy voice.tts shape."""
+    if not isinstance(tts_config, dict):
+        return {}
+    nested = tts_config.get("cartesia")
+    if isinstance(nested, dict):
+        merged = dict(tts_config)
+        merged.update(nested)
+        return merged
+    return tts_config
+
+
+def cartesia_voice_id_from_settings(settings: dict[str, Any]) -> str:
+    raw_voice_id = settings.get("voice_id")
+    if isinstance(raw_voice_id, str) and raw_voice_id.strip():
+        return raw_voice_id.strip()
+
+    raw_voice = settings.get("voice")
+    if isinstance(raw_voice, dict):
+        mode = str(raw_voice.get("mode", "id") or "id").strip().lower()
+        if mode != "id":
+            raise SystemExit("voice.tts.voice.mode currently supports only 'id' for Cartesia")
+        voice_id = str(raw_voice.get("id", "") or "").strip()
+        if voice_id:
+            return voice_id
+    elif isinstance(raw_voice, str) and raw_voice.strip():
+        return raw_voice.strip()
+
+    return DEFAULT_CARTESIA_VOICE_ID
+
+
 def provider_available(node: dict[str, Any]) -> bool:
     provider = (node.get("provider") or "").strip()
     if not provider or provider == "none":
@@ -1769,7 +1810,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     if "openai" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]}:
         env["VIVENTIUM_OPENAI_TTS_MODEL"] = DEFAULT_OPENAI_TTS_MODEL
         env["TTS_MODEL"] = DEFAULT_OPENAI_TTS_MODEL
-        configured_openai_tts_voice = str(tts_config.get("voice", "") or "").strip()
+        raw_openai_tts_voice = tts_config.get("voice", "")
+        configured_openai_tts_voice = (
+            raw_openai_tts_voice.strip() if isinstance(raw_openai_tts_voice, str) else ""
+        )
         configured_openai_tts_speed = str(tts_config.get("speed", "") or "").strip()
         env["VIVENTIUM_OPENAI_TTS_VOICE"] = (
             configured_openai_tts_voice or DEFAULT_OPENAI_TTS_VOICE
@@ -1781,6 +1825,43 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         configured_openai_tts_instructions = str(tts_config.get("instructions", "") or "").strip()
         env["VIVENTIUM_OPENAI_TTS_INSTRUCTIONS"] = (
             configured_openai_tts_instructions or DEFAULT_OPENAI_TTS_INSTRUCTIONS
+        )
+    if "cartesia" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]}:
+        cartesia_config = cartesia_tts_settings(tts_config)
+        configured_model_id = str(
+            cartesia_config.get("model_id") or cartesia_config.get("model") or ""
+        ).strip()
+        if configured_model_id and configured_model_id != DEFAULT_CARTESIA_MODEL_ID:
+            raise SystemExit("Cartesia voice calls support only model_id 'sonic-3'")
+        configured_api_version = str(cartesia_config.get("api_version", "") or "").strip()
+        configured_sample_rate = str(cartesia_config.get("sample_rate", "") or "").strip()
+        configured_speed = str(cartesia_config.get("speed", "") or "").strip()
+        configured_volume = str(cartesia_config.get("volume", "") or "").strip()
+        configured_emotion = str(cartesia_config.get("emotion", "") or "").strip()
+        configured_language = str(cartesia_config.get("language", "") or "").strip()
+        configured_max_buffer_delay_ms = str(
+            cartesia_config.get("max_buffer_delay_ms", "") or ""
+        ).strip()
+        configured_segment_silence_ms = str(
+            cartesia_config.get("segment_silence_ms", "") or ""
+        ).strip()
+        env["VIVENTIUM_CARTESIA_API_VERSION"] = (
+            configured_api_version or DEFAULT_CARTESIA_API_VERSION
+        )
+        env["VIVENTIUM_CARTESIA_MODEL_ID"] = DEFAULT_CARTESIA_MODEL_ID
+        env["VIVENTIUM_CARTESIA_VOICE_ID"] = cartesia_voice_id_from_settings(cartesia_config)
+        env["VIVENTIUM_CARTESIA_SAMPLE_RATE"] = (
+            configured_sample_rate or DEFAULT_CARTESIA_SAMPLE_RATE
+        )
+        env["VIVENTIUM_CARTESIA_SPEED"] = configured_speed or DEFAULT_CARTESIA_SPEED
+        env["VIVENTIUM_CARTESIA_VOLUME"] = configured_volume or DEFAULT_CARTESIA_VOLUME
+        env["VIVENTIUM_CARTESIA_EMOTION"] = configured_emotion or DEFAULT_CARTESIA_EMOTION
+        env["VIVENTIUM_CARTESIA_LANGUAGE"] = configured_language or DEFAULT_CARTESIA_LANGUAGE
+        env["VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS"] = (
+            configured_max_buffer_delay_ms or DEFAULT_CARTESIA_MAX_BUFFER_DELAY_MS
+        )
+        env["VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS"] = (
+            configured_segment_silence_ms or DEFAULT_CARTESIA_SEGMENT_SILENCE_MS
         )
     assemblyai_key = resolve_voice_provider_secret(voice, resolved_voice, "assemblyai")
     if assemblyai_key:

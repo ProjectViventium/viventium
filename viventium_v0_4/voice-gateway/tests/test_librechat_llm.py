@@ -13,6 +13,7 @@ from librechat_llm import (
     _extract_last_user_text,
     _extract_stream_error,
     _select_stream_error_message,
+    _summarize_error_for_log,
     _NoResponseStreamGuard,
     is_no_response_only,
     format_insights_for_direct_speech,
@@ -61,6 +62,18 @@ class TestFinalEventHelpers(unittest.TestCase):
             self.assertEqual(_extract_final_response_text(final_event), "Stream down.")
         finally:
             os.environ.pop("VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE", None)
+
+    def test_summarizes_error_content_without_raw_message(self) -> None:
+        raw = (
+            'An error occurred while processing the request: 401 '
+            '{"type":"error","error":{"type":"authentication_error",'
+            '"message":"Invalid authentication credentials"}}'
+        )
+        summary = _summarize_error_for_log(raw)
+        self.assertIn("status=401", summary)
+        self.assertIn("type=error", summary)
+        self.assertIn("error_type=authentication_error", summary)
+        self.assertNotIn("Invalid authentication credentials", summary)
 
     def test_extracts_final_response_text_preserves_word_boundaries(self) -> None:
         final_event = {
@@ -115,12 +128,18 @@ class TestStreamErrorHelpers(unittest.TestCase):
     def test_selects_tool_error_message(self) -> None:
         os.environ["VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE"] = "Stream down."
         os.environ["VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE"] = "Tool down."
+        os.environ["VIVENTIUM_VOICE_AUTH_ERROR_MESSAGE"] = "Auth down."
         try:
             self.assertEqual(_select_stream_error_message("MCP connection failed"), "Tool down.")
+            self.assertEqual(
+                _select_stream_error_message("401 authentication_error"),
+                "Auth down.",
+            )
             self.assertEqual(_select_stream_error_message("other error"), "Stream down.")
         finally:
             os.environ.pop("VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE", None)
             os.environ.pop("VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE", None)
+            os.environ.pop("VIVENTIUM_VOICE_AUTH_ERROR_MESSAGE", None)
 
 class TestNoResponseStreamingGuard(unittest.TestCase):
     def test_buffers_and_suppresses_braced_tag(self) -> None:

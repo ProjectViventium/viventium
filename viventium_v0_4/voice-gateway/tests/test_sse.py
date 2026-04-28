@@ -8,8 +8,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 # === VIVENTIUM START ===
 from sse import (
+    VoiceControlDisplayFilter,
     iter_sse_json_events,
     extract_cortex_message_id,
+    extract_raw_text_deltas,
     extract_text_deltas,
     sanitize_voice_delta_text,
     sanitize_voice_text,
@@ -267,6 +269,24 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("[laughter]", cleaned)
         self.assertIn("Great news!", cleaned)
         self.assertIn("Check it out.", cleaned)
+
+    def test_voice_control_display_filter_buffers_partial_emotion_tag(self) -> None:
+        display = VoiceControlDisplayFilter()
+        chunks = ["<em", "otion ", 'value="excited"/>Voice ', "check"]
+        cleaned = "".join(display.feed(chunk) for chunk in chunks)
+        cleaned += display.feed("", final=True)
+        self.assertEqual(cleaned, "Voice check")
+
+    def test_voice_control_display_filter_strips_split_bracket_stage_direction(self) -> None:
+        display = VoiceControlDisplayFilter()
+        chunks = ["Hello ", "[laugh", "ter] world"]
+        cleaned = "".join(display.feed(chunk) for chunk in chunks)
+        self.assertEqual(cleaned, "Hello  world")
+
+    def test_voice_control_display_filter_preserves_non_voice_markup(self) -> None:
+        display = VoiceControlDisplayFilter()
+        cleaned = display.feed("Use 1 < 2 and [note: important].")
+        self.assertEqual(cleaned, "Use 1 < 2 and [note: important].")
     # === VIVENTIUM END ===
 
     def test_extract_text_deltas_preserves_space_only_chunks(self) -> None:
@@ -284,6 +304,25 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         }
         deltas = extract_text_deltas(payload)
         self.assertEqual("".join(deltas), "quiet and")
+
+    def test_extract_raw_text_deltas_preserves_voice_markup_for_debugging(self) -> None:
+        payload = {
+            "event": "on_message_delta",
+            "data": {
+                "delta": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": '<emotion value="calm"/>Hello <break time="200ms"/>there.',
+                        }
+                    ]
+                }
+            },
+        }
+        self.assertEqual(
+            extract_raw_text_deltas(payload),
+            ['<emotion value="calm"/>Hello <break time="200ms"/>there.'],
+        )
     # === VIVENTIUM END ===
 
 

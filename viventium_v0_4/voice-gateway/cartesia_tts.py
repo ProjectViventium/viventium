@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import io
 import json
 import logging
@@ -42,9 +43,15 @@ logger = logging.getLogger("voice-gateway.cartesia_tts")
 
 DEFAULT_URL = "https://api.cartesia.ai/tts/bytes"
 DEFAULT_WS_URL = "wss://api.cartesia.ai/tts/websocket"
-DEFAULT_VERSION = "2025-04-16"
+DEFAULT_VERSION = "2026-03-01"
 DEFAULT_MODEL_ID = "sonic-3"
-DEFAULT_VOICE_ID = "e8e5fffb-252c-436d-b842-8879b84445b6"
+MEGAN_VOICE_ID = "e8e5fffb-252c-436d-b842-8879b84445b6"
+LYRA_VOICE_ID = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+DEFAULT_VOICE_ID = MEGAN_VOICE_ID
+CARTESIA_VOICE_PRESETS: tuple[tuple[str, str], ...] = (
+    (MEGAN_VOICE_ID, "Megan"),
+    (LYRA_VOICE_ID, "Lyra"),
+)
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_NUM_CHANNELS = 1
 # === VIVENTIUM START ===
@@ -73,7 +80,9 @@ _GENERIC_TAG_RE = re.compile(r"</?([A-Za-z][A-Za-z0-9]*)\b[^>]*>")
 # === VIVENTIUM NOTE ===
 _BRACKET_TOKEN_RE = re.compile(r"\[([^\]]+)\]")
 _STAGE_TOKEN_ALIASES = {
-    # Laughter family
+    # Cartesia docs currently document `[laughter]` as the supported nonverbal token.
+    # Accept close laughter variants from model output, but do not synthesize unsupported
+    # stage directions into invented speech.
     "laugh": "laughter",
     "laughter": "laughter",
     "giggle": "laughter",
@@ -84,28 +93,11 @@ _STAGE_TOKEN_ALIASES = {
     "nervous laugh": "laughter",
     "awkward laugh": "laughter",
     "light laugh": "laughter",
-    # Sighs / breath
-    "sigh": "sigh",
-    "gentle sigh": "sigh",
-    "soft sigh": "sigh",
-    "breath": "breath",
-    "breath in": "breath",
-    "breath out": "breath",
-    "inhale": "breath",
-    "exhale": "breath",
-    # Other nonverbal
-    "gasp": "gasp",
-    "hmm": "hmm",
-    "hm": "hmm",
 }
 
 _STAGE_PROMPTS: dict[str, tuple[str, Optional[str]]] = {
     # Cartesia docs: insert `[laughter]` token to produce laughter.
     "laughter": ("[laughter]", "joking/comedic"),
-    "sigh": ("haaah", "sad"),
-    "breath": ("hmm", "calm"),
-    "gasp": ("ah!", "surprised"),
-    "hmm": ("hmm", "contemplative"),
 }
 # === VIVENTIUM END ===
 
@@ -228,6 +220,30 @@ def _normalize_nonverbal_tokens(text: str) -> str:
     normalized = _BRACKET_TOKEN_RE.sub(_replace, text)
     normalized = re.sub(r"\s{2,}", " ", normalized).strip()
     return normalized
+
+
+def _debug_text(text: str, *, max_len: int = 500) -> str:
+    snippet = (text or "").replace("\n", "\\n").replace("\r", "\\r")
+    if len(snippet) > max_len:
+        return snippet[:max_len] + "..."
+    return snippet
+
+
+def _with_emotion_ssml(text: str, emotion: Optional[str]) -> str:
+    """
+    Preserve LLM-selected Cartesia emotion control in the transcript sent to Cartesia.
+
+    The model chooses the emotion tag in the assistant response. The adapter may split a
+    streaming response into provider-safe chunks, so it reattaches that chosen emotion as
+    Cartesia SSML while also passing the same value in generation_config.emotion.
+    """
+    cleaned = text or ""
+    value = (emotion or "").strip()
+    if not value:
+        return cleaned
+    if _EMOTION_SELF_CLOSING_RE.match(cleaned.lstrip()) or _EMOTION_WRAPPER_OPEN_RE.match(cleaned.lstrip()):
+        return cleaned
+    return f'<emotion value="{html.escape(value, quote=True)}"/>{cleaned}'
 
 
 def _normalize_stage_token(raw: str) -> Optional[str]:
@@ -536,6 +552,7 @@ class _CartesiaChunkedStream(ChunkedStream):
             # Feature: Per-segment emotion synthesis + laughter normalization.
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 for idx, segment in enumerate(segments):
+                    emotion_from_llm = bool(segment.emotion) and not segment.stage
                     if segment.stage:
                         stage_prompt = _STAGE_PROMPTS.get(segment.stage, (f"[{segment.stage}]", None))
                         segment_text = stage_prompt[0]
@@ -545,9 +562,14 @@ class _CartesiaChunkedStream(ChunkedStream):
                         emotion = (segment.emotion or cfg.emotion).strip() or "neutral"
                     if not segment_text:
                         continue
+                    cartesia_transcript = (
+                        _with_emotion_ssml(segment_text, segment.emotion)
+                        if emotion_from_llm
+                        else segment_text
+                    )
                     payload = {
                         "model_id": cfg.model_id,
-                        "transcript": segment_text,
+                        "transcript": cartesia_transcript,
                         "voice": {"mode": "id", "id": cfg.voice_id},
                         "output_format": {
                             "container": "wav",
@@ -564,10 +586,13 @@ class _CartesiaChunkedStream(ChunkedStream):
 
                     if _should_debug():
                         logger.info(
-                            "Cartesia segment %s emotion=%s text=%s",
+                            "[VoiceMarkup] cartesia_bytes_request segment=%s model=%s voice=%s version=%s emotion=%s transcript=%s",
                             idx + 1,
+                            cfg.model_id,
+                            cfg.voice_id,
+                            cfg.api_version,
                             emotion,
-                            segment_text[:200],
+                            _debug_text(cartesia_transcript),
                         )
 
                     async with session.post(cfg.api_url, headers=headers, data=json.dumps(payload)) as resp:
@@ -642,6 +667,7 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
                 async def _emit_segment(segment: EmotionSegment) -> None:
                     nonlocal sent_any_input
 
+                    emotion_from_llm = bool(segment.emotion) and not segment.stage
                     if segment.stage:
                         stage_prompt = _STAGE_PROMPTS.get(
                             segment.stage,
@@ -655,14 +681,21 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
 
                     if not chunk:
                         return
+                    cartesia_transcript = (
+                        _with_emotion_ssml(chunk, segment.emotion)
+                        if emotion_from_llm
+                        else chunk
+                    )
 
                     if _should_debug():
                         logger.info(
-                            "Cartesia ws push len=%s emotion=%s buffer_ms=%s chunk=%s",
-                            len(chunk),
+                            "[VoiceMarkup] cartesia_ws_request model=%s voice=%s version=%s continue=true emotion=%s buffer_ms=%s transcript=%s",
+                            cfg.model_id,
+                            cfg.voice_id,
+                            cfg.api_version,
                             emotion,
                             cfg.max_buffer_delay_ms,
-                            chunk[:200],
+                            _debug_text(cartesia_transcript),
                         )
 
                     await ws.send_str(
@@ -670,7 +703,7 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
                             _build_ws_generation_request(
                                 cfg=cfg,
                                 context_id=context_id,
-                                transcript=chunk,
+                                transcript=cartesia_transcript,
                                 continue_generation=True,
                                 emotion=emotion,
                             )

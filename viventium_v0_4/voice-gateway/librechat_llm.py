@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -33,9 +34,12 @@ from sse import (
     extract_cortex_message_id,
     # === VIVENTIUM END ===
     extract_cortex_insight,
-    extract_text_deltas,
+    extract_raw_text_deltas,
     iter_sse_json_events,
+    sanitize_voice_delta_text,
     sanitize_voice_followup_text,
+    strip_voice_control_tags,
+    VoiceControlDisplayFilter,
 )
 
 # === VIVENTIUM START ===
@@ -159,6 +163,48 @@ def _is_possible_no_response_prefix(text: str) -> bool:
     return True
 
 
+def _should_debug_voice_markup() -> bool:
+    return (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+
+
+def _debug_text(text: str, *, max_len: int = 500) -> str:
+    snippet = (text or "").replace("\n", "\\n").replace("\r", "\\r")
+    if len(snippet) > max_len:
+        return snippet[:max_len] + "..."
+    return snippet
+
+
+def _summarize_error_for_log(error: str) -> str:
+    text = error or ""
+    summary: list[str] = []
+    status_match = re.search(r"\b([45]\d{2})\b", text)
+    if status_match:
+        summary.append(f"status={status_match.group(1)}")
+
+    json_start = text.find("{")
+    if json_start >= 0:
+        try:
+            payload = json.loads(text[json_start:])
+            if isinstance(payload, dict):
+                outer_type = payload.get("type")
+                if isinstance(outer_type, str) and outer_type.strip():
+                    summary.append(f"type={outer_type.strip()}")
+                inner = payload.get("error")
+                if isinstance(inner, dict):
+                    inner_type = inner.get("type")
+                    if isinstance(inner_type, str) and inner_type.strip():
+                        summary.append(f"error_type={inner_type.strip()}")
+                    inner_code = inner.get("code")
+                    if isinstance(inner_code, str) and inner_code.strip():
+                        summary.append(f"error_code={inner_code.strip()}")
+        except Exception:
+            pass
+
+    if summary:
+        return " ".join(summary)
+    return _debug_text(text, max_len=120)
+
+
 class _NoResponseStreamGuard:
     """
     Buffers initial deltas that might form a no-response-only output, so `{NTA}` doesn't flash.
@@ -256,6 +302,10 @@ def _extract_final_response_text(final_event: dict[str, Any]) -> str:
                 if isinstance(inner, str) and inner.strip():
                     msg = inner.strip()
             # Voice should not read raw stack traces or auth strings aloud; map to a generic UX message.
+            logger.warning(
+                "[LibreChatLLM] Final response contained error content; using voice-safe fallback (%s)",
+                _summarize_error_for_log(msg or "voice generation error"),
+            )
             return sanitize_voice_followup_text(_select_stream_error_message(msg or "voice generation error"))
         if part.get("type") != "text":
             continue
@@ -321,14 +371,28 @@ def _get_voice_sse_retry_config() -> tuple[int, float]:
 def _select_stream_error_message(error: Optional[str]) -> str:
     tool_message = os.getenv("VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE", "").strip()
     stream_message = os.getenv("VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE", "").strip()
+    auth_message = os.getenv("VIVENTIUM_VOICE_AUTH_ERROR_MESSAGE", "").strip()
     if not tool_message:
         tool_message = "I'm having trouble reaching your tools right now. Please try again."
     if not stream_message:
         stream_message = "I'm having trouble reaching the service right now. Please try again."
+    if not auth_message:
+        auth_message = (
+            "The selected voice-call model needs a valid connected account or API key. "
+            "Reconnect it in Settings, then retry."
+        )
     if error:
         lowered = error.lower()
-        if "mcp" in lowered or "tool" in lowered or "oauth" in lowered:
+        if "mcp" in lowered or "tool" in lowered:
             return tool_message
+        if (
+            "authentication" in lowered
+            or "credential" in lowered
+            or "unauthorized" in lowered
+            or " 401 " in f" {lowered} "
+            or " 403 " in f" {lowered} "
+        ):
+            return auth_message
     return stream_message
 
 
@@ -554,6 +618,7 @@ class _LibreChatLLMStream(llm.LLMStream):
             # === VIVENTIUM START ===
             # Guard against `{NTA}` flashing during streaming.
             no_response_guard = _NoResponseStreamGuard()
+            debug_display_filter = VoiceControlDisplayFilter()
             # === VIVENTIUM END ===
             # === VIVENTIUM START ===
             # Keep the canonical assistant messageId from cortex updates as a follow-up fallback.
@@ -599,8 +664,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                             #
                             # Why: extract_cortex_insight() only captures status="complete" events
                             # and `continue`s. But "activating"/"brewing" cortex events that have
-                            # a "text" field (status label) would fall through to
-                            # extract_text_deltas() which matches any payload with a "text" key,
+                            # a "text" field (status label) would fall through to text delta
+                            # extraction, which matches any payload with a "text" key,
                             # causing cortex status labels to be spoken via TTS.
                             # Additionally, on_cortex_followup events must not be treated as
                             # text deltas either — follow-up delivery is handled by the poller.
@@ -619,9 +684,18 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 continue
                             # === VIVENTIUM END ===
 
-                            for delta in extract_text_deltas(event):
+                            for raw_delta in extract_raw_text_deltas(event):
+                                delta = sanitize_voice_delta_text(raw_delta)
                                 if not delta:
                                     continue
+                                if _should_debug_voice_markup():
+                                    display_delta = debug_display_filter.feed(delta)
+                                    logger.info(
+                                        "[VoiceMarkup] llm_delta raw=%s tts_delta=%s display_delta=%s",
+                                        _debug_text(raw_delta),
+                                        _debug_text(delta),
+                                        _debug_text(display_delta),
+                                    )
                                 saw_any_tokens = True
                                 if first_token_at is None:
                                     first_token_at = time.time()
@@ -704,6 +778,12 @@ class _LibreChatLLMStream(llm.LLMStream):
             # === VIVENTIUM START ===
             # Flush any buffered deltas now that we have the full response classification.
             full_response_text = "".join(collected_response)
+            if _should_debug_voice_markup() and full_response_text:
+                logger.info(
+                    "[VoiceMarkup] llm_full tts_text=%s display_text=%s",
+                    _debug_text(full_response_text),
+                    _debug_text(strip_voice_control_tags(full_response_text)),
+                )
             suppressed, pending_emit = no_response_guard.finalize(full_response_text)
             if not suppressed:
                 for emit_delta in pending_emit:

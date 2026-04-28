@@ -1616,6 +1616,160 @@ def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path)
     assert "VIVENTIUM_STT_VAD_MIN_SPEECH=0.12" in runtime_env
     assert "VIVENTIUM_STT_VAD_MIN_SILENCE=0.72" in runtime_env
     assert "VIVENTIUM_STT_VAD_ACTIVATION=0.33" in runtime_env
+    assert "VIVENTIUM_CARTESIA_API_VERSION=2026-03-01" in runtime_env
+    assert "VIVENTIUM_CARTESIA_MODEL_ID=sonic-3" in runtime_env
+    assert "VIVENTIUM_CARTESIA_VOICE_ID=e8e5fffb-252c-436d-b842-8879b84445b6" in runtime_env
+    assert "VIVENTIUM_CARTESIA_SAMPLE_RATE=44100" in runtime_env
+    assert "VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS=120" in runtime_env
+
+
+def test_config_compiler_emits_cartesia_sonic3_voice_options(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "assemblyai",
+            "stt": {"secret_value": "assemblyai-test"},
+            "tts_provider": "cartesia",
+            "tts": {
+                "secret_value": "cartesia-test",
+                "model_id": "sonic-3",
+                "voice": {
+                    "mode": "id",
+                    "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+                },
+                "speed": 1,
+                "volume": 1,
+                "emotion": "calm",
+                "language": "en",
+                "api_version": "2026-03-01",
+                "sample_rate": 44100,
+                "max_buffer_delay_ms": 80,
+                "segment_silence_ms": 40,
+            },
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_CARTESIA_API_VERSION=2026-03-01" in runtime_env
+    assert "VIVENTIUM_CARTESIA_MODEL_ID=sonic-3" in runtime_env
+    assert "VIVENTIUM_CARTESIA_VOICE_ID=6ccbfb76-1fc6-48f7-b71d-91ac6298247b" in runtime_env
+    assert "VIVENTIUM_CARTESIA_SPEED=1" in runtime_env
+    assert "VIVENTIUM_CARTESIA_VOLUME=1" in runtime_env
+    assert "VIVENTIUM_CARTESIA_EMOTION=calm" in runtime_env
+    assert "VIVENTIUM_CARTESIA_LANGUAGE=en" in runtime_env
+    assert "VIVENTIUM_CARTESIA_SAMPLE_RATE=44100" in runtime_env
+    assert "VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS=80" in runtime_env
+    assert "VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS=40" in runtime_env
+
+
+def test_config_compiler_rejects_non_sonic3_cartesia_model(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "assemblyai",
+            "stt": {"secret_value": "assemblyai-test"},
+            "tts_provider": "cartesia",
+            "tts": {"secret_value": "cartesia-test", "model_id": "sonic-2"},
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert result.returncode != 0
+    assert "Cartesia voice calls support only model_id 'sonic-3'" in (
+        result.stdout + result.stderr
+    )
 
 
 def test_config_compiler_emits_background_followup_window_override(tmp_path: Path) -> None:
