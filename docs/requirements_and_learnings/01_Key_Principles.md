@@ -104,6 +104,36 @@
   - honest health checks during first package builds
   - no false "healthy" claim before the actual user-facing surfaces respond
 
+### 2.5 Incident Learning and Drift Prevention Discipline
+- When a bug exposes a gap between source, docs, runtime behavior, QA, or user-visible wording, the
+  fix must capture the learning in the owning feature document and, when non-trivial, in `qa/`.
+- Root-cause notes must explain the full causal chain:
+  - trigger
+  - transformation path
+  - user-visible failure
+  - precise owning fix
+  - why similar drift is prevented for future users
+- Do not treat "code changed" as "problem solved":
+  - run the relevant automated checks
+  - verify the live or shipped artifact when the feature depends on a running worker, generated
+    config, compiled bundle, nested component, or prebuilt output
+  - record residual risks and any runtime QA that still remains
+- If a user reports that a live/local flow still fails after an earlier fix, treat that report as
+  new evidence. Reopen logs, DB/runtime state, code, docs, and generated artifacts before claiming
+  the failure is explained.
+- Debug instrumentation must reveal the decisive truth without leaking secrets or private data:
+  - exact payload text should be logged with safe escaping when formatting is the suspected issue
+  - credentials, private identifiers, local absolute paths, account emails, call-session ids, and
+    private transcript content must stay out of public docs and QA artifacts
+- Second-opinion reviews are used to challenge a grounded proposal, not to replace investigation:
+  document what was validated, what gaps were found, and what follow-up was completed.
+- User-facing error copy is part of product truth. If the underlying failure is rate limit, auth,
+  missing key, provider outage, local runtime unavailable, or unsupported configuration, the message
+  must say the correct class of problem instead of a generic service failure.
+- Communication must be efficient and specific: summarize what was changed, how it was verified,
+  what was pushed or left local, and what still needs live QA, without dumping raw logs or private
+  machine details.
+
 ### 3. Study Before Acting
 - **Do not make assumptions** about the codebase, components, or anything
 - **You must provide proof and references** to truth in codebase and online resources to ensure you are grounded in reality and not making things up
