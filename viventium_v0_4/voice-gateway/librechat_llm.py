@@ -372,6 +372,7 @@ def _select_stream_error_message(error: Optional[str]) -> str:
     tool_message = os.getenv("VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE", "").strip()
     stream_message = os.getenv("VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE", "").strip()
     auth_message = os.getenv("VIVENTIUM_VOICE_AUTH_ERROR_MESSAGE", "").strip()
+    rate_limit_message = os.getenv("VIVENTIUM_VOICE_RATE_LIMIT_ERROR_MESSAGE", "").strip()
     if not tool_message:
         tool_message = "I'm having trouble reaching your tools right now. Please try again."
     if not stream_message:
@@ -381,10 +382,22 @@ def _select_stream_error_message(error: Optional[str]) -> str:
             "The selected voice-call model needs a valid connected account or API key. "
             "Reconnect it in Settings, then retry."
         )
+    if not rate_limit_message:
+        rate_limit_message = (
+            "The selected voice-call model hit a provider rate limit. "
+            "Choose a fallback model in Agent Builder or wait for the limit to reset."
+        )
     if error:
         lowered = error.lower()
         if "mcp" in lowered or "tool" in lowered:
             return tool_message
+        if (
+            "rate_limit" in lowered
+            or "rate limit" in lowered
+            or "too many requests" in lowered
+            or " 429 " in f" {lowered} "
+        ):
+            return rate_limit_message
         if (
             "authentication" in lowered
             or "credential" in lowered

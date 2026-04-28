@@ -129,17 +129,23 @@ class TestStreamErrorHelpers(unittest.TestCase):
         os.environ["VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE"] = "Stream down."
         os.environ["VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE"] = "Tool down."
         os.environ["VIVENTIUM_VOICE_AUTH_ERROR_MESSAGE"] = "Auth down."
+        os.environ["VIVENTIUM_VOICE_RATE_LIMIT_ERROR_MESSAGE"] = "Rate limited."
         try:
             self.assertEqual(_select_stream_error_message("MCP connection failed"), "Tool down.")
             self.assertEqual(
                 _select_stream_error_message("401 authentication_error"),
                 "Auth down.",
             )
+            self.assertEqual(
+                _select_stream_error_message("status 429 rate_limit_error"),
+                "Rate limited.",
+            )
             self.assertEqual(_select_stream_error_message("other error"), "Stream down.")
         finally:
             os.environ.pop("VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE", None)
             os.environ.pop("VIVENTIUM_VOICE_TOOL_ERROR_MESSAGE", None)
             os.environ.pop("VIVENTIUM_VOICE_AUTH_ERROR_MESSAGE", None)
+            os.environ.pop("VIVENTIUM_VOICE_RATE_LIMIT_ERROR_MESSAGE", None)
 
 class TestNoResponseStreamingGuard(unittest.TestCase):
     def test_buffers_and_suppresses_braced_tag(self) -> None:

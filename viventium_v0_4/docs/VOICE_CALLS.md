@@ -61,6 +61,24 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
   must not be voiced directly into the modern playground transcript/TTS path.
 - Voice follow-up requests set `suppressBackgroundCortices=true` to prevent recursion.
 
+## Agent LLM Routes and Fallback
+- The live call LLM defaults to the selected agent provider/model.
+- A dedicated Agent Builder `Voice Chat Model` may override the live-call LLM for voice only.
+- A dedicated Agent Builder `Fallback Model` is the secondary provider/model route used when the
+  primary agent route fails before producing assistant text.
+- The `Voice Chat Model` page has its own fallback model. Voice calls use that voice-specific
+  fallback first, then inherit the general `Fallback Model` only when the voice fallback is unset or
+  unavailable before model initialization.
+- Fallback is retry-once and user-configured. Runtime does not silently choose a hidden model from
+  machine defaults, account identity, prompt text, or provider labels.
+- Fallback uses the normal provider auth path, including connected accounts. A valid connected
+  OpenAI account can therefore recover from an Anthropic rate limit when the agent fallback route is
+  set to an OpenAI model.
+- If fallback is unset or fails too, the voice gateway should speak an honest error class. Provider
+  rate limits use the rate-limit message, not the generic service outage message.
+- Assistant route disclosure reports the effective call LLM separately from STT/TTS settings and
+  may include the configured fallback route as secondary route information.
+
 ## Streaming-First TTS Contract
 - Live voice calls must begin speech from incremental LLM output; they must not wait for the full
   final assistant answer before TTS starts.

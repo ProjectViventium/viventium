@@ -39,6 +39,30 @@ background-cortex behavior.
 - If an explicit Voice Call LLM is invalid or lacks a required server credential, runtime should log
   the skip and fall back to the agent primary model/provider.
 
+### Agent Fallback LLM Contract
+- Agent Builder must expose a user-visible `Fallback Model` route from the Model Parameters page.
+  It uses explicit `fallback_llm_provider`, `fallback_llm_model`, and
+  `fallback_llm_model_parameters` fields.
+- Agent Builder must also expose a fallback route inside the Voice Chat Model page. It uses
+  explicit `voice_fallback_llm_provider`, `voice_fallback_llm_model`, and
+  `voice_fallback_llm_model_parameters` fields so voice calls can recover independently of the
+  text-chat fallback route.
+- The fallback route is a secondary provider/model for recoverable primary-route failures before
+  any assistant text is produced, including provider rate limits, credential failures, and temporary
+  provider outages.
+- For live voice calls, runtime chooses fallback candidates in this order:
+  1. the voice-specific fallback route, when configured
+  2. the general agent fallback route, when the voice-specific route is unset or unavailable before
+     model initialization
+- Runtime may retry once with the configured fallback route. It must not silently remap to hidden
+  machine defaults or infer a fallback from a user identity, provider label, or prompt text.
+- The fallback route must support connected-account auth with the same precedence as the primary
+  agent route: user connected account first, then server env key where the endpoint supports it.
+- If no fallback route is configured or the fallback route is invalid, voice must surface an honest
+  provider-specific failure. A provider rate limit must not be voiced as a generic service outage.
+- If primary output has already produced substantive assistant text, runtime must not switch models
+  mid-answer; that would create an incoherent mixed-provider response.
+
 ### Call Session Storage
 - Persist call sessions with TTL.
 - Session fields should include the call identity, user, agent, conversation, room, and expiry.
@@ -55,6 +79,9 @@ background-cortex behavior.
   call LLM route for the owning agent.
 - The assistant disclosure must show the concrete provider/model and whether that route comes from
   the agent Voice Call LLM or from inheritance of the agent primary LLM.
+- When configured, the assistant disclosure may also show the fallback provider/model separately
+  from the effective call LLM so users understand resilience without confusing it with STT/TTS
+  route selection.
 - Runtime should use the persisted call-session flag as the source of truth for whether Wing Mode is on.
 
 ### Voice Gateway Contract
