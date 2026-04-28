@@ -16,6 +16,7 @@ from utils.stt_env import resolve_api_whisper_config
 logger = logging.getLogger(__name__)
 
 _DEFAULT_LOCAL_CHATTERBOX_MODEL_ID = "mlx-community/chatterbox-turbo-8bit"
+_CARTESIA_SONIC3_MODEL_ID = "sonic-3"
 _SUPPORTED_TTS_PROVIDERS = {
     "openai",
     "elevenlabs",
@@ -163,6 +164,14 @@ def _extract_voice_route_tts(voice_route: Optional[dict[str, Any]]) -> dict[str,
     }
 
 
+def _cartesia_voice_id_from_variant(variant: Optional[str], default_voice_id: str) -> str:
+    """Cartesia variants are voice IDs; legacy model variants fall back to the configured voice."""
+    candidate = (variant or "").strip()
+    if candidate and candidate not in {"sonic-2", _CARTESIA_SONIC3_MODEL_ID}:
+        return candidate
+    return (default_voice_id or "").strip()
+
+
 def _is_local_chatterbox_supported() -> tuple[bool, Optional[str]]:
     if sys.platform != "darwin":
         return False, "local Chatterbox requires macOS"
@@ -209,7 +218,10 @@ def resolve_tts_selection(voice_route: Optional[dict[str, Any]] = None) -> dict[
 
     def _default_variant(provider: str) -> Optional[str]:
         if provider == "cartesia":
-            return (config.VIVENTIUM_CARTESIA_MODEL_ID or "sonic-3").strip() or "sonic-3"
+            return (
+                (config.VIVENTIUM_CARTESIA_VOICE_ID or "").strip()
+                or None
+            )
         if provider == "elevenlabs":
             return (config.TTS_VOICE_ELEVENLABS or config.TTS_VOICE or "").strip() or None
         if provider == "local_chatterbox_turbo_mlx_8bit":
@@ -378,16 +390,29 @@ async def synthesize_speech(
                 logger.warning("Skipping Cartesia TTS because CARTESIA_API_KEY is missing")
                 return None
 
-            if not VIVENTIUM_CARTESIA_VOICE_ID:
+            cartesia_voice_id = _cartesia_voice_id_from_variant(
+                variant_override,
+                VIVENTIUM_CARTESIA_VOICE_ID,
+            )
+            if not cartesia_voice_id:
                 logger.warning("Skipping Cartesia TTS because VIVENTIUM_CARTESIA_VOICE_ID is not configured")
                 return None
+
+            cartesia_model_id = (VIVENTIUM_CARTESIA_MODEL_ID or _CARTESIA_SONIC3_MODEL_ID).strip()
+            if cartesia_model_id != _CARTESIA_SONIC3_MODEL_ID:
+                logger.warning(
+                    "Telegram Cartesia TTS only supports %s; ignoring configured model_id=%s",
+                    _CARTESIA_SONIC3_MODEL_ID,
+                    cartesia_model_id,
+                )
+                cartesia_model_id = _CARTESIA_SONIC3_MODEL_ID
 
             # Updated 2026-02-22: Removed deprecated Sonic-2 top-level "speed": "normal"
             # (conflicts with generation_config.speed). Made language configurable.
             payload = {
-                "model_id": (variant_override or VIVENTIUM_CARTESIA_MODEL_ID or "sonic-3").strip() or "sonic-3",
+                "model_id": cartesia_model_id,
                 "transcript": synth_text,
-                "voice": {"mode": "id", "id": VIVENTIUM_CARTESIA_VOICE_ID},
+                "voice": {"mode": "id", "id": cartesia_voice_id},
                 "output_format": {
                     "container": "wav",
                     "encoding": "pcm_s16le",

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 import types
 
@@ -38,7 +39,7 @@ def _fake_config(**overrides):
         "ELEVENLABS_USE_SPEAKER_BOOST": None,
         "ELEVENLABS_SPEED": None,
         "VIVENTIUM_CARTESIA_API_URL": "https://api.cartesia.ai/tts/bytes",
-        "VIVENTIUM_CARTESIA_API_VERSION": "2025-04-16",
+        "VIVENTIUM_CARTESIA_API_VERSION": "2026-03-01",
         "VIVENTIUM_CARTESIA_EMOTION": "neutral",
         "VIVENTIUM_CARTESIA_LANGUAGE": "en",
         "VIVENTIUM_CARTESIA_MODEL_ID": "sonic-3",
@@ -106,6 +107,31 @@ def test_resolve_tts_selection_falls_back_when_saved_chatterbox_is_unavailable(m
 
     assert resolved["provider"] == "openai"
     assert resolved["source"] == "default"
+
+
+def test_resolve_tts_selection_treats_cartesia_variant_as_voice_id(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+        ),
+    )
+
+    resolved = tts_module.resolve_tts_selection(
+        voice_route={
+            "tts": {
+                "provider": "cartesia",
+                "variant": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+            }
+        }
+    )
+
+    assert resolved["provider"] == "cartesia"
+    assert resolved["variant"] == "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+    assert resolved["source"] == "saved"
 
 
 def test_is_local_chatterbox_supported_requires_full_import_chain(monkeypatch):
@@ -178,3 +204,114 @@ async def test_synthesize_speech_uses_local_chatterbox_branch_and_preserves_mark
     assert voice_bytes == b"wav-bytes"
     assert seen["text"] == "Hello [laugh]"
     assert seen["model_id"] == "mlx-community/chatterbox-turbo-8bit"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_cartesia_uses_voice_variant_not_model_id(monkeypatch):
+    seen = {}
+    lyra_voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_MODEL_ID="sonic-2",
+            VIVENTIUM_CARTESIA_VOICE_ID="default-voice-id",
+        ),
+    )
+
+    class _Response:
+        content = b"wav-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, headers=None, content=None, **_kwargs):
+            seen["url"] = url
+            seen["headers"] = headers or {}
+            seen["payload"] = json.loads(content)
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech(
+        "Hello.",
+        "conv-1",
+        voice_route={
+            "tts": {
+                "provider": "cartesia",
+                "variant": lyra_voice_id,
+            }
+        },
+    )
+
+    assert voice_bytes == b"wav-bytes"
+    assert seen["headers"]["Cartesia-Version"] == "2026-03-01"
+    assert seen["payload"]["model_id"] == "sonic-3"
+    assert seen["payload"]["voice"] == {"mode": "id", "id": lyra_voice_id}
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_cartesia_ignores_legacy_model_variant(monkeypatch):
+    seen = {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="cartesia",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_VOICE_ID="default-voice-id",
+        ),
+    )
+
+    class _Response:
+        content = b"wav-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, _url, *, content=None, **_kwargs):
+            seen["payload"] = json.loads(content)
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech(
+        "Hello.",
+        "conv-1",
+        voice_route={
+            "tts": {
+                "provider": "cartesia",
+                "variant": "sonic-2",
+            }
+        },
+    )
+
+    assert voice_bytes == b"wav-bytes"
+    assert seen["payload"]["model_id"] == "sonic-3"
+    assert seen["payload"]["voice"] == {"mode": "id", "id": "default-voice-id"}

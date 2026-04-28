@@ -41,6 +41,10 @@ stream back to Telegram through the existing bridge.
 - Telegram's hosted Bot API cannot download files above its platform limit, so oversized Telegram
   media must fail honestly unless the install is configured to use a local Telegram Bot API server.
 - Voice replies must use a compatible TTS provider/key pair.
+- Telegram voice-note replies must use the same saved Speaking route as the modern voice
+  playground. The LibreChat Telegram route resolves `resolveUserVoiceRoute(...)` for the linked
+  user and returns that route to the bot; the bot must treat Cartesia variants as voice IDs
+  (Megan/Lyra), not as Sonic model names. Cartesia model selection is Sonic-3-only.
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
   explicitly known-good for the current deployment.
