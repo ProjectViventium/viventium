@@ -111,6 +111,15 @@ stream back to Telegram through the existing bridge.
   unavailable or installed but not runnable.
 - If a running bridge still encounters a non-runnable decoder, Telegram should return one clean
   media-decoder error and stop before chat submission.
+- Telegram polling must be single-owner per BotFather token. Starting the bot from a second
+  checkout, terminal, launch helper, or stale supervised process must fail closed before polling
+  begins, otherwise Telegram's `getUpdates` API alternates conflicts between the processes and
+  voice replies can be delayed or split from the text reply.
+- The same-token lock must live in a durable Viventium runtime lock directory, not a temporary
+  directory that the OS may clean while the process is still running.
+- Non-secret voice delivery timing logs must be available in normal runtime logs. Each voice-routed
+  Telegram turn should log the gate decision, TTS start, TTS chunk duration/bytes, and Telegram audio
+  send duration without logging bot tokens, API keys, raw private message text, or local paths.
 
 ## Telegram Attachments
 

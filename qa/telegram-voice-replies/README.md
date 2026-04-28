@@ -97,3 +97,34 @@ Verification:
 - Expected:
   - No Telegram audio reply is sent.
   - LibreChat is not put into voice-mode output for that turn.
+
+## 2026-04-28 Delayed Voice Reply Incident
+
+Observed state:
+
+- A Telegram voice note was transcribed and the text reply was delivered quickly.
+- The matching audio reply arrived roughly two minutes later.
+- Runtime process inspection found two `bot.py` polling processes for the same BotFather token:
+  one supported live process and one stale process from a source checkout.
+- Both logs showed repeated Telegram `getUpdates` conflict errors during the incident window.
+- A direct Cartesia Lyra smoke test for comparable text returned WAV bytes in about one second, so
+  Cartesia synthesis was not the source of the two-minute delay.
+
+Fix:
+
+- The Telegram bot now acquires a same-token singleton lock before polling begins.
+- A second local process for the same BotFather token exits before calling Telegram `getUpdates`,
+  preventing split/competing pollers across checkouts or stale helpers.
+- The lock is stored under a durable Viventium runtime lock directory and records only the owner
+  PID, never the BotFather token.
+- If Telegram still reports a `getUpdates` conflict at runtime, the error handler now logs the
+  duplicate-poller cause directly instead of a generic traceback.
+- Normal runtime logs now include non-secret `[TG_VOICE]` phase logs for gate decisions, TTS chunk
+  durations/bytes, and Telegram audio send duration.
+
+Verification:
+
+- Passed: `python3 -m py_compile TelegramVivBot/bot.py TelegramVivBot/utils/singleton.py TelegramVivBot/utils/voice.py TelegramVivBot/utils/librechat_bridge.py TelegramVivBot/utils/tts.py`
+- Passed: `uv run --with pytest --with pytest-asyncio --with httpx --with requests --with pillow --with fastapi python -m pytest tests/test_singleton.py tests/test_tts.py tests/test_voice_preferences.py tests/test_librechat_bridge.py -q`
+- Passed: process cleanup left one Telegram bot process.
+- Passed: second source-checkout startup with the same token exited before polling with code 78.

@@ -51,6 +51,8 @@ from config import (
 from utils.scripts import GetMesageInfo, safe_get, is_emoji
 from utils.tts import synthesize_speech
 from utils.livekit_bridge import LiveKitBridge
+from utils.env import coerce_bool
+from utils.singleton import SingletonAlreadyRunning, acquire_telegram_singleton_lock
 # === VIVENTIUM START ===
 # Feature: Centralized voice reply gating helper.
 from utils.voice import normalize_voice_preference, should_request_voice_mode, should_send_voice_reply
@@ -154,6 +156,30 @@ def _voice_debug_text(text: str, limit: int = 1200) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: limit - 3] + "..."
+# === VIVENTIUM END ===
+
+
+# === VIVENTIUM START ===
+# Feature: Same-token process singleton for Telegram polling.
+_TELEGRAM_SINGLETON_LOCK = None
+
+
+def _acquire_telegram_singleton_or_exit() -> None:
+    global _TELEGRAM_SINGLETON_LOCK
+    lock_enabled = coerce_bool(os.getenv("VIVENTIUM_TELEGRAM_SINGLETON_LOCK"), True)
+    if not lock_enabled:
+        logger.warning("Telegram singleton lock disabled by environment")
+        return
+    try:
+        _TELEGRAM_SINGLETON_LOCK = acquire_telegram_singleton_lock(BOT_TOKEN)
+    except SingletonAlreadyRunning as exc:
+        owner = f" pid={exc.owner_pid}" if exc.owner_pid else ""
+        logger.error(
+            "Another Telegram bot process already owns this BotFather-token lock%s; "
+            "exiting to prevent getUpdates conflicts and delayed voice replies.",
+            owner,
+        )
+        raise SystemExit(78) from exc
 # === VIVENTIUM END ===
 
 
@@ -1481,6 +1507,14 @@ async def getViventiumResponse(
         voice_enabled=voice_responses_active,
         text=tmpresult,
     )
+    logger.info(
+        "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s send=%s",
+        trace_id,
+        int(bool(voice_note_detected)),
+        int(always_voice_active),
+        int(voice_responses_active),
+        int(bool(should_send_voice)),
+    )
     _tg_timing_log(
         trace_id,
         "voice_gate",
@@ -1526,6 +1560,13 @@ async def getViventiumResponse(
                         provider_value = tts_config.get("provider")
                         if isinstance(provider_value, str):
                             tts_provider = provider_value.strip().lower()
+                logger.info(
+                    "[TG_VOICE] trace=%s tts_start provider=%s chars=%s route_cached=%s",
+                    trace_id,
+                    tts_provider or "default",
+                    len(cleaned_voice),
+                    int(isinstance(voice_route, dict)),
+                )
                 # === VIVENTIUM START ===
                 # Feature: Timing for TTS synthesis + send.
                 tts_start_ts = time.monotonic()
@@ -1559,9 +1600,19 @@ async def getViventiumResponse(
                 for i, chunk in enumerate(chunks):
                     logger.debug(f"Synthesizing TTS chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
                     chunk_start_ts = time.monotonic() if _tg_deep_enabled() else None
+                    chunk_wall_start_ts = time.monotonic()
                     voice_bytes = await synthesize_speech(chunk, convo_id, voice_route=voice_route)
                     if voice_bytes:
                         all_audio_chunks.append(voice_bytes)
+                        logger.info(
+                            "[TG_VOICE] trace=%s tts_chunk idx=%s/%s chars=%s bytes=%s ms=%.1f",
+                            trace_id,
+                            i + 1,
+                            len(chunks),
+                            len(chunk),
+                            len(voice_bytes),
+                            (time.monotonic() - chunk_wall_start_ts) * 1000,
+                        )
                         if chunk_start_ts is not None:
                             _tg_deep_log(
                                 trace_id,
@@ -1604,6 +1655,13 @@ async def getViventiumResponse(
 
                     send_voice_start_ts = time.monotonic() if _tg_deep_enabled() else None
                     await context.bot.send_audio(**send_kwargs)
+                    logger.info(
+                        "[TG_VOICE] trace=%s audio_sent chunks=%s bytes=%s ms=%.1f",
+                        trace_id,
+                        len(all_audio_chunks),
+                        len(combined_audio),
+                        (time.monotonic() - tts_start_ts) * 1000,
+                    )
                     # === VIVENTIUM START ===
                     _tg_timing_log(
                         trace_id,
@@ -2009,6 +2067,12 @@ async def start(update, context):
 
 async def error(update, context):
     traceback_string = traceback.format_exception(None, context.error, context.error.__traceback__)
+    if "telegram.error.Conflict" in traceback_string or "terminated by other getUpdates request" in traceback_string:
+        logger.error(
+            "Telegram getUpdates conflict detected: another process is polling this BotFather token. "
+            "Stop the duplicate Telegram bot process before retrying voice replies."
+        )
+        return
     if "telegram.error.TimedOut: Timed out" in traceback_string:
         logger.warning('error: telegram.error.TimedOut: Timed out')
         return
@@ -2084,6 +2148,8 @@ if __name__ == '__main__':
     # See config.py for detailed documentation on each setting.
     # Defaults are optimized for small deployments (1-10 users).
     # ========================================================================
+    _acquire_telegram_singleton_or_exit()
+
     telegram_bot_api_base_url = (
         getattr(config, "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL", "") or ""
     ).strip()
