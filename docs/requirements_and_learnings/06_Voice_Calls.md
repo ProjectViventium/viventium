@@ -109,6 +109,10 @@ background-cortex behavior.
 - Cartesia live calls must use the WebSocket continuation path for incremental LLM deltas. The
   `/tts/bytes` WAV endpoint is reserved for full-text one-request surfaces and must not become the
   default live-call path.
+- Cartesia WebSocket continuation transcripts are concatenated verbatim by the provider. Runtime
+  must preserve leading and trailing whitespace on streamed TTS chunks after markup/nonverbal
+  normalization, including whitespace-only deltas, so `["What's", " up?"]` remains
+  `What's up?`, not `What'sup?`.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -122,7 +126,8 @@ background-cortex behavior.
   Cartesia TTS.
 - Debug logging for voice markup must be opt-in and non-secret-bearing. With
   `VIVENTIUM_VOICE_DEBUG_TTS=1`, logs should show LLM raw text, TTS text, display-sanitized text,
-  and Cartesia request transcripts without API keys.
+  and Cartesia request transcripts without API keys. Cartesia transcript logs must use a
+  JSON-escaped representation so leading/trailing spaces and joined continuation text are visible.
 - When a TTS provider does not support native incremental text input, runtime may adapt it to an
   incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
   for voice-first providers.

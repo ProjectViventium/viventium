@@ -25,6 +25,7 @@ from cartesia_tts import (
     _is_ws_done,
     _normalize_nonverbal_tokens,
     _split_emotion_segments,
+    _streaming_transcript_for_segment,
     _with_emotion_ssml,
     StreamingEmotionState,
 )
@@ -72,6 +73,91 @@ class TestCartesiaNormalization(unittest.TestCase):
         self.assertNotIn("[whisper]", normalized)
         self.assertNotIn("[snort]", normalized)
         self.assertIn("hello", normalized)
+
+    def test_streaming_normalization_preserves_leading_space_between_words(self) -> None:
+        state = StreamingEmotionState()
+        chunks = ["Hey, doing good. What's", " up?"]
+        transcripts: list[str] = []
+
+        for chunk in chunks:
+            for segment in _consume_streaming_emotion_chunk(state, chunk, final=False):
+                transcripts.append(
+                    _normalize_nonverbal_tokens(
+                        segment.text,
+                        preserve_edge_whitespace=True,
+                    )
+                )
+
+        self.assertEqual(transcripts, ["Hey, doing good. What's", " up?"])
+        self.assertEqual("".join(transcripts), "Hey, doing good. What's up?")
+
+    def test_streaming_normalization_preserves_trailing_space_for_next_chunk(self) -> None:
+        state = StreamingEmotionState()
+        chunks = ["The road ", "goes ever ", "on."]
+        transcripts: list[str] = []
+
+        for chunk in chunks:
+            for segment in _consume_streaming_emotion_chunk(state, chunk, final=False):
+                transcripts.append(
+                    _normalize_nonverbal_tokens(
+                        segment.text,
+                        preserve_edge_whitespace=True,
+                    )
+                )
+
+        self.assertEqual(transcripts, ["The road ", "goes ever ", "on."])
+        self.assertEqual("".join(transcripts), "The road goes ever on.")
+
+    def test_streaming_normalization_preserves_whitespace_only_chunk(self) -> None:
+        state = StreamingEmotionState()
+        chunks = ["Hello", " ", "world"]
+        transcripts: list[str] = []
+
+        for chunk in chunks:
+            for segment in _consume_streaming_emotion_chunk(state, chunk, final=False):
+                transcripts.append(
+                    _normalize_nonverbal_tokens(
+                        segment.text,
+                        preserve_edge_whitespace=True,
+                    )
+                )
+
+        self.assertEqual(transcripts, ["Hello", " ", "world"])
+        self.assertEqual("".join(transcripts), "Hello world")
+
+    def test_streaming_ws_payload_preserves_chunk_boundary_spaces(self) -> None:
+        cfg = CartesiaConfig(api_key="cartesia-key")
+        state = StreamingEmotionState()
+        chunks = ["Hey, doing good. What's", " up?"]
+        payloads: list[dict[str, object]] = []
+
+        for chunk in chunks:
+            for segment in _consume_streaming_emotion_chunk(state, chunk, final=False):
+                transcript, emotion = _streaming_transcript_for_segment(
+                    segment,
+                    default_emotion=cfg.emotion,
+                )
+                if not transcript:
+                    continue
+                payloads.append(
+                    _build_ws_generation_request(
+                        cfg=cfg,
+                        context_id="ctx-123",
+                        transcript=transcript,
+                        continue_generation=True,
+                        emotion=emotion,
+                    )
+                )
+
+        transcripts = [payload["transcript"] for payload in payloads]
+        self.assertEqual(transcripts, ["Hey, doing good. What's", " up?"])
+        self.assertEqual(
+            "".join(str(transcript) for transcript in transcripts),
+            "Hey, doing good. What's up?",
+        )
+
+    def test_default_normalization_still_strips_edges_for_one_shot_requests(self) -> None:
+        self.assertEqual(_normalize_nonverbal_tokens(" hello "), "hello")
 
     # === VIVENTIUM START ===
     # Feature: Verify Cartesia SSML tags are preserved through normalization.

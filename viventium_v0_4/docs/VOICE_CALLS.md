@@ -136,6 +136,9 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 ### Cartesia (Sonic 3)
 - Live voice calls use Cartesia WebSocket contexts (`/tts/websocket`) so text deltas can be pushed
   as they arrive from the LLM. The bytes endpoint remains for one-request/full-text surfaces.
+- Cartesia joins continuation transcripts verbatim. The voice gateway preserves leading and
+  trailing whitespace on streamed transcript chunks after markup/nonverbal normalization, including
+  whitespace-only deltas, so chunk boundaries do not collapse words such as `What's` + ` up?`.
 - Current default request contract:
   - `Cartesia-Version: 2026-03-01`
   - `model_id: sonic-3`
@@ -151,6 +154,8 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 - SSML tags: `<break time="1s"/>`, `<speed ratio="1.2"/>`, `<volume ratio="0.8"/>`, `<spell>TEXT</spell>`.
 - Nonverbal token: `[laughter]` (sent as literal token to Cartesia).
 - Non-Cartesia HTML tags are stripped; Cartesia SSML tags are preserved through synthesis.
+- With `VIVENTIUM_VOICE_DEBUG_TTS=1`, Cartesia request logs include JSON-escaped transcript chunks
+  and joined continuation text so leading/trailing spaces can be inspected without logging API keys.
 
 ### xAI (Grok Voice)
 - Allowed nonverbal markers: `[laugh]`, `[sigh]`, `[gasp]`, `[whisper]`, `[hmm]`, `[chuckle]`.

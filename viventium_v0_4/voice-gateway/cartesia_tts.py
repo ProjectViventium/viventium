@@ -207,7 +207,7 @@ def _strip_non_cartesia_tags(text: str) -> str:
     return _GENERIC_TAG_RE.sub(_replace_tag, text)
 
 
-def _normalize_nonverbal_tokens(text: str) -> str:
+def _normalize_nonverbal_tokens(text: str, *, preserve_edge_whitespace: bool = False) -> str:
     text = _strip_non_cartesia_tags(text)
 
     def _replace(match: re.Match[str]) -> str:
@@ -219,6 +219,13 @@ def _normalize_nonverbal_tokens(text: str) -> str:
 
     normalized = _BRACKET_TOKEN_RE.sub(_replace, text)
     normalized = re.sub(r"\s{2,}", " ", normalized).strip()
+    if preserve_edge_whitespace and normalized:
+        if text[:1].isspace() and not normalized[:1].isspace():
+            normalized = " " + normalized
+        if text[-1:].isspace() and not normalized[-1:].isspace():
+            normalized = normalized + " "
+    elif preserve_edge_whitespace and text and text.isspace():
+        return " "
     return normalized
 
 
@@ -227,6 +234,10 @@ def _debug_text(text: str, *, max_len: int = 500) -> str:
     if len(snippet) > max_len:
         return snippet[:max_len] + "..."
     return snippet
+
+
+def _debug_text_json(text: str) -> str:
+    return json.dumps(text or "", ensure_ascii=False)
 
 
 def _with_emotion_ssml(text: str, emotion: Optional[str]) -> str:
@@ -244,6 +255,36 @@ def _with_emotion_ssml(text: str, emotion: Optional[str]) -> str:
     if _EMOTION_SELF_CLOSING_RE.match(cleaned.lstrip()) or _EMOTION_WRAPPER_OPEN_RE.match(cleaned.lstrip()):
         return cleaned
     return f'<emotion value="{html.escape(value, quote=True)}"/>{cleaned}'
+
+
+def _streaming_transcript_for_segment(
+    segment: EmotionSegment,
+    *,
+    default_emotion: str,
+) -> tuple[str, str]:
+    emotion_from_llm = bool(segment.emotion) and not segment.stage
+    if segment.stage:
+        stage_prompt = _STAGE_PROMPTS.get(
+            segment.stage,
+            (f"[{segment.stage}]", None),
+        )
+        chunk = stage_prompt[0]
+        emotion = (stage_prompt[1] or segment.emotion or default_emotion).strip() or "neutral"
+    else:
+        chunk = _normalize_nonverbal_tokens(
+            segment.text,
+            preserve_edge_whitespace=True,
+        )
+        emotion = (segment.emotion or default_emotion).strip() or "neutral"
+
+    if not chunk:
+        return "", emotion
+    cartesia_transcript = (
+        _with_emotion_ssml(chunk, segment.emotion)
+        if emotion_from_llm
+        else chunk
+    )
+    return cartesia_transcript, emotion
 
 
 def _normalize_stage_token(raw: str) -> Optional[str]:
@@ -586,13 +627,13 @@ class _CartesiaChunkedStream(ChunkedStream):
 
                     if _should_debug():
                         logger.info(
-                            "[VoiceMarkup] cartesia_bytes_request segment=%s model=%s voice=%s version=%s emotion=%s transcript=%s",
+                            "[VoiceMarkup] cartesia_bytes_request segment=%s model=%s voice=%s version=%s emotion=%s transcript_json=%s",
                             idx + 1,
                             cfg.model_id,
                             cfg.voice_id,
                             cfg.api_version,
                             emotion,
-                            _debug_text(cartesia_transcript),
+                            _debug_text_json(cartesia_transcript),
                         )
 
                     async with session.post(cfg.api_url, headers=headers, data=json.dumps(payload)) as resp:
@@ -663,39 +704,32 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.ws_connect(cfg.ws_url, headers=headers, heartbeat=20) as ws:
                 emotion_state = StreamingEmotionState()
+                sent_transcripts: list[str] = []
+                sent_input_count = 0
 
                 async def _emit_segment(segment: EmotionSegment) -> None:
-                    nonlocal sent_any_input
+                    nonlocal sent_any_input, sent_input_count
 
-                    emotion_from_llm = bool(segment.emotion) and not segment.stage
-                    if segment.stage:
-                        stage_prompt = _STAGE_PROMPTS.get(
-                            segment.stage,
-                            (f"[{segment.stage}]", None),
-                        )
-                        chunk = stage_prompt[0]
-                        emotion = (stage_prompt[1] or segment.emotion or cfg.emotion).strip() or "neutral"
-                    else:
-                        chunk = _normalize_nonverbal_tokens(segment.text)
-                        emotion = (segment.emotion or cfg.emotion).strip() or "neutral"
-
-                    if not chunk:
-                        return
-                    cartesia_transcript = (
-                        _with_emotion_ssml(chunk, segment.emotion)
-                        if emotion_from_llm
-                        else chunk
+                    cartesia_transcript, emotion = _streaming_transcript_for_segment(
+                        segment,
+                        default_emotion=cfg.emotion,
                     )
+                    if not cartesia_transcript:
+                        return
 
+                    sent_input_count += 1
+                    sent_transcripts.append(cartesia_transcript)
                     if _should_debug():
                         logger.info(
-                            "[VoiceMarkup] cartesia_ws_request model=%s voice=%s version=%s continue=true emotion=%s buffer_ms=%s transcript=%s",
+                            "[VoiceMarkup] cartesia_ws_request index=%s model=%s voice=%s version=%s continue=true emotion=%s buffer_ms=%s transcript_json=%s joined_transcript_json=%s",
+                            sent_input_count,
                             cfg.model_id,
                             cfg.voice_id,
                             cfg.api_version,
                             emotion,
                             cfg.max_buffer_delay_ms,
-                            _debug_text(cartesia_transcript),
+                            _debug_text_json(cartesia_transcript),
+                            _debug_text_json("".join(sent_transcripts)),
                         )
 
                     await ws.send_str(
@@ -738,6 +772,16 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
                     input_ready.set()
                     if not sent_any_input:
                         return
+
+                    if _should_debug():
+                        logger.info(
+                            "[VoiceMarkup] cartesia_ws_finalize model=%s voice=%s version=%s continue=false transcript_json=%s joined_transcript_json=%s",
+                            cfg.model_id,
+                            cfg.voice_id,
+                            cfg.api_version,
+                            _debug_text_json(""),
+                            _debug_text_json("".join(sent_transcripts)),
+                        )
 
                     await ws.send_str(
                         json.dumps(

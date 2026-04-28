@@ -174,6 +174,10 @@ def _debug_text(text: str, *, max_len: int = 500) -> str:
     return snippet
 
 
+def _debug_text_json(text: str) -> str:
+    return json.dumps(text or "", ensure_ascii=False)
+
+
 def _summarize_error_for_log(error: str) -> str:
     text = error or ""
     summary: list[str] = []
@@ -704,10 +708,10 @@ class _LibreChatLLMStream(llm.LLMStream):
                                 if _should_debug_voice_markup():
                                     display_delta = debug_display_filter.feed(delta)
                                     logger.info(
-                                        "[VoiceMarkup] llm_delta raw=%s tts_delta=%s display_delta=%s",
-                                        _debug_text(raw_delta),
-                                        _debug_text(delta),
-                                        _debug_text(display_delta),
+                                        "[VoiceMarkup] llm_delta raw_json=%s tts_delta_json=%s display_delta_json=%s",
+                                        _debug_text_json(raw_delta),
+                                        _debug_text_json(delta),
+                                        _debug_text_json(display_delta),
                                     )
                                 saw_any_tokens = True
                                 if first_token_at is None:
@@ -793,9 +797,9 @@ class _LibreChatLLMStream(llm.LLMStream):
             full_response_text = "".join(collected_response)
             if _should_debug_voice_markup() and full_response_text:
                 logger.info(
-                    "[VoiceMarkup] llm_full tts_text=%s display_text=%s",
-                    _debug_text(full_response_text),
-                    _debug_text(strip_voice_control_tags(full_response_text)),
+                    "[VoiceMarkup] llm_full tts_text_json=%s display_text_json=%s",
+                    _debug_text_json(full_response_text),
+                    _debug_text_json(strip_voice_control_tags(full_response_text)),
                 )
             suppressed, pending_emit = no_response_guard.finalize(full_response_text)
             if not suppressed:
