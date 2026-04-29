@@ -19,7 +19,9 @@ from cartesia_tts import (
     DEFAULT_VERSION,
     DEFAULT_VOICE_ID,
     _STAGE_PROMPTS,
+    _CARTESIA_SONIC3_CAPABILITIES_PATH,
     _build_ws_generation_request,
+    _CARTESIA_SONIC3_EMOTION_VALUES,
     _consume_streaming_emotion_chunk,
     _extract_ws_audio_chunk,
     _is_ws_done,
@@ -44,11 +46,18 @@ class TestCartesiaNormalization(unittest.TestCase):
         self.assertEqual(cfg.api_version, DEFAULT_VERSION)
         self.assertEqual(DEFAULT_VERSION, "2026-03-01")
 
+    def test_cartesia_emotion_values_loaded_from_shared_contract(self) -> None:
+        self.assertTrue(_CARTESIA_SONIC3_CAPABILITIES_PATH.exists())
+        self.assertGreaterEqual(len(_CARTESIA_SONIC3_EMOTION_VALUES), 50)
+        self.assertIn("joking/comedic", _CARTESIA_SONIC3_EMOTION_VALUES)
+        self.assertIn("determined", _CARTESIA_SONIC3_EMOTION_VALUES)
+
     def test_laughter_stage_prompt_uses_cartesia_token(self) -> None:
         # Cartesia docs: the token `[laughter]` triggers actual laughter. We should not
-        # approximate it as spoken "ha ha ha" text.
+        # approximate it as spoken "ha ha ha" text or auto-author an emotion.
         prompt, _emotion = _STAGE_PROMPTS.get("laughter", ("", None))
         self.assertEqual(prompt, "[laughter]")
+        self.assertIsNone(_emotion)
 
     def test_normalizes_laughter_variants(self) -> None:
         text = "Hi [laugh] there [gentle laugh] wow [giggle]!"
@@ -218,14 +227,42 @@ class TestCartesiaNormalization(unittest.TestCase):
             emotion="calm",
         )
         self.assertEqual(payload["generation_config"]["emotion"], "calm")
+        invalid_payload = _build_ws_generation_request(
+            cfg=cfg,
+            context_id="ctx-123",
+            transcript="Hello there.",
+            continue_generation=True,
+            emotion="invented",
+        )
+        self.assertEqual(invalid_payload["generation_config"]["emotion"], "neutral")
+
+    def test_build_ws_generation_request_clamps_speed_volume_from_contract(self) -> None:
+        cfg = CartesiaConfig(api_key="cartesia-key", speed=9.0, volume=0.1)
+        payload = _build_ws_generation_request(
+            cfg=cfg,
+            context_id="ctx-123",
+            transcript="Hello there.",
+            continue_generation=True,
+        )
+        self.assertEqual(payload["generation_config"]["speed"], 1.5)
+        self.assertEqual(payload["generation_config"]["volume"], 0.5)
 
     def test_llm_selected_emotion_is_kept_as_ssml_transcript_prefix(self) -> None:
         transcript = _with_emotion_ssml("Hmm... okay.", "frustrated")
         self.assertEqual(transcript, '<emotion value="frustrated"/>Hmm... okay.')
 
-    def test_llm_selected_emotion_is_escaped_when_reattached(self) -> None:
+    def test_invalid_llm_emotion_is_not_reattached(self) -> None:
         transcript = _with_emotion_ssml("Careful.", 'calm" bad')
-        self.assertEqual(transcript, '<emotion value="calm&quot; bad"/>Careful.')
+        self.assertEqual(transcript, "Careful.")
+
+    def test_invalid_llm_emotion_falls_back_without_preserving_invalid_tag(self) -> None:
+        cfg = CartesiaConfig(api_key="cartesia-key", emotion="neutral")
+        transcript, emotion = _streaming_transcript_for_segment(
+            _split_emotion_segments('<emotion value="invented"/>Careful.')[0],
+            default_emotion=cfg.emotion,
+        )
+        self.assertEqual(transcript, "Careful.")
+        self.assertEqual(emotion, "neutral")
 
     def test_ws_request_keeps_llm_emotion_in_ssml_and_generation_config(self) -> None:
         cfg = CartesiaConfig(api_key="cartesia-key")
@@ -291,6 +328,24 @@ class TestCartesiaEmotionSegments(unittest.TestCase):
         self.assertEqual(data[1], ("", None, "laughter"))
         self.assertEqual(data[2], ("there", None, None))
 
+    def test_laughter_stage_does_not_auto_author_emotion(self) -> None:
+        segment = _split_emotion_segments("[laughter]")[0]
+        transcript, emotion = _streaming_transcript_for_segment(
+            segment,
+            default_emotion="neutral",
+        )
+        self.assertEqual(transcript, "[laughter]")
+        self.assertEqual(emotion, "neutral")
+
+    def test_laughter_stage_preserves_llm_authored_emotion(self) -> None:
+        segment = _split_emotion_segments('<emotion value="excited"/>[laughter]')[0]
+        transcript, emotion = _streaming_transcript_for_segment(
+            segment,
+            default_emotion="neutral",
+        )
+        self.assertEqual(transcript, '<emotion value="excited"/>[laughter]')
+        self.assertEqual(emotion, "excited")
+
     def test_streaming_emotion_state_handles_partial_self_closing_tag(self) -> None:
         state = StreamingEmotionState()
         self.assertEqual(
@@ -305,6 +360,16 @@ class TestCartesiaEmotionSegments(unittest.TestCase):
         )
         data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
         self.assertEqual(data, [("Yeah, feels smoother.", "content", None)])
+
+    def test_streaming_state_buffers_partial_spell_wrapper(self) -> None:
+        state = StreamingEmotionState()
+        self.assertEqual(
+            _consume_streaming_emotion_chunk(state, "<spell>AB", final=False),
+            [],
+        )
+        segments = _consume_streaming_emotion_chunk(state, "C</spell> done.", final=False)
+        data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
+        self.assertEqual(data, [("<spell>ABC</spell> done.", None, None)])
 
     def test_streaming_emotion_state_preserves_emotion_across_chunks(self) -> None:
         state = StreamingEmotionState()

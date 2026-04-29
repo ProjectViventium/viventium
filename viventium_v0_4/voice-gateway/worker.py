@@ -112,6 +112,20 @@ from fallback_tts import FallbackTTS, ProviderAttempt
 
 logger = logging.getLogger("voice-gateway")
 
+_TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
+    "run.completed",
+    "run.failed",
+    "run.cancelled",
+    "run.interrupted",
+    "checkpoint.ready",
+    "takeover.requested",
+}
+
+
+def _glasshive_callback_is_terminal(latest: dict[str, Any]) -> bool:
+    event = str(latest.get("event") or "").strip()
+    return not event or event in _TERMINAL_GLASSHIVE_CALLBACK_EVENTS
+
 # === VIVENTIUM START ===
 # Feature: No-response tag ({NTA}) suppression for passive/background follow-ups.
 _SHARED_PATH = Path(__file__).resolve().parent.parent / "shared"  # .../viventium_v0_4/shared
@@ -233,6 +247,7 @@ class Env:
     voice_followup_timeout_s: float
     voice_followup_interval_s: float
     voice_followup_grace_s: float
+    voice_glasshive_timeout_s: float
     voice_initialize_process_timeout_s: float
     voice_idle_processes: int
     voice_worker_load_threshold: float
@@ -1285,6 +1300,7 @@ def load_env() -> Env:
         voice_followup_timeout_s=_parse_float_env("VIVENTIUM_VOICE_FOLLOWUP_TIMEOUT_S", 60.0),
         voice_followup_interval_s=_parse_float_env("VIVENTIUM_VOICE_FOLLOWUP_INTERVAL_S", 1.0),
         voice_followup_grace_s=_parse_float_env("VIVENTIUM_VOICE_FOLLOWUP_GRACE_S", 30.0),
+        voice_glasshive_timeout_s=_parse_float_env("VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S", 600.0),
         voice_initialize_process_timeout_s=_parse_float_env(
             "VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S",
             default_initialize_process_timeout_s,
@@ -1769,6 +1785,7 @@ class CortexFollowupScheduler:
         timeout_s: float,
         interval_s: float,
         grace_s: float,
+        glasshive_timeout_s: Optional[float] = None,
     ) -> None:
         self._origin = origin.rstrip("/")
         self._auth = auth
@@ -1776,20 +1793,39 @@ class CortexFollowupScheduler:
         self._timeout_s = max(0.0, float(timeout_s))
         self._interval_s = max(0.25, float(interval_s))
         self._grace_s = max(0.0, float(grace_s))
+        self._glasshive_timeout_s = max(
+            0.0,
+            float(self._timeout_s if glasshive_timeout_s is None else glasshive_timeout_s),
+        )
         self._seq = 0
         self._task: Optional[asyncio.Task[None]] = None
 
     def schedule(
-        self, message_id: str, pending_insights: list[dict[str, Any]], recent_response: str
+        self,
+        message_id: str,
+        pending_insights: list[dict[str, Any]],
+        recent_response: str,
+        *,
+        cortex_expected: Optional[bool] = None,
+        glasshive_expected: bool = False,
     ) -> None:
-        if not message_id or self._timeout_s <= 0:
+        _ = recent_response
+        should_poll_cortex = bool(pending_insights) if cortex_expected is None else bool(cortex_expected)
+        should_poll_glasshive = bool(glasshive_expected)
+        if not message_id or not (should_poll_cortex or should_poll_glasshive):
             return
         self._seq += 1
         seq = self._seq
         if self._task and not self._task.done():
             self._task.cancel()
         self._task = asyncio.create_task(
-            self._run(seq, message_id, pending_insights, recent_response)
+            self._run(
+                seq,
+                message_id,
+                pending_insights,
+                should_poll_cortex=should_poll_cortex,
+                should_poll_glasshive=should_poll_glasshive,
+            )
         )
 
     async def _run(
@@ -1797,11 +1833,20 @@ class CortexFollowupScheduler:
         seq: int,
         message_id: str,
         pending_insights: list[dict[str, Any]],
-        _recent_response: str,
+        *,
+        should_poll_cortex: bool,
+        should_poll_glasshive: bool,
     ) -> None:
         try:
             started_at = time.monotonic()
-            deadline = started_at + self._timeout_s
+            deadline_window = max(
+                self._timeout_s if should_poll_cortex else 0.0,
+                self._glasshive_timeout_s if should_poll_glasshive else 0.0,
+            )
+            if deadline_window <= 0:
+                return
+            deadline = started_at + deadline_window
+            cortex_deadline = started_at + self._timeout_s
             merged_insights: list[dict[str, Any]] = list(pending_insights or [])
             # === VIVENTIUM START ===
             # Feature: Speak only main-agent Phase B follow-ups in live voice.
@@ -1828,7 +1873,26 @@ class CortexFollowupScheduler:
                     if seq != self._seq:
                         return
 
-                    data = await self._fetch_cortex(session, message_id)
+                    if should_poll_glasshive:
+                        glasshive_data = await self._fetch_glasshive(session, message_id)
+                        if isinstance(glasshive_data, dict):
+                            latest = glasshive_data.get("latest")
+                            if isinstance(latest, dict):
+                                text = latest.get("text")
+                                if (
+                                    isinstance(text, str)
+                                    and text.strip()
+                                    and _glasshive_callback_is_terminal(latest)
+                                ):
+                                    text = text.strip()
+                                    if is_no_response_only(text):
+                                        return
+                                    self._speak(text, seq)
+                                    return
+
+                    data = None
+                    if should_poll_cortex and time.monotonic() < cortex_deadline:
+                        data = await self._fetch_cortex(session, message_id)
                     if isinstance(data, dict):
                         follow_up = data.get("followUp")
                         if isinstance(follow_up, dict):
@@ -1901,6 +1965,42 @@ class CortexFollowupScheduler:
                     body = await resp.text()
                     logger.warning(
                         "[voice-gateway] Follow-up poll failed (status=%s, body=%s)",
+                        resp.status,
+                        body,
+                    )
+        except Exception:
+            return None
+
+    async def _fetch_glasshive(
+        self, session: aiohttp.ClientSession, message_id: str
+    ) -> Optional[dict[str, Any]]:
+        if self._glasshive_timeout_s <= 0:
+            return None
+        url = f"{self._origin}/api/viventium/voice/glasshive/{message_id}"
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        try:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    payload = await resp.json()
+                    if isinstance(payload, dict):
+                        return payload
+                    return None
+                if resp.status in {401, 403}:
+                    logger.warning(
+                        "[voice-gateway] GlassHive poll unauthorized (status=%s)", resp.status
+                    )
+                    return None
+                if resp.status != 404:
+                    body = await resp.text()
+                    logger.warning(
+                        "[voice-gateway] GlassHive poll failed (status=%s, body=%s)",
                         resp.status,
                         body,
                     )
@@ -2453,6 +2553,7 @@ async def entrypoint(ctx: JobContext) -> None:
         timeout_s=env.voice_followup_timeout_s,
         interval_s=env.voice_followup_interval_s,
         grace_s=env.voice_followup_grace_s,
+        glasshive_timeout_s=env.voice_glasshive_timeout_s,
     )
     llm_impl.set_followup_handler(followup_scheduler.schedule)
     # === VIVENTIUM END ===

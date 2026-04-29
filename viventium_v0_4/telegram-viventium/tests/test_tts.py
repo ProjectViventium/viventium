@@ -17,14 +17,21 @@ if str(TELEGRAM_ROOT) not in sys.path:
 from TelegramVivBot.utils import tts as tts_module
 
 
-def _test_wav_bytes(frame_value: bytes = b"\x00\x00") -> bytes:
+def _test_wav_bytes(frame_value: bytes = b"\x00\x00", *, framerate: int = 44100) -> bytes:
     output = BytesIO()
     with wave.open(output, "wb") as wav_file:
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
-        wav_file.setframerate(44100)
+        wav_file.setframerate(framerate)
         wav_file.writeframes(frame_value)
     return output.getvalue()
+
+
+def _placeholder_nframes_wav_bytes(frame_value: bytes) -> bytes:
+    data = bytearray(_test_wav_bytes(frame_value))
+    data[4:8] = (0xFFFFFFFF).to_bytes(4, "little")
+    data[40:44] = (0xFFFFFFFF).to_bytes(4, "little")
+    return bytes(data)
 
 
 def _fake_config(**overrides):
@@ -91,6 +98,12 @@ def test_resolve_tts_selection_prefers_supported_saved_chatterbox(monkeypatch):
     assert resolved["provider"] == "local_chatterbox_turbo_mlx_8bit"
     assert resolved["variant"] == "mlx-community/chatterbox-turbo-8bit"
     assert resolved["source"] == "saved"
+
+
+def test_cartesia_capability_contract_is_loaded_from_shared_file():
+    assert tts_module._CARTESIA_SONIC3_CAPABILITIES_PATH.exists()
+    assert len(tts_module._CARTESIA_SONIC3_EMOTION_VALUES) >= 50
+    assert tts_module._CARTESIA_SONIC3_API_VERSION == "2026-03-01"
 
 
 def test_resolve_tts_selection_falls_back_when_saved_chatterbox_is_unavailable(monkeypatch):
@@ -222,6 +235,7 @@ async def test_synthesize_speech_uses_local_chatterbox_branch_and_preserves_mark
 async def test_synthesize_speech_cartesia_uses_voice_variant_not_model_id(monkeypatch):
     seen = {}
     lyra_voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+    monkeypatch.delenv("VIVENTIUM_CARTESIA_API_VERSION", raising=False)
 
     monkeypatch.setitem(
         sys.modules,
@@ -230,6 +244,7 @@ async def test_synthesize_speech_cartesia_uses_voice_variant_not_model_id(monkey
             CARTESIA_API_KEY="cartesia-key",
             TTS_PROVIDER_PRIMARY="openai",
             TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_API_VERSION="stale-config-default",
             VIVENTIUM_CARTESIA_MODEL_ID="sonic-2",
             VIVENTIUM_CARTESIA_VOICE_ID="default-voice-id",
         ),
@@ -271,9 +286,53 @@ async def test_synthesize_speech_cartesia_uses_voice_variant_not_model_id(monkey
     )
 
     assert voice_bytes == b"wav-bytes"
-    assert seen["headers"]["Cartesia-Version"] == "2026-03-01"
+    assert seen["headers"]["Cartesia-Version"] == tts_module._CARTESIA_SONIC3_API_VERSION
     assert seen["payload"]["model_id"] == "sonic-3"
     assert seen["payload"]["voice"] == {"mode": "id", "id": lyra_voice_id}
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_cartesia_api_version_env_override_wins(monkeypatch):
+    seen = {}
+
+    monkeypatch.setenv("VIVENTIUM_CARTESIA_API_VERSION", "override-version")
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="cartesia",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_VOICE_ID="voice-id",
+        ),
+    )
+
+    class _Response:
+        content = b"wav-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, _url, *, headers=None, content=None, **_kwargs):
+            seen["headers"] = headers or {}
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech("Hello.", "conv-1")
+
+    assert voice_bytes == b"wav-bytes"
+    assert seen["headers"]["Cartesia-Version"] == "override-version"
 
 
 @pytest.mark.asyncio
@@ -376,6 +435,90 @@ async def test_synthesize_speech_cartesia_preserves_voice_markup_and_sets_emotio
 
 
 @pytest.mark.asyncio
+async def test_synthesize_speech_cartesia_clamps_speed_volume_from_contract(monkeypatch):
+    seen = {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="cartesia",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_SPEED=9.0,
+            VIVENTIUM_CARTESIA_VOLUME=0.1,
+            VIVENTIUM_CARTESIA_VOICE_ID="voice-id",
+        ),
+    )
+
+    class _Response:
+        content = b"wav-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, _url, *, content=None, **_kwargs):
+            seen["payload"] = json.loads(content)
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech("Hello.", "conv-1")
+
+    assert voice_bytes == b"wav-bytes"
+    assert seen["payload"]["generation_config"]["speed"] == 1.5
+    assert seen["payload"]["generation_config"]["volume"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_cartesia_skips_empty_after_marker_normalization(monkeypatch):
+    called = False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            CARTESIA_API_KEY="cartesia-key",
+            TTS_PROVIDER_PRIMARY="cartesia",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_CARTESIA_VOICE_ID="voice-id",
+        ),
+    )
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            nonlocal called
+            called = True
+            raise AssertionError("empty Cartesia transcript should not be posted")
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech("[sigh]", "conv-1")
+
+    assert voice_bytes is None
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_synthesize_speech_cartesia_splits_model_authored_emotion_states(monkeypatch):
     payloads = []
 
@@ -427,6 +570,59 @@ async def test_synthesize_speech_cartesia_splits_model_authored_emotion_states(m
     assert payloads[1]["transcript"].startswith('<emotion value="calm"/>')
     with wave.open(BytesIO(voice_bytes), "rb") as wav_file:
         assert wav_file.getnframes() == 2
+
+
+def test_merge_wav_chunks_rewrites_placeholder_nframes_header():
+    merged = tts_module._merge_wav_chunks(
+        [
+            _placeholder_nframes_wav_bytes(b"\x01\x00"),
+            _placeholder_nframes_wav_bytes(b"\x02\x00"),
+        ]
+    )
+
+    assert merged.count(b"RIFF") == 1
+    with wave.open(BytesIO(merged), "rb") as wav_file:
+        assert wav_file.getnframes() == 2
+        assert wav_file.readframes(2) == b"\x01\x00\x02\x00"
+
+
+def test_merge_wav_chunks_rejects_mismatched_params_without_raw_concat():
+    with pytest.raises(tts_module.WavMergeError):
+        tts_module._merge_wav_chunks(
+            [
+                _test_wav_bytes(b"\x01\x00", framerate=44100),
+                _test_wav_bytes(b"\x02\x00", framerate=48000),
+            ]
+        )
+
+
+def test_summarize_voice_markup_counts_structural_markers():
+    assert tts_module.summarize_voice_markup(
+        '<emotion value="excited"/>Hi [laughter]. <break time="1s"/>'
+        '<speed ratio="1.1"/>Fast. <volume ratio="0.9"/>Soft. <spell>ABC</spell>'
+    ) == {
+        "laughter": 1,
+        "emotion": 1,
+        "break": 1,
+        "speed": 1,
+        "volume": 1,
+        "spell": 1,
+    }
+
+
+def test_cartesia_emotion_normalization_uses_shared_sonic3_list():
+    assert tts_module._normalize_cartesia_emotion("joking/comedic", "neutral") == "joking/comedic"
+    assert tts_module._normalize_cartesia_emotion("made up mood", "calm") == "calm"
+
+
+def test_cartesia_nonverbal_normalization_keeps_contract_markers_and_strips_stage_noise():
+    for marker in tts_module._CARTESIA_SONIC3_CAPABILITIES["nonverbal_markers"]:
+        assert tts_module._normalize_cartesia_nonverbal_tokens(marker) == marker
+        assert tts_module._strip_voice_control_tags(marker) == ""
+    assert (
+        tts_module._normalize_cartesia_nonverbal_tokens("Hi [Section 3] [sigh] [laugh] there")
+        == "Hi   [laughter] there"
+    )
 
 
 def test_strip_voice_control_tags_for_non_cartesia_fallback():

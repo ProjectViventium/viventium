@@ -18,13 +18,72 @@ from utils.stt_env import resolve_api_whisper_config
 logger = logging.getLogger(__name__)
 
 _DEFAULT_LOCAL_CHATTERBOX_MODEL_ID = "mlx-community/chatterbox-turbo-8bit"
-_CARTESIA_SONIC3_MODEL_ID = "sonic-3"
 _SUPPORTED_TTS_PROVIDERS = {
     "openai",
     "elevenlabs",
     "cartesia",
     "local_chatterbox_turbo_mlx_8bit",
 }
+
+
+# === VIVENTIUM START ===
+# Feature: Cartesia Sonic-3 shared capability source of truth.
+_CARTESIA_SONIC3_CAPABILITIES_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "shared"
+    / "voice"
+    / "cartesia_sonic3_capabilities.json"
+)
+
+
+def _load_cartesia_sonic3_capabilities() -> dict[str, Any]:
+    try:
+        with _CARTESIA_SONIC3_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        logger.exception(
+            "Failed to load Cartesia Sonic-3 capability contract from %s",
+            _CARTESIA_SONIC3_CAPABILITIES_PATH,
+        )
+    return {
+        "model_id": "sonic-3",
+        "generation_config": {
+            "emotion": {
+                "default": "neutral",
+                "values": ["neutral"],
+            }
+        },
+        "ssml_tags": {},
+        "nonverbal_markers": ["[laughter]"],
+    }
+
+
+_CARTESIA_SONIC3_CAPABILITIES = _load_cartesia_sonic3_capabilities()
+_CARTESIA_SONIC3_API_VERSION = str(
+    _CARTESIA_SONIC3_CAPABILITIES.get("api_version") or "2026-03-01"
+).strip()
+_CARTESIA_SONIC3_MODEL_ID = str(_CARTESIA_SONIC3_CAPABILITIES.get("model_id") or "sonic-3")
+_CARTESIA_SONIC3_GENERATION_CONFIG = (
+    _CARTESIA_SONIC3_CAPABILITIES.get("generation_config", {})
+    if isinstance(_CARTESIA_SONIC3_CAPABILITIES.get("generation_config"), dict)
+    else {}
+)
+_CARTESIA_SONIC3_EMOTION_CONFIG = (
+    _CARTESIA_SONIC3_GENERATION_CONFIG.get("emotion", {})
+    if isinstance(_CARTESIA_SONIC3_GENERATION_CONFIG, dict)
+    else {}
+)
+_CARTESIA_SONIC3_DEFAULT_EMOTION = str(
+    _CARTESIA_SONIC3_EMOTION_CONFIG.get("default") or "neutral"
+).strip().lower()
+_CARTESIA_SONIC3_EMOTION_VALUES = frozenset(
+    str(value).strip().lower()
+    for value in (_CARTESIA_SONIC3_EMOTION_CONFIG.get("values") or [])
+    if str(value).strip()
+)
+# === VIVENTIUM END ===
 
 
 # === VIVENTIUM START ===
@@ -95,7 +154,24 @@ _CARTESIA_EMOTION_EVENT_RE = re.compile(
     r'<emotion\s+value=["\']?(?P<svalue>[^"\'>]+)["\']?\s*/>',
     re.IGNORECASE,
 )
-_CARTESIA_EMOTION_VALUE_RE = re.compile(r"^[A-Za-z][A-Za-z /-]{0,48}$")
+_CARTESIA_LAUGHTER_RE = re.compile(r"\[laughter\]", re.IGNORECASE)
+_CARTESIA_BRACKET_TOKEN_RE = re.compile(r"\[([^\]]+)\]")
+_CARTESIA_NONVERBAL_ALIASES = {
+    "laugh": "laughter",
+    "laughter": "laughter",
+    "giggle": "laughter",
+    "chuckle": "laughter",
+    "soft laugh": "laughter",
+    "gentle laugh": "laughter",
+    "quiet laugh": "laughter",
+    "nervous laugh": "laughter",
+    "awkward laugh": "laughter",
+    "light laugh": "laughter",
+}
+
+
+class WavMergeError(ValueError):
+    pass
 
 
 def _strip_voice_control_tags(text: str) -> str:
@@ -115,17 +191,72 @@ def _strip_voice_control_tags(text: str) -> str:
 # === VIVENTIUM END ===
 
 
+def _normalize_cartesia_nonverbal_tokens(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        token = re.sub(r"\s+", " ", match.group(1).strip().lower())
+        canonical = _CARTESIA_NONVERBAL_ALIASES.get(token)
+        if canonical:
+            return f"[{canonical}]"
+        return ""
+
+    return _CARTESIA_BRACKET_TOKEN_RE.sub(_replace, text or "")
+
+
 # === VIVENTIUM START ===
 # Feature: Cartesia Sonic-3 emotion config parity.
 # Purpose: The LLM owns emotion markup. Telegram TTS only parses selected
 # `<emotion value="...">` tags so Cartesia gets matching transcript and config.
 def _normalize_cartesia_emotion(value: Optional[str], default: str) -> str:
-    fallback = (default or "neutral").strip().lower() or "neutral"
+    configured_default = _CARTESIA_SONIC3_DEFAULT_EMOTION or "neutral"
+    fallback_candidate = (default or configured_default).strip().lower() or configured_default
+    fallback_candidate = re.sub(r"\s+", " ", fallback_candidate)
+    fallback = (
+        fallback_candidate
+        if fallback_candidate in _CARTESIA_SONIC3_EMOTION_VALUES
+        else configured_default
+    )
     candidate = (value or "").strip().lower()
     candidate = re.sub(r"\s+", " ", candidate)
-    if not candidate or not _CARTESIA_EMOTION_VALUE_RE.match(candidate):
-        return fallback
-    return candidate
+    if candidate and candidate in _CARTESIA_SONIC3_EMOTION_VALUES:
+        return candidate
+    return fallback
+
+
+def _normalize_cartesia_numeric_control(name: str, value: Any) -> float:
+    control = _CARTESIA_SONIC3_GENERATION_CONFIG.get(name, {})
+    if not isinstance(control, dict):
+        control = {}
+    default = float(control.get("default", 1.0))
+    minimum = float(control.get("min", default))
+    maximum = float(control.get("max", default))
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid Cartesia %s=%r; using default %s", name, value, default)
+        return default
+    clamped = max(minimum, min(maximum, numeric))
+    if clamped != numeric:
+        logger.warning(
+            "Clamped Cartesia %s from %s to %s (allowed range: %s-%s)",
+            name,
+            numeric,
+            clamped,
+            minimum,
+            maximum,
+        )
+    return clamped
+
+
+def summarize_voice_markup(text: str) -> dict[str, int]:
+    value = text or ""
+    return {
+        "laughter": len(_CARTESIA_LAUGHTER_RE.findall(value)),
+        "emotion": len(list(_CARTESIA_EMOTION_EVENT_RE.finditer(value))),
+        "break": len(_VCT_BREAK_RE.findall(value)),
+        "speed": len(_VCT_SPEED_RE.findall(value)),
+        "volume": len(_VCT_VOLUME_RE.findall(value)),
+        "spell": len(_VCT_SPELL_RE.findall(value)),
+    }
 
 
 def _cartesia_segments_for_text(text: str, default_emotion: str) -> list[tuple[str, str]]:
@@ -138,14 +269,14 @@ def _cartesia_segments_for_text(text: str, default_emotion: str) -> list[tuple[s
 
     for match in _CARTESIA_EMOTION_EVENT_RE.finditer(text):
         if match.start() > pos:
-            prefix = text[pos:match.start()]
+            prefix = _normalize_cartesia_nonverbal_tokens(text[pos:match.start()])
             if prefix.strip():
                 segments.append((prefix, current_emotion))
 
         wrapped_value = match.group("wvalue")
         self_closing_value = match.group("svalue")
         if wrapped_value is not None:
-            segment_text = match.group(0)
+            segment_text = _normalize_cartesia_nonverbal_tokens(match.group(0))
             emotion = _normalize_cartesia_emotion(wrapped_value, default_value)
             if segment_text.strip():
                 segments.append((segment_text, emotion))
@@ -156,11 +287,14 @@ def _cartesia_segments_for_text(text: str, default_emotion: str) -> list[tuple[s
         pos = match.start()
 
     if pos < len(text):
-        suffix = text[pos:]
+        suffix = _normalize_cartesia_nonverbal_tokens(text[pos:])
         if suffix.strip():
             segments.append((suffix, current_emotion))
 
-    return segments or [(text, default_value)]
+    if segments:
+        return segments
+    normalized = _normalize_cartesia_nonverbal_tokens(text)
+    return [(normalized, default_value)] if normalized.strip() else []
 
 
 def _merge_wav_chunks(chunks: list[bytes]) -> bytes:
@@ -170,24 +304,28 @@ def _merge_wav_chunks(chunks: list[bytes]) -> bytes:
         return chunks[0]
     try:
         frames: list[bytes] = []
-        params = None
+        audio_params = None
         for chunk in chunks:
             with wave.open(BytesIO(chunk), "rb") as wav_file:
                 current_params = wav_file.getparams()
-                if params is None:
-                    params = current_params
-                elif current_params[:3] != params[:3]:
-                    logger.warning("Cartesia WAV segment params differ; returning raw concatenation")
-                    return b"".join(chunks)
+                current_audio_params = current_params[:3]
+                if audio_params is None:
+                    audio_params = current_audio_params
+                elif current_audio_params != audio_params:
+                    logger.warning("Cartesia WAV segment params differ; refusing raw concatenation")
+                    raise WavMergeError("Cartesia WAV segment params differ")
                 frames.append(wav_file.readframes(wav_file.getnframes()))
         output = BytesIO()
         with wave.open(output, "wb") as out_file:
-            out_file.setparams(params)
+            nchannels, sampwidth, framerate = audio_params
+            out_file.setnchannels(nchannels)
+            out_file.setsampwidth(sampwidth)
+            out_file.setframerate(framerate)
             out_file.writeframes(b"".join(frames))
         return output.getvalue()
     except Exception:
-        logger.exception("Failed to merge Cartesia WAV chunks; returning raw concatenation")
-        return b"".join(chunks)
+        logger.exception("Failed to merge Cartesia WAV chunks; refusing raw concatenation")
+        raise
 
 
 def _tts_debug_enabled() -> bool:
@@ -198,10 +336,10 @@ def _tts_debug_enabled() -> bool:
 
 
 def _debug_text(text: str, limit: int = 1200) -> str:
-    cleaned = re.sub(r"\s+", " ", text or "").strip()
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 3] + "..."
+    value = text or ""
+    if len(value) > limit:
+        value = value[: limit - 3] + "..."
+    return json.dumps(value, ensure_ascii=False)
 # === VIVENTIUM END ===
 
 
@@ -420,7 +558,6 @@ async def synthesize_speech(
         ELEVENLABS_API_URL,
         ELEVENLABS_MODEL,
         VIVENTIUM_CARTESIA_API_URL,
-        VIVENTIUM_CARTESIA_API_VERSION,
         VIVENTIUM_CARTESIA_EMOTION,
         VIVENTIUM_CARTESIA_LANGUAGE,
         VIVENTIUM_CARTESIA_MODEL_ID,
@@ -506,8 +643,21 @@ async def synthesize_speech(
                 )
                 cartesia_model_id = _CARTESIA_SONIC3_MODEL_ID
 
+            cartesia_api_version = (
+                os.getenv("VIVENTIUM_CARTESIA_API_VERSION", "").strip()
+                or _CARTESIA_SONIC3_API_VERSION
+            )
+            cartesia_speed = _normalize_cartesia_numeric_control(
+                "speed",
+                VIVENTIUM_CARTESIA_SPEED,
+            )
+            cartesia_volume = _normalize_cartesia_numeric_control(
+                "volume",
+                VIVENTIUM_CARTESIA_VOLUME,
+            )
+
             headers = {
-                "Cartesia-Version": VIVENTIUM_CARTESIA_API_VERSION,
+                "Cartesia-Version": cartesia_api_version,
                 "X-API-Key": CARTESIA_API_KEY,
                 "Authorization": f"Bearer {CARTESIA_API_KEY}",
                 "Content-Type": "application/json",
@@ -519,6 +669,8 @@ async def synthesize_speech(
                 audio_chunks: list[bytes] = []
                 async with httpx.AsyncClient(timeout=timeout_config) as client:
                     for index, (segment_text, segment_emotion) in enumerate(segments, start=1):
+                        if not segment_text.strip():
+                            continue
                         # Updated 2026-02-22: Removed deprecated Sonic-2 top-level "speed": "normal"
                         # (conflicts with generation_config.speed). Made language configurable.
                         payload = {
@@ -532,11 +684,27 @@ async def synthesize_speech(
                             },
                             "language": VIVENTIUM_CARTESIA_LANGUAGE or "en",
                             "generation_config": {
-                                "speed": float(VIVENTIUM_CARTESIA_SPEED),
-                                "volume": float(VIVENTIUM_CARTESIA_VOLUME),
+                                "speed": cartesia_speed,
+                                "volume": cartesia_volume,
                                 "emotion": segment_emotion,
                             },
                         }
+                        segment_markup = summarize_voice_markup(segment_text)
+                        logger.info(
+                            "[VoiceMarkup][telegram] cartesia_segment segment=%s/%s "
+                            "chars=%s emotion=%s laughter=%s emotion_tags=%s break_tags=%s "
+                            "speed_tags=%s volume_tags=%s spell_tags=%s",
+                            index,
+                            len(segments),
+                            len(segment_text),
+                            segment_emotion,
+                            segment_markup["laughter"],
+                            segment_markup["emotion"],
+                            segment_markup["break"],
+                            segment_markup["speed"],
+                            segment_markup["volume"],
+                            segment_markup["spell"],
+                        )
                         if _tts_debug_enabled():
                             logger.info(
                                 "[VoiceMarkup][telegram] cartesia_request segment=%s/%s "
@@ -555,6 +723,9 @@ async def synthesize_speech(
                         )
                         response.raise_for_status()
                         audio_chunks.append(response.content)
+                if not audio_chunks:
+                    logger.warning("Skipping Cartesia TTS: text empty after voice marker normalization")
+                    return None
                 return _merge_wav_chunks(audio_chunks)
             except asyncio.TimeoutError:
                 logger.warning("Cartesia TTS timed out for conversation %s", convo_id)

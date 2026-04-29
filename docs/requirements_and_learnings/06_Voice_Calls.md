@@ -117,9 +117,36 @@ background-cortex behavior.
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
   (`6ccbfb76-1fc6-48f7-b71d-91ac6298247b`).
+- Cartesia Sonic-3 capabilities are consolidated in
+  `viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json`. Prompt generation,
+  Telegram TTS validation, and LiveKit gateway validation must read from this contract instead
+  of keeping independent emotion/tag lists.
+- The shared Sonic-3 contract covers the documented voice controls: `generation_config.speed`
+  (`0.6`-`1.5`), `generation_config.volume` (`0.5`-`2.0`),
+  `generation_config.emotion` (the complete documented emotion list), SSML-like
+  `<emotion>`, `<speed>`, `<volume>`, `<break>`, and `<spell>` tags, plus the `[laughter]`
+  nonverbal marker. Future Cartesia model/provider upgrades should add a new provider/model
+  capability contract or update this one, then wire prompts/runtime from that contract.
+- Runtime must validate provider-control config against the shared contract before making Cartesia
+  requests. Out-of-range speed/volume should be clamped with a warning instead of causing a
+  provider 4xx or silently diverging between Telegram and LiveKit.
 - Cartesia emotion handling must pass both surfaces when the LLM selected an emotion tag:
   the `<emotion value="..."/>` prefix remains in the transcript sent to Cartesia, and the same value
   is sent as `generation_config.emotion`.
+- Runtime must not assign an emotion just because it normalized or segmented a nonverbal marker.
+  For example, `[laughter]` stays `[laughter]`; the segment uses an LLM-authored `<emotion>` value
+  if present, otherwise the configured default emotion.
+- Telegram Cartesia multi-segment audio must be repackaged as one valid WAV before sending to
+  Telegram. Runtime must not recover from a failed WAV merge by raw-concatenating complete WAV
+  files, because embedded RIFF headers can become audible clicks at segment boundaries.
+- Laughter observability must distinguish three states: model did not emit `[laughter]`, model did
+  emit it but Cartesia did not render an audible laugh, or the marker was lost before TTS. Persisted
+  assistant text and Telegram display are not sufficient proof because both intentionally strip
+  voice-control markup.
+- Telegram voice-note and always-voice replies must reuse the same saved Speaking route as the
+  modern playground. The resolved route must survive the handoff from LibreChat generation to
+  Telegram audio delivery across both the per-user conversation key and the raw Telegram chat id;
+  a cache miss must not silently drift TTS back to process defaults.
 - Modern playground transcript display must use a stateful structural filter for provider markup.
   Incomplete streaming fragments such as `<em` or `[laugh` must be buffered until they can be
   classified, then stripped from user-visible text while the original LLM text continues to feed
@@ -128,6 +155,10 @@ background-cortex behavior.
   `VIVENTIUM_VOICE_DEBUG_TTS=1`, logs should show LLM raw text, TTS text, display-sanitized text,
   and Cartesia request transcripts without API keys. Cartesia transcript logs must use a
   JSON-escaped representation so leading/trailing spaces and joined continuation text are visible.
+- Non-secret structural marker counts should be logged for Telegram voice turns and Cartesia
+  segments even when full transcript debug is disabled. At minimum, logs should expose counts for
+  `[laughter]`, emotion tags, break tags, speed tags, volume tags, and spell tags so incidents can
+  distinguish generation omission from downstream loss without dumping private transcript text.
 - When a TTS provider does not support native incremental text input, runtime may adapt it to an
   incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
   for voice-first providers.

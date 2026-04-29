@@ -97,6 +97,10 @@ _VOICE_SPEED_RE = re.compile(r'<speed\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGN
 _VOICE_VOLUME_RE = re.compile(r'<volume\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VOICE_SPELL_RE = re.compile(r"<spell>([\s\S]*?)</spell>", re.IGNORECASE)
 _VOICE_BRACKET_RE = re.compile(r"\[([A-Za-z][A-Za-z' -]{1,40})\]")
+_TOOL_TRANSCRIPT_LINE_RE = re.compile(
+    r"^\s*Tool:\s+.*_mcp_[A-Za-z0-9_.-]+.*(?:\r?\n|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
 # === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
@@ -109,6 +113,15 @@ _MARKDOWN_V2_UNESCAPE_RE = re.compile(r"\\([_*\[\]()~`>#+\-=|{}.!])")
 # Feature: Cortex part detection for DB-backed follow-up polling.
 _CORTEX_PART_TYPES = {"cortex_activation", "cortex_brewing", "cortex_insight"}
 _ACTIVE_CORTEX_STATUSES = {"activating", "brewing"}
+_GLASSHIVE_MCP_SERVER = "glasshive-workers-projects"
+_TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
+    "run.completed",
+    "run.failed",
+    "run.cancelled",
+    "run.interrupted",
+    "checkpoint.ready",
+    "takeover.requested",
+}
 # === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
@@ -192,7 +205,8 @@ except Exception:
 def sanitize_telegram_text(text: str) -> str:
     if not text:
         return ""
-    cleaned = _CITATION_COMPOSITE_RE.sub(" ", text)
+    cleaned = _TOOL_TRANSCRIPT_LINE_RE.sub("", text)
+    cleaned = _CITATION_COMPOSITE_RE.sub(" ", cleaned)
     cleaned = _CITATION_STANDALONE_RE.sub(" ", cleaned)
     cleaned = _CITATION_CLEANUP_RE.sub(" ", cleaned)
     cleaned = _BRACKET_CITATION_RE.sub(" ", cleaned)
@@ -538,6 +552,53 @@ def extract_cortex_parts(content: Any) -> list[dict[str, Any]]:
         for part in content
         if isinstance(part, dict) and part.get("type") in _CORTEX_PART_TYPES
     ]
+
+
+def _extract_tool_call_name(part: Any) -> str:
+    if not isinstance(part, dict):
+        return ""
+    tool_call = part.get("tool_call") or part.get("toolCall") or part.get("tool") or part
+    if not isinstance(tool_call, dict):
+        return ""
+    candidates = [
+        tool_call.get("name"),
+        (tool_call.get("function") or {}).get("name") if isinstance(tool_call.get("function"), dict) else None,
+        tool_call.get("toolName"),
+        part.get("name"),
+        (part.get("function") or {}).get("name") if isinstance(part.get("function"), dict) else None,
+        part.get("toolName"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
+def _is_glasshive_tool_name(name: str) -> bool:
+    if not name:
+        return False
+    parts = name.split("_mcp_", 1)
+    return len(parts) == 2 and parts[1] == _GLASSHIVE_MCP_SERVER
+
+
+def payload_has_glasshive_tool_call(payload: dict[str, Any]) -> bool:
+    response = payload.get("responseMessage")
+    if not isinstance(response, dict):
+        return False
+    content = response.get("content")
+    if not isinstance(content, list):
+        return False
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "tool_call":
+            continue
+        if _is_glasshive_tool_name(_extract_tool_call_name(part)):
+            return True
+    return False
+
+
+def glasshive_callback_is_terminal(latest: dict[str, Any]) -> bool:
+    event = str(latest.get("event") or "").strip()
+    return not event or event in _TERMINAL_GLASSHIVE_CALLBACK_EVENTS
 
 
 def has_active_cortex(parts: list[dict[str, Any]]) -> bool:
@@ -919,8 +980,14 @@ class LibreChatBridge:
             (os.getenv("VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S") or "").strip(),
             self.insight_max_s,
         )
+        self.glasshive_timeout_s = _parse_positive_float(
+            (os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S") or "").strip(),
+            600.0,
+        )
         if self.followup_timeout_s < self.followup_grace_s:
             self.followup_timeout_s = self.followup_grace_s
+        if self.glasshive_timeout_s < 1.0:
+            self.glasshive_timeout_s = 1.0
         # === VIVENTIUM END ===
         self._get_conversation_id = get_conversation_id
         self._set_conversation_id = set_conversation_id
@@ -944,6 +1011,7 @@ class LibreChatBridge:
         self._followup_send_lock_by_stream: dict[str, asyncio.Lock] = {}
         self._stream_identity: dict[str, dict[str, Any]] = {}
         self._cortex_seen_by_stream: dict[str, bool] = {}
+        self._glasshive_seen_by_stream: set[str] = set()
         self._stream_text_by_stream: dict[str, str] = {}
         self._brief_main_reply_by_stream: dict[str, bool] = {}
         self._voice_route_by_chat: dict[str, dict[str, Any]] = {}
@@ -976,6 +1044,20 @@ class LibreChatBridge:
         if isinstance(route, dict):
             return route
         return None
+
+    # === VIVENTIUM START ===
+    # Feature: Telegram saved-voice-route parity.
+    # Purpose: The bridge uses a per-user conversation key for history, while
+    # Telegram delivery uses the raw chat id. Cache the resolved route under
+    # every stable key so final/proactive TTS cannot drift to process defaults.
+    def _cache_voice_route(self, voice_route: Optional[dict[str, Any]], *keys: object) -> None:
+        if not isinstance(voice_route, dict):
+            return
+        for key in keys:
+            normalized_key = str(key or "").strip()
+            if normalized_key:
+                self._voice_route_by_chat[normalized_key] = voice_route
+    # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
     def _trace(self, message: str, *args: Any) -> None:
@@ -1027,6 +1109,7 @@ class LibreChatBridge:
             self._followup_send_lock_by_stream.pop(previous, None)
             self._stream_identity.pop(previous, None)
             self._cortex_seen_by_stream.pop(previous, None)
+            self._glasshive_seen_by_stream.discard(previous)
             self._stream_text_by_stream.pop(previous, None)
             self._brief_main_reply_by_stream.pop(previous, None)
             self._voice_route_by_stream.pop(previous, None)
@@ -1337,6 +1420,12 @@ class LibreChatBridge:
     def _has_cortex_seen(self, stream_id: str) -> bool:
         return self._cortex_seen_by_stream.get(stream_id, False)
 
+    def _mark_glasshive_seen(self, stream_id: str) -> None:
+        self._glasshive_seen_by_stream.add(stream_id)
+
+    def _has_glasshive_seen(self, stream_id: str) -> bool:
+        return stream_id in self._glasshive_seen_by_stream
+
     def _has_active_background_tasks(self, stream_id: str) -> bool:
         followup_task = self._followup_task_by_stream.get(stream_id)
         if followup_task and not followup_task.done():
@@ -1541,7 +1630,12 @@ class LibreChatBridge:
                 self._conversation_by_stream[session.stream_id] = session.conversation_id
             if session.voice_route:
                 self._voice_route_by_stream[session.stream_id] = session.voice_route
-                self._voice_route_by_chat[chat_id] = session.voice_route
+                self._cache_voice_route(
+                    session.voice_route,
+                    chat_id,
+                    telegram_chat_id,
+                    session.conversation_id,
+                )
             insight_task: Optional[asyncio.Task] = None
             if self.on_message_callback:
                 insight_task = asyncio.create_task(
@@ -1570,6 +1664,7 @@ class LibreChatBridge:
                 if session and not self._has_active_background_tasks(session.stream_id):
                     self._stream_identity.pop(session.stream_id, None)
                     self._cortex_seen_by_stream.pop(session.stream_id, None)
+                    self._glasshive_seen_by_stream.discard(session.stream_id)
                     self._voice_route_by_stream.pop(session.stream_id, None)
                 # === VIVENTIUM END ===
 
@@ -1785,9 +1880,10 @@ class LibreChatBridge:
                                     self._timing_log(trace_id, "lc_stream_final", stream_start_ts)
                                 self._mark_stream_final(stream_id)
                                 response_message_id = extract_response_message_id(payload)
+                                if payload_has_glasshive_tool_call(payload):
+                                    self._mark_glasshive_seen(stream_id)
                                 if response_message_id:
                                     self._response_message_ids[stream_id] = response_message_id
-                                    self._schedule_followup_poll(stream_id, chat_id)
 
                                 # === VIVENTIUM START ===
                                 # Feature: Check for explicit errors in final payload before treating as empty.
@@ -1808,6 +1904,12 @@ class LibreChatBridge:
                                 final_attachments = extract_attachments(payload)
                                 has_final_attachments = len(final_attachments) > 0
                                 deferred_internal_final = _is_deferred_internal_final(payload)
+                                if response_message_id and (
+                                    self._has_cortex_seen(stream_id)
+                                    or self._has_glasshive_seen(stream_id)
+                                    or deferred_internal_final
+                                ):
+                                    self._schedule_followup_poll(stream_id, chat_id)
                                 if deferred_internal_final:
                                     self._mark_cortex_seen(stream_id)
 
@@ -1951,10 +2053,51 @@ class LibreChatBridge:
             logger.warning("LibreChatBridge follow-up poll error: %s", exc)
         return None
 
+    async def _fetch_glasshive_state(
+        self,
+        *,
+        message_id: str,
+        conversation_id: Optional[str],
+        stream_id: str,
+    ) -> Optional[dict[str, Any]]:
+        if not message_id or self.glasshive_timeout_s <= 0:
+            return None
+        headers = {"X-VIVENTIUM-TELEGRAM-SECRET": self.secret}
+        url = f"{self.base_url}/api/viventium/telegram/glasshive/{message_id}"
+        params: dict[str, str] = self._get_identity_params(stream_id)
+        if conversation_id:
+            params["conversationId"] = conversation_id
+        timeout = httpx.Timeout(connect=10.0, read=10.0, write=10.0, pool=10.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(url, headers=headers, params=params)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    if isinstance(payload, dict):
+                        return payload
+                    return None
+                if resp.status_code in (401, 403):
+                    logger.warning("LibreChatBridge GlassHive poll unauthorized: %s", resp.status_code)
+                    return None
+                if resp.status_code != 404:
+                    logger.warning(
+                        "LibreChatBridge GlassHive poll failed: %s %s",
+                        resp.status_code,
+                        resp.text,
+                    )
+        except Exception as exc:
+            logger.warning("LibreChatBridge GlassHive poll error: %s", exc)
+        return None
+
     async def _poll_for_followup(self, *, stream_id: str, chat_id: str) -> None:
         message_id = self._response_message_ids.get(stream_id, "")
         conversation_id = self._conversation_by_stream.get(stream_id)
-        timeout_s = max(self.followup_timeout_s, 1.0)
+        poll_glasshive = self._has_glasshive_seen(stream_id)
+        timeout_s = (
+            max(self.followup_timeout_s, self.glasshive_timeout_s, 1.0)
+            if poll_glasshive
+            else max(self.followup_timeout_s, 1.0)
+        )
         interval_s = max(self.followup_interval_s, 0.25)
         grace_s = max(self.followup_grace_s, 0.0)
         started_at = time.monotonic()
@@ -1972,6 +2115,30 @@ class LibreChatBridge:
                     return
                 if self._has_followup_sent(stream_id):
                     return
+
+                if poll_glasshive:
+                    glasshive_state = await self._fetch_glasshive_state(
+                        message_id=message_id,
+                        conversation_id=conversation_id,
+                        stream_id=stream_id,
+                    )
+                    if isinstance(glasshive_state, dict):
+                        latest = glasshive_state.get("latest")
+                        if isinstance(latest, dict):
+                            text = latest.get("text")
+                            if isinstance(text, str) and text.strip() and glasshive_callback_is_terminal(latest):
+                                if is_no_response_only(text):
+                                    self._mark_followup_sent(stream_id)
+                                    self._cancel_insight_task(stream_id)
+                                    return
+                                sent = await self._send_followup_text_once(
+                                    chat_id,
+                                    text,
+                                    stream_id=stream_id,
+                                )
+                                if sent:
+                                    self._cancel_insight_task(stream_id)
+                                return
 
                 state = await self._fetch_followup_state(
                     message_id=message_id,
@@ -2021,8 +2188,8 @@ class LibreChatBridge:
                             self._cancel_insight_task(stream_id)
                         return
 
-                if isinstance(state, dict) and not parts and not saw_active and not self._has_cortex_seen(stream_id):
-                    return
+                # A GlassHive worker callback can arrive without any cortex parts. Keep polling
+                # until the configured timeout instead of treating "no cortex" as terminal.
 
                 active = has_active_cortex(last_parts)
                 if active:
@@ -2068,6 +2235,7 @@ class LibreChatBridge:
                 self._followup_sent.discard(stream_id)
                 self._followup_send_lock_by_stream.pop(stream_id, None)
                 self._cortex_seen_by_stream.pop(stream_id, None)
+                self._glasshive_seen_by_stream.discard(stream_id)
                 self._stream_text_by_stream.pop(stream_id, None)
                 self._brief_main_reply_by_stream.pop(stream_id, None)
                 self._stream_identity.pop(stream_id, None)
@@ -2266,6 +2434,7 @@ class LibreChatBridge:
                 self._followup_sent.discard(stream_id)
                 self._followup_send_lock_by_stream.pop(stream_id, None)
                 self._cortex_seen_by_stream.pop(stream_id, None)
+                self._glasshive_seen_by_stream.discard(stream_id)
                 self._stream_text_by_stream.pop(stream_id, None)
                 self._brief_main_reply_by_stream.pop(stream_id, None)
                 self._clear_active_stream(chat_id, stream_id)

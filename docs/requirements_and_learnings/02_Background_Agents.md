@@ -94,6 +94,51 @@ Canonical model-parameter rule:
   facts just because the scheduled prompt also mentions them. If a requested item is outside the
   verified provider result set, omit it from the cortex insight instead of guessing or adding a
   placeholder.
+- Background cortices must not claim that a tool, worker, browser, file, email, or OS action
+  happened unless that same cortex received a verified tool result for it during the current run.
+  When the main agent is handling a direct execution request and a cortex has no independent
+  verified result, the cortex should emit no visible insight.
+- The shared activation policy lives in
+  `config.viventium.background_cortices.activation_policy`. It is a source-of-truth prompt/config
+  contract, not runtime NLU. It declares direct-action MCP surfaces by exact tool names, such as
+  GlassHive worker/project tools and Scheduling Cortex tools. Runtime may pass the main agent's
+  configured tool list into the activation prompt, but must not infer intent from user text or parse
+  tool-name substrings to decide behavior.
+- If a user request is primarily a direct action, status check, follow-up, approval, or result
+  request for a declared direct-action surface, generic cortices should not activate unless their
+  configured scope owns a separate part of the request. When they do activate for that separate
+  part, they must not narrate tool, worker, browser, schedule, or runtime status.
+- Cortex execution that returns empty output or the exact no-response token `{NTA}` is silent
+  success. It must not render a visible "Insight from ..." card.
+
+## Non-Blocking Main-Agent Communication Contract
+
+Background agents are not a second chat surface. They are non-blocking evidence producers for the
+main agent path.
+
+Requirements:
+
+- The main assistant turn must never wait on background agents before answering the user.
+- Background agent results must travel over a durable, structured, DB-backed communication line
+  tied to the originating conversation and assistant message. In-memory callbacks may improve
+  latency, but they must not be the only delivery path.
+- The communication payload should carry structured provenance such as cortex id/name, activation
+  scope, result text, tool-call counts, timestamps, and error/degradation state. It must not carry
+  secrets, raw logs, browser screenshots, local absolute paths, or private runtime artifacts.
+- Background agents provide evidence only. They do not decide whether the user should see a
+  follow-up message.
+- The main-agent follow-up/adjudication path owns the visible decision. It receives the background
+  evidence as an injected continuation prompt, compares it to the response the main agent already
+  gave, and either writes a concise same-conversation follow-up or outputs exactly `{NTA}`.
+- `{NTA}` means silent success. It is valid for redundant, irrelevant, or non-actionable
+  background results and must not be delivered to web, Telegram, or voice users.
+- Errors and degradation are not hidden behind `{NTA}`. If a background worker or cortex has a real
+  blocker that changes the user outcome, the follow-up path must surface a concise blocker or
+  failure message.
+- Surface adapters such as web, Telegram, and voice poll the same persisted follow-up state. They
+  must not invent separate delivery logic that bypasses the main-agent adjudication/NTA gate.
+- The implementation must stay generic: no runtime prompt-text matching, no hardcoded cortex names,
+  and no tool-substring NLU. Structured metadata and source-of-truth activation prompts own scope.
 
 ## Anthropic Runtime Compatibility
 
@@ -165,6 +210,13 @@ Use this order so the fix stays surgical:
   deterministic runtime heuristics.
 - Activation and execution must be diagnosed separately. A productivity cortex can activate
   correctly and still fail later if its execution-model credential or connected account is expired.
+- Direct proof-by-execution requests, such as asking Viventium to run a GlassHive/Codex/Claude
+  worker on the local machine, are owned by the main agent and the worker/tool path. Analysis,
+  planning, support, and research cortices should not activate just to speculate about whether the
+  dispatch is possible.
+- Background insight text must never fabricate tool transcripts, run ids, worker ids, or dispatch
+  confirmations. Those values are authoritative only when they come from the tool result or durable
+  runtime store.
 - On April 24, 2026, a scheduled Telegram check exposed two separate issues: an Anthropic malformed
   thinking-content execution failure and a scheduler ledger that treated the resulting deferred
   fallback as ordinary `sent/delivered`. Scheduled cortex polling must thread `scheduleId` into

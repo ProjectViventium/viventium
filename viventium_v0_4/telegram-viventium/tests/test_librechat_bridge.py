@@ -25,6 +25,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     has_active_cortex,
     LibreChatBridge,
     LibreChatSession,
+    payload_has_glasshive_tool_call,
     render_telegram_markdown,
     sanitize_telegram_display_text,
     sanitize_telegram_text,
@@ -37,6 +38,35 @@ def test_sanitize_telegram_text_removes_citations():
     assert "\ue202turn0search0" not in cleaned
     assert "[12]" not in cleaned
     assert "Hello world done" in cleaned
+
+
+def test_payload_has_glasshive_tool_call_uses_mcp_server_identity():
+    assert payload_has_glasshive_tool_call(
+        {
+            "final": True,
+            "responseMessage": {
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "tool_call": {"name": "worker_run_mcp_glasshive-workers-projects"},
+                    }
+                ]
+            },
+        }
+    )
+    assert not payload_has_glasshive_tool_call(
+        {
+            "final": True,
+            "responseMessage": {
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "tool_call": {"name": "web_search"},
+                    }
+                ]
+            },
+        }
+    )
 
 
 def test_sanitize_telegram_text_removes_consecutive_citations():
@@ -64,7 +94,27 @@ def test_sanitize_telegram_text_removes_unknown_citation_type():
     assert "Hello world" in cleaned
 
 
+def test_sanitize_telegram_text_removes_mcp_tool_transcript_lines():
+    text = (
+        'Tool: worker_live_mcp_glasshive-workers-projects, [{"type":"text","text":"internal"}]\n\n'
+        "The task finished."
+    )
+    cleaned = sanitize_telegram_text(text)
+    assert "Tool:" not in cleaned
+    assert "worker_live_mcp" not in cleaned
+    assert cleaned.strip() == "The task finished."
+
+
 # === VIVENTIUM START ===
+def test_bridge_defaults_glasshive_poll_timeout_for_long_host_tasks(monkeypatch):
+    monkeypatch.delenv("VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S", raising=False)
+    bridge = LibreChatBridge(
+        get_conversation_id=lambda _chat_id: "",
+        set_conversation_id=lambda _chat_id, _conversation_id: None,
+    )
+    assert bridge.glasshive_timeout_s == 600.0
+
+
 def test_sanitize_telegram_text_normalizes_em_dash_clause_breaks():
     text = "Hi—This is how it should read.\n\nHi — This is another example."
     cleaned = sanitize_telegram_text(text)
@@ -591,16 +641,19 @@ async def test_ask_stream_async_listens_for_followup_events_even_when_raw_insigh
 
 
 @pytest.mark.asyncio
-async def test_ask_stream_async_caches_voice_route_from_chat_start():
+async def test_ask_stream_async_caches_voice_route_from_chat_start_for_all_delivery_keys():
     bridge = _make_bridge()
 
     async def fake_start_chat(**kwargs):
-        _ = kwargs
+        assert kwargs["telegram_chat_id"] == "raw-chat"
         return LibreChatSession(
             stream_id="stream-voice",
             conversation_id="conv-voice",
             voice_route={
-                "tts": {"provider": "local_chatterbox_turbo_mlx_8bit", "variant": "mlx-community/chatterbox-turbo-8bit"},
+                "tts": {
+                    "provider": "local_chatterbox_turbo_mlx_8bit",
+                    "variant": "mlx-community/chatterbox-turbo-8bit",
+                },
             },
         )
 
@@ -612,15 +665,25 @@ async def test_ask_stream_async_caches_voice_route_from_chat_start():
     bridge._start_chat = fake_start_chat  # type: ignore[assignment]
     bridge._stream_response = fake_stream_response  # type: ignore[assignment]
 
-    chunks = [chunk async for chunk in bridge.ask_stream_async("hi", "voice-chat")]
+    chunks = [
+        chunk
+        async for chunk in bridge.ask_stream_async(
+            "hi",
+            "conversation-key",
+            telegram_chat_id="raw-chat",
+        )
+    ]
 
-    assert chunks == []
-    assert bridge.get_cached_voice_route("voice-chat") == {
+    expected_route = {
         "tts": {
             "provider": "local_chatterbox_turbo_mlx_8bit",
             "variant": "mlx-community/chatterbox-turbo-8bit",
         },
     }
+    assert chunks == []
+    assert bridge.get_cached_voice_route("conversation-key") == expected_route
+    assert bridge.get_cached_voice_route("raw-chat") == expected_route
+    assert bridge.get_cached_voice_route("conv-voice") == expected_route
 
 
 @pytest.mark.asyncio
@@ -1404,6 +1467,7 @@ async def test_poll_for_followup_sends_followup():
     bridge.followup_interval_s = 0.01
     bridge.followup_timeout_s = 0.2
     bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
 
     states = [
         {"cortexParts": [{"type": "cortex_brewing", "status": "brewing"}], "followUp": None},
@@ -1472,6 +1536,7 @@ async def test_poll_for_followup_waits_when_cortex_seen_but_no_parts():
     bridge.followup_interval_s = 0.01
     bridge.followup_timeout_s = 0.2
     bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
 
     states = [
         {"cortexParts": [], "followUp": None},
@@ -1494,6 +1559,145 @@ async def test_poll_for_followup_waits_when_cortex_seen_but_no_parts():
 
 
 @pytest.mark.asyncio
+async def test_poll_for_followup_sends_glasshive_callback_without_cortex_parts():
+    bridge = _make_bridge()
+    messages = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive"
+    chat_id = "303:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="303",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive"
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    glasshive_states = [
+        {"latest": None},
+        {"latest": {"event": "run.completed", "text": "The worker finished the browser task."}},
+    ]
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        if glasshive_states:
+            return glasshive_states.pop(0)
+        return {"latest": None}
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert len(messages) == 1
+    assert messages[0][0] == 303
+    assert "worker finished" in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_waits_for_terminal_glasshive_callback():
+    bridge = _make_bridge()
+    messages = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-terminal"
+    chat_id = "303:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="303",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive"
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    glasshive_states = [
+        {"latest": {"event": "run.started", "text": "I’m working on it now."}},
+        {"latest": {"event": "run.completed", "text": "Done with the browser task."}},
+    ]
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        if glasshive_states:
+            return glasshive_states.pop(0)
+        return {"latest": None}
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert len(messages) == 1
+    assert messages[0][0] == 303
+    assert "Done with the browser task" in messages[0][1]
+    assert "working on it" not in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_does_not_fetch_glasshive_for_non_glasshive_turn():
+    bridge = _make_bridge()
+    async def on_message(chat_id, text):
+        _ = chat_id, text
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-ordinary-tool"
+    chat_id = "303:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._response_message_ids[stream_id] = "msg-ordinary"
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.02
+    bridge.followup_grace_s = 0.01
+    bridge.glasshive_timeout_s = 0.2
+    calls = {"glasshive": 0, "cortex": 0}
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        calls["glasshive"] += 1
+        return {"latest": {"text": "Should not be fetched"}}
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        calls["cortex"] += 1
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert calls["glasshive"] == 0
+    assert calls["cortex"] > 0
+
+
+@pytest.mark.asyncio
 async def test_poll_for_followup_sends_canonical_text_when_hold_was_replaced():
     bridge = _make_bridge()
     messages = []
@@ -1512,6 +1716,7 @@ async def test_poll_for_followup_sends_canonical_text_when_hold_was_replaced():
     bridge.followup_interval_s = 0.01
     bridge.followup_timeout_s = 0.2
     bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
 
     async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
         _ = message_id, conversation_id, stream_id
@@ -1545,6 +1750,7 @@ async def test_poll_for_followup_skips_canonical_text_when_already_streamed():
     bridge.followup_interval_s = 0.01
     bridge.followup_timeout_s = 0.05
     bridge.followup_grace_s = 0.02
+    bridge.glasshive_timeout_s = 0.05
 
     async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
         _ = message_id, conversation_id, stream_id

@@ -76,6 +76,20 @@
   - `viventium_v0_4/MCPs/google_workspace_mcp`
 - LibreChat MCP configs live in the v0.4 stack (see `viventium_v0_4/docs/`).
 
+### First-Party Request Context Projection
+
+- First-party direct-action MCP servers that need current-turn context, such as GlassHive, receive
+  it through structured headers on the existing MCP request path. Do not create a second upload or
+  callback path for them.
+- DB-sourced MCP configs must continue to block env/OpenID/user/body placeholder expansion by
+  default. A Viventium-managed first-party server may opt into request context with the explicit
+  server-managed `viventiumRequestContext: true` flag.
+- `viventiumRequestContext: true` allows only user/body request metadata such as user id,
+  conversation id, assistant message id, surface metadata, and upload/file-resource metadata. It
+  must not expand env secrets or OpenID tokens.
+- User-created MCP servers must not be able to set this flag through the public MCP creation UI/API.
+  It belongs to reviewed source-of-truth/runtime config.
+
 ---
 
 ## Use Cases
@@ -409,7 +423,7 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
 
 #### Symptoms
 - Local Google-backed conversations could stall with the Google cortex left in `brewing` and the assistant message left `unfinished`.
-- The concrete failing local thread was conversation `ee8c815e-2355-41d9-8edb-b1a71a51308f`, where the last user request referenced `Viventium_Master_GTM_Handbook` on Google Docs and the follow-up assistant message `62b31d7a-9734-45e2-98d7-f3268b4b9000` never completed.
+- A Google-backed conversation with document context could leave the follow-up assistant message unfinished.
 - MCP Settings showed `google_workspace - Connecting` or `Unknown`, but no Google auth window opened.
 - Local launcher/API logs showed:
   - `Failed to establish connection Connection timeout after 120000ms`
@@ -554,6 +568,10 @@ When deploying Google Workspace MCP to a new environment:
 - **OAuth 2.1 requires DCR** - ensure LibreChat can call `/register` and that DCR state persists
 - **Persist the MCP OAuth proxy registry** - use `disk` or `valkey` to avoid re-auth loops after MCP restarts
 - **Non-chatMenu persistent MCPs need explicit warm-up** - if an MCP (like `scheduling-cortex`) is hidden from chat selection (`chatMenu: false`), it will not be part of selected-server reconnect logic unless specifically added as always-on.
+- **Local sidecar MCP startup must prove health, not only port/process presence** - `scheduling-cortex`
+  is a persistent runtime loop. The launcher must verify `/health` after startup and supervise it
+  while LibreChat is running, otherwise the chat API can keep retrying a dead `streamable-http` URL
+  and surface repeated MCP `ECONNREFUSED` failures.
 - **Test OAuth flows locally before deploying** - Azure deployment cycles are slow
 
 ---

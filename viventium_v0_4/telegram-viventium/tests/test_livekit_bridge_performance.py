@@ -197,7 +197,10 @@ async def test_multiple_turns_performance():
     # Performance should not degrade (last turn shouldn't be significantly slower)
     first_turn = turn_times[0]
     last_turn = turn_times[-1]
-    degradation = (last_turn - first_turn) / first_turn if first_turn > 0 else 0
+    # At sub-millisecond timings, clock jitter dominates percentage comparisons.
+    # Keep the real performance contract above, and only use the relative check
+    # with a floor that prevents nanosecond-scale noise from failing CI.
+    degradation = (last_turn - first_turn) / max(first_turn, 0.001)
     assert degradation < 2.0, f"Performance degraded by {degradation*100:.1f}%, last turn {last_turn*1000:.2f}ms vs first {first_turn*1000:.2f}ms"
 
 

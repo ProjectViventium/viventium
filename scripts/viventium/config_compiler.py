@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import platform
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -47,6 +49,9 @@ DEFAULT_CARTESIA_LANGUAGE = "en"
 DEFAULT_CARTESIA_MAX_BUFFER_DELAY_MS = "120"
 DEFAULT_CARTESIA_SEGMENT_SILENCE_MS = "80"
 DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
+DEFAULT_GLASSHIVE_FOLLOWUP_TIMEOUT_S = "600"
+MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
+MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD = "0.01"
 DEFAULT_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS = "100"
 DEFAULT_ASSEMBLYAI_MAX_TURN_SILENCE_MS = "1000"
@@ -94,6 +99,7 @@ DEFAULT_GOOGLE_WORKSPACE_MCP_SCOPE = (
 LOCAL_MCP_ALLOWED_DOMAINS = ["localhost", "127.0.0.1", "host.docker.internal"]
 REPO_ROOT = SCRIPT_DIR.parent.parent
 GLASSHIVE_RUNTIME_DIR = REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
+LIBRECHAT_UPLOADS_DIR = REPO_ROOT / "viventium_v0_4" / "LibreChat" / "uploads"
 LEGACY_CANONICAL_ENV_IMPORT_KEYS = (
     "AZURE_AI_FOUNDRY_API_KEY",
     "AZURE_AI_FOUNDRY_API_VERSION",
@@ -162,6 +168,40 @@ def glasshive_enabled(config: dict[str, Any]) -> bool:
     integrations = config.get("integrations", {}) or {}
     configured = resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False)
     return configured and GLASSHIVE_RUNTIME_DIR.is_dir()
+
+
+def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, Any]:
+    integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive") or {}
+    host_worker = glasshive.get("host_worker") or {}
+    mentions = host_worker.get("mentions") or {}
+    destructive_confirmation = host_worker.get("destructive_confirmation") or {}
+    advisory_reviewer = host_worker.get("advisory_reviewer") or {}
+    prompt_visibility = host_worker.get("prompt_visibility") or {}
+    workspace_root = str(host_worker.get("workspace_root") or "~/viventium").strip() or "~/viventium"
+    enabled = resolve_bool(host_worker.get("enabled"), True)
+    default_execution_mode = str(host_worker.get("default_execution_mode") or "host").strip().lower()
+    if default_execution_mode not in {"host", "docker"}:
+        default_execution_mode = "host"
+    if not enabled:
+        default_execution_mode = "docker"
+    return {
+        "enabled": enabled,
+        "workspace_root": workspace_root,
+        "default_execution_mode": default_execution_mode,
+        "mentions": {
+            "codex": str(mentions.get("codex") or "@codex"),
+            "claude": str(mentions.get("claude") or "@claude"),
+            "openclaw": str(mentions.get("openclaw") or "@openclaw"),
+        },
+        "destructive_confirmation_enabled": resolve_bool(destructive_confirmation.get("enabled"), True),
+        "advisory_reviewer_enabled": resolve_bool(advisory_reviewer.get("enabled"), False),
+        "advisory_reviewer_mode": str(advisory_reviewer.get("mode") or "review_final").strip() or "review_final",
+        "prompt_visibility_enabled": resolve_bool(prompt_visibility.get("enabled"), True),
+        "codex_cli_available": shutil.which("codex") is not None,
+        "claude_cli_available": shutil.which("claude") is not None,
+        "openclaw_cli_available": shutil.which("openclaw") is not None,
+    }
 
 VOICE_PROVIDER_KEYCHAIN_SERVICES = {
     "assemblyai": "viventium/assemblyai_api_key",
@@ -690,6 +730,16 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
             mcp_servers.pop("google_workspace", None)
         if not resolve_bool(env.get("START_GLASSHIVE"), False):
             mcp_servers.pop("glasshive-workers-projects", None)
+        ms365_server = mcp_servers.get("ms-365")
+        if isinstance(ms365_server, dict):
+            oauth = ms365_server.get("oauth")
+            if isinstance(oauth, dict):
+                for field, env_key in {
+                    "client_id": "MS365_MCP_CLIENT_ID",
+                    "client_secret": "MS365_MCP_CLIENT_SECRET",
+                }.items():
+                    if not has_non_placeholder_env(env, env_key):
+                        oauth[field] = ""
 
     web_search = cleaned.get("webSearch")
     if isinstance(web_search, dict):
@@ -952,6 +1002,11 @@ def optional_nested_secret(node: dict[str, Any], key: str) -> str:
     return resolve_optional_secret(value)
 
 
+def scoped_secret(base_secret: str, scope: str) -> str:
+    seed = f"viventium:{scope}:v1:{base_secret}".encode("utf-8")
+    return hashlib.sha256(seed).hexdigest()
+
+
 def positive_int_or_default(value: Any, default: int, label: str) -> int:
     if value in (None, ""):
         return default
@@ -961,6 +1016,18 @@ def positive_int_or_default(value: Any, default: int, label: str) -> int:
         raise SystemExit(f"{label} must be an integer") from exc
     if parsed < 1:
         raise SystemExit(f"{label} must be greater than 0")
+    return parsed
+
+
+def bounded_int_or_default(value: Any, default: int, label: str, *, minimum: int, maximum: int) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"{label} must be an integer") from exc
+    if parsed < minimum or parsed > maximum:
+        raise SystemExit(f"{label} must be between {minimum} and {maximum}")
     return parsed
 
 
@@ -1437,6 +1504,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     start_firecrawl = web_search_is_enabled and web_search_settings["scraper_provider"] == "firecrawl"
     telegram_is_enabled = telegram_enabled(config)
     glasshive_is_enabled = glasshive_enabled(config)
+    glasshive_host_worker = resolve_glasshive_host_worker_settings(config)
 
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
@@ -1557,6 +1625,23 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
+        env["GLASSHIVE_HOST_WORKERS_ENABLED"] = "true" if glasshive_host_worker["enabled"] else "false"
+        env["WPR_HOST_WORKSPACE_ROOT"] = str(glasshive_host_worker["workspace_root"])
+        env["WPR_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
+        env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] = "true" if glasshive_host_worker["destructive_confirmation_enabled"] else "false"
+        env["WPR_HOST_ADVISORY_REVIEWER_ENABLED"] = "true" if glasshive_host_worker["advisory_reviewer_enabled"] else "false"
+        env["WPR_HOST_ADVISORY_REVIEWER_MODE"] = str(glasshive_host_worker["advisory_reviewer_mode"])
+        env["WPR_HOST_PROMPT_VISIBILITY"] = "true" if glasshive_host_worker["prompt_visibility_enabled"] else "false"
+        env["WPR_HOST_MENTION_CODEX"] = str(glasshive_host_worker["mentions"]["codex"])
+        env["WPR_HOST_MENTION_CLAUDE"] = str(glasshive_host_worker["mentions"]["claude"])
+        env["WPR_HOST_MENTION_OPENCLAW"] = str(glasshive_host_worker["mentions"]["openclaw"])
+        env["WPR_HOST_CODEX_CLI_AVAILABLE"] = "true" if glasshive_host_worker["codex_cli_available"] else "false"
+        env["WPR_HOST_CLAUDE_CLI_AVAILABLE"] = "true" if glasshive_host_worker["claude_cli_available"] else "false"
+        env["WPR_HOST_OPENCLAW_CLI_AVAILABLE"] = "true" if glasshive_host_worker["openclaw_cli_available"] else "false"
+        env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(LIBRECHAT_UPLOADS_DIR)
+        env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(LIBRECHAT_UPLOADS_DIR)
+        env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
+        env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -1701,9 +1786,21 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if configured_background_followup_window_s in (None, "")
         else str(configured_background_followup_window_s).strip()
     )
+    glasshive_followup_timeout_s = str(
+        bounded_int_or_default(
+            runtime.get("glasshive_followup_timeout_s"),
+            int(DEFAULT_GLASSHIVE_FOLLOWUP_TIMEOUT_S),
+            "runtime.glasshive_followup_timeout_s",
+            minimum=MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S,
+            maximum=MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S,
+        )
+    )
     env["VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S"] = background_followup_window_s
     env["VIVENTIUM_VOICE_FOLLOWUP_GRACE_S"] = background_followup_window_s
     env["VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S"] = background_followup_window_s
+    env["VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
+    env["VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
+    env["VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
 
     env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"], env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] = assignments["conscious"]
     env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] = assignments["background_analysis"]
@@ -2080,21 +2177,64 @@ def build_mcp_servers(
     }
 
     if glasshive_enabled(config):
+        host_worker = resolve_glasshive_host_worker_settings(config)
+        codex_mention = host_worker["mentions"]["codex"]
+        claude_mention = host_worker["mentions"]["claude"]
+        openclaw_mention = host_worker["mentions"]["openclaw"]
+        if host_worker["enabled"]:
+            glasshive_server_instructions = (
+                "GlassHive MCP for persistent projects, resumable workers, workstation "
+                "sandboxes, host-native workers, and live operator takeover. Use host-native "
+                "workers when the user asks for Codex/Claude/OpenClaw on the main computer, "
+                "local Chrome/browser, desktop apps, OS tools, or host files; a Docker "
+                "workstation browser is isolated and is not the user's real Chrome profile. "
+                f"For configured mentions "
+                f"{codex_mention}, {claude_mention}, and {openclaw_mention}, create or resume "
+                "a worker with execution_mode='host' and the matching profile. Current request "
+                "upload metadata is projected through headers; preserve those existing file "
+                "references in bootstrap_bundle_json instead of creating a separate upload path. "
+                "After worker_run, check run_get or worker_live before reporting a terminal "
+                "result; queued only means the run was accepted."
+            )
+        else:
+            glasshive_server_instructions = (
+                "GlassHive MCP for persistent projects, resumable workers, workstation "
+                "sandboxes, and live operator takeover. Host-native workers are disabled by "
+                "the current Viventium config; do not create, resume, or run workers with "
+                "execution_mode='host'. Use Docker execution when a worker is still appropriate, "
+                "or tell the main agent that host-computer execution is disabled. Current request "
+                "upload metadata is projected through headers; preserve those existing file "
+                "references in bootstrap_bundle_json instead of creating a separate upload path. "
+                "After worker_run, check run_get or worker_live before reporting a terminal "
+                "result; queued only means the run was accepted."
+            )
         servers["glasshive-workers-projects"] = {
             "type": "streamable-http",
             "url": "${GLASSHIVE_MCP_URL}",
+            "viventiumRequestContext": True,
             "headers": {
                 "X-Viventium-User-Id": "{{LIBRECHAT_USER_ID}}",
                 "X-Viventium-Agent-Id": default_main_agent_id,
+                "X-Viventium-Conversation-Id": "{{LIBRECHAT_BODY_CONVERSATIONID}}",
+                "X-Viventium-Parent-Message-Id": "{{LIBRECHAT_BODY_PARENTMESSAGEID}}",
+                "X-Viventium-Message-Id": "{{LIBRECHAT_BODY_MESSAGEID}}",
+                "X-Viventium-Surface": "{{LIBRECHAT_BODY_VIVENTIUMSURFACE}}",
+                "X-Viventium-Input-Mode": "{{LIBRECHAT_BODY_VIVENTIUMINPUTMODE}}",
+                "X-Viventium-Stream-Id": "{{LIBRECHAT_BODY_VIVENTIUMSTREAMID}}",
+                "X-Viventium-Voice-Call-Session-Id": "{{LIBRECHAT_BODY_VIVENTIUMVOICECALLSESSIONID}}",
+                "X-Viventium-Voice-Request-Id": "{{LIBRECHAT_BODY_VIVENTIUMVOICEREQUESTID}}",
+                "X-Viventium-Telegram-Chat-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMCHATID}}",
+                "X-Viventium-Telegram-User-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMUSERID}}",
+                "X-Viventium-Telegram-Message-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}",
+                "X-Viventium-Request-Files": "{{LIBRECHAT_BODY_FILES_JSON_B64}}",
+                "X-Viventium-Request-Attachments": "{{LIBRECHAT_BODY_ATTACHMENTS_JSON_B64}}",
+                "X-Viventium-Tool-Resources": "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}",
+                "X-Viventium-File-Ids": "{{LIBRECHAT_BODY_FILE_IDS_JSON_B64}}",
             },
             "startup": False,
             "chatMenu": True,
             "timeout": 120000,
-            "serverInstructions": (
-                "GlassHive MCP for persistent projects, resumable workers, workstation "
-                "sandboxes, and live operator takeover. Use it when work needs delegation, "
-                "persistence, or a human handoff into a live sandbox."
-            ),
+            "serverInstructions": glasshive_server_instructions,
         }
 
     if integrations.get("ms365", {}).get("enabled"):

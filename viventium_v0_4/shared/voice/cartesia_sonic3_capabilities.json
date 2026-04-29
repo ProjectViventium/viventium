@@ -1,0 +1,145 @@
+{
+  "provider": "cartesia",
+  "model_id": "sonic-3",
+  "api_version": "2026-03-01",
+  "source_urls": [
+    "https://docs.cartesia.ai/build-with-cartesia/sonic-3/volume-speed-emotion",
+    "https://docs.cartesia.ai/build-with-cartesia/sonic-3/ssml-tags"
+  ],
+  "generation_config": {
+    "speed": {
+      "default": 1.0,
+      "min": 0.6,
+      "max": 1.5
+    },
+    "volume": {
+      "default": 1.0,
+      "min": 0.5,
+      "max": 2.0
+    },
+    "emotion": {
+      "default": "neutral",
+      "primary": [
+        "neutral",
+        "angry",
+        "excited",
+        "content",
+        "sad",
+        "scared"
+      ],
+      "values": [
+        "happy",
+        "excited",
+        "enthusiastic",
+        "elated",
+        "euphoric",
+        "triumphant",
+        "amazed",
+        "surprised",
+        "flirtatious",
+        "joking/comedic",
+        "curious",
+        "content",
+        "peaceful",
+        "serene",
+        "calm",
+        "grateful",
+        "affectionate",
+        "trust",
+        "sympathetic",
+        "anticipation",
+        "mysterious",
+        "angry",
+        "mad",
+        "outraged",
+        "frustrated",
+        "agitated",
+        "threatened",
+        "disgusted",
+        "contempt",
+        "envious",
+        "sarcastic",
+        "ironic",
+        "sad",
+        "dejected",
+        "melancholic",
+        "disappointed",
+        "hurt",
+        "guilty",
+        "bored",
+        "tired",
+        "rejected",
+        "nostalgic",
+        "wistful",
+        "apologetic",
+        "hesitant",
+        "insecure",
+        "confused",
+        "resigned",
+        "anxious",
+        "panicked",
+        "alarmed",
+        "scared",
+        "neutral",
+        "proud",
+        "confident",
+        "distant",
+        "skeptical",
+        "contemplative",
+        "determined"
+      ]
+    }
+  },
+  "ssml_tags": {
+    "emotion": {
+      "forms": [
+        "<emotion value=\"calm\"/>",
+        "<emotion value=\"excited\">TEXT</emotion>"
+      ],
+      "attribute": "value"
+    },
+    "speed": {
+      "form": "<speed ratio=\"1.1\"/>",
+      "attribute": "ratio",
+      "min": 0.6,
+      "max": 1.5
+    },
+    "volume": {
+      "form": "<volume ratio=\"0.9\"/>",
+      "attribute": "ratio",
+      "min": 0.5,
+      "max": 2.0
+    },
+    "break": {
+      "form": "<break time=\"500ms\"/>",
+      "attribute": "time",
+      "units": [
+        "s",
+        "ms"
+      ]
+    },
+    "spell": {
+      "form": "<spell>ABC123</spell>"
+    }
+  },
+  "nonverbal_markers": [
+    "[laughter]"
+  ],
+  "voice_presets": [
+    {
+      "name": "Megan",
+      "id": "e8e5fffb-252c-436d-b842-8879b84445b6"
+    },
+    {
+      "name": "Lyra",
+      "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+      "cartesia_public_name": "Tessa"
+    }
+  ],
+  "prompt_notes": [
+    "Tags for volume, speed, and emotions are beta.",
+    "When streaming token by token, speed and volume tags must be emitted as complete tags with complete attribute values.",
+    "Emotion control is experimental; separate generation contexts are best for major emotion shifts.",
+    "Only the LLM may author voice-control markup; runtime preserves, validates, routes, or strips for display/fallback."
+  ]
+}

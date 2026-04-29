@@ -49,7 +49,7 @@ from config import (
 
 # REMOVED: i18n - Using hardcoded English strings for simplicity
 from utils.scripts import GetMesageInfo, safe_get, is_emoji
-from utils.tts import synthesize_speech
+from utils.tts import resolve_tts_selection, summarize_voice_markup, synthesize_speech
 from utils.livekit_bridge import LiveKitBridge
 from utils.env import coerce_bool
 from utils.singleton import SingletonAlreadyRunning, acquire_telegram_singleton_lock
@@ -1552,20 +1552,32 @@ async def getViventiumResponse(
                         _voice_debug_text(cleaned_voice),
                         _voice_debug_text(sanitize_telegram_display_text(tmpresult)),
                     )
-                voice_route = robot.get_cached_voice_route(str(chatid)) if hasattr(robot, "get_cached_voice_route") else None
-                tts_provider = ""
-                if isinstance(voice_route, dict):
-                    tts_config = voice_route.get("tts")
-                    if isinstance(tts_config, dict):
-                        provider_value = tts_config.get("provider")
-                        if isinstance(provider_value, str):
-                            tts_provider = provider_value.strip().lower()
+                voice_route = None
+                if hasattr(robot, "get_cached_voice_route"):
+                    voice_route = (
+                        robot.get_cached_voice_route(str(convo_id))
+                        or robot.get_cached_voice_route(str(chatid))
+                    )
+                resolved_tts = resolve_tts_selection(voice_route=voice_route)
+                tts_provider = (resolved_tts.get("provider") or "").strip().lower()
+                voice_markup = summarize_voice_markup(cleaned_voice)
                 logger.info(
-                    "[TG_VOICE] trace=%s tts_start provider=%s chars=%s route_cached=%s",
+                    "[TG_VOICE] trace=%s tts_start provider=%s source=%s chars=%s route_cached=%s",
                     trace_id,
                     tts_provider or "default",
+                    resolved_tts.get("source") or "unknown",
                     len(cleaned_voice),
                     int(isinstance(voice_route, dict)),
+                )
+                logger.info(
+                    "[VoiceMarkup][telegram] trace=%s tts_markers laughter=%s "
+                    "emotion_tags=%s break_tags=%s speed_tags=%s volume_tags=%s",
+                    trace_id,
+                    voice_markup["laughter"],
+                    voice_markup["emotion"],
+                    voice_markup["break"],
+                    voice_markup["speed"],
+                    voice_markup["volume"],
                 )
                 # === VIVENTIUM START ===
                 # Feature: Timing for TTS synthesis + send.

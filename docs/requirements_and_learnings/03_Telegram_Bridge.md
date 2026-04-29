@@ -19,6 +19,10 @@ stream back to Telegram through the existing bridge.
 - Background follow-ups must preserve the same formatting rules as the main response.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
+- Telegram must mirror direct-action worker completion delivery. When a LibreChat turn starts a
+  GlassHive worker, the bot should keep polling the persisted GlassHive callback state long enough
+  for real host-browser/desktop work to finish and should send the final result automatically in the
+  same Telegram chat.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
 - Detached/local launches must not leave Telegram pointed at a dead LibreChat localhost origin after
   frontend dev-server exits or launcher-side supervision gaps.
@@ -56,10 +60,15 @@ stream back to Telegram through the existing bridge.
     messages with always-voice output still use `input_mode=text`.
 - When the resolved Speaking route is Cartesia, Telegram follows the same Sonic-3 voice markup
   contract as modern calls:
+  - the canonical Cartesia Sonic-3 capability contract is
+    `viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json`; Telegram must not carry a
+    separate emotion list or tag vocabulary
   - the main agent may emit Cartesia SSML-like tags and bracket nonverbal markers only because the
     voice-mode prompt instructed it to do so
   - runtime must not invent emotion tags or infer emotion from user intent
   - raw LLM text with Cartesia markup is preserved for TTS
+  - Cartesia-supported nonverbal markers from the shared contract are preserved, while structural
+    unsupported bracket stage directions are stripped before Cartesia so they are not read aloud
   - user-visible Telegram text is sanitized so `<emotion>`, `<break>`, `<speed>`, `<volume>`,
     `<spell>`, and structural bracket stage directions do not appear
   - Cartesia `/tts/bytes` requests include both the model-authored tag in `transcript` and the same
@@ -68,6 +77,9 @@ stream back to Telegram through the existing bridge.
   - opt-in non-secret debugging (`VIVENTIUM_VOICE_DEBUG_TTS=1` or
     `VIVENTIUM_TELEGRAM_DEBUG_TTS=1`) may log raw LLM text, TTS text, display-sanitized text, and
     Cartesia request transcripts without API keys
+  - default logs should still include non-secret structural counts for `[laughter]`,
+    `<emotion>`, `<break>`, `<speed>`, `<volume>`, and `<spell>` so formatting loss can be
+    diagnosed without publishing transcript content
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
   explicitly known-good for the current deployment.

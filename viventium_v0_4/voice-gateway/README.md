@@ -81,6 +81,10 @@ This service is the **voice bridge** between:
       adapter preserves LLM-selected emotion tags in the Cartesia transcript and also
       passes the same value as `generation_config.emotion`.
     - Cartesia-documented nonverbal marker: `[laughter]`.
+    - The Cartesia Sonic-3 model/version, named voice presets, emotion values, tag names,
+      and control ranges are sourced from
+      `viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json`; update that contract
+      first when Cartesia changes the documented Sonic-3 surface.
   - **xAI Grok Voice ("Voice Agent API")**
     - Requires: `XAI_API_KEY`
     - Optional knobs:
@@ -110,6 +114,8 @@ This service is the **voice bridge** between:
     - Poll interval while waiting for cortex insights to be persisted to the DB.
   - `VIVENTIUM_VOICE_FOLLOWUP_GRACE_S` (defaults to `30.0`)
     - Background follow-up window after the DB poller first discovers persisted insights. This gives the backend follow-up LLM time to persist a true Phase B main-agent continuation. Grace timer starts from the first DB poll with insights, not from SSE-captured insights.
+  - `VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S` (defaults to `600.0`)
+    - How long an active call waits for persisted GlassHive worker completion/blocker callbacks after the main response.
   - Follow-ups are delivered asynchronously and never block the main response.
   - Raw background insights stay silent in live voice if no persisted follow-up arrives inside the window.
 

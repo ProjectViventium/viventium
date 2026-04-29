@@ -1,8 +1,9 @@
-# GlassHive: Workstation-Sandbox Runtime
+# GlassHive: Workstation and Host-Native Worker Runtime
 
-**Purpose**: GlassHive is a first-party, standalone workstation-sandbox runtime that gives AI workers
-a persistent, resumable execution environment with a real browser, terminal, filesystem, and live
-operator visibility. It is composable with Viventium/LibreChat but architecturally independent.
+**Purpose**: GlassHive is a first-party, standalone worker runtime that gives AI workers persistent,
+resumable execution environments with browser, terminal, filesystem, and operator visibility. It
+supports Docker workstation sandboxes and host-native workers. It is composable with
+Viventium/LibreChat but architecturally independent.
 
 **Repo**: `ProjectViventium/GlassHive` (first-party, no upstream fork boundary)
 **License**: FSL 1.1 with Apache-2.0 future license
@@ -15,7 +16,8 @@ operator visibility. It is composable with Viventium/LibreChat but architectural
 | Term | Meaning |
 |---|---|
 | **Sandbox** | A Docker-backed workstation container with desktop, browser, terminal, and filesystem |
-| **Worker** | The AI runtime operating inside a sandbox (profiles: `codex-cli`, `claude-code`, `openclaw-general`) |
+| **Host Worker** | A no-sandbox worker that runs local CLIs directly on the user's main computer |
+| **Worker** | The AI runtime operating inside a sandbox or on the host (profiles: `codex-cli`, `claude-code`, `openclaw-general`) |
 | **Project** | An operator-defined mission with goal, success criteria, and continuity wrapper |
 | **Bootstrap Bundle** | A portable preset containing auth, MCP config, instructions, env, and files that seeds a worker |
 
@@ -27,8 +29,19 @@ operator visibility. It is composable with Viventium/LibreChat but architectural
 
 1. **Control Plane** -- FastAPI API (port 8766), SQLite persistence, project-first operator web UI
 2. **Worker Runtime** -- Profile-agnostic runtime supporting multiple worker types
-3. **Sandbox Substrate** -- Docker containers with persistent volume mounts
+3. **Execution Substrate** -- Docker workstation containers or host-native process execution
 4. **Client Adapters** -- HTTP API, MCP (streamable-http, stdio, sse), direct API calls
+
+### Execution Modes
+
+| Mode | Behavior |
+|---|---|
+| `docker` | Existing Docker workstation sandbox with noVNC, persistent home, and isolated browser profile |
+| `host` | No-sandbox host-native process execution using local `codex`, `claude`, or `openclaw` CLIs |
+
+Host-native workers are intentionally powerful. They act on the user's main computer and inherit the
+local OS, filesystem, browser, and CLI auth posture. They must be selected explicitly through
+`execution_mode=host`; Docker remains the isolated default.
 
 ### Why Selenium's Docker Image (Not Selenium Grid)
 
@@ -121,6 +134,101 @@ container and data).
 | `claude-code` | Claude Code desktop |
 | `openclaw-general` | OpenClaw CLI |
 
+### Host-Native Worker Contract
+
+Host-native workers use the same project/worker/run control plane and MCP tools as Docker workers,
+but run directly on the host machine.
+
+Host-worker UX and callback requirements:
+
+- Chat-facing status should focus on the real task outcome. Worker IDs, run IDs, project IDs,
+  terminal URLs, ports, and `queued/running` plumbing are diagnostic details and should only be
+  shown when the user asks for them.
+- Worker execution must be non-blocking for the main assistant turn. The main agent may dispatch or
+  steer a worker and then stop the chat turn; completion, blockers, approvals, and takeover requests
+  return through signed callbacks or same-surface polling.
+- Host-native execution must obey the compiled runtime gate. If
+  `GLASSHIVE_HOST_WORKERS_ENABLED=false`, API and MCP paths must reject host worker creation,
+  find-or-resume, resume, run, steer, and desktop actions instead of treating the flag as advisory.
+- The callback path is a durable communication line between GlassHive and the originating Viventium
+  conversation. It must be signed, replay-protected, anchored to the assistant response message,
+  persisted in a local callback outbox until delivered, persisted in the conversation store after
+  receiver acceptance, and pollable by web, Telegram, and voice surfaces.
+- Worker callbacks provide verified execution evidence. They must stay structured and sanitized so
+  the main agent/follow-up layer can decide whether to surface the information, summarize it, or
+  remain silent with `{NTA}` when the information is redundant or irrelevant.
+- Worker lifecycle and queue events remain internal lifecycle/audit events and are not posted into
+  the user conversation by default. A `run.started` callback may update the originating assistant
+  status with one concise "working on it" message for long-running host work, without worker IDs,
+  ports, terminal URLs, or queue jargon. User-visible terminal callbacks are completion, failure,
+  approval/checkpoint, takeover/help-needed, and cancellation states.
+- Completion callbacks should carry the concise final result. Failure callbacks should say what got
+  stuck and what help is needed. Approval callbacks should state the specific decision required.
+- Repeated visible callbacks for one worker run update a single task-status message instead of
+  creating a chain of callback branches.
+- Visible callbacks must include the assistant response `message_id` for the originating turn.
+  Unanchored visible callbacks are ignored/retried rather than being attached to the user message
+  as a sibling assistant branch.
+- Callback URL and HMAC secret are resolved from the canonical runtime environment. The GlassHive
+  MCP/API processes should inherit those values from the launcher; they also load the generated
+  Viventium runtime env as defense-in-depth when started without the expected process env.
+- CLI stop reasons are scoped to the active run so a timeout or termination marker from one run
+  cannot cancel a later successful run. If a worker reports termination after stdout/exit artifacts
+  were written, the service must attempt `collect_completed_run(worker, run_id)` before marking the
+  run cancelled.
+- CLI worker runs are long-running background work by default. Host and Docker workers must not
+  inherit a short synchronous request timeout or a hard-coded 300 second worker timeout. Deployments
+  may set an explicit run timeout through runtime env for operational policy, but the default worker
+  behavior is to keep running until completion, cancellation, checkpoint, or process failure.
+
+- `worker_create` and `worker_find_or_resume` accept `execution_mode=host`.
+- `codex-cli` uses local Codex CLI full-access/no-approval execution.
+- `claude-code` uses local Claude Code bypass-permission execution.
+- `openclaw-general` requires `openclaw` on `PATH`; if missing, the capability must degrade with a
+  clear operator-readable message.
+- v1 permits only one active host worker per CLI family unless explicit per-worker CLI auth
+  isolation is later proven.
+- Host process lifecycle uses a per-run process group with terminate/kill cleanup.
+- Parent-visible logs are redacted; raw per-run logs are local files with restrictive permissions.
+- Host child processes receive a minimal runtime environment. Provider keys, callback secrets,
+  LibreChat secrets, and broad parent process env are not inherited by default.
+
+### Host Workspace Layout
+
+The host workspace root is compiled from canonical config:
+
+```yaml
+integrations:
+  glasshive:
+    host_worker:
+      enabled: true
+      default_execution_mode: host
+      workspace_root: ~/viventium
+```
+
+Each host worker initializes:
+
+```text
+<workspace_root>/<agent-type>/<YYYY-MM-DD>-<slug>/
+  project-definition.md
+  work-log.md
+  harness-prompt.md
+  agents.md / AGENTS.md
+  claude.md / CLAUDE.md
+  codex.md / CODEX.md
+```
+
+`/viventium` at filesystem root is allowed only when doctor/preflight proves it is user-writable.
+The default must stay user-scoped.
+
+### Host Harness Prompt
+
+Docker prompts must keep sandbox wording. Host-native prompts must say explicitly that the worker is
+running on the real host computer and that destructive host changes require a checkpoint when the
+confirmation policy is enabled.
+
+The harness prompt is materialized as `harness-prompt.md` for operator visibility.
+
 ---
 
 ## Browser Session Persistence
@@ -128,7 +236,7 @@ container and data).
 - Browser profile data lives in the worker home directory and **persists across pause/resume**
 - Same named worker = same browser identity (cookies, sessions, login state)
 - Parent systems should use **stable worker aliases** for browser-authenticated work
-  (e.g. `demo-linkedin-primary`, `demo-gmail-browser`)
+  (e.g. `demo-browser-primary`, `demo-mail-browser`)
 - Chromium launched with: `--no-sandbox`, `--disable-dev-shm-usage`, `--start-maximized`
 
 ## User-Facing Workspace Model
@@ -190,6 +298,62 @@ GlassHive must **NOT** directly depend on or read LibreChat/parent internals (Mo
 storage, config formats). The `bootstrap_bundle` is the only crossing point between parent and
 sandbox.
 
+Host file materialization is allowlisted. `bootstrap_bundle.files[*].source_path` is copied only
+when it is an absolute path under `WPR_BOOTSTRAP_SOURCE_ROOTS`, does not traverse through symlinks,
+and stays below the configured size cap. Request-derived upload metadata must not become arbitrary
+host file reads.
+
+LibreChat local uploads use the existing upload path: request headers carry the same `files`,
+`attachments`, `tool_resources`, and `file_ids` context that MCP already receives. When a file has
+a virtual `/uploads/...` path and `WPR_LIBRECHAT_UPLOADS_ROOT` is configured, GlassHive maps it to
+the local uploads root and then still applies the trusted-source allowlist before copying it into
+the worker workspace. If only extracted text is present, GlassHive materializes that text; if only
+metadata is available, it writes an attachment metadata manifest under `uploads/`.
+
+If the GlassHive MCP server config is DB-sourced, request-context placeholders are resolved only
+when the reviewed Viventium-managed server config carries `viventiumRequestContext: true`.
+Arbitrary DB-sourced MCP servers must not receive user/body placeholder expansion, env secrets, or
+OpenID tokens through this path.
+
+Callbacks are signed per worker/run. The parent callback receiver derives a per-run HMAC key from
+the compiled callback secret plus `worker_id` and `run_id`, rejects stale timestamps and duplicate
+callback ids after successful persistence, verifies conversation ownership, and then writes the
+follow-up message into the originating conversation. GlassHive first writes each callback to a local
+SQLite outbox, dispatches the first delivery attempt off the user-facing request thread, retries
+delivery with the same callback id, treats duplicate `409` responses as delivered, and replays
+pending callbacks on service restart so a temporary parent outage does not silently drop the
+result. Replay refreshes `callback_ts` and re-signs the payload while preserving `callback_id`.
+First-attempt delivery and outbox replay must run in the background and must not block worker
+create/run APIs or GlassHive service startup if the callback receiver is slow or unavailable. The
+retry attempt count and base backoff are runtime-configurable.
+
+Callback signing uses the canonical JSON body encoded as literal UTF-8. GlassHive must not sign an
+ASCII-escaped JSON variant while the parent receiver verifies a literal-Unicode stable JSON body,
+because normal task text containing punctuation or non-ASCII characters would otherwise fail HMAC
+verification with `401 Unauthorized`.
+
+Callback persistence must be branch-safe in LibreChat's message tree. GlassHive callback payloads
+carry both the original parent context and the assistant response `message_id` for the turn that
+started the worker. The callback receiver requires the assistant response id as the tree anchor for
+visible callbacks. Later visible callbacks for the same run update the existing GlassHive status
+message instead of creating new callback children. The original semantic parent and the compact event
+history stay in metadata. This prevents worker status updates from rendering as multiple sibling
+branches under the same user message, including the race where a callback arrives before the
+assistant response has finished saving.
+
+Voice and Telegram must surface the same persisted callback message after the main stream ends.
+They should poll the callback state by assistant message id and conversation id, just as they poll
+persisted follow-ups, so a worker completion or blocker reaches the same call/chat without a user
+having to manually ask for status.
+Same-surface GlassHive polling must be armed by structured GlassHive MCP/tool evidence from the
+turn, not by the presence of any generic tool call. Ordinary non-GlassHive tool turns should keep
+their normal cortex follow-up window and must not inherit the long GlassHive callback wait window.
+
+Host-native browser and desktop runs can take longer than ordinary background insight follow-ups.
+The same-surface callback wait is therefore owned by `runtime.glasshive_followup_timeout_s`, compiled
+to Web, Telegram, and Voice GlassHive timeout env vars, and defaults to 600 seconds. This timeout
+must not silently inherit the shorter background-follow-up grace window.
+
 ---
 
 ## MCP Integration
@@ -203,10 +367,44 @@ sandbox.
 
 - **Project**: `projects_list`, `project_create`, `project_get`, `project_runs`, `project_events`
 - **Worker**: `workers_list`, `worker_create`, `worker_get`, `worker_live`
+- **Worker reuse**: `worker_find_or_resume` for stable aliases
 - **Execution**: `worker_run` (queue instruction), `worker_message` (send operator message)
 - **Lifecycle**: `worker_pause`, `worker_resume`, `worker_interrupt`, `worker_terminate`
 - **Observation**: `worker_desktop_action`, `worker_takeover`, `run_get`
 - **Metrics**: `metrics_summary`
+
+`worker_live` includes host worker visibility fields when applicable:
+
+- `work_log_tail`
+- `action_audit_tail`
+- `prompt_paths`
+- `runtime_details.execution_mode`
+
+Parent-visible log and console tails must be redacted before returning through `worker_live`.
+Image payloads, data URLs, long base64 blobs, secrets, and credential-looking values stay in local
+raw logs only and must not be surfaced into chat, QA reports, or public docs.
+
+File attachments are projected through the existing LibreChat/Viventium upload path, not a new
+GlassHive upload route. The first-party GlassHive MCP configuration passes request `files`,
+`attachments`, `tool_resources`, and `file_ids` metadata in request-scoped headers. GlassHive folds
+local `filepath`/`source_path` references or extracted text into `bootstrap_bundle.files`, then
+materializes them under `uploads/` in the worker workspace.
+
+### Callback Reporting
+
+Callbacks are optional and parent-owned. GlassHive accepts callback metadata in `bootstrap_bundle`
+and emits signed lifecycle events to the parent URL:
+
+- `run.started`
+- `run.completed`
+- `run.failed`
+- `checkpoint.ready`
+- `artifact.created`
+- `takeover.requested`
+
+GlassHive must not read LibreChat Mongo or channel internals. Viventium/LibreChat owns the callback
+receiver, visible-event allowlist, same-conversation persistence, and surface fanout. Non-terminal
+worker lifecycle events are audit/status data, not chat messages.
 
 ### Optional Bearer Auth
 
@@ -226,6 +424,7 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
 - **Live terminal inside desktop**: when the desktop-first default is on, GlassHive opens an xterm attached to the active `screen` run session so the operator can watch the real live run without leaving the desktop
 - **Idle desktop priming**: fresh worker desktops are primed with a GlassHive-owned placeholder page so operators do not land on the inherited Selenium splash as the default visible surface
 - **Launch failure audit trail**: if a project launch fails after worker creation but before the first run is queued, the worker is marked failed and a `worker.launch_failed` event is recorded instead of leaving an orphaned ready worker
+- **Orphan active-run cleanup**: startup/admin reconcile marks a `running` run as interrupted when the associated worker process is no longer alive, so stale runtime rows do not appear as current active work
 - **User-facing naming**: the glossy/operator UI should present persistent personal environments as `Workspaces` rather than exposing raw worker IDs or `sandbox` terminology in the primary flow
 - **Steer redirect semantics**: the glossy watch footer `Steer + send` path must interrupt the active run, kill the exact live run session/process tree, auto-start the replacement steer run, and keep that replacement run in execution mode until the redirected action is actually performed or a blocker is raised
 - **Queue follow-up gestures**: the same footer must also support non-interrupting queued follow-ups through long-press `Send` and `Cmd/Ctrl+Enter` or modifier-click send; those gestures route through `worker_message`, preserve the current active run, and visibly explain the queue behavior in the footer UI
@@ -298,6 +497,10 @@ persistent home and workspace mounts.
 | `GLASSHIVE_DEFAULT_LAUNCH_SURFACE` | `desktop` | Project-first UI default initial watch surface (`desktop`, `terminal`, `auto`) |
 | `GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP` | `true` | When desktop-first watch is used, auto-open the active live run terminal inside the desktop |
 | `WPR_IDLE_DESKTOP_PRIME_BROWSER` | `true` | Prime fresh worker desktops with the GlassHive placeholder browser page instead of the inherited base-image splash |
+| `GLASSHIVE_CALLBACK_RETRY_ATTEMPTS` | `3` | Callback delivery attempts before GlassHive records `callback.failed` |
+| `GLASSHIVE_CALLBACK_RETRY_BASE_DELAY_S` | `0.5` | Linear callback retry base delay in seconds |
+| `GLASSHIVE_RUN_TIMEOUT_SEC` / `WPR_RUN_TIMEOUT_SEC` | unset | Optional explicit timeout for long-running CLI worker runs; unset means no default hard cap |
+| `GLASSHIVE_HOST_RUN_TIMEOUT_SEC` / `WPR_HOST_RUN_TIMEOUT_SEC` | unset | Optional host-specific override for host-native CLI runs |
 
 ---
 

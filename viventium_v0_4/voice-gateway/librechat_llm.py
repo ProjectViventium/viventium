@@ -24,6 +24,7 @@ from typing import Any, Callable, Optional
 import aiohttp
 
 logger = logging.getLogger("voice-gateway.librechat_llm")
+GLASSHIVE_MCP_SERVER = "glasshive-workers-projects"
 from livekit.agents import llm
 from livekit.agents.llm import ChatChunk, ChatContext, ChoiceDelta
 from livekit.agents.llm.tool_context import FunctionTool, RawFunctionTool, ToolChoice
@@ -250,6 +251,48 @@ class _NoResponseStreamGuard:
         self._buffer_text = ""
         return False, ([cleaned] if cleaned else [])
 # === VIVENTIUM END ===
+
+
+def _extract_tool_call_name(part: Any) -> str:
+    if not isinstance(part, dict):
+        return ""
+    tool_call = part.get("tool_call") or part.get("toolCall") or part.get("tool") or part
+    if not isinstance(tool_call, dict):
+        return ""
+    candidates = [
+        tool_call.get("name"),
+        (tool_call.get("function") or {}).get("name") if isinstance(tool_call.get("function"), dict) else None,
+        tool_call.get("toolName"),
+        part.get("name"),
+        (part.get("function") or {}).get("name") if isinstance(part.get("function"), dict) else None,
+        part.get("toolName"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
+def _is_glasshive_tool_name(name: str) -> bool:
+    if not name:
+        return False
+    parts = name.split("_mcp_", 1)
+    return len(parts) == 2 and parts[1] == GLASSHIVE_MCP_SERVER
+
+
+def _payload_has_glasshive_tool_call(payload: dict[str, Any]) -> bool:
+    response = payload.get("responseMessage")
+    if not isinstance(response, dict):
+        return False
+    content = response.get("content")
+    if not isinstance(content, list):
+        return False
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "tool_call":
+            continue
+        if _is_glasshive_tool_name(_extract_tool_call_name(part)):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -482,7 +525,7 @@ class LibreChatLLM(llm.LLM):
         timeout_s: float = 120.0,
         voice_mode: bool = True,
         voice_provider: str = "cartesia",
-        followup_handler: Optional[Callable[[str, list[dict[str, Any]], str], None]] = None,
+        followup_handler: Optional[Callable[..., None]] = None,
     ) -> None:
         super().__init__()
         self._origin = origin.rstrip("/")
@@ -501,7 +544,7 @@ class LibreChatLLM(llm.LLM):
         return "viventium"
 
     def set_followup_handler(
-        self, handler: Optional[Callable[[str, list[dict[str, Any]], str], None]]
+        self, handler: Optional[Callable[..., None]]
     ) -> None:
         self._followup_handler = handler
 
@@ -631,6 +674,8 @@ class _LibreChatLLMStream(llm.LLMStream):
 
             # Track cortex insights that arrive during streaming (background cortices)
             pending_insights: list[dict[str, Any]] = []
+            saw_cortex_event = False
+            saw_glasshive_tool_call = False
             collected_response: list[str] = []
             # === VIVENTIUM START ===
             # Guard against `{NTA}` flashing during streaming.
@@ -666,6 +711,8 @@ class _LibreChatLLMStream(llm.LLMStream):
 
                             if event.get("final"):
                                 final_event = event
+                                if _payload_has_glasshive_tool_call(event):
+                                    saw_glasshive_tool_call = True
                                 break
 
                             # === VIVENTIUM START ===
@@ -690,6 +737,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                             # Fix: Guard all cortex event types before the text delta extraction.
                             cortex_event_type = event.get("event", "")
                             if cortex_event_type in ("on_cortex_update", "on_cortex_followup"):
+                                saw_cortex_event = True
                                 # Still capture completed insights for the follow-up poller.
                                 insight = extract_cortex_insight(event)
                                 if insight:
@@ -825,6 +873,8 @@ class _LibreChatLLMStream(llm.LLMStream):
                         message_id,
                         pending_insights,
                         "".join(collected_response).strip(),
+                        cortex_expected=saw_cortex_event,
+                        glasshive_expected=saw_glasshive_tool_call,
                     )
                 except Exception as e:
                     logger.warning("[LibreChatLLM] follow-up handler failed: %s", e)

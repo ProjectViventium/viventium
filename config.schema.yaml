@@ -72,6 +72,12 @@ properties:
             type: string
       background_followup_window_s:
         type: number
+      glasshive_followup_timeout_s:
+        type: number
+        description: Seconds that Web, Telegram, and Voice should keep listening for GlassHive worker callbacks after the main response returns.
+        default: 600
+        minimum: 30
+        maximum: 86400
       network:
         type: object
         properties:
@@ -286,6 +292,47 @@ properties:
         type: object
       ms365:
         type: object
+      glasshive:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          host_worker:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              workspace_root:
+                type: string
+              default_execution_mode:
+                type: string
+                enum: [host, docker]
+              mentions:
+                type: object
+                properties:
+                  codex:
+                    type: string
+                  claude:
+                    type: string
+                  openclaw:
+                    type: string
+              destructive_confirmation:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+              advisory_reviewer:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  mode:
+                    type: string
+              prompt_visibility:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
       skyvern:
         type: object
       openclaw:

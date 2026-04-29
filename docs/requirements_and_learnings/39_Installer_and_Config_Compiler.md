@@ -54,6 +54,16 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `GLASSHIVE_DEFAULT_LAUNCH_SURFACE`
   - `GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP`
   - `WPR_IDLE_DESKTOP_PRIME_BROWSER`
+  - `GLASSHIVE_HOST_WORKERS_ENABLED`
+  - `WPR_HOST_WORKSPACE_ROOT`
+  - `WPR_DEFAULT_EXECUTION_MODE`
+  - `WPR_HOST_DESTRUCTIVE_CONFIRMATION`
+  - `WPR_HOST_ADVISORY_REVIEWER_ENABLED`
+  - `WPR_HOST_PROMPT_VISIBILITY`
+  - `WPR_LIBRECHAT_UPLOADS_ROOT`
+  - `WPR_BOOTSTRAP_SOURCE_ROOTS`
+  - `VIVENTIUM_GLASSHIVE_CALLBACK_URL`
+  - `VIVENTIUM_GLASSHIVE_CALLBACK_SECRET`
   - do not rely on manual App Support edits or one laptop's shell exports to make GlassHive launch/watch UX correct
 - Web search ownership is part of that same compiler contract:
   - the live switch is `integrations.web_search` in canonical App Support config
@@ -152,6 +162,30 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     user-scoped credentials explicitly
   - optional MCP/runtime surfaces such as GlassHive must compile out cleanly when they are not
     enabled for the install or not actually present in the checked-out component set
+  - GlassHive host-native workers compile from `integrations.glasshive.host_worker`; when GlassHive
+    is enabled, host workers default on, the default execution mode is `host`, the default workspace
+    root is user-scoped (`~/viventium`), and `/viventium` is valid only when doctor proves it is
+    writable by the current user
+  - when `integrations.glasshive.host_worker.enabled=false`, the compiler must emit
+    `GLASSHIVE_HOST_WORKERS_ENABLED=false`, force the generated default execution mode to `docker`,
+    and generate MCP instructions that do not tell agents to create host-native workers
+  - host worker doctor/preflight must report local `codex`, `claude`, and `openclaw` CLI
+    availability separately; missing OpenClaw degrades only the `@openclaw` host worker, not Codex
+    or Claude workers
+  - generated GlassHive MCP headers must include user, agent, conversation, parent message, and
+    current message context so `worker_find_or_resume` can seed same-chat callback metadata without
+    a controller-level mention parser
+  - those generated GlassHive MCP headers also carry request-scoped upload metadata (`files`,
+    `attachments`, `tool_resources`, `file_ids`) as encoded JSON so GlassHive workers reuse the
+    current upload path rather than adding a duplicate one
+  - generated GlassHive env must expose the existing LibreChat uploads root to GlassHive through
+    `WPR_LIBRECHAT_UPLOADS_ROOT` and allow bootstrap file materialization from that same root
+    through `WPR_BOOTSTRAP_SOURCE_ROOTS`; this is how browser/API/voice uploads become workspace
+    files without adding a second upload service
+  - GlassHive callbacks must be validated with per-worker/run HMAC binding, fresh callback
+    timestamps, replay detection, and same-user conversation ownership before the callback receiver
+    writes status or completion messages back into chat; the compiled GlassHive callback secret is a
+    scoped derivative, not the raw call-session or scheduler secret
   - seeded built-in agents must not keep dead GlassHive tool IDs on installs where
     `START_GLASSHIVE=false`, or fresh-user chat can fail before any real task begins
   - startup reseed for existing installs must preserve live user-managed tool choices except for
@@ -182,6 +216,17 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     - note:
       - the umbrella product phrase is now `background follow-up window`
       - the env var names intentionally keep the older `FOLLOWUP_GRACE` suffix for backward compatibility
+  - canonical runtime config separately owns the GlassHive worker callback wait window:
+    - `runtime.glasshive_followup_timeout_s`
+    - compiles to:
+      - `VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S`
+      - `VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S`
+      - `VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S`
+    - default:
+      - 600 seconds, because host-native browser/desktop work can legitimately take several minutes
+      - this timeout must not inherit the shorter background follow-up grace window
+    - valid range:
+      - 30-86400 seconds; compiler and preflight should reject values outside that range
   - canonical voice config owns `VIVENTIUM_TURN_DETECTION`
   - canonical voice turn-handling config owns:
     - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`

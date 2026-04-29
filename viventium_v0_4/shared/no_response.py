@@ -122,4 +122,4 @@ def strip_trailing_nta(text: Optional[str]) -> str:
         return text or ""
     if is_no_response_only(text):
         return text
-    return strip_inline_nta(_TRAILING_NTA_RE.sub("", text).rstrip())
+    return _TRAILING_NTA_RE.sub("", text).rstrip()

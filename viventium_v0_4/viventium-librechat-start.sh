@@ -461,12 +461,13 @@ GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
 TELEGRAM_LOCAL_BOT_API_PID_FILE="$LOG_ROOT/telegram-local-bot-api.pid"
 TELEGRAM_LOCAL_BOT_API_LOG_FILE="$LOG_DIR/telegram-local-bot-api.log"
-TELEGRAM_LOCAL_BOT_API_STATE_DIR="$VIVENTIUM_STATE_ROOT/telegram-local-bot-api"
-TELEGRAM_LOCAL_BOT_API_WORK_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/work"
-TELEGRAM_LOCAL_BOT_API_TEMP_DIR="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/tmp"
-TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE="$TELEGRAM_LOCAL_BOT_API_STATE_DIR/hosted-logout.sha256"
+TELEGRAM_LOCAL_BOT_API_STATE_DIR="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_STATE_DIR:-}"
+TELEGRAM_LOCAL_BOT_API_WORK_DIR="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_WORK_DIR:-}"
+TELEGRAM_LOCAL_BOT_API_TEMP_DIR="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_TEMP_DIR:-}"
+TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE:-}"
 TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
+TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viventium.telegram-bot}"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 MONGO_CONTAINER_NAME="${VIVENTIUM_LOCAL_MONGO_CONTAINER:-viventium-mongodb}"
 MONGO_VOLUME_NAME="${VIVENTIUM_LOCAL_MONGO_VOLUME:-viventium-mongodb-data}"
@@ -702,6 +703,8 @@ done
 # Load environment from the local workspace or the optional companion workspace.
 # ----------------------------
 ENV_FILE_PRIMARY="${VIVENTIUM_ENV_FILE:-$(resolve_path_or_default \
+  "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/runtime.env" \
+  "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/runtime.env" \
   "$VIVENTIUM_CORE_DIR/.env" \
   "$VIVENTIUM_CORE_DIR/.env" \
   "$VIVENTIUM_PRIVATE_REPO_DIR/.env" \
@@ -709,6 +712,8 @@ ENV_FILE_PRIMARY="${VIVENTIUM_ENV_FILE:-$(resolve_path_or_default \
   "$VIVENTIUM_PRIVATE_CURATED_DIR/workspace-root/.env" \
   "$VIVENTIUM_PRIVATE_MIRROR_DIR/.env")}"
 ENV_FILE_LOCAL="${VIVENTIUM_ENV_LOCAL_FILE:-$(resolve_path_or_default \
+  "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/runtime.local.env" \
+  "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/runtime.local.env" \
   "$VIVENTIUM_CORE_DIR/.env.local" \
   "$VIVENTIUM_CORE_DIR/.env.local" \
   "$VIVENTIUM_PRIVATE_REPO_DIR/.env.local" \
@@ -916,6 +921,10 @@ export VIVENTIUM_LOCAL_MEILI_VOLUME="${VIVENTIUM_LOCAL_MEILI_VOLUME:-${VIVENTIUM
 
 PROFILE_STATE_ROOT_DEFAULT="$VIVENTIUM_BASE_STATE_DIR/runtime/$VIVENTIUM_RUNTIME_PROFILE"
 export VIVENTIUM_STATE_ROOT="${VIVENTIUM_STATE_ROOT:-$PROFILE_STATE_ROOT_DEFAULT}"
+TELEGRAM_LOCAL_BOT_API_STATE_DIR="${TELEGRAM_LOCAL_BOT_API_STATE_DIR:-$VIVENTIUM_STATE_ROOT/telegram-local-bot-api}"
+TELEGRAM_LOCAL_BOT_API_WORK_DIR="${TELEGRAM_LOCAL_BOT_API_WORK_DIR:-$TELEGRAM_LOCAL_BOT_API_STATE_DIR/work}"
+TELEGRAM_LOCAL_BOT_API_TEMP_DIR="${TELEGRAM_LOCAL_BOT_API_TEMP_DIR:-$TELEGRAM_LOCAL_BOT_API_STATE_DIR/tmp}"
+TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE="${TELEGRAM_LOCAL_BOT_API_HOSTED_LOGOUT_MARKER_FILE:-$TELEGRAM_LOCAL_BOT_API_STATE_DIR/hosted-logout.sha256}"
 if [[ "$VIVENTIUM_RUNTIME_PROFILE" == "isolated" ]]; then
   export VIVENTIUM_LOCAL_MONGO_DATA_PATH="${VIVENTIUM_LOCAL_MONGO_DATA_PATH:-$VIVENTIUM_STATE_ROOT/mongo-data}"
 fi
@@ -966,10 +975,13 @@ GLASSHIVE_UI_PID_FILE="$LOG_ROOT/glasshive_ui.pid"
 TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
 TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
+TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viventium.telegram-bot}"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
 LIBRECHAT_API_WATCHDOG_PID_FILE="$LOG_ROOT/librechat-api-watchdog.pid"
 LIBRECHAT_API_WATCHDOG_LOG_FILE="$LOG_DIR/librechat-api-watchdog.log"
+SCHEDULING_MCP_WATCHDOG_PID_FILE="$LOG_ROOT/scheduling_cortex_mcp_watchdog.pid"
+SCHEDULING_MCP_WATCHDOG_LOG_FILE="$LOG_DIR/scheduling_cortex_mcp_watchdog.log"
 MONGO_NATIVE_PID_FILE="$LOG_ROOT/mongodb-native.pid"
 MONGO_NATIVE_LOG_FILE="$LOG_DIR/mongodb-native.log"
 MEILI_NATIVE_PID_FILE="$LOG_ROOT/meilisearch-native.pid"
@@ -2391,6 +2403,24 @@ read_pid_file() {
   fi
 }
 
+stop_telegram_launchctl_job() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  command -v launchctl >/dev/null 2>&1 || return 0
+  local label="${TELEGRAM_BOT_LAUNCHCTL_LABEL:-}"
+  [[ -n "$label" ]] || return 0
+
+  local user_domain="gui/$(id -u)"
+  local service="${user_domain}/${label}"
+  if ! launchctl print "$service" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log_warn "Stopping stale Telegram launchctl job: $label"
+  launchctl bootout "$service" >/dev/null 2>&1 \
+    || launchctl remove "$label" >/dev/null 2>&1 \
+    || true
+}
+
 telegram_pid_is_running() {
   local pid
   pid="$(read_pid_file "$TELEGRAM_BOT_PID_FILE")"
@@ -2655,6 +2685,10 @@ stop_pid_file_scoped() {
 
 stop_detached_librechat_api_watchdog() {
   stop_pid_file_scoped "$LIBRECHAT_API_WATCHDOG_PID_FILE" "$VIVENTIUM_CORE_DIR"
+}
+
+stop_scheduling_mcp_watchdog() {
+  stop_pid_file_scoped "$SCHEDULING_MCP_WATCHDOG_PID_FILE" "$VIVENTIUM_CORE_DIR"
 }
 
 cleanup_code_interpreter_exec_containers() {
@@ -3046,11 +3080,15 @@ render_librechat_config() {
     return 1
   fi
 
-  SOURCE="$source" TARGET="$target" "$PYTHON_BIN" - <<'PY'
+SOURCE="$source" TARGET="$target" "$PYTHON_BIN" - <<'PY'
 import os
+import json
 
 source = os.environ["SOURCE"]
 target = os.environ["TARGET"]
+
+def yaml_string_env(name: str) -> str:
+    return json.dumps(os.getenv(name, ""))
 
 replacements = {
     "${SCHEDULING_MCP_URL}": os.getenv("SCHEDULING_MCP_URL", ""),
@@ -3060,8 +3098,8 @@ replacements = {
     "${MS365_MCP_AUTH_URL}": os.getenv("MS365_MCP_AUTH_URL", ""),
     "${MS365_MCP_TOKEN_URL}": os.getenv("MS365_MCP_TOKEN_URL", ""),
     "${MS365_MCP_REDIRECT_URI}": os.getenv("MS365_MCP_REDIRECT_URI", ""),
-    "${MS365_MCP_CLIENT_ID}": os.getenv("MS365_MCP_CLIENT_ID", ""),
-    "${MS365_MCP_CLIENT_SECRET}": os.getenv("MS365_MCP_CLIENT_SECRET", ""),
+    "${MS365_MCP_CLIENT_ID}": yaml_string_env("MS365_MCP_CLIENT_ID"),
+    "${MS365_MCP_CLIENT_SECRET}": yaml_string_env("MS365_MCP_CLIENT_SECRET"),
     "${MS365_MCP_SCOPE}": os.getenv("MS365_MCP_SCOPE", ""),
     "${GOOGLE_WORKSPACE_MCP_URL}": os.getenv("GOOGLE_WORKSPACE_MCP_URL", ""),
     "${GOOGLE_WORKSPACE_MCP_AUTH_URL}": os.getenv("GOOGLE_WORKSPACE_MCP_AUTH_URL", ""),
@@ -5185,6 +5223,7 @@ stop_running_services() {
     kill_pids "$telegram_pid"
     rm -f "$TELEGRAM_BOT_PID_FILE"
   fi
+  stop_telegram_launchctl_job
   stop_telegram_local_bot_api
   local telegram_deferred_pid
   telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
@@ -5217,6 +5256,7 @@ stop_running_services() {
   kill_recorded_detached_launch_process_group
 
   stop_remote_call_tunnels
+  stop_scheduling_mcp_watchdog
 
   # === VIVENTIUM START ===
   # Feature: Ensure Scheduling Cortex MCP restarts with fresh env on stack restart.
@@ -5491,6 +5531,14 @@ librechat_api_healthy() {
   curl -fsS --max-time 3 "${LC_API_URL}/health" >/dev/null 2>&1
 }
 
+scheduling_mcp_health_url() {
+  printf 'http://localhost:%s/health\n' "$SCHEDULING_MCP_PORT"
+}
+
+scheduling_mcp_healthy() {
+  curl -fsS --max-time 3 "$(scheduling_mcp_health_url)" >/dev/null 2>&1
+}
+
 telegram_local_bot_api_enabled() {
   is_truthy "${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED:-false}"
 }
@@ -5743,6 +5791,70 @@ start_detached_librechat_api_watchdog() {
   log_info "Started detached LibreChat API watchdog (pid: $!, interval: ${interval_s}s)"
 }
 
+restart_scheduling_mcp_runtime() {
+  log_warn "Scheduling Cortex MCP watchdog is restarting the local MCP runtime"
+  stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
+  kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
+  if port_in_use "$SCHEDULING_MCP_PORT"; then
+    log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is still owned outside the scheduler scope"
+    return 1
+  fi
+  start_scheduling_mcp
+}
+
+start_scheduling_mcp_watchdog() {
+  if [[ "$START_SCHEDULING_MCP" != "true" || ! -d "$SCHEDULING_MCP_DIR" ]]; then
+    return 0
+  fi
+
+  stop_scheduling_mcp_watchdog
+  mkdir -p "$(dirname "$SCHEDULING_MCP_WATCHDOG_LOG_FILE")"
+
+  local interval_s="${SCHEDULING_MCP_WATCHDOG_INTERVAL_S:-10}"
+  local failure_threshold="${SCHEDULING_MCP_WATCHDOG_FAILURE_THRESHOLD:-3}"
+  local recovery_retries="${SCHEDULING_MCP_WATCHDOG_RECOVERY_RETRIES:-30}"
+
+  (
+    trap - EXIT
+    trap 'exit 0' INT TERM HUP
+    local consecutive_failures=0
+    local failed_recoveries=0
+
+    while true; do
+      sleep "$interval_s"
+      if scheduling_mcp_healthy; then
+        consecutive_failures=0
+        failed_recoveries=0
+        continue
+      fi
+
+      consecutive_failures=$((consecutive_failures + 1))
+      if [[ "$consecutive_failures" -lt "$failure_threshold" ]]; then
+        continue
+      fi
+
+      log_warn "Scheduling Cortex MCP watchdog detected ${consecutive_failures} failed health checks"
+      if restart_scheduling_mcp_runtime &&
+        wait_for_http "$(scheduling_mcp_health_url)" "Scheduling Cortex MCP after watchdog restart" "$recovery_retries"; then
+        consecutive_failures=0
+        failed_recoveries=0
+        continue
+      fi
+
+      failed_recoveries=$((failed_recoveries + 1))
+      log_warn "Scheduling Cortex MCP watchdog restart did not restore health in time (failed recoveries: ${failed_recoveries})"
+      consecutive_failures="$failure_threshold"
+    done
+  ) >>"$SCHEDULING_MCP_WATCHDOG_LOG_FILE" 2>&1 &
+
+  local watchdog_pid=$!
+  printf '%s\n' "$watchdog_pid" >"$SCHEDULING_MCP_WATCHDOG_PID_FILE"
+  if detached_start_requested; then
+    disown "$watchdog_pid" 2>/dev/null || true
+  fi
+  log_info "Started Scheduling Cortex MCP watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
+}
+
 start_native_livekit_fallback() {
   local livekit_bin="$1"
   local app_support_dir="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
@@ -5843,6 +5955,8 @@ queue_parallel_optional_start() {
   local warning_message="$1"
   shift
   (
+    trap - EXIT
+    trap 'exit 130' INT TERM
     if ! "$@"; then
       log_warn "$warning_message"
       exit 1
@@ -6613,6 +6727,7 @@ cleanup() {
   echo ""
   echo -e "${YELLOW}[viventium]${NC} Shutting down..."
   stop_detached_librechat_api_watchdog
+  stop_scheduling_mcp_watchdog
   stop_telegram_local_bot_api
   [[ "$VOICE_GATEWAY_STARTED_BY_SCRIPT" == "true" && -n "${VOICE_GATEWAY_PID:-}" ]] && kill "${VOICE_GATEWAY_PID}" 2>/dev/null || true
   local cleanup_voice_gateway_runtime_pids=""
@@ -7012,11 +7127,15 @@ start_scheduling_mcp() {
   fi
 
   if port_in_use "$SCHEDULING_MCP_PORT"; then
+    if scheduling_mcp_healthy; then
+      log_success "Scheduling Cortex MCP already healthy on port $SCHEDULING_MCP_PORT"
+      return 0
+    fi
     # === VIVENTIUM START ===
     # Feature: Restart Scheduling MCP on stack restart to refresh secrets.
     # === VIVENTIUM END ===
     if [[ "$RESTART_SERVICES" == "true" ]]; then
-      log_warn "Scheduling Cortex MCP already running on port $SCHEDULING_MCP_PORT - restarting"
+      log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is occupied but unhealthy - restarting"
       stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
       kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
       if port_in_use "$SCHEDULING_MCP_PORT"; then
@@ -7024,8 +7143,13 @@ start_scheduling_mcp() {
         return 1
       fi
     else
-      log_success "Scheduling Cortex MCP already running on port $SCHEDULING_MCP_PORT"
-      return 0
+      log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is occupied but health check failed; attempting scoped repair"
+      stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
+      kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
+      if port_in_use "$SCHEDULING_MCP_PORT"; then
+        log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT still in use (outside scope); cannot repair"
+        return 1
+      fi
     fi
   fi
 
@@ -7036,6 +7160,7 @@ start_scheduling_mcp() {
   log_info "Starting Scheduling Cortex MCP..."
   pushd "$SCHEDULING_MCP_DIR" >/dev/null
 
+  local scheduling_python="$PYTHON_BIN"
   if command -v uv >/dev/null 2>&1; then
     local deps_signature_file="$LOG_DIR/scheduling_cortex_mcp_deps.sha256"
     local deps_signature=""
@@ -7080,20 +7205,32 @@ PY
     else
       log_success "Scheduling Cortex MCP dependencies already up to date"
     fi
-    uv run python -m scheduling_cortex.server --transport streamable-http --port "$SCHEDULING_MCP_PORT" >"$LOG_DIR/scheduling_cortex_mcp.log" 2>&1 &
-  else
-    "$PYTHON_BIN" -m scheduling_cortex.server --transport streamable-http --port "$SCHEDULING_MCP_PORT" >"$LOG_DIR/scheduling_cortex_mcp.log" 2>&1 &
+    if [[ -x ".venv/bin/python" ]]; then
+      scheduling_python="$PWD/.venv/bin/python"
+    else
+      log_warn "Scheduling Cortex MCP venv python not found after dependency sync; falling back to $PYTHON_BIN"
+    fi
   fi
+  "$scheduling_python" -m scheduling_cortex.server --transport streamable-http --port "$SCHEDULING_MCP_PORT" >"$LOG_DIR/scheduling_cortex_mcp.log" 2>&1 &
 
   SCHEDULING_MCP_PID=$!
   SCHEDULING_MCP_STARTED_BY_SCRIPT=true
   echo "$SCHEDULING_MCP_PID" >"$SCHEDULING_MCP_PID_FILE"
+  if detached_start_requested; then
+    disown "$SCHEDULING_MCP_PID" 2>/dev/null || true
+  fi
 
   popd >/dev/null
 
   sleep 2
   if ! ps -p "$SCHEDULING_MCP_PID" >/dev/null 2>&1; then
     log_error "Scheduling Cortex MCP failed to start"
+    tail -20 "$LOG_DIR/scheduling_cortex_mcp.log" 2>/dev/null || true
+    return 1
+  fi
+
+  if ! wait_for_http "$(scheduling_mcp_health_url)" "Scheduling Cortex MCP"; then
+    log_error "Scheduling Cortex MCP process started but health check failed"
     tail -20 "$LOG_DIR/scheduling_cortex_mcp.log" 2>/dev/null || true
     return 1
   fi
@@ -8274,6 +8411,9 @@ start_telegram_bot() {
     log_info "Starting Telegram bot (backend=livekit, agent_name=${telegram_agent_name})..."
   else
     log_info "Starting Telegram bot (backend=librechat)..."
+  fi
+  if [[ "$RESTART_SERVICES" == "true" ]]; then
+    stop_telegram_launchctl_job
   fi
   EXISTING_TELEGRAM_PIDS=""
   if telegram_pid_is_running; then
@@ -9667,6 +9807,9 @@ if [[ "${#PARALLEL_OPTIONAL_START_PIDS[@]}" -gt 0 ]]; then
     log_info "Detached launch is still waiting for parallel optional sidecars before exiting"
   fi
   wait_for_parallel_optional_starts || true
+fi
+if [[ "$START_SCHEDULING_MCP" == "true" ]]; then
+  start_scheduling_mcp_watchdog
 fi
 start_optional_docker_recovery_worker
 sleep 3

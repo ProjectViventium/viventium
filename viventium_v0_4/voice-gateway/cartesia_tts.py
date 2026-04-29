@@ -24,7 +24,8 @@ import time
 import uuid
 import wave
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 from urllib.parse import urlparse, urlunparse
 
 import aiohttp
@@ -41,14 +42,91 @@ from sse import sanitize_voice_text
 logger = logging.getLogger("voice-gateway.cartesia_tts")
 
 
+# === VIVENTIUM START ===
+# Feature: Cartesia Sonic-3 shared capability source of truth.
+_CARTESIA_SONIC3_CAPABILITIES_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "shared"
+    / "voice"
+    / "cartesia_sonic3_capabilities.json"
+)
+
+
+def _load_cartesia_sonic3_capabilities() -> dict[str, Any]:
+    try:
+        with _CARTESIA_SONIC3_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        logger.exception(
+            "Failed to load Cartesia Sonic-3 capability contract from %s",
+            _CARTESIA_SONIC3_CAPABILITIES_PATH,
+        )
+    return {
+        "model_id": "sonic-3",
+        "api_version": "2026-03-01",
+        "generation_config": {
+            "emotion": {
+                "default": "neutral",
+                "values": ["neutral"],
+            }
+        },
+        "ssml_tags": {"emotion": {}, "break": {}, "speed": {}, "volume": {}, "spell": {}},
+        "nonverbal_markers": ["[laughter]"],
+        "voice_presets": [
+            {"name": "Megan", "id": "e8e5fffb-252c-436d-b842-8879b84445b6"},
+            {"name": "Lyra", "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"},
+        ],
+    }
+
+
+_CARTESIA_SONIC3_CAPABILITIES = _load_cartesia_sonic3_capabilities()
+_CARTESIA_SONIC3_GENERATION = _CARTESIA_SONIC3_CAPABILITIES.get("generation_config", {})
+_CARTESIA_SONIC3_EMOTION_CONFIG = (
+    _CARTESIA_SONIC3_GENERATION.get("emotion", {})
+    if isinstance(_CARTESIA_SONIC3_GENERATION, dict)
+    else {}
+)
+_CARTESIA_SONIC3_DEFAULT_EMOTION = str(
+    _CARTESIA_SONIC3_EMOTION_CONFIG.get("default") or "neutral"
+).strip().lower()
+_CARTESIA_SONIC3_EMOTION_VALUES = frozenset(
+    str(value).strip().lower()
+    for value in (_CARTESIA_SONIC3_EMOTION_CONFIG.get("values") or [])
+    if str(value).strip()
+)
+_CARTESIA_SONIC3_SSML_CONFIG = _CARTESIA_SONIC3_CAPABILITIES.get("ssml_tags", {})
+if not isinstance(_CARTESIA_SONIC3_SSML_CONFIG, dict):
+    _CARTESIA_SONIC3_SSML_CONFIG = {}
+_CARTESIA_SONIC3_SSML_TAGS = frozenset(
+    str(tag).strip().lower()
+    for tag in _CARTESIA_SONIC3_SSML_CONFIG.keys()
+    if str(tag).strip()
+)
+_CARTESIA_SONIC3_VOICE_PRESETS = tuple(
+    (str(item.get("id") or ""), str(item.get("name") or ""))
+    for item in (_CARTESIA_SONIC3_CAPABILITIES.get("voice_presets") or [])
+    if isinstance(item, dict) and item.get("id") and item.get("name")
+)
+# === VIVENTIUM END ===
+
+
 DEFAULT_URL = "https://api.cartesia.ai/tts/bytes"
 DEFAULT_WS_URL = "wss://api.cartesia.ai/tts/websocket"
-DEFAULT_VERSION = "2026-03-01"
-DEFAULT_MODEL_ID = "sonic-3"
-MEGAN_VOICE_ID = "e8e5fffb-252c-436d-b842-8879b84445b6"
-LYRA_VOICE_ID = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+DEFAULT_VERSION = str(_CARTESIA_SONIC3_CAPABILITIES.get("api_version") or "2026-03-01")
+DEFAULT_MODEL_ID = str(_CARTESIA_SONIC3_CAPABILITIES.get("model_id") or "sonic-3")
+MEGAN_VOICE_ID = (
+    _CARTESIA_SONIC3_VOICE_PRESETS[0][0]
+    if _CARTESIA_SONIC3_VOICE_PRESETS
+    else "e8e5fffb-252c-436d-b842-8879b84445b6"
+)
+LYRA_VOICE_ID = next(
+    (voice_id for voice_id, name in _CARTESIA_SONIC3_VOICE_PRESETS if name == "Lyra"),
+    "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+)
 DEFAULT_VOICE_ID = MEGAN_VOICE_ID
-CARTESIA_VOICE_PRESETS: tuple[tuple[str, str], ...] = (
+CARTESIA_VOICE_PRESETS: tuple[tuple[str, str], ...] = _CARTESIA_SONIC3_VOICE_PRESETS or (
     (MEGAN_VOICE_ID, "Megan"),
     (LYRA_VOICE_ID, "Lyra"),
 )
@@ -75,7 +153,7 @@ _SPEAK_TAG_RE = re.compile(r"</?speak[^>]*>", re.IGNORECASE)
 # Updated 2026-02-22: Exclude Cartesia-supported SSML tags (<break>, <speed>, <volume>, <spell>)
 # from generic stripping. These are valid Cartesia Sonic 3 SSML tags that should be preserved
 # in the transcript and passed through to the Cartesia API.
-_CARTESIA_SSML_TAGS = {"emotion", "break", "speed", "volume", "spell", "speak"}
+_CARTESIA_SSML_TAGS = set(_CARTESIA_SONIC3_SSML_TAGS) | {"speak"}
 _GENERIC_TAG_RE = re.compile(r"</?([A-Za-z][A-Za-z0-9]*)\b[^>]*>")
 # === VIVENTIUM NOTE ===
 _BRACKET_TOKEN_RE = re.compile(r"\[([^\]]+)\]")
@@ -97,7 +175,9 @@ _STAGE_TOKEN_ALIASES = {
 
 _STAGE_PROMPTS: dict[str, tuple[str, Optional[str]]] = {
     # Cartesia docs: insert `[laughter]` token to produce laughter.
-    "laughter": ("[laughter]", "joking/comedic"),
+    # Do not assign an emotion here. The LLM may author an <emotion> tag; otherwise
+    # the configured default emotion stays in force.
+    "laughter": ("[laughter]", None),
 }
 # === VIVENTIUM END ===
 
@@ -114,7 +194,7 @@ class CartesiaConfig:
     num_channels: int = DEFAULT_NUM_CHANNELS
     speed: float = 1.0
     volume: float = 1.0
-    emotion: str = "neutral"
+    emotion: str = _CARTESIA_SONIC3_DEFAULT_EMOTION or "neutral"
     segment_silence_ms: int = DEFAULT_SEGMENT_SILENCE_MS
     language: str = "en"
     max_buffer_delay_ms: int = DEFAULT_MAX_BUFFER_DELAY_MS
@@ -153,9 +233,9 @@ class CartesiaTTS(TTS):
             api_version=config.api_version,
             sample_rate=config.sample_rate,
             num_channels=config.num_channels,
-            speed=config.speed,
-            volume=config.volume,
-            emotion=config.emotion,
+            speed=_normalize_cartesia_numeric_control("speed", config.speed),
+            volume=_normalize_cartesia_numeric_control("volume", config.volume),
+            emotion=_normalize_cartesia_emotion(config.emotion),
             segment_silence_ms=config.segment_silence_ms,
             language=config.language,
             max_buffer_delay_ms=max_buffer_delay_ms,
@@ -195,6 +275,48 @@ def _default_ws_url(api_url: str) -> str:
         return DEFAULT_WS_URL
     ws_scheme = "wss" if parsed.scheme == "https" else "ws"
     return urlunparse((ws_scheme, parsed.netloc, "/tts/websocket", "", "", ""))
+
+
+def _cartesia_emotion_value(value: Optional[str]) -> Optional[str]:
+    candidate = (value or "").strip().lower()
+    candidate = re.sub(r"\s+", " ", candidate)
+    if candidate and candidate in _CARTESIA_SONIC3_EMOTION_VALUES:
+        return candidate
+    return None
+
+
+def _normalize_cartesia_emotion(value: Optional[str], default: Optional[str] = None) -> str:
+    fallback = (
+        _cartesia_emotion_value(default)
+        or _cartesia_emotion_value(_CARTESIA_SONIC3_DEFAULT_EMOTION)
+        or "neutral"
+    )
+    return _cartesia_emotion_value(value) or fallback
+
+
+def _normalize_cartesia_numeric_control(name: str, value: Any) -> float:
+    control = _CARTESIA_SONIC3_GENERATION.get(name, {})
+    if not isinstance(control, dict):
+        control = {}
+    default = float(control.get("default", 1.0))
+    minimum = float(control.get("min", default))
+    maximum = float(control.get("max", default))
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid Cartesia %s=%r; using default %s", name, value, default)
+        return default
+    clamped = max(minimum, min(maximum, numeric))
+    if clamped != numeric:
+        logger.warning(
+            "Clamped Cartesia %s from %s to %s (allowed range: %s-%s)",
+            name,
+            numeric,
+            clamped,
+            minimum,
+            maximum,
+        )
+    return clamped
 
 
 def _strip_non_cartesia_tags(text: str) -> str:
@@ -249,7 +371,7 @@ def _with_emotion_ssml(text: str, emotion: Optional[str]) -> str:
     Cartesia SSML while also passing the same value in generation_config.emotion.
     """
     cleaned = text or ""
-    value = (emotion or "").strip()
+    value = _cartesia_emotion_value(emotion) or ""
     if not value:
         return cleaned
     if _EMOTION_SELF_CLOSING_RE.match(cleaned.lstrip()) or _EMOTION_WRAPPER_OPEN_RE.match(cleaned.lstrip()):
@@ -262,25 +384,26 @@ def _streaming_transcript_for_segment(
     *,
     default_emotion: str,
 ) -> tuple[str, str]:
-    emotion_from_llm = bool(segment.emotion) and not segment.stage
+    llm_emotion = _cartesia_emotion_value(segment.emotion)
+    emotion_from_llm = bool(llm_emotion)
     if segment.stage:
         stage_prompt = _STAGE_PROMPTS.get(
             segment.stage,
             (f"[{segment.stage}]", None),
         )
         chunk = stage_prompt[0]
-        emotion = (stage_prompt[1] or segment.emotion or default_emotion).strip() or "neutral"
+        emotion = _normalize_cartesia_emotion(stage_prompt[1] or segment.emotion, default_emotion)
     else:
         chunk = _normalize_nonverbal_tokens(
             segment.text,
             preserve_edge_whitespace=True,
         )
-        emotion = (segment.emotion or default_emotion).strip() or "neutral"
+        emotion = _normalize_cartesia_emotion(segment.emotion, default_emotion)
 
     if not chunk:
         return "", emotion
     cartesia_transcript = (
-        _with_emotion_ssml(chunk, segment.emotion)
+        _with_emotion_ssml(chunk, llm_emotion)
         if emotion_from_llm
         else chunk
     )
@@ -392,6 +515,19 @@ _EMOTION_WRAPPER_OPEN_RE = re.compile(
     r"<emotion\s+value=[\"']?([^\"'>]+)[\"']?\s*>",
     re.IGNORECASE,
 )
+_SSML_WRAPPER_OPEN_RE = re.compile(r"<(?P<tag>emotion|spell)\b[^>]*>", re.IGNORECASE)
+
+
+def _find_unmatched_voice_wrapper_start(text: str) -> Optional[int]:
+    for match in _SSML_WRAPPER_OPEN_RE.finditer(text):
+        opening = match.group(0)
+        if opening.rstrip().endswith("/>"):
+            continue
+        tag = match.group("tag").lower()
+        if re.search(rf"</{tag}\s*>", text[match.end():], flags=re.IGNORECASE):
+            continue
+        return match.start()
+    return None
 
 
 def _partition_streamable_emotion_text(text: str) -> tuple[str, str]:
@@ -404,13 +540,8 @@ def _partition_streamable_emotion_text(text: str) -> tuple[str, str]:
     if last_lt > last_gt:
         safe_len = last_lt
 
-    unmatched_wrapper_start: Optional[int] = None
     safe_text = text[:safe_len]
-    for match in _EMOTION_WRAPPER_OPEN_RE.finditer(safe_text):
-        if safe_text.find("</emotion>", match.end()) == -1:
-            unmatched_wrapper_start = match.start()
-            break
-
+    unmatched_wrapper_start = _find_unmatched_voice_wrapper_start(safe_text)
     if unmatched_wrapper_start is not None:
         safe_len = min(safe_len, unmatched_wrapper_start)
 
@@ -434,6 +565,8 @@ def _normalize_streaming_emotion_tail(text: str) -> str:
         flags=re.IGNORECASE,
     )
     tail = tail.replace("</emotion>", "")
+    tail = re.sub(r"<spell\b[^>]*>", "", tail, flags=re.IGNORECASE)
+    tail = re.sub(r"</spell\s*>", "", tail, flags=re.IGNORECASE)
     tail = _SPEAK_TAG_RE.sub("", tail)
     return tail
 
@@ -482,9 +615,9 @@ def _build_ws_generation_request(
         },
         "language": cfg.language or "en",
         "generation_config": {
-            "speed": float(cfg.speed),
-            "volume": float(cfg.volume),
-            "emotion": ((emotion or cfg.emotion or "neutral").strip() or "neutral"),
+            "speed": _normalize_cartesia_numeric_control("speed", cfg.speed),
+            "volume": _normalize_cartesia_numeric_control("volume", cfg.volume),
+            "emotion": _normalize_cartesia_emotion(emotion, cfg.emotion),
         },
         "context_id": context_id,
         "continue": bool(continue_generation),
@@ -593,18 +726,19 @@ class _CartesiaChunkedStream(ChunkedStream):
             # Feature: Per-segment emotion synthesis + laughter normalization.
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 for idx, segment in enumerate(segments):
-                    emotion_from_llm = bool(segment.emotion) and not segment.stage
+                    llm_emotion = _cartesia_emotion_value(segment.emotion)
+                    emotion_from_llm = bool(llm_emotion)
                     if segment.stage:
                         stage_prompt = _STAGE_PROMPTS.get(segment.stage, (f"[{segment.stage}]", None))
                         segment_text = stage_prompt[0]
-                        emotion = (stage_prompt[1] or segment.emotion or cfg.emotion).strip() or "neutral"
+                        emotion = _normalize_cartesia_emotion(stage_prompt[1] or segment.emotion, cfg.emotion)
                     else:
                         segment_text = _normalize_nonverbal_tokens(segment.text)
-                        emotion = (segment.emotion or cfg.emotion).strip() or "neutral"
+                        emotion = _normalize_cartesia_emotion(segment.emotion, cfg.emotion)
                     if not segment_text:
                         continue
                     cartesia_transcript = (
-                        _with_emotion_ssml(segment_text, segment.emotion)
+                        _with_emotion_ssml(segment_text, llm_emotion)
                         if emotion_from_llm
                         else segment_text
                     )
@@ -619,8 +753,8 @@ class _CartesiaChunkedStream(ChunkedStream):
                         },
                         "language": cfg.language or "en",
                         "generation_config": {
-                            "speed": float(cfg.speed),
-                            "volume": float(cfg.volume),
+                            "speed": _normalize_cartesia_numeric_control("speed", cfg.speed),
+                            "volume": _normalize_cartesia_numeric_control("volume", cfg.volume),
                             "emotion": emotion,
                         },
                     }

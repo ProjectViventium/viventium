@@ -43,6 +43,8 @@ DEFAULT_DOCKER_AUTOSTART_GRACE_SECONDS = 12.0
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
 UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
 DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS = 3.0
+MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
+MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 
 
 @dataclass
@@ -88,6 +90,17 @@ def resolve_bool(value: Any, default: bool) -> bool:
         if normalized in {"0", "false", "no", "off", ""}:
             return False
     return bool(value)
+
+
+def glasshive_followup_timeout_valid(config: dict[str, Any]) -> bool:
+    value = (config.get("runtime", {}) or {}).get("glasshive_followup_timeout_s")
+    if value in (None, ""):
+        return True
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return False
+    return MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S <= parsed <= MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S
 
 
 def command_exists(command: str) -> bool:
@@ -600,6 +613,8 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
     network = runtime.get("network", {}) or {}
     remote_call_mode = normalize_remote_call_mode(network)
     integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive") or {}
+    glasshive_host_worker = glasshive.get("host_worker") or {}
     telegram = integrations.get("telegram") or {}
     telegram_local_bot_api = telegram.get("local_bot_api") or {}
     return {
@@ -624,7 +639,20 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
             telegram_local_bot_api.get("api_hash", "") or ""
         ).strip(),
         "skyvern": resolve_bool((integrations.get("skyvern") or {}).get("enabled"), False),
+        "glasshive": resolve_bool(glasshive.get("enabled"), False),
+        "glasshive_host_worker": resolve_bool(glasshive_host_worker.get("enabled"), True),
+        "glasshive_host_workspace_root": str(glasshive_host_worker.get("workspace_root") or "~/viventium").strip() or "~/viventium",
     }
+
+
+def host_workspace_root_ready(raw_root: str) -> bool:
+    root = Path(raw_root).expanduser()
+    if not root.is_absolute():
+        return False
+    if root.exists():
+        return root.is_dir() and os.access(root, os.W_OK)
+    parent = root.parent
+    return parent.exists() and parent.is_dir() and os.access(parent, os.W_OK)
 
 
 def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
@@ -707,6 +735,76 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
             command="uv",
         )
     )
+    glasshive_timeout_valid = glasshive_followup_timeout_valid(config)
+    items.append(
+        PreflightItem(
+            key="glasshive_followup_timeout",
+            label="GlassHive callback follow-up timeout",
+            category="runtime config",
+            reason="keep Web, Telegram, and Voice listening long enough for non-blocking GlassHive worker callbacks",
+            status="ok" if glasshive_timeout_valid else "missing",
+            manual_command=(
+                "Set runtime.glasshive_followup_timeout_s to an integer between "
+                f"{MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S} and {MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S} seconds"
+                if not glasshive_timeout_valid
+                else ""
+            ),
+        )
+    )
+    if ctx["glasshive"] and ctx["glasshive_host_worker"]:
+        codex_ready = command_exists("codex")
+        claude_ready = command_exists("claude")
+        openclaw_ready = command_exists("openclaw")
+        workspace_ready = host_workspace_root_ready(ctx["glasshive_host_workspace_root"])
+        items.extend(
+            [
+                PreflightItem(
+                    key="glasshive_host_codex_cli",
+                    label="Codex CLI",
+                    category="GlassHive host workers",
+                    reason="run @codex host-native workers on this computer",
+                    status="ok" if codex_ready else "missing",
+                    install_kind="manual" if not codex_ready else "none",
+                    command="codex",
+                    manual_command="Install and sign in to the Codex CLI, then rerun preflight",
+                ),
+                PreflightItem(
+                    key="glasshive_host_claude_cli",
+                    label="Claude CLI",
+                    category="GlassHive host workers",
+                    reason="run @claude host-native workers on this computer",
+                    status="ok" if claude_ready else "missing",
+                    install_kind="manual" if not claude_ready else "none",
+                    command="claude",
+                    manual_command="Install and sign in to Claude Code, then rerun preflight",
+                ),
+                PreflightItem(
+                    key="glasshive_host_openclaw_cli",
+                    label="OpenClaw CLI",
+                    category="GlassHive host workers",
+                    reason="run @openclaw host-native workers on this computer",
+                    status="ok" if openclaw_ready else "missing",
+                    install_kind="manual" if not openclaw_ready else "none",
+                    command="openclaw",
+                    manual_command=(
+                        "Install and sign in to the OpenClaw CLI to enable @openclaw host workers; "
+                        "Codex and Claude host workers can still run without it"
+                    ),
+                ),
+                PreflightItem(
+                    key="glasshive_host_workspace_root",
+                    label="GlassHive host workspace root",
+                    category="GlassHive host workers",
+                    reason="create host-native worker project folders under the configured user-scoped root",
+                    status="ok" if workspace_ready else "missing",
+                    install_kind="manual" if not workspace_ready else "none",
+                    manual_command=(
+                        "Create the configured integrations.glasshive.host_worker.workspace_root "
+                        "or choose a writable user-scoped path such as ~/viventium"
+                    ),
+                ),
+            ]
+        )
     if ctx["conversation_recall"] and retrieval_embeddings["provider"] == "ollama":
         ollama_ready = ollama_cli_runtime_ready()
         items.append(

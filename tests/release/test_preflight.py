@@ -28,6 +28,10 @@ def preflight_subprocess_env(tmp_path: Path, *, path: str = "/usr/bin:/bin") -> 
     }
 
 
+def compact_output(text: str) -> str:
+    return " ".join(text.split())
+
+
 def load_preflight_module():
     spec = importlib.util.spec_from_file_location("viventium_preflight_test", PREFLIGHT_PATH)
     assert spec is not None and spec.loader is not None
@@ -229,6 +233,152 @@ def test_preflight_uses_runtime_probes_for_brew_prereqs(
     assert target.formula == formula
 
 
+def test_preflight_checks_glasshive_host_worker_required_clis(monkeypatch, tmp_path: Path) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex"})
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "host_worker": {
+                        "enabled": True,
+                        "workspace_root": str(tmp_path / "workers"),
+                    },
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_host_codex_cli"].status == "ok"
+    assert by_key["glasshive_host_claude_cli"].status == "missing"
+    assert by_key["glasshive_host_claude_cli"].install_kind == "manual"
+    assert by_key["glasshive_host_openclaw_cli"].status == "missing"
+    assert by_key["glasshive_host_openclaw_cli"].install_kind == "manual"
+    assert by_key["glasshive_host_workspace_root"].status == "ok"
+
+
+def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex", "claude"})
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "integrations": {"glasshive": {"enabled": True}},
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_host_codex_cli"].status == "ok"
+    assert by_key["glasshive_host_claude_cli"].status == "ok"
+    assert by_key["glasshive_host_openclaw_cli"].status == "missing"
+    assert by_key["glasshive_host_workspace_root"].status == "ok"
+
+
+def test_preflight_rejects_relative_glasshive_host_workspace_root(monkeypatch) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex", "claude"})
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "host_worker": {
+                        "enabled": True,
+                        "workspace_root": "relative-workers",
+                    },
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_host_workspace_root"].status == "missing"
+
+
+def test_preflight_flags_invalid_glasshive_followup_timeout(monkeypatch) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex", "claude"})
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "runtime": {"glasshive_followup_timeout_s": 0},
+            "integrations": {"glasshive": {"enabled": True}},
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_followup_timeout"].status == "missing"
+    assert "between 30 and 86400" in by_key["glasshive_followup_timeout"].manual_command
+
+
 def test_preflight_aggregates_missing_native_prereqs(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -307,7 +457,7 @@ integrations:
 
     assert completed.returncode == 1
     assert "telegram-bot-api" in completed.stdout
-    assert "Telegram local Bot API credentials" in completed.stdout
+    assert "Telegram local Bot API credentials" in compact_output(completed.stdout)
 
 
 def test_preflight_legacy_auto_remote_call_mode_defaults_to_disabled(tmp_path: Path) -> None:
@@ -407,7 +557,7 @@ voice:
     assert "NetBird client" in completed.stdout
     assert "caddy" in completed.stdout
     assert "NetBird remote origins" in completed.stdout
-    assert "public_client_origin" in completed.stdout
+    assert "public_client_origin" in compact_output(completed.stdout)
 
 
 @pytest.mark.parametrize("remote_call_mode", ["public_https_edge", "custom_domain"])

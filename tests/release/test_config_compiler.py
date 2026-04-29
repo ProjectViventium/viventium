@@ -157,6 +157,9 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S=30" in runtime_env
     assert "VIVENTIUM_VOICE_FOLLOWUP_GRACE_S=30" in runtime_env
     assert "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S=30" in runtime_env
+    assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=600" in runtime_env
+    assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=600" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=600" in runtime_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
@@ -282,6 +285,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     runtime_dir = tmp_path / "runtime_phase1"
     runtime_dir.mkdir(parents=True)
     monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda name: f"/usr/local/bin/{name}" if name in {"codex", "claude"} else None)
 
     base_config = {
         "version": 1,
@@ -314,12 +318,80 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert "GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP" not in disabled_env
     assert "WPR_IDLE_DESKTOP_PRIME_BROWSER" not in disabled_env
 
+    default_host_config = copy.deepcopy(base_config)
+    default_host_config["integrations"]["glasshive"] = {"enabled": True}
+    default_host_env = config_compiler.render_runtime_env(
+        default_host_config,
+        config_compiler.build_agent_assignments(default_host_config),
+    )
+    assert default_host_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    assert default_host_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium"
+    assert default_host_env["WPR_DEFAULT_EXECUTION_MODE"] == "host"
+
+    disabled_host_config = copy.deepcopy(base_config)
+    disabled_host_config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": False,
+            "default_execution_mode": "host",
+        },
+    }
+    disabled_host_env = config_compiler.render_runtime_env(
+        disabled_host_config,
+        config_compiler.build_agent_assignments(disabled_host_config),
+    )
+    assert disabled_host_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "false"
+    assert disabled_host_env["WPR_DEFAULT_EXECUTION_MODE"] == "docker"
+    disabled_host_mcp = config_compiler.build_mcp_servers(disabled_host_config, {"lc_api_port": 3080}, "agent-main")
+    disabled_host_instructions = disabled_host_mcp["glasshive-workers-projects"]["serverInstructions"]
+    assert "Host-native workers are disabled" in disabled_host_instructions
+    assert "execution_mode='host' and the matching profile" not in disabled_host_instructions
+
     enabled_config = copy.deepcopy(base_config)
-    enabled_config["integrations"]["glasshive"] = {"enabled": True}
+    enabled_config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {
+            "enabled": True,
+            "workspace_root": "~/viventium-workers",
+            "default_execution_mode": "host",
+            "mentions": {"codex": "@codex", "claude": "@claude", "openclaw": "@openclaw"},
+            "destructive_confirmation": {"enabled": True},
+            "advisory_reviewer": {"enabled": False, "mode": "review_final"},
+            "prompt_visibility": {"enabled": True},
+        },
+    }
     enabled_env = config_compiler.render_runtime_env(enabled_config, config_compiler.build_agent_assignments(enabled_config))
     assert enabled_env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] == "desktop"
     assert enabled_env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] == "true"
     assert enabled_env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] == "true"
+    assert enabled_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    assert enabled_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium-workers"
+    assert enabled_env["WPR_DEFAULT_EXECUTION_MODE"] == "host"
+    assert enabled_env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] == "true"
+    assert enabled_env["WPR_HOST_MENTION_CODEX"] == "@codex"
+    assert enabled_env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
+    assert enabled_env["WPR_HOST_CLAUDE_CLI_AVAILABLE"] == "true"
+    assert enabled_env["WPR_HOST_OPENCLAW_CLI_AVAILABLE"] == "false"
+    assert enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"].endswith("viventium_v0_4/LibreChat/uploads")
+    assert enabled_env["WPR_BOOTSTRAP_SOURCE_ROOTS"] == enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"]
+    assert enabled_env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"].endswith("/api/viventium/glasshive/callback")
+    assert enabled_env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] == config_compiler.scoped_secret(
+        "call-session-test", "glasshive-callback"
+    )
+    assert enabled_env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] != enabled_env["VIVENTIUM_CALL_SESSION_SECRET"]
+    mcp_servers = config_compiler.build_mcp_servers(enabled_config, {"lc_api_port": 3080}, "agent-main")
+    glasshive_headers = mcp_servers["glasshive-workers-projects"]["headers"]
+    assert glasshive_headers["X-Viventium-Conversation-Id"] == "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+    assert glasshive_headers["X-Viventium-Parent-Message-Id"] == "{{LIBRECHAT_BODY_PARENTMESSAGEID}}"
+    assert glasshive_headers["X-Viventium-Message-Id"] == "{{LIBRECHAT_BODY_MESSAGEID}}"
+    assert glasshive_headers["X-Viventium-Surface"] == "{{LIBRECHAT_BODY_VIVENTIUMSURFACE}}"
+    assert glasshive_headers["X-Viventium-Input-Mode"] == "{{LIBRECHAT_BODY_VIVENTIUMINPUTMODE}}"
+    assert glasshive_headers["X-Viventium-Stream-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMSTREAMID}}"
+    assert glasshive_headers["X-Viventium-Telegram-Chat-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMCHATID}}"
+    assert glasshive_headers["X-Viventium-Telegram-User-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMUSERID}}"
+    assert glasshive_headers["X-Viventium-Telegram-Message-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}"
+    assert glasshive_headers["X-Viventium-Request-Files"] == "{{LIBRECHAT_BODY_FILES_JSON_B64}}"
+    assert glasshive_headers["X-Viventium-Tool-Resources"] == "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}"
 
 
 def test_config_compiler_compile_phase_ignores_stale_generated_source_override(tmp_path: Path) -> None:
@@ -1780,6 +1852,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
             "log_level": "info",
             "profile": "isolated",
             "background_followup_window_s": 45,
+            "glasshive_followup_timeout_s": 900,
             "call_session_secret": {"secret_value": "call-session-test"},
             "network": {"remote_call_mode": "auto"},
         },
@@ -1832,6 +1905,72 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S=45" in runtime_env
     assert "VIVENTIUM_VOICE_FOLLOWUP_GRACE_S=45" in runtime_env
     assert "VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S=45" in runtime_env
+    assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=900" in runtime_env
+    assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=900" in runtime_env
+    assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=900" in runtime_env
+
+
+def test_config_compiler_rejects_invalid_glasshive_followup_timeout(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "glasshive_followup_timeout_s": 0,
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"remote_call_mode": "auto"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "tts_provider": "browser",
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert result.returncode != 0
+    assert "runtime.glasshive_followup_timeout_s must be between 30 and 86400" in (
+        result.stdout + result.stderr
+    )
 
 
 def test_config_compiler_emits_assemblyai_turn_detection_defaults_when_unset(tmp_path: Path) -> None:
@@ -2998,6 +3137,8 @@ def test_config_compiler_runtime_port_overrides(tmp_path: Path) -> None:
     assert librechat_yaml["mcpServers"]["ms-365"]["oauth"]["redirect_uri"] == (
         "http://localhost:5180/api/mcp/ms-365/oauth/callback"
     )
+    assert librechat_yaml["mcpServers"]["ms-365"]["oauth"]["client_id"] == "${MS365_MCP_CLIENT_ID}"
+    assert librechat_yaml["mcpServers"]["ms-365"]["oauth"]["client_secret"] == ""
 
 
 def test_config_compiler_imports_legacy_private_env_passthrough(tmp_path: Path) -> None:

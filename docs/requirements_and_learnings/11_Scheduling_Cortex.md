@@ -49,6 +49,10 @@ We will implement a dedicated Scheduling MCP server that:
 The scheduler is a local runtime loop, so it must handle host sleep, restart, and long pauses
 without silently dropping user-facing reminders.
 
+The launcher must treat the Scheduling Cortex MCP as a supervised local sidecar, not a one-shot
+optional startup. Startup success requires a real `/health` probe, and a lightweight watchdog must
+restart the MCP if the process exits while LibreChat remains running.
+
 - A task is a misfire when it is due but first processed after `SCHEDULER_MISFIRE_GRACE_S`
   seconds. The default grace is 900 seconds.
 - User-created one-time reminders default to catch-up delivery when they are late but still inside
@@ -78,6 +82,9 @@ without silently dropping user-facing reminders.
 - Scheduler generation is canonical.
 - Runs should flow through the existing scheduler-authenticated internal routes.
 - Conversation policy can be `new` or `same`.
+- Scheduled prompts and delayed checks are injected as main-agent work, not delivered as raw
+  scheduler text. The main agent/follow-up adjudication path decides whether the result is useful
+  to the user or should remain silent with `{NTA}`.
 
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
@@ -118,6 +125,10 @@ Current owning implementation points:
 - `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py` prepends the deterministic late
   reminder notice on visible catch-up deliveries and carries `late_delivery` metadata into channel
   delivery details.
+- `viventium-librechat-start.sh` health-checks the Scheduling Cortex MCP after launch and runs a
+  small watchdog so MCP transport failures do not persist as `ECONNREFUSED` after an MCP process
+  exits. After dependency sync, the launcher runs the long-lived service through the MCP venv
+  Python directly instead of supervising a transient package-manager wrapper process.
 
 ## Summary-Safe Browsing Contract
 
