@@ -103,6 +103,18 @@ def glasshive_followup_timeout_valid(config: dict[str, Any]) -> bool:
     return MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S <= parsed <= MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S
 
 
+def glasshive_callback_secret_configured(config: dict[str, Any]) -> bool:
+    if os.environ.get("VIVENTIUM_GLASSHIVE_CALLBACK_SECRET", "").strip():
+        return True
+    if os.environ.get("VIVENTIUM_CALL_SESSION_SECRET", "").strip():
+        return True
+    runtime = config.get("runtime", {}) or {}
+    value = runtime.get("call_session_secret", "")
+    if isinstance(value, dict):
+        return bool(str(value.get("secret_ref") or value.get("secret_value") or "").strip())
+    return bool(str(value or "").strip())
+
+
 def command_exists(command: str) -> bool:
     return shutil.which(command) is not None
 
@@ -752,12 +764,25 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
         )
     )
     if ctx["glasshive"] and ctx["glasshive_host_worker"]:
+        callback_secret_ready = glasshive_callback_secret_configured(config)
         codex_ready = command_exists("codex")
         claude_ready = command_exists("claude")
         openclaw_ready = command_exists("openclaw")
         workspace_ready = host_workspace_root_ready(ctx["glasshive_host_workspace_root"])
         items.extend(
             [
+                PreflightItem(
+                    key="glasshive_callback_secret",
+                    label="GlassHive callback secret",
+                    category="GlassHive host workers",
+                    reason="verify worker completion callbacks can be signed and accepted by Viventium",
+                    status="ok" if callback_secret_ready else "missing",
+                    install_kind="manual" if not callback_secret_ready else "none",
+                    manual_command=(
+                        "Set runtime.call_session_secret, VIVENTIUM_CALL_SESSION_SECRET, or "
+                        "VIVENTIUM_GLASSHIVE_CALLBACK_SECRET before enabling GlassHive host workers"
+                    ),
+                ),
                 PreflightItem(
                     key="glasshive_host_codex_cli",
                     label="Codex CLI",

@@ -255,6 +255,7 @@ def test_preflight_checks_glasshive_host_worker_required_clis(monkeypatch, tmp_p
     items = module.build_preflight_items(
         {
             "install": {"mode": "native"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
             "integrations": {
                 "glasshive": {
                     "enabled": True,
@@ -268,6 +269,7 @@ def test_preflight_checks_glasshive_host_worker_required_clis(monkeypatch, tmp_p
     )
     by_key = {item.key: item for item in items}
 
+    assert by_key["glasshive_callback_secret"].status == "ok"
     assert by_key["glasshive_host_codex_cli"].status == "ok"
     assert by_key["glasshive_host_claude_cli"].status == "missing"
     assert by_key["glasshive_host_claude_cli"].install_kind == "manual"
@@ -298,6 +300,7 @@ def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
     items = module.build_preflight_items(
         {
             "install": {"mode": "native"},
+            "runtime": {"call_session_secret": {"secret_ref": "viventium/call_session_secret"}},
             "integrations": {"glasshive": {"enabled": True}},
         }
     )
@@ -307,6 +310,39 @@ def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
     assert by_key["glasshive_host_claude_cli"].status == "ok"
     assert by_key["glasshive_host_openclaw_cli"].status == "missing"
     assert by_key["glasshive_host_workspace_root"].status == "ok"
+
+
+def test_preflight_flags_missing_glasshive_callback_secret(monkeypatch) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex", "claude"})
+    monkeypatch.delenv("VIVENTIUM_GLASSHIVE_CALLBACK_SECRET", raising=False)
+    monkeypatch.delenv("VIVENTIUM_CALL_SESSION_SECRET", raising=False)
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "integrations": {"glasshive": {"enabled": True}},
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_callback_secret"].status == "missing"
+    assert "runtime.call_session_secret" in by_key["glasshive_callback_secret"].manual_command
 
 
 def test_preflight_rejects_relative_glasshive_host_workspace_root(monkeypatch) -> None:
@@ -331,6 +367,7 @@ def test_preflight_rejects_relative_glasshive_host_workspace_root(monkeypatch) -
     items = module.build_preflight_items(
         {
             "install": {"mode": "native"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
             "integrations": {
                 "glasshive": {
                     "enabled": True,

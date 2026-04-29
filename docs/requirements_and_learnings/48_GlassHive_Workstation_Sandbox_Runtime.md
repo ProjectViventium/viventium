@@ -169,9 +169,15 @@ Host-worker UX and callback requirements:
 - Visible callbacks must include the assistant response `message_id` for the originating turn.
   Unanchored visible callbacks are ignored/retried rather than being attached to the user message
   as a sibling assistant branch.
+- Message rendering must tolerate callback/status content stored as an array, single object, string,
+  `null`, or legacy malformed tool-call shape. Renderers must normalize before iterating so a bad
+  persisted callback cannot crash the chat with array-method errors.
 - Callback URL and HMAC secret are resolved from the canonical runtime environment. The GlassHive
   MCP/API processes should inherit those values from the launcher; they also load the generated
   Viventium runtime env as defense-in-depth when started without the expected process env.
+  Preflight must fail closed when host workers are enabled without a callback secret source,
+  because unsigned or unverifiable callbacks would recreate the "worker finished but user never
+  heard back" failure mode.
 - CLI stop reasons are scoped to the active run so a timeout or termination marker from one run
   cannot cancel a later successful run. If a worker reports termination after stdout/exit artifacts
   were written, the service must attempt `collect_completed_run(worker, run_id)` before marking the
