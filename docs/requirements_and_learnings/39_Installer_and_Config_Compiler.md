@@ -200,6 +200,12 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   generated App Support outputs to appear correct.
 - Telegram launcher parity follows the same rule: compiled Telegram service env must be the default
   startup source ahead of legacy repo-local or private overlay files.
+- Telegram voice-note STT is a bridge reliability boundary:
+  - canonical `integrations.telegram.stt_provider` may override transcription just for Telegram
+  - when omitted and global voice STT is local Whisper, the compiler defaults Telegram to hosted
+    OpenAI STT so a native local transcription crash cannot stop Telegram message delivery
+  - operators who explicitly want local Telegram STT can set `integrations.telegram.stt_provider`
+    to the local provider and accept that risk knowingly
 - Managed Telegram large-media mode follows the same rule:
   - canonical `integrations.telegram.local_bot_api` config compiles to generated Telegram service env
   - the launcher reads that generated env to decide whether it owns a local `telegram-bot-api` process

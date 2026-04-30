@@ -55,6 +55,7 @@ MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD = "0.01"
 DEFAULT_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS = "100"
 DEFAULT_ASSEMBLYAI_MAX_TURN_SILENCE_MS = "1000"
+SUPPORTED_TELEGRAM_STT_PROVIDERS = {"openai", "assemblyai", "whisper_local", "pywhispercpp", "local"}
 DEFAULT_LOCAL_CODE_INTERPRETER_API_KEY = "viventium-local-code-access"
 DEFAULT_LOCAL_FIRECRAWL_API_KEY = "viventium-local-firecrawl-access"
 DEFAULT_AGENT_RECURSION_LIMIT = 2000
@@ -1272,6 +1273,16 @@ def host_supports_local_tts() -> bool:
     return platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
 
 
+def normalize_telegram_stt_provider(value: Any, field_path: str) -> str:
+    provider = str(value or "").strip().lower()
+    if not provider:
+        return ""
+    if provider not in SUPPORTED_TELEGRAM_STT_PROVIDERS:
+        allowed = ", ".join(sorted(SUPPORTED_TELEGRAM_STT_PROVIDERS))
+        raise SystemExit(f"{field_path} must be one of: {allowed}")
+    return provider
+
+
 def resolve_voice_settings(config: dict[str, Any]) -> dict[str, str]:
     voice = config.get("voice", {}) or {}
     voice_mode = str(voice.get("mode", "disabled") or "disabled").strip().lower()
@@ -1699,6 +1710,19 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             "integrations.telegram",
         )
         telegram_settings = integrations.get("telegram", {}) or {}
+        telegram_stt_provider = normalize_telegram_stt_provider(
+            telegram_settings.get("stt_provider", ""),
+            "integrations.telegram.stt_provider",
+        )
+        if not telegram_stt_provider:
+            # Telegram is a long-running ingress process. Keep local Whisper available
+            # through an explicit Telegram override, but default the bridge away from
+            # in-process native STT so a native backend crash cannot take down message delivery.
+            if resolved_voice["stt_provider"] in {"whisper_local", "pywhispercpp", "local"}:
+                telegram_stt_provider = "openai"
+            else:
+                telegram_stt_provider = resolved_voice["stt_provider"]
+        env["VIVENTIUM_TELEGRAM_STT_PROVIDER"] = telegram_stt_provider
         telegram_local_bot_api = telegram_settings.get("local_bot_api", {}) or {}
         telegram_local_bot_api_enabled = resolve_bool(
             telegram_local_bot_api.get("enabled"),
@@ -2452,6 +2476,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_LIBRECHAT_ORIGIN",
         "VIVENTIUM_TELEGRAM_SECRET",
         "VIVENTIUM_CALL_SESSION_SECRET",
+        "VIVENTIUM_TELEGRAM_STT_PROVIDER",
         "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE",
         "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN",
         "VIVENTIUM_TELEGRAM_BOT_API_BASE_URL",

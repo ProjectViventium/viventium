@@ -4,7 +4,8 @@ def resolve_whisper_mode(env) -> str:
         return explicit_mode
 
     stt_provider = str(
-        env.get("VIVENTIUM_STT_PROVIDER")
+        env.get("VIVENTIUM_TELEGRAM_STT_PROVIDER")
+        or env.get("VIVENTIUM_STT_PROVIDER")
         or env.get("STT_PROVIDER")
         or ""
     ).strip().lower()

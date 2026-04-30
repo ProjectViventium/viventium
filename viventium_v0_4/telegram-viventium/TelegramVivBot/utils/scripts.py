@@ -297,6 +297,43 @@ def is_image_mime(mime_type: str) -> bool:
 # === VIVENTIUM END ===
 
 logger = logging.getLogger(__name__)
+_LOCAL_STT_LOCK = None
+_LOCAL_STT_LOCK_LOOP = None
+
+
+def _is_local_whisper_mode() -> bool:
+    whisper_mode = str(getattr(config, "WHISPER_MODE", "") or "").strip().lower()
+    return whisper_mode in ("local", "pywhispercpp")
+
+
+def _get_audio_message_sync(file_bytes: bytes):
+    from aient.aient.utils.scripts import get_audio_message
+
+    return get_audio_message(file_bytes)
+
+
+def _local_stt_lock() -> asyncio.Lock:
+    global _LOCAL_STT_LOCK, _LOCAL_STT_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _LOCAL_STT_LOCK is None or _LOCAL_STT_LOCK_LOOP is not loop:
+        _LOCAL_STT_LOCK = asyncio.Lock()
+        _LOCAL_STT_LOCK_LOOP = loop
+    return _LOCAL_STT_LOCK
+
+
+async def _transcribe_audio_bytes(file_bytes: bytes, timeout_s: int):
+    if _is_local_whisper_mode():
+        logger.info("Waiting for local Whisper transcription lock")
+        async with _local_stt_lock():
+            logger.info("Acquired local Whisper transcription lock")
+            return await asyncio.wait_for(
+                asyncio.to_thread(_get_audio_message_sync, file_bytes),
+                timeout=timeout_s,
+            )
+    return await asyncio.wait_for(
+        asyncio.to_thread(_get_audio_message_sync, file_bytes),
+        timeout=timeout_s,
+    )
 
 async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
     """Transcribe a voice message using Whisper (local or API)"""
@@ -316,22 +353,17 @@ async def get_voice(file_id: str, context) -> TelegramTranscriptionResult:
         file_bytes = download_result.file_bytes
         logger.debug(f"Downloaded {len(file_bytes)} bytes from Telegram")
 
-        whisper_mode = str(getattr(config, "WHISPER_MODE", "") or "").strip().lower()
-        if whisper_mode in ("local", "pywhispercpp") and not ffmpeg_runtime_ready():
+        if _is_local_whisper_mode() and not ffmpeg_runtime_ready():
             logger.error("ffmpeg is not runnable for local Telegram voice transcription")
             return _transcription_runtime_error("voice note", "media_decoder_unavailable")
 
         # Use the proper transcription function that handles both local and API modes
         # This matches the pattern from telegram-bot-standalone
         logger.debug("Calling get_audio_message for transcription")
-        from aient.aient.utils.scripts import get_audio_message
         timeout_s = int(os.environ.get("LOCAL_WHISPER_TIMEOUT_S", "120"))
         start_ts = time.monotonic()
         try:
-            transcript = await asyncio.wait_for(
-                asyncio.to_thread(get_audio_message, file_bytes),
-                timeout=timeout_s,
-            )
+            transcript = await _transcribe_audio_bytes(file_bytes, timeout_s)
         except asyncio.TimeoutError:
             logger.exception("Transcription timed out after %ss", timeout_s)
             return _transcription_runtime_error("voice note", "timeout")
@@ -363,7 +395,7 @@ async def transcribe_video(
     *,
     media_label: str = "video note",
 ) -> TelegramTranscriptionResult:
-    from aient.aient.utils.scripts import extract_audio_from_video, transcribe_audio_file
+    from aient.aient.utils.scripts import extract_audio_from_video
 
     try:
         if not ffmpeg_runtime_ready():
@@ -393,7 +425,10 @@ async def transcribe_video(
         audio_path = None
         try:
             audio_path = extract_audio_from_video(temp_video_path)
-            transcript = transcribe_audio_file(audio_path)
+            with open(audio_path, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+            timeout_s = int(os.environ.get("LOCAL_WHISPER_TIMEOUT_S", "120"))
+            transcript = await _transcribe_audio_bytes(audio_bytes, timeout_s)
         finally:
             if audio_path and os.path.exists(audio_path):
                 os.remove(audio_path)
@@ -407,6 +442,9 @@ async def transcribe_video(
 
         return TelegramTranscriptionResult(text=transcript_text)
 
+    except asyncio.TimeoutError:
+        logger.exception("%s transcription timed out", media_label)
+        return _transcription_runtime_error(media_label, "timeout")
     except Exception as e:
         logger.exception(f"Exception during {media_label} transcription: {e}")
         return _transcription_runtime_error(media_label)

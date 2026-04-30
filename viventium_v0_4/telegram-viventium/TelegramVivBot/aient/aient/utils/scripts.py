@@ -4,9 +4,13 @@ import urllib.parse
 import subprocess
 import shutil
 import tempfile
+import threading
 from io import BytesIO
 
 from ..core.utils import get_image_message
+
+
+_LOCAL_STT_TRANSCRIBE_LOCK = threading.Lock()
 
 def get_doc_from_url(url):
     filename = urllib.parse.unquote(url.split("/")[-1])
@@ -59,6 +63,13 @@ def transcribe_audio_file(file_path):
         file_bytes = file.read()
     return get_audio_message(file_bytes)
 
+
+def _normalized_local_whisper_language(config):
+    language = str(getattr(config, "LOCAL_WHISPER_LANG", "") or "").strip()
+    if language.lower() in {"auto", "detect", "auto-detect", "autodetect", "none", "null"}:
+        return ""
+    return language
+
 def get_audio_message(file_bytes):
     """Transcribe audio bytes using local Whisper or API"""
     import logging
@@ -94,14 +105,16 @@ def get_audio_message(file_bytes):
                 tmp_file.write(file_bytes)
             
             try:
-                logger.debug(f"Transcribing with local model, language={config.LOCAL_WHISPER_LANG}, temp_file={tmp_path}")
+                local_language = _normalized_local_whisper_language(config)
+                logger.debug(f"Transcribing with local model, language={local_language or 'auto'}, temp_file={tmp_path}")
                 
-                transcript_segments = config.local_whisper.transcribe(
-                    tmp_path,  # Pass file path, not BytesIO
-                    language=config.LOCAL_WHISPER_LANG,
-                    translate=False,
-                    print_realtime=config.LOCAL_WHISPER_VERBOSE,
-                )
+                with _LOCAL_STT_TRANSCRIBE_LOCK:
+                    transcript_segments = config.local_whisper.transcribe(
+                        tmp_path,  # Pass file path, not BytesIO
+                        language=local_language,
+                        translate=False,
+                        print_realtime=config.LOCAL_WHISPER_VERBOSE,
+                    )
                 transcript = " ".join(segment.text for segment in transcript_segments)
                 logger.info(f"Local transcription successful, {len(transcript_segments)} segments")
             finally:

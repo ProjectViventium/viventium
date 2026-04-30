@@ -80,6 +80,13 @@ def _derive_telegram_bot_api_prefix(origin: str, suffix: str) -> str:
     elif candidate.endswith("/bot"):
         candidate = candidate[: -len("/bot")]
     return f"{candidate}{suffix}"
+
+
+def _normalize_local_whisper_lang(value):
+    normalized = str(value or "").strip()
+    if normalized.lower() in {"auto", "detect", "auto-detect", "autodetect", "none", "null"}:
+        return ""
+    return normalized
 # === VIVENTIUM END ===
 
 # Optional local whisper integration
@@ -87,7 +94,7 @@ def _derive_telegram_bot_api_prefix(origin: str, suffix: str) -> str:
 WHISPER_MODE = resolve_whisper_mode(os.environ)
 LOCAL_WHISPER_MODEL_PATH = os.environ.get("LOCAL_WHISPER_MODEL_PATH")
 LOCAL_WHISPER_THREADS = int(os.environ.get("LOCAL_WHISPER_THREADS", "4"))
-LOCAL_WHISPER_LANG = os.environ.get("LOCAL_WHISPER_LANG", "auto")
+LOCAL_WHISPER_LANG = _normalize_local_whisper_lang(os.environ.get("LOCAL_WHISPER_LANG", "auto"))
 LOCAL_WHISPER_VERBOSE = os.environ.get("LOCAL_WHISPER_VERBOSE", "false").lower() == "true"
 
 from telegram import InlineKeyboardButton

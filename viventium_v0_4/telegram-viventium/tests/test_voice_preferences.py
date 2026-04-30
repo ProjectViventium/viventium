@@ -251,6 +251,40 @@ def test_get_voice_surfaces_broken_local_decoder_as_structured_error(monkeypatch
     )
 
 
+def test_get_voice_serializes_local_whisper_transcription(monkeypatch):
+    async def _fake_download(*_args, **_kwargs):
+        return scripts.TelegramDownloadResult(file_bytes=b"voice-bytes")
+
+    active = {"count": 0, "max": 0}
+
+    def _fake_transcribe(_file_bytes):
+        active["count"] += 1
+        active["max"] = max(active["max"], active["count"])
+        import time
+
+        time.sleep(0.03)
+        active["count"] -= 1
+        return "hello"
+
+    monkeypatch.setattr(scripts, "download_telegram_file_result", _fake_download)
+    monkeypatch.setattr(scripts.config, "WHISPER_MODE", "pywhispercpp", raising=False)
+    monkeypatch.setattr(scripts, "ffmpeg_runtime_ready", lambda: True)
+    monkeypatch.setattr(scripts, "_get_audio_message_sync", _fake_transcribe)
+
+    async def _run_pair():
+        context = types.SimpleNamespace(bot=object())
+        return await asyncio.gather(
+            scripts.get_voice("voice-file-a", context),
+            scripts.get_voice("voice-file-b", context),
+        )
+
+    first, second = asyncio.run(_run_pair())
+
+    assert first.text == "hello"
+    assert second.text == "hello"
+    assert active["max"] == 1
+
+
 def test_transcribe_video_surfaces_broken_decoder_as_structured_error(monkeypatch):
     monkeypatch.setattr(scripts, "ffmpeg_runtime_ready", lambda: False)
 
@@ -268,6 +302,46 @@ def test_transcribe_video_surfaces_broken_decoder_as_structured_error(monkeypatc
         result.error_text
         == "Temporarily unable to transcribe this video note because Telegram media decoding is not ready. Run bin/viventium upgrade, then retry."
     )
+
+
+def test_transcribe_video_uses_serialized_transcription_path(monkeypatch, tmp_path):
+    async def _fake_download(*_args, **_kwargs):
+        return scripts.TelegramDownloadResult(file_bytes=b"video-bytes", filename="clip.mp4")
+
+    def _fake_extract_audio(video_path):
+        audio_path = tmp_path / f"{Path(video_path).name}.ogg"
+        audio_path.write_bytes(b"audio-bytes")
+        return str(audio_path)
+
+    active = {"count": 0, "max": 0}
+
+    def _fake_transcribe(_file_bytes):
+        active["count"] += 1
+        active["max"] = max(active["max"], active["count"])
+        import time
+
+        time.sleep(0.03)
+        active["count"] -= 1
+        return "video hello"
+
+    monkeypatch.setattr(scripts, "download_telegram_file_result", _fake_download)
+    monkeypatch.setattr(scripts, "ffmpeg_runtime_ready", lambda: True)
+    monkeypatch.setattr(scripts.config, "WHISPER_MODE", "pywhispercpp", raising=False)
+    monkeypatch.setattr(scripts, "_get_audio_message_sync", _fake_transcribe)
+    monkeypatch.setattr(_fake_aient_scripts, "extract_audio_from_video", _fake_extract_audio)
+
+    async def _run_pair():
+        context = types.SimpleNamespace(bot=object())
+        return await asyncio.gather(
+            scripts.transcribe_video("video-a", context),
+            scripts.transcribe_video("video-b", context),
+        )
+
+    first, second = asyncio.run(_run_pair())
+
+    assert first.text == "video hello"
+    assert second.text == "video hello"
+    assert active["max"] == 1
 
 
 def test_get_voice_surfaces_download_timeout_as_structured_error(monkeypatch):

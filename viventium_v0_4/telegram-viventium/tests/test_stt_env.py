@@ -27,6 +27,15 @@ def test_resolve_whisper_mode_maps_canonical_local_provider():
     assert resolve_whisper_mode(env) == "pywhispercpp"
 
 
+def test_resolve_whisper_mode_prefers_telegram_provider_override():
+    env = {
+        "VIVENTIUM_TELEGRAM_STT_PROVIDER": "openai",
+        "VIVENTIUM_STT_PROVIDER": "whisper_local",
+    }
+
+    assert resolve_whisper_mode(env) == "openai"
+
+
 def test_resolve_whisper_mode_maps_legacy_provider_alias():
     env = {"STT_PROVIDER": "assemblyai"}
 

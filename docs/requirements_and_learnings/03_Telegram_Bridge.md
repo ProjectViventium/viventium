@@ -39,9 +39,17 @@ stream back to Telegram through the existing bridge.
 
 ## Telegram Voice and Call Behavior
 
-- Voice-note transcription must use the configured runtime STT provider.
+- Voice-note transcription must use the Telegram bridge STT provider. By default,
+  `integrations.telegram.stt_provider` is empty and the compiler selects hosted OpenAI STT when
+  the global voice STT provider is local Whisper, keeping the long-running Telegram ingress process
+  away from in-process native model inference by default. Operators may explicitly opt Telegram back
+  into local STT with `integrations.telegram.stt_provider`, but that is a conscious reliability
+  tradeoff.
 - Voice-note and video-note download/transcription failures must return one clean Telegram error and
   stop before chat submission.
+- Voice-note and video-note transcription must share the same non-blocking serialized local-STT path
+  whenever Telegram is explicitly configured to use local Whisper. The bot must not run local native
+  STT concurrently inside the polling process.
 - Telegram's hosted Bot API cannot download files above its platform limit, so oversized Telegram
   media must fail honestly unless the install is configured to use a local Telegram Bot API server.
 - Voice replies must use a compatible TTS provider/key pair.

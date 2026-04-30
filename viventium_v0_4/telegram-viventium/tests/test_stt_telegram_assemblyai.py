@@ -3,6 +3,8 @@
 # Purpose: Validate Telegram STT dispatch uses AssemblyAI path.
 # VIVENTIUM END
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -111,3 +113,56 @@ def test_get_audio_message_local_whisper_lazy_init(monkeypatch):
     assert text == "hello local"
     assert calls["count"] == 1
     assert len(stub.calls) == 1
+
+
+def test_get_audio_message_local_whisper_treats_auto_as_autodetect(monkeypatch):
+    stub = StubLocalWhisper()
+    config_stub = types.SimpleNamespace(
+        WHISPER_MODE="pywhispercpp",
+        assemblyai_client=None,
+        local_whisper=stub,
+        whisperBot=None,
+        LOCAL_WHISPER_LANG="auto",
+        LOCAL_WHISPER_VERBOSE=False,
+    )
+    monkeypatch.setitem(sys.modules, "config", config_stub)
+
+    text = get_audio_message(b"local-audio")
+
+    assert text == "hello local"
+    assert stub.calls[0]["language"] == ""
+
+
+def test_get_audio_message_local_whisper_serializes_native_transcribe(monkeypatch):
+    active = {"current": 0, "max": 0}
+
+    class SlowLocalWhisper:
+        def transcribe(self, file_path, language, translate, print_realtime):
+            active["current"] += 1
+            active["max"] = max(active["max"], active["current"])
+            time.sleep(0.05)
+            active["current"] -= 1
+            return [types.SimpleNamespace(text="serial")]
+
+    config_stub = types.SimpleNamespace(
+        WHISPER_MODE="pywhispercpp",
+        assemblyai_client=None,
+        local_whisper=SlowLocalWhisper(),
+        whisperBot=None,
+        LOCAL_WHISPER_LANG="auto",
+        LOCAL_WHISPER_VERBOSE=False,
+    )
+    monkeypatch.setitem(sys.modules, "config", config_stub)
+
+    results = []
+    threads = [
+        threading.Thread(target=lambda: results.append(get_audio_message(b"local-audio"))),
+        threading.Thread(target=lambda: results.append(get_audio_message(b"local-audio"))),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(results) == ["serial", "serial"]
+    assert active["max"] == 1

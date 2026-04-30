@@ -254,6 +254,10 @@ properties:
             type: string
           max_file_size_bytes:
             type: integer
+          stt_provider:
+            type: string
+            enum: [openai, assemblyai, whisper_local, pywhispercpp, local]
+            description: Optional Telegram-only STT provider override. Defaults to openai when global voice STT is local, so Telegram message delivery is not coupled to an in-process native transcription backend.
           bot_api_origin:
             type: string
           bot_api_base_url:

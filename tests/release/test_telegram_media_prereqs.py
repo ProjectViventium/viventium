@@ -177,6 +177,40 @@ def test_start_telegram_bot_checks_media_prereqs_before_launch() -> None:
     assert "if ! start_telegram_local_bot_api; then" in script_text
 
 
+def test_detached_telegram_start_uses_user_launchd_job() -> None:
+    script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
+    launch_fragment = script_text[
+        script_text.index('local telegram_runtime_env_file="$LOG_ROOT/telegram_bot_runtime.env"') :
+        script_text.index("local telegram_started_with_launchctl=false")
+    ]
+
+    assert "telegram_bot_launch.sh" in script_text
+    assert "telegram_bot_runtime.env" in script_text
+    assert "chmod 600 \"$telegram_runtime_env_file\"" in script_text
+    assert "MS365_MCP_CLIENT_SECRET" not in launch_fragment
+    assert 'source "$VIVENTIUM_ENV_FILE"' not in launch_fragment
+    assert 'source "$ENV_FILE_LOCAL"' not in launch_fragment
+    assert 'source "$telegram_runtime_env_file"' in launch_fragment
+    assert "VIVENTIUM_TELEGRAM_RECONNECT_GRACE_S" in launch_fragment
+    assert "VIVENTIUM_TELEGRAM_EMPTY_RESPONSE_MESSAGE" in launch_fragment
+    assert "local telegram_clean_env=(" in script_text
+    assert "local telegram_launch_program=(" in script_text
+    assert "env -i" in script_text
+    assert '"HOME=$HOME"' in script_text
+    assert "launchctl submit" in script_text
+    assert '"${telegram_clean_env[@]}" launchctl submit' in script_text
+    assert "-l \"$TELEGRAM_BOT_LAUNCHCTL_LABEL\"" in script_text
+    assert '-- "${telegram_launch_program[@]}"' in script_text
+    assert 'nohup "${telegram_launch_program[@]}"' in script_text
+    assert 'nohup "$telegram_python" bot.py' in script_text
+    assert 'source "$TELEGRAM_CONFIG_ENV_FILE"' in script_text
+    assert 'if [[ -z "\\${API_KEY:-}" && -n "\\${OPENAI_API_KEY:-}" ]]; then export API_KEY="\\$OPENAI_API_KEY"; fi' in script_text
+    assert 'TELEGRAM_BOT_WATCHDOG_PID_FILE="$LOG_ROOT/telegram_bot_watchdog.pid"' in script_text
+    assert "start_telegram_bot_watchdog() {" in script_text
+    assert "Telegram bot watchdog restarting Telegram bridge" in script_text
+    assert "start_telegram_bot_watchdog" in script_text
+
+
 def test_launcher_includes_managed_local_telegram_bot_api_runtime() -> None:
     script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
 

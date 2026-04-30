@@ -976,6 +976,7 @@ TELEGRAM_BOT_PID_FILE="$LOG_ROOT/telegram_bot.pid"
 TELEGRAM_BOT_DEFERRED_PID_FILE="$LOG_ROOT/telegram_bot_deferred.pid"
 TELEGRAM_BOT_DEFERRED_MARKER_FILE="$LOG_ROOT/telegram_bot_deferred.pending"
 TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viventium.telegram-bot}"
+TELEGRAM_BOT_WATCHDOG_PID_FILE="$LOG_ROOT/telegram_bot_watchdog.pid"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
 LIBRECHAT_API_WATCHDOG_PID_FILE="$LOG_ROOT/librechat-api-watchdog.pid"
@@ -2689,6 +2690,10 @@ stop_detached_librechat_api_watchdog() {
 
 stop_scheduling_mcp_watchdog() {
   stop_pid_file_scoped "$SCHEDULING_MCP_WATCHDOG_PID_FILE" "$VIVENTIUM_CORE_DIR"
+}
+
+stop_telegram_bot_watchdog() {
+  stop_pid_file_scoped "$TELEGRAM_BOT_WATCHDOG_PID_FILE" "$VIVENTIUM_CORE_DIR"
 }
 
 cleanup_code_interpreter_exec_containers() {
@@ -5209,6 +5214,7 @@ stop_running_services() {
   fi
 
   # Telegram bot
+  stop_telegram_bot_watchdog
   local telegram_dir
   if [[ -d "$TELEGRAM_DIR_PRIMARY" ]]; then
     telegram_dir="$TELEGRAM_DIR_PRIMARY"
@@ -5853,6 +5859,55 @@ start_scheduling_mcp_watchdog() {
     disown "$watchdog_pid" 2>/dev/null || true
   fi
   log_info "Started Scheduling Cortex MCP watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
+}
+
+start_telegram_bot_watchdog() {
+  if [[ "$START_TELEGRAM" != "true" ]]; then
+    return 0
+  fi
+  if ! detached_start_requested; then
+    return 0
+  fi
+
+  stop_telegram_bot_watchdog
+
+  local interval_s="${VIVENTIUM_TELEGRAM_WATCHDOG_INTERVAL_S:-10}"
+  local failure_threshold="${VIVENTIUM_TELEGRAM_WATCHDOG_FAILURE_THRESHOLD:-3}"
+
+  (
+    trap - EXIT
+    trap 'exit 0' INT TERM HUP
+    local consecutive_failures=0
+
+    while true; do
+      sleep "$interval_s"
+      local telegram_pid
+      telegram_pid="$(read_pid_file "$TELEGRAM_BOT_PID_FILE")"
+      if [[ -n "$telegram_pid" ]] && ps -p "$telegram_pid" >/dev/null 2>&1; then
+        consecutive_failures=0
+        continue
+      fi
+
+      consecutive_failures=$((consecutive_failures + 1))
+      if [[ "$consecutive_failures" -lt "$failure_threshold" ]]; then
+        continue
+      fi
+
+      log_warn "Telegram bot watchdog detected ${consecutive_failures} failed liveness checks"
+      log_warn "Telegram bot watchdog restarting Telegram bridge"
+      if start_telegram_bot; then
+        consecutive_failures=0
+      else
+        log_warn "Telegram bot watchdog restart failed"
+        consecutive_failures="$failure_threshold"
+      fi
+    done
+  ) >>"$LOG_DIR/telegram_bot_watchdog.log" 2>&1 &
+
+  local watchdog_pid=$!
+  printf '%s\n' "$watchdog_pid" >"$TELEGRAM_BOT_WATCHDOG_PID_FILE"
+  disown "$watchdog_pid" 2>/dev/null || true
+  log_info "Started Telegram bot watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
 }
 
 start_native_livekit_fallback() {
@@ -6728,6 +6783,7 @@ cleanup() {
   echo -e "${YELLOW}[viventium]${NC} Shutting down..."
   stop_detached_librechat_api_watchdog
   stop_scheduling_mcp_watchdog
+  stop_telegram_bot_watchdog
   stop_telegram_local_bot_api
   [[ "$VOICE_GATEWAY_STARTED_BY_SCRIPT" == "true" && -n "${VOICE_GATEWAY_PID:-}" ]] && kill "${VOICE_GATEWAY_PID}" 2>/dev/null || true
   local cleanup_voice_gateway_runtime_pids=""
@@ -8535,10 +8591,186 @@ PY
   fi
   # === VIVENTIUM END ===
 
-  nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
-  TELEGRAM_BOT_PID=$!
-  if detached_start_requested; then
-    disown "$TELEGRAM_BOT_PID" 2>/dev/null || true
+  local telegram_python_path="$telegram_python"
+  if [[ "$telegram_python_path" != /* ]]; then
+    telegram_python_path="$PWD/$telegram_python_path"
+  fi
+  local telegram_launch_user="${USER:-$(id -un)}"
+  local telegram_launch_logname="${LOGNAME:-$telegram_launch_user}"
+  local telegram_launch_shell="${SHELL:-/bin/zsh}"
+  local telegram_launch_path="${PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+  local telegram_launch_script="$LOG_ROOT/telegram_bot_launch.sh"
+  local telegram_runtime_env_file="$LOG_ROOT/telegram_bot_runtime.env"
+  local telegram_clean_env=(
+    env -i
+    "HOME=$HOME"
+    "USER=$telegram_launch_user"
+    "LOGNAME=$telegram_launch_logname"
+    "SHELL=$telegram_launch_shell"
+    "PATH=$telegram_launch_path"
+  )
+  local telegram_launch_program=(
+    /usr/bin/env -i
+    "HOME=$HOME"
+    "USER=$telegram_launch_user"
+    "LOGNAME=$telegram_launch_logname"
+    "SHELL=$telegram_launch_shell"
+    "PATH=$telegram_launch_path"
+    /bin/bash
+    "$telegram_launch_script"
+  )
+  : >"$telegram_runtime_env_file"
+  chmod 600 "$telegram_runtime_env_file"
+  local telegram_runtime_env_names=(
+    API_KEY
+    OPENAI_API_KEY
+    AZURE_OPENAI_API_KEY
+    AZURE_OPENAI_API_VERSION
+    BASE_URL
+    MODEL
+    AUDIO_MODEL_NAME
+    WHISPER_API_URL
+    WHISPER_AZURE_API_VERSION
+    WHISPER_TIMEOUT
+    ASSEMBLYAI_API_KEY
+    ASSEMBLYAI_BASE_URL
+    ASSEMBLYAI_TIMEOUT_S
+    ASSEMBLYAI_POLL_INTERVAL_S
+    ASSEMBLYAI_POLL_TIMEOUT_S
+    ASSEMBLYAI_LANGUAGE_CODE
+    LOCAL_WHISPER_MODEL_PATH
+    LOCAL_WHISPER_THREADS
+    LOCAL_WHISPER_LANG
+    LOCAL_WHISPER_VERBOSE
+    LOCAL_WHISPER_TIMEOUT_S
+    LOCAL_WHISPER_MODEL_NAME
+    SYSTEMPROMPT
+    NICK
+    PORT
+    RESET_TIME
+    CONNECTION_POOL_SIZE
+    GET_UPDATES_CONNECTION_POOL_SIZE
+    TIMEOUT
+    POLLING_TIMEOUT
+    CHAT_MODE
+    PASS_HISTORY
+    LONG_TEXT
+    LONG_TEXT_SPLIT
+    FILE_UPLOAD_MESS
+    WEB_HOOK
+    whitelist
+    BLACK_LIST
+    ADMIN_LIST
+    GROUP_LIST
+    TTS_PROVIDER_PRIMARY
+    TTS_PROVIDER_FALLBACK
+    TTS_MODEL
+    TTS_VOICE
+    TTS_RESPONSE_FORMAT
+    ELEVENLABS_API_KEY
+    ELEVENLABS_API_URL
+    ELEVENLABS_MODEL
+    TTS_VOICE_ELEVENLABS
+    CARTESIA_API_KEY
+    VIVENTIUM_CARTESIA_API_URL
+    VIVENTIUM_CARTESIA_API_VERSION
+    VIVENTIUM_CARTESIA_MODEL_ID
+    VIVENTIUM_CARTESIA_VOICE_ID
+    VIVENTIUM_CARTESIA_SAMPLE_RATE
+    VIVENTIUM_CARTESIA_EMOTION
+    VIVENTIUM_CARTESIA_LANGUAGE
+    VIVENTIUM_MLX_AUDIO_MODEL_ID
+    VIVENTIUM_VOICE_DEBUG_TTS
+    VIVENTIUM_TELEGRAM_DEBUG_TTS
+    LIVEKIT_URL
+    LIVEKIT_API_KEY
+    LIVEKIT_API_SECRET
+    LIVEKIT_AGENT_NAME
+    VIVENTIUM_RUNTIME_LOCK_DIR
+    VIVENTIUM_TELEGRAM_LOCK_DIR
+    XDG_RUNTIME_DIR
+    VIVENTIUM_TELEGRAM_RECONNECT_GRACE_S
+    VIVENTIUM_TELEGRAM_HOLDING_TAIL_TIMEOUT_S
+    VIVENTIUM_TELEGRAM_TAIL_TIMEOUT_S
+    VIVENTIUM_TELEGRAM_CALL_LINK_CACHE_TTL_S
+    VIVENTIUM_TELEGRAM_DEFAULT_TIMEZONE
+    VIVENTIUM_TELEGRAM_INCLUDE_CORTEX_INSIGHTS
+    VIVENTIUM_TELEGRAM_INSIGHT_FALLBACK
+    VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S
+    VIVENTIUM_TELEGRAM_INSIGHT_MAX_S
+    VIVENTIUM_TELEGRAM_INSIGHT_PREFIX
+    VIVENTIUM_TELEGRAM_STREAM_ERROR_MESSAGE
+    VIVENTIUM_TELEGRAM_EMPTY_RESPONSE_MESSAGE
+    VIVENTIUM_TELEGRAM_SSE_MAX_RETRIES
+    VIVENTIUM_TELEGRAM_SSE_RETRY_DELAY_S
+    VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S
+    VIVENTIUM_TELEGRAM_FOLLOWUP_INTERVAL_S
+    VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S
+    VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S
+    VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S
+    VIVENTIUM_TELEGRAM_SERIALIZE_PER_CHAT
+    VIVENTIUM_TELEGRAM_TRACE
+    VIVENTIUM_TELEGRAM_TIMING_ENABLED
+    VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S
+  )
+  local telegram_runtime_env_name
+  for telegram_runtime_env_name in "${telegram_runtime_env_names[@]}"; do
+    if [[ -n "${!telegram_runtime_env_name+x}" ]]; then
+      printf 'export %s=%q\n' "$telegram_runtime_env_name" "${!telegram_runtime_env_name}" >>"$telegram_runtime_env_file"
+    fi
+  done
+  cat >"$telegram_launch_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+set -a
+if [[ -f "$telegram_runtime_env_file" ]]; then source "$telegram_runtime_env_file"; fi
+if [[ -f "$TELEGRAM_CONFIG_ENV_FILE" ]]; then source "$TELEGRAM_CONFIG_ENV_FILE"; fi
+set +a
+if [[ -z "\${API_KEY:-}" && -n "\${OPENAI_API_KEY:-}" ]]; then export API_KEY="\$OPENAI_API_KEY"; fi
+if [[ -z "\${BASE_URL:-}" ]]; then export BASE_URL="https://api.openai.com/v1"; fi
+export CONFIG_DIR="$TELEGRAM_USER_CONFIGS_DIR"
+export VIVENTIUM_TELEGRAM_BACKEND="$telegram_backend"
+export VIVENTIUM_LIBRECHAT_ORIGIN="\${VIVENTIUM_LIBRECHAT_ORIGIN:-$LC_API_URL}"
+cd "$PWD"
+exec "$telegram_python_path" bot.py
+EOF
+  chmod 700 "$telegram_launch_script"
+  local telegram_started_with_launchctl=false
+  if detached_start_requested && [[ "$(uname -s)" == "Darwin" ]] && command -v launchctl >/dev/null 2>&1; then
+    local telegram_launch_service="gui/$(id -u)/${TELEGRAM_BOT_LAUNCHCTL_LABEL}"
+    stop_telegram_launchctl_job
+    if "${telegram_clean_env[@]}" launchctl submit \
+      -l "$TELEGRAM_BOT_LAUNCHCTL_LABEL" \
+      -o "$LOG_DIR/telegram_bot.log" \
+      -e "$LOG_DIR/telegram_bot.log" \
+      -- "${telegram_launch_program[@]}"; then
+      sleep 3
+      TELEGRAM_BOT_PID="$(
+        launchctl print "$telegram_launch_service" 2>/dev/null \
+          | awk -F' = ' '/pid =/ {print $2; exit}' \
+          | tr -cd '0-9'
+      )"
+      if [[ -n "$TELEGRAM_BOT_PID" ]] && ps -p "$TELEGRAM_BOT_PID" >/dev/null 2>&1; then
+        telegram_started_with_launchctl=true
+      else
+        log_warn "Telegram launchctl job did not report a running pid; falling back to direct nohup"
+        stop_telegram_launchctl_job
+        TELEGRAM_BOT_PID=""
+      fi
+    else
+      log_warn "Telegram launchctl submit failed; falling back to direct nohup"
+    fi
+  fi
+  if [[ "$telegram_started_with_launchctl" != "true" ]]; then
+    if detached_start_requested; then
+      nohup "${telegram_launch_program[@]}" >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
+    else
+      nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &
+    fi
+    TELEGRAM_BOT_PID=$!
+    if detached_start_requested; then
+      disown "$TELEGRAM_BOT_PID" 2>/dev/null || true
+    fi
   fi
   TELEGRAM_STARTED_BY_SCRIPT=true
   printf '%s\n' "$TELEGRAM_BOT_PID" >"$TELEGRAM_BOT_PID_FILE"
@@ -9810,6 +10042,9 @@ if [[ "${#PARALLEL_OPTIONAL_START_PIDS[@]}" -gt 0 ]]; then
 fi
 if [[ "$START_SCHEDULING_MCP" == "true" ]]; then
   start_scheduling_mcp_watchdog
+fi
+if [[ "$START_TELEGRAM" == "true" ]]; then
+  start_telegram_bot_watchdog
 fi
 start_optional_docker_recovery_worker
 sleep 3
