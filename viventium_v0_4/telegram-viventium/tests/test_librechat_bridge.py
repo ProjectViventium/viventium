@@ -987,6 +987,90 @@ async def test_stream_response_deferred_internal_final_skips_false_empty_fallbac
 
 
 @pytest.mark.asyncio
+async def test_stream_response_schedules_glasshive_followup_when_tool_call_streamed_before_final(
+    monkeypatch,
+):
+    bridge = _make_bridge()
+    scheduled = []
+    payloads = [
+        {
+            "event": "on_agent_update",
+            "data": {
+                "messages": [
+                    {
+                        "content": [
+                            {
+                                "type": "tool_call",
+                                "tool_call": {"name": "worker_delegate_once_mcp_glasshive-workers-projects"},
+                            }
+                        ]
+                    }
+                ]
+            },
+        },
+        {
+            "final": True,
+            "responseMessage": {"messageId": "msg-glasshive-final", "content": []},
+        },
+    ]
+
+    async def fake_iter_sse_json_events(*, chunk_iter):
+        _ = chunk_iter
+        for payload in payloads:
+            yield payload
+
+    class _FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def stream(self, *args, **kwargs):
+            _ = args, kwargs
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "iter_sse_json_events", fake_iter_sse_json_events)
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(
+        bridge,
+        "_schedule_followup_poll",
+        lambda stream_id, chat_id: scheduled.append((stream_id, chat_id)),
+    )
+
+    chunks = [chunk async for chunk in bridge._stream_response("stream-gh", "555")]
+
+    assert chunks == []
+    assert scheduled == [("stream-gh", "555")]
+    assert bridge._response_message_ids["stream-gh"] == "msg-glasshive-final"
+    assert bridge._has_glasshive_seen("stream-gh") is True
+
+
+@pytest.mark.asyncio
 async def test_stream_response_text_and_final_attachments(monkeypatch):
     bridge = _make_bridge()
 
@@ -1607,6 +1691,62 @@ async def test_poll_for_followup_sends_glasshive_callback_without_cortex_parts()
     assert len(messages) == 1
     assert messages[0][0] == 303
     assert "worker finished" in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_new_telegram_turn_does_not_cancel_pending_glasshive_followup():
+    bridge = _make_bridge()
+    messages = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-long"
+    chat_id = "304:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="304",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-long"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-long"
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    glasshive_states = [
+        {"latest": None},
+        {"latest": {"event": "run.completed", "text": "Long worker result delivered."}},
+    ]
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        if glasshive_states:
+            return glasshive_states.pop(0)
+        return {"latest": None}
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    task = asyncio.create_task(bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id))
+    await asyncio.sleep(0)
+    bridge._followup_task_by_stream[stream_id] = task
+    bridge._set_active_stream(chat_id, "stream-newer")
+
+    await task
+
+    assert len(messages) == 1
+    assert messages[0][0] == 304
+    assert "Long worker result delivered" in messages[0][1]
 
 
 @pytest.mark.asyncio

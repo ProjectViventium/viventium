@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -157,6 +158,39 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(session.say_calls), 1)
         self.assertEqual(session.say_calls[0]["text"], "The browser task is done.")
+
+    async def test_new_turn_does_not_cancel_pending_glasshive_result(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session, timeout_s=0.5, interval_s=0.01)
+
+        async def _fake_fetch_cortex(self, _http_session, _message_id):
+            return {"insights": [], "followUp": None}
+
+        states = [
+            {"latest": {"event": "run.started", "text": "Still working."}},
+            {"latest": {"event": "run.completed", "text": "The worker result arrived."}},
+        ]
+        first_glasshive_poll = asyncio.Event()
+
+        async def _fake_fetch_glasshive(self, _http_session, _message_id):
+            first_glasshive_poll.set()
+            if states:
+                return states.pop(0)
+            return {"latest": None}
+
+        scheduler._fetch_cortex = MethodType(_fake_fetch_cortex, scheduler)
+        scheduler._fetch_glasshive = MethodType(_fake_fetch_glasshive, scheduler)
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule("msg_glasshive", [], "", glasshive_expected=True)
+            glasshive_task = scheduler._task
+            await first_glasshive_poll.wait()
+            scheduler.schedule("msg_new", [], "", cortex_expected=True)
+            self.assertIsNotNone(glasshive_task)
+            await glasshive_task
+
+        self.assertEqual(len(session.say_calls), 1)
+        self.assertEqual(session.say_calls[0]["text"], "The worker result arrived.")
 
     async def test_does_not_schedule_poll_for_ordinary_turn(self) -> None:
         session = _DummySession()

@@ -14,6 +14,7 @@ from librechat_llm import (
     _extract_stream_error,
     _select_stream_error_message,
     _summarize_error_for_log,
+    _payload_has_glasshive_tool_call,
     _NoResponseStreamGuard,
     is_no_response_only,
     format_insights_for_direct_speech,
@@ -51,6 +52,24 @@ class TestFinalEventHelpers(unittest.TestCase):
 
     def test_extracts_final_response_message_id_missing(self) -> None:
         self.assertEqual(_extract_final_response_message_id({"final": True}), "")
+
+    def test_detects_glasshive_tool_call_in_nested_stream_event(self) -> None:
+        event = {
+            "event": "on_agent_update",
+            "data": {
+                "messages": [
+                    {
+                        "content": [
+                            {
+                                "type": "tool_call",
+                                "tool_call": {"name": "worker_delegate_once_mcp_glasshive-workers-projects"},
+                            }
+                        ]
+                    }
+                ]
+            },
+        }
+        self.assertTrue(_payload_has_glasshive_tool_call(event))
 
     def test_extracts_error_content_part_as_fallback_message(self) -> None:
         os.environ["VIVENTIUM_VOICE_STREAM_ERROR_MESSAGE"] = "Stream down."

@@ -280,16 +280,22 @@ def _is_glasshive_tool_name(name: str) -> bool:
     return len(parts) == 2 and parts[1] == GLASSHIVE_MCP_SERVER
 
 
+def _iter_tool_call_parts(value: Any):
+    if isinstance(value, list):
+        for item in value:
+            yield from _iter_tool_call_parts(item)
+        return
+    if not isinstance(value, dict):
+        return
+    if value.get("type") == "tool_call":
+        yield value
+    for child in value.values():
+        if isinstance(child, (dict, list)):
+            yield from _iter_tool_call_parts(child)
+
+
 def _payload_has_glasshive_tool_call(payload: dict[str, Any]) -> bool:
-    response = payload.get("responseMessage")
-    if not isinstance(response, dict):
-        return False
-    content = response.get("content")
-    if not isinstance(content, list):
-        return False
-    for part in content:
-        if not isinstance(part, dict) or part.get("type") != "tool_call":
-            continue
+    for part in _iter_tool_call_parts(payload):
         if _is_glasshive_tool_name(_extract_tool_call_name(part)):
             return True
     return False
@@ -709,10 +715,11 @@ class _LibreChatLLMStream(llm.LLMStream):
                             if event.get("sync"):
                                 continue
 
+                            if _payload_has_glasshive_tool_call(event):
+                                saw_glasshive_tool_call = True
+
                             if event.get("final"):
                                 final_event = event
-                                if _payload_has_glasshive_tool_call(event):
-                                    saw_glasshive_tool_call = True
                                 break
 
                             # === VIVENTIUM START ===

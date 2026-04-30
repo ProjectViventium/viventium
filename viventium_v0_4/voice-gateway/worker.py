@@ -1799,6 +1799,9 @@ class CortexFollowupScheduler:
         )
         self._seq = 0
         self._task: Optional[asyncio.Task[None]] = None
+        self._cortex_task: Optional[asyncio.Task[None]] = None
+        self._glasshive_tasks: set[asyncio.Task[None]] = set()
+        self._glasshive_task_warning_threshold = 4
 
     def schedule(
         self,
@@ -1816,17 +1819,30 @@ class CortexFollowupScheduler:
             return
         self._seq += 1
         seq = self._seq
-        if self._task and not self._task.done():
-            self._task.cancel()
-        self._task = asyncio.create_task(
+        allow_stale_delivery = should_poll_glasshive
+        if not should_poll_glasshive and self._cortex_task and not self._cortex_task.done():
+            self._cortex_task.cancel()
+        task = asyncio.create_task(
             self._run(
                 seq,
                 message_id,
                 pending_insights,
                 should_poll_cortex=should_poll_cortex,
                 should_poll_glasshive=should_poll_glasshive,
+                allow_stale_delivery=allow_stale_delivery,
             )
         )
+        self._task = task
+        if should_poll_glasshive:
+            self._glasshive_tasks.add(task)
+            task.add_done_callback(self._glasshive_tasks.discard)
+            if len(self._glasshive_tasks) > self._glasshive_task_warning_threshold:
+                logger.warning(
+                    "voice GlassHive follow-up polling has %s concurrent tasks",
+                    len(self._glasshive_tasks),
+                )
+        else:
+            self._cortex_task = task
 
     async def _run(
         self,
@@ -1836,6 +1852,7 @@ class CortexFollowupScheduler:
         *,
         should_poll_cortex: bool,
         should_poll_glasshive: bool,
+        allow_stale_delivery: bool,
     ) -> None:
         try:
             started_at = time.monotonic()
@@ -1870,7 +1887,7 @@ class CortexFollowupScheduler:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 while time.monotonic() < deadline:
-                    if seq != self._seq:
+                    if not allow_stale_delivery and seq != self._seq:
                         return
 
                     if should_poll_glasshive:
@@ -1887,7 +1904,7 @@ class CortexFollowupScheduler:
                                     text = text.strip()
                                     if is_no_response_only(text):
                                         return
-                                    self._speak(text, seq)
+                                    self._speak(text, seq, allow_stale_delivery=allow_stale_delivery)
                                     return
 
                     data = None
@@ -1905,7 +1922,7 @@ class CortexFollowupScheduler:
                                         message_id,
                                     )
                                     return
-                                self._speak(text, seq)
+                                self._speak(text, seq, allow_stale_delivery=allow_stale_delivery)
                                 return
 
                         insights = data.get("insights")
@@ -1925,7 +1942,7 @@ class CortexFollowupScheduler:
 
                     await asyncio.sleep(self._interval_s)
 
-            if seq != self._seq:
+            if not allow_stale_delivery and seq != self._seq:
                 return
             if merged_insights:
                 logger.info(
@@ -2008,8 +2025,8 @@ class CortexFollowupScheduler:
             return None
         return None
 
-    def _speak(self, text: str, seq: int) -> None:
-        if seq != self._seq:
+    def _speak(self, text: str, seq: int, *, allow_stale_delivery: bool = False) -> None:
+        if not allow_stale_delivery and seq != self._seq:
             return
         try:
             # No-response is an intentional "say nothing" signal.

@@ -63,6 +63,16 @@ disabled.
 - Prefer `codex-cli` for available host browser, desktop, file, and code execution. Use
   `claude-code` when the user asks for Claude or when configured as the preferred local CLI. Use
   `openclaw-general` only when installed/configured or explicitly requested.
+- Fresh one-off host/browser/desktop/local tasks should go through a high-level MCP delegation
+  surface such as `worker_delegate_once`. The main agent should not have to manually list projects,
+  create or resume workers, and queue runs for routine tasks; low-level tools remain available for
+  explicit status, resume, steering, diagnostics, and multi-worker orchestration.
+- When `worker_delegate_once` reports callback readiness, the main agent should acknowledge once
+  and stop the turn. It should not immediately poll `worker_live`/`run_get` unless the user asked
+  for diagnostics or live status; the callback channel owns completion and blockers.
+- `worker_delegate_once` must not return project, worker, run, alias, or execution plumbing to the
+  model by default. Those fields are available only through an explicit diagnostics flag or the
+  lower-level status tools, so routine chat turns cannot accidentally leak internal IDs.
 - Host worker prompts must require a final user-facing completion block, headed `FINAL REPORT:`,
   so callback delivery can surface results instead of progress chatter.
 
@@ -167,9 +177,14 @@ Host-worker UX and callback requirements:
 - Chat-facing status should focus on the real task outcome. Worker IDs, run IDs, project IDs,
   terminal URLs, ports, and `queued/running` plumbing are diagnostic details and should only be
   shown when the user asks for them.
+- Immediate dispatch messages should be plain and short, for example "On it — opening that now. I'll
+  send the result here." Do not expose internal provider/tool/runtime labels such as Codex, worker,
+  run, host mode, queue, or terminal unless the user asks for diagnostics.
 - Worker execution must be non-blocking for the main assistant turn. The main agent may dispatch or
   steer a worker and then stop the chat turn; completion, blockers, approvals, and takeover requests
   return through signed callbacks or same-surface polling.
+- The dispatch acknowledgement should not include rich `worker_live` output. Live state and logs are
+  for explicit status/diagnostic requests, not routine one-off delegation.
 - Host-native execution must obey the compiled runtime gate. If
   `GLASSHIVE_HOST_WORKERS_ENABLED=false`, API and MCP paths must reject host worker creation,
   find-or-resume, resume, run, steer, and desktop actions instead of treating the flag as advisory.
@@ -181,10 +196,9 @@ Host-worker UX and callback requirements:
   the main agent/follow-up layer can decide whether to surface the information, summarize it, or
   remain silent with `{NTA}` when the information is redundant or irrelevant.
 - Worker lifecycle and queue events remain internal lifecycle/audit events and are not posted into
-  the user conversation by default. A `run.started` callback may update the originating assistant
-  status with one concise "working on it" message for long-running host work, without worker IDs,
-  ports, terminal URLs, or queue jargon. User-visible terminal callbacks are completion, failure,
-  approval/checkpoint, takeover/help-needed, and cancellation states.
+  the user conversation. The main assistant turn owns any immediate "working on it" status. The
+  GlassHive callback receiver surfaces only terminal/actionable events: completion, failure,
+  approval/checkpoint, artifact, takeover/help-needed, and cancellation states.
 - Completion callbacks should carry the concise final result. Failure callbacks should say what got
   stuck and what help is needed. Approval callbacks should state the specific decision required.
 - Completion callback text is selected from the worker's `FINAL REPORT:` block when present, or from
@@ -197,6 +211,15 @@ Host-worker UX and callback requirements:
 - Visible callbacks must include the assistant response `message_id` for the originating turn.
   Unanchored visible callbacks are ignored/retried rather than being attached to the user message
   as a sibling assistant branch.
+- Visible callbacks must not update a blank assistant anchor while preserving a timestamp that
+  predates the user request. If the web stack creates a blank assistant anchor before the user row
+  is timestamped, callback persistence must repair the callback message timestamp so chronological
+  and tree views both show the user request before the worker result.
+- Worker delegation must preserve the user's stated success condition and response-format
+  constraints. If the user asks for a short/exact result or asks to leave the local computer in a
+  specific visible state, that requirement must be passed into the worker instruction and into the
+  final callback; screenshots, run logs, IDs, local artifact paths, and extra evidence stay out of
+  the user-visible result unless requested or required to explain a blocker.
 - Message rendering must tolerate callback/status content stored as an array, single object, string,
   `null`, or legacy malformed tool-call shape. Renderers must normalize before iterating so a bad
   persisted callback cannot crash the chat with array-method errors.
@@ -356,10 +379,11 @@ follow-up message into the originating conversation. GlassHive first writes each
 SQLite outbox, dispatches the first delivery attempt off the user-facing request thread, retries
 delivery with the same callback id, treats duplicate `409` responses as delivered, and replays
 pending callbacks on service restart so a temporary parent outage does not silently drop the
-result. Replay refreshes `callback_ts` and re-signs the payload while preserving `callback_id`.
+result. A periodic retry loop must also replay pending callbacks without requiring a GlassHive
+restart. Replay refreshes `callback_ts` and re-signs the payload while preserving `callback_id`.
 First-attempt delivery and outbox replay must run in the background and must not block worker
 create/run APIs or GlassHive service startup if the callback receiver is slow or unavailable. The
-retry attempt count and base backoff are runtime-configurable.
+retry attempt count, base backoff, and periodic replay interval are runtime-configurable.
 
 Callback signing uses the canonical JSON body encoded as literal UTF-8. GlassHive must not sign an
 ASCII-escaped JSON variant while the parent receiver verifies a literal-Unicode stable JSON body,
@@ -533,6 +557,7 @@ persistent home and workspace mounts.
 | `WPR_IDLE_DESKTOP_PRIME_BROWSER` | `true` | Prime fresh worker desktops with the GlassHive placeholder browser page instead of the inherited base-image splash |
 | `GLASSHIVE_CALLBACK_RETRY_ATTEMPTS` | `3` | Callback delivery attempts before GlassHive records `callback.failed` |
 | `GLASSHIVE_CALLBACK_RETRY_BASE_DELAY_S` | `0.5` | Linear callback retry base delay in seconds |
+| `GLASSHIVE_CALLBACK_RETRY_INTERVAL_S` | `30` | Periodic pending-callback replay interval in seconds |
 | `GLASSHIVE_RUN_TIMEOUT_SEC` / `WPR_RUN_TIMEOUT_SEC` | unset | Optional explicit timeout for long-running CLI worker runs; unset means no default hard cap |
 | `GLASSHIVE_HOST_RUN_TIMEOUT_SEC` / `WPR_HOST_RUN_TIMEOUT_SEC` | unset | Optional host-specific override for host-native CLI runs |
 

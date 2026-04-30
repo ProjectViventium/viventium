@@ -581,16 +581,22 @@ def _is_glasshive_tool_name(name: str) -> bool:
     return len(parts) == 2 and parts[1] == _GLASSHIVE_MCP_SERVER
 
 
+def _iter_tool_call_parts(value: Any):
+    if isinstance(value, list):
+        for item in value:
+            yield from _iter_tool_call_parts(item)
+        return
+    if not isinstance(value, dict):
+        return
+    if value.get("type") == "tool_call":
+        yield value
+    for child in value.values():
+        if isinstance(child, (dict, list)):
+            yield from _iter_tool_call_parts(child)
+
+
 def payload_has_glasshive_tool_call(payload: dict[str, Any]) -> bool:
-    response = payload.get("responseMessage")
-    if not isinstance(response, dict):
-        return False
-    content = response.get("content")
-    if not isinstance(content, list):
-        return False
-    for part in content:
-        if not isinstance(part, dict) or part.get("type") != "tool_call":
-            continue
+    for part in _iter_tool_call_parts(payload):
         if _is_glasshive_tool_name(_extract_tool_call_name(part)):
             return True
     return False
@@ -1094,6 +1100,7 @@ class LibreChatBridge:
     def _set_active_stream(self, chat_id: str, stream_id: str) -> None:
         previous = self._active_stream_by_chat.get(chat_id)
         if previous and previous != stream_id:
+            keep_previous_glasshive = self._has_glasshive_seen(previous) and not self._has_followup_sent(previous)
             self._trace(
                 "LibreChatBridge replacing active stream: chat_id=%s old_stream=%s new_stream=%s",
                 chat_id,
@@ -1101,18 +1108,19 @@ class LibreChatBridge:
                 stream_id,
             )
             self._cancel_insight_task(previous)
-            self._cancel_followup_task(previous)
-            self._pending_followups.pop(previous, None)
-            self._response_message_ids.pop(previous, None)
-            self._conversation_by_stream.pop(previous, None)
-            self._followup_sent.discard(previous)
-            self._followup_send_lock_by_stream.pop(previous, None)
-            self._stream_identity.pop(previous, None)
-            self._cortex_seen_by_stream.pop(previous, None)
-            self._glasshive_seen_by_stream.discard(previous)
-            self._stream_text_by_stream.pop(previous, None)
-            self._brief_main_reply_by_stream.pop(previous, None)
-            self._voice_route_by_stream.pop(previous, None)
+            if not keep_previous_glasshive:
+                self._cancel_followup_task(previous)
+                self._pending_followups.pop(previous, None)
+                self._response_message_ids.pop(previous, None)
+                self._conversation_by_stream.pop(previous, None)
+                self._followup_sent.discard(previous)
+                self._followup_send_lock_by_stream.pop(previous, None)
+                self._stream_identity.pop(previous, None)
+                self._cortex_seen_by_stream.pop(previous, None)
+                self._glasshive_seen_by_stream.discard(previous)
+                self._stream_text_by_stream.pop(previous, None)
+                self._brief_main_reply_by_stream.pop(previous, None)
+                self._voice_route_by_stream.pop(previous, None)
         self._active_stream_by_chat[chat_id] = stream_id
 
     def _clear_active_stream(self, chat_id: str, stream_id: str) -> None:
@@ -1854,6 +1862,9 @@ class LibreChatBridge:
                                 self._mark_cortex_seen(stream_id)
                             # === VIVENTIUM END ===
 
+                            if payload_has_glasshive_tool_call(payload):
+                                self._mark_glasshive_seen(stream_id)
+
                             # === VIVENTIUM START ===
                             # Feature: Surface streamed attachments to Telegram (images/files).
                             attachments = extract_attachments(payload)
@@ -1880,8 +1891,6 @@ class LibreChatBridge:
                                     self._timing_log(trace_id, "lc_stream_final", stream_start_ts)
                                 self._mark_stream_final(stream_id)
                                 response_message_id = extract_response_message_id(payload)
-                                if payload_has_glasshive_tool_call(payload):
-                                    self._mark_glasshive_seen(stream_id)
                                 if response_message_id:
                                     self._response_message_ids[stream_id] = response_message_id
 
@@ -1941,9 +1950,9 @@ class LibreChatBridge:
                                     and not has_final_attachments
                                 ):
                                     diagnosis = _diagnose_empty_response(payload)
-                                    if deferred_internal_final:
+                                    if deferred_internal_final or self._has_glasshive_seen(stream_id):
                                         self._trace(
-                                            "LibreChatBridge deferred final: chat_id=%s stream_id=%s diagnosis=%s keys=%s",
+                                            "LibreChatBridge pending follow-up final: chat_id=%s stream_id=%s diagnosis=%s keys=%s",
                                             chat_id,
                                             stream_id,
                                             diagnosis,
@@ -2106,12 +2115,12 @@ class LibreChatBridge:
         last_parts: list[dict[str, Any]] = []
 
         try:
-            if not self.on_message_callback or not self._is_stream_active(chat_id, stream_id):
+            if not self.on_message_callback:
                 return
             if not message_id:
                 return
             while time.monotonic() - started_at < timeout_s:
-                if not self._is_stream_active(chat_id, stream_id):
+                if not poll_glasshive and not self._is_stream_active(chat_id, stream_id):
                     return
                 if self._has_followup_sent(stream_id):
                     return

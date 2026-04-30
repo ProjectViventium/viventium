@@ -31,9 +31,12 @@ absolute home-directory paths.
   conversation when callback context is present.
 - Callback receiver rejects stale signatures, replayed callback ids, and conversations not owned by
   the callback user before writing a follow-up message.
-- Callback receiver anchors early updates to the assistant response message id and updates one
-  status message for later visible callbacks from the same run, so worker lifecycle updates do not
-  create LibreChat sibling branches.
+- Callback receiver ignores non-terminal lifecycle events, anchors visible terminal/actionable
+  updates to the assistant response message id, and updates one status message for later visible
+  callbacks from the same run, so worker lifecycle updates do not create LibreChat sibling branches.
+- Callback receiver repairs callback message timestamps when a blank assistant anchor was created
+  before the user message, so chronological and tree views both show the user request before the
+  worker result.
 - Telegram and voice surfaces poll the same persisted GlassHive callback message so worker
   completion/blockers reach the originating chat/call without a manual status follow-up.
 - Web, Telegram, and voice arm the long GlassHive callback polling window only from structured
@@ -316,7 +319,8 @@ Fixes:
 - Docker CLI workers also no longer inherit the old hard 300s run timeout by default; `GLASSHIVE_RUN_TIMEOUT_SEC`
   / `WPR_RUN_TIMEOUT_SEC` provide the explicit operational cap when needed.
 - GlassHive writes outbound callbacks to a local SQLite outbox before delivery and replays pending
-  callbacks on restart with the same callback id, fresh timestamp, and fresh HMAC signature.
+  callbacks on restart and on a periodic retry loop with the same callback id, fresh timestamp, and
+  fresh HMAC signature.
 - Viventium callback persistence writes displayable structured text content whenever it writes
   user-visible callback text, including updates to an existing status message.
 - Client message rendering now tolerates legacy malformed object content and keeps polling after
@@ -332,8 +336,8 @@ Regression coverage run:
   host timeout values, and configured timeout values.
 - GlassHive callback delivery tests cover duplicate callback acknowledgements (`409`) as delivered
   no-ops, so replay-safe receiver behavior does not create false `callback.failed` noise.
-- GlassHive callback delivery tests cover failed callback persistence in the local outbox and
-  replay-after-service-restart delivery.
+- GlassHive callback delivery tests cover failed callback persistence in the local outbox,
+  replay-after-service-restart delivery, and non-blocking pending replay behavior.
 - LibreChat callback route tests cover visible callback content updates, in-place status update, and
   retryable rejection of visible callbacks that lack the assistant response anchor needed for
   branch-safe same-conversation delivery.
@@ -390,6 +394,62 @@ Regression coverage added:
   profile choices, and desktop action enums.
 - Visual QA must include a callback message with multiline text plus a long unbroken token/URL-like
   string and verify that the web chat remains readable after reload.
+
+## 2026-04-30 Follow-Up: Live Host Browser Same-Chat QA
+
+A live local QA pass used a synthetic localhost page and the local QA account. The user prompt did
+not mention GlassHive, Codex, Computer Use, or local machine:
+
+```text
+Open http://127.0.0.1:<port>/qa in a new Chrome tab and tell me the page title here. Keep it short.
+```
+
+Observed and fixed gaps:
+
+- Non-terminal callbacks (`worker.ready`, `run.queued`, `run.started`) were delivered successfully
+  but no longer created or updated visible chat messages.
+- LibreChat can create a blank assistant anchor before the user message timestamp. Callback updates
+  now override immutable timestamps when repairing that anchor, so persisted messages sort as user
+  request first, worker result second.
+- The main-agent-to-GlassHive instruction must preserve response-format constraints. Runtime and
+  MCP instructions now explicitly require short/exact-answer constraints to be passed to the worker.
+- Callback redaction now preserves Markdown delimiters when redacting local URLs and local artifact
+  paths, avoiding broken-looking link text.
+
+Verified live behavior:
+
+- The main agent selected the GlassHive host worker path from a normal real-browser task request.
+- The generated worker instruction preserved "only the page title" and "keep it short".
+- Routine `worker_delegate_once` tool results stay compact by default; run, project, worker, alias,
+  and execution-mode details are only returned when diagnostics are explicitly requested.
+- The host worker opened the synthetic page in the real Chrome session and left the Chrome tab on
+  the requested page.
+- The same chat received exactly the synthetic page title as the final assistant callback.
+- Mongo message ordering was correct: user message first, terminal GlassHive callback second.
+- The callback message content was a normal text array and contained only the concise title.
+- GlassHive callback outbox showed lifecycle callbacks delivered as internal 2xx acknowledgements
+  and the terminal completion delivered once.
+- The conversation contained no extra visible background insight messages.
+
+Release prerequisite:
+
+- Before claiming this flow is shipped in a live install, run the documented live-vs-source agent
+  compare and sync the source-of-truth agent/MCP prompt changes intentionally. The new
+  `worker_delegate_once` tool entry and GlassHive prompt rules must be present in the live agent
+  bundle, not only in tracked YAML.
+
+Regression coverage added or re-run:
+
+- LibreChat callback receiver tests cover silent non-terminal callbacks, terminal callback
+  persistence, blank-anchor timestamp repair, Markdown-safe redaction, replay, stale HMAC, and
+  conversation ownership rejection.
+- LibreChat message model tests cover explicit timestamp override for callback anchor repair.
+- GlassHive runtime/API/MCP tests cover host worker delegation, callback context, no default hard
+  CLI timeout, and `FINAL REPORT:` callback selection.
+- Web client tests cover malformed callback content normalization so legacy callback rows cannot
+  crash rendering with array-method errors.
+- Telegram and Voice tests cover long GlassHive callback polling and same-surface completion
+  delivery after a newer user turn.
 
 ## 2026-04-29 Key-Principles Check
 
