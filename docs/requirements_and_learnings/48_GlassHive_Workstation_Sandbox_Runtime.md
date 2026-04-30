@@ -75,6 +75,9 @@ disabled.
   lower-level status tools, so routine chat turns cannot accidentally leak internal IDs.
 - Host worker prompts must require a final user-facing completion block, headed `FINAL REPORT:`,
   so callback delivery can surface results instead of progress chatter.
+- CLI output parsing must treat intermediate assistant messages as progress. For Codex/Claude-style
+  workers, GlassHive should publish the explicit `FINAL REPORT:` section when present, otherwise the
+  latest assistant result, not a concatenation of every progress message.
 
 ### Why Selenium's Docker Image (Not Selenium Grid)
 
@@ -192,9 +195,16 @@ Host-worker UX and callback requirements:
   conversation. It must be signed, replay-protected, anchored to the assistant response message,
   persisted in a local callback outbox until delivered, persisted in the conversation store after
   receiver acceptance, and pollable by web, Telegram, and voice surfaces.
+- This communication line must work after the original chat request has ended, after UI refresh,
+  and across long-running or parallel workers. The user should not have to ask "what happened?" for
+  GlassHive to return the result.
 - Worker callbacks provide verified execution evidence. They must stay structured and sanitized so
   the main agent/follow-up layer can decide whether to surface the information, summarize it, or
   remain silent with `{NTA}` when the information is redundant or irrelevant.
+- Callback/result surfacing should follow the same high-level pattern as Scheduling Cortex
+  follow-ups: backend services inject bounded verified context into the conversation path, and the
+  main agent/user-visible layer owns whether the content is useful to show or should be suppressed
+  as `{NTA}`/irrelevant. Do not create a second conversation-specific reporting path.
 - Worker lifecycle and queue events remain internal lifecycle/audit events and are not posted into
   the user conversation. The main assistant turn owns any immediate "working on it" status. The
   GlassHive callback receiver surfaces only terminal/actionable events: completion, failure,
@@ -206,6 +216,8 @@ Host-worker UX and callback requirements:
   rendering preserves paragraphs, redacts common local/private path forms, and uses the same visible
   length budget as the GlassHive terminal callback selector so the selected result is not truncated
   again.
+- Completion selection must happen before truncating stored CLI output. Long progress streams should
+  never push the final assistant result out of the retained text window.
 - Repeated visible callbacks for one worker run update a single task-status message instead of
   creating a chain of callback branches.
 - Visible callbacks must include the assistant response `message_id` for the originating turn.
@@ -220,6 +232,9 @@ Host-worker UX and callback requirements:
   specific visible state, that requirement must be passed into the worker instruction and into the
   final callback; screenshots, run logs, IDs, local artifact paths, and extra evidence stay out of
   the user-visible result unless requested or required to explain a blocker.
+- Conversation titles for host-worker tasks should summarize the user-visible task or outcome.
+  Title generation must not reinterpret local/private URLs as failed browsing targets or expose
+  internal worker mechanics.
 - Message rendering must tolerate callback/status content stored as an array, single object, string,
   `null`, or legacy malformed tool-call shape. Renderers must normalize before iterating so a bad
   persisted callback cannot crash the chat with array-method errors.

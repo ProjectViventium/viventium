@@ -390,6 +390,18 @@ Regression coverage added:
   redacted, and long result text within the shared callback budget is not truncated a second time.
 - GlassHive profile-runtime coverage proves default host workspace prompts require a `FINAL REPORT:`
   block in the harness and agent context files.
+- GlassHive parser coverage proves accumulated Codex progress messages do not mask the latest
+  assistant result or explicit `FINAL REPORT:` section.
+- GlassHive API coverage proves alias-based worker reuse refreshes callback metadata before the
+  next run, so reusable workers return results to the current originating conversation instead of
+  a stale or missing callback target.
+- Web client coverage proves consecutive GlassHive MCP calls collapse into one visible worker row and
+  progress labels truncate cleanly instead of overflowing or creating unreadable line breaks.
+- Web client coverage proves routine `worker_delegate_once` rows are hidden from normal chat
+  rendering; users should see the short human acknowledgement and final result, not internal
+  GlassHive plumbing.
+- Config/runtime QA must verify host-worker conversations produce user-friendly titles based on
+  the task or outcome, not URL accessibility failures or worker/runtime terminology.
 - MCP schema coverage proves worker tools advertise host-native execution mode, the Codex/Claude
   profile choices, and desktop action enums.
 - Visual QA must include a callback message with multiline text plus a long unbroken token/URL-like
