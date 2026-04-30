@@ -352,6 +352,45 @@ Regression coverage run:
   conversation in Chrome and verified the page renders without the `content.forEach` crash or a
   blank blocked bubble.
 
+## 2026-04-30 Follow-Up: Result Quality, Discoverability, And Visual Layout
+
+Live QA of a host-native browser/listing task exposed three additional public-safe product issues:
+
+- The worker completed and produced the requested extracted data, but the completion callback used
+  the beginning of accumulated CLI progress output instead of the final result. The user saw a
+  mid-word fragment and did not receive the useful result.
+- The primary web renderer path could still collapse content-array callback text into narrow,
+  hard-to-read lines when the message wrapper had no `min-width: 0`/full-width constraints.
+- The main agent and GlassHive MCP descriptions relied too much on users naming implementation
+  details. Users should be able to ask for a real-browser/local-computer outcome, and the
+  source-of-truth prompts plus MCP schemas should steer the structured GlassHive call.
+
+Fixes:
+
+- Host harness prompts now require a `FINAL REPORT:` block for every run. GlassHive completion
+  callbacks select that block when present, or the useful output tail for older workers.
+- GlassHive and Viventium use the same visible callback text budget, and the callback receiver
+  preserves paragraphs while still redacting common local/private path forms.
+- All known message-rendering paths now include full-width/min-width guards around assistant
+  callback content.
+- Source-of-truth Viventium and GlassHive MCP prompts describe real-computer capabilities directly:
+  signed-in browser sessions, desktop apps, local files/projects, installed CLIs, OS/window control,
+  long-running work, and same-chat callbacks. Runtime code still relies on structured arguments,
+  not keyword or provider-name heuristics.
+
+Regression coverage added:
+
+- GlassHive unit coverage proves a completed run callback posts the `FINAL REPORT:` result instead
+  of progress chatter.
+- LibreChat callback coverage proves multiline result text is preserved, local details are
+  redacted, and long result text within the shared callback budget is not truncated a second time.
+- GlassHive profile-runtime coverage proves default host workspace prompts require a `FINAL REPORT:`
+  block in the harness and agent context files.
+- MCP schema coverage proves worker tools advertise host-native execution mode, the Codex/Claude
+  profile choices, and desktop action enums.
+- Visual QA must include a callback message with multiline text plus a long unbroken token/URL-like
+  string and verify that the web chat remains readable after reload.
+
 ## 2026-04-29 Key-Principles Check
 
 Checked against `docs/requirements_and_learnings/01_Key_Principles.md` before local commit:

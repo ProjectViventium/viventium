@@ -40,8 +40,31 @@ Viventium/LibreChat but architecturally independent.
 | `host` | No-sandbox host-native process execution using local `codex`, `claude`, or `openclaw` CLIs |
 
 Host-native workers are intentionally powerful. They act on the user's main computer and inherit the
-local OS, filesystem, browser, and CLI auth posture. They must be selected explicitly through
-`execution_mode=host`; Docker remains the isolated default.
+local OS, filesystem, browser, and CLI auth posture. The selected mode is a structured runtime
+decision, not a free-text runtime heuristic: `execution_mode=host` means the real computer/session,
+and `execution_mode=docker` means isolated workstation. Deployments may configure either mode as the
+MCP default; when the user request depends on the real browser profile, desktop apps, local files,
+installed CLIs, or OS/window control, GlassHive-facing prompts and schemas should steer the main
+agent to host mode unless the user explicitly asks for an isolated sandbox or the host-worker gate is
+disabled.
+
+### Host-Native Discoverability Contract
+
+- Users should not need to say "GlassHive", "Codex", "computer use", or "on this local machine" for
+  every real-computer task. Viventium's main agent prompt and the GlassHive MCP tool descriptions
+  should advertise concrete capabilities such as signed-in browser sessions, desktop apps, local
+  files/projects, installed CLIs, OS/window control, long-running work, and callbacks.
+- Runtime code must not infer intent from prompt text, provider names, or tool-substring matching.
+  The main agent chooses structured tool arguments (`execution_mode`, `profile`, `workspace_root`,
+  `alias`, callback metadata) from source-of-truth prompts, MCP schemas, and config.
+- If host vs sandbox is genuinely ambiguous and both are available, the user-facing question should
+  be short and outcome-oriented: ask whether to use the real computer/session or an isolated
+  sandbox. If the task clearly requires an existing login/session or local file/app, default to host.
+- Prefer `codex-cli` for available host browser, desktop, file, and code execution. Use
+  `claude-code` when the user asks for Claude or when configured as the preferred local CLI. Use
+  `openclaw-general` only when installed/configured or explicitly requested.
+- Host worker prompts must require a final user-facing completion block, headed `FINAL REPORT:`,
+  so callback delivery can surface results instead of progress chatter.
 
 ### Why Selenium's Docker Image (Not Selenium Grid)
 
@@ -164,6 +187,11 @@ Host-worker UX and callback requirements:
   approval/checkpoint, takeover/help-needed, and cancellation states.
 - Completion callbacks should carry the concise final result. Failure callbacks should say what got
   stuck and what help is needed. Approval callbacks should state the specific decision required.
+- Completion callback text is selected from the worker's `FINAL REPORT:` block when present, or from
+  the useful tail of the run output when older workers omit that marker. Receiver-side callback
+  rendering preserves paragraphs, redacts common local/private path forms, and uses the same visible
+  length budget as the GlassHive terminal callback selector so the selected result is not truncated
+  again.
 - Repeated visible callbacks for one worker run update a single task-status message instead of
   creating a chain of callback branches.
 - Visible callbacks must include the assistant response `message_id` for the originating turn.
