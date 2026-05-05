@@ -202,10 +202,14 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   startup source ahead of legacy repo-local or private overlay files.
 - Telegram voice-note STT is a bridge reliability boundary:
   - canonical `integrations.telegram.stt_provider` may override transcription just for Telegram
-  - when omitted and global voice STT is local Whisper, the compiler defaults Telegram to hosted
-    OpenAI STT so a native local transcription crash cannot stop Telegram message delivery
-  - operators who explicitly want local Telegram STT can set `integrations.telegram.stt_provider`
-    to the local provider and accept that risk knowingly
+  - when omitted, Telegram inherits the configured global voice STT provider, including local
+    Whisper/whisper.cpp
+  - the compiler must not silently remap inherited local Whisper to OpenAI, AssemblyAI, or any
+    hosted provider; hosted Telegram STT must be an explicit operator choice
+  - local Telegram STT must use the serialized local-STT path and media-decoder preflight instead
+    of avoiding local STT by changing providers behind the user's back
+  - release tests must assert the inherited local-Whisper default so future "reliability" changes
+    cannot drift Telegram onto hosted STT without an explicit config field
 - Managed Telegram large-media mode follows the same rule:
   - canonical `integrations.telegram.local_bot_api` config compiles to generated Telegram service env
   - the launcher reads that generated env to decide whether it owns a local `telegram-bot-api` process
@@ -388,6 +392,67 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     Documents-folder prompts even when the helper app bundle lives in `~/Applications`
   - the correct fix belongs in helper install/config binding, not in App Support hand edits and not
     by asking users to grant broader folder access than the supported install actually needs
+- On May 2, 2026, a recurrence exposed two additional helper delivery requirements:
+  - already-installed helper state must self-heal stale protected-folder `repoRoot` values on
+    helper launch, because source fixes in the installer do not automatically rewrite App Support
+    config for users who already have the helper installed
+  - detached helper start/stop must derive the command from the healed helper config instead of
+    trusting a generated App Support wrapper that may still contain an old protected checkout path
+  - when no safe checkout exists, helper install must fail closed and the running helper must block
+    start/stop/backup actions with clear user guidance instead of silently launching from the
+    protected checkout
+  - Swift and shell protected-folder checks must both resolve symlinks so aliases or symlinked
+    checkout paths do not bypass the macOS TCC boundary
+  - the assembled helper app bundle must be locally code signed with the `ai.viventium.helper`
+    bundle identifier after packaging so the installed app identity matches the product bundle;
+    Developer ID signing is still required for update-stable TCC identity, so signing is not a
+    substitute for keeping runtime roots out of protected folders
+- The same incident clarified the developer-checkout escape hatch:
+  - default public installs still prefer a safe checkout outside `~/Documents`, `~/Desktop`, and
+    `~/Downloads` to avoid repeated macOS folder-access prompts
+  - developers need an explicit machine-local setting when they want helper/start commands to run
+    the checkout they are actively editing, even when a separate installed checkout also exists
+  - `bin/viventium runtime-checkout use --this --allow-protected-folder` records that choice under
+    App Support state and refreshes the helper binding without copying, deleting, resetting,
+    pulling, or migrating code, runtime config, snapshots, or database state
+  - helper refresh from this command should relaunch the status-bar helper so applying the setting
+    does not make the menu disappear until the next login
+  - helper config carries the same explicit protected-folder acknowledgement so the helper does not
+    silently self-heal the developer checkout back to `~/viventium`
+  - global or stale checkout invocations of start, stop, and helper-binding commands should re-exec
+    through the active runtime checkout instead of starting or stopping a different repo by accident
+  - re-execed commands must use the active checkout's own component lock file instead of carrying
+    the caller checkout's `components.lock.json`
+  - the re-exec boundary must reset both argv and inherited environment, including
+    `VIVENTIUM_COMPONENTS_LOCK_FILE`; otherwise the right code can still read the wrong component
+    lock
+  - an explicit active-checkout setting must outrank LaunchAgent environment hints such as
+    `VIVENTIUM_HELPER_RUNTIME_REPO_ROOT`; install-time helper defaults should not outvote a later
+    developer selection
+  - clearing the setting restores automatic checkout resolution; it must not remove App Support
+    state or repo files
+- The same pass exposed an optional-cleanup rule:
+  - disabled optional maintenance features must not block start/upgrade when their cleanup helper is
+    absent from a temporary or partial checkout
+  - if memory hardening is explicitly enabled and its helper script is missing, fail closed; if the
+    feature is disabled and an old LaunchAgent cleanup cannot run, warn and continue
+- The same May 2, 2026 incident clarified two health-reporting boundaries:
+  - the macOS helper's Running/Stopped state is a core surface check only: LibreChat API, LibreChat
+    frontend, and the modern playground. Optional sidecars such as MCP servers, local search,
+    recall, voice, or scraper services must not make the helper show `Start` while the app is
+    usable.
+  - optional sidecars still matter for stop convergence and for `bin/viventium status`, where each
+    sidecar must report its own live/configured/action-required state.
+  - OAuth-backed MCP servers that already have a usable stored access or refresh token should be
+    warmed by the connection-status endpoint. The UI should not stay in a needs-auth/disconnected
+    state merely because the last refresh happened while the local MCP listener was down.
+  - status-route warmup must be bounded: cooldown/in-flight guards still apply, OAuth token
+    presence should be short-cacheable, and setup data should be re-read only after a warmup
+    attempt that could have changed connection state
+  - the browser MCP status query should refresh periodically while MCP controls are mounted so a
+    recovered local listener or refreshed token becomes visible without requiring a full page reload.
+  - MCP endpoint readiness must treat an HTTP auth challenge from `/mcp` as a live server signal;
+    connection-refused is the failure state.
 - On April 5, 2026, a background-cortex failure showed why install/start ownership matters:
   built-in Anthropic agents are re-seeded from source-of-truth on startup, so fixing only live
   Mongo state or only a local runtime leftover would not align fresh installs or later restarts.

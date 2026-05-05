@@ -279,6 +279,105 @@ Observed results:
 
 ## Date
 
+- 2026-05-02
+
+## Build Under Test
+
+- Parent repo: local working tree
+- Nested modern-playground repo base commit: `3d085e0`
+- Runtime profile: `isolated`
+
+## Scope
+
+- Investigate repeated modern-playground startup failures showing:
+  - `Call failed to start`
+  - `publishing rejected as engine not connected within timeout`
+- Verify the canonical local call path on the launcher-managed playground at `http://localhost:3300`.
+
+## RCA
+
+- LiveKit, the voice gateway, and call-session creation were all running.
+- The failed room had `dispatchConfirmedAt`, but no `activeJobId` or `activeWorkerId`.
+- LiveKit logs showed delayed dispatch list/create work followed by the browser participant joining
+  without a user microphone track publish.
+- The browser-side root cause was startup ordering:
+  - `session.start()` fetched `/api/connection-details`
+  - that route also performed Viventium dispatch claim/list/create work
+  - LiveKit React attempted pre-connect microphone publication at the same time
+  - if dispatch/token setup took long enough, LiveKit's client-side signal-engine wait expired
+    before the room was connected
+- The voice gateway never received a publisher job in that failed path because no user microphone
+  track was published.
+
+## Fix
+
+- For explicit-dispatch calls, the modern playground now connects the room with microphone disabled
+  first, then enables the microphone after the room is connected.
+- The generic sandbox path still uses the normal LiveKit `session.start()` behavior.
+- QA also found a cleanup regression: the sleep-recovery hook could restart after a deliberate
+  visible-page End Call. Recovery now only triggers after a background/sleep return.
+
+## Verification
+
+Automated checks:
+
+- `pnpm exec prettier --check components/app/app.tsx hooks/useConnectionRecovery.ts components/livekit/voice-route-control.tsx`
+- `pnpm exec tsc --noEmit`
+- `pnpm build`
+- `cd viventium_v0_4/LibreChat/api && npm run test:ci -- server/routes/viventium/__tests__/calls.spec.js --runInBand`
+  - Result: `8 passed`
+- Added release-contract assertions in `tests/release/test_voice_playground_dispatch_contract.py`
+  for explicit-dispatch microphone deferral and End Call recovery behavior.
+- `python3 -m py_compile tests/release/test_voice_playground_dispatch_contract.py`
+  - Result: passed
+- `python3 -m pytest tests/release/test_voice_playground_dispatch_contract.py -q`
+  - Result: not executed in this local environment because the available Python runtimes did not
+    have `pytest` installed.
+
+Runtime checks:
+
+- `http://localhost:3300/` returned `200` on the launcher-managed playground.
+- Fresh call sessions launched in the real Chrome profile and reached the connected call UI.
+- Chrome showed active microphone recording during the call.
+- LiveKit participant state and runtime logs for the verified rooms showed:
+  - user participant active
+  - unmuted user microphone track
+  - `JT_PUBLISHER` job assigned to `librechat-voice-gateway`
+  - agent participant active
+  - unmuted agent audio track
+- Voice-gateway logs showed:
+  - job request received
+  - selected STT/TTS route loaded for the call
+- Mongo call-session state showed populated `activeJobId`, `activeWorkerId`,
+  `dispatchConfirmedAt`, `dispatchRoomName`, and `dispatchAgentName`.
+- The original browser error did not recur.
+- End Call returned the page to the Start chat gate and stopped microphone recording.
+- Post-End-Call log check showed exactly one publisher-worker assignment for the final verified
+  room, proving the recovery hook did not create a duplicate reconnect/job.
+
+## Claude Review
+
+- A review-only ClaudeViv pass agreed that the primary owner was browser startup sequencing, not
+  STT/TTS provider setup or voice-worker availability.
+- It specifically called out the need to avoid a one-room workaround and to verify cleanup/recovery
+  behavior. The final fix covers explicit-dispatch calls generally and the End Call recovery edge.
+- It also requested a cheap regression guard for the sequencing and recovery contracts. Those
+  assertions are now in the release test file.
+
+## Residual Notes
+
+- A Playwright-isolated Chrome pass connected to LiveKit signaling but failed ICE before microphone
+  publication. That was not the user-visible path and did not reproduce in the real Chrome profile.
+- A DB-seeded QA session proved the transport path but bypassed the authenticated conversation
+  launch context and later logged a model-selection warning. That warning is separate from the
+  call-start timeout fixed here.
+- The local runtime still logs unrelated memory/recall provider issues. They did not block the
+  verified browser-to-LiveKit-to-voice-gateway startup path.
+
+---
+
+## Date
+
 - 2026-04-12
 
 ## Build Under Test
@@ -509,3 +608,91 @@ Observed results:
   stack to validate both:
   - page-load health
   - downstream voice join behavior
+
+---
+
+## Date
+
+- 2026-05-02
+
+## Scope
+
+- Investigate a modern-playground voice call that dropped and then showed `Failed to fetch`.
+- Validate whether the failure was browser-only, LiveKit-only, or stale call-session/dispatch state.
+
+## Evidence Reviewed
+
+- Runtime process state for LibreChat, the modern playground, LiveKit, Mongo, and the voice gateway.
+- LiveKit and voice-gateway logs for worker registration and restart timing.
+- Mongo call-session rows for recent rooms, dispatch confirmation, active job/worker state, and
+  lease expiry.
+- Modern-playground startup code, `/api/connection-details`, call-state hook, voice-settings hook,
+  and LibreChat dispatch claim/confirm endpoints.
+- Review-only second opinion from the local Claude helper.
+
+## Findings
+
+- The local stack was restarted during the affected call window. LiveKit and the voice gateway came
+  back healthy and the gateway registered as `librechat-voice-gateway`.
+- The affected persisted call session still had `dispatchConfirmedAt`, but its worker lease had
+  expired and LiveKit restart can clear the in-memory dispatch that the persisted confirmation
+  referred to.
+- Before the fix, `/api/connection-details` treated `dispatch/claim -> already` as enough evidence
+  and skipped LiveKit dispatch list/create. A rejoin after restart could therefore receive a room
+  token while no matching LiveKit dispatch existed.
+- The browser startup path also returned raw network exception text, so a transient runtime fetch
+  failure surfaced as literal `Failed to fetch` instead of a Viventium recovery message.
+
+## Fix Implemented
+
+- `/api/connection-details` now verifies LiveKit dispatch existence even when Mongo reports an
+  already-confirmed dispatch.
+- If Mongo is confirmed but LiveKit has no matching dispatch, the route performs a second
+  server-side reclaim with `reclaimConfirmed=true` before creating a replacement dispatch.
+- If LiveKit dispatch listing fails, the route fails closed instead of treating the unknown LiveKit
+  state as an empty dispatch list.
+- If dispatch claim reports the call session expired, the route returns an expired-session response
+  before issuing a participant token.
+- `claimDispatch` now atomically reclaims confirmed dispatches by unsetting `dispatchConfirmedAt`
+  during the reclaim; concurrent reclaims fall back to `in_flight`.
+- The modern playground retries transient connection-details, call-state, and voice-settings fetch
+  failures once and replaces raw browser fetch errors with Viventium-specific recovery text.
+
+## QA Executed
+
+- Direct release-contract checks for:
+  - stale confirmed dispatch recreation after LiveKit restart
+  - existing LiveKit dispatch preservation
+  - in-flight claim duplicate prevention
+  - fail-closed behavior when LiveKit dispatch listing fails
+  - expired call-session rejection before token issue
+  - connection-details fetch retry/error normalization
+  - call-state and voice-settings fetch retry/error normalization
+- `python3 -m py_compile tests/release/test_voice_playground_dispatch_contract.py`
+- `pnpm exec prettier --check components/app/app.tsx app/api/connection-details/route.ts hooks/useCallSessionState.ts hooks/useCallSessionVoiceSettings.ts`
+- `pnpm exec tsc --noEmit`
+- `pnpm build`
+- `npm run test:ci -- server/services/viventium/__tests__/CallSessionService.spec.js server/routes/viventium/__tests__/calls.spec.js --runInBand`
+- Live runtime sanity probes:
+  - modern playground root returned HTTP 200
+  - LibreChat health endpoint returned HTTP 200
+  - LiveKit HTTP endpoint returned HTTP 200
+  - voice worker health endpoint returned `OK`
+
+## QA Notes
+
+- `python3 -m pytest tests/release/test_voice_playground_dispatch_contract.py -q` could not run in
+  this local Python environment because `pytest` is not installed; the same new assertions were
+  executed through the direct Python harness.
+- The latest logs still contain unrelated provider model-discovery noise and earlier QA-created
+  sessions with a non-canonical agent id. The affected live user call used the canonical Viventium
+  agent id, so those entries were not the root cause of this call drop.
+- Claude second-opinion review agreed the reclaim design is race-safe in the common path and
+  recommended two hardening changes: fail closed on LiveKit dispatch-list failures and handle
+  expired claim status explicitly. Both were implemented and covered by release-contract checks.
+
+## Conclusion
+
+- Root cause fixed at the correct ownership boundary: durable call-session state is no longer
+  mistaken for durable LiveKit dispatch state, and transient runtime fetch failures no longer leak
+  raw browser exception text to the call UI.

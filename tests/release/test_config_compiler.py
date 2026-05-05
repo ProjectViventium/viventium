@@ -7,6 +7,7 @@ import platform
 import subprocess
 import sys
 import importlib.util
+import stat
 from pathlib import Path
 
 import pytest
@@ -492,7 +493,7 @@ def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) 
             },
             "secondary": {"provider": "none", "auth_mode": "disabled"},
             "extra_provider_keys": {
-                "x_ai": "xai-test",
+                "x_ai": "synthetic_xai_test",
             },
         },
         "voice": {
@@ -633,7 +634,7 @@ def test_build_agent_assignments_requires_openai_or_anthropic_foundation() -> No
             "primary": {
                 "provider": "x_ai",
                 "auth_mode": "api_key",
-                "secret_value": "xai-test",
+                "secret_value": "synthetic_xai_test",
             },
             "secondary": {"provider": "none", "auth_mode": "disabled"},
             "extra_provider_keys": {},
@@ -662,7 +663,7 @@ def test_config_compiler_full_run_requires_openai_or_anthropic_foundation(tmp_pa
             "primary": {
                 "provider": "x_ai",
                 "auth_mode": "api_key",
-                "secret_value": "xai-test",
+                "secret_value": "synthetic_xai_test",
             },
             "secondary": {"provider": "none", "auth_mode": "disabled"},
             "extra_provider_keys": {},
@@ -952,7 +953,7 @@ def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundat
             "primary": {
                 "provider": "x_ai",
                 "auth_mode": "api_key",
-                "secret_value": "xai-test",
+                "secret_value": "synthetic_xai_test",
             },
             "secondary": {
                 "provider": "openai",
@@ -1474,7 +1475,7 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
                 "secret_value": "anthropic-test",
             },
             "extra_provider_keys": {
-                "x_ai": "xai-test",
+                "x_ai": "synthetic_xai_test",
             },
         },
         "voice": {
@@ -1537,7 +1538,7 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert "ASSEMBLYAI_API_KEY=assemblyai-test" in runtime_env
     assert "ELEVENLABS_API_KEY=elevenlabs-test" in runtime_env
     assert "ELEVEN_API_KEY=elevenlabs-test" in runtime_env
-    assert "XAI_API_KEY=xai-test" in runtime_env
+    assert "XAI_API_KEY=synthetic_xai_test" in runtime_env
     assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in runtime_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-secret-2" in runtime_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
@@ -2242,10 +2243,85 @@ def test_config_compiler_renders_managed_local_telegram_bot_api_settings(tmp_pat
     assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH=telegram-api-hash-test" in runtime_env
     assert "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN=http://127.0.0.1:8084" in runtime_env
     assert "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE=104857600" in runtime_env
-    assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=openai" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=whisper_local" in telegram_env
     assert "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED=true" in telegram_env
     assert "VIVENTIUM_TELEGRAM_BOT_API_ORIGIN=http://127.0.0.1:8084" in telegram_env
     assert "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE=104857600" in telegram_env
+    telegram_env_mode = stat.S_IMODE((output_dir / "service-env" / "telegram.config.env").stat().st_mode)
+    runtime_env_mode = stat.S_IMODE((output_dir / "runtime.env").stat().st_mode)
+    librechat_env_mode = stat.S_IMODE((output_dir / "service-env" / "librechat.env").stat().st_mode)
+    assert telegram_env_mode == 0o600
+    assert runtime_env_mode == 0o600
+    assert librechat_env_mode == 0o600
+
+
+@pytest.mark.parametrize("voice_stt_provider", ["whisper_local", "pywhispercpp", "local"])
+def test_config_compiler_inherits_local_voice_stt_for_telegram_when_not_overridden(
+    tmp_path: Path,
+    voice_stt_provider: str,
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {
+                "secret_value": f"call-secret-telegram-stt-default-{voice_stt_provider}"
+            },
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": voice_stt_provider,
+            "tts_provider": "browser",
+        },
+        "integrations": {
+            "telegram": {
+                "enabled": True,
+                "secret_value": VALID_TELEGRAM_TOKEN,
+            },
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
+
+    assert f"VIVENTIUM_TELEGRAM_STT_PROVIDER={voice_stt_provider}" in telegram_env
+    assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=openai" not in telegram_env
+    assert "VIVENTIUM_TELEGRAM_STT_PROVIDER=assemblyai" not in telegram_env
 
 
 def test_config_compiler_allows_explicit_telegram_stt_provider_override(tmp_path: Path) -> None:
@@ -3014,7 +3090,7 @@ def test_config_compiler_prefers_real_optional_provider_keys_over_placeholders(t
                 "google": "google-key-real",
                 "openrouter": "openrouter-real",
                 "perplexity": "perplexity-real",
-                "x_ai": "xai-real",
+                "x_ai": "synthetic_xai_real",
             },
         },
         "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
@@ -3048,7 +3124,7 @@ def test_config_compiler_prefers_real_optional_provider_keys_over_placeholders(t
     assert "GOOGLE_KEY=google-key-real" in runtime_env
     assert "OPENROUTER_API_KEY=openrouter-real" in runtime_env
     assert "PERPLEXITY_API_KEY=perplexity-real" in runtime_env
-    assert "XAI_API_KEY=xai-real" in runtime_env
+    assert "XAI_API_KEY=synthetic_xai_real" in runtime_env
 
 
 def test_config_compiler_omits_websearch_bundle_when_feature_is_disabled(tmp_path: Path) -> None:

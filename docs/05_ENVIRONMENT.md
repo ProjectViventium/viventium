@@ -22,9 +22,9 @@ Telegram local Bot API settings now have canonical config fields under
 `integrations.telegram` and should not require `runtime.extra_env`.
 That same canonical block now owns:
 - `max_file_size_bytes`
-- `stt_provider` for Telegram-only voice note transcription; when omitted and the global voice STT
-  provider is local Whisper, Telegram defaults to hosted OpenAI STT so the bridge cannot be taken
-  down by an in-process native transcription crash
+- `stt_provider` for Telegram-only voice note transcription; when omitted, Telegram inherits the
+  configured global voice STT provider, including local Whisper/whisper.cpp. The compiler must not
+  silently switch Telegram to hosted OpenAI or AssemblyAI.
 - explicit external Bot API URLs (`bot_api_origin` / base URLs)
 - the Viventium-managed same-Mac local Bot API path under `local_bot_api`
 

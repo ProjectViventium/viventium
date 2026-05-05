@@ -36,6 +36,14 @@ def test_http_ok_prefers_curl_when_available(monkeypatch) -> None:
     assert calls == [["/usr/bin/curl", "-fsS", "-o", "/dev/null", "--max-time", "2", "http://localhost:3180/api/health"]]
 
 
+def test_http_endpoint_reachable_treats_auth_challenge_as_alive(monkeypatch) -> None:
+    install_summary = load_install_summary_module()
+
+    monkeypatch.setattr(install_summary, "http_status", lambda _url: 401)
+
+    assert install_summary.http_endpoint_reachable("http://localhost:6274/mcp") is True
+
+
 def test_build_service_rows_treats_localhost_api_health_as_running(monkeypatch) -> None:
     install_summary = load_install_summary_module()
 
@@ -90,6 +98,150 @@ def test_build_service_rows_accepts_ipv4_loopback_when_localhost_probe_fails(mon
     assert service_status["LibreChat Frontend"] == "Running"
     assert service_status["LibreChat API"] == "Running"
     assert service_status["Modern Playground"] == "Running"
+
+
+def test_build_service_rows_marks_mcp_running_on_auth_challenge(monkeypatch, tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"profile": "isolated", "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {
+            "google_workspace": {"enabled": True},
+            "ms365": {"enabled": True},
+        },
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        install_summary,
+        "http_ok",
+        lambda url: url
+        in {
+            "http://localhost:3190",
+            "http://localhost:3180/api/health",
+            "http://localhost:3300",
+        },
+    )
+    monkeypatch.setattr(install_summary, "http_status", lambda url: 401 if url.endswith("/mcp") else None)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "GOOGLE_WORKSPACE_MCP_URL": "http://localhost:8111/mcp",
+            "MS365_MCP_SERVER_URL": "http://localhost:6274/mcp",
+            "START_GOOGLE_MCP": "true",
+            "START_MS365_MCP": "true",
+            "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        },
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Google Workspace MCP"] == ("Running", "http://localhost:8111/mcp")
+    assert services["Microsoft 365 MCP"] == ("Running", "http://localhost:6274/mcp")
+
+
+def test_build_service_rows_marks_started_mcp_action_required_after_startup(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"profile": "isolated", "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {"ms365": {"enabled": True}},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        install_summary,
+        "http_ok",
+        lambda url: url
+        in {
+            "http://localhost:3190",
+            "http://localhost:3180/api/health",
+            "http://localhost:3300",
+        },
+    )
+    monkeypatch.setattr(install_summary, "http_status", lambda _url: None)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "MS365_MCP_SERVER_URL": "http://localhost:6274/mcp",
+            "START_MS365_MCP": "true",
+            "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        },
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Microsoft 365 MCP"][0] == "Action Required"
+    assert "Endpoint not reachable" in services["Microsoft 365 MCP"][1]
+
+
+def test_build_service_rows_marks_started_mcp_starting_while_cli_lock_is_active(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"profile": "isolated", "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {"ms365": {"enabled": True}},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+    lock_dir = tmp_path / "state" / "cli-operation.lock"
+    lock_dir.mkdir(parents=True)
+    (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+
+    monkeypatch.setattr(
+        install_summary,
+        "http_ok",
+        lambda url: url
+        in {
+            "http://localhost:3190",
+            "http://localhost:3180/api/health",
+            "http://localhost:3300",
+        },
+    )
+    monkeypatch.setattr(install_summary, "http_status", lambda _url: None)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "MS365_MCP_SERVER_URL": "http://localhost:6274/mcp",
+            "START_MS365_MCP": "true",
+            "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        },
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Microsoft 365 MCP"][0] == "Starting"
+    assert "Waiting for" in services["Microsoft 365 MCP"][1]
 
 
 def test_build_service_rows_marks_invalid_telegram_bridge_as_misconfigured(monkeypatch, tmp_path: Path) -> None:

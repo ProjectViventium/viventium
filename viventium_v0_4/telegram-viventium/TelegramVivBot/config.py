@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 import time
+import asyncio
 
 # CRITICAL: Load .env BEFORE any imports that read environment variables!
 from dotenv import load_dotenv
@@ -550,6 +551,22 @@ def sync_voice_preferences(user_id, always_voice, voice_enabled):
         logging.getLogger(__name__).warning("Voice preference sync error: %s", e)
 
 
+def schedule_voice_preferences_sync(user_id, always_voice, voice_enabled):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        sync_voice_preferences(user_id, always_voice, voice_enabled)
+        return None
+    return loop.create_task(
+        asyncio.to_thread(
+            sync_voice_preferences,
+            user_id,
+            always_voice,
+            voice_enabled,
+        )
+    )
+
+
 def _extract_telegram_user_id(conversation_key):
     raw = str(conversation_key or "").strip()
     if not raw or raw == "global":
@@ -673,6 +690,16 @@ def get_telegram_call_link_result(conversation_key):
 def get_telegram_call_url(conversation_key):
     return get_telegram_call_link_result(conversation_key).get("url", "")
 # === VIVENTIUM END ===
+
+
+def get_cached_telegram_call_url(conversation_key):
+    normalized_user_id = _extract_telegram_user_id(conversation_key)
+    if not normalized_user_id:
+        return ""
+    cached = _CALL_URL_CACHE.get(normalized_user_id)
+    if cached and cached.get("expires_at", 0) > time.time():
+        return cached.get("url", "")
+    return ""
 
 class NestedDict:
     def __init__(self):
@@ -936,7 +963,7 @@ class UserConfig:
                 "ALWAYS_VOICE_RESPONSE",
                 "VOICE_RESPONSES_ENABLED",
             ):
-                sync_voice_preferences(
+                schedule_voice_preferences_sync(
                     self.user_id,
                     self.users[self.user_id].data.get("ALWAYS_VOICE_RESPONSE"),
                     self.users[self.user_id].data.get("VOICE_RESPONSES_ENABLED"),
@@ -978,7 +1005,7 @@ class UserConfig:
                 "ALWAYS_VOICE_RESPONSE",
                 "VOICE_RESPONSES_ENABLED",
             ):
-                sync_voice_preferences(
+                schedule_voice_preferences_sync(
                     self.user_id,
                     self.users[self.user_id].data.get("ALWAYS_VOICE_RESPONSE"),
                     self.users[self.user_id].data.get("VOICE_RESPONSES_ENABLED"),
@@ -1383,10 +1410,16 @@ def get_current_lang(chatid=None):
 # REMOVED: update_models_buttons() - Model selection UI removed, Viventium handles models
 # This function created model selection buttons which are no longer needed
 
-def update_first_buttons_message(chatid=None):
+def update_first_buttons_message(chatid=None, call_url=None, fetch_call_url=True):
     # REMOVED: Language selection button - Using English-only UI
     first_buttons = []
-    call_url = get_telegram_call_url(chatid) if chatid is not None else ""
+    if call_url is None:
+        if chatid is None:
+            call_url = ""
+        elif fetch_call_url:
+            call_url = get_telegram_call_url(chatid)
+        else:
+            call_url = get_cached_telegram_call_url(chatid)
     if call_url:
         first_buttons.append([InlineKeyboardButton("Call Viventium", url=call_url)])
     first_buttons.append(

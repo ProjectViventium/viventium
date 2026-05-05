@@ -138,6 +138,10 @@ helper_config_file() {
   printf '%s\n' "$APP_SUPPORT_DIR/helper-config.json"
 }
 
+runtime_checkout_file() {
+  active_runtime_checkout_file "$APP_SUPPORT_DIR"
+}
+
 refresh_runtime_paths() {
   CONFIG_FILE="${VIVENTIUM_CONFIG_FILE:-$APP_SUPPORT_DIR/config.yaml}"
   RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
@@ -309,15 +313,19 @@ set_helper_status_bar_visibility() {
   local enabled="${1:-1}"
   local helper_config=""
   local helper_runtime_repo_root=""
+  local allow_protected_repo_root=0
   helper_config="$(helper_config_file)"
-  helper_runtime_repo_root="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"
+  helper_runtime_repo_root="$(resolve_helper_runtime_repo_root "$REPO_ROOT" "$APP_SUPPORT_DIR")"
+  if active_runtime_checkout_allows_repo_root "$APP_SUPPORT_DIR" "$helper_runtime_repo_root"; then
+    allow_protected_repo_root=1
+  fi
   refresh_repo_python
-  "$PYTHON_BIN" - "$helper_config" "$helper_runtime_repo_root" "$APP_SUPPORT_DIR" "$enabled" <<'PY'
+  "$PYTHON_BIN" - "$helper_config" "$helper_runtime_repo_root" "$APP_SUPPORT_DIR" "$enabled" "$allow_protected_repo_root" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-helper_config, repo_root, app_support_dir, enabled = sys.argv[1:]
+helper_config, repo_root, app_support_dir, enabled, allow_protected_repo_root = sys.argv[1:]
 path = Path(helper_config)
 payload = {}
 if path.exists():
@@ -328,6 +336,7 @@ if path.exists():
 
 payload["repoRoot"] = repo_root
 payload["appSupportDir"] = app_support_dir
+payload["allowProtectedRepoRoot"] = allow_protected_repo_root == "1"
 payload["showInStatusBar"] = enabled == "1"
 
 path.parent.mkdir(parents=True, exist_ok=True)
@@ -479,6 +488,7 @@ Commands:
   install-helper    Install or refresh the macOS Viventium status-bar helper.
   uninstall-helper  Remove the macOS Viventium status-bar helper.
   status-bar        Turn the macOS Viventium status-bar helper on or off.
+  runtime-checkout  Show or choose the checkout used by helper/start commands.
   preflight         Detect and optionally install missing system prerequisites.
   reset             Factory-reset the local Viventium install state under App Support.
   start             Start the current Viventium stack using generated runtime env.
@@ -631,6 +641,22 @@ Turns the macOS Viventium status-bar helper on or off without touching the rest
 of the local App Support state.
 USAGE
       ;;
+    runtime-checkout)
+      cat <<'USAGE'
+Usage:
+  bin/viventium runtime-checkout status
+  bin/viventium runtime-checkout use --this [--allow-protected-folder] [--no-helper-refresh]
+  bin/viventium runtime-checkout use <path> [--allow-protected-folder] [--no-helper-refresh]
+  bin/viventium runtime-checkout clear [--no-helper-refresh]
+
+Chooses the checkout that local start/helper operations should use. The setting is
+stored under App Support state and does not copy, delete, pull, reset, or modify
+runtime databases or user configuration.
+
+For the current checkout:
+  bin/viventium runtime-checkout use --this --allow-protected-folder
+USAGE
+      ;;
     shell-init)
       cat <<'USAGE'
 Usage:
@@ -742,8 +768,13 @@ sync_memory_hardening_schedule() {
     awk -F= '$1=="VIVENTIUM_MEMORY_HARDENING_SCHEDULE"{value=$0; sub(/^VIVENTIUM_MEMORY_HARDENING_SCHEDULE=/, "", value); print value; exit}' "$GENERATED_ENV" | sed "s/^'//;s/'$//"
   )"
   plist_path="$HOME/Library/LaunchAgents/ai.viventium.memory-harden.plist"
+  local memory_harden_script="$REPO_ROOT/scripts/viventium/memory_harden.py"
   if [[ "$enabled" == "true" ]]; then
-    if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/memory_harden.py" \
+    if [[ ! -f "$memory_harden_script" ]]; then
+      echo "Warning: memory hardening is enabled but memory_harden.py was not found." >&2
+      return 1
+    fi
+    if ! "$PYTHON_BIN" "$memory_harden_script" \
       --repo-root "$REPO_ROOT" \
       --app-support-dir "$APP_SUPPORT_DIR" \
       --runtime-dir "$RUNTIME_DIR" \
@@ -753,7 +784,11 @@ sync_memory_hardening_schedule() {
     fi
     echo "Memory hardening schedule installed."
   elif [[ -f "$plist_path" ]]; then
-    if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/memory_harden.py" \
+    if [[ ! -f "$memory_harden_script" ]]; then
+      echo "Warning: memory hardening cleanup skipped; memory_harden.py was not found." >&2
+      return 0
+    fi
+    if ! "$PYTHON_BIN" "$memory_harden_script" \
       --repo-root "$REPO_ROOT" \
       --app-support-dir "$APP_SUPPORT_DIR" \
       --runtime-dir "$RUNTIME_DIR" \
@@ -958,6 +993,296 @@ run_status_bar_command() {
       exit 1
       ;;
   esac
+}
+
+expand_user_path() {
+  local candidate="${1:-}"
+  case "$candidate" in
+    "~")
+      printf '%s\n' "$HOME"
+      ;;
+    "~/"*)
+      printf '%s/%s\n' "$HOME" "${candidate#~/}"
+      ;;
+    *)
+      printf '%s\n' "$candidate"
+      ;;
+  esac
+}
+
+json_string_field() {
+  local json_file="${1:-}"
+  local field_name="${2:-}"
+  [[ -f "$json_file" && -n "$field_name" ]] || return 1
+  refresh_repo_python
+  "$PYTHON_BIN" - "$json_file" "$field_name" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, field_name = sys.argv[1:]
+try:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+value = payload.get(field_name)
+if value is None:
+    raise SystemExit(1)
+print(str(value))
+PY
+}
+
+write_runtime_checkout_setting() {
+  local repo_root="${1:-}"
+  local allow_protected="${2:-0}"
+  local state_file=""
+  state_file="$(runtime_checkout_file)"
+  refresh_repo_python
+  "$PYTHON_BIN" - "$state_file" "$repo_root" "$allow_protected" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+state_file, repo_root, allow_protected = sys.argv[1:]
+payload = {
+    "repoRoot": str(Path(repo_root).expanduser().resolve()),
+    "allowProtectedFolderAccess": allow_protected == "1",
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "source": "bin/viventium runtime-checkout",
+}
+path = Path(state_file)
+path.parent.mkdir(parents=True, exist_ok=True)
+tmp_path = path.with_name(f".{path.name}.tmp")
+tmp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+os.replace(tmp_path, path)
+PY
+}
+
+runtime_checkout_refresh_helper() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local active_repo=""
+  active_repo="$(active_runtime_checkout_repo_root "$APP_SUPPORT_DIR" 2>/dev/null || true)"
+  if [[ -n "$active_repo" ]] && path_is_viventium_runtime_repo_root "$active_repo"; then
+    active_repo="$(canonicalize_existing_dir "$active_repo")"
+  else
+    active_repo="$REPO_ROOT"
+  fi
+
+  if [[ "$active_repo" != "$(canonicalize_existing_dir "$REPO_ROOT")" ]]; then
+    echo "Refreshing helper from active checkout: $(display_safe_path "$active_repo")"
+    "$active_repo/bin/viventium" \
+      --app-support-dir "$APP_SUPPORT_DIR" \
+      --config-file "$CONFIG_FILE" \
+      --runtime-dir "$RUNTIME_DIR" \
+      install-helper \
+      --no-launch
+  else
+    run_macos_helper_install_command 0 --no-launch
+  fi
+  launch_macos_helper_app
+  echo "Viventium status-bar helper refreshed and relaunched."
+}
+
+runtime_checkout_status() {
+  local active_repo=""
+  local helper_repo=""
+  local owner_repo=""
+  local state_file=""
+  local helper_config=""
+  local owner_file=""
+  state_file="$(runtime_checkout_file)"
+  helper_config="$(helper_config_file)"
+  owner_file="$(stack_owner_state_file)"
+
+  active_repo="$(active_runtime_checkout_repo_root "$APP_SUPPORT_DIR" 2>/dev/null || true)"
+  if [[ -n "$active_repo" ]]; then
+    if active_runtime_checkout_allows_protected_folder_access "$APP_SUPPORT_DIR"; then
+      echo "Active runtime checkout: $(display_safe_path "$active_repo") (developer protected-folder access allowed)"
+    else
+      echo "Active runtime checkout: $(display_safe_path "$active_repo")"
+    fi
+  elif [[ -f "$state_file" ]]; then
+    echo "Active runtime checkout: invalid setting at $(display_safe_path "$state_file")"
+  else
+    echo "Active runtime checkout: automatic"
+  fi
+
+  helper_repo="$(json_string_field "$helper_config" repoRoot 2>/dev/null || true)"
+  if [[ -n "$helper_repo" ]]; then
+    echo "Helper checkout: $(display_safe_path "$helper_repo")"
+  else
+    echo "Helper checkout: not installed"
+  fi
+
+  owner_repo="$(json_string_field "$owner_file" repoRoot 2>/dev/null || true)"
+  if [[ -n "$owner_repo" ]]; then
+    echo "Live stack owner: $(display_safe_path "$owner_repo")"
+  else
+    echo "Live stack owner: none recorded"
+  fi
+
+  echo "This command checkout: $(display_safe_path "$REPO_ROOT")"
+}
+
+runtime_checkout_command() {
+  local action="${1:-status}"
+  shift || true
+
+  case "$action" in
+    status)
+      if [[ "$#" -gt 0 ]]; then
+        echo "Unknown runtime-checkout status option: $1" >&2
+        exit 1
+      fi
+      runtime_checkout_status
+      ;;
+    use)
+      local target=""
+      local allow_protected=0
+      local refresh_helper=1
+
+      while [[ $# -gt 0 ]]; do
+        case "${1:-}" in
+          --this)
+            target="$REPO_ROOT"
+            shift
+            ;;
+          --allow-protected-folder)
+            allow_protected=1
+            shift
+            ;;
+          --no-helper-refresh)
+            refresh_helper=0
+            shift
+            ;;
+          --help|-h)
+            subcommand_usage runtime-checkout
+            exit 0
+            ;;
+          -*)
+            echo "Unknown runtime-checkout use option: $1" >&2
+            exit 1
+            ;;
+          *)
+            if [[ -n "$target" ]]; then
+              echo "Only one runtime checkout path can be selected." >&2
+              exit 1
+            fi
+            target="$1"
+            shift
+            ;;
+        esac
+      done
+
+      if [[ -z "$target" ]]; then
+        echo "Missing runtime checkout path. Use --this or pass a checkout path." >&2
+        exit 1
+      fi
+      target="$(expand_user_path "$target")"
+      if ! path_is_viventium_runtime_repo_root "$target"; then
+        echo "Not a valid Viventium runtime checkout: $target" >&2
+        echo "Expected bin/viventium, scripts/viventium/common.sh, and viventium_v0_4/viventium-librechat-start.sh." >&2
+        exit 1
+      fi
+      target="$(canonicalize_existing_dir "$target")"
+
+      if repo_root_uses_macos_protected_folder_access "$target" && [[ "$allow_protected" != "1" ]]; then
+        echo "Refusing to select a checkout inside Documents, Desktop, or Downloads without explicit acknowledgement." >&2
+        echo "Rerun with --allow-protected-folder if this is an intentional developer checkout. macOS may ask the helper for folder access." >&2
+        exit 1
+      fi
+
+      ensure_app_support_layout "$APP_SUPPORT_DIR"
+      write_runtime_checkout_setting "$target" "$allow_protected"
+      echo "Active runtime checkout set to $(display_safe_path "$target")."
+      if [[ "$allow_protected" == "1" && "$(uname -s)" == "Darwin" ]]; then
+        echo "Developer protected-folder access is allowed for this checkout; macOS may prompt the helper for folder access."
+      fi
+
+      if [[ "$refresh_helper" == "1" ]]; then
+        runtime_checkout_refresh_helper
+      else
+        echo "Skipped helper refresh; run bin/viventium install-helper --no-launch when ready."
+      fi
+
+      local owner_repo=""
+      owner_repo="$(json_string_field "$(stack_owner_state_file)" repoRoot 2>/dev/null || true)"
+      if [[ -n "$owner_repo" && "$(canonicalize_existing_dir "$owner_repo" 2>/dev/null || true)" != "$target" ]]; then
+        echo "Current live stack still belongs to $(display_safe_path "$owner_repo"). Stop and start when you want this checkout to take over."
+      fi
+      ;;
+    clear)
+      local refresh_helper=1
+      while [[ $# -gt 0 ]]; do
+        case "${1:-}" in
+          --no-helper-refresh)
+            refresh_helper=0
+            shift
+            ;;
+          --help|-h)
+            subcommand_usage runtime-checkout
+            exit 0
+            ;;
+          *)
+            echo "Unknown runtime-checkout clear option: $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+
+      rm -f "$(runtime_checkout_file)"
+      echo "Active runtime checkout cleared; helper/start will use automatic checkout resolution."
+      if [[ "$refresh_helper" == "1" ]]; then
+        runtime_checkout_refresh_helper
+      else
+        echo "Skipped helper refresh; run bin/viventium install-helper --no-launch when ready."
+      fi
+      ;;
+    --help|-h|help)
+      subcommand_usage runtime-checkout
+      ;;
+    *)
+      echo "Unknown runtime-checkout action: $action" >&2
+      subcommand_usage runtime-checkout >&2
+      exit 1
+      ;;
+  esac
+}
+
+maybe_reexec_active_runtime_checkout() {
+  [[ "${VIVENTIUM_DISABLE_ACTIVE_CHECKOUT_REEXEC:-0}" == "1" ]] && return 0
+  local command_name="${1:-}"
+  shift || true
+
+  case "$command_name" in
+    start|launch|stop|install-helper|uninstall-helper|status-bar)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  local active_repo=""
+  active_repo="$(active_runtime_checkout_repo_root "$APP_SUPPORT_DIR" 2>/dev/null || true)"
+  [[ -n "$active_repo" ]] || return 0
+  path_is_viventium_runtime_repo_root "$active_repo" || return 0
+  active_repo="$(canonicalize_existing_dir "$active_repo")"
+
+  if [[ "$active_repo" == "$(canonicalize_existing_dir "$REPO_ROOT")" ]]; then
+    return 0
+  fi
+
+  local active_lock_file="$active_repo/components.lock.json"
+  echo "Using active runtime checkout: $(display_safe_path "$active_repo")" >&2
+  VIVENTIUM_COMPONENTS_LOCK_FILE="$active_lock_file" exec "$active_repo/bin/viventium" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --config-file "$CONFIG_FILE" \
+    --runtime-dir "$RUNTIME_DIR" \
+    --lock-file "$active_lock_file" \
+    "$command_name" \
+    "$@"
 }
 
 yaml_file_has_unique_mapping_keys() {
@@ -2458,6 +2783,7 @@ COMMAND="${1:-help}"
 if [[ $# -gt 0 ]]; then
   shift
 fi
+maybe_reexec_active_runtime_checkout "$COMMAND" "$@"
 
 case "$COMMAND" in
   install|bootstrap)
@@ -2874,6 +3200,14 @@ case "$COMMAND" in
       exit 0
     fi
     run_status_bar_command "$@"
+    ;;
+  runtime-checkout)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage runtime-checkout
+      exit 0
+    fi
+    runtime_checkout_command "$@"
     ;;
   uninstall-helper)
     acquire_cli_lock "$COMMAND"

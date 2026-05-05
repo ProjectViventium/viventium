@@ -93,10 +93,100 @@ default_public_install_repo_root() {
   printf '%s\n' "${VIVENTIUM_PUBLIC_INSTALL_DIR:-${VIVENTIUM_INSTALL_DIR:-$HOME/viventium}}"
 }
 
+active_runtime_checkout_file() {
+  local app_support_dir="${1:-${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}}"
+  printf '%s\n' "$app_support_dir/state/active-checkout.json"
+}
+
+active_runtime_checkout_repo_root() {
+  local app_support_dir="${1:-${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}}"
+  local state_file=""
+  state_file="$(active_runtime_checkout_file "$app_support_dir")"
+  [[ -f "$state_file" ]] || return 1
+
+  local python_bin
+  python_bin="$(resolve_repo_python)"
+  "$python_bin" - "$state_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+repo_root = str(payload.get("repoRoot") or "").strip()
+if not repo_root:
+    raise SystemExit(1)
+
+candidate = Path(repo_root).expanduser()
+if not candidate.is_dir():
+    raise SystemExit(1)
+
+print(candidate.resolve())
+PY
+}
+
+active_runtime_checkout_allows_protected_folder_access() {
+  local app_support_dir="${1:-${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}}"
+  local state_file=""
+  state_file="$(active_runtime_checkout_file "$app_support_dir")"
+  [[ -f "$state_file" ]] || return 1
+
+  local python_bin
+  python_bin="$(resolve_repo_python)"
+  local allowed=""
+  allowed="$("$python_bin" - "$state_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    print("false")
+    raise SystemExit(0)
+
+print("true" if payload.get("allowProtectedFolderAccess") is True else "false")
+PY
+)"
+  [[ "$allowed" == "true" ]]
+}
+
+active_runtime_checkout_matches_repo_root() {
+  local app_support_dir="${1:-}"
+  local repo_root="${2:-}"
+  local active_repo=""
+  [[ -n "$app_support_dir" && -n "$repo_root" ]] || return 1
+  active_repo="$(active_runtime_checkout_repo_root "$app_support_dir" 2>/dev/null || true)"
+  [[ -n "$active_repo" ]] || return 1
+  [[ "$(canonicalize_existing_dir "$active_repo" 2>/dev/null || true)" == "$(canonicalize_existing_dir "$repo_root" 2>/dev/null || true)" ]]
+}
+
+active_runtime_checkout_allows_repo_root() {
+  local app_support_dir="${1:-}"
+  local repo_root="${2:-}"
+  active_runtime_checkout_matches_repo_root "$app_support_dir" "$repo_root" &&
+    active_runtime_checkout_allows_protected_folder_access "$app_support_dir"
+}
+
 resolve_helper_runtime_repo_root() {
   local repo_root="${1:-}"
+  local app_support_dir="${2:-${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}}"
   local override="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-}"
   local candidate=""
+
+  candidate="$(active_runtime_checkout_repo_root "$app_support_dir" 2>/dev/null || true)"
+  if [[ -n "$candidate" ]] && path_is_viventium_runtime_repo_root "$candidate"; then
+    if ! repo_root_uses_macos_protected_folder_access "$candidate" ||
+      active_runtime_checkout_allows_protected_folder_access "$app_support_dir"; then
+      canonicalize_existing_dir "$candidate"
+      return 0
+    fi
+  fi
 
   if [[ -n "$override" ]] && path_is_viventium_runtime_repo_root "$override"; then
     canonicalize_existing_dir "$override"

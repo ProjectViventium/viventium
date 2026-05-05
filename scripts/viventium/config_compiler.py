@@ -1715,13 +1715,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             "integrations.telegram.stt_provider",
         )
         if not telegram_stt_provider:
-            # Telegram is a long-running ingress process. Keep local Whisper available
-            # through an explicit Telegram override, but default the bridge away from
-            # in-process native STT so a native backend crash cannot take down message delivery.
-            if resolved_voice["stt_provider"] in {"whisper_local", "pywhispercpp", "local"}:
-                telegram_stt_provider = "openai"
-            else:
-                telegram_stt_provider = resolved_voice["stt_provider"]
+            # Telegram must stay in STT parity with the configured voice route by default.
+            # Operators can override Telegram only through integrations.telegram.stt_provider;
+            # the compiler must not silently remap local Whisper to a hosted provider.
+            telegram_stt_provider = resolved_voice["stt_provider"]
         env["VIVENTIUM_TELEGRAM_STT_PROVIDER"] = telegram_stt_provider
         telegram_local_bot_api = telegram_settings.get("local_bot_api", {}) or {}
         telegram_local_bot_api_enabled = resolve_bool(
@@ -2100,6 +2097,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
 def dump_env(path: Path, env: dict[str, str]) -> None:
     lines = [f"{key}={shlex.quote(str(value))}" for key, value in sorted(env.items()) if value is not None]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.chmod(0o600)
 
 
 def build_interface_config(

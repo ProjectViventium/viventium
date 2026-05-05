@@ -34,7 +34,6 @@ from config import (
     update_menu_buttons,
     update_first_buttons_message,
     get_telegram_call_link_result,
-    get_telegram_call_url,
     CONNECTION_POOL_SIZE,
     GET_UPDATES_CONNECTION_POOL_SIZE,
     TIMEOUT,
@@ -72,6 +71,30 @@ from utils.librechat_attachments import (
     fetch_librechat_bytes,
     send_librechat_attachments,
 )
+
+_PENDING_INFO_CALL_REFRESHES = set()
+
+
+def _info_call_refresh_key(chatid, message_id):
+    if chatid is None or message_id is None:
+        return None
+    return (str(chatid), int(message_id))
+
+
+def _mark_info_call_refresh(chatid, message_id):
+    key = _info_call_refresh_key(chatid, message_id)
+    if key is not None:
+        _PENDING_INFO_CALL_REFRESHES.add(key)
+
+
+def _cancel_info_call_refresh_for_query(callback_query):
+    message = getattr(callback_query, "message", None)
+    chat_id = getattr(message, "chat_id", None)
+    message_id = getattr(message, "message_id", None)
+    key = _info_call_refresh_key(chat_id, message_id)
+    if key is not None:
+        _PENDING_INFO_CALL_REFRESHES.discard(key)
+
 
 # === VIVENTIUM START ===
 # Feature: Markdown stripping for plain-text fallback.
@@ -631,14 +654,91 @@ async def command_bot(update, context, title="", has_command=True):
             reply_to_message_id=messageid,
         )
 
-async def delete_message(update, context, messageid = [], delay=60):
+async def delete_message(update, context, messageid=None, delay=60):
     await asyncio.sleep(delay)
+    if messageid is None:
+        return
+    chat = getattr(update, "effective_chat", None)
+    chat_id = getattr(chat, "id", None)
+    if chat_id is None:
+        return
     if isinstance(messageid, list):
         for mid in messageid:
             try:
-                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=mid)
+                await context.bot.delete_message(chat_id=chat_id, message_id=mid)
             except Exception as e:
                 pass
+    else:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=messageid)
+        except Exception:
+            pass
+
+
+def schedule_delete_message(update, context, messageid=None, delay=60):
+    if messageid is None:
+        return None
+    messageids = messageid if isinstance(messageid, list) else [messageid]
+    messageids = [mid for mid in messageids if mid is not None]
+    if not messageids:
+        return None
+    coroutine = delete_message(update, context, messageids, delay=delay)
+    application = getattr(context, "application", None)
+    if application is not None and hasattr(application, "create_task"):
+        return application.create_task(
+            coroutine,
+            update=update,
+            name="telegram-delayed-delete-message",
+        )
+    try:
+        return asyncio.create_task(coroutine)
+    except RuntimeError:
+        coroutine.close()
+        logger.debug("Skipped Telegram delayed cleanup task: no running event loop")
+        return None
+
+
+def schedule_background_task(context, coroutine, update=None, name=None):
+    application = getattr(context, "application", None)
+    if application is not None and hasattr(application, "create_task"):
+        return application.create_task(coroutine, update=update, name=name)
+    try:
+        return asyncio.create_task(coroutine)
+    except RuntimeError:
+        coroutine.close()
+        logger.debug("Skipped Telegram background task %s: no running event loop", name)
+        return None
+
+
+async def refresh_call_button_message(context, chatid, message_id, convo_id, info_message_md):
+    key = _info_call_refresh_key(chatid, message_id)
+    if key is None or key not in _PENDING_INFO_CALL_REFRESHES:
+        return
+    try:
+        call_link = await asyncio.to_thread(get_telegram_call_link_result, convo_id)
+        if key not in _PENDING_INFO_CALL_REFRESHES:
+            return
+        call_url = str(call_link.get("url") or "").strip()
+        if not call_url:
+            return
+        await context.bot.edit_message_text(
+            chat_id=chatid,
+            message_id=message_id,
+            text=info_message_md,
+            reply_markup=InlineKeyboardMarkup(
+                update_first_buttons_message(
+                    convo_id,
+                    call_url=call_url,
+                    fetch_call_url=False,
+                )
+            ),
+            parse_mode='MarkdownV2',
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        logger.debug("Deferred Telegram call button refresh skipped: %s", e)
+    finally:
+        _PENDING_INFO_CALL_REFRESHES.discard(key)
 
 from telegram.error import Forbidden, TelegramError
 async def is_bot_blocked(bot, user_id: int) -> bool:
@@ -1783,6 +1883,7 @@ async def button_press(update, context):
         # REMOVED: Language selection - Using English-only UI for simplicity
 
         if data.endswith("_PREFERENCES"):
+            _cancel_info_call_refresh_for_query(callback_query)
             pref_key = data[:-12]
             _t3 = _time.monotonic()
             try:
@@ -1798,6 +1899,7 @@ async def button_press(update, context):
             logger.info("[PREF_TIMING] toggle=%s set=%.0fms edit=%.0fms total=%.0fms", pref_key, (_t4-_t3)*1000, (_t5-_t4)*1000, (_t5-_t0)*1000)
 
         elif data.startswith("PREFERENCES"):
+            _cancel_info_call_refresh_for_query(callback_query)
             await _edit_or_send_menu(
                 reply_markup=InlineKeyboardMarkup(update_menu_buttons(PREFERENCES, "_PREFERENCES", convo_id)),
                 fallback_text=info_message_md,
@@ -1806,8 +1908,11 @@ async def button_press(update, context):
             logger.info("[PREF_TIMING] open_menu edit=%.0fms total=%.0fms", (_t5-_t2)*1000, (_t5-_t0)*1000)
 
         elif data.startswith("BACK"):
+            _cancel_info_call_refresh_for_query(callback_query)
             await _edit_or_send_menu(
-                reply_markup=InlineKeyboardMarkup(update_first_buttons_message(convo_id)),
+                reply_markup=InlineKeyboardMarkup(
+                    update_first_buttons_message(convo_id, fetch_call_url=False)
+                ),
                 fallback_text=info_message_md,
             )
             _t5 = _time.monotonic()
@@ -1952,7 +2057,7 @@ async def reset_chat(update, context):
         parse_mode='MarkdownV2',
     )
     # REMOVED: GET_MODELS - Model fetching is not needed, Viventium handles models
-    await delete_message(update, context, [message.message_id, user_message_id])
+    schedule_delete_message(update, context, [message.message_id, user_message_id])
 
 @decorators.AdminAuthorization
 @decorators.GroupAuthorization
@@ -1964,12 +2069,25 @@ async def info(update, context):
         chat_id=chatid,
         message_thread_id=message_thread_id,
         text=escape(info_message, italic=False),
-        reply_markup=InlineKeyboardMarkup(update_first_buttons_message(convo_id)),
+        reply_markup=InlineKeyboardMarkup(update_first_buttons_message(convo_id, fetch_call_url=False)),
         parse_mode='MarkdownV2',
         disable_web_page_preview=True,
         read_timeout=600,
     )
-    await delete_message(update, context, [message.message_id, user_message_id])
+    _mark_info_call_refresh(chatid, message.message_id)
+    schedule_delete_message(update, context, [user_message_id])
+    schedule_background_task(
+        context,
+        refresh_call_button_message(
+            context,
+            chatid,
+            message.message_id,
+            convo_id,
+            escape(info_message, italic=False),
+        ),
+        update=update,
+        name="telegram-refresh-info-call-button",
+    )
 
 
 @decorators.GroupAuthorization
@@ -2005,7 +2123,7 @@ async def call(update, context):
             disable_web_page_preview=True,
             read_timeout=600,
         )
-        await delete_message(update, context, [message.message_id, user_message_id])
+        schedule_delete_message(update, context, [message.message_id, user_message_id])
         return
 
     reply_markup = InlineKeyboardMarkup(
@@ -2023,7 +2141,7 @@ async def call(update, context):
         disable_web_page_preview=True,
         read_timeout=600,
     )
-    await delete_message(update, context, [message.message_id, user_message_id])
+    schedule_delete_message(update, context, [user_message_id])
 
 @decorators.GroupAuthorization
 @decorators.Authorization

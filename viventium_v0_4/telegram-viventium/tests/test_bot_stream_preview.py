@@ -84,6 +84,110 @@ def _make_message_info(*, voice_error_text=None):
     )
 
 
+class _FakeEffectiveChat:
+    id = "chat-1"
+
+
+class _FakeEffectiveUser:
+    id = "user-1"
+    username = "sampleuser"
+
+
+class _FakeCommandUpdate:
+    effective_chat = _FakeEffectiveChat()
+    effective_user = _FakeEffectiveUser()
+
+
+def _make_command_message_info():
+    return (
+        None,
+        None,
+        None,
+        "chat-1",
+        777,
+        None,
+        None,
+        None,
+        "chat-1:user-1",
+        None,
+        None,
+        None,
+        None,
+        [],
+    )
+
+
+def test_info_schedules_cleanup_without_blocking_or_deleting_menu(monkeypatch):
+    tg_bot._PENDING_INFO_CALL_REFRESHES.clear()
+    scheduled_deletes = []
+    scheduled_background = []
+    first_button_calls = []
+
+    async def _fake_get_message_info(*_args, **_kwargs):
+        return _make_command_message_info()
+
+    def _fake_first_buttons(convo_id, **kwargs):
+        first_button_calls.append((convo_id, kwargs))
+        return [[tg_bot.InlineKeyboardButton("Preferences", callback_data="PREFERENCES")]]
+
+    def _fake_delete(update, context, messageids, delay=60):
+        scheduled_deletes.append((messageids, delay))
+        return None
+
+    def _fake_background(context, coroutine, update=None, name=None):
+        scheduled_background.append(name)
+        coroutine.close()
+        return None
+
+    monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_get_message_info)
+    monkeypatch.setattr(tg_bot.decorators, "GetMesageInfo", _fake_get_message_info)
+    monkeypatch.setattr(tg_bot.config, "ADMIN_LIST", None)
+    monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None)
+    monkeypatch.setattr(tg_bot.config, "GROUP_LIST", None)
+    monkeypatch.setattr(tg_bot.config, "whitelist", None)
+    monkeypatch.setattr(tg_bot, "update_info_message", lambda _convo_id: "Cognitive System: Viventium")
+    monkeypatch.setattr(tg_bot, "update_first_buttons_message", _fake_first_buttons)
+    monkeypatch.setattr(tg_bot, "schedule_delete_message", _fake_delete)
+    monkeypatch.setattr(tg_bot, "schedule_background_task", _fake_background)
+
+    try:
+        asyncio.run(asyncio.wait_for(tg_bot.info(_FakeCommandUpdate(), _FakeContext()), timeout=0.25))
+
+        assert scheduled_deletes == [([777], 60)]
+        assert scheduled_background == ["telegram-refresh-info-call-button"]
+        assert first_button_calls == [("chat-1:user-1", {"fetch_call_url": False})]
+        assert ("chat-1", 1001) in tg_bot._PENDING_INFO_CALL_REFRESHES
+    finally:
+        tg_bot._PENDING_INFO_CALL_REFRESHES.clear()
+
+
+def test_call_button_refresh_does_not_overwrite_after_preferences_navigation(monkeypatch):
+    tg_bot._PENDING_INFO_CALL_REFRESHES.clear()
+    context = _FakeContext()
+    tg_bot._mark_info_call_refresh("chat-1", 1001)
+
+    def _fake_call_link(_convo_id):
+        tg_bot._PENDING_INFO_CALL_REFRESHES.discard(("chat-1", 1001))
+        return {"url": "http://198.51.100.25:3300/?ok=1"}
+
+    monkeypatch.setattr(tg_bot, "get_telegram_call_link_result", _fake_call_link)
+
+    try:
+        asyncio.run(
+            tg_bot.refresh_call_button_message(
+                context,
+                "chat-1",
+                1001,
+                "chat-1:user-1",
+                "Cognitive System: Viventium",
+            )
+        )
+
+        assert context.bot.edits == []
+    finally:
+        tg_bot._PENDING_INFO_CALL_REFRESHES.clear()
+
+
 def test_deliver_proactive_telegram_message_keeps_text_canonical_and_voice_additive():
     bot = _FakeTelegramBot()
 

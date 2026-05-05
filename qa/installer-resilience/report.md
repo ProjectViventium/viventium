@@ -493,3 +493,254 @@ Observed:
 - `~/Library/Application Support/Viventium/helper-scripts/viventium-stack.sh` now launches:
   - `~/viventium/bin/viventium`
 - the helper binding no longer points at the checkout under `~/Documents/<repo>`
+
+## Helper protected-folder recurrence follow-up
+
+Date: 2026-05-02
+
+Runtime evidence:
+
+- The installed helper config can remain stale after the source-level installer fix:
+  - `helper-config.json` may still store `repoRoot: ~/Documents/<repo>`
+  - `helper-scripts/viventium-stack.sh` may still launch `~/Documents/<repo>/bin/viventium`
+- The installed app bundle must be verified independently from source:
+  - an unsigned assembled helper bundle does not provide the stable `ai.viventium.helper` app
+    identity that the source `Info.plist` declares
+
+Root cause:
+
+- The April fix only repaired helper install/status-bar config writes.
+- Already-installed helper state still needed a runtime self-heal path.
+- Detached helper start/stop still trusted the generated App Support wrapper, so a stale wrapper
+  could preserve the protected checkout path even after config repair.
+
+Product fix:
+
+- `ViventiumHelper` now self-heals a protected-folder `repoRoot` on launch when a supported safe
+  public checkout is available.
+- If no safe checkout is available, helper install fails closed and the helper blocks
+  start/stop/backup actions with guidance instead of launching from the protected checkout.
+- Swift helper protected-folder checks now resolve symlinks for parity with the shell resolver and
+  macOS TCC's real-path behavior.
+- Detached helper start/stop now executes the healed `repoRoot/bin/viventium` directly with the
+  helper environment that the wrapper used to provide.
+- Helper install still writes the wrapper for compatibility, but stale wrapper contents no longer
+  own detached start/stop.
+- The assembled helper app bundle is locally code signed with `ai.viventium.helper` after
+  packaging so the installed bundle identity matches the product `Info.plist`; this is packaging
+  hygiene, while avoiding protected-folder runtime roots remains the actual TCC prompt prevention.
+
+Automated verification:
+
+Ran:
+
+```bash
+swiftc -parse-as-library -sdk "$(xcrun --show-sdk-path)" -target "$(uname -m)-apple-macosx13.0" apps/macos/ViventiumHelper/Sources/ViventiumHelper/ViventiumHelperApp.swift -o /tmp/ViventiumHelper-check
+bash -n scripts/viventium/common.sh
+bash -n scripts/viventium/install_macos_helper.sh
+bash -n bin/viventium
+./scripts/viventium/build_macos_helper_fallback.sh
+uv run --with pytest pytest tests/release/test_macos_helper_install.py -q
+uv run --with pytest pytest tests/release/test_cli_upgrade.py -k 'test_maybe_install_macos_helper_accepts_explicit_no_launch_override or test_cli_usage_documents_status_bar_and_shell_init_commands' -q
+```
+
+Result:
+
+- Swift compile passed with the existing Swift 6 sendable-capture warning elsewhere in the helper
+  source.
+- shell syntax checks passed.
+- helper prebuilt artifact and `source.sha256` were regenerated from current helper sources.
+- `test_macos_helper_install.py`: `9 passed`
+- targeted CLI helper/status-bar slice: `2 passed`
+- a temporary real helper install verified that `codesign -dv` reports
+  `Identifier=ai.viventium.helper` and no longer reports an unsigned app bundle.
+
+Live-machine verification:
+
+Ran:
+
+```bash
+bin/viventium install-helper --no-launch
+bin/viventium status-bar on
+open -g ~/Applications/Viventium.app
+bin/viventium stop
+bin/viventium status
+```
+
+Observed:
+
+- helper install logged:
+  - `Using public-safe helper runtime checkout: ~/viventium`
+- live `helper-config.json` stores:
+  - `repoRoot: ~/viventium`
+- live `helper-scripts/viventium-stack.sh` contains the compatibility-wrapper header and launches:
+  - `~/viventium/bin/viventium`
+- `codesign -dv ~/Applications/Viventium.app` reports:
+  - `Identifier=ai.viventium.helper`
+  - sealed resources and bound `Info.plist` entries
+- launching the helper did not start the old protected checkout; it logged:
+  - `Auto-start blocked; split-workspace state detected`
+- the old Documents-owned runtime was stopped through the CLI, leaving only the signed helper app
+  process active and no runtime child processes under `~/Documents/<repo>`.
+
+## Active developer checkout follow-up
+
+Date: 2026-05-02
+
+Runtime evidence:
+
+- A live stack can be healthy while being owned by a different checkout than the one under active
+  development.
+- The prior protected-folder fix intentionally preferred `~/viventium` for helper binding, which
+  avoided repeated macOS folder prompts but made local source fixes invisible to helper-launched
+  runtime processes.
+
+Product fix:
+
+- Added `bin/viventium runtime-checkout`:
+  - `status` shows the active setting, helper binding, live stack owner, and command checkout
+  - `use --this --allow-protected-folder` explicitly selects a developer checkout under a macOS
+    protected folder
+  - `clear` restores automatic checkout resolution
+- The setting is machine-local App Support state and does not touch repo history, repo files,
+  generated runtime config, snapshots, or database state.
+- Helper install/status-bar config writes now honor the active checkout setting.
+- The helper config records the explicit protected-folder acknowledgement so the helper does not
+  silently rebind an intentional developer checkout back to `~/viventium`.
+- Helper refresh relaunches the status-bar helper after updating the binding.
+- Start/stop/helper commands invoked through a stale checkout re-exec through the active checkout.
+- Re-execed commands use the active checkout's own component lock file.
+- Re-execed commands reset inherited lock-file environment so the active checkout cannot
+  accidentally read the caller checkout's component lock.
+- The explicit active-checkout setting outranks LaunchAgent helper runtime environment defaults.
+- Disabled optional memory-hardening cleanup warns and continues when a partial checkout lacks the
+  cleanup helper; explicitly enabled memory hardening still fails closed if its helper is missing.
+
+Verification plan:
+
+```bash
+bash -n scripts/viventium/common.sh
+bash -n scripts/viventium/install_macos_helper.sh
+bash -n bin/viventium
+swiftc -parse-as-library -sdk "$(xcrun --show-sdk-path)" -target "$(uname -m)-apple-macosx13.0" apps/macos/ViventiumHelper/Sources/ViventiumHelper/ViventiumHelperApp.swift -o <temp>/ViventiumHelper-check
+./scripts/viventium/build_macos_helper_fallback.sh
+uv run --with pytest pytest tests/release/test_macos_helper_install.py -q
+uv run --with pytest pytest tests/release/test_cli_upgrade.py -q
+```
+
+Verification result:
+
+- shell syntax checks passed
+- Swift helper compile passed with the existing Swift 6 sendable-capture warning elsewhere in the
+  helper source
+- helper prebuilt artifact and `source.sha256` were regenerated from current helper sources
+- `test_macos_helper_install.py`: `10 passed`
+- `test_cli_upgrade.py` plus helper install tests after the hardening follow-up: `45 passed`
+
+Second-opinion review:
+
+- ClaudeViv confirmed the RCA and the non-destructive active-checkout design.
+- Initial review findings addressed before applying the live setting:
+  - helper refresh now relaunches the status-bar helper after rebinding
+  - active-checkout re-exec no longer forwards the caller checkout's component lock file
+  - re-exec coverage now includes stop and uninstall-helper in addition to start/launch/helper
+    binding commands
+  - helper refresh uses the active checkout's installer when the selected checkout differs from the
+    caller checkout
+  - hand-edited protected active-checkout settings without explicit acknowledgement are ignored with
+    a helper log line instead of silently healing to another checkout
+- Follow-up review findings addressed before final validation:
+  - re-exec now resets inherited `VIVENTIUM_COMPONENTS_LOCK_FILE` and passes the active checkout's
+    lock file explicitly
+  - helper checkout resolution now lets the explicit active-checkout setting outrank LaunchAgent
+    `VIVENTIUM_HELPER_RUNTIME_REPO_ROOT`
+  - MCP OAuth warmup now has token-presence caching, negative-path coverage, and skips the second
+    setup-data read when no warmup was attempted
+  - a CLI integration test proves re-exec reaches the active checkout with the active checkout's
+    lock file in argv and environment
+
+Live-machine setting verification:
+
+Ran:
+
+```bash
+bin/viventium runtime-checkout use --this --allow-protected-folder
+bin/viventium runtime-checkout status
+viventium runtime-checkout status
+codesign -dv ~/Applications/Viventium.app
+```
+
+Observed:
+
+- active runtime checkout points at the current developer checkout under `~/Documents/<repo>`
+- helper config points at the same developer checkout and records `allowProtectedRepoRoot: true`
+- helper log records an intentionally protected developer checkout and split-workspace auto-start
+  block
+- installed helper bundle remains signed with `Identifier=ai.viventium.helper`
+- live stack owner still points at the prior installed checkout until an intentional stop/start
+
+## Helper and MS365 MCP status follow-up
+
+Date: 2026-05-02
+
+Runtime evidence:
+
+- The live stack was owned by the installed checkout while the active fixes were in another working
+  checkout, so helper-launched runtime processes did not include current local source changes.
+- With Docker down or warming, the MS365 MCP listener was absent and LibreChat logged repeated
+  `fetch failed` connection attempts for `ms-365`.
+- After starting from the active checkout with Docker running, core endpoints returned healthy
+  responses and the MS365 `/mcp` endpoint returned an HTTP auth challenge, proving the listener was
+  alive.
+- The helper menu could still report `Start`/`Stopped` because helper core health required every
+  managed optional service URL to respond.
+- The MCP connection-status API returned `disconnected` for a user with stored MS365 refresh-token
+  records because OAuth MCPs were not warmed from stored tokens during status polling.
+
+Product fix:
+
+- Helper Running/Stopped state now depends on core surfaces only: LibreChat API, LibreChat
+  frontend, and the modern playground.
+- Managed optional sidecars remain part of stop convergence, but no longer decide whether the app is
+  running.
+- `bin/viventium status` now probes Google/MS365 MCP endpoints separately and treats an HTTP auth
+  challenge as a live listener.
+- Local MCP endpoints that are expected to start now show `Starting` while a CLI start command is
+  active and `Action Required` after startup has completed with no listener.
+- The MCP status route now warms OAuth-backed MCP servers when the user already has a usable stored
+  access or refresh token.
+- OAuth warmup is bounded with cooldown/in-flight checks and short token-presence caching so
+  mounted status polling does not repeatedly hit token storage.
+- The browser MCP status query refreshes periodically while mounted so recovered local MCP listeners
+  and warmed OAuth connections are reflected without a full page reload.
+
+Verification result:
+
+```bash
+uv run --with pytest --with PyYAML pytest tests/release/test_install_summary.py -q
+uv run --with pytest pytest tests/release/test_macos_helper_install.py -q
+npm run test -- server/routes/__tests__/mcp.spec.js --runInBand
+npm run test -- server/services/MCP.spec.js --runInBand
+swift build -c release --package-path apps/macos/ViventiumHelper
+./scripts/viventium/build_macos_helper_fallback.sh
+git diff --check
+```
+
+Observed:
+
+- install-summary tests: `31 passed`
+- CLI/helper release tests: `45 passed`
+- MCP route tests: `82 passed`
+- MCP service tests: `35 passed`
+- frontend typecheck was attempted after the MCP query refresh change; it still fails on existing
+  repo-wide TypeScript drift outside this change area
+- Swift helper build passed with the pre-existing Swift 6 sendable-capture warning
+- helper prebuilt artifact and `source.sha256` were regenerated after the helper health fix
+- `bin/viventium status` reports Google Workspace MCP and Microsoft 365 MCP as `Running`
+- direct local probes returned `200` for frontend/API/playground and `401` auth challenges for
+  Google Workspace MCP and Microsoft 365 MCP `/mcp`, which is the expected live-listener signal
+- `bin/viventium runtime-checkout status` reports the active checkout, helper checkout, live stack
+  owner, and command checkout all aligned to the developer checkout
+- the QA account's live `GET /api/mcp/connection/status/ms-365` response reports
+  `connectionStatus: connected` and `requiresOAuth: true`
+- live helper menu reports `Running` with a `Stop` action while the stack is up

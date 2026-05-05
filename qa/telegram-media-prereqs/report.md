@@ -91,3 +91,35 @@ Homebrew ffmpeg, not a missing binary and not LibreChat chat routing.
   fails during voice/video transcription.
 - Mongo evidence for the reproduced class showed zero LibreChat messages/conversations in the
   failed voice-note window, confirming the failed transcript was not forwarded as user input.
+
+## 2026-05-03 STT Provider Default Correction
+
+### Incident Class
+
+Telegram voice-note download succeeded, but the bridge route drifted from inherited local Whisper
+to hosted OpenAI STT. Follow-up incident review corrected the source of truth: Telegram inherits
+the configured voice STT provider by default, including local Whisper/whisper.cpp. Hosted OpenAI or
+AssemblyAI STT must be explicit Telegram overrides, never silent compiler remaps.
+
+### Added Acceptance
+
+- Telegram inherits local Whisper/whisper.cpp when `integrations.telegram.stt_provider` is omitted
+  and the global voice STT provider is local Whisper.
+- Explicit Telegram STT overrides still work for OpenAI, AssemblyAI, and local Whisper.
+- Generated runtime env for a local-Whisper voice install contains
+  `VIVENTIUM_TELEGRAM_STT_PROVIDER=whisper_local` unless Telegram is explicitly overridden.
+
+### Checks Executed
+
+- `uv run --with pytest --with PyYAML python -m pytest tests/release/test_config_compiler.py -q`
+  - Result: `68 passed`
+- `python3 -m py_compile scripts/viventium/config_compiler.py`
+  - Result: passed
+- `cd viventium_v0_4/telegram-viventium/TelegramVivBot && uv run python -m pytest ../tests/test_stt_env.py ../tests/test_stt_telegram_assemblyai.py ../tests/test_voice_preferences.py -q`
+  - Result: `40 passed`
+- `uv run --with pytest python -m pytest tests/release/test_telegram_media_prereqs.py tests/release/test_telegram_transcription_error_contract.py tests/release/test_telegram_lazy_startup_contract.py -q`
+  - Result: `14 passed`
+- `bin/viventium compile-config`
+  - Result: generated Telegram env uses inherited local Whisper for the omitted Telegram STT field.
+- Synthetic local OGG smoke through the Telegram STT helper
+  - Result: local Whisper/whisper.cpp returned a transcript through the inherited Telegram route.

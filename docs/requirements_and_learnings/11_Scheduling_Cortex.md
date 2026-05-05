@@ -60,12 +60,16 @@ restart the MCP if the process exits while LibreChat remains running.
   `SCHEDULER_CATCH_UP_MAX_LATE_S`, with a hard cap of 24 hours.
 - Catch-up eligibility is based only on structured task fields: `created_source == "user"` and
   `schedule.type == "once"`, unless explicit `metadata.misfire_policy` overrides it. Runtime code
-  must not inspect prompt text, reminder wording, agent names, or other human-facing labels.
+  must not inspect prompt text, reminder wording, schedule names, agent names, or other human-facing
+  labels.
 - `metadata.misfire_policy.mode` may be `catch_up` or `strict`. `skip`, `miss`, and `missed` are
   treated as `strict`. `metadata.misfire_policy.max_late_s` may narrow or extend the per-task
   window up to the hard cap.
-- Recurring tasks, heartbeat tasks, and system/agent-created tasks default to strict misfire
-  handling so a sleeping host does not spam stale runs when it wakes.
+- Recurring tasks and system/agent-created tasks default to strict misfire handling so a sleeping host
+  does not spam stale runs when it wakes. A user-created one-time task defaults to catch-up no matter
+  what the schedule is named; passive/system schedules that need strict behavior must declare
+  `metadata.misfire_policy.mode: strict` or use a non-user-created source instead of relying on a
+  special schedule name.
 - A catch-up delivery must be visibly honest. The dispatch layer prepends a deterministic notice to
   delivered text, for example: `Late reminder: originally scheduled for 2026-02-13 19:00 UTC;
   delivered 85 minutes late.`
@@ -85,10 +89,20 @@ restart the MCP if the process exits while LibreChat remains running.
 - Scheduled prompts and delayed checks are injected as main-agent work, not delivered as raw
   scheduler text. The main agent/follow-up adjudication path decides whether the result is useful
   to the user or should remain silent with `{NTA}`.
+- Visibility is not task-type-specific. Morning briefings, reminders, passive check-ins, heartbeat
+  schedules, and future scheduled prompt types must all use the same generated-text visibility path:
+  canonical result -> `{NTA}`/empty suppression or visible content -> channel fan-out -> delivery
+  ledger.
 
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
 - Do not start a second agent run through the Telegram chat route just for scheduled tasks.
+- Passive schedules must not emit scheduler-synthesized keepalive, status, "no change," or next-run
+  announcements. If the canonical scheduled result is `{NTA}` or empty, Telegram delivery stays
+  silent unless the model produced substantive user-visible content.
+- The scheduler must not branch Telegram visibility on schedule names, prompt text, incident labels,
+  or user-facing task titles. Operational exceptions require structured fields such as
+  `metadata.misfire_policy`, not runtime string checks.
 - Scheduled Telegram delivery must classify transport/runtime fallback separately from
   model-generated content. If a model or background cortex guesses at a live fact, the correct fix is
   the scheduled prompt/source-of-truth truthfulness contract, not a Telegram text filter.
@@ -102,29 +116,33 @@ restart the MCP if the process exits while LibreChat remains running.
 
 Current owning implementation points:
 
-- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:30` injects the default scheduled
-  self-prompt contract, including the rule that live external facts require verified tool/cortex
-  evidence and should otherwise be omitted.
-- `api/server/services/viventium/cortexFallbackText.js:74` suppresses the generic deferred fallback
+- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py` owns scheduler generation and
+  channel fan-out. `SCHEDULED_SELF_PROMPT_LINE` injects the default scheduled self-prompt contract,
+  `_run_scheduler_generation` performs the canonical agent run, and `dispatch_task` fans the same
+  result out to the requested channels.
+- `dispatch.py` owns visibility classification through `_prepare_generated_visibility`,
+  `_build_librechat_delivery_detail`, and `_deliver_telegram_generated_text`. These helpers classify
+  `{NTA}`/empty output, visible output, and fallback provenance without inspecting schedule names or
+  prompt text.
+- `dispatch.py` owns late catch-up copy through `_apply_late_delivery_notice`, which prepends the
+  deterministic late-reminder notice only when there is visible content to deliver.
+- `api/server/services/viventium/cortexFallbackText.js` suppresses the generic deferred fallback
   sentence when a structured `scheduleId` is present.
-- `api/server/services/viventium/cortexMessageState.js:214` returns empty scheduled fallback text with
+- `api/server/services/viventium/cortexMessageState.js` returns empty scheduled fallback text with
   `deferred_fallback` / `empty_deferred_response` provenance when no usable insight exists.
-- `api/server/routes/viventium/scheduler.js:563` and
-  `api/server/routes/viventium/telegram.js:1259` thread the query `scheduleId` into cortex-state
-  recovery.
-- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1213` sends `scheduleId` during
-  scheduler polling, and `dispatch.py:1298` converts deferred fallback provenance into either
-  canonical fallback text or a suppressed fallback reason.
-- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1901` and `dispatch.py:2235`
-  classify suppressed/degraded fallback visibility separately from ordinary delivery.
-- `viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py:29` and `scheduler.py:231` persist
-  deferred fallback degradation metadata while preserving compatible scheduler success semantics.
-- `viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py` resolves structured misfire
-  policy, catches up eligible user-created one-time reminders, and writes delivery ledgers for
-  missed tasks.
-- `viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py` prepends the deterministic late
-  reminder notice on visible catch-up deliveries and carries `late_delivery` metadata into channel
-  delivery details.
+- `api/server/routes/viventium/scheduler.js` and `api/server/routes/viventium/telegram.js` thread the
+  query `scheduleId` into cortex-state recovery.
+- `viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py` owns persistence and policy:
+  `_default_misfire_mode` resolves default strict/catch-up behavior from structured fields,
+  `_resolve_misfire_policy` applies explicit metadata overrides, `_deferred_fallback_degradation`
+  records fallback degradation in the ledger, `_pruned_internal_metadata` strips obsolete internal
+  scheduler keys, and `_update_after_success` writes successful delivery visibility.
+- `scheduler.py` writes missed-task ledgers through `_update_after_skip` and failure ledgers through
+  `_update_after_failure`.
+- `viventium-librechat-start.sh` health-checks the Scheduling Cortex MCP after launch and runs a
+  small watchdog so MCP transport failures do not persist as `ECONNREFUSED` after an MCP process
+  exits. After dependency sync, the launcher runs the long-lived service through the MCP venv
+  Python directly instead of supervising a transient package-manager wrapper process.
 - `viventium-librechat-start.sh` health-checks the Scheduling Cortex MCP after launch and runs a
   small watchdog so MCP transport failures do not persist as `ECONNREFUSED` after an MCP process
   exits. After dependency sync, the launcher runs the long-lived service through the MCP venv

@@ -6,6 +6,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_FILE = ROOT / "viventium_v0_4" / "agent-starter-react" / "components" / "app" / "app.tsx"
+CONNECTION_RECOVERY_HOOK_FILE = (
+    ROOT / "viventium_v0_4" / "agent-starter-react" / "hooks" / "useConnectionRecovery.ts"
+)
+CALL_SESSION_STATE_HOOK_FILE = (
+    ROOT / "viventium_v0_4" / "agent-starter-react" / "hooks" / "useCallSessionState.ts"
+)
+CALL_SESSION_VOICE_SETTINGS_HOOK_FILE = (
+    ROOT / "viventium_v0_4" / "agent-starter-react" / "hooks" / "useCallSessionVoiceSettings.ts"
+)
 VOICE_ROUTE_HOOK_FILE = ROOT / "viventium_v0_4" / "agent-starter-react" / "hooks" / "useVoiceRoute.ts"
 ROUTE_FILE = (
     ROOT / "viventium_v0_4" / "agent-starter-react" / "app" / "api" / "connection-details" / "route.ts"
@@ -29,6 +38,8 @@ def _run_connection_details_route_case(
     env: dict[str, str],
     request_body: dict[str, object],
     fetch_responses: list[dict[str, object]],
+    existing_dispatches: list[dict[str, object]] | None = None,
+    list_dispatch_error: bool = False,
 ) -> dict[str, object]:
     script = textwrap.dedent(
         f"""
@@ -52,6 +63,8 @@ def _run_connection_details_route_case(
           env: {json.dumps(env)},
           requestBody: {json.dumps(request_body)},
           fetchResponses: {json.dumps(fetch_responses)},
+          existingDispatches: {json.dumps(existing_dispatches or [])},
+          listDispatchError: {json.dumps(list_dispatch_error)},
         }};
 
         for (const [key, value] of Object.entries(caseData.env)) {{
@@ -81,7 +94,10 @@ def _run_connection_details_route_case(
           }}
 
           async listDispatch(_roomName) {{
-            return [];
+            if (caseData.listDispatchError) {{
+              throw new Error('list dispatch failed');
+            }}
+            return caseData.existingDispatches;
           }}
 
           async createDispatch(roomName, agentName, options) {{
@@ -114,10 +130,13 @@ def _run_connection_details_route_case(
             method: init.method || 'GET',
             body: init.body || null,
           }});
-          const match = caseData.fetchResponses.find((item) => urlText.endsWith(String(item.match)));
-          if (!match) {{
+          const matchIndex = caseData.fetchResponses.findIndex((item) =>
+            urlText.endsWith(String(item.match))
+          );
+          if (matchIndex < 0) {{
             throw new Error(`Unexpected fetch: ${{urlText}}`);
           }}
+          const match = caseData.fetchResponses.splice(matchIndex, 1)[0];
           return {{
             ok: Number(match.status) >= 200 && Number(match.status) < 300,
             status: Number(match.status),
@@ -232,6 +251,69 @@ def test_call_session_playground_extends_agent_join_timeout_for_local_cold_start
     assert "const VIVENTIUM_CALL_AGENT_CONNECT_TIMEOUT_MS = 90_000;" in content
     assert "agentConnectTimeoutMilliseconds: expectedCallSessionId" in content
     assert "? VIVENTIUM_CALL_AGENT_CONNECT_TIMEOUT_MS" in content
+
+
+def test_explicit_dispatch_call_connects_room_before_enabling_microphone() -> None:
+    content = APP_FILE.read_text()
+
+    assert "const shouldDeferMicrophoneUntilConnected = Boolean(expectedCallSessionId || appConfig.agentName);" in content
+    assert "const startSession = useCallback(async () => {" in content
+    assert "await session.start();" in content
+    assert "await session.start({" in content
+    assert "microphone: {" in content
+    assert "enabled: false," in content
+    assert "await session.room.localParticipant.setMicrophoneEnabled(true);" in content
+    assert "await session.end().catch((disconnectError) => {" in content
+    assert "useConnectionRecovery({" in content
+    assert "start: startSession," in content
+    assert "await startSession();" in content
+
+
+def test_voice_connection_recovery_preserves_background_reconnect_without_restarting_after_end_call() -> None:
+    content = CONNECTION_RECOVERY_HOOK_FILE.read_text()
+
+    assert "const RECONNECT_GRACE_MS = 5000;" in content
+    assert "function isRecoverableActiveState(connectionState: ConnectionState): boolean {" in content
+    assert "document.visibilityState === 'visible'" in content
+    assert "if (wasConnectedRef.current && shouldRecoverOnVisibleRef.current)" in content
+    assert "visible-page disconnect is intentional user action" in content
+    assert "const scheduleRecoveryCheck = useCallback(() => {" in content
+    assert "if (recoveryTimerRef.current)" in content
+    assert "document.visibilityState !== 'visible'" in content
+    assert "shouldRecoverOnVisibleRef.current = true;" in content
+    assert "scheduleRecoveryCheck();" in content
+
+
+def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial_loads() -> None:
+    state_hook = CALL_SESSION_STATE_HOOK_FILE.read_text()
+    voice_settings_hook = CALL_SESSION_VOICE_SETTINGS_HOOK_FILE.read_text()
+
+    assert "const INITIAL_STATE_RETRY_MS = 1500;" in state_hook
+    assert "const INITIAL_STATE_MAX_ATTEMPTS = 2;" in state_hook
+    assert "function isLikelyFetchNetworkError(error: unknown): boolean {" in state_hook
+    assert "Viventium is reconnecting to the voice runtime. Retrying call state..." in state_hook
+    assert "Viventium could not reach the voice runtime for call state." in state_hook
+    assert "loadState(attempt + 1);" in state_hook
+    assert "clearTimeout(retryTimeoutId);" in state_hook
+
+    assert "const INITIAL_LOAD_RETRY_MS = 1500;" in voice_settings_hook
+    assert "const INITIAL_LOAD_MAX_ATTEMPTS = 2;" in voice_settings_hook
+    assert "function isLikelyFetchNetworkError(error: unknown): boolean {" in voice_settings_hook
+    assert "Viventium is reconnecting to the voice runtime. Retrying voice settings..." in voice_settings_hook
+    assert "Viventium could not reach the voice runtime for voice settings." in voice_settings_hook
+    assert "loadVoiceSettings(attempt + 1);" in voice_settings_hook
+    assert "clearTimeout(retryTimeoutId);" in voice_settings_hook
+
+
+def test_playground_client_retries_connection_details_fetch_and_hides_raw_browser_fetch_error() -> None:
+    content = APP_FILE.read_text()
+
+    assert "const CONNECTION_DETAILS_RETRY_MS = 1500;" in content
+    assert "const CONNECTION_DETAILS_MAX_ATTEMPTS = 2;" in content
+    assert "function isLikelyFetchNetworkError(error: unknown): boolean {" in content
+    assert "await wait(CONNECTION_DETAILS_RETRY_MS);" in content
+    assert "Viventium could not reach the voice runtime." in content
+    assert "throw new Error(normalizeStartError(error));" in content
 
 
 def test_cartesia_playground_selector_exposes_named_voices_not_model_choices() -> None:
@@ -477,6 +559,210 @@ def test_connection_details_route_runtime_keeps_original_metadata_when_voice_set
     assert len(dispatch_calls) == 1
     metadata = json.loads(dispatch_calls[0]["options"]["metadata"])
     assert metadata == original_metadata
+
+
+def test_connection_details_route_recreates_stale_confirmed_dispatch_after_livekit_restart() -> None:
+    result = _run_connection_details_route_case(
+        env={
+            "LIVEKIT_API_KEY": "lk-api-key",
+            "LIVEKIT_API_SECRET": "lk-api-secret",
+            "LIVEKIT_URL": "ws://localhost:7888",
+            "LIVEKIT_API_HOST": "http://localhost:7888",
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://librechat.local",
+            "VIVENTIUM_CALL_SESSION_SECRET": "call-secret",
+        },
+        request_body={
+            "room_name": "room-restarted",
+            "participant_identity": "user-restarted",
+            "participant_name": "User Restarted",
+            "agentName": "librechat-voice-gateway",
+            "agentMetadata": json.dumps({"callSessionId": "call-restarted"}),
+        },
+        fetch_responses=[
+            {
+                "match": "/api/viventium/calls/call-restarted/voice-settings",
+                "status": 200,
+                "json": {},
+            },
+            {
+                "match": "/api/viventium/calls/call-restarted/dispatch/claim",
+                "status": 200,
+                "json": {"status": "already"},
+            },
+            {
+                "match": "/api/viventium/calls/call-restarted/dispatch/claim",
+                "status": 200,
+                "json": {"status": "claimed", "claimId": "claim-restarted"},
+            },
+            {
+                "match": "/api/viventium/calls/call-restarted/dispatch/confirm",
+                "status": 200,
+                "json": {"status": "ok"},
+            },
+        ],
+        existing_dispatches=[],
+    )
+
+    dispatch_calls = result["dispatchCalls"]
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0]["roomName"] == "room-restarted"
+    assert dispatch_calls[0]["agentName"] == "librechat-voice-gateway"
+    claim_bodies = [
+        json.loads(call["body"])
+        for call in result["fetchCalls"]
+        if call["url"].endswith("/api/viventium/calls/call-restarted/dispatch/claim")
+    ]
+    assert claim_bodies[0]["reclaimConfirmed"] is False
+    assert claim_bodies[1]["reclaimConfirmed"] is True
+
+
+def test_connection_details_route_keeps_existing_livekit_dispatch_for_confirmed_session() -> None:
+    result = _run_connection_details_route_case(
+        env={
+            "LIVEKIT_API_KEY": "lk-api-key",
+            "LIVEKIT_API_SECRET": "lk-api-secret",
+            "LIVEKIT_URL": "ws://localhost:7888",
+            "LIVEKIT_API_HOST": "http://localhost:7888",
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://librechat.local",
+            "VIVENTIUM_CALL_SESSION_SECRET": "call-secret",
+        },
+        request_body={
+            "room_name": "room-already-live",
+            "participant_identity": "user-already-live",
+            "participant_name": "User Already Live",
+            "agentName": "librechat-voice-gateway",
+            "agentMetadata": json.dumps({"callSessionId": "call-already-live"}),
+        },
+        fetch_responses=[
+            {
+                "match": "/api/viventium/calls/call-already-live/voice-settings",
+                "status": 200,
+                "json": {},
+            },
+            {
+                "match": "/api/viventium/calls/call-already-live/dispatch/claim",
+                "status": 200,
+                "json": {"status": "already"},
+            },
+        ],
+        existing_dispatches=[{"agentName": "librechat-voice-gateway"}],
+    )
+
+    assert result["dispatchCalls"] == []
+
+
+def test_connection_details_route_does_not_duplicate_dispatch_while_claim_in_flight() -> None:
+    result = _run_connection_details_route_case(
+        env={
+            "LIVEKIT_API_KEY": "lk-api-key",
+            "LIVEKIT_API_SECRET": "lk-api-secret",
+            "LIVEKIT_URL": "ws://localhost:7888",
+            "LIVEKIT_API_HOST": "http://localhost:7888",
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://librechat.local",
+            "VIVENTIUM_CALL_SESSION_SECRET": "call-secret",
+        },
+        request_body={
+            "room_name": "room-in-flight",
+            "participant_identity": "user-in-flight",
+            "participant_name": "User In Flight",
+            "agentName": "librechat-voice-gateway",
+            "agentMetadata": json.dumps({"callSessionId": "call-in-flight"}),
+        },
+        fetch_responses=[
+            {
+                "match": "/api/viventium/calls/call-in-flight/voice-settings",
+                "status": 200,
+                "json": {},
+            },
+            {
+                "match": "/api/viventium/calls/call-in-flight/dispatch/claim",
+                "status": 200,
+                "json": {"status": "in_flight"},
+            },
+        ],
+        existing_dispatches=[],
+    )
+
+    assert result["dispatchCalls"] == []
+
+
+def test_connection_details_route_fails_closed_when_dispatch_list_fails_for_confirmed_session() -> None:
+    result = _run_connection_details_route_case(
+        env={
+            "LIVEKIT_API_KEY": "lk-api-key",
+            "LIVEKIT_API_SECRET": "lk-api-secret",
+            "LIVEKIT_URL": "ws://localhost:7888",
+            "LIVEKIT_API_HOST": "http://localhost:7888",
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://librechat.local",
+            "VIVENTIUM_CALL_SESSION_SECRET": "call-secret",
+        },
+        request_body={
+            "room_name": "room-list-error",
+            "participant_identity": "user-list-error",
+            "participant_name": "User List Error",
+            "agentName": "librechat-voice-gateway",
+            "agentMetadata": json.dumps({"callSessionId": "call-list-error"}),
+        },
+        fetch_responses=[
+            {
+                "match": "/api/viventium/calls/call-list-error/voice-settings",
+                "status": 200,
+                "json": {},
+            },
+            {
+                "match": "/api/viventium/calls/call-list-error/dispatch/claim",
+                "status": 200,
+                "json": {"status": "already"},
+            },
+        ],
+        list_dispatch_error=True,
+    )
+
+    assert result["response"]["status"] == 500
+    assert result["dispatchCalls"] == []
+    claim_calls = [
+        call
+        for call in result["fetchCalls"]
+        if call["url"].endswith("/api/viventium/calls/call-list-error/dispatch/claim")
+    ]
+    assert len(claim_calls) == 1
+
+
+def test_connection_details_route_rejects_expired_call_session_before_token_issue() -> None:
+    result = _run_connection_details_route_case(
+        env={
+            "LIVEKIT_API_KEY": "lk-api-key",
+            "LIVEKIT_API_SECRET": "lk-api-secret",
+            "LIVEKIT_URL": "ws://localhost:7888",
+            "LIVEKIT_API_HOST": "http://localhost:7888",
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://librechat.local",
+            "VIVENTIUM_CALL_SESSION_SECRET": "call-secret",
+        },
+        request_body={
+            "room_name": "room-expired",
+            "participant_identity": "user-expired",
+            "participant_name": "User Expired",
+            "agentName": "librechat-voice-gateway",
+            "agentMetadata": json.dumps({"callSessionId": "call-expired"}),
+        },
+        fetch_responses=[
+            {
+                "match": "/api/viventium/calls/call-expired/voice-settings",
+                "status": 200,
+                "json": {},
+            },
+            {
+                "match": "/api/viventium/calls/call-expired/dispatch/claim",
+                "status": 200,
+                "json": {"status": "expired"},
+            },
+        ],
+        existing_dispatches=[],
+    )
+
+    assert result["response"]["status"] == 410
+    assert "expired" in result["response"]["body"]["message"]
+    assert result["dispatchCalls"] == []
 
 
 def test_connection_details_route_uses_public_livekit_only_for_configured_public_playground_origin() -> None:

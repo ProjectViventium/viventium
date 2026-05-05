@@ -92,6 +92,26 @@ background-cortex behavior.
 - Agent dispatch metadata for modern-playground calls must be hydrated from the authoritative
   call-session voice settings server-side before dispatch creation; do not rely on the browser's
   async voice-settings fetch completing first.
+- A persisted `dispatchConfirmedAt` is not proof that LiveKit still has a live dispatch. Local
+  restarts can clear LiveKit's in-memory dispatch state while Mongo still remembers the prior
+  confirmation. `/api/connection-details` must verify the LiveKit dispatch list and, if the session
+  is confirmed but LiveKit has no matching dispatch, atomically reclaim the server-side dispatch
+  lease before creating and confirming a replacement.
+- Explicit-dispatch modern-playground calls must connect the LiveKit room before enabling the
+  microphone track. The `/api/connection-details` route can legitimately spend time claiming and
+  confirming dispatch, and browser-side pre-connect microphone publication must not race that work
+  into LiveKit's signal-engine timeout. This means explicit-dispatch calls intentionally do not
+  buffer microphone audio before the room is connected.
+- Browser-visible voice startup errors must not expose raw fetch exceptions such as
+  `Failed to fetch`. Transient runtime fetch failures during startup/restart should retry briefly,
+  then surface a Viventium-specific recovery message if the runtime is still unavailable.
+- Publisher-dispatch workers join after the user microphone track is published. A successful call
+  startup therefore requires all of these observable states: room connection, user microphone track
+  publish, `JT_PUBLISHER` job assignment, voice gateway job receipt, and persisted
+  `activeJobId`/`activeWorkerId`.
+- Background/sleep recovery must not treat an intentional visible-page disconnect as a dropped
+  connection. End Call should leave the page in the pre-connect state without silently starting a
+  new LiveKit participant or duplicate worker job.
 
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.
@@ -113,6 +133,12 @@ background-cortex behavior.
   must preserve leading and trailing whitespace on streamed TTS chunks after markup/nonverbal
   normalization, including whitespace-only deltas, so `["What's", " up?"]` remains
   `What's up?`, not `What'sup?`.
+- Modern playground transcripts must preserve assistant message boundaries. The default path uses
+  async LiveKit transcript output (`VIVENTIUM_VOICE_SYNC_TRANSCRIPTION` unset/false) so the browser
+  shows each assistant answer as soon as the LLM completes it instead of pacing words with TTS
+  playout. `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` is an opt-in caption QA mode, not the shipped
+  default. The playground transcript reader must key boundaries by LiveKit text-stream id, not by
+  segment text or provider names.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -168,9 +194,17 @@ background-cortex behavior.
 - In live voice, only the main agent's user-facing outputs may be spoken:
   - the immediate Phase A main response
   - a persisted Phase B `cortex_followup` main-agent continuation, when one exists
+- Voice inherits the shared Phase B moved-on conversation rule: if newer visible messages were
+  exchanged before an old background follow-up completes, the main-agent adjudicator receives those
+  messages and must choose whether anything is still useful now.
 - Raw `cortex_insight` content is background cognition. It may be shown in LibreChat's
   background-insight UI, but it must not be spoken directly into the modern playground transcript
   or TTS path as a fallback.
+- A normal, non-replacement voice follow-up that resolves to `{NTA}` is terminal. The persistence
+  layer must not override that no-response decision with deterministic raw insight fallback text.
+- If voice follow-up generation returns empty text for a normal follow-up, the voice surface stays
+  silent rather than speaking raw `cortex_insight` fallback text. Forced replacement/deferred-primary
+  paths may still use governed fallback text when they explicitly own the user-visible answer.
 
 ### Turn-Taking Ownership Contract
 - AssemblyAI-backed voice calls must default to provider endpointing (`turn_detection=stt`) instead
@@ -182,17 +216,32 @@ background-cortex behavior.
   near-zero/small and act only as a guardrail.
 - Semantic turn detection is a higher-capability option, but it is an explicit config/runtime choice,
   not the default fallback for every AssemblyAI install.
-- When the semantic turn-detector plugin is installed, launcher/runtime checks must verify the exact
-  required cached assets, not just the presence of a generic Hugging Face cache directory.
+- When the semantic turn-detector plugin is installed, launcher/runtime checks must verify both the
+  exact required cached assets and the actual local LiveKit inference-runner registration before
+  advertising `turn_detector` as available. The cache check must cover the ONNX model,
+  `languages.json`, and tokenizer/config files required by LiveKit's `AutoTokenizer` path; a
+  partial snapshot must fall back instead of registering a broken semantic detector path.
 - The turn-detector plugin must load lazily. Installing the package alone must not make an unrelated
   local `vad` route boot with inference-runner initialization errors for an unused detector path.
 - Local whisper.cpp (`whisper_local` / `pywhispercpp`) remains a StreamAdapter + Silero VAD path:
   - it inherits shared interruption handling and saved-route plumbing
-  - it does not gain AssemblyAI-native endpointing knobs or semantic turn-detector behavior
+  - it does not gain AssemblyAI-native endpointing knobs
+  - when the optional multilingual semantic turn detector is installed, the exact cached assets are
+    present, and the LiveKit inference runner is registered before worker construction, local Whisper
+    may use `turn_detector` so end-of-turn is decided by the gateway's semantic turn-taking layer
+    instead of by a short silence timer
+  - when the semantic detector is unavailable, uncached, or lacks a registered local inference
+    runner, local Whisper must fall back to a less-eager VAD profile instead of committing after the
+    historical `0.5s` silence / `0.9s` endpointing profile
+  - first-run detector downloads are best-effort; if the exact detector assets cannot be cached,
+    local Whisper remains functional on the less-eager VAD fallback and the launcher retries on a
+    later start
 - Optional voice-gateway plugins must never crash worker boot at module import time:
   - plugin availability checks must treat a missing parent package the same as a missing leaf module
-  - semantic turn detection may downgrade at runtime, but the LiveKit worker must still register
-    for `stt` and `vad` routes
+  - semantic turn detection may downgrade at runtime, and worker logs must expose the concrete
+    downgrade status (`plugin_missing`, `model_weights_missing`,
+    `local_inference_runner_unregistered`, or equivalent) instead of labeling an unhealthy path as
+    `semantic_turn_detector`
 - Voice-gateway dependency installation must compare installed package versions against
   `voice-gateway/requirements.txt`, not just test package presence. An already-created venv with
   older LiveKit packages must be refreshed during startup/upgrade instead of silently reusing stale
@@ -214,6 +263,8 @@ background-cortex behavior.
     expected during model warm-up and must not make the worker disappear from dispatch
   - local Whisper routes default to a longer initialization timeout so cold-start model loading does
     not kill the idle process before the worker can accept calls
+  - local Whisper VAD fallback defaults to a longer silence budget than remote/STT-owned routes, and
+    explicit `VIVENTIUM_STT_VAD_MIN_SILENCE` still overrides that default
   - runtime logs must state why a user turn completed, using normalized reason labels such as
     `vad_silence`, `stt_end_of_turn`, or `semantic_turn_detector`
 - Per-call requested voice-route overrides must recompute the effective turn-taking defaults from the

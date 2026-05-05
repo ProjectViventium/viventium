@@ -12,7 +12,14 @@ from worker import (
     _apply_requested_voice_route,
     _build_assemblyai_stt_kwargs,
     _build_voice_capability_catalog,
+    _ensure_turn_detector_runner_registered,
+    _semantic_turn_detector_status,
+    _silero_vad_kwargs_for_env,
+    _supports_semantic_turn_detector,
     _turn_detector_model_is_cached,
+    _turn_detector_runner_registered,
+    _vad_kwargs_cache_key,
+    _voice_sync_transcription_enabled,
     build_stt_selection,
     load_env,
     load_turn_detection,
@@ -57,18 +64,43 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_max_endpointing_delay_s, 1.8)
 
     def test_load_env_respects_explicit_turn_detector_override(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "VIVENTIUM_STT_PROVIDER": "assemblyai",
-                "VIVENTIUM_TURN_DETECTION": "turn_detector",
-            },
-            clear=True,
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIVENTIUM_STT_PROVIDER": "assemblyai",
+                    "VIVENTIUM_TURN_DETECTION": "turn_detector",
+                },
+                clear=True,
+            ),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=True),
         ):
             env = load_env()
 
         self.assertEqual(env.voice_turn_detection, "turn_detector")
         self.assertEqual(env.voice_min_endpointing_delay_s, 0.35)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 1.8)
+
+    def test_explicit_turn_detector_falls_back_to_aligned_profile_when_uncached(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIVENTIUM_STT_PROVIDER": "assemblyai",
+                    "VIVENTIUM_TURN_DETECTION": "turn_detector",
+                },
+                clear=True,
+            ),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=False),
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_turn_detection, "stt")
+        self.assertEqual(env.voice_min_endpointing_delay_s, 0.0)
         self.assertEqual(env.voice_max_endpointing_delay_s, 1.8)
 
     def test_load_env_respects_turn_handling_overrides(self) -> None:
@@ -126,6 +158,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(updated.voice_max_endpointing_delay_s, 1.8)
         self.assertEqual(updated.voice_min_interruption_words, 1)
         self.assertEqual(updated.voice_min_consecutive_speech_delay_s, 0.2)
+        self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_silence_duration"], 0.5)
 
     def test_requested_local_override_recomputes_turn_profile_from_assemblyai_default(self) -> None:
         with (
@@ -138,6 +171,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
                 clear=True,
             ),
             patch("worker.HAS_ASSEMBLYAI", True),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
         ):
             env = load_env()
             capabilities = _build_voice_capability_catalog(env)
@@ -150,10 +184,100 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(updated.stt_provider, "pywhispercpp")
         self.assertEqual(updated.stt_model, "tiny.en")
         self.assertEqual(updated.voice_turn_detection, "vad")
-        self.assertEqual(updated.voice_min_endpointing_delay_s, 0.9)
+        self.assertEqual(updated.voice_min_endpointing_delay_s, 1.4)
         self.assertEqual(updated.voice_max_endpointing_delay_s, 3.0)
         self.assertEqual(updated.voice_min_interruption_words, 0)
         self.assertEqual(updated.voice_min_consecutive_speech_delay_s, 0.0)
+
+    def test_local_whisper_uses_semantic_turn_detector_when_cached(self) -> None:
+        with (
+            patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=True),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=True),
+        ):
+            env = load_env()
+
+        self.assertTrue(_supports_semantic_turn_detector("whisper_local"))
+        self.assertTrue(_supports_semantic_turn_detector("pywhispercpp"))
+        self.assertEqual(env.voice_turn_detection, "turn_detector")
+        self.assertEqual(env.voice_min_endpointing_delay_s, 0.35)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 1.8)
+        self.assertEqual(env.voice_min_interruption_words, 1)
+        self.assertEqual(env.voice_min_consecutive_speech_delay_s, 0.2)
+
+    def test_local_whisper_falls_back_to_vad_when_runner_is_not_registered(self) -> None:
+        with (
+            patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=True),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=False),
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_turn_detection, "vad")
+        self.assertEqual(env.voice_min_endpointing_delay_s, 1.4)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
+
+    def test_local_whisper_uncached_fallback_uses_less_eager_vad(self) -> None:
+        with (
+            patch.dict(os.environ, {"VIVENTIUM_STT_PROVIDER": "whisper_local"}, clear=True),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=False),
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_turn_detection, "vad")
+        self.assertEqual(env.voice_min_endpointing_delay_s, 1.4)
+        self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 1.0)
+
+    def test_local_whisper_respects_explicit_vad_min_silence_override(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                    "VIVENTIUM_STT_VAD_MIN_SILENCE": "0.72",
+                },
+                clear=True,
+            ),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+        ):
+            env = load_env()
+            vad_kwargs = _silero_vad_kwargs_for_env(env)
+
+        self.assertEqual(vad_kwargs["min_silence_duration"], 0.72)
+
+    def test_vad_kwargs_cache_key_changes_when_requested_route_changes_vad_timing(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                    "ASSEMBLYAI_API_KEY": "assemblyai-test",
+                },
+                clear=True,
+            ),
+            patch("worker.HAS_ASSEMBLYAI", True),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+        ):
+            env = load_env()
+            local_key = _vad_kwargs_cache_key(_silero_vad_kwargs_for_env(env))
+            capabilities = _build_voice_capability_catalog(env)
+            updated = _apply_requested_voice_route(
+                env,
+                {"stt": {"provider": "assemblyai", "variant": "universal-streaming"}},
+                capabilities,
+            )
+            assemblyai_key = _vad_kwargs_cache_key(_silero_vad_kwargs_for_env(updated))
+
+        self.assertEqual(env.voice_turn_detection, "vad")
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 1.0)
+        self.assertEqual(updated.voice_turn_detection, "stt")
+        self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_silence_duration"], 0.5)
+        self.assertNotEqual(local_key, assemblyai_key)
 
     def test_load_env_raises_memory_warning_threshold_for_local_voice_route(self) -> None:
         with patch.dict(
@@ -233,6 +357,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         with (
             patch("worker.HAS_TURN_DETECTOR", True),
             patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=True),
             patch("worker._load_turn_detector_model_class", return_value=lambda: "semantic-detector"),
         ):
             turn_detection, reason = load_turn_detection(env, has_vad=True)
@@ -246,6 +371,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         with (
             patch("worker.HAS_TURN_DETECTOR", True),
             patch("worker._turn_detector_model_is_cached", return_value=False),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=False),
             patch("worker._load_turn_detector_model_class") as detector_cls,
         ):
             turn_detection, reason = load_turn_detection(env, has_vad=True)
@@ -253,6 +379,81 @@ class TestWorkerTurnHandling(unittest.TestCase):
         detector_cls.assert_not_called()
         self.assertEqual(turn_detection, "stt")
         self.assertEqual(reason, "stt_end_of_turn")
+
+    def test_load_turn_detection_falls_back_to_vad_for_local_stt_when_runner_missing(self) -> None:
+        env = SimpleNamespace(voice_turn_detection="turn_detector", stt_provider="pywhispercpp")
+
+        with (
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=False),
+            patch("worker._load_turn_detector_model_class") as detector_cls,
+        ):
+            turn_detection, reason = load_turn_detection(env, has_vad=True)
+
+        detector_cls.assert_not_called()
+        self.assertEqual(turn_detection, "vad")
+        self.assertEqual(reason, "vad_silence")
+
+    def test_semantic_turn_detector_status_requires_registered_local_runner(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=False),
+        ):
+            self.assertEqual(
+                _semantic_turn_detector_status("pywhispercpp"),
+                (False, "local_inference_runner_unregistered"),
+            )
+
+    def test_semantic_turn_detector_status_allows_remote_inference(self) -> None:
+        with (
+            patch.dict(os.environ, {"LIVEKIT_REMOTE_EOT_URL": "https://example.invalid/eot"}, clear=True),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+        ):
+            self.assertEqual(
+                _semantic_turn_detector_status("pywhispercpp"),
+                (True, "remote_inference"),
+            )
+
+    def test_turn_detector_runner_registration_does_not_import_when_assets_missing(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+            patch("builtins.__import__") as import_fn,
+        ):
+            self.assertFalse(_ensure_turn_detector_runner_registered())
+
+        import_fn.assert_not_called()
+
+    def test_turn_detector_runner_registration_imports_multilingual_plugin(self) -> None:
+        registered_runners = {}
+        FakeInferenceRunner = type(
+            "FakeInferenceRunner",
+            (),
+            {"registered_runners": registered_runners},
+        )
+
+        def fake_import(name: str, *args, **kwargs):
+            if name == "livekit.agents.inference_runner":
+                return SimpleNamespace(_InferenceRunner=FakeInferenceRunner)
+            if name == "livekit.plugins.turn_detector.multilingual":
+                registered_runners["lk_end_of_utterance_multilingual"] = object()
+                return SimpleNamespace()
+            raise ImportError(name)
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("builtins.__import__", side_effect=fake_import),
+        ):
+            self.assertFalse(_turn_detector_runner_registered())
+            self.assertTrue(_ensure_turn_detector_runner_registered())
+            self.assertTrue(_turn_detector_runner_registered())
 
     def test_load_turn_detection_falls_back_to_stt_when_turn_detector_missing(self) -> None:
         env = SimpleNamespace(voice_turn_detection="turn_detector", stt_provider="assemblyai")
@@ -285,11 +486,40 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
         with (
             patch("worker._get_turn_detector_cache_manifest", return_value=manifest),
-            patch("huggingface_hub.hf_hub_download", side_effect=["/tmp/model_q8.onnx", "/tmp/languages.json"]) as download,
+            patch(
+                "huggingface_hub.hf_hub_download",
+                side_effect=[
+                    "/tmp/model_q8.onnx",
+                    "/tmp/config.json",
+                    "/tmp/languages.json",
+                    "/tmp/special_tokens_map.json",
+                    "/tmp/tokenizer.json",
+                    "/tmp/tokenizer_config.json",
+                ],
+            ) as download,
         ):
             self.assertTrue(_turn_detector_model_is_cached())
 
-        self.assertEqual(download.call_count, 2)
+        self.assertEqual(download.call_count, 6)
+
+    def test_turn_detector_model_cache_check_rejects_partial_snapshot(self) -> None:
+        manifest = {
+            "repo_id": "livekit/turn-detector",
+            "revision": "v0.4.1-intl",
+            "onnx_filename": "model_q8.onnx",
+        }
+
+        with (
+            patch("worker._get_turn_detector_cache_manifest", return_value=manifest),
+            patch(
+                "huggingface_hub.hf_hub_download",
+                side_effect=[
+                    "/tmp/model_q8.onnx",
+                    OSError("missing tokenizer config"),
+                ],
+            ),
+        ):
+            self.assertFalse(_turn_detector_model_is_cached())
 
     def test_turn_detector_model_cache_check_returns_false_when_exact_assets_missing(self) -> None:
         manifest = {
@@ -303,6 +533,35 @@ class TestWorkerTurnHandling(unittest.TestCase):
             patch("huggingface_hub.hf_hub_download", side_effect=OSError("missing")),
         ):
             self.assertFalse(_turn_detector_model_is_cached())
+
+    def test_voice_sync_transcription_defaults_to_fast_async_display(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(_voice_sync_transcription_enabled())
+
+        with patch.dict(os.environ, {"VIVENTIUM_VOICE_SYNC_TRANSCRIPTION": "1"}, clear=True):
+            self.assertTrue(_voice_sync_transcription_enabled())
+
+    def test_pinned_livekit_word_tokenizer_preserves_spacing_for_synced_transcripts(self) -> None:
+        from livekit.agents import tokenize
+
+        tokenizer = tokenize.basic.WordTokenizer(
+            retain_format=True,
+            ignore_punctuation=False,
+            split_character=True,
+        )
+
+        text = "Night, friend. Ha. Which one?"
+        self.assertEqual("".join(tokenizer.tokenize(text)), text)
+
+    def test_pinned_livekit_synchronizer_uses_display_safe_word_tokenizer_for_opt_in_sync(self) -> None:
+        from livekit.agents.voice.transcription import synchronizer
+
+        source = inspect.getsource(synchronizer.TranscriptSynchronizer)
+
+        self.assertIn("WordTokenizer", source)
+        self.assertIn("retain_format=True", source)
+        self.assertIn("ignore_punctuation=False", source)
+        self.assertIn("split_character=True", source)
 
 
 if __name__ == "__main__":

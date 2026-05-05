@@ -14,6 +14,7 @@ APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/
 HELPER_PACKAGE_DIR="${VIVENTIUM_HELPER_PACKAGE_DIR:-$REPO_ROOT/apps/macos/ViventiumHelper}"
 HELPER_BUILD_DIR="${VIVENTIUM_HELPER_BUILD_DIR:-$HELPER_PACKAGE_DIR/.build/release}"
 HELPER_EXECUTABLE_NAME="ViventiumHelper"
+HELPER_BUNDLE_IDENTIFIER="${VIVENTIUM_HELPER_BUNDLE_IDENTIFIER:-ai.viventium.helper}"
 BUILT_EXECUTABLE="${VIVENTIUM_HELPER_BUILT_EXECUTABLE:-$HELPER_BUILD_DIR/$HELPER_EXECUTABLE_NAME}"
 HELPER_PREBUILT_DIR="${VIVENTIUM_HELPER_PREBUILT_DIR:-$HELPER_PACKAGE_DIR/prebuilt}"
 HELPER_PREBUILT_EXECUTABLE="${VIVENTIUM_HELPER_PREBUILT_EXECUTABLE:-$HELPER_PREBUILT_DIR/${HELPER_EXECUTABLE_NAME}-universal}"
@@ -32,6 +33,7 @@ HELPER_STACK_WRAPPER="${VIVENTIUM_HELPER_STACK_WRAPPER:-$HELPER_SCRIPT_DIR/viven
 HELPER_RUNTIME_REPO_ROOT="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-$REPO_ROOT}"
 SKIP_BUILD="${VIVENTIUM_HELPER_SKIP_BUILD:-0}"
 FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"
+SKIP_CODESIGN="${VIVENTIUM_HELPER_SKIP_CODESIGN:-0}"
 SKIP_LAUNCHCTL="${VIVENTIUM_HELPER_SKIP_LAUNCHCTL:-0}"
 SKIP_LOGIN_ITEM="${VIVENTIUM_HELPER_SKIP_LOGIN_ITEM:-0}"
 OSASCRIPT_TIMEOUT_SECONDS="${VIVENTIUM_HELPER_OSASCRIPT_TIMEOUT_SECONDS:-15}"
@@ -70,9 +72,25 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
-HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"
+HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT" "$APP_SUPPORT_DIR")"
+HELPER_RUNTIME_ALLOW_PROTECTED=0
+if active_runtime_checkout_allows_repo_root "$APP_SUPPORT_DIR" "$HELPER_RUNTIME_REPO_ROOT"; then
+  HELPER_RUNTIME_ALLOW_PROTECTED=1
+fi
 if [[ "$HELPER_RUNTIME_REPO_ROOT" != "$REPO_ROOT" ]]; then
-  echo "[viventium] Using public-safe helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2
+  if active_runtime_checkout_matches_repo_root "$APP_SUPPORT_DIR" "$HELPER_RUNTIME_REPO_ROOT"; then
+    echo "[viventium] Using configured helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2
+  else
+    echo "[viventium] Using public-safe helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2
+  fi
+fi
+if repo_root_uses_macos_protected_folder_access "$HELPER_RUNTIME_REPO_ROOT" && [[ "$HELPER_RUNTIME_ALLOW_PROTECTED" != "1" ]]; then
+  echo "[viventium] Refusing to bind the macOS helper to a protected-folder checkout." >&2
+  echo "[viventium] Install or update Viventium from $(public_safe_path_label "$(default_public_install_repo_root)") or run bin/viventium runtime-checkout use <path> --allow-protected-folder for an explicit developer checkout." >&2
+  exit 1
+fi
+if repo_root_uses_macos_protected_folder_access "$HELPER_RUNTIME_REPO_ROOT" && [[ "$HELPER_RUNTIME_ALLOW_PROTECTED" == "1" ]]; then
+  echo "[viventium] Binding helper to explicit developer checkout inside a macOS protected folder: $HELPER_RUNTIME_REPO_ROOT" >&2
 fi
 
 mkdir -p "$APP_SUPPORT_DIR" "$APP_SUPPORT_DIR/logs" "$HELPER_APP_DIR" "$LAUNCH_AGENT_DIR"
@@ -98,6 +116,7 @@ config.update(
     {
         "repoRoot": r"""$HELPER_RUNTIME_REPO_ROOT""",
         "appSupportDir": r"""$APP_SUPPORT_DIR""",
+        "allowProtectedRepoRoot": """$HELPER_RUNTIME_ALLOW_PROTECTED""" == "1",
         "showInStatusBar": bool(existing.get("showInStatusBar", True)),
     }
 )
@@ -144,6 +163,9 @@ def q(value: Path | str) -> str:
 dollar = chr(36)
 
 wrapper = f"""#!/usr/bin/env bash
+# Compatibility wrapper written by the installer. The menu-bar helper builds
+# detached start/stop commands from helper-config.json directly so stale wrapper
+# contents cannot rebind runtime operations to a protected-folder checkout.
 set -euo pipefail
 export VIVENTIUM_HELPER_V0_ROOT={q(repo_root / "viventium_v0_4")}
 export VIVENTIUM_HELPER_CORE_ROOT={q(repo_root)}
@@ -185,11 +207,15 @@ write_launch_agent_plist() {
   <array>
     <string>Aqua</string>
   </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>$PATH</string>
-  </dict>
+	  <key>EnvironmentVariables</key>
+	  <dict>
+	    <key>PATH</key>
+	    <string>$PATH</string>
+	    <key>VIVENTIUM_HELPER_RUNTIME_REPO_ROOT</key>
+	    <string>$HELPER_RUNTIME_REPO_ROOT</string>
+	    <key>VIVENTIUM_PUBLIC_INSTALL_DIR</key>
+	    <string>$(default_public_install_repo_root)</string>
+	  </dict>
   <key>StandardOutPath</key>
   <string>$HELPER_LOG_FILE</string>
   <key>StandardErrorPath</key>
@@ -545,6 +571,15 @@ install_bundle() {
   fi
 }
 
+sign_installed_bundle() {
+  [[ "$SKIP_CODESIGN" == "1" ]] && return 0
+  [[ -x /usr/bin/codesign ]] || return 0
+
+  if ! /usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_APP_BUNDLE" >/dev/null 2>&1; then
+    echo "[viventium] Warning: Viventium helper installed but could not be code signed locally." >&2
+  fi
+}
+
 stop_existing_helper() {
   pkill -f "$LEGACY_HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME" >/dev/null 2>&1 || true
   pkill -f "$HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME" >/dev/null 2>&1 || true
@@ -576,6 +611,7 @@ install)
     cleanup_legacy_terminal_helper_launchers
     build_helper
     install_bundle
+    sign_installed_bundle
     write_helper_config
     write_helper_launcher_scripts
     stop_existing_helper

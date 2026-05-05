@@ -120,10 +120,41 @@ Expected behavior:
   checkout
 - generated helper launcher scripts point at the safe public checkout for `bin/viventium`
 - helper install/status-bar output makes the rebinding explicit
+- an already-installed helper self-heals stale protected-folder helper config on launch when a safe
+  public checkout is available
+- helper install fails closed when the only available runtime checkout is under Documents, Desktop,
+  or Downloads
+- detached helper start/stop uses the healed helper config directly instead of stale generated
+  App Support wrapper content
+- the installed helper app bundle is code signed with the `ai.viventium.helper` bundle identifier
+  as packaging hygiene
 - the helper app no longer needs ongoing Documents-folder access just to poll/start/stop the local
   stack
 
-### 7. Native CLI dependency drift
+### 7. Explicit active developer checkout
+
+Repro surface:
+
+- a developer has both a supported installed checkout such as `~/viventium` and a working checkout
+  elsewhere
+- helper/start commands would otherwise choose the installed checkout and miss the code under active
+  development
+
+Expected behavior:
+
+- `bin/viventium runtime-checkout use --this --allow-protected-folder` records an explicit
+  machine-local active checkout under App Support state
+- helper config and helper launcher scripts bind to that active checkout after helper refresh
+- the helper does not self-heal that explicit developer checkout back to `~/viventium`
+- helper refresh relaunches the status-bar helper instead of leaving the menu hidden until next login
+- start/stop/helper commands invoked through a stale checkout re-exec through the active checkout
+- re-execed commands use the active checkout's own component lock file
+- inherited lock-file environment from the stale checkout is reset at the re-exec boundary
+- the active-checkout setting outranks LaunchAgent helper runtime environment defaults
+- no repo files, App Support config, snapshots, or database state are copied, deleted, reset, or
+  migrated by changing the active checkout setting
+
+### 8. Native CLI dependency drift
 
 Repro surface:
 
@@ -140,3 +171,29 @@ Expected behavior:
   the status command
 - daemon readiness remains feature-specific; binary probes do not pretend that Docker, Tailscale,
   Ollama models, router mappings, or service listeners are ready
+
+### 9. Helper and MCP status health boundaries
+
+Repro surface:
+
+- the core browser/API/playground stack is reachable
+- one optional sidecar is missing, still warming, or auth-protected
+- an OAuth-backed MCP server has a stored refresh token but no current in-memory connection after
+  restart
+
+Expected behavior:
+
+- the macOS helper menu shows `Running` and a `Stop` action when the core user-facing surfaces are
+  healthy
+- optional sidecar failures do not make the helper show `Start`
+- `bin/viventium status` reports each optional sidecar independently
+- Google/MS365 MCP `/mcp` responses with HTTP auth challenges count as live listeners
+- a connection-refused MCP endpoint becomes `Starting` during an active start command and
+  `Action Required` after startup has completed
+- the MCP connection-status API warms OAuth-backed MCPs when the user already has a usable stored
+  access or refresh token, so the UI can move from disconnected/needs-auth to connected without a
+  manual reconnect click
+- OAuth warmup is bounded by cooldown/in-flight guards and short token-presence caching so mounted
+  UI polling does not turn into avoidable DB load
+- mounted MCP UI controls refresh status periodically so recovery is reflected without a full browser
+  reload

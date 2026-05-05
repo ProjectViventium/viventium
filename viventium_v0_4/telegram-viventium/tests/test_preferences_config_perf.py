@@ -6,6 +6,8 @@
 # === VIVENTIUM END ===
 
 import sys
+import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -145,6 +147,80 @@ def test_update_first_buttons_message_adds_call_button_when_available(monkeypatc
 
     assert call_button.url == "http://198.51.100.25:3300/?chatid=user-1"
     assert prefs_button.callback_data == "PREFERENCES"
+
+
+def test_update_first_buttons_message_can_skip_call_link_fetch(monkeypatch):
+    def _fail_fetch(_chatid):
+        raise AssertionError("call-link HTTP fetch should not run in the Preferences hot path")
+
+    monkeypatch.setattr(telegram_config, "get_telegram_call_url", _fail_fetch)
+    telegram_config._CALL_URL_CACHE.clear()
+
+    buttons = telegram_config.update_first_buttons_message("user-1", fetch_call_url=False)
+    flattened = [btn for row in buttons for btn in row]
+
+    assert [btn.text for btn in flattened] == ["Preferences"]
+    assert flattened[0].callback_data == "PREFERENCES"
+
+
+def test_update_first_buttons_message_uses_explicit_call_url_without_fetch(monkeypatch):
+    def _fail_fetch(_chatid):
+        raise AssertionError("explicit call_url should avoid call-link HTTP fetch")
+
+    monkeypatch.setattr(telegram_config, "get_telegram_call_url", _fail_fetch)
+
+    buttons = telegram_config.update_first_buttons_message(
+        "user-1",
+        call_url="http://198.51.100.25:3300/?ok=1",
+        fetch_call_url=False,
+    )
+    flattened = [btn for row in buttons for btn in row]
+
+    assert flattened[0].text == "Call Viventium"
+    assert flattened[0].url == "http://198.51.100.25:3300/?ok=1"
+    assert flattened[1].text == "Preferences"
+
+
+def test_update_first_buttons_message_uses_cached_call_url_without_fetch(monkeypatch):
+    def _fail_fetch(_chatid):
+        raise AssertionError("cached call_url should avoid call-link HTTP fetch")
+
+    monkeypatch.setattr(telegram_config, "get_telegram_call_url", _fail_fetch)
+    telegram_config._CALL_URL_CACHE.clear()
+    telegram_config._CALL_URL_CACHE["user-1"] = {
+        "url": "http://198.51.100.25:3300/?cached=1",
+        "expires_at": time.time() + 60,
+    }
+
+    buttons = telegram_config.update_first_buttons_message("user-1", fetch_call_url=False)
+    flattened = [btn for row in buttons for btn in row]
+
+    assert flattened[0].text == "Call Viventium"
+    assert flattened[0].url == "http://198.51.100.25:3300/?cached=1"
+    assert flattened[1].text == "Preferences"
+
+
+def test_voice_preference_sync_is_backgrounded_in_running_event_loop(monkeypatch):
+    calls = []
+
+    def _slow_sync(*args):
+        time.sleep(0.15)
+        calls.append(args)
+
+    async def _run():
+        monkeypatch.setattr(telegram_config, "sync_voice_preferences", _slow_sync)
+
+        start = time.perf_counter()
+        task = telegram_config.schedule_voice_preferences_sync("user-1", True, True)
+        elapsed = time.perf_counter() - start
+
+        assert task is not None
+        assert elapsed < 0.05
+        await task
+
+    asyncio.run(_run())
+
+    assert calls == [("user-1", True, True)]
 
 
 def test_get_telegram_call_url_uses_convo_key_but_sends_real_telegram_user_id(monkeypatch):

@@ -257,6 +257,10 @@ A developer referring to a single document about a respective feature **must per
 - **Provide a concrete causal chain** for every issue: `trigger -> transformation -> user-visible output`, with file:line references
 - **Plumbing budget rule**: before adding new request fields/routes/config keys, prove existing context signals are insufficient (e.g., existing ids/metadata already flowing)
 - **Cross-surface regression check**: evaluate impact across Telegram, Scheduler, LibreChat Web UI, and Voice before finalizing
+- **No one-instance scheduling exceptions**: scheduled prompts must flow through one canonical generation,
+  visibility classification, delivery, and ledger path. Do not branch runtime behavior on human-facing
+  schedule names, prompt examples, or incident-specific labels such as "heartbeat"; use structured task
+  fields or explicit metadata contracts when a schedule needs special operational policy.
 - **Activation classifier rule**:
   - If a background-agent activation bug is `model-generated`, fix the user-configured activation prompt/source-of-truth first and prove it with evals.
   - Do **not** add runtime string blacklists or message-specific "if text contains X, suppress agent Y" gates for classifier false positives.

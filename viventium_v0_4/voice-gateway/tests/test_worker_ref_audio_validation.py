@@ -92,11 +92,15 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(env.voice_initialize_process_timeout_s, 120.0)
 
     def test_load_env_sets_voice_endpointing_defaults(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+        ):
             env = load_env()
 
         self.assertEqual(env.voice_min_interruption_duration_s, 0.5)
-        self.assertEqual(env.voice_min_endpointing_delay_s, 0.9)
+        self.assertEqual(env.voice_turn_detection, "vad")
+        self.assertEqual(env.voice_min_endpointing_delay_s, 1.4)
         self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
 
     def test_load_env_respects_voice_endpointing_overrides(self) -> None:
@@ -228,7 +232,7 @@ class TestRefAudioValidation(unittest.TestCase):
             os.environ,
             {
                 "OPENAI_API_KEY": "openai-key",
-                "XAI_API_KEY": "xai-key",
+                "XAI_API_KEY": "synthetic_xai_key",
                 "VIVENTIUM_TTS_PROVIDER": "openai",
                 "VIVENTIUM_OPENAI_STT_MODEL": "gpt-4o-mini-transcribe",
             },
@@ -380,7 +384,7 @@ class TestRefAudioValidation(unittest.TestCase):
             os.environ,
             {
                 "OPENAI_API_KEY": "openai-key",
-                "XAI_API_KEY": "xai-key",
+                "XAI_API_KEY": "synthetic_xai_key",
                 "VIVENTIUM_STT_PROVIDER": "openai",
                 "VIVENTIUM_OPENAI_STT_MODEL": "gpt-4o-transcribe",
                 "VIVENTIUM_TTS_PROVIDER": "xai",

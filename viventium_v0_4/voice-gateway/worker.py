@@ -76,6 +76,16 @@ def optional_module_available(module_name: str) -> bool:
 
 
 HAS_TURN_DETECTOR = optional_module_available("livekit.plugins.turn_detector.multilingual")
+_TURN_DETECTOR_RUNNER_NAME = "lk_end_of_utterance_multilingual"
+_LOCAL_WHISPER_STT_PROVIDERS = {"pywhispercpp", "whisper_local"}
+_LOCAL_WHISPER_VAD_MIN_SILENCE_S = "1.0"
+_TURN_DETECTOR_REQUIRED_ROOT_FILES = (
+    "config.json",
+    "languages.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+)
 
 # Optional import - handle gracefully if elevenlabs is not available
 try:
@@ -391,22 +401,129 @@ def _supports_stt_endpointing(provider: str) -> bool:
     return _normalize_stt_provider(provider) == "assemblyai"
 
 
+def _is_local_whisper_stt(provider: str) -> bool:
+    return _normalize_stt_provider(provider) in _LOCAL_WHISPER_STT_PROVIDERS
+
+
 def _supports_semantic_turn_detector(provider: str) -> bool:
-    return _supports_stt_endpointing(provider)
+    normalized_provider = _normalize_stt_provider(provider)
+    return _supports_stt_endpointing(normalized_provider) or _is_local_whisper_stt(
+        normalized_provider
+    )
+
+
+def _turn_detector_uses_remote_inference() -> bool:
+    return bool((os.getenv("LIVEKIT_REMOTE_EOT_URL", "") or "").strip())
+
+
+def _turn_detector_runner_registered() -> bool:
+    if _turn_detector_uses_remote_inference():
+        return True
+    try:
+        from livekit.agents.inference_runner import _InferenceRunner
+
+        return _TURN_DETECTOR_RUNNER_NAME in _InferenceRunner.registered_runners
+    except Exception:
+        return False
+
+
+def _ensure_turn_detector_runner_registered() -> bool:
+    if not HAS_TURN_DETECTOR:
+        return False
+    if _turn_detector_uses_remote_inference():
+        return True
+    if not _turn_detector_model_is_cached():
+        return False
+    if _turn_detector_runner_registered():
+        return True
+    try:
+        import livekit.plugins.turn_detector.multilingual  # noqa: F401
+    except Exception as exc:
+        logger.warning(
+            "Unable to import LiveKit multilingual turn detector before worker start: %s",
+            exc,
+        )
+        return False
+    return _turn_detector_runner_registered()
+
+
+def _semantic_turn_detector_status(provider: str) -> tuple[bool, str]:
+    normalized_provider = _normalize_stt_provider(provider)
+    if not HAS_TURN_DETECTOR:
+        return False, "plugin_missing"
+    if not _supports_semantic_turn_detector(normalized_provider):
+        return False, "unsupported_stt_provider"
+    if _turn_detector_uses_remote_inference():
+        return True, "remote_inference"
+    if not _turn_detector_model_is_cached():
+        return False, "model_weights_missing"
+    if _ensure_turn_detector_runner_registered():
+        return True, "local_inference_runner_ready"
+    return False, "local_inference_runner_unregistered"
+
+
+def _semantic_turn_detector_ready(provider: str) -> bool:
+    ready, _status = _semantic_turn_detector_status(provider)
+    return ready
+
+
+def _turn_end_reason_for_mode(mode: str) -> str:
+    if mode == "stt":
+        return "stt_end_of_turn"
+    if mode == "vad":
+        return "vad_silence"
+    return mode
+
+
+def _fallback_turn_detection_for_missing_semantic(provider: str) -> str:
+    return "stt" if _supports_stt_endpointing(provider) else "vad"
 
 
 def _default_turn_detection(stt_provider: str) -> str:
     normalized_provider = _normalize_stt_provider(stt_provider)
     if _supports_stt_endpointing(normalized_provider):
         return "stt"
+    if _is_local_whisper_stt(normalized_provider) and _semantic_turn_detector_ready(
+        normalized_provider
+    ):
+        return "turn_detector"
     return "vad"
 
 
-def _default_min_endpointing_delay(turn_detection: str) -> float:
+def _resolve_turn_detection_for_profile(
+    *,
+    stt_provider: str,
+    requested_turn_detection: str,
+) -> str:
+    normalized_provider = _normalize_stt_provider(stt_provider)
+    requested = _normalize_turn_detection(requested_turn_detection)
+    mode = requested or _default_turn_detection(normalized_provider)
+    if mode != "turn_detector":
+        return mode
+
+    ready, status = _semantic_turn_detector_status(normalized_provider)
+    if ready:
+        return "turn_detector"
+
+    fallback_mode = _fallback_turn_detection_for_missing_semantic(normalized_provider)
+    if requested:
+        logger.warning(
+            "VIVENTIUM_TURN_DETECTION=turn_detector requested but semantic detector is unavailable "
+            "for provider=%s status=%s; using %s turn detection.",
+            normalized_provider,
+            status,
+            fallback_mode,
+        )
+    return fallback_mode
+
+
+def _default_min_endpointing_delay(turn_detection: str, stt_provider: str = "") -> float:
     if turn_detection == "stt":
         return 0.0
     if turn_detection == "turn_detector":
         return 0.35
+    if turn_detection == "vad" and _is_local_whisper_stt(stt_provider):
+        return 1.4
     return 0.9
 
 
@@ -433,10 +550,14 @@ def _resolve_turn_handling_profile(
     configured_max_endpointing_delay_s: Optional[float],
     configured_min_consecutive_speech_delay_s: Optional[float],
 ) -> dict[str, float | int | str]:
-    voice_turn_detection = _normalize_turn_detection(requested_turn_detection) or _default_turn_detection(
+    voice_turn_detection = _resolve_turn_detection_for_profile(
+        stt_provider=stt_provider,
+        requested_turn_detection=requested_turn_detection,
+    )
+    default_min_endpointing_delay = _default_min_endpointing_delay(
+        voice_turn_detection,
         stt_provider,
     )
-    default_min_endpointing_delay = _default_min_endpointing_delay(voice_turn_detection)
     default_max_endpointing_delay = _default_max_endpointing_delay(voice_turn_detection)
     default_min_interruption_words = 1 if voice_turn_detection in {"stt", "turn_detector"} else 0
     default_min_consecutive_speech_delay = 0.2 if voice_turn_detection in {"stt", "turn_detector"} else 0.0
@@ -490,12 +611,13 @@ def _turn_detector_model_is_cached() -> bool:
             revision=manifest["revision"],
             local_files_only=True,
         )
-        hf_hub_download(
-            manifest["repo_id"],
-            "languages.json",
-            revision=manifest["revision"],
-            local_files_only=True,
-        )
+        for filename in _TURN_DETECTOR_REQUIRED_ROOT_FILES:
+            hf_hub_download(
+                manifest["repo_id"],
+                filename,
+                revision=manifest["revision"],
+                local_files_only=True,
+            )
         return True
     except Exception:
         return False
@@ -1380,20 +1502,17 @@ def load_turn_detection(env: Env, has_vad: bool) -> tuple[Any, str]:
     """
     mode = env.voice_turn_detection
     if mode == "turn_detector":
-        if HAS_TURN_DETECTOR and _supports_semantic_turn_detector(env.stt_provider):
-            if not _turn_detector_model_is_cached():
-                logger.warning(
-                    "VIVENTIUM_TURN_DETECTION=%s requested but turn detector model weights are not cached; falling back.",
-                    mode,
-                )
-                return "stt", "stt_end_of_turn"
+        ready, status = _semantic_turn_detector_status(env.stt_provider)
+        if ready:
             detector_model_cls = _load_turn_detector_model_class()
             if detector_model_cls is not None:
                 return detector_model_cls(), "semantic_turn_detector"
+
         logger.warning(
-            "VIVENTIUM_TURN_DETECTION=%s requested but turn detector is unavailable for provider=%s; falling back.",
+            "VIVENTIUM_TURN_DETECTION=%s requested but turn detector is unavailable for provider=%s status=%s; falling back.",
             mode,
             env.stt_provider,
+            status,
         )
         mode = "stt" if _supports_stt_endpointing(env.stt_provider) else "vad"
 
@@ -1403,13 +1522,7 @@ def load_turn_detection(env: Env, has_vad: bool) -> tuple[Any, str]:
                 "VIVENTIUM_TURN_DETECTION=vad but silero VAD is unavailable; falling back to 'stt'."
             )
             return "stt", "stt_end_of_turn"
-        if mode == "stt":
-            return "stt", "stt_end_of_turn"
-        if mode == "vad":
-            return "vad", "vad_silence"
-        if mode == "realtime_llm":
-            return "realtime_llm", "realtime_llm"
-        return "manual", "manual"
+        return mode, _turn_end_reason_for_mode(mode)
 
     fallback_mode = "vad" if has_vad else "stt"
     fallback_reason = "vad_silence" if fallback_mode == "vad" else "stt_end_of_turn"
@@ -1561,7 +1674,23 @@ def _attach_room_diagnostics(ctx: JobContext, *, call_session_id: str) -> None:
 # === VIVENTIUM END ===
 
 
-def load_vad() -> Optional[Any]:
+def _silero_vad_kwargs_for_env(env: Optional[Env] = None) -> dict[str, Any]:
+    source = os.environ
+    if (
+        env is not None
+        and _is_local_whisper_stt(env.stt_provider)
+        and not (os.getenv("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip()
+    ):
+        source = dict(os.environ)
+        source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
+    return get_silero_vad_kwargs(source)
+
+
+def _vad_kwargs_cache_key(vad_kwargs: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((key, str(value)) for key, value in vad_kwargs.items()))
+
+
+def load_vad(env: Optional[Env] = None) -> Optional[Any]:
     if not HAS_SILERO:
         logger.warning("Silero VAD not available; turn detection will fall back to STT.")
         return None
@@ -1569,7 +1698,7 @@ def load_vad() -> Optional[Any]:
     # Feature: VAD tuning parity with v1
     # === VIVENTIUM END ===
     try:
-        vad_kwargs = get_silero_vad_kwargs()
+        vad_kwargs = _silero_vad_kwargs_for_env(env)
         logger.info(
             "Loading shared Silero VAD min_speech=%ss min_silence=%ss activation=%s max_buffered_speech=%ss force_cpu=%s",
             vad_kwargs["min_speech_duration"],
@@ -1666,9 +1795,11 @@ def prewarm_process(proc: JobProcess) -> None:
     env = load_env()
     proc.userdata["voice_env"] = env
 
-    prewarmed_vad = load_vad()
+    prewarmed_vad_kwargs = _silero_vad_kwargs_for_env(env)
+    prewarmed_vad = load_vad(env)
     if prewarmed_vad is not None:
         proc.userdata["prewarmed_vad"] = prewarmed_vad
+        proc.userdata["prewarmed_vad_kwargs_key"] = _vad_kwargs_cache_key(prewarmed_vad_kwargs)
 
     provider = _normalize_stt_provider(env.stt_provider)
     if provider in {"pywhispercpp", "whisper_local"}:
@@ -1742,6 +1873,10 @@ def _turn_end_reason_label(turn_detection: Any) -> str:
     if turn_detection is not None:
         return "semantic_turn_detector"
     return "unknown"
+
+
+def _voice_sync_transcription_enabled() -> bool:
+    return _parse_bool_env("VIVENTIUM_VOICE_SYNC_TRANSCRIPTION", False)
 
 
 # === VIVENTIUM START ===
@@ -2142,9 +2277,19 @@ async def entrypoint(ctx: JobContext) -> None:
     # === VIVENTIUM END ===
 
     # VAD (turn detection)
+    desired_vad_kwargs = _silero_vad_kwargs_for_env(env)
     vad = ctx.proc.userdata.get("prewarmed_vad")
+    if (
+        vad is not None
+        and ctx.proc.userdata.get("prewarmed_vad_kwargs_key")
+        != _vad_kwargs_cache_key(desired_vad_kwargs)
+    ):
+        logger.info(
+            "[voice-gateway] Discarding prewarmed VAD because the requested voice route needs different VAD timing."
+        )
+        vad = None
     if vad is None:
-        vad = load_vad()
+        vad = load_vad(env)
 
     # STT (provider selection)
     stt_impl, stt_provider = build_stt_selection(env, vad)
@@ -2276,11 +2421,14 @@ async def entrypoint(ctx: JobContext) -> None:
                 return (_build_openai_tts(), actual_voice_provider)
 
             _log_selection(
-                "Using Cartesia TTS (model=%s, voice=%s, sample_rate=%s, emotion=%s, ws=%s, buffer_ms=%s)",
+                "Using Cartesia TTS (model=%s, voice=%s, sample_rate=%s, speed=%s, volume=%s, emotion=%s, language=%s, ws=%s, buffer_ms=%s)",
                 env.cartesia_model_id,
                 env.cartesia_voice_id,
                 env.cartesia_sample_rate,
+                env.cartesia_speed,
+                env.cartesia_volume,
                 env.cartesia_emotion,
+                env.cartesia_language or "auto",
                 env.cartesia_ws_url,
                 env.cartesia_max_buffer_delay_ms,
             )
@@ -2547,7 +2695,7 @@ async def entrypoint(ctx: JobContext) -> None:
         logger.info(
             "[voice-gateway] user_turn_completed source=livekit_metrics callSessionId=%s reason=%s detection=%s eou_delay=%ss transcription_delay=%ss",
             call_session_id,
-            _turn_end_reason_label(turn_detection),
+            turn_end_reason,
             _turn_detection_label(turn_detection),
             round(float(getattr(metrics, "end_of_utterance_delay", 0.0)), 3),
             round(float(getattr(metrics, "transcription_delay", 0.0)), 3),
@@ -2588,28 +2736,16 @@ async def entrypoint(ctx: JobContext) -> None:
     # === VIVENTIUM START ===
     # Feature: Transcript display correctness and TTS-failure resilience.
     #
-    # Default to False (async transcription) for two validated reasons:
-    #
-    # 1. GARBLED TEXT FIX (root cause: LiveKit TranscriptSynchronizer word tokenizer)
-    #    When sync_transcription=True, LiveKit's TranscriptSynchronizer
-    #    (livekit-agents/voice/transcription/synchronizer.py) breaks LLM text into
-    #    word-level tokens via a WordTokenizer and publishes each word as a separate
-    #    text-stream chunk.  The frontend @livekit/components-core textStream.ts
-    #    reassembles chunks with direct concatenation (acc + chunk).  If the word
-    #    tokenizer strips inter-word whitespace, the display shows concatenated words
-    #    like "tracksis" instead of "tracks is".  Disabling sync bypasses the word
-    #    tokenizer entirely — LLM deltas (which include correct whitespace) are
-    #    published as-is to the text stream.
-    #
-    # 2. TTS-FAILURE TRANSCRIPT VISIBILITY
-    #    When sync_transcription=True and TTS produces no audio (e.g., Cartesia 402),
-    #    the transcript is held until audio playout that never comes — the Modern
-    #    Playground appears to "hang" with no visible assistant text.  With sync=False,
-    #    text appears immediately regardless of TTS success.
-    #
-    # Override: set VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1 to re-enable if LiveKit
-    # fixes the word tokenizer in a future SDK version.
-    sync_transcription = _parse_bool_env("VIVENTIUM_VOICE_SYNC_TRANSCRIPTION", False)
+    # Viventium defaults to async transcript output so the modern playground shows
+    # each assistant answer as soon as the LLM completes it instead of pacing text
+    # word-by-word with TTS playout. Operators can opt into audio-paced captions
+    # with VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1 for provider-specific QA.
+    sync_transcription = _voice_sync_transcription_enabled()
+    logger.info(
+        "[voice-gateway] RoomOutputOptions callSessionId=%s sync_transcription=%s",
+        call_session_id,
+        sync_transcription,
+    )
     await session.start(
         agent=agent,
         room=ctx.room,
@@ -2622,6 +2758,22 @@ async def entrypoint(ctx: JobContext) -> None:
 def run() -> None:
     start_health_server()
     env = load_env()
+    stt_provider = getattr(env, "stt_provider", "")
+    if (
+        getattr(env, "voice_turn_detection", "") == "turn_detector"
+        or _normalize_turn_detection(getattr(env, "voice_requested_turn_detection", ""))
+        == "turn_detector"
+        or (bool(stt_provider) and _is_local_whisper_stt(stt_provider))
+    ):
+        turn_detector_ready, turn_detector_status = _semantic_turn_detector_status(stt_provider)
+        logger.info(
+            "[voice-gateway] turn_detector_readiness stt_provider=%s requested=%s effective=%s ready=%s status=%s",
+            stt_provider,
+            getattr(env, "voice_requested_turn_detection", "") or "default",
+            getattr(env, "voice_turn_detection", ""),
+            turn_detector_ready,
+            turn_detector_status,
+        )
     initialize_process_timeout_s = max(
         10.0,
         float(getattr(env, "voice_initialize_process_timeout_s", 45.0)),

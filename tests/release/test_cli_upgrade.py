@@ -513,8 +513,133 @@ def test_cli_usage_lists_runtime_recovery_commands() -> None:
     assert "update            Alias for upgrade." in usage_section
     assert "status            Show live service health and access URLs." in usage_section
     assert "status-bar        Turn the macOS Viventium status-bar helper on or off." in usage_section
+    assert "runtime-checkout  Show or choose the checkout used by helper/start commands." in usage_section
     assert "reset             Factory-reset the local Viventium install state under App Support." in usage_section
     assert "uninstall         Remove the local Viventium install state and helper app." in usage_section
+
+
+def test_runtime_checkout_use_writes_machine_local_setting_without_helper_refresh(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    runtime_repo = tmp_path / "runtime-repo"
+    write_executable(runtime_repo / "bin" / "viventium", "#!/bin/sh\nexit 0\n")
+    (runtime_repo / "scripts" / "viventium").mkdir(parents=True)
+    (runtime_repo / "scripts" / "viventium" / "common.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (runtime_repo / "viventium_v0_4").mkdir(parents=True)
+    (runtime_repo / "viventium_v0_4" / "viventium-librechat-start.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            str(REPO_ROOT / "bin" / "viventium"),
+            "--app-support-dir",
+            str(app_support),
+            "runtime-checkout",
+            "use",
+            str(runtime_repo),
+            "--no-helper-refresh",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+        env={**os.environ, "HOME": str(fake_home)},
+    )
+
+    setting = json.loads((app_support / "state" / "active-checkout.json").read_text(encoding="utf-8"))
+    assert setting["repoRoot"] == str(runtime_repo.resolve())
+    assert setting["allowProtectedFolderAccess"] is False
+    assert "Active runtime checkout set" in completed.stdout
+    assert "Skipped helper refresh" in completed.stdout
+    assert not (app_support / "helper-config.json").exists()
+
+
+def test_runtime_checkout_clear_removes_machine_local_setting(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    state_file = app_support / "state" / "active-checkout.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text('{"repoRoot": "/tmp/viventium"}\n', encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            str(REPO_ROOT / "bin" / "viventium"),
+            "--app-support-dir",
+            str(app_support),
+            "runtime-checkout",
+            "clear",
+            "--no-helper-refresh",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+        env={**os.environ, "HOME": str(fake_home)},
+    )
+
+    assert not state_file.exists()
+    assert "Active runtime checkout cleared" in completed.stdout
+    assert "Skipped helper refresh" in completed.stdout
+
+
+def test_runtime_checkout_reexecs_helper_command_through_active_checkout(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    active_repo = tmp_path / "active-repo"
+    marker = tmp_path / "active-bin-args.txt"
+    write_executable(
+        active_repo / "bin" / "viventium",
+        "#!/bin/sh\n"
+        "for arg in \"$@\"; do printf 'arg:%s\\n' \"$arg\"; done > \"$VIVENTIUM_REEXEC_MARKER\"\n"
+        "printf 'env:%s\\n' \"${VIVENTIUM_COMPONENTS_LOCK_FILE:-}\" >> \"$VIVENTIUM_REEXEC_MARKER\"\n"
+        "exit 0\n",
+    )
+    (active_repo / "scripts" / "viventium").mkdir(parents=True)
+    (active_repo / "scripts" / "viventium" / "common.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (active_repo / "viventium_v0_4").mkdir(parents=True)
+    (active_repo / "viventium_v0_4" / "viventium-librechat-start.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    state_file = app_support / "state" / "active-checkout.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(json.dumps({"repoRoot": str(active_repo)}) + "\n", encoding="utf-8")
+
+    subprocess.run(
+        [
+            str(REPO_ROOT / "bin" / "viventium"),
+            "--app-support-dir",
+            str(app_support),
+            "status-bar",
+            "status",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "HOME": str(fake_home),
+            "VIVENTIUM_COMPONENTS_LOCK_FILE": str(tmp_path / "stale" / "components.lock.json"),
+            "VIVENTIUM_REEXEC_MARKER": str(marker),
+        },
+    )
+
+    lines = marker.read_text(encoding="utf-8").splitlines()
+    args = [line.removeprefix("arg:") for line in lines if line.startswith("arg:")]
+    env_value = next(line.removeprefix("env:") for line in lines if line.startswith("env:"))
+    active_lock_file = str(active_repo / "components.lock.json")
+    assert "--app-support-dir" in args
+    assert str(app_support) in args
+    assert "--config-file" in args
+    assert "--runtime-dir" in args
+    assert "--lock-file" in args
+    assert args[args.index("--lock-file") + 1] == active_lock_file
+    assert env_value == active_lock_file
+    assert args[-2:] == ["status-bar", "status"]
 
 
 def test_launch_log_indicates_startup_failure_treats_required_surface_skip_as_terminal(tmp_path: Path) -> None:
@@ -592,6 +717,9 @@ def test_cli_usage_documents_status_bar_and_shell_init_commands() -> None:
     assert 'echo "Run bin/viventium status-bar on to bring it back."' in cli_source
     assert "bin/viventium status-bar on" in cli_source
     assert "bin/viventium status-bar off" in cli_source
+    assert "runtime_checkout_command() {" in cli_source
+    assert "maybe_reexec_active_runtime_checkout() {" in cli_source
+    assert "Using active runtime checkout:" in cli_source
 
 
 def test_install_script_defaults_to_main_branch() -> None:

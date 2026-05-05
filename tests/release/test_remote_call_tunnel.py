@@ -66,14 +66,14 @@ def test_state_is_healthy_for_tailscale_requires_provider_state(monkeypatch) -> 
         "provider": "tailscale_tailnet_https",
         "client": {
             "target": "http://localhost:3190",
-            "public_url": "https://home-node.tail123.ts.net",
+            "public_url": "https://voice-node.example.test",
         },
         "api": {
             "target": "http://localhost:3180",
-            "public_url": "https://home-node.tail123.ts.net:8443",
+            "public_url": "https://voice-node.example.test:8443",
         },
-        "public_client_url": "https://home-node.tail123.ts.net",
-        "public_api_url": "https://home-node.tail123.ts.net:8443",
+        "public_client_url": "https://voice-node.example.test",
+        "public_api_url": "https://voice-node.example.test:8443",
     }
 
     assert module.state_is_healthy(state) is True
@@ -288,7 +288,7 @@ def test_tailscale_state_ready_requires_matching_dns_name(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "tailscale_status_json",
-        lambda _bin: {"Self": {"DNSName": "home-node.tail123.ts.net."}},
+        lambda _bin: {"Self": {"DNSName": "voice-node.example.test."}},
     )
 
     assert (
@@ -297,7 +297,7 @@ def test_tailscale_state_ready_requires_matching_dns_name(monkeypatch) -> None:
                     "provider": "tailscale_tailnet_https",
                     "client": {"target": "http://localhost:3190", "public_url": "https://x"},
                     "tailscale": {"dns_name": "other-node.tail123.ts.net", "managed_ports": [443]},
-                    "public_client_url": "https://home-node.tail123.ts.net",
+                    "public_client_url": "https://voice-node.example.test",
                 }
             )
             is False
@@ -420,8 +420,8 @@ def test_cmd_start_tailscale_derives_public_urls_and_node_ip(monkeypatch, tmp_pa
     monkeypatch.setattr(module.fcntl, "flock", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(module, "load_state", lambda _path: {})
     monkeypatch.setattr(module, "ensure_tailscale", lambda _auto_install: "/opt/homebrew/bin/tailscale")
-    monkeypatch.setattr(module, "tailscale_status_json", lambda _bin: {"Self": {"DNSName": "home-node.tail123.ts.net."}})
-    monkeypatch.setattr(module, "tailscale_dns_name", lambda _status: "home-node.tail123.ts.net")
+    monkeypatch.setattr(module, "tailscale_status_json", lambda _bin: {"Self": {"DNSName": "voice-node.example.test."}})
+    monkeypatch.setattr(module, "tailscale_dns_name", lambda _status: "voice-node.example.test")
     monkeypatch.setattr(module, "tailscale_ipv4", lambda _bin, _status: "100.101.102.103")
     configured: list[tuple[int, str]] = []
     monkeypatch.setattr(
@@ -460,10 +460,10 @@ def test_cmd_start_tailscale_derives_public_urls_and_node_ip(monkeypatch, tmp_pa
         (3443, "http://localhost:3300"),
         (7443, "http://localhost:7888"),
     ]
-    assert saved["public_client_url"] == "https://home-node.tail123.ts.net"
-    assert saved["public_api_url"] == "https://home-node.tail123.ts.net:8443"
-    assert saved["public_playground_url"] == "https://home-node.tail123.ts.net:3443"
-    assert saved["public_livekit_url"] == "wss://home-node.tail123.ts.net:7443"
+    assert saved["public_client_url"] == "https://voice-node.example.test"
+    assert saved["public_api_url"] == "https://voice-node.example.test:8443"
+    assert saved["public_playground_url"] == "https://voice-node.example.test:3443"
+    assert saved["public_livekit_url"] == "wss://voice-node.example.test:7443"
     assert saved["livekit_node_ip"] == "100.101.102.103"
 
 

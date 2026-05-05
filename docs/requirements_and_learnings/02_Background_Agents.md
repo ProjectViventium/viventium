@@ -30,6 +30,9 @@ For the manager-readable handbook, start with:
   mode, but raw insight text must remain background-only.
 - Follow-up realizations should still surface shortly after the original request within a
   configurable background follow-up window.
+- If the user and assistant have already exchanged newer visible messages before Phase B completes,
+  the follow-up adjudicator must see that newer exchange and decide whether the background result is
+  still useful now or should resolve to `{NTA}`.
 
 ## Execution Matrix
 
@@ -130,8 +133,14 @@ Requirements:
 - The main-agent follow-up/adjudication path owns the visible decision. It receives the background
   evidence as an injected continuation prompt, compares it to the response the main agent already
   gave, and either writes a concise same-conversation follow-up or outputs exactly `{NTA}`.
+- If the conversation has moved on since the originating response, the adjudication prompt must also
+  include the newer visible user/assistant exchange so the main agent can avoid stale or interruptive
+  follow-ups without runtime text matching.
 - `{NTA}` means silent success. It is valid for redundant, irrelevant, or non-actionable
   background results and must not be delivered to web, Telegram, or voice users.
+- For normal non-replacement follow-ups in a moved-on conversation, empty generation or follow-up LLM
+  failure stays silent; deterministic raw insight fallback is reserved for deferred-primary flows
+  that explicitly own the user-visible answer.
 - Errors and degradation are not hidden behind `{NTA}`. If a background worker or cortex has a real
   blocker that changes the user outcome, the follow-up path must surface a concise blocker or
   failure message.
@@ -222,12 +231,12 @@ Use this order so the fix stays surgical:
   fallback as ordinary `sent/delivered`. Scheduled cortex polling must thread `scheduleId` into
   cortex-state recovery and preserve structured fallback provenance so degraded fallback delivery is
   either suppressed or recorded as `fallback_delivered`, never hidden as a normal successful result.
-  The owning boundaries are the deferred fallback helper
-  (`api/server/services/viventium/cortexFallbackText.js:74`), cortex-state provenance
-  (`api/server/services/viventium/cortexMessageState.js:214`), scheduler polling
-  (`viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1213`), fallback visibility
-  classification (`viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py:1901`), and
-  persisted degradation metadata (`viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py:29`).
+	  The owning boundaries are the deferred fallback helper
+	  (`api/server/services/viventium/cortexFallbackText.js`), cortex-state provenance
+	  (`api/server/services/viventium/cortexMessageState.js`), scheduler polling and fallback
+	  visibility classification (`viventium/MCPs/scheduling-cortex/scheduling_cortex/dispatch.py`),
+	  and persisted degradation metadata
+	  (`viventium/MCPs/scheduling-cortex/scheduling_cortex/scheduler.py`).
 - On April 14, 2026, a shipped-source audit caught a Deep Research drift:
   - the built-in bundle still carried `web_search`, but its OpenAI execution bag was using
     `thinkingBudget` instead of the documented OpenAI `reasoning_effort`

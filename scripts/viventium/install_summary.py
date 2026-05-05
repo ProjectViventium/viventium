@@ -163,6 +163,51 @@ def any_http_ok(*urls: str) -> bool:
     return any(url and http_ok(url) for url in urls)
 
 
+def http_status(url: str) -> int | None:
+    curl_cmd = shutil.which("curl")
+    if curl_cmd:
+        try:
+            completed = subprocess.run(
+                [
+                    curl_cmd,
+                    "-sS",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code}",
+                    "--max-time",
+                    "2",
+                    url,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+        except Exception:
+            completed = None
+        if completed is not None and completed.returncode == 0:
+            raw_status = completed.stdout.strip()
+            if raw_status.isdigit():
+                status = int(raw_status)
+                if status > 0:
+                    return status
+
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return int(getattr(response, "status", 200))
+    except urllib.error.HTTPError as error:
+        return int(error.code)
+    except Exception:
+        return None
+
+
+def http_endpoint_reachable(url: str) -> bool:
+    status = http_status(url)
+    return status is not None and 100 <= status < 500
+
+
 def port_open(port: int) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
@@ -429,6 +474,15 @@ def pid_file_process_running(path: Path) -> bool:
         return False
 
 
+def cli_operation_running(runtime_dir: Path | None) -> bool:
+    if runtime_dir is None:
+        return False
+    lock_dir = runtime_dir.parent / "state" / "cli-operation.lock"
+    if not lock_dir.is_dir():
+        return False
+    return pid_file_process_running(lock_dir / "pid")
+
+
 def telegram_service_status(
     *,
     config: dict[str, Any],
@@ -491,6 +545,26 @@ def telegram_service_status(
     if probe_live:
         return "Stopped", f"Check {log_detail}"
     return "Configured", "Starts with Viventium"
+
+
+def mcp_service_status(
+    *,
+    url: str,
+    start_enabled: bool,
+    probe_live: bool,
+    stack_should_be_live: bool,
+    startup_in_progress: bool,
+    default_detail: str,
+) -> tuple[str, str]:
+    detail = url or default_detail
+    if probe_live and url:
+        if http_endpoint_reachable(url):
+            return "Running", detail
+        if stack_should_be_live and start_enabled:
+            if startup_in_progress:
+                return "Starting", f"Waiting for {detail}"
+            return "Action Required", f"Endpoint not reachable at {detail}"
+    return "Configured", detail
 
 
 def local_network_host() -> str | None:
@@ -561,6 +635,7 @@ def build_service_rows(
     playground_url = runtime_env.get("VIVENTIUM_PLAYGROUND_URL") or f"http://localhost:{playground_port}"
     livekit_url = runtime_env.get("LIVEKIT_URL", "ws://localhost:7880")
     stack_should_be_live = stack_expected_live(config, runtime_env, runtime_dir)
+    startup_in_progress = cli_operation_running(runtime_dir)
     remote_status, remote_detail = remote_access_status_and_detail(
         config,
         runtime_env,
@@ -759,9 +834,25 @@ def build_service_rows(
             )
         )
     if resolve_bool((integrations.get("google_workspace") or {}).get("enabled"), False):
-        rows.append(("Google Workspace MCP", "Configured", google_mcp_url or "Local MCP server"))
+        status, detail = mcp_service_status(
+            url=google_mcp_url,
+            start_enabled=resolve_bool(runtime_env.get("START_GOOGLE_MCP"), False),
+            probe_live=probe_live,
+            stack_should_be_live=stack_should_be_live,
+            startup_in_progress=startup_in_progress,
+            default_detail="Local MCP server",
+        )
+        rows.append(("Google Workspace MCP", status, detail))
     if resolve_bool((integrations.get("ms365") or {}).get("enabled"), False):
-        rows.append(("Microsoft 365 MCP", "Configured", ms365_mcp_url or "Local MCP server"))
+        status, detail = mcp_service_status(
+            url=ms365_mcp_url,
+            start_enabled=resolve_bool(runtime_env.get("START_MS365_MCP"), False),
+            probe_live=probe_live,
+            stack_should_be_live=stack_should_be_live,
+            startup_in_progress=startup_in_progress,
+            default_detail="Local MCP server",
+        )
+        rows.append(("Microsoft 365 MCP", status, detail))
     if resolve_bool((integrations.get("skyvern") or {}).get("enabled"), False):
         rows.append(("Skyvern", "Configured", "Local browser-agent service"))
     if resolve_bool((integrations.get("openclaw") or {}).get("enabled"), False):

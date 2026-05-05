@@ -40,16 +40,20 @@ stream back to Telegram through the existing bridge.
 ## Telegram Voice and Call Behavior
 
 - Voice-note transcription must use the Telegram bridge STT provider. By default,
-  `integrations.telegram.stt_provider` is empty and the compiler selects hosted OpenAI STT when
-  the global voice STT provider is local Whisper, keeping the long-running Telegram ingress process
-  away from in-process native model inference by default. Operators may explicitly opt Telegram back
-  into local STT with `integrations.telegram.stt_provider`, but that is a conscious reliability
-  tradeoff.
+  `integrations.telegram.stt_provider` is empty and Telegram inherits the configured global voice
+  STT provider, including local Whisper/whisper.cpp. The compiler must not silently remap local
+  Whisper to OpenAI, AssemblyAI, or any hosted provider just because Telegram is a long-running
+  ingress process. Hosted providers are explicit Telegram overrides only.
 - Voice-note and video-note download/transcription failures must return one clean Telegram error and
   stop before chat submission.
 - Voice-note and video-note transcription must share the same non-blocking serialized local-STT path
-  whenever Telegram is explicitly configured to use local Whisper. The bot must not run local native
-  STT concurrently inside the polling process.
+  whenever Telegram uses local Whisper, whether inherited from the global voice route or explicitly
+  configured for Telegram. The bot must not run local native STT concurrently inside the polling
+  process.
+- Drift guardrail: do not "harden" Telegram by changing the omitted STT provider to OpenAI,
+  AssemblyAI, or another hosted route. Reliability hardening for inherited local Whisper belongs in
+  serialization, startup/preflight checks, decoder validation, and honest error reporting, not in a
+  hidden provider remap.
 - Telegram's hosted Bot API cannot download files above its platform limit, so oversized Telegram
   media must fail honestly unless the install is configured to use a local Telegram Bot API server.
 - Voice replies must use a compatible TTS provider/key pair.

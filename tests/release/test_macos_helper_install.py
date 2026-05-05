@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import hashlib
+import json
 from pathlib import Path
 
 
@@ -292,6 +293,7 @@ def test_install_prefers_safe_public_checkout_for_helper_runtime_when_repo_root_
             "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
             "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
             "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+            "VIVENTIUM_HELPER_RUNTIME_REPO_ROOT": str(safe_repo_root),
             "VIVENTIUM_HELPER_PACKAGE_DIR": str(REPO_ROOT / "apps" / "macos" / "ViventiumHelper"),
             "VIVENTIUM_HELPER_ICON_RESOURCE": str(
                 REPO_ROOT
@@ -333,6 +335,118 @@ def test_install_prefers_safe_public_checkout_for_helper_runtime_when_repo_root_
     assert str(safe_repo_root / "bin" / "viventium") in stack_wrapper_text
     assert str(unsafe_repo_root / "bin" / "viventium") not in stack_wrapper_text
     assert "Using public-safe helper runtime checkout" in completed.stderr
+
+
+def test_install_honors_explicit_active_developer_checkout_in_documents(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+
+    unsafe_repo_root = fake_home / "Documents" / "Viventium"
+    _make_fake_runtime_repo_root(unsafe_repo_root)
+    safe_repo_root = fake_home / "viventium"
+    _make_fake_runtime_repo_root(safe_repo_root)
+
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    active_checkout = app_support / "state" / "active-checkout.json"
+    active_checkout.parent.mkdir(parents=True, exist_ok=True)
+    active_checkout.write_text(
+        json.dumps(
+            {
+                "repoRoot": str(unsafe_repo_root),
+                "allowProtectedFolderAccess": True,
+                "source": "test",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(fake_home),
+            "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+            "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+            "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+            "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+            "VIVENTIUM_HELPER_PACKAGE_DIR": str(REPO_ROOT / "apps" / "macos" / "ViventiumHelper"),
+            "VIVENTIUM_HELPER_ICON_RESOURCE": str(
+                REPO_ROOT
+                / "apps"
+                / "macos"
+                / "ViventiumHelper"
+                / "Sources"
+                / "ViventiumHelper"
+                / "Resources"
+                / "Viventium.icns"
+            ),
+        }
+    )
+
+    completed = subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(unsafe_repo_root),
+            "--no-launch",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    helper_config = json.loads((app_support / "helper-config.json").read_text(encoding="utf-8"))
+    stack_wrapper_text = (app_support / "helper-scripts" / "viventium-stack.sh").read_text(encoding="utf-8")
+
+    assert helper_config["repoRoot"] == str(unsafe_repo_root.resolve())
+    assert helper_config["allowProtectedRepoRoot"] is True
+    assert str(unsafe_repo_root / "bin" / "viventium") in stack_wrapper_text
+    assert str(safe_repo_root / "bin" / "viventium") not in stack_wrapper_text
+    assert helper_config["repoRoot"] != str(safe_repo_root.resolve())
+    assert "Binding helper to explicit developer checkout inside a macOS protected folder" in completed.stderr
+
+
+def test_install_refuses_protected_helper_runtime_when_no_safe_checkout_exists(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    unsafe_repo_root = fake_home / "Documents" / "Viventium"
+    _make_fake_runtime_repo_root(unsafe_repo_root)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(fake_home),
+            "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+            "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+            "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        }
+    )
+
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    completed = subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(unsafe_repo_root),
+            "--no-launch",
+        ],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert "Refusing to bind the macOS helper to a protected-folder checkout" in completed.stderr
+    assert not (app_support / "helper-config.json").exists()
 
 
 def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_path: Path) -> None:
@@ -382,6 +496,14 @@ def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_p
 
     helper_binary = fake_home / "Applications" / "Viventium.app" / "Contents" / "MacOS" / "ViventiumHelper"
     assert helper_binary.exists()
+    signature = subprocess.run(
+        ["/usr/bin/codesign", "-dv", str(fake_home / "Applications" / "Viventium.app")],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert "Identifier=ai.viventium.helper" in signature.stderr
+    assert "code object is not signed at all" not in signature.stderr
     assert "Using shipped prebuilt helper" in completed.stderr
     assert not swift_marker.exists()
     assert not xcrun_marker.exists()
@@ -395,6 +517,14 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
         "private func maybeAutoStartOnLaunch",
         1,
     )[0]
+    user_facing_health_section = source.split(
+        "private nonisolated static func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool",
+        1,
+    )[1].split("private nonisolated static func waitForHealthyStack", 1)[0]
+    stop_completion_section = source.split(
+        "nonisolated static func stopCompletionReached(runtime: RuntimePorts, appSupportDir: String) async -> Bool",
+        1,
+    )[1].split("nonisolated static func managedServicesRunning", 1)[0]
 
     assert 'self?.maybeAutoStartOnLaunch(trigger: "launch")' in source
     assert 'self?.maybeAutoStartOnLaunch(trigger: "poll")' in source
@@ -406,7 +536,36 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'return self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: "viventium-helper.log")' in source
     assert 'private nonisolated static func makeNamedHelperLogURL(' in source
     assert 'process.arguments = ["\\(repoRoot)/bin/viventium", "--app-support-dir", appSupportDir] + arguments' in source
+    assert "let configured = self.applyActiveRuntimeCheckout(decoded)" in source
+    assert "let healed = self.healProtectedFolderBinding(configured)" in source
+    assert "if healed != decoded {" in source
+    assert "Helper config repoRoot moved from a protected folder to a public-safe checkout" in source
+    assert "Helper config repoRoot updated from the active runtime checkout setting" in source
+    assert "Helper config repoRoot is inside a protected folder and no public-safe checkout was found" in source
+    assert "Helper config intentionally uses an active developer checkout inside a protected folder" in source
+    assert "Ignoring active runtime checkout because protected-folder access was not explicitly allowed" in source
+    assert "private static func resolveSafeRuntimeRepoRoot(_ repoRoot: String) -> String" in source
+    assert "private static func applyActiveRuntimeCheckout(_ config: HelperConfig) -> HelperConfig" in source
+    assert "private static func configUsesProtectedRepoRoot(_ config: HelperConfig) -> Bool" in source
+    assert 'environment["VIVENTIUM_HELPER_RUNTIME_REPO_ROOT"]' in source
+    assert 'environment["VIVENTIUM_PUBLIC_INSTALL_DIR"]' in source
+    assert 'environment["VIVENTIUM_INSTALL_DIR"]' in source
+    assert '"\\(homeDirectory)/viventium"' in source
+    assert "private static func repoRootUsesMacOSProtectedFolderAccess(_ repoRoot: String) -> Bool" in source
+    assert '"\\(homeDirectory)/Documents"' in source
+    assert '"\\(homeDirectory)/Desktop"' in source
+    assert '"\\(homeDirectory)/Downloads"' in source
+    assert 'self.stackState = .unavailable("Protected Checkout")' in source
+    assert 'self.presentProtectedCheckoutAlert(action: "start Viventium")' in source
+    assert 'self.presentProtectedCheckoutAlert(action: "stop Viventium")' in source
+    assert 'self.presentProtectedCheckoutAlert(action: "create a backup")' in source
+    assert 'alert.messageText = "Viventium helper needs a safe checkout"' in source
+    assert "private static func normalizedFileSystemPath(_ path: String) -> String" in source
+    assert ".resolvingSymlinksInPath()" in source
+    assert "private static func isViventiumRuntimeRepoRoot(_ candidate: String) -> Bool" in source
+    assert 'FileManager.default.isExecutableFile(atPath: "\\(candidate)/bin/viventium")' in source
     assert "guard let detachedStartPID = Self.submitDetachedStart(" in source
+    assert "repoRoot: config.repoRoot," in source
     assert 'let startLogURL = Self.makeNamedHelperLogURL(' in source
     assert "let startLogOffset = Self.fileSize(startLogURL)" in source
     assert 'logFileName: "helper-start.log"' in source
@@ -425,11 +584,12 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "return await self.firstHTTPStatus(urls: self.candidateURLs(for: url)) != nil" in source
     assert 'pidFileName: "helper-detached-start.pid"' in source
     assert 'pidFileName: "helper-detached-stop.pid"' in source
-    assert 'let stackScriptPath = self.helperStackScriptPath(appSupportDir: appSupportDir)' in source
+    assert "repoRoot: repoRoot," in source
+    assert 'let binViventiumPath = "\\(repoRoot)/bin/viventium"' in source
     assert 'let runnerScriptURL = URL(fileURLWithPath: self.helperDetachedCommandScriptPath(' in source
     assert 'let legacyRunnerScriptURL = URL(fileURLWithPath: self.legacyHelperDetachedCommandScriptPath(' in source
-    assert 'guard FileManager.default.isExecutableFile(atPath: stackScriptPath) else {' in source
-    assert 'let escapedCommand = (["/bin/bash", stackScriptPath] + commandArguments)' in source
+    assert 'guard FileManager.default.isExecutableFile(atPath: binViventiumPath) else {' in source
+    assert 'let escapedCommand = (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)' in source
     assert 'let detachedCommand = """' in source
     assert 'cd \\(escapedAppSupportDir)' in source
     assert 'nohup \\(escapedCommand) >> \\(escapedLogPath) 2>&1 < /dev/null &' in source
@@ -438,10 +598,20 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'process.executableURL = URL(fileURLWithPath: "/bin/bash")' in source
     assert 'process.arguments = ["-lc", detachedCommand]' in source
     assert 'process.currentDirectoryURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)' in source
+    assert "process.environment = self.makeHelperStackEnvironment(" in source
     assert 'process.executableURL = URL(fileURLWithPath: "/usr/bin/open")' not in source
     assert '"-a", "Terminal"' not in source
-    assert 'commandArguments: ["--stop"]' in source
+    assert 'commandArguments: ["launch"]' in source
+    assert 'environmentOverrides: ["VIVENTIUM_DETACHED_START": "true"]' in source
+    assert 'commandArguments: ["stop"]' in source
+    assert 'environmentOverrides: ["VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE": "1"]' in source
     assert 'private nonisolated static func helperStackScriptPath(appSupportDir: String) -> String' in source
+    assert "private nonisolated static func makeHelperStackEnvironment(" in source
+    assert 'environment["VIVENTIUM_HELPER_V0_ROOT"] = "\\(repoRoot)/viventium_v0_4"' in source
+    assert 'environment["VIVENTIUM_HELPER_CORE_ROOT"] = repoRoot' in source
+    assert 'environment["VIVENTIUM_HELPER_WORKSPACE_ROOT"] = URL(fileURLWithPath: repoRoot, isDirectory: true)' in source
+    assert 'environment["VIVENTIUM_APP_SUPPORT_DIR"] = appSupportDir' in source
+    assert 'environment["VIVENTIUM_ENV_FILE"] = "\\(appSupportDir)/runtime/runtime.env"' in source
     assert 'private nonisolated static func helperDetachedCommandScriptPath(' in source
     assert 'private nonisolated static func legacyHelperDetachedCommandScriptPath(' in source
     assert '"\\(appSupportDir)/helper-scripts/viventium-stack.sh"' in source
@@ -529,7 +699,9 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'appendingPathComponent("state/runtime/\\(runtimeProfile)/stack-owner.json")' in source
     assert 'let managedStopCheckURLs: [String]' in source
     assert 'managedStopCheckURLs: self.managedStopCheckURLs(values: values)' in source
-    assert "return await self.managedServicesHealthy(runtime: runtime)" in source
+    assert "return await self.stackHealthy(" in user_facing_health_section
+    assert "managedServicesHealthy" not in user_facing_health_section
+    assert "managedServicesRunning(runtime: runtime)" in stop_completion_section
     assert 'if self.boolValue(values["START_SCHEDULING_MCP"])' in source
     assert 'if self.boolValue(values["START_GOOGLE_MCP"])' in source
     assert 'if self.boolValue(values["START_MS365_MCP"])' in source
@@ -623,9 +795,9 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private nonisolated static func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool" in source
     assert "private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool" in source
     assert "return await self.frontendHealthy(port: playgroundPort)" in source
-    assert "guard await self.stackHealthy(" in source
+    assert "return await self.stackHealthy(" in user_facing_health_section
     assert "playgroundPort: runtime.playgroundPort" in source
-    assert "return await self.managedServicesHealthy(runtime: runtime)" in source
+    assert "return await self.managedServicesHealthy(runtime: runtime)" not in source
     assert "let shouldPreserveBusyState =" in source
     assert "self.stackState.actionBusy &&" in source
     assert "inFlightState != nil" in source
@@ -662,10 +834,18 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
         'HELPER_PREBUILT_EXECUTABLE="${VIVENTIUM_HELPER_PREBUILT_EXECUTABLE:-$HELPER_PREBUILT_DIR/${HELPER_EXECUTABLE_NAME}-universal}"'
         in install_script
     )
+    assert 'HELPER_BUNDLE_IDENTIFIER="${VIVENTIUM_HELPER_BUNDLE_IDENTIFIER:-ai.viventium.helper}"' in install_script
+    assert 'SKIP_CODESIGN="${VIVENTIUM_HELPER_SKIP_CODESIGN:-0}"' in install_script
     assert 'HELPER_PREBUILT_SOURCE_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_SOURCE_HASH_FILE:-$HELPER_PREBUILT_DIR/source.sha256}"' in install_script
     assert 'HELPER_RUNTIME_REPO_ROOT="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-$REPO_ROOT}"' in install_script
-    assert 'HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"' in install_script
+    assert 'HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT" "$APP_SUPPORT_DIR")"' in install_script
+    assert '"allowProtectedRepoRoot": """$HELPER_RUNTIME_ALLOW_PROTECTED""" == "1",' in install_script
     assert 'echo "[viventium] Using public-safe helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2' in install_script
+    assert 'echo "[viventium] Using configured helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2' in install_script
+    assert 'Refusing to bind the macOS helper to a protected-folder checkout' in install_script
+    assert 'VIVENTIUM_HELPER_RUNTIME_REPO_ROOT' in install_script
+    assert '<key>VIVENTIUM_HELPER_RUNTIME_REPO_ROOT</key>' in install_script
+    assert '<key>VIVENTIUM_PUBLIC_INSTALL_DIR</key>' in install_script
     assert 'FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"' in install_script
     assert 'OSASCRIPT_TIMEOUT_SECONDS="${VIVENTIUM_HELPER_OSASCRIPT_TIMEOUT_SECONDS:-15}"' in install_script
     assert 'if [[ "$FORCE_LOCAL_BUILD" != "1" ]] && prebuilt_helper_matches_sources; then' in install_script
@@ -688,6 +868,9 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'local notice="${1:-Using prebuilt helper fallback}"' in install_script
     assert 'echo "[viventium] $notice from $HELPER_PREBUILT_EXECUTABLE" >&2' in install_script
     assert 'use_prebuilt_helper "Using prebuilt helper fallback"' in install_script
+    assert "sign_installed_bundle() {" in install_script
+    assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_APP_BUNDLE"' in install_script
+    assert "sign_installed_bundle" in install_script
     assert 'if [[ "$FORCE_LOCAL_BUILD" == "1" ]]; then' in install_script
     assert 'echo "[viventium] Local helper build was forced and no source build completed successfully" >&2' in install_script
     assert 'echo "[viventium] Prebuilt helper fallback exists but does not match current helper sources" >&2' in install_script
@@ -695,6 +878,7 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert '"$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/ViventiumHelperApp.swift"' in install_script
     assert '"repoRoot": r"""$HELPER_RUNTIME_REPO_ROOT""",' in install_script
     assert 'repo_root = Path(r"""$HELPER_RUNTIME_REPO_ROOT""").resolve()' in install_script
+    assert "Compatibility wrapper written by the installer." in install_script
     assert 'export VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE=1' in install_script
     assert 'bin_viventium = repo_root / "bin" / "viventium"' in install_script
     assert 'if [[ "{dollar}{{1:-}}" == "--stop" ]]; then' in install_script
@@ -740,7 +924,9 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE' in cli_source
     assert 'scripts", "viventium", "native_stack.sh"' in cli_source
     assert 'Native runtime cleanup continuing in background' in cli_source
-    assert 'helper_runtime_repo_root="$(resolve_helper_runtime_repo_root "$REPO_ROOT")"' in cli_source
+    assert 'helper_runtime_repo_root="$(resolve_helper_runtime_repo_root "$REPO_ROOT" "$APP_SUPPORT_DIR")"' in cli_source
+    assert "runtime_checkout_command() {" in cli_source
+    assert "bin/viventium runtime-checkout use --this --allow-protected-folder" in cli_source
     assert 'stack_owner_state_file() {' in cli_source
     assert 'write_stack_owner_state() {' in cli_source
     assert 'printf \'%s\\n\' "$APP_SUPPORT_DIR/state/runtime/${runtime_profile}/stack-owner.json"' in cli_source

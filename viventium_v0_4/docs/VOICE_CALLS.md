@@ -20,7 +20,30 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - `roomName`: LiveKit room id
 - `callSessionId`: authentication context for the voice gateway
 - `agentName`: LiveKit dispatch agent name
-- `autoConnect=1`: auto-join on load
+- `autoConnect=1`: auto-join on load for non-call-session sandbox links. Call-session links still
+  show the Start chat gate because browser microphone publication requires a user gesture.
+
+### Explicit Dispatch Startup Contract
+- Call-session deep links use LiveKit publisher dispatch: the voice gateway joins only after the
+  browser publishes the user's microphone track.
+- The playground must not ask LiveKit to publish the microphone while `/api/connection-details` is
+  still performing call-session dispatch claim/list/create work. That route may take several
+  seconds under load; pre-connect microphone publication can otherwise hit LiveKit's signal-engine
+  timeout before the room is connected. For explicit-dispatch calls, audio spoken before the room
+  connects is not buffered.
+- The stable sequence is:
+  1. fetch connection details and connect the room with microphone disabled
+  2. enable the microphone after the room is connected
+  3. let LiveKit assign the `JT_PUBLISHER` job to `librechat-voice-gateway`
+  4. persist the active job/worker ids on the call session
+- `dispatchConfirmedAt` is durable call-session state, not durable LiveKit state. After a local
+  restart, `/api/connection-details` must list LiveKit dispatches for the room and recreate the
+  dispatch only after atomically reclaiming the confirmed session in Mongo.
+- The playground retries transient `/api/connection-details`, call-state, and voice-settings fetch
+  failures once during startup and never shows raw browser errors such as `Failed to fetch` as the
+  user-facing recovery text.
+- Visible-page End Call is intentional. Recovery logic should only restart after a background or
+  sleep return, not after the user explicitly disconnects.
 
 ## Localhost vs Public Voice Origins
 - Localhost remains the canonical default:
@@ -41,7 +64,8 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - Voice gateway worker: `voice-gateway/worker.py`
 - Voice gateway LLM bridge: `voice-gateway/librechat_llm.py`
 - SSE parsing helpers: `voice-gateway/sse.py`
-- Playground deep-link handling: `agents-playground/src/pages/index.tsx`
+- Playground deep-link handling: `agent-starter-react/components/app/app.tsx`
+- Playground sleep recovery: `agent-starter-react/hooks/useConnectionRecovery.ts`
 
 ## Voice Parity with Background Agents
 - Voice calls use the same backend orchestration as text (`AgentClient` + `BackgroundCortexService`).
@@ -94,6 +118,11 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - Coalesced text must preserve ingress order, not whichever request wins the Mongo race first.
 - Canonical saved assistant history strips voice-control tags after synthesis so reloads, exports,
   and downstream surfaces do not retain raw `<emotion .../>` markup.
+- Modern playground transcripts default to async LiveKit transcript output so the browser shows each
+  assistant answer as soon as the LLM completes it instead of pacing words with TTS playout.
+  `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` remains available as an opt-in caption QA mode. The
+  playground reads LiveKit transcription streams by stream id so adjacent assistant answers cannot
+  collapse into one transcript row.
 - AssemblyAI-backed calls now default to provider endpointing plus VAD:
   - `VIVENTIUM_TURN_DETECTION=stt` when the active STT provider supports endpointing
   - Silero VAD remains attached for interruption responsiveness
@@ -117,10 +146,18 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
   - `VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S=0.2` for `stt` / `turn_detector`
 - Pure `vad` mode remains available when explicitly configured or when the active STT path does not
   expose endpointing support.
-- Semantic turn detection is available through explicit config/env (`turn_detector`), but it is not
-  silently forced on for every AssemblyAI install.
-- If explicit `turn_detector` mode is requested but the detector weights are not cached locally,
-  runtime falls back cleanly to `stt` and logs the downgrade instead of failing mid-call.
+- Semantic turn detection is available through explicit config/env (`turn_detector`), and local
+  `whisper_local` / `pywhispercpp` may default to it when the optional plugin, exact cached
+  multilingual assets, and LiveKit local inference runner are all ready before worker construction.
+  AssemblyAI still defaults to provider endpointing (`stt`) rather than silently switching to
+  semantic detection.
+- If explicit `turn_detector` mode is requested but the detector weights are not cached locally or
+  the LiveKit inference runner is not registered, runtime falls back cleanly to the provider-owned
+  route (`stt` for AssemblyAI, less-eager `vad` for local Whisper) and logs the concrete downgrade
+  status instead of failing mid-call.
+- On first install or after a cache purge, local Whisper can start on the less-eager VAD fallback if
+  the turn-detector download cannot complete. The launcher retries the exact detector assets on a
+  later start, so this is degraded turn-taking, not a broken voice route.
 - Worker logs emit normalized turn-end reasons so real calls can be debugged without guessing:
   - `vad_silence`
   - `stt_end_of_turn`
@@ -232,7 +269,8 @@ Supported providers:
 
 VAD tuning (shared with v1):
 - `VIVENTIUM_STT_VAD_MIN_SPEECH` (default `0.1`)
-- `VIVENTIUM_STT_VAD_MIN_SILENCE` (default `0.5`)
+- `VIVENTIUM_STT_VAD_MIN_SILENCE` (default `0.5`; local Whisper fallback defaults to `1.0`
+  unless explicitly configured)
 - `VIVENTIUM_STT_VAD_ACTIVATION` (default `0.4`)
 - `VIVENTIUM_STT_VAD_FORCE_CPU` (optional)
 
@@ -242,16 +280,18 @@ Notes:
 - The launcher refreshes the voice-gateway venv when installed package versions no longer satisfy
   `voice-gateway/requirements.txt`; package presence alone is not a valid health check.
 - The semantic turn detector plugin is optional. When installed, the launcher pre-downloads the
-  exact multilingual detector assets (`onnx/model_q8.onnx` and `languages.json`) before worker
-  boot. The voice gateway also loads that plugin lazily, only when semantic turn detection is
-  actually selected, so a normal local `vad` route does not boot-noise on an unused detector cache.
+  exact multilingual detector assets before worker boot. The voice gateway verifies the ONNX model,
+  `languages.json`, tokenizer/config files, and the LiveKit local inference runner before reporting
+  semantic turn detection as ready. A partial detector snapshot or a cached detector without the
+  registered `lk_end_of_utterance_multilingual` runner must fall back to the provider-owned route.
 - A missing optional turn-detector package must not crash worker import. The worker treats that as
   `HAS_TURN_DETECTOR=false` and continues with the configured `stt` or `vad` path.
 - AssemblyAI endpointing knobs are config-owned and optional. If not set, Viventium leaves the
   provider/plugin defaults intact instead of hardcoding additional silence thresholds.
 - `whisper_local` / `pywhispercpp` inherits the shared interruption knobs and saved-route contract,
-  but it remains a StreamAdapter + Silero VAD path. It does not get AssemblyAI-native endpointing
-  knobs or semantic turn-detector behavior.
+  but it remains a StreamAdapter + Silero VAD path when semantic turn detection is unavailable. It
+  does not get AssemblyAI-native endpointing knobs. Its VAD fallback uses a longer silence budget
+  than remote/STT-owned routes so short reflective pauses do not become committed user turns.
 - Local Whisper routes default `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=inf`; CPU load during model
   warm-up is not a reliable overload signal and must not make LiveKit stop dispatching jobs to a
   healthy local worker.
@@ -315,6 +355,7 @@ Added: 2026-01-11
 - `VIVENTIUM_VOICE_TURN_COALESCE_POLL_MS`
 - `VIVENTIUM_VOICE_TURN_COALESCE_RETURN_WINDOW_MS`
 - `VIVENTIUM_VOICE_TURN_COALESCE_TTL_S`
+- `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION`
 - `VIVENTIUM_VOICE_LOG_LATENCY=1`
 - `VIVENTIUM_VOICE_DEBUG_TTS=1`
 

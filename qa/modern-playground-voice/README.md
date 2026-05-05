@@ -15,6 +15,9 @@ chat message.
 - Clicking `Start chat` connects the browser to LiveKit and the voice agent.
 - Toggling the transcript opens the typed chat input.
 - Sending a synthetic typed prompt returns an actual assistant answer, not a generic runtime failure.
+- Assistant transcript rows preserve per-answer boundaries. A later assistant answer must not append
+  onto the prior row, and async display must not add slow audio-paced spacing unless
+  `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` is explicitly enabled for caption QA.
 - When background agents activate, the modern playground should hear:
   - the immediate main-agent Phase A response
   - only a later persisted main-agent Phase B follow-up, if one is generated
@@ -54,6 +57,72 @@ chat message.
     layer before changing code.
 
 ## Execution Evidence
+
+### 2026-05-01 Follow-Up NTA Fallback Regression
+
+Observed RCA before the fix:
+- Backend follow-up generation already told the main agent to output `{NTA}` when there was no new
+  user-visible continuation.
+- A later persistence resolver refactor cleared `{NTA}` and then allowed deterministic fallback to
+  promote raw background insight text into a persisted `cortex_followup`.
+- Voice gateway behavior was then technically correct: it spoke the persisted `cortex_followup`.
+  The bad persistence decision happened before the voice gateway poll.
+
+Fix verification:
+- Resolver regression:
+  - non-replacement `{NTA}` with production-shaped background text stays silent
+  - replacement/deferred-primary `{NTA}` still may use governed fallback text
+  - voice-mode empty generation stays silent instead of speaking raw insight fallback text
+- Automated checks:
+  - `cd viventium_v0_4/LibreChat/api && npm run test:ci -- server/services/viventium/__tests__/BackgroundCortexFollowUpService.spec.js --runInBand`
+    - Result: `16 passed`
+  - `cd viventium_v0_4/LibreChat/api && npm run test:ci -- server/routes/viventium/__tests__/voice.spec.js --runInBand`
+    - Result: `7 passed`
+  - `cd viventium_v0_4/voice-gateway && .venv/bin/python -m unittest tests.test_worker_followup_scheduler -v`
+    - Result: `7 passed`
+
+Acceptance conclusion:
+- Normal follow-ups now honor `{NTA}` as terminal.
+- Modern playground voice still speaks persisted main-agent follow-ups, but raw background insight
+  fallback text is no longer promoted when the main agent chose no follow-up or produced empty voice
+  follow-up text.
+
+### 2026-05-04 Async Transcript Boundary + Local Route QA
+
+Observed RCA before the fix:
+- LiveKit's built-in React session-message helper merges transcription chunks by segment metadata
+  that can repeat across adjacent assistant answers.
+- LiveKit's default synchronized transcription path paces transcript display with audio playout,
+  which made the UI look slow and exposed spacing artifacts when TTS output was still streaming.
+
+Fix verification:
+- The modern playground now reads LiveKit transcription text streams directly and keys assistant
+  transcript rows by text-stream id.
+- `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION` defaults to false; synchronized captions remain available
+  only as an explicit QA/diagnostic opt-in.
+- Automated checks:
+  - `cd viventium_v0_4/agent-starter-react && pnpm run lint`
+    - Result: passed
+  - `cd viventium_v0_4/agent-starter-react && pnpm exec tsc --noEmit`
+    - Result: passed
+  - `cd viventium_v0_4/agent-starter-react && pnpm run build`
+    - Result: passed
+- Runtime smoke after `bin/viventium launch --modern-playground`:
+  - LibreChat frontend returned `200`
+  - modern playground returned `200`
+  - voice gateway registered successfully
+
+Acceptance conclusion:
+- The browser transcript display path no longer appends a later assistant answer onto a prior
+  answer row.
+- Transcript rendering is decoupled from audio pacing by default, so Lyra/Cartesia and local
+  Chatterbox routes use the same UI boundary behavior.
+
+Release delivery note:
+- This QA proves the active local checkout.
+- For future-user release, publish the `agent-starter-react` component update and bump the parent
+  component lock entry; the parent repository alone does not ship gitignored nested component
+  changes.
 
 ### 2026-04-28 Cartesia Sonic-3 Live Join QA
 

@@ -173,6 +173,9 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   case, Homebrew had upgraded an ffmpeg dependency while the ffmpeg binary was still linked to the
   previous dynamic-library ABI.
 - Fix:
+  - Telegram inherits the configured global voice STT route when
+    `integrations.telegram.stt_provider` is omitted, including local Whisper/whisper.cpp.
+    Do not "fix" local decoder issues by silently remapping Telegram to hosted OpenAI or AssemblyAI.
   - preflight and launcher now treat `ffmpeg` as healthy only after a real media probe succeeds
   - installer/preflight rechecks formula usability after Homebrew install and retries with a clean
     reinstall if the runtime probe still fails

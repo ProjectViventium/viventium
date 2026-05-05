@@ -3,10 +3,16 @@ import Darwin
 import Foundation
 import SwiftUI
 
-private struct HelperConfig: Codable {
+private struct HelperConfig: Codable, Equatable {
     let repoRoot: String
     let appSupportDir: String
+    var allowProtectedRepoRoot: Bool?
     var showInStatusBar: Bool?
+}
+
+private struct ActiveRuntimeCheckout: Decodable {
+    let repoRoot: String
+    let allowProtectedFolderAccess: Bool?
 }
 
 private struct StackOwnerState: Decodable {
@@ -127,7 +133,7 @@ final class HelperController: ObservableObject {
     }
 
     var actionDisabled: Bool {
-        self.stackState.actionBusy || self.config == nil
+        self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
     }
 
     var backupActionLabel: String {
@@ -135,11 +141,18 @@ final class HelperController: ObservableObject {
     }
 
     var backupActionDisabled: Bool {
-        self.snapshotInProgress || self.stackState.actionBusy || self.config == nil
+        self.snapshotInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
     }
 
     var showsStatusRow: Bool {
         !self.stackState.actionBusy
+    }
+
+    private var configUsesProtectedRepoRoot: Bool {
+        guard let config else {
+            return false
+        }
+        return Self.configUsesProtectedRepoRoot(config)
     }
 
     func setShowInStatusBar(_ enabled: Bool) {
@@ -253,6 +266,10 @@ final class HelperController: ObservableObject {
             alert.runModal()
             return
         }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "create a backup")
+            return
+        }
         guard !self.snapshotInProgress else {
             return
         }
@@ -344,6 +361,10 @@ final class HelperController: ObservableObject {
             self.stackState = .unavailable("Missing helper config")
             return
         }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "start Viventium")
+            return
+        }
         self.log("Starting stack (\(launchReason))")
         self.beginBusyState(.starting)
         Task.detached(priority: .userInitiated) {
@@ -371,6 +392,7 @@ final class HelperController: ObservableObject {
             )
             let startLogOffset = Self.fileSize(startLogURL)
             guard let detachedStartPID = Self.submitDetachedStart(
+                repoRoot: config.repoRoot,
                 appSupportDir: config.appSupportDir,
                 logFileName: "helper-start.log"
             ) else {
@@ -428,6 +450,10 @@ final class HelperController: ObservableObject {
             if terminateWhenDone {
                 NSApplication.shared.terminate(nil)
             }
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "stop Viventium")
             return
         }
         self.log(terminateWhenDone ? "Stopping stack before helper exit" : "Stopping stack")
@@ -533,6 +559,10 @@ final class HelperController: ObservableObject {
             self.stackState = .unavailable("Missing helper config")
             return
         }
+        if Self.configUsesProtectedRepoRoot(config) {
+            self.stackState = .unavailable("Protected Checkout")
+            return
+        }
         let runtime = self.envParser.readRuntime(appSupportDir: config.appSupportDir)
         let host = LocalNetworkAddressResolver.currentHost() ?? "localhost"
         self.openURLString = Self.frontendURLString(host: host, port: runtime.frontendPort)
@@ -598,12 +628,29 @@ final class HelperController: ObservableObject {
         self.busyStateGraceDeadline = Date().addingTimeInterval(self.busyStateHandoffGraceSeconds)
     }
 
+    private func presentProtectedCheckoutAlert(action: String) {
+        self.log("Blocked \(action); helper is still bound to a protected-folder checkout")
+        self.stackState = .unavailable("Protected Checkout")
+        let alert = NSAlert()
+        alert.messageText = "Viventium helper needs a safe checkout"
+        alert.informativeText = "Install or update Viventium from a checkout outside Documents, Desktop, and Downloads, or explicitly choose a developer checkout with `bin/viventium runtime-checkout use --this --allow-protected-folder`."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     private func maybeAutoStartOnLaunch(trigger: String) {
         guard !self.didAttemptLaunchAutostart else {
             return
         }
         guard let config else {
             self.log("Auto-start skipped; missing helper config")
+            self.didAttemptLaunchAutostart = true
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.log("Auto-start skipped; helper is still bound to a protected-folder checkout")
+            self.stackState = .unavailable("Protected Checkout")
             self.didAttemptLaunchAutostart = true
             return
         }
@@ -667,7 +714,28 @@ final class HelperController: ObservableObject {
         else {
             return nil
         }
-        return decoded
+        let configured = self.applyActiveRuntimeCheckout(decoded)
+        let healed = self.healProtectedFolderBinding(configured)
+        if healed != decoded {
+            self.appendHelperLog(
+                self.makeHelperLogURL(appSupportDir: healed.appSupportDir),
+                self.configUsesProtectedRepoRoot(configured)
+                    ? "Helper config repoRoot moved from a protected folder to a public-safe checkout"
+                    : "Helper config repoRoot updated from the active runtime checkout setting"
+            )
+            _ = self.saveConfig(healed)
+        } else if self.configUsesProtectedRepoRoot(decoded) {
+            self.appendHelperLog(
+                self.makeHelperLogURL(appSupportDir: decoded.appSupportDir),
+                "Helper config repoRoot is inside a protected folder and no public-safe checkout was found"
+            )
+        } else if self.repoRootUsesMacOSProtectedFolderAccess(decoded.repoRoot) {
+            self.appendHelperLog(
+                self.makeHelperLogURL(appSupportDir: decoded.appSupportDir),
+                "Helper config intentionally uses an active developer checkout inside a protected folder"
+            )
+        }
+        return healed
     }
 
     private static func saveConfig(_ config: HelperConfig) -> Bool {
@@ -687,6 +755,128 @@ final class HelperController: ObservableObject {
         } catch {
             return false
         }
+    }
+
+    private static func healProtectedFolderBinding(_ config: HelperConfig) -> HelperConfig {
+        if config.allowProtectedRepoRoot == true {
+            return HelperConfig(
+                repoRoot: self.normalizedFileSystemPath(config.repoRoot),
+                appSupportDir: config.appSupportDir,
+                allowProtectedRepoRoot: config.allowProtectedRepoRoot,
+                showInStatusBar: config.showInStatusBar
+            )
+        }
+        let resolvedRepoRoot = self.resolveSafeRuntimeRepoRoot(config.repoRoot)
+        guard resolvedRepoRoot != config.repoRoot else {
+            return config
+        }
+        return HelperConfig(
+            repoRoot: resolvedRepoRoot,
+            appSupportDir: config.appSupportDir,
+            allowProtectedRepoRoot: false,
+            showInStatusBar: config.showInStatusBar
+        )
+    }
+
+    private static func applyActiveRuntimeCheckout(_ config: HelperConfig) -> HelperConfig {
+        guard let activeCheckout = self.loadActiveRuntimeCheckout(appSupportDir: config.appSupportDir) else {
+            return config
+        }
+        let normalizedRepoRoot = self.normalizedFileSystemPath(activeCheckout.repoRoot)
+        guard self.isViventiumRuntimeRepoRoot(normalizedRepoRoot) else {
+            return config
+        }
+        if self.repoRootUsesMacOSProtectedFolderAccess(normalizedRepoRoot),
+           activeCheckout.allowProtectedFolderAccess != true
+        {
+            self.appendHelperLog(
+                self.makeHelperLogURL(appSupportDir: config.appSupportDir),
+                "Ignoring active runtime checkout because protected-folder access was not explicitly allowed"
+            )
+            return config
+        }
+        return HelperConfig(
+            repoRoot: normalizedRepoRoot,
+            appSupportDir: config.appSupportDir,
+            allowProtectedRepoRoot: activeCheckout.allowProtectedFolderAccess == true,
+            showInStatusBar: config.showInStatusBar
+        )
+    }
+
+    private static func loadActiveRuntimeCheckout(appSupportDir: String) -> ActiveRuntimeCheckout? {
+        let stateURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("state/active-checkout.json")
+        guard
+            let data = try? Data(contentsOf: stateURL),
+            let decoded = try? JSONDecoder().decode(ActiveRuntimeCheckout.self, from: data)
+        else {
+            return nil
+        }
+        return decoded
+    }
+
+    private static func configUsesProtectedRepoRoot(_ config: HelperConfig) -> Bool {
+        self.repoRootUsesMacOSProtectedFolderAccess(config.repoRoot) &&
+            config.allowProtectedRepoRoot != true
+    }
+
+    private static func resolveSafeRuntimeRepoRoot(_ repoRoot: String) -> String {
+        let normalizedRepoRoot = self.normalizedFileSystemPath(repoRoot)
+        guard self.repoRootUsesMacOSProtectedFolderAccess(normalizedRepoRoot) else {
+            return normalizedRepoRoot
+        }
+
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+        let environment = ProcessInfo.processInfo.environment
+        let candidates = [
+            environment["VIVENTIUM_HELPER_RUNTIME_REPO_ROOT"],
+            environment["VIVENTIUM_PUBLIC_INSTALL_DIR"],
+            environment["VIVENTIUM_INSTALL_DIR"],
+            "\(homeDirectory)/viventium",
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        for candidate in candidates where !candidate.isEmpty {
+            let normalizedCandidate = self.normalizedFileSystemPath(candidate)
+            guard normalizedCandidate != normalizedRepoRoot else {
+                continue
+            }
+            if self.isViventiumRuntimeRepoRoot(normalizedCandidate),
+               !self.repoRootUsesMacOSProtectedFolderAccess(normalizedCandidate) {
+                return normalizedCandidate
+            }
+        }
+
+        return normalizedRepoRoot
+    }
+
+    private static func repoRootUsesMacOSProtectedFolderAccess(_ repoRoot: String) -> Bool {
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+        let protectedRoots = [
+            "\(homeDirectory)/Documents",
+            "\(homeDirectory)/Desktop",
+            "\(homeDirectory)/Downloads",
+        ]
+        return protectedRoots.contains { self.path(repoRoot, isWithin: $0) }
+    }
+
+    private static func path(_ candidate: String, isWithin parentDirectory: String) -> Bool {
+        let normalizedCandidate = self.normalizedFileSystemPath(candidate)
+        let normalizedParent = self.normalizedFileSystemPath(parentDirectory)
+        return normalizedCandidate == normalizedParent ||
+            normalizedCandidate.hasPrefix("\(normalizedParent)/")
+    }
+
+    private static func normalizedFileSystemPath(_ path: String) -> String {
+        URL(fileURLWithPath: path, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    private static func isViventiumRuntimeRepoRoot(_ candidate: String) -> Bool {
+        FileManager.default.isExecutableFile(atPath: "\(candidate)/bin/viventium") &&
+            FileManager.default.fileExists(atPath: "\(candidate)/scripts/viventium/common.sh") &&
+            FileManager.default.fileExists(atPath: "\(candidate)/viventium_v0_4/viventium-librechat-start.sh")
     }
 
     private nonisolated static func makeHelperLogURL(appSupportDir: String?) -> URL? {
@@ -805,14 +995,11 @@ final class HelperController: ObservableObject {
     }
 
     private nonisolated static func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool {
-        guard await self.stackHealthy(
+        return await self.stackHealthy(
             apiPort: runtime.apiPort,
             frontendPort: runtime.frontendPort,
             playgroundPort: runtime.playgroundPort
-        ) else {
-            return false
-        }
-        return await self.managedServicesHealthy(runtime: runtime)
+        )
     }
 
     private nonisolated static func waitForHealthyStack(
@@ -870,6 +1057,7 @@ final class HelperController: ObservableObject {
         }
         let stopLogOffset = self.fileSize(stopLogURL)
         guard let stopCommandPID = self.submitDetachedStop(
+            repoRoot: repoRoot,
             appSupportDir: appSupportDir,
             logFileName: logFileName ?? "helper-stop.log"
         ) else {
@@ -1341,37 +1529,45 @@ final class HelperController: ObservableObject {
     }
 
     private nonisolated static func submitDetachedStart(
+        repoRoot: String,
         appSupportDir: String,
         logFileName: String
     ) -> Int32? {
         self.submitDetachedHelperStackCommand(
+            repoRoot: repoRoot,
             appSupportDir: appSupportDir,
             logFileName: logFileName,
             pidFileName: "helper-detached-start.pid",
-            commandArguments: []
+            commandArguments: ["launch"],
+            environmentOverrides: ["VIVENTIUM_DETACHED_START": "true"]
         )
     }
 
     private nonisolated static func submitDetachedStop(
+        repoRoot: String,
         appSupportDir: String,
         logFileName: String,
     ) -> Int32? {
         self.submitDetachedHelperStackCommand(
+            repoRoot: repoRoot,
             appSupportDir: appSupportDir,
             logFileName: logFileName,
             pidFileName: "helper-detached-stop.pid",
-            commandArguments: ["--stop"]
+            commandArguments: ["stop"],
+            environmentOverrides: ["VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE": "1"]
         )
     }
 
     private nonisolated static func submitDetachedHelperStackCommand(
+        repoRoot: String,
         appSupportDir: String,
         logFileName: String,
         pidFileName: String,
-        commandArguments: [String]
+        commandArguments: [String],
+        environmentOverrides: [String: String]
     ) -> Int32? {
-        let stackScriptPath = self.helperStackScriptPath(appSupportDir: appSupportDir)
-        guard FileManager.default.isExecutableFile(atPath: stackScriptPath) else {
+        let binViventiumPath = "\(repoRoot)/bin/viventium"
+        guard FileManager.default.isExecutableFile(atPath: binViventiumPath) else {
             return nil
         }
         let logPath = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName).path
@@ -1399,7 +1595,7 @@ final class HelperController: ObservableObject {
         let escapedAppSupportDir = self.shellQuoted(appSupportDir)
         let escapedLogPath = self.shellQuoted(logPath)
         let escapedPidPath = self.shellQuoted(pidFileURL.path)
-        let escapedCommand = (["/bin/bash", stackScriptPath] + commandArguments)
+        let escapedCommand = (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)
             .map(self.shellQuoted)
             .joined(separator: " ")
         let detachedCommand = """
@@ -1414,6 +1610,11 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = ["-lc", detachedCommand]
         process.currentDirectoryURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+        process.environment = self.makeHelperStackEnvironment(
+            repoRoot: repoRoot,
+            appSupportDir: appSupportDir,
+            environmentOverrides: environmentOverrides
+        )
         process.standardInput = FileHandle.nullDevice
         let outputPipe = Pipe()
         process.standardOutput = outputPipe
@@ -1452,6 +1653,26 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
 
     private nonisolated static func helperStackScriptPath(appSupportDir: String) -> String {
         "\(appSupportDir)/helper-scripts/viventium-stack.sh"
+    }
+
+    private nonisolated static func makeHelperStackEnvironment(
+        repoRoot: String,
+        appSupportDir: String,
+        environmentOverrides: [String: String]
+    ) -> [String: String] {
+        var environment = self.makeCLIEnvironment()
+        environment["VIVENTIUM_HELPER_V0_ROOT"] = "\(repoRoot)/viventium_v0_4"
+        environment["VIVENTIUM_HELPER_CORE_ROOT"] = repoRoot
+        environment["VIVENTIUM_HELPER_WORKSPACE_ROOT"] = URL(fileURLWithPath: repoRoot, isDirectory: true)
+            .deletingLastPathComponent()
+            .path
+        environment["VIVENTIUM_APP_SUPPORT_DIR"] = appSupportDir
+        environment["VIVENTIUM_ENV_FILE"] = "\(appSupportDir)/runtime/runtime.env"
+        environment["VIVENTIUM_ENV_LOCAL_FILE"] = "\(appSupportDir)/runtime/runtime.local.env"
+        for (key, value) in environmentOverrides {
+            environment[key] = value
+        }
+        return environment
     }
 
     private nonisolated static func helperDetachedCommandScriptPath(

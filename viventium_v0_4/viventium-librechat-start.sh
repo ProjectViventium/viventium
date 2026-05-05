@@ -403,11 +403,12 @@ TELEGRAM_CODEX_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_ENV_FILE:-$TELEGRAM_CODEX_DI
 TELEGRAM_CODEX_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE:-$TELEGRAM_CODEX_DIR/config/settings.yaml}"
 TELEGRAM_CODEX_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE:-$TELEGRAM_CODEX_DIR/config/projects.yaml}"
 TELEGRAM_USER_CONFIGS_DIR="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-$(resolve_dir_or_default \
-  "$TELEGRAM_DIR_PRIMARY/TelegramVivBot/user_configs" \
+  "$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs" \
   "$TELEGRAM_DIR_PRIMARY/TelegramVivBot/user_configs" \
   "$TELEGRAM_DIR_PRIMARY/user_configs" \
   "$VIVENTIUM_PRIVATE_CURATED_DIR/runtime-state/telegram-user-configs" \
   "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/telegram-viventium/TelegramVivBot/user_configs")}"
+mkdir -p "$TELEGRAM_USER_CONFIGS_DIR"
 SKYVERN_ENV_FILE="${VIVENTIUM_SKYVERN_ENV_FILE:-$(resolve_path_or_default \
   "$ROOT_DIR/docker/skyvern/.env" \
   "$ROOT_DIR/docker/skyvern/.env" \
@@ -3003,6 +3004,20 @@ default_voice_worker_load_threshold() {
   fi
 
   printf '%s\n' "0.7"
+}
+
+default_voice_stt_vad_min_silence() {
+  local provider="${1:-${VIVENTIUM_STT_PROVIDER:-whisper_local}}"
+  provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$provider" == "whisper_local" || "$provider" == "pywhispercpp" ]]; then
+    # Local whisper has no provider-native semantic endpointing when the optional
+    # turn detector is unavailable, so its VAD fallback needs a less-eager pause
+    # budget than remote/STT-owned routes.
+    printf '%s\n' "1.0"
+    return 0
+  fi
+
+  printf '%s\n' "0.5"
 }
 
 host_supports_local_chatterbox_mlx() {
@@ -9830,7 +9845,8 @@ PY
             turn_detection_requested="$(printf '%s' "${VIVENTIUM_TURN_DETECTION:-}" | tr '[:upper:]' '[:lower:]')"
             wants_voice_turn_detector=false
             has_voice_turn_detector=false
-            if [[ "${VIVENTIUM_STT_PROVIDER:-}" == "assemblyai" ]]; then
+            voice_stt_provider_normalized="$(printf '%s' "${VIVENTIUM_STT_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')"
+            if [[ "$voice_stt_provider_normalized" == "assemblyai" || "$voice_stt_provider_normalized" == "whisper_local" || "$voice_stt_provider_normalized" == "pywhispercpp" ]]; then
               case "$turn_detection_requested" in
                 ""|turn_detector|semantic|semantic_turn_detector|multilingual)
                   wants_voice_turn_detector=true
@@ -9874,7 +9890,7 @@ PY
                 echo -e "${YELLOW}[viventium]${NC} Pre-downloading voice turn detector model..."
                 "$voice_python" worker.py download-files >>"$LOG_DIR/voice_gateway_deps.log" 2>&1 || {
                   if [[ "$wants_voice_turn_detector" == "true" ]]; then
-                    log_warn "Voice turn detector model pre-download failed; runtime will fall back to AssemblyAI STT endpointing if needed"
+                    log_warn "Voice turn detector model pre-download failed; runtime will fall back to the provider-specific turn-taking profile if needed"
                   else
                     log_warn "Voice turn detector model pre-download failed; boot logs may still show plugin initialization errors until the cache is available"
                   fi
@@ -9978,7 +9994,11 @@ PY
         fi
         export VIVENTIUM_STT_VAD_ACTIVATION="${VIVENTIUM_STT_VAD_ACTIVATION:-0.4}"
         export VIVENTIUM_STT_VAD_MAX_BUFFERED_SPEECH="${VIVENTIUM_STT_VAD_MAX_BUFFERED_SPEECH:-600}"
-        export VIVENTIUM_STT_VAD_MIN_SILENCE="${VIVENTIUM_STT_VAD_MIN_SILENCE:-0.5}"
+        if [[ -z "${VIVENTIUM_STT_VAD_MIN_SILENCE:-}" ]]; then
+          export VIVENTIUM_STT_VAD_MIN_SILENCE="$(default_voice_stt_vad_min_silence "$VIVENTIUM_STT_PROVIDER")"
+        else
+          export VIVENTIUM_STT_VAD_MIN_SILENCE
+        fi
         export VIVENTIUM_STT_VAD_MIN_SPEECH="${VIVENTIUM_STT_VAD_MIN_SPEECH:-0.1}"
         export VIVENTIUM_STT_VAD_FORCE_CPU="${VIVENTIUM_STT_VAD_FORCE_CPU:-}"
         export ASSEMBLYAI_API_KEY="${ASSEMBLYAI_API_KEY:-}"

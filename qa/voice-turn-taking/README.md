@@ -15,11 +15,18 @@ not fail when the optional semantic turn-detector plugin is installed.
 - LiveKit interruption knobs compile from canonical config into generated runtime env.
 - AssemblyAI endpointing knobs compile from canonical config into generated runtime env.
 - Worker logs expose normalized turn-end reasons.
+- Worker logs expose semantic turn-detector readiness and the concrete downgrade status when a
+  detector path is unavailable.
 - A hostile restart with no turn-detector model cache still boots cleanly when the plugin is
   installed.
 - Existing voice-gateway and compiler test suites remain green.
 - Local `whisper_local` + `local_chatterbox_turbo_mlx_8bit` route plumbing remains functional after
   the turn-taking changes.
+- Local `whisper_local` / `pywhispercpp` no longer depends on a short pure-VAD silence timer when a
+  better gateway-owned signal is available:
+  - semantic `turn_detector` is used when the optional plugin, exact cached assets, and local
+    inference runner are ready
+  - otherwise the local VAD fallback uses a less-eager silence/endpointing profile
 - Per-call requested STT overrides recompute the effective turn-taking defaults from the final STT
   provider instead of inheriting stale defaults from the machine route.
 - Voice worker memory/prewarm controls compile from canonical config into generated runtime env.
@@ -46,7 +53,60 @@ Result:
   - `min_consecutive_speech_delay`
   - mixed-provider override regression coverage for `whisper_local -> assemblyai` and
     `assemblyai -> pywhispercpp`
-  - exact turn-detector asset cache verification for `onnx/model_q8.onnx` plus `languages.json`
+  - local Whisper semantic-detector default coverage when exact assets are cached and the LiveKit
+    inference runner is registered
+  - local Whisper fallback coverage when exact assets are cached but the inference runner is not
+    registered
+  - local Whisper fallback coverage proving `vad` uses the less-eager endpointing profile and
+    `VIVENTIUM_STT_VAD_MIN_SILENCE=1.0` unless explicitly configured
+  - current LiveKit tokenizer coverage proving synchronized transcript chunks preserve whitespace
+  - exact turn-detector asset cache verification for `onnx/model_q8.onnx`, `languages.json`, and
+    the tokenizer/config files LiveKit loads before inference
+
+### 2026-05-04 Local Whisper Mid-Sentence Endpointing Regression
+
+RCA:
+- A real local call used `pywhispercpp` / local whisper.cpp with `turn_detection=vad`.
+- Logs showed user turns completing with `reason=vad_silence` after the historical local profile
+  (`VIVENTIUM_STT_VAD_MIN_SILENCE=0.5`, `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S=0.9`).
+- The partial utterance was persisted and answered before the rest of the spoken sentence arrived,
+  so the continuation landed under a newer assistant parent and bypassed same-parent coalescing.
+- The modern playground transcript concatenation was a separate display path issue: canonical
+  LibreChat messages were separate, but async LiveKit transcript accumulation could render adjacent
+  assistant messages without boundaries.
+
+Fix contract:
+- End-of-turn ownership stays in the voice gateway, not in `/voice/chat`.
+- Local Whisper can use semantic `turn_detector` when exact assets are cached.
+- If semantic detection is unavailable, local Whisper uses a less-eager VAD fallback:
+  - local VAD min silence default: `1.0`
+  - local VAD endpointing default: `1.4`
+- The launcher pre-downloads the turn-detector model for local Whisper routes as well as AssemblyAI
+  routes when semantic turn detection may be selected.
+- If that first-run pre-download cannot complete, local Whisper remains usable on the less-eager VAD
+  fallback and the launcher retries the exact detector assets on a later start.
+- Modern playground transcript boundaries use async LiveKit text output keyed by text-stream id;
+  `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` is an opt-in caption QA mode, not the default.
+- LibreChat voice-route logs now render actual values instead of literal `%s` placeholders.
+
+Final validation after the Lyra/local-route report:
+- The local cache contained a partial `livekit/turn-detector` snapshot for `v0.4.1-intl`
+  (`onnx/model_q8.onnx` plus `languages.json`) but not tokenizer/config files. LiveKit's runtime
+  initialization still failed this snapshot, so the readiness check now rejects partial snapshots.
+- A fresh supported `bin/viventium stop` then `bin/viventium launch --modern-playground` booted the
+  local checkout without registering the turn-detector plugin, without starting a turn-detector
+  inference executor, and without the previous model-missing / "no inference executor" signatures.
+- Runtime surfaces after the restart:
+  - LibreChat API returned `OK`
+  - LibreChat frontend returned `200`
+  - modern playground returned `200`
+  - Google Workspace MCP health returned `200`
+  - Scheduling Cortex health returned `200`
+  - MS365 MCP returned `401` on `/mcp`, which proves the server is reachable and enforcing auth
+- Telegram bridge restarted and registered its proactive callback.
+- Default machine route remains local Chatterbox + local whisper.cpp, while per-user saved routes
+  such as Cartesia/Lyra continue through call-session voice settings; AssemblyAI STT was not
+  changed.
 
 ### Voice gateway full suite
 
@@ -56,7 +116,7 @@ cd viventium_v0_4/voice-gateway
 ```
 
 Result:
-- `158` tests passed
+- `202` tests passed on the final run
 
 ### Compiler / release contract
 
@@ -87,22 +147,23 @@ rm -f "$HOME/Library/Application Support/Viventium/state/runtime/isolated/logs/v
 ```
 
 Evidence:
-- `voice_gateway_deps.log` was created automatically during startup
-- it downloaded the turn-detector assets before worker boot
-- the boot no longer registered the turn-detector plugin on the default local `vad` route
-- `voice_gateway.log` no longer contained the old `model_q8.onnx` / inference-runner
-  initialization failure
+- `voice_gateway_deps.log` is created automatically during startup
+- a partial detector cache is rejected unless the ONNX model, `languages.json`, and tokenizer/config
+  files required by LiveKit are all present
+- the boot no longer registers the turn-detector plugin on default local `vad` fallback routes
+- `voice_gateway.log` no longer contains the old `model_q8.onnx` / inference-runner initialization
+  failure or "inference request received but no inference executor" loop
 - the worker registered successfully
-- explicit `turn_detector` mode now also has a runtime safeguard: if weights are missing despite the
-  plugin being installed, `load_turn_detection()` falls back to `stt` instead of instantiating a
-  broken detector path
+- explicit `turn_detector` mode now also has a runtime safeguard: if exact assets are missing
+  despite the plugin being installed, `load_turn_detection()` falls back to the aligned `stt` or
+  local less-eager `vad` profile instead of instantiating a broken detector path
 
 Key log evidence:
 
 ```text
-[viventium] Pre-downloading voice turn detector model...
-INFO livekit.agents - Downloading files for <livekit.plugins.turn_detector.EOUPlugin ...>
-INFO livekit.agents - Finished downloading files for <livekit.plugins.turn_detector.EOUPlugin ...>
+{"message": "plugin registered", "plugin": "livekit.plugins.openai", ...}
+{"message": "plugin registered", "plugin": "livekit.plugins.assemblyai", ...}
+{"message": "plugin registered", "plugin": "livekit.plugins.silero", ...}
 {"message": "registered worker", ...}
 ```
 
@@ -296,7 +357,7 @@ Result:
 ### Real browser QA
 
 Account used:
-- `test@viventium.ai`
+- synthetic local QA account
 
 Observed localhost flow:
 1. Opened the authenticated LibreChat surface on `http://localhost:3190`
