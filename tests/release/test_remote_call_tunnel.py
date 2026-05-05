@@ -296,7 +296,7 @@ def test_tailscale_state_ready_requires_matching_dns_name(monkeypatch) -> None:
                 {
                     "provider": "tailscale_tailnet_https",
                     "client": {"target": "http://localhost:3190", "public_url": "https://x"},
-                    "tailscale": {"dns_name": "other-node.tail123.ts.net", "managed_ports": [443]},
+                    "tailscale": {"dns_name": "other-node.example.test", "managed_ports": [443]},
                     "public_client_url": "https://voice-node.example.test",
                 }
             )
