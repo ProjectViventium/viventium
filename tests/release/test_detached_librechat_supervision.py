@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -86,10 +87,29 @@ def test_telegram_bot_survives_detached_launcher_exit() -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"
     )
+    start_telegram_bot = launcher_text[
+        launcher_text.index("start_telegram_bot() {") :
+        launcher_text.index("\nschedule_deferred_telegram_bot_start() {")
+    ]
+    fallback_block = start_telegram_bot[
+        start_telegram_bot.index('if [[ "$telegram_started_with_launchctl" != "true" ]]; then') :
+        start_telegram_bot.index("TELEGRAM_STARTED_BY_SCRIPT=true")
+    ]
 
     assert "cleanup() {\n  if detached_start_requested; then\n    return\n  fi" in launcher_text
+    assert "trap '' HUP" in launcher_text
+    assert (
+        'nohup "${telegram_launch_program[@]}" >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &'
+        in fallback_block
+    )
     assert 'nohup "$telegram_python" bot.py >"$LOG_DIR/telegram_bot.log" 2>&1 < /dev/null &' in launcher_text
-    assert 'if detached_start_requested; then\n    disown "$TELEGRAM_BOT_PID" 2>/dev/null || true\n  fi' in launcher_text
+    assert fallback_block.index("TELEGRAM_BOT_PID=$!") < fallback_block.index(
+        'disown "$TELEGRAM_BOT_PID"'
+    )
+    assert re.search(
+        r'if detached_start_requested; then\s+disown "\$TELEGRAM_BOT_PID" 2>/dev/null \|\| true\s+fi',
+        fallback_block,
+    )
 
 
 def test_voice_gateway_requirements_check_detects_version_drift(tmp_path: Path) -> None:
