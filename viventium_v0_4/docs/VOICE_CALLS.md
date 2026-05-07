@@ -16,8 +16,14 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 5. Voice Gateway streams audio → LibreChat `/api/viventium/voice/chat` and speaks the response.
 6. Background insights are surfaced after the main response (same contract as text).
 
+Conversation continuity follows the call-session `agentId`. Provider-backed ephemeral agent
+conversations may be stored with provider endpoints such as `xai`; the voice resolver may reuse
+them only when the stored conversation `agent_id` exactly matches the active call session. Persisted
+non-ephemeral agents still use endpoint `agents`; this carve-out exists for LibreChat's ephemeral
+provider-agent storage shape.
+
 Listen-Only Mode is the intentional exception to steps 5-6: the voice route saves the transcribed
-turn as structured transcript evidence and returns `status=listen_only` without starting an Agents
+turn as a structured ambient transcript record and returns `status=listen_only` without starting an Agents
 stream, TTS, follow-up polling, tools, background cortices, title generation, or live memory writes.
 
 ### Playground Deep-Link Parameters
@@ -215,10 +221,19 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 - With `VIVENTIUM_VOICE_DEBUG_TTS=1`, Cartesia request logs include JSON-escaped transcript chunks
   and joined continuation text so leading/trailing spaces can be inspected without logging API keys.
 
-### xAI (Grok Voice)
-- Allowed nonverbal markers: `[laugh]`, `[sigh]`, `[gasp]`, `[whisper]`, `[hmm]`, `[chuckle]`.
-- No XML/SSML tags (`<emotion/>`, `<break/>`, etc.).
-- Tone is expressed naturally via word choice and pacing.
+### xAI
+- xAI is the user-facing provider label for standalone xAI TTS. The older Grok Voice Agent adapter
+  remains opt-in only via `VIVENTIUM_XAI_TTS_API=voice_agent`.
+- Inline tags: `[pause]`, `[long-pause]`, `[hum-tune]`, `[laugh]`, `[chuckle]`, `[giggle]`,
+  `[cry]`, `[tsk]`, `[tongue-click]`, `[lip-smack]`, `[breath]`, `[inhale]`, `[exhale]`,
+  `[sigh]`.
+- Wrapping tags: `<soft>`, `<whisper>`, `<loud>`, `<build-intensity>`,
+  `<decrease-intensity>`, `<higher-pitch>`, `<lower-pitch>`, `<slow>`, `<fast>`,
+  `<sing-song>`, `<singing>`, `<laugh-speak>`, `<emphasis>`.
+- xAI tags are not SSML and must not be mixed with Cartesia Sonic-3 tags such as `<emotion>`,
+  `<speed>`, `<volume>`, `<break>`, `<spell>`, or `[laughter]`.
+- Tone and emotion are controlled by natural wording plus the documented xAI tags; xAI has no
+  Cartesia-style emotion parameter.
 
 ### Chatterbox (Local MLX)
 - Allowed nonverbal markers: `[laugh]`, `[sigh]`, `[gasp]`.
@@ -354,6 +369,10 @@ Added: 2026-01-11
 - `VIVENTIUM_CARTESIA_WS_URL`
 - `VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS` (default `120` for live voice)
 - `VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS`
+- `VIVENTIUM_XAI_TTS_API` (default `tts`; `voice_agent` is legacy)
+- `VIVENTIUM_XAI_VOICE` (default `Sal`; supported xAI TTS voices are `Ara`, `Eve`, `Leo`, `Rex`, `Sal`)
+- `VIVENTIUM_XAI_LANGUAGE` (default `en`)
+- `VIVENTIUM_XAI_TTS_WS_URL` (standalone TTS WebSocket endpoint)
 - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`
 - `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS`
 - `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S`
@@ -388,6 +407,16 @@ Added: 2026-01-11
 - Live call LLM selection follows the agent primary model by default and only changes when the agent
   has an explicit Voice Chat Model configured.
 - Voice transport settings such as STT/TTS provider selection do not change the call LLM route.
+- The user-facing hosted provider label is `xAI`; the underlying transport uses standalone xAI TTS
+  by default through `livekit-plugins-xai`; the older
+  Grok Voice Agent adapter is retained only behind `VIVENTIUM_XAI_TTS_API=voice_agent`.
+- Recommended Speaking order is Local Chatterbox first when available, then xAI Voice as the
+  preferred hosted general-purpose route. As of 2026-05-07, the official xAI TTS pricing page lists
+  $4.20 per 1M TTS characters, materially below the effective public Cartesia bundled-character
+  cost from Cartesia's pricing page, and local QA found the route fast and high quality. Cartesia
+  remains the expressive Sonic-3 route when its emotion/SSML-like controls are specifically needed.
+- xAI speech tags are documented in `viventium_v0_4/shared/voice/xai_tts_capabilities.json`.
+  They are not SSML and must not be mixed with Cartesia Sonic-3 tags.
 - Per-call voice-route overrides recompute the effective turn-taking defaults from the final STT
   provider for that call. A call that overrides from `whisper_local` to `assemblyai` must not keep
   stale VAD-only defaults from the machine route.

@@ -158,6 +158,46 @@ def sanitize_voice_followup_text(text: str, *, preserve_leading_space: bool = Fa
 #
 # Updated 2026-04-20: Replaced hardcoded bracket token vocabularies with a structural
 # stage-direction parser so runtime no longer depends on enumerating individual words.
+_XAI_TTS_CAPABILITIES_PATH = _SHARED_PATH / "voice" / "xai_tts_capabilities.json"
+
+
+def _load_xai_wrapping_tag_names() -> tuple[str, ...]:
+    try:
+        with _XAI_TTS_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        tags = ((payload or {}).get("speech_tags") or {}).get("wrapping") or []
+        return tuple(
+            str(tag).strip().lower()
+            for tag in tags
+            if isinstance(tag, str) and str(tag).strip()
+        )
+    except Exception:
+        return (
+            "soft",
+            "whisper",
+            "loud",
+            "build-intensity",
+            "decrease-intensity",
+            "higher-pitch",
+            "lower-pitch",
+            "slow",
+            "fast",
+            "sing-song",
+            "singing",
+            "laugh-speak",
+            "emphasis",
+        )
+
+
+_XAI_WRAPPING_TAG_NAMES = _load_xai_wrapping_tag_names()
+_XAI_WRAPPING_TAG_PATTERN = "|".join(re.escape(tag) for tag in _XAI_WRAPPING_TAG_NAMES)
+_XAI_WRAPPING_TAG_RE = re.compile(
+    r"<(?P<tag>%s)>(?P<text>.*?)</(?P=tag)>"
+    % _XAI_WRAPPING_TAG_PATTERN,
+    re.IGNORECASE | re.DOTALL,
+)
+_XAI_ANGLE_TAG_RE = re.compile(r"</?(?:%s)\s*>" % _XAI_WRAPPING_TAG_PATTERN, re.IGNORECASE)
+_XAI_BRACKET_TAG_RE = re.compile(r"\[\s*/?\s*(?:%s)\s*\]" % _XAI_WRAPPING_TAG_PATTERN, re.IGNORECASE)
 _VCT_SPEAK_TAG_RE = re.compile(r"</?speak[^>]*>", re.IGNORECASE)
 _VCT_EMOTION_SELF_CLOSING_RE = re.compile(
     r"<emotion\s+value=[\"']?[^\"'>]+[\"']?\s*/>", re.IGNORECASE
@@ -199,6 +239,13 @@ def _is_bracket_stage_direction(content: str) -> bool:
     return all(word.isalpha() for word in words)
 
 
+def _is_xai_bracket_control_tag(content: str) -> bool:
+    candidate = (content or "").strip().lower()
+    if candidate.startswith("/"):
+        candidate = candidate[1:].lstrip()
+    return candidate in _XAI_WRAPPING_TAG_NAMES
+
+
 def _strip_bracket_stage_directions(text: str) -> str:
     if not text:
         return ""
@@ -222,7 +269,7 @@ def _strip_bracket_stage_directions(text: str) -> str:
         left = text[index - 1] if index > 0 else ""
         right = text[closing + 1] if closing + 1 < text_len else ""
         if (
-            _is_bracket_stage_direction(content)
+            (_is_xai_bracket_control_tag(content) or _is_bracket_stage_direction(content))
             and _is_stage_direction_boundary(left)
             and _is_stage_direction_boundary(right)
         ):
@@ -233,6 +280,17 @@ def _strip_bracket_stage_directions(text: str) -> str:
         index = closing + 1
 
     return "".join(out)
+
+
+def _strip_xai_wrapping_tags(text: str) -> str:
+    cleaned = text or ""
+    while True:
+        updated = _XAI_WRAPPING_TAG_RE.sub(lambda m: m.group("text") or "", cleaned)
+        if updated == cleaned:
+            cleaned = _XAI_ANGLE_TAG_RE.sub("", cleaned)
+            cleaned = _XAI_BRACKET_TAG_RE.sub("", cleaned)
+            return cleaned
+        cleaned = updated
 
 
 def strip_voice_control_tags(text: str) -> str:
@@ -251,13 +309,14 @@ def strip_voice_control_tags(text: str) -> str:
     cleaned = _VCT_SPEED_TAG_RE.sub("", cleaned)
     cleaned = _VCT_VOLUME_TAG_RE.sub("", cleaned)
     cleaned = _VCT_SPELL_TAG_RE.sub(lambda m: m.group(1) or "", cleaned)
+    cleaned = _strip_xai_wrapping_tags(cleaned)
     cleaned = _strip_bracket_stage_directions(cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned
 
 
 _VOICE_CONTROL_TAG_NAMES = frozenset(
-    {"emotion", "break", "speed", "volume", "spell", "speak"}
+    {"emotion", "break", "speed", "volume", "spell", "speak", *_XAI_WRAPPING_TAG_NAMES}
 )
 _VOICE_CONTROL_PENDING_MAX = 512
 
@@ -273,7 +332,7 @@ def _voice_control_tag_name(tag: str) -> str:
         inner = inner[:-1].rstrip()
     name = []
     for ch in inner:
-        if ch.isalpha():
+        if ch.isalpha() or ch == "-":
             name.append(ch.lower())
             continue
         break
@@ -297,7 +356,7 @@ def _could_be_voice_control_tag_prefix(text: str) -> bool:
         return False
     name = []
     for ch in inner:
-        if ch.isalpha():
+        if ch.isalpha() or ch == "-":
             name.append(ch.lower())
             continue
         break
@@ -367,7 +426,7 @@ class VoiceControlDisplayFilter:
                 left = source[index - 1] if index > 0 else ""
                 right = source[closing + 1] if closing + 1 < source_len else ""
                 if (
-                    _is_bracket_stage_direction(content)
+                    (_is_xai_bracket_control_tag(content) or _is_bracket_stage_direction(content))
                     and _is_stage_direction_boundary(left)
                     and _is_stage_direction_boundary(right)
                 ):

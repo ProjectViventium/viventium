@@ -7,7 +7,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "a2ad68cd5d522a54fd38e27caad865d930e555fe"
+      "ref": "8bfd6ab4ac2d9901f4f9fd16ee7ae167cc889d68"
     },
     {
       "name": "agents-playground",
@@ -35,7 +35,7 @@
       "path": "viventium_v0_4/agent-starter-react",
       "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
       "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
-      "ref": "11ca371f90235b794f41ab14b1d1a562a12f9676"
+      "ref": "e06db8fdabf1a4ba182236d29921be2217b2e8db"
     },
     {
       "name": "GlassHive",

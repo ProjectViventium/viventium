@@ -62,4 +62,104 @@ assert.deepEqual(
   ['speaker one', 'speaker two']
 );
 
+const firstSeenMsById = new Map([
+  ['stream-local-a', 1000],
+  ['stream-local-b', 1300],
+  ['stream-local-c', 4000],
+  ['stream-remote-a', 1100],
+  ['stream-chat-a', 1450],
+]);
+
+const sameLocalTranscriptAcrossStreams = [
+  {
+    id: 'stream-local-a',
+    type: 'userTranscript',
+    message: 'Hello   Mom',
+    timestamp: 1000,
+    from: { identity: 'local-speaker', isLocal: true },
+  },
+  {
+    id: 'stream-local-b',
+    type: 'userTranscript',
+    message: 'hello mom',
+    timestamp: 1300,
+    from: { identity: 'local-speaker', isLocal: true },
+  },
+];
+assert.deepEqual(
+  dedupeMessagesById(sameLocalTranscriptAcrossStreams, { firstSeenMsById }).map(
+    (message) => message.id
+  ),
+  ['stream-local-b']
+);
+
+const sameLocalTranscriptOutsideWindow = [
+  {
+    id: 'stream-local-a',
+    type: 'userTranscript',
+    message: 'hello mom',
+    timestamp: 1000,
+    from: { identity: 'local-speaker', isLocal: true },
+  },
+  {
+    id: 'stream-local-c',
+    type: 'userTranscript',
+    message: 'hello mom',
+    timestamp: 4000,
+    from: { identity: 'local-speaker', isLocal: true },
+  },
+];
+assert.deepEqual(
+  dedupeMessagesById(sameLocalTranscriptOutsideWindow, { firstSeenMsById }).map(
+    (message) => message.id
+  ),
+  ['stream-local-a', 'stream-local-c']
+);
+
+const sameTextDifferentSpeakerNoSegment = [
+  {
+    id: 'stream-local-a',
+    type: 'userTranscript',
+    message: 'hello mom',
+    timestamp: 1000,
+    from: { identity: 'local-speaker', isLocal: true },
+  },
+  {
+    id: 'stream-remote-a',
+    type: 'userTranscript',
+    message: 'hello mom',
+    timestamp: 1100,
+    from: { identity: 'remote-speaker', isLocal: false },
+  },
+];
+assert.deepEqual(
+  dedupeMessagesById(sameTextDifferentSpeakerNoSegment, { firstSeenMsById }).map(
+    (message) => message.id
+  ),
+  ['stream-local-a', 'stream-remote-a']
+);
+
+const sameLocalTranscriptAndChatEcho = [
+  {
+    id: 'stream-local-b',
+    type: 'userTranscript',
+    message: 'same line',
+    timestamp: 1300,
+    from: { identity: 'local-speaker', isLocal: true },
+  },
+  {
+    id: 'stream-chat-a',
+    type: 'chatMessage',
+    message: 'same line',
+    timestamp: 1450,
+    from: { identity: 'local-speaker', isLocal: true },
+  },
+];
+assert.deepEqual(
+  dedupeMessagesById(sameLocalTranscriptAndChatEcho, { firstSeenMsById }).map(
+    (message) => message.id
+  ),
+  ['stream-chat-a']
+);
+
 console.log('session-message-utils tests passed');

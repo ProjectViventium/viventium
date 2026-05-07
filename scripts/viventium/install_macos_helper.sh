@@ -571,6 +571,26 @@ install_bundle() {
   fi
 }
 
+verify_installed_bundle() {
+  local installed_executable="$HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME"
+  [[ -x "$installed_executable" ]] || {
+    echo "[viventium] Installed helper executable is missing: $installed_executable" >&2
+    exit 1
+  }
+  if ! cmp -s "$BUILT_EXECUTABLE" "$installed_executable"; then
+    echo "[viventium] Installed helper executable does not match the built/shipped helper." >&2
+    exit 1
+  fi
+  if ! strings "$installed_executable" | grep -F -- "ingest-transcripts" >/dev/null; then
+    echo "[viventium] Installed helper is missing transcript ingest support." >&2
+    exit 1
+  fi
+  if ! strings "$installed_executable" | grep -F -- "--ignore-idle-gate" >/dev/null; then
+    echo "[viventium] Installed helper is missing the manual transcript ingest idle-gate override." >&2
+    exit 1
+  fi
+}
+
 sign_installed_bundle() {
   [[ "$SKIP_CODESIGN" == "1" ]] && return 0
   [[ -x /usr/bin/codesign ]] || return 0
@@ -611,6 +631,7 @@ install)
     cleanup_legacy_terminal_helper_launchers
     build_helper
     install_bundle
+    verify_installed_bundle
     sign_installed_bundle
     write_helper_config
     write_helper_launcher_scripts

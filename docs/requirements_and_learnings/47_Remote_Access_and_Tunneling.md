@@ -329,6 +329,29 @@ Operator recipe for a stable public link:
    - do not treat a full-tunnel VPN running on the same host Mac as equivalent proof; use a
      separate device or disable the VPN on the serving host first
 
+Temporary disable / re-enable recipe:
+
+- If the Mac is away from the network/IP that the public domains route to, disable remote access
+  instead of leaving stale public origins active:
+  ```yaml
+  runtime:
+    network:
+      remote_call_mode: disabled
+      public_client_origin: ""
+      public_api_origin: ""
+      public_playground_origin: ""
+      public_livekit_url: ""
+  ```
+- Keep the intended custom-domain values in operator notes or YAML comments, not as active
+  `public_*` fields, while remote access is disabled.
+- Re-enable when the Mac is back on the routed network:
+  1. Set `runtime.network.remote_call_mode: custom_domain`.
+  2. Restore the saved `public_client_origin`, `public_api_origin`,
+     `public_playground_origin`, and `public_livekit_url`.
+  3. Restart with `bin/viventium restart` or `bin/viventium stop && bin/viventium start`.
+  4. Run `bin/viventium status`.
+  5. Validate from a separate off-home network before treating public voice as ready.
+
 User expectation:
 
 - yes, this mode is the one that lets you use Viventium and the modern playground from a phone

@@ -174,6 +174,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - Keep the compiler fallback and `local.librechat.yaml` source-template xAI endpoint aligned;
     the source template currently wins same-name custom endpoint merges in generated
     `librechat.yaml`
+  - Direct LibreChat dev starts must refresh the ignored local `LibreChat/librechat.yaml` from the
+    tracked `viventium/source_of_truth/local.librechat.yaml` before the API loads startup config;
+    otherwise the browser model picker can serve stale model specs even when the source template and
+    generated App Support runtime are correct
 - Retrieval-runtime prerequisites must stay honest across install/start surfaces:
   - if conversation recall is configured to use Ollama embeddings, preflight, install summary,
     doctor, and launcher readiness must all surface the same local-runtime dependency
@@ -692,3 +696,16 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     enough when global runtime gates disabled a capability such as Web Search
   - the fix belongs in runtime-field repair: prune only the tools the current machine cannot back,
     while still preserving all other live user-managed tool choices
+- On May 7, 2026, xAI standalone TTS added a provider-id and secret-routing rule:
+  - canonical voice TTS provider id is `xai`
+  - legacy aliases `x_ai`, `grok`, and `xai_grok_voice` are accepted at config/compiler/runtime
+    boundaries but compile to `xai`
+  - hosted voice setup must be able to collect a TTS-only xAI API key and store it under
+    `voice.provider_keys.xai` / `keychain://viventium/x_ai_api_key`
+  - xAI TTS secret precedence is voice provider key, selected `voice.tts`, keychain fallback, then
+    `llm.extra_provider_keys.x_ai` only as a fallback
+  - generated Telegram service env must include xAI voice settings and
+    `VIVENTIUM_XAI_TTS_API_KEY` so Telegram voice replies can follow the same saved Speaking route
+    and dedicated TTS key as LiveKit calls
+  - the hosted wizard must not silently default new installs to xAI before the user has explicitly
+    configured and QA'd that provider

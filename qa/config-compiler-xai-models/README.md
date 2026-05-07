@@ -2,8 +2,8 @@
 
 ## Scope
 
-Verify Viventium's public config compiler and LibreChat source template generate xAI custom endpoint
-support for Grok 4.3 without mutating local runtime state.
+Verify Viventium's public config compiler, LibreChat source template, direct LibreChat dev launcher,
+and live local UI expose xAI Grok 4.3.
 
 ## Requirements Under Test
 
@@ -15,8 +15,10 @@ support for Grok 4.3 without mutating local runtime state.
 - Future installs must work from tracked product sources:
   - `scripts/viventium/config_compiler.py`
   - `viventium_v0_4/LibreChat/viventium/source_of_truth/local.librechat.yaml`
-- Local-safe QA must compile into a temporary output directory only. It must not modify App Support
-  runtime files, Keychain, Mongo, containers, or running services.
+  - `viventium_v0_4/LibreChat/viventium-start.sh`
+- Local-safe compiler QA must compile into a temporary output directory first.
+- Live local QA may intentionally recompile the local runtime and restart only the LibreChat API
+  when explicitly requested by the operator.
 
 ## Environments
 
@@ -40,9 +42,17 @@ support for Grok 4.3 without mutating local runtime state.
    - generated xAI endpoint still uses `grok-4.3`
    - `runtime.env` and `service-env/librechat.env` expose `XAI_API_KEY=user_provided`
 6. Confirm no retiring xAI IDs appear in generated temporary outputs.
+7. Compile the local runtime through the public `bin/viventium compile-config` path.
+8. Confirm live `/api/config` exposes a `grok-4.3` model spec with preset endpoint `xai`.
+9. Real-browser QA:
+   - search the model picker for `grok-4.3`
+   - confirm `Grok 4.3` appears instead of `No results`
+   - select it and confirm the composer switches to Grok/xAI routing
 
 ## Expected Results
 
 - Targeted release tests pass.
 - Generated output supports Grok 4.3 for future users through the public compiler path.
-- Local proof does not dirty the operator's live Viventium runtime.
+- Direct LibreChat dev starts refresh ignored `librechat.yaml` from source-of-truth before loading
+  model specs.
+- Live local browser picker can find and select `Grok 4.3`.

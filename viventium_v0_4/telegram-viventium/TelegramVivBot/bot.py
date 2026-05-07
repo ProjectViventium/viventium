@@ -1711,7 +1711,7 @@ async def getViventiumResponse(
                 # Split by sentences to maintain natural flow
                 # Note: 're' is already imported at top of file
                 max_chunk_size = 800
-                if "chatterbox" in tts_provider or tts_provider == "cartesia":
+                if "chatterbox" in tts_provider or tts_provider in {"cartesia", "xai"}:
                     chunks = [cleaned_voice]
                 elif len(cleaned_voice) > max_chunk_size:
                     # Split by sentences (periods, exclamation, question marks followed by space)

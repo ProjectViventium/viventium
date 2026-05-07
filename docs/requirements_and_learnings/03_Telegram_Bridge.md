@@ -93,6 +93,24 @@ stream back to Telegram through the existing bridge.
   - default logs should still include non-secret structural counts for `[laughter]`,
     `<emotion>`, `<break>`, `<speed>`, `<volume>`, and `<spell>` so formatting loss can be
     diagnosed without publishing transcript content
+- When the resolved Speaking route is xAI, Telegram follows the standalone xAI TTS contract:
+  - the canonical xAI capability contract is
+    `viventium_v0_4/shared/voice/xai_tts_capabilities.json`
+  - the saved route's `tts.variant` is the xAI `voice_id`, so a user selecting `Eve`, `Rex`, or
+    another xAI voice in the modern playground gets the same voice in Telegram audio replies
+  - Telegram prefers `VIVENTIUM_XAI_TTS_API_KEY` for synthesis and only falls back to `XAI_API_KEY`
+    for compatibility, matching the LiveKit gateway's xAI voice-key precedence
+  - Telegram calls `POST https://api.x.ai/v1/tts` with `text`, `voice_id`, `language`, and a
+    structured `output_format`
+  - xAI inline and wrapping speech tags from the shared contract are preserved for xAI synthesis
+  - Telegram must not split xAI text into generic 800-character fallback chunks because that can
+    break xAI wrapping tags and create invalid concatenated MP3 output
+  - user-visible Telegram text must strip xAI tags even when the model emits malformed wrapper
+    syntax such as `[soft]...[/soft]` or an orphan closing tag like `[/soft]`
+  - Cartesia-only tags such as `<emotion>`, `<break>`, `<speed>`, `<volume>`, `<spell>`,
+    `[laughter]`, and Cartesia-only bracket aliases like `[soft laugh]` or `[gentle sigh]` are
+    stripped before xAI synthesis
+  - OpenAI/ElevenLabs fallbacks still strip all provider markup before synthesis
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
   explicitly known-good for the current deployment.

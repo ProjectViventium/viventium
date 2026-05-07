@@ -8,7 +8,7 @@ Validates the LiveKit Listen-Only Mode path:
 - persisted call-session state
 - mutual exclusion with Wing Mode
 - voice-route bypass before `AgentController`
-- transcript evidence persistence with `listen_only_transcript` metadata
+- ambient transcript persistence with `listen_only_transcript` metadata
 - exclusion from normal conversation recall corpus
 - exclusion from live agent prompt history after Listen-Only is turned off
 - daily memory-hardener treatment as soft `ambient_transcript` evidence
@@ -17,7 +17,7 @@ Validates the LiveKit Listen-Only Mode path:
 
 1. The control bar shows an icon-sized Listen-Only button that matches the current LiveKit control
    style and has a tooltip explaining what is saved and what does not run. User-facing copy must
-   avoid forensic/evidence-gathering language and present Viventium as present, quiet, and
+   avoid forensic or surveillance language and present Viventium as present, quiet, and
    remembering later.
 2. Enabling Listen-Only clears Wing Mode; enabling Wing Mode clears Listen-Only.
 3. While Listen-Only is active, typed chat input is hidden and voice turns return

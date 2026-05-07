@@ -25,6 +25,8 @@ from worker import (
     _build_voice_capability_catalog,
     _build_configured_voice_route_metadata,
     _build_voice_route_metadata,
+    _configure_xai_standalone_tts_plugin,
+    _normalize_voice_provider,
     _validate_ref_audio_path,
     load_env,
     prewarm_process,
@@ -81,6 +83,51 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(env.openai_tts_voice, "coral")
         self.assertEqual(env.openai_tts_speed, 1.12)
         self.assertIn("Speak naturally and warmly", env.openai_tts_instructions)
+
+    def test_load_env_keeps_xai_voice_agent_behind_explicit_flag(self) -> None:
+        with patch.dict(os.environ, {"VIVENTIUM_XAI_TTS_API": "voice_agent"}, clear=True):
+            env = load_env()
+
+        self.assertEqual(env.xai_tts_api, "voice_agent")
+        self.assertEqual(env.xai_tts_ws_url, "wss://api.x.ai/v1/tts")
+        self.assertEqual(env.xai_wss_url, "wss://api.x.ai/v1/realtime")
+
+    def test_load_env_reads_xai_standalone_tts_endpoint_and_sample_rate(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_XAI_TTS_WS_URL": "wss://xai-tts.example.test/v1/tts",
+                "VIVENTIUM_XAI_SAMPLE_RATE": "44100",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertEqual(env.xai_tts_ws_url, "wss://xai-tts.example.test/v1/tts")
+        self.assertEqual(env.xai_sample_rate, 44100)
+
+    def test_configure_xai_standalone_tts_plugin_applies_runtime_endpoint(self) -> None:
+        fake_tts_module = SimpleNamespace(
+            XAI_WEBSOCKET_URL="wss://old-xai.example.test/v1/tts",
+            SAMPLE_RATE=24000,
+        )
+
+        with patch("worker.xai_plugin", SimpleNamespace(tts=fake_tts_module)):
+            _configure_xai_standalone_tts_plugin(
+                ws_url="wss://xai-tts.example.test/v1/tts",
+                sample_rate=44100,
+            )
+
+        self.assertEqual(fake_tts_module.XAI_WEBSOCKET_URL, "wss://xai-tts.example.test/v1/tts")
+        self.assertEqual(fake_tts_module.SAMPLE_RATE, 44100)
+
+    def test_configure_xai_standalone_tts_plugin_fails_without_endpoint_controls(self) -> None:
+        with patch("worker.xai_plugin", SimpleNamespace(tts=SimpleNamespace())):
+            with self.assertRaisesRegex(RuntimeError, "endpoint controls"):
+                _configure_xai_standalone_tts_plugin(
+                    ws_url="wss://xai-tts.example.test/v1/tts",
+                    sample_rate=44100,
+                )
 
     def test_load_env_uses_cold_start_timeout_for_local_whisper(self) -> None:
         with (
@@ -232,7 +279,8 @@ class TestRefAudioValidation(unittest.TestCase):
             os.environ,
             {
                 "OPENAI_API_KEY": "openai-key",
-                "XAI_API_KEY": "synthetic_xai_key",
+                "XAI_API_KEY": "user_provided",
+                "VIVENTIUM_XAI_TTS_API_KEY": "synthetic_xai_key",
                 "VIVENTIUM_TTS_PROVIDER": "openai",
                 "VIVENTIUM_OPENAI_STT_MODEL": "gpt-4o-mini-transcribe",
             },
@@ -251,6 +299,11 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(updated.openai_stt_model, "gpt-4o-transcribe")
         self.assertEqual(updated.tts_provider, "xai")
         self.assertEqual(updated.xai_voice, "Eve")
+
+    def test_normalize_voice_provider_accepts_xai_aliases(self) -> None:
+        self.assertEqual(_normalize_voice_provider("x_ai"), "xai")
+        self.assertEqual(_normalize_voice_provider("grok"), "xai")
+        self.assertEqual(_normalize_voice_provider("xai_grok_voice"), "xai")
 
     def test_apply_requested_voice_route_ignores_unavailable_providers(self) -> None:
         with patch.dict(
@@ -352,6 +405,21 @@ class TestRefAudioValidation(unittest.TestCase):
             by_key[("tts", "cartesia")]["variants"],
         )
 
+    def test_build_voice_capability_catalog_rejects_xai_placeholder_key(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"XAI_API_KEY": "user_provided", "VIVENTIUM_XAI_TTS_API_KEY": ""},
+            clear=False,
+        ):
+            env = load_env()
+            capabilities = _build_voice_capability_catalog(env)
+
+        xai_capability = next(
+            entry for entry in capabilities if entry["modality"] == "tts" and entry["id"] == "xai"
+        )
+        self.assertFalse(xai_capability["available"])
+        self.assertIn("XAI_API_KEY", xai_capability["unavailableReason"])
+
     def test_build_voice_capability_catalog_labels_local_whisper_recommended_model(self) -> None:
         with patch.dict(
             os.environ,
@@ -384,7 +452,8 @@ class TestRefAudioValidation(unittest.TestCase):
             os.environ,
             {
                 "OPENAI_API_KEY": "openai-key",
-                "XAI_API_KEY": "synthetic_xai_key",
+                "XAI_API_KEY": "user_provided",
+                "VIVENTIUM_XAI_TTS_API_KEY": "synthetic_xai_key",
                 "VIVENTIUM_STT_PROVIDER": "openai",
                 "VIVENTIUM_OPENAI_STT_MODEL": "gpt-4o-transcribe",
                 "VIVENTIUM_TTS_PROVIDER": "xai",
@@ -403,6 +472,26 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertEqual(metadata["tts"]["variant"], "Eve")
         self.assertEqual(metadata["ttsFallback"]["provider"], "openai")
         self.assertTrue(any(item["id"] == "xai" for item in metadata["capabilities"]))
+
+    def test_build_voice_capability_catalog_keeps_legacy_xai_voice_agent_available_without_plugin(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIVENTIUM_XAI_TTS_API": "voice_agent",
+                    "VIVENTIUM_XAI_TTS_API_KEY": "synthetic_xai_key",
+                },
+                clear=True,
+            ),
+            patch("worker.HAS_XAI_TTS", False),
+        ):
+            env = load_env()
+            capabilities = _build_voice_capability_catalog(env)
+
+        xai_capability = next(item for item in capabilities if item["modality"] == "tts" and item["id"] == "xai")
+        self.assertTrue(xai_capability["available"])
+        self.assertEqual(xai_capability["label"], "xAI")
+        self.assertIsNone(xai_capability["unavailableReason"])
 
     def test_build_configured_voice_route_metadata_labels_cartesia_voice(self) -> None:
         with patch.dict(

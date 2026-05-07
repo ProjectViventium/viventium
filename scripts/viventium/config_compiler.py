@@ -48,6 +48,14 @@ DEFAULT_CARTESIA_EMOTION = "neutral"
 DEFAULT_CARTESIA_LANGUAGE = "en"
 DEFAULT_CARTESIA_MAX_BUFFER_DELAY_MS = "120"
 DEFAULT_CARTESIA_SEGMENT_SILENCE_MS = "80"
+DEFAULT_XAI_TTS_API = "tts"
+DEFAULT_XAI_TTS_API_URL = "https://api.x.ai/v1/tts"
+DEFAULT_XAI_TTS_WS_URL = "wss://api.x.ai/v1/tts"
+DEFAULT_XAI_TTS_VOICE = "Sal"
+DEFAULT_XAI_TTS_LANGUAGE = "en"
+DEFAULT_XAI_TTS_SAMPLE_RATE = "24000"
+DEFAULT_XAI_TTS_CODEC = "mp3"
+DEFAULT_XAI_TTS_BIT_RATE = "128000"
 DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
 DEFAULT_GLASSHIVE_FOLLOWUP_TIMEOUT_S = "600"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
@@ -208,6 +216,7 @@ VOICE_PROVIDER_KEYCHAIN_SERVICES = {
     "assemblyai": "viventium/assemblyai_api_key",
     "cartesia": "viventium/cartesia_api_key",
     "elevenlabs": "viventium/elevenlabs_api_key",
+    "xai": "viventium/x_ai_api_key",
 }
 
 MODEL_MAP = {
@@ -1058,9 +1067,16 @@ def resolve_voice_provider_secret(
     resolved_voice: dict[str, str],
     provider_name: str,
 ) -> str:
+    provider_name = normalize_voice_tts_provider(provider_name)
     provider_keys = voice.get("provider_keys", {}) or {}
     if isinstance(provider_keys, dict):
-        configured = provider_keys.get(provider_name)
+        key_candidates = [provider_name]
+        if provider_name == "xai":
+            key_candidates.extend(["x_ai", "grok", "xai_grok_voice"])
+        configured = next(
+            (provider_keys.get(candidate) for candidate in key_candidates if provider_keys.get(candidate)),
+            None,
+        )
         if isinstance(configured, dict):
             resolved = resolve_optional_secret(
                 configured.get("secret_ref") or configured.get("secret_value") or ""
@@ -1087,6 +1103,11 @@ def resolve_voice_provider_secret(
         if resolved:
             return resolved
 
+    if provider_name == "xai" and resolved_voice["tts_provider"] == "xai":
+        resolved = optional_nested_secret(voice, "tts")
+        if resolved:
+            return resolved
+
     service = VOICE_PROVIDER_KEYCHAIN_SERVICES.get(provider_name)
     if not service:
         return ""
@@ -1098,6 +1119,18 @@ def cartesia_tts_settings(tts_config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(tts_config, dict):
         return {}
     nested = tts_config.get("cartesia")
+    if isinstance(nested, dict):
+        merged = dict(tts_config)
+        merged.update(nested)
+        return merged
+    return tts_config
+
+
+def xai_tts_settings(tts_config: dict[str, Any]) -> dict[str, Any]:
+    """Return xAI-specific TTS settings while preserving legacy voice.tts shape."""
+    if not isinstance(tts_config, dict):
+        return {}
+    nested = tts_config.get("xai") or tts_config.get("x_ai")
     if isinstance(nested, dict):
         merged = dict(tts_config)
         merged.update(nested)
@@ -1307,13 +1340,20 @@ def normalize_telegram_stt_provider(value: Any, field_path: str) -> str:
     return provider
 
 
+def normalize_voice_tts_provider(value: Any) -> str:
+    provider = str(value or "").strip().lower()
+    if provider in {"x_ai", "grok", "xai_grok_voice"}:
+        return "xai"
+    return provider
+
+
 def resolve_voice_settings(config: dict[str, Any]) -> dict[str, str]:
     voice = config.get("voice", {}) or {}
     voice_mode = str(voice.get("mode", "disabled") or "disabled").strip().lower()
     raw_stt_provider = str(voice.get("stt_provider", "") or "").strip().lower()
     stt_provider = raw_stt_provider or "whisper_local"
-    tts_provider = str(voice.get("tts_provider", "") or "").strip().lower()
-    tts_provider_fallback = str(voice.get("tts_provider_fallback", "") or "").strip().lower()
+    tts_provider = normalize_voice_tts_provider(voice.get("tts_provider", ""))
+    tts_provider_fallback = normalize_voice_tts_provider(voice.get("tts_provider_fallback", ""))
 
     if voice_mode == "local":
         # `browser` is a user-facing/client-side intent, not an instruction to silently route the
@@ -1633,6 +1673,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_GOOGLE_MCP_PORT": str(profile["google_mcp_port"]),
         "VIVENTIUM_SCHEDULING_MCP_PORT": str(profile["scheduling_mcp_port"]),
         "VIVENTIUM_RAG_API_PORT": str(profile["rag_api_port"]),
+        "RAG_API_URL": f"http://localhost:{profile['rag_api_port']}"
+        if start_rag_api == "true"
+        else "",
         "VIVENTIUM_CODE_INTERPRETER_PORT": str(profile["code_interpreter_port"]),
         "VIVENTIUM_SKYVERN_API_PORT": str(profile["skyvern_api_port"]),
         "VIVENTIUM_SKYVERN_UI_PORT": str(profile["skyvern_ui_port"]),
@@ -2104,6 +2147,49 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS"] = (
             configured_segment_silence_ms or DEFAULT_CARTESIA_SEGMENT_SILENCE_MS
         )
+    xai_voice_key = ""
+    if "xai" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]}:
+        xai_config = xai_tts_settings(tts_config)
+        configured_tts_api = str(xai_config.get("tts_api", "") or "").strip().lower()
+        if configured_tts_api and configured_tts_api not in {"tts", "voice_agent"}:
+            raise SystemExit("xAI voice calls support tts_api values 'tts' or 'voice_agent'")
+        configured_voice = str(
+            xai_config.get("voice_id") or xai_config.get("voice") or ""
+        ).strip()
+        configured_language = str(xai_config.get("language", "") or "").strip()
+        configured_sample_rate = str(xai_config.get("sample_rate", "") or "").strip()
+        output_format = xai_config.get("output_format")
+        if not isinstance(output_format, dict):
+            output_format = {}
+        configured_tts_codec = str(
+            xai_config.get("codec") or output_format.get("codec") or ""
+        ).strip()
+        configured_tts_sample_rate = str(
+            xai_config.get("tts_sample_rate")
+            or xai_config.get("output_sample_rate")
+            or output_format.get("sample_rate")
+            or ""
+        ).strip()
+        configured_tts_bit_rate = str(
+            xai_config.get("bit_rate") or output_format.get("bit_rate") or ""
+        ).strip()
+        configured_api_url = str(xai_config.get("api_url", "") or "").strip()
+        configured_ws_url = str(xai_config.get("ws_url", "") or "").strip()
+        env["VIVENTIUM_XAI_TTS_API"] = configured_tts_api or DEFAULT_XAI_TTS_API
+        env["VIVENTIUM_XAI_TTS_API_URL"] = configured_api_url or DEFAULT_XAI_TTS_API_URL
+        env["VIVENTIUM_XAI_TTS_WS_URL"] = configured_ws_url or DEFAULT_XAI_TTS_WS_URL
+        env["VIVENTIUM_XAI_VOICE"] = configured_voice or DEFAULT_XAI_TTS_VOICE
+        env["VIVENTIUM_XAI_LANGUAGE"] = configured_language or DEFAULT_XAI_TTS_LANGUAGE
+        env["VIVENTIUM_XAI_SAMPLE_RATE"] = (
+            configured_sample_rate or DEFAULT_XAI_TTS_SAMPLE_RATE
+        )
+        env["VIVENTIUM_XAI_TTS_CODEC"] = configured_tts_codec or DEFAULT_XAI_TTS_CODEC
+        env["VIVENTIUM_XAI_TTS_SAMPLE_RATE"] = (
+            configured_tts_sample_rate
+            or configured_sample_rate
+            or DEFAULT_XAI_TTS_SAMPLE_RATE
+        )
+        env["VIVENTIUM_XAI_TTS_BIT_RATE"] = configured_tts_bit_rate or DEFAULT_XAI_TTS_BIT_RATE
     assemblyai_key = resolve_voice_provider_secret(voice, resolved_voice, "assemblyai")
     if assemblyai_key:
         env["ASSEMBLYAI_API_KEY"] = assemblyai_key
@@ -2144,6 +2230,16 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     if cartesia_key:
         env["CARTESIA_API_KEY"] = cartesia_key
 
+    voice_provider_keys = voice.get("provider_keys", {}) or {}
+    has_xai_voice_provider_key = (
+        isinstance(voice_provider_keys, dict)
+        and any(alias in voice_provider_keys for alias in ("xai", "x_ai", "grok", "xai_grok_voice"))
+    )
+    if "xai" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]} or has_xai_voice_provider_key:
+        xai_voice_key = resolve_voice_provider_secret(voice, resolved_voice, "xai")
+        if xai_voice_key:
+            env["VIVENTIUM_XAI_TTS_API_KEY"] = xai_voice_key
+
     for provider_name, secret_value in (llm.get("extra_provider_keys") or {}).items():
         resolved = resolve_secret(secret_value)
         if not resolved:
@@ -2152,8 +2248,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             env["OPENAI_API_KEY"] = resolved
         elif provider_name == "anthropic":
             env["ANTHROPIC_API_KEY"] = resolved
-        elif provider_name == "x_ai":
-            env["XAI_API_KEY"] = resolved
+        elif provider_name in {"x_ai", "xai"}:
+            env.setdefault("XAI_API_KEY", resolved)
         elif provider_name == "openrouter":
             env["OPENROUTER_API_KEY"] = resolved
         elif provider_name == "perplexity":
@@ -2167,6 +2263,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
 
     for key, value in build_legacy_env_imports(config).items():
         env.setdefault(key, value)
+
+    if xai_voice_key:
+        env.setdefault("XAI_API_KEY", xai_voice_key)
 
     if code_interpreter_is_enabled:
         env.setdefault("LIBRECHAT_CODE_BASEURL", f"http://localhost:{profile['code_interpreter_port']}")
@@ -2587,6 +2686,15 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "ANTHROPIC_API_KEY",
         "XAI_API_KEY",
         "GROQ_API_KEY",
+        "MONGO_URI",
+        "RAG_API_URL",
+        "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE",
         "VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER",
         "VIVENTIUM_FC_CONSCIOUS_LLM_MODEL",
     ]
@@ -2608,6 +2716,15 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH",
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID",
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH",
+        "XAI_API_KEY",
+        "VIVENTIUM_XAI_TTS_API_KEY",
+        "VIVENTIUM_XAI_TTS_API_URL",
+        "VIVENTIUM_XAI_VOICE",
+        "VIVENTIUM_XAI_LANGUAGE",
+        "VIVENTIUM_XAI_SAMPLE_RATE",
+        "VIVENTIUM_XAI_TTS_CODEC",
+        "VIVENTIUM_XAI_TTS_SAMPLE_RATE",
+        "VIVENTIUM_XAI_TTS_BIT_RATE",
     ]
     telegram_codex_keys = ["TELEGRAM_CODEX_BOT_TOKEN", "TELEGRAM_CODEX_BOT_USERNAME"]
     skyvern_keys = ["START_SKYVERN"]

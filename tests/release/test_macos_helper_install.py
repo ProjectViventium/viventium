@@ -39,7 +39,7 @@ BIN_VIVENTIUM = REPO_ROOT / "bin" / "viventium"
 
 def _make_fake_executable(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.write_text("#!/bin/sh\n# ingest-transcripts\n# --ignore-idle-gate\nexit 0\n", encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
@@ -505,6 +505,7 @@ def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_p
     assert "Advanced" in helper_strings
     assert "Ingest Meeting Transcripts" in helper_strings
     assert "helper-transcript-ingest.log" in helper_strings
+    assert "--ignore-idle-gate" in helper_strings
     signature = subprocess.run(
         ["/usr/bin/codesign", "-dv", str(fake_home / "Applications" / "Viventium.app")],
         text=True,
@@ -677,13 +678,17 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "String(contentsOf: stdoutURL, encoding: .utf8)" in source
     assert "FileManager.default.removeItem(at: stdoutURL)" in source
     assert "let stdoutPipe = Pipe()" not in captured_section
-    assert "private nonisolated static func transcriptIngestRunSummary(stdout: String) -> String?" in source
+    assert "private struct TranscriptIngestSummary" in source
+    assert "private nonisolated static func transcriptIngestRunSummary(stdout: String) -> TranscriptIngestSummary?" in source
+    assert '"No transcript scan ran: \\(uniqueReasons)"' in source
+    assert 'alert.messageText = runSummary?.skipped == true ? "Transcript ingest skipped" : "Transcript ingest completed"' in source
+    assert '"Manual transcript ingest skipped; scope: \\(ingestScope)\\(logSummary)"' in source
     assert '"0 files deferred by caps"' in source
     assert 'files deferred by caps; run ingest again or let the 3am job continue' in source
     assert "private nonisolated static func runCLIStatusOnly(" in source
     assert "process.standardOutput = FileHandle.nullDevice" in source
     assert "process.standardError = FileHandle.nullDevice" in source
-    assert 'alert.messageText = "Transcript ingest completed"' in source
+    assert '"Viventium did not scan the configured transcript source for \\(ingestScope)."' in source
     assert '"Viventium processed the configured transcript source for \\(ingestScope)."' in source
     assert 'alert.messageText = "Transcript ingest failed"' in source
     assert 'Menu("Advanced")' in source
@@ -925,6 +930,11 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'local notice="${1:-Using prebuilt helper fallback}"' in install_script
     assert 'echo "[viventium] $notice from $HELPER_PREBUILT_EXECUTABLE" >&2' in install_script
     assert 'use_prebuilt_helper "Using prebuilt helper fallback"' in install_script
+    assert 'verify_installed_bundle() {' in install_script
+    assert 'cmp -s "$BUILT_EXECUTABLE" "$installed_executable"' in install_script
+    assert 'strings "$installed_executable" | grep -F -- "ingest-transcripts" >/dev/null' in install_script
+    assert 'strings "$installed_executable" | grep -F -- "--ignore-idle-gate" >/dev/null' in install_script
+    assert 'verify_installed_bundle' in install_script
     assert "sign_installed_bundle() {" in install_script
     assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_APP_BUNDLE"' in install_script
     assert "sign_installed_bundle" in install_script

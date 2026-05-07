@@ -399,19 +399,24 @@ Acceptance:
 
 ### Fix 7: Keep voice controls surface-scoped and capability-driven
 
-Voice provider controls should stay out of the main prompt. The current use of a shared Cartesia
-Sonic-3 capability contract is the right direction.
+Voice provider controls should stay out of the main prompt. The shared Cartesia Sonic-3 and xAI TTS
+capability contracts are the source of truth for provider-specific voice markup.
 
 Improvements:
 
-- Add prompt-frame evidence proving Cartesia emotion/tag lists are injected only when the selected
-  voice/TTS route needs them.
+- Add prompt-frame evidence proving Cartesia emotion/tag lists and xAI speech tags are injected only
+  when the selected voice/TTS route needs that provider dialect.
 - Consider a two-tier voice prompt after evals:
   - default: base voice rules plus primary/high-reliability controls
   - advanced: full provider capability list when expressive control is explicitly enabled or when
     the provider route requires it
 - Keep runtime validation capability-driven. Runtime may preserve, sanitize, segment, and validate
-  model-authored provider markup. It must not invent emotion from heuristics.
+  model-authored provider markup. It must not invent emotion from heuristics. xAI TTS has no
+  Cartesia-style emotion parameter, so the xAI branch may only expose documented xAI speech tags and
+  natural-language tone guidance.
+- User-facing provider labels should stay simple even when model-facing prompt branches are precise:
+  show `xAI` in voice pickers, while keeping prompt/runtime wording explicit about standalone xAI
+  TTS versus the legacy Grok Voice Agent adapter.
 
 Acceptance:
 
@@ -421,6 +426,8 @@ Acceptance:
 - Marker-count observability distinguishes generation omission from downstream stripping.
 - If a two-tier voice prompt ships, evals must exercise every provider-control marker declared in
   the shared voice capability contract before the split is accepted.
+- Provider dialects remain isolated: Cartesia prompts never leak into xAI routes, xAI tags never
+  leak into Cartesia routes, and OpenAI/ElevenLabs routes prohibit provider markup entirely.
 
 ### Fix 8: Tier memory context instead of dumping everything blindly
 

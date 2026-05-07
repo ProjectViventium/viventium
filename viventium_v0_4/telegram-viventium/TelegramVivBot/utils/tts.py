@@ -22,6 +22,7 @@ _SUPPORTED_TTS_PROVIDERS = {
     "openai",
     "elevenlabs",
     "cartesia",
+    "xai",
     "local_chatterbox_turbo_mlx_8bit",
 }
 
@@ -85,6 +86,99 @@ _CARTESIA_SONIC3_EMOTION_VALUES = frozenset(
 )
 # === VIVENTIUM END ===
 
+# === VIVENTIUM START ===
+# Feature: xAI standalone TTS shared capability source of truth.
+_XAI_TTS_CAPABILITIES_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "shared"
+    / "voice"
+    / "xai_tts_capabilities.json"
+)
+
+
+def _load_xai_tts_capabilities() -> dict[str, Any]:
+    try:
+        with _XAI_TTS_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        logger.exception("Failed to load xAI TTS capability contract from %s", _XAI_TTS_CAPABILITIES_PATH)
+    return {
+        "defaults": {
+            "voice_id": "Sal",
+            "language": "en",
+            "telegram_codec": "mp3",
+            "telegram_sample_rate": 24000,
+            "telegram_bit_rate": 128000,
+        },
+        "endpoints": {"rest": "https://api.x.ai/v1/tts"},
+        "voices": [{"id": "Sal", "label": "Sal"}],
+    }
+
+
+_XAI_TTS_CAPABILITIES = _load_xai_tts_capabilities()
+_XAI_TTS_DEFAULTS = (
+    _XAI_TTS_CAPABILITIES.get("defaults", {})
+    if isinstance(_XAI_TTS_CAPABILITIES.get("defaults"), dict)
+    else {}
+)
+_XAI_TTS_ENDPOINTS = (
+    _XAI_TTS_CAPABILITIES.get("endpoints", {})
+    if isinstance(_XAI_TTS_CAPABILITIES.get("endpoints"), dict)
+    else {}
+)
+_XAI_TTS_DEFAULT_VOICE = str(_XAI_TTS_DEFAULTS.get("voice_id") or "Sal").strip() or "Sal"
+_XAI_TTS_DEFAULT_LANGUAGE = str(_XAI_TTS_DEFAULTS.get("language") or "en").strip() or "en"
+_XAI_TTS_DEFAULT_API_URL = str(_XAI_TTS_ENDPOINTS.get("rest") or "https://api.x.ai/v1/tts").strip() or "https://api.x.ai/v1/tts"
+_XAI_TTS_DEFAULT_CODEC = str(_XAI_TTS_DEFAULTS.get("telegram_codec") or "mp3").strip() or "mp3"
+_XAI_TTS_DEFAULT_SAMPLE_RATE = int(float(_XAI_TTS_DEFAULTS.get("telegram_sample_rate") or 24000))
+_XAI_TTS_DEFAULT_BIT_RATE = int(float(_XAI_TTS_DEFAULTS.get("telegram_bit_rate") or 128000))
+_XAI_TTS_FALLBACK_WRAPPING_TAGS = (
+    "soft",
+    "whisper",
+    "loud",
+    "build-intensity",
+    "decrease-intensity",
+    "higher-pitch",
+    "lower-pitch",
+    "slow",
+    "fast",
+    "sing-song",
+    "singing",
+    "laugh-speak",
+    "emphasis",
+)
+_XAI_TTS_WRAPPING_TAGS = tuple(
+    str(tag).strip().lower()
+    for tag in ((_XAI_TTS_CAPABILITIES.get("speech_tags") or {}).get("wrapping") or [])
+    if isinstance(tag, str) and str(tag).strip()
+) or _XAI_TTS_FALLBACK_WRAPPING_TAGS
+_XAI_TTS_INLINE_TAGS = tuple(
+    str(tag).strip()[1:-1].strip().lower()
+    for tag in ((_XAI_TTS_CAPABILITIES.get("speech_tags") or {}).get("inline") or [])
+    if isinstance(tag, str) and str(tag).strip().startswith("[") and str(tag).strip().endswith("]")
+) or (
+    "pause",
+    "long-pause",
+    "hum-tune",
+    "laugh",
+    "chuckle",
+    "giggle",
+    "cry",
+    "tsk",
+    "tongue-click",
+    "lip-smack",
+    "breath",
+    "inhale",
+    "exhale",
+    "sigh",
+)
+_XAI_TTS_WRAPPING_TAG_PATTERN = "|".join(
+    re.escape(tag) for tag in _XAI_TTS_WRAPPING_TAGS
+)
+# === VIVENTIUM END ===
+
 
 # === VIVENTIUM START ===
 # Feature: Strip LibreChat citation markers before TTS.
@@ -138,9 +232,17 @@ _VCT_BREAK_RE = re.compile(r'<break\s+time=["\']?[^"\'>]+["\']?\s*/>', re.IGNORE
 _VCT_SPEED_RE = re.compile(r'<speed\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VCT_VOLUME_RE = re.compile(r'<volume\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VCT_SPELL_RE = re.compile(r"<spell>([\s\S]*?)</spell>", re.IGNORECASE)
+_VCT_XAI_WRAPPER_RE = re.compile(
+    r"<(?P<tag>%s)>(?P<text>[\s\S]*?)</(?P=tag)>"
+    % _XAI_TTS_WRAPPING_TAG_PATTERN,
+    re.IGNORECASE,
+)
+_VCT_XAI_ANGLE_TAG_RE = re.compile(r"</?(?:%s)\s*>" % _XAI_TTS_WRAPPING_TAG_PATTERN, re.IGNORECASE)
+_VCT_XAI_BRACKET_TAG_RE = re.compile(r"\[\s*/?\s*(?:%s)\s*\]" % _XAI_TTS_WRAPPING_TAG_PATTERN, re.IGNORECASE)
 _VCT_BRACKET_RE = re.compile(
     r"\["
-    r"(?:laugh(?:ter)?|giggle|chuckle|soft laugh|gentle laugh|quiet laugh|nervous laugh|"
+    r"(?:pause|long-pause|hum-tune|laugh(?:ter)?|giggle|chuckle|cry|tsk|"
+    r"tongue-click|lip-smack|soft laugh|gentle laugh|quiet laugh|nervous laugh|"
     r"awkward laugh|light laugh|"
     r"sigh|gentle sigh|soft sigh|"
     r"breath|breath in|breath out|inhale|exhale|"
@@ -185,9 +287,63 @@ def _strip_voice_control_tags(text: str) -> str:
     cleaned = _VCT_SPEED_RE.sub("", cleaned)
     cleaned = _VCT_VOLUME_RE.sub("", cleaned)
     cleaned = _VCT_SPELL_RE.sub(r"\1", cleaned)
+    while True:
+        updated = _VCT_XAI_WRAPPER_RE.sub(r"\g<text>", cleaned)
+        if updated == cleaned:
+            break
+        cleaned = updated
+    cleaned = _VCT_XAI_ANGLE_TAG_RE.sub("", cleaned)
+    cleaned = _VCT_XAI_BRACKET_TAG_RE.sub("", cleaned)
     cleaned = _VCT_BRACKET_RE.sub("", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned.strip()
+
+
+def _strip_cartesia_markup_for_xai(text: str) -> str:
+    """Remove Cartesia-only tags before xAI TTS while preserving xAI speech tags."""
+    if not text:
+        return ""
+    cleaned = _VCT_SPEAK_RE.sub("", text)
+    cleaned = _VCT_EMOTION_SC_RE.sub("", cleaned)
+    cleaned = _VCT_EMOTION_WRAP_RE.sub(r"\1", cleaned)
+    cleaned = _VCT_BREAK_RE.sub("", cleaned)
+    cleaned = _VCT_SPEED_RE.sub("", cleaned)
+    cleaned = _VCT_VOLUME_RE.sub("", cleaned)
+    cleaned = _VCT_SPELL_RE.sub(r"\1", cleaned)
+    cleaned = _CARTESIA_LAUGHTER_RE.sub("", cleaned)
+    cleaned = _strip_non_xai_bracket_controls_for_xai(cleaned)
+    cleaned = _VCT_XAI_BRACKET_TAG_RE.sub("", cleaned)
+    cleaned = _strip_orphan_xai_angle_tags_preserving_wrappers(cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
+def _strip_orphan_xai_angle_tags_preserving_wrappers(text: str) -> str:
+    protected: list[str] = []
+
+    def _protect(match: re.Match[str]) -> str:
+        protected.append(match.group(0))
+        return f"@@VIVENTIUM_XAI_WRAP_{len(protected) - 1}@@"
+
+    cleaned = _VCT_XAI_WRAPPER_RE.sub(_protect, text or "")
+    cleaned = _VCT_XAI_ANGLE_TAG_RE.sub("", cleaned)
+    for index, value in enumerate(protected):
+        cleaned = cleaned.replace(f"@@VIVENTIUM_XAI_WRAP_{index}@@", value)
+    return cleaned
+
+
+def _strip_non_xai_bracket_controls_for_xai(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        token = re.sub(r"\s+", " ", match.group(1).strip().lower())
+        if token in _XAI_TTS_INLINE_TAGS:
+            return match.group(0)
+        if token.lstrip("/").lstrip() in _XAI_TTS_WRAPPING_TAGS:
+            return ""
+        if _VCT_BRACKET_RE.fullmatch(match.group(0)):
+            return ""
+        return match.group(0)
+
+    return _CARTESIA_BRACKET_TOKEN_RE.sub(_replace, text or "")
 # === VIVENTIUM END ===
 
 
@@ -466,6 +622,11 @@ def resolve_tts_selection(voice_route: Optional[dict[str, Any]] = None) -> dict[
                 (os.getenv("VIVENTIUM_MLX_AUDIO_MODEL_ID", "") or "").strip()
                 or _DEFAULT_LOCAL_CHATTERBOX_MODEL_ID
             )
+        if provider == "xai":
+            return (
+                (getattr(config, "VIVENTIUM_XAI_VOICE", "") or "").strip()
+                or _XAI_TTS_DEFAULT_VOICE
+            )
         return (config.TTS_MODEL or "").strip() or None
 
     def _provider_supported(provider: str) -> tuple[bool, Optional[str]]:
@@ -473,6 +634,10 @@ def resolve_tts_selection(voice_route: Optional[dict[str, Any]] = None) -> dict[
             return False, f"provider '{provider}' is not supported by Telegram TTS"
         if provider == "cartesia" and not config.CARTESIA_API_KEY:
             return False, "CARTESIA_API_KEY is missing"
+        if provider == "xai" and not (
+            getattr(config, "VIVENTIUM_XAI_TTS_API_KEY", "") or getattr(config, "XAI_API_KEY", "")
+        ):
+            return False, "VIVENTIUM_XAI_TTS_API_KEY/XAI_API_KEY is missing"
         if provider == "elevenlabs" and not config.ELEVENLABS_API_KEY:
             return False, "ELEVENLABS_API_KEY is missing"
         if provider == "local_chatterbox_turbo_mlx_8bit":
@@ -565,6 +730,14 @@ async def synthesize_speech(
         VIVENTIUM_CARTESIA_SPEED,
         VIVENTIUM_CARTESIA_VOICE_ID,
         VIVENTIUM_CARTESIA_VOLUME,
+        XAI_API_KEY,
+        VIVENTIUM_XAI_TTS_API_KEY,
+        VIVENTIUM_XAI_LANGUAGE,
+        VIVENTIUM_XAI_TTS_API_URL,
+        VIVENTIUM_XAI_TTS_BIT_RATE,
+        VIVENTIUM_XAI_TTS_CODEC,
+        VIVENTIUM_XAI_TTS_SAMPLE_RATE,
+        VIVENTIUM_XAI_VOICE,
     )
 
     api_key, api_url = resolve_api_whisper_config(
@@ -593,7 +766,12 @@ async def synthesize_speech(
         # non-expressive fallback providers would speak them literally.
         # Added: 2026-02-22
         synth_text = text
-        if provider != "cartesia" and "chatterbox" not in provider:
+        if provider == "xai":
+            synth_text = _strip_cartesia_markup_for_xai(text)
+            if not synth_text:
+                logger.warning("Skipping xAI TTS: text empty after Cartesia tag stripping")
+                return None
+        elif provider != "cartesia" and "chatterbox" not in provider:
             synth_text = _strip_voice_control_tags(text)
             if not synth_text:
                 logger.warning("Skipping %s TTS: text empty after voice tag stripping", provider)
@@ -736,6 +914,52 @@ async def synthesize_speech(
 
             return None
         # === VIVENTIUM END ===
+
+        if provider == "xai":
+            xai_api_key = (VIVENTIUM_XAI_TTS_API_KEY or XAI_API_KEY or "").strip()
+            if not xai_api_key:
+                logger.warning("Skipping xAI TTS because VIVENTIUM_XAI_TTS_API_KEY/XAI_API_KEY is missing")
+                return None
+
+            voice_id = (variant_override or VIVENTIUM_XAI_VOICE or _XAI_TTS_DEFAULT_VOICE).strip()
+            language = (VIVENTIUM_XAI_LANGUAGE or _XAI_TTS_DEFAULT_LANGUAGE).strip() or "en"
+            codec = (VIVENTIUM_XAI_TTS_CODEC or _XAI_TTS_DEFAULT_CODEC).strip() or "mp3"
+            sample_rate = int(float(VIVENTIUM_XAI_TTS_SAMPLE_RATE or _XAI_TTS_DEFAULT_SAMPLE_RATE))
+            bit_rate = int(float(VIVENTIUM_XAI_TTS_BIT_RATE or _XAI_TTS_DEFAULT_BIT_RATE))
+            output_format: dict[str, Any] = {
+                "codec": codec,
+                "sample_rate": sample_rate,
+            }
+            if codec == "mp3":
+                output_format["bit_rate"] = bit_rate
+
+            payload = {
+                "text": synth_text,
+                "voice_id": voice_id,
+                "output_format": output_format,
+                "language": language,
+            }
+            headers = {
+                "Authorization": f"Bearer {xai_api_key}",
+                "Content-Type": "application/json",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=timeout_config) as client:
+                    response = await client.post(
+                        VIVENTIUM_XAI_TTS_API_URL or _XAI_TTS_DEFAULT_API_URL,
+                        headers=headers,
+                        content=json.dumps(payload),
+                    )
+                    response.raise_for_status()
+                    return response.content
+            except asyncio.TimeoutError:
+                logger.warning("xAI TTS timed out for conversation %s", convo_id)
+            except httpx.HTTPStatusError as err:
+                logger.warning("xAI TTS HTTP error (%s): %s", err.response.status_code, err.response.text)
+            except Exception:
+                logger.exception("Unexpected xAI TTS error")
+
+            return None
 
         if provider == "elevenlabs":
             if not ELEVENLABS_API_KEY:

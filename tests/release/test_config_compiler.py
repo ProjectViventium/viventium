@@ -285,6 +285,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
     librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
     summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
 
@@ -2826,6 +2827,7 @@ def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selecti
                 "assemblyai": {"secret_value": "assemblyai-dormant"},
                 "cartesia": {"secret_value": "cartesia-dormant"},
                 "elevenlabs": {"secret_value": "elevenlabs-dormant"},
+                "xai": {"secret_value": "synthetic_xai_dormant"},
             },
         },
         "integrations": {},
@@ -2860,6 +2862,88 @@ def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selecti
     assert "CARTESIA_API_KEY=cartesia-dormant" in runtime_env
     assert "ELEVENLABS_API_KEY=elevenlabs-dormant" in runtime_env
     assert "ELEVEN_API_KEY=elevenlabs-dormant" in runtime_env
+    assert "VIVENTIUM_XAI_TTS_API_KEY=synthetic_xai_dormant" in runtime_env
+    assert "XAI_API_KEY=synthetic_xai_dormant" in runtime_env
+
+
+def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call_secret_xai_tts"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "api_key", "secret_value": ""},
+            "extra_provider_keys": {"x_ai": "synthetic_xai_llm"},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "openai",
+            "tts_provider": "x_ai",
+            "tts": {
+                "secret_value": "synthetic_xai_tts",
+                "voice_id": "Eve",
+                "language": "en",
+                "xai": {
+                    "output_format": {
+                        "codec": "mp3",
+                        "sample_rate": 44100,
+                        "bit_rate": 128000,
+                    }
+                },
+            },
+        },
+        "integrations": {},
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    telegram_env = (output_dir / "service-env" / "telegram.config.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_TTS_PROVIDER=xai" in runtime_env
+    assert "VIVENTIUM_XAI_TTS_API=tts" in runtime_env
+    assert "VIVENTIUM_XAI_TTS_WS_URL=wss://api.x.ai/v1/tts" in runtime_env
+    assert "VIVENTIUM_XAI_VOICE=Eve" in runtime_env
+    assert "VIVENTIUM_XAI_LANGUAGE=en" in runtime_env
+    assert "VIVENTIUM_XAI_TTS_API_KEY=synthetic_xai_tts" in runtime_env
+    assert "XAI_API_KEY=synthetic_xai_llm" in runtime_env
+    assert "VIVENTIUM_XAI_TTS_API_KEY=synthetic_xai_tts" in telegram_env
+    assert "XAI_API_KEY=synthetic_xai_llm" in telegram_env
+    assert "VIVENTIUM_XAI_TTS_API_URL=https://api.x.ai/v1/tts" in telegram_env
+    assert "VIVENTIUM_XAI_VOICE=Eve" in telegram_env
+    assert "VIVENTIUM_XAI_LANGUAGE=en" in telegram_env
+    assert "VIVENTIUM_XAI_SAMPLE_RATE=24000" in telegram_env
+    assert "VIVENTIUM_XAI_TTS_CODEC=mp3" in telegram_env
+    assert "VIVENTIUM_XAI_TTS_SAMPLE_RATE=44100" in telegram_env
+    assert "VIVENTIUM_XAI_TTS_BIT_RATE=128000" in telegram_env
 
 
 def test_config_compiler_disables_rag_bootstrap_when_conversation_recall_default_is_off(tmp_path: Path) -> None:
@@ -2913,6 +2997,7 @@ def test_config_compiler_disables_rag_bootstrap_when_conversation_recall_default
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "START_RAG_API=false" in runtime_env
@@ -2980,9 +3065,11 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "START_RAG_API=true" in runtime_env
+    assert "RAG_API_URL=http://localhost:8110" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in runtime_env
@@ -2990,6 +3077,14 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE=detailed_summary_only" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in librechat_env
+    assert "RAG_API_URL=http://localhost:8110" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE=detailed_summary_only" in librechat_env
 
 
 def test_config_compiler_respects_explicit_retrieval_embeddings_override(tmp_path: Path) -> None:

@@ -340,6 +340,22 @@ VIVENTIUM_CARTESIA_EMOTION = os.environ.get('VIVENTIUM_CARTESIA_EMOTION', 'neutr
 VIVENTIUM_CARTESIA_LANGUAGE = os.environ.get('VIVENTIUM_CARTESIA_LANGUAGE', 'en')
 # === VIVENTIUM END ===
 
+# === VIVENTIUM START ===
+# Feature: xAI standalone TTS configuration for Telegram voice replies.
+VIVENTIUM_XAI_TTS_API_KEY = os.environ.get('VIVENTIUM_XAI_TTS_API_KEY', '').strip()
+XAI_API_KEY = VIVENTIUM_XAI_TTS_API_KEY or os.environ.get('XAI_API_KEY', '')
+VIVENTIUM_XAI_TTS_API_URL = os.environ.get('VIVENTIUM_XAI_TTS_API_URL', 'https://api.x.ai/v1/tts')
+VIVENTIUM_XAI_VOICE = os.environ.get('VIVENTIUM_XAI_VOICE', 'Sal')
+VIVENTIUM_XAI_LANGUAGE = os.environ.get('VIVENTIUM_XAI_LANGUAGE', 'en')
+VIVENTIUM_XAI_TTS_CODEC = os.environ.get('VIVENTIUM_XAI_TTS_CODEC', 'mp3')
+VIVENTIUM_XAI_TTS_SAMPLE_RATE = int(float(
+    os.environ.get('VIVENTIUM_XAI_TTS_SAMPLE_RATE')
+    or os.environ.get('VIVENTIUM_XAI_SAMPLE_RATE')
+    or '24000'
+))
+VIVENTIUM_XAI_TTS_BIT_RATE = int(float(os.environ.get('VIVENTIUM_XAI_TTS_BIT_RATE', '128000')))
+# === VIVENTIUM END ===
+
 WEB_HOOK = os.environ.get('WEB_HOOK', None)
 CHAT_MODE = os.environ.get('CHAT_MODE', "global")
 # === VIVENTIUM START ===

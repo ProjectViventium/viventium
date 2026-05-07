@@ -1,10 +1,100 @@
 # Listen-Only Mode QA Report
 
-Date: 2026-05-05
+Date: 2026-05-06
 
 ## Result
 
 Pass for the current implementation and QA pass.
+
+## 2026-05-06 Continuity Regression
+
+Result: pass.
+
+### RCA
+
+- Normal voice drift was not caused by Listen-Only itself. Recent live DB rows showed normal voice
+  turns saved as provider-backed conversations with endpoint values such as `xai`, two messages per
+  conversation, and `NO_PARENT` roots.
+- The voice resolver correctly rejected non-`agents` conversations, but provider-backed ephemeral
+  agent conversations can still carry the same structured `agent_id` as the active call session.
+  Because the call session kept pointing at the rejected conversation, each next turn resolved to
+  `new` again and created another conversation.
+- The fix keeps the endpoint invariant for unrelated surfaces, but voice may now reuse a
+  provider-backed conversation only when its stored `agent_id` exactly matches the call-session
+  `agentId`.
+- A related Listen-Only stale-session path was closed: if a stored call-session conversation id was
+  rejected, Listen-Only now claims/replaces a fresh concrete conversation id instead of falling back
+  to the stale provider conversation.
+- If Listen-Only cannot claim a fresh concrete conversation id from the live call session, it now
+  fails closed and does not write orphan transcript rows.
+- The playground transcript dedupe now covers same local transcript text arriving through different
+  stream ids without collapsing different speakers or later repeated phrases.
+- A background-cortex crash path was closed by snapshotting request, response, agent, and message
+  ids before async Phase A/B work can outlive LibreChat client cleanup.
+
+### Added Regression Coverage
+
+```bash
+cd viventium_v0_4/LibreChat/api
+npm test -- --runInBand \
+  server/routes/viventium/__tests__/voice.spec.js \
+  server/services/viventium/__tests__/conversationThreading.spec.js \
+  server/services/viventium/__tests__/CallSessionService.spec.js \
+  server/services/viventium/__tests__/conversationRecallFilters.spec.js
+
+cd ../../agent-starter-react
+pnpm exec tsc --noEmit
+
+cd ../..
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types \
+  qa/listen-only-mode/session-message-utils.test.mjs
+```
+
+Observed:
+
+- Voice route, conversation-threading, call-session, and recall-filter suites: 52 passed.
+- Modern playground TypeScript: passed.
+- Session message utility QA: passed.
+- Modern playground Prettier check on touched files: passed.
+- LibreChat backend formatting was not used as a gate for `client.js`/`voice.js` because those
+  upstream-shaped files are not currently clean under whole-file Prettier; the fix keeps their diffs
+  surgical to avoid unrelated formatting churn.
+
+### Live Runtime Evidence
+
+Live runtime QA used synthetic QA-account data only.
+
+1. Provider-backed voice conversation with matching `agent_id`:
+   - `/api/viventium/voice/chat` returned `status=listen_only`.
+   - The response had no `streamId`.
+   - The saved transcript reused the existing provider-backed conversation and parented to the
+     latest prior assistant row.
+   - The saved row had `sender="Listen-Only"`, `isCreatedByUser=false`, `tokenCount=0`,
+     `_meiliIndex=false`, and `metadata.viventium.mode="listen_only"`.
+2. Stale provider-backed conversation with a different `agent_id`:
+   - `/api/viventium/voice/chat` returned `status=listen_only`.
+   - The response had no `streamId`.
+   - The call session was updated to a fresh conversation id.
+   - The transcript was saved under that fresh id, not the rejected provider conversation.
+3. Browser control QA with fake media:
+   - Start chat connected without the previous `could not establish pc connection` failure.
+   - The Listen-Only button was visible, icon-sized, and 36px by 36px in the active control bar.
+   - Tooltip copy used human presence wording and included the operational boundaries: no answer,
+     speech, tools, or live memory update.
+   - Toggling Listen-Only changed the control state and showed the quiet presence message.
+4. Post-QA health:
+   - LibreChat API, modern playground, and LibreChat frontend returned HTTP 200.
+   - No recurrence of the voice async `client.options.req` crash was found after the live QA pass.
+
+### Final Review Closure
+
+- Review-only Claude validated the main design and asked for added guarantees around the exact
+  two-turn fork symptom, transient lookup errors, and unclaimed Listen-Only writes.
+- Added coverage now proves:
+  - the first stale voice turn updates the call session to the generated conversation id;
+  - the next voice turn reuses that generated id instead of starting another conversation;
+  - transient conversation lookup errors do not replace the call-session conversation id;
+  - Listen-Only fails closed when a fresh session conversation cannot be claimed.
 
 ## Root Cause Corrections
 

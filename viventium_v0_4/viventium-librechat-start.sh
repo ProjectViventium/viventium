@@ -8747,6 +8747,15 @@ PY
     VIVENTIUM_TELEGRAM_TRACE
     VIVENTIUM_TELEGRAM_TIMING_ENABLED
     VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S
+    XAI_API_KEY
+    VIVENTIUM_XAI_TTS_API_KEY
+    VIVENTIUM_XAI_TTS_API_URL
+    VIVENTIUM_XAI_VOICE
+    VIVENTIUM_XAI_LANGUAGE
+    VIVENTIUM_XAI_SAMPLE_RATE
+    VIVENTIUM_XAI_TTS_CODEC
+    VIVENTIUM_XAI_TTS_SAMPLE_RATE
+    VIVENTIUM_XAI_TTS_BIT_RATE
   )
   local telegram_runtime_env_name
   for telegram_runtime_env_name in "${telegram_runtime_env_names[@]}"; do
@@ -10036,8 +10045,9 @@ PY
         fi
         # Also export ELEVENLABS_API_KEY for backward compatibility
         export ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
-        # xAI Grok Voice configuration (Available voices: Ara, Rex, Sal, Eve, Leo)
+        # xAI voice configuration (standalone TTS by default; legacy realtime adapter is opt-in)
         export XAI_API_KEY="${XAI_API_KEY:-}"
+        export VIVENTIUM_XAI_TTS_API_KEY="${VIVENTIUM_XAI_TTS_API_KEY:-}"
         export VIVENTIUM_XAI_VOICE="${VIVENTIUM_XAI_VOICE:-Sal}"
         export VIVENTIUM_XAI_WSS_URL="${VIVENTIUM_XAI_WSS_URL:-wss://api.x.ai/v1/realtime}"
         export VIVENTIUM_XAI_SAMPLE_RATE="${VIVENTIUM_XAI_SAMPLE_RATE:-24000}"
@@ -10058,8 +10068,8 @@ PY
         else
           echo -e "${YELLOW}[viventium]${NC} WARNING: ELEVEN_API_KEY not set - ElevenLabs TTS will fallback to OpenAI"
         fi
-        if [[ -n "${XAI_API_KEY:-}" ]]; then
-          echo -e "${CYAN}[viventium]${NC} XAI_API_KEY is set (${XAI_API_KEY:0:8}...) - xAI Grok Voice available"
+        if [[ -n "${VIVENTIUM_XAI_TTS_API_KEY:-}" || -n "${XAI_API_KEY:-}" ]]; then
+          echo -e "${CYAN}[viventium]${NC} xAI voice available"
         fi
         if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
           echo -e "${CYAN}[viventium]${NC} CARTESIA_API_KEY is set (${CARTESIA_API_KEY:0:8}...) - Cartesia TTS available"

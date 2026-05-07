@@ -386,6 +386,36 @@
     - dead same-host mapping reclamation
     - preservation of active conflicting mappings as hard failures
 
+## Temporary Local Remote-Access Hold
+
+- Date: May 7, 2026
+- Operator state:
+  - remote access is intentionally disabled for the local QA machine while it is not running on the
+    network/IP that the public custom domains route to
+  - the saved custom-domain values are retained only as comments in the local authoring config so
+    they can be restored later without rediscovering the topology
+  - active runtime exports are localhost-only:
+    - LiveKit browser URL: `ws://localhost:7888`
+    - modern playground: `http://localhost:3300`
+    - `VIVENTIUM_REMOTE_CALL_MODE=disabled`
+- Rationale:
+  - public custom-domain acceptance requires DNS and router/public-IP reachability to point at the
+    machine that is currently serving Viventium
+  - when that is not true, keeping public origins active makes browser voice launch choose dead
+    URLs even though localhost voice is healthy
+- Local verification:
+  - launcher health checks passed with remote access disabled
+  - no public-edge Caddy or remote-call tunnel process was running
+  - localhost LiveKit/playground voice QA remained the active acceptance path
+- Re-enable checklist:
+  1. Confirm this Mac is back on the network/IP that the public custom domains route to.
+  2. In the local authoring config, set `runtime.network.remote_call_mode: custom_domain`.
+  3. Restore the saved custom-domain values into `public_client_origin`, `public_api_origin`,
+     `public_playground_origin`, and `public_livekit_url`.
+  4. Restart Viventium through the supported launcher.
+  5. Run `bin/viventium status` and confirm Remote Access is running.
+  6. Validate public app load and a real voice round-trip from a separate off-home network.
+
 ## Limitations
 
 - This report now includes proof that an off-home phone browser could load `https://app.<your-domain>`

@@ -402,9 +402,13 @@ final class HelperController: ObservableObject {
             let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)
             await MainActor.run {
                 self.transcriptIngestInProgress = false
-                let logSummary = runSummary.map { "; \($0)" } ?? ""
+                let logSummary = runSummary.map { "; \($0.message)" } ?? ""
                 let statusMessage = exitStatus == 0
-                    ? "Manual transcript ingest completed; scope: \(ingestScope)\(logSummary)"
+                    ? (
+                        runSummary?.skipped == true
+                            ? "Manual transcript ingest skipped; scope: \(ingestScope)\(logSummary)"
+                            : "Manual transcript ingest completed; scope: \(ingestScope)\(logSummary)"
+                    )
                     : "Manual transcript ingest failed with status \(exitStatus); scope: \(ingestScope)\(logSummary)"
                 self.log(statusMessage)
                 Self.appendHelperLog(
@@ -416,10 +420,12 @@ final class HelperController: ObservableObject {
                 )
                 let alert = NSAlert()
                 if exitStatus == 0 {
-                    alert.messageText = "Transcript ingest completed"
+                    alert.messageText = runSummary?.skipped == true ? "Transcript ingest skipped" : "Transcript ingest completed"
                     alert.informativeText = [
-                        "Viventium processed the configured transcript source for \(ingestScope).",
-                        runSummary,
+                        runSummary?.skipped == true
+                            ? "Viventium did not scan the configured transcript source for \(ingestScope)."
+                            : "Viventium processed the configured transcript source for \(ingestScope).",
+                        runSummary?.message,
                     ].compactMap { $0 }.joined(separator: "\n\n")
                     alert.alertStyle = .informational
                 } else {
@@ -1987,7 +1993,12 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
     }
 
-    private nonisolated static func transcriptIngestRunSummary(stdout: String) -> String? {
+    private struct TranscriptIngestSummary {
+        let message: String
+        let skipped: Bool
+    }
+
+    private nonisolated static func transcriptIngestRunSummary(stdout: String) -> TranscriptIngestSummary? {
         guard
             let data = stdout.data(using: .utf8),
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -1996,6 +2007,14 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
 
         let users = root["users"] as? [[String: Any]] ?? []
+        let skippedReasons = users.compactMap { user -> String? in
+            let status = (user["status"] as? String) ?? ""
+            let reason = (user["reason"] as? String) ?? ""
+            if status == "skipped" && !reason.isEmpty {
+                return reason
+            }
+            return nil
+        }
         let transcriptStats = users.compactMap { $0["transcript_ingest"] as? [String: Any] }
         let filesSeen = transcriptStats.reduce(0) { $0 + self.intValue($1["files_seen"]) }
         let filesPendingBeforeRun = transcriptStats.reduce(0) { $0 + self.intValue($1["files_pending"]) }
@@ -2006,6 +2025,10 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         let deleted = vectorStats.reduce(0) { $0 + self.intValue($1["deleted"]) }
 
         var parts: [String] = []
+        if transcriptStats.isEmpty && !skippedReasons.isEmpty {
+            let uniqueReasons = Array(Set(skippedReasons)).sorted().joined(separator: ", ")
+            parts.append("No transcript scan ran: \(uniqueReasons)")
+        }
         if filesSeen > 0 {
             parts.append("\(filesSeen) source files checked")
         }
@@ -2023,7 +2046,9 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         } else if filesSeen > 0 {
             parts.append("0 files deferred by caps")
         }
-        return parts.isEmpty ? nil : parts.joined(separator: "; ")
+        return parts.isEmpty
+            ? nil
+            : TranscriptIngestSummary(message: parts.joined(separator: "; "), skipped: transcriptStats.isEmpty && !skippedReasons.isEmpty)
     }
 
     private nonisolated static func intValue(_ value: Any?) -> Int {

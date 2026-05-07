@@ -21,6 +21,7 @@ import time
 import urllib.parse
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
 
 import httpx
@@ -98,6 +99,47 @@ _VOICE_SPEED_RE = re.compile(r'<speed\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGN
 _VOICE_VOLUME_RE = re.compile(r'<volume\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VOICE_SPELL_RE = re.compile(r"<spell>([\s\S]*?)</spell>", re.IGNORECASE)
 _VOICE_BRACKET_RE = re.compile(r"\[([A-Za-z][A-Za-z' -]{1,40})\]")
+_XAI_TTS_CAPABILITIES_PATH = (
+    Path(__file__).resolve().parents[3] / "shared" / "voice" / "xai_tts_capabilities.json"
+)
+
+
+def _load_xai_wrapping_tag_names() -> tuple[str, ...]:
+    try:
+        with _XAI_TTS_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        tags = ((payload or {}).get("speech_tags") or {}).get("wrapping") or []
+        return tuple(
+            str(tag).strip().lower()
+            for tag in tags
+            if isinstance(tag, str) and str(tag).strip()
+        )
+    except Exception:
+        return (
+            "soft",
+            "whisper",
+            "loud",
+            "build-intensity",
+            "decrease-intensity",
+            "higher-pitch",
+            "lower-pitch",
+            "slow",
+            "fast",
+            "sing-song",
+            "singing",
+            "laugh-speak",
+            "emphasis",
+        )
+
+
+_XAI_WRAPPING_TAG_NAMES = _load_xai_wrapping_tag_names()
+_XAI_TAG_PATTERN = "|".join(re.escape(tag) for tag in _XAI_WRAPPING_TAG_NAMES)
+_VOICE_XAI_WRAPPER_RE = re.compile(
+    r"<(?P<tag>%s)>(?P<text>[\s\S]*?)</(?P=tag)>" % _XAI_TAG_PATTERN,
+    re.IGNORECASE,
+)
+_VOICE_XAI_ANGLE_TAG_RE = re.compile(r"</?(?:%s)\s*>" % _XAI_TAG_PATTERN, re.IGNORECASE)
+_VOICE_XAI_BRACKET_TAG_RE = re.compile(r"\[\s*/?\s*(?:%s)\s*\]" % _XAI_TAG_PATTERN, re.IGNORECASE)
 _TOOL_TRANSCRIPT_LINE_RE = re.compile(
     r"^\s*Tool:\s+.*_mcp_[A-Za-z0-9_.-]+.*(?:\r?\n|$)",
     re.IGNORECASE | re.MULTILINE,
@@ -227,6 +269,13 @@ def strip_voice_control_tags_for_display(text: str) -> str:
     cleaned = _VOICE_SPEED_RE.sub("", cleaned)
     cleaned = _VOICE_VOLUME_RE.sub("", cleaned)
     cleaned = _VOICE_SPELL_RE.sub(r"\1", cleaned)
+    while True:
+        updated = _VOICE_XAI_WRAPPER_RE.sub(lambda match: match.group("text") or "", cleaned)
+        if updated == cleaned:
+            break
+        cleaned = updated
+    cleaned = _VOICE_XAI_ANGLE_TAG_RE.sub("", cleaned)
+    cleaned = _VOICE_XAI_BRACKET_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_BRACKET_RE.sub(_strip_voice_bracket_marker, cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned.strip()

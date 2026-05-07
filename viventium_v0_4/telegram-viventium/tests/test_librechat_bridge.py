@@ -30,6 +30,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     render_telegram_markdown,
     sanitize_telegram_display_text,
     sanitize_telegram_text,
+    _XAI_WRAPPING_TAG_NAMES,
 )
 
 
@@ -162,6 +163,48 @@ def test_voice_markup_display_sanitizer_preserves_default_markdown_rendering():
     assert "<b>there</b>" in rendered_voice
     assert display_text == "Hello **there**"
 # === VIVENTIUM END ===
+
+
+def test_voice_markup_display_sanitizer_strips_xai_wrapping_tags():
+    text = '<soft>Morning. You have warmth.</soft> **There**'
+
+    rendered_voice = render_telegram_markdown(text, strip_voice_markup=True)
+    display_text = sanitize_telegram_display_text(text)
+
+    assert "<soft>" not in rendered_voice
+    assert "&lt;soft&gt;" not in rendered_voice
+    assert "</soft>" not in rendered_voice
+    assert "Morning. You have warmth." in rendered_voice
+    assert "<b>There</b>" in rendered_voice
+    assert display_text == "Morning. You have warmth. **There**"
+
+
+def test_voice_markup_display_sanitizer_strips_malformed_xai_square_wrappers():
+    text = (
+        "Morning. You have warmth coming at you.[/soft] "
+        "If needed, I can sort the signal."
+    )
+
+    rendered_voice = render_telegram_markdown(text, strip_voice_markup=True)
+    display_text = sanitize_telegram_display_text(text)
+
+    assert "[/soft]" not in rendered_voice
+    assert "[/soft]" not in display_text
+    assert rendered_voice == "Morning. You have warmth coming at you. If needed, I can sort the signal."
+    assert display_text == "Morning. You have warmth coming at you. If needed, I can sort the signal."
+
+
+@pytest.mark.parametrize("tag", _XAI_WRAPPING_TAG_NAMES)
+def test_voice_markup_display_sanitizer_strips_each_xai_square_wrapper(tag):
+    text = f"Lead [{tag}] keep this [/{tag}] tail."
+
+    rendered_voice = render_telegram_markdown(text, strip_voice_markup=True)
+    display_text = sanitize_telegram_display_text(text)
+
+    assert f"[{tag}]" not in rendered_voice
+    assert f"[/{tag}]" not in rendered_voice
+    assert rendered_voice == "Lead keep this tail."
+    assert display_text == "Lead keep this tail."
 
 
 def test_render_telegram_markdown_preserves_preescaped_text():
