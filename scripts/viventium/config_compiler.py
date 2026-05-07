@@ -240,29 +240,30 @@ MODEL_MAP = {
         "memory": "claude-sonnet-4-6",
     },
     "x_ai": {
-        "conscious": "grok-4-1-fast-non-reasoning",
-        "background_analysis": "grok-4-1-fast-non-reasoning",
-        "confirmation_bias": "grok-4-1-fast-non-reasoning",
-        "red_team": "grok-4-1-fast-non-reasoning",
-        "deep_research": "grok-4-1-fast-non-reasoning",
-        "productivity": "grok-4-1-fast-non-reasoning",
-        "parietal": "grok-4-1-fast-non-reasoning",
-        "pattern_recognition": "grok-4-1-fast-non-reasoning",
-        "emotional_resonance": "grok-4-1-fast-non-reasoning",
-        "strategic_planning": "grok-4-1-fast-non-reasoning",
-        "support": "grok-4-1-fast-non-reasoning",
-        "memory": "grok-4-1-fast-non-reasoning",
+        "conscious": "grok-4.3",
+        "background_analysis": "grok-4.3",
+        "confirmation_bias": "grok-4.3",
+        "red_team": "grok-4.3",
+        "deep_research": "grok-4.3",
+        "productivity": "grok-4.3",
+        "parietal": "grok-4.3",
+        "pattern_recognition": "grok-4.3",
+        "emotional_resonance": "grok-4.3",
+        "strategic_planning": "grok-4.3",
+        "support": "grok-4.3",
+        "memory": "grok-4.3",
     },
 }
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
-    "anthropic": {"claude-opus-4-7", "claude-sonnet-4-6"},
-    "openai": {"gpt-5.4"},
+    "anthropic": {"claude-opus-4-7"},
+    "openai": {"gpt-5.5"},
 }
 DEFAULT_MEMORY_HARDENING = {
     "enabled": False,
-    "schedule": "0 5 * * *",
+    "schedule": "0 3 * * *",
     "timezone": "America/Toronto",
+    "operator_user_email": "",
     "lookback_days": 7,
     "min_user_idle_minutes": 60,
     "max_changes_per_user": 3,
@@ -271,11 +272,35 @@ DEFAULT_MEMORY_HARDENING = {
     "dry_run_first": True,
     "provider_profile": "launch_ready_only",
     "anthropic_model": "claude-opus-4-7",
-    "openai_model": "gpt-5.4",
+    "anthropic_effort": "xhigh",
+    "openai_model": "gpt-5.5",
+    "openai_reasoning_effort": "xhigh",
+    "transcripts": {
+        "source_dir": "",
+        "max_files_per_run": 20,
+        "max_chars_per_file": 500000,
+        "summary_max_chars": 32000,
+        "stable_evidence_max_age_days": 90,
+        "rag_mode": "detailed_summary_only",
+    },
 }
+
+MEMORY_TRANSCRIPT_RAG_MODES = {"detailed_summary_only", "raw_and_summary", "raw_only"}
 
 CURRENT_BACKGROUND_ACTIVATION_PROVIDER = "groq"
 CURRENT_BACKGROUND_ACTIVATION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+XAI_GROK_43_MODEL_SPEC = {
+    "name": "grok-4.3",
+    "label": "Grok 4.3",
+    "description": "xAI Grok",
+    "group": "xai",
+    "groupIcon": "xai",
+    "iconURL": "xai",
+    "preset": {
+        "endpoint": "xai",
+        "model": "grok-4.3",
+    },
+}
 
 CURATED_ADDED_ENDPOINTS = [
     "agents",
@@ -327,19 +352,15 @@ CURATED_CUSTOM_ENDPOINTS = [
         "apiKeyEnv": "XAI_API_KEY",
         "baseURL": "https://api.x.ai/v1",
         "models": [
-            "grok-4-1-fast-non-reasoning",
-            "grok-4-1-fast-reasoning",
-            "grok-4-fast-non-reasoning",
-            "grok-4-fast-reasoning",
-            "grok-4-0709",
-            "grok-code-fast-1",
-            "grok-3-mini",
-            "grok-3",
+            "grok-4.3",
+            "grok-4.20-multi-agent-0309",
+            "grok-4.20-0309-reasoning",
+            "grok-4.20-0309-non-reasoning",
             "grok-2-vision-1212",
             "grok-2-image-1212",
         ],
-        "titleModel": "grok-4-1-fast-non-reasoning",
-        "summaryModel": "grok-4-1-fast-non-reasoning",
+        "titleModel": "grok-4.3",
+        "summaryModel": "grok-4.3",
         "modelDisplayLabel": "Grok",
         "fetch": True,
         "titleMethod": "completion",
@@ -1140,7 +1161,10 @@ def build_model_specs(_default_main_agent_id: str) -> dict[str, Any]:
     return {
         "prioritize": False,
         "addedEndpoints": CURATED_ADDED_ENDPOINTS,
-        "list": build_built_in_agent_model_specs(_default_main_agent_id),
+        "list": [
+            *build_built_in_agent_model_specs(_default_main_agent_id),
+            copy.deepcopy(XAI_GROK_43_MODEL_SPEC),
+        ],
     }
 
 
@@ -1411,11 +1435,17 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     if raw and not isinstance(raw, dict):
         raise SystemExit("runtime.memory_hardening must be a mapping when provided")
 
-    settings = dict(DEFAULT_MEMORY_HARDENING)
+    settings = copy.deepcopy(DEFAULT_MEMORY_HARDENING)
     settings.update(raw)
+    raw_transcripts = raw.get("transcripts", {}) if isinstance(raw, dict) else {}
+    if raw_transcripts and not isinstance(raw_transcripts, dict):
+        raise SystemExit("runtime.memory_hardening.transcripts must be a mapping when provided")
+    transcripts = dict(DEFAULT_MEMORY_HARDENING["transcripts"])
+    transcripts.update(raw_transcripts or {})
     settings["enabled"] = resolve_bool(settings.get("enabled"), False)
     settings["dry_run_first"] = resolve_bool(settings.get("dry_run_first"), True)
     settings["require_full_lookback"] = resolve_bool(settings.get("require_full_lookback"), True)
+    settings["operator_user_email"] = str(settings.get("operator_user_email") or "").strip()
     settings["schedule"] = str(settings.get("schedule") or DEFAULT_MEMORY_HARDENING["schedule"])
     settings["timezone"] = str(settings.get("timezone") or DEFAULT_MEMORY_HARDENING["timezone"])
     settings["provider_profile"] = str(
@@ -1436,7 +1466,39 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings["anthropic_model"] = str(
         settings.get("anthropic_model") or DEFAULT_MEMORY_HARDENING["anthropic_model"]
     )
+    settings["anthropic_effort"] = str(
+        settings.get("anthropic_effort") or DEFAULT_MEMORY_HARDENING["anthropic_effort"]
+    )
     settings["openai_model"] = str(settings.get("openai_model") or DEFAULT_MEMORY_HARDENING["openai_model"])
+    settings["openai_reasoning_effort"] = str(
+        settings.get("openai_reasoning_effort")
+        or DEFAULT_MEMORY_HARDENING["openai_reasoning_effort"]
+    )
+    transcripts["source_dir"] = str(transcripts.get("source_dir") or "").strip()
+    transcripts["max_files_per_run"] = positive_int(
+        transcripts.get("max_files_per_run"),
+        "runtime.memory_hardening.transcripts.max_files_per_run",
+    )
+    transcripts["max_chars_per_file"] = positive_int(
+        transcripts.get("max_chars_per_file"),
+        "runtime.memory_hardening.transcripts.max_chars_per_file",
+    )
+    transcripts["summary_max_chars"] = positive_int(
+        transcripts.get("summary_max_chars"),
+        "runtime.memory_hardening.transcripts.summary_max_chars",
+    )
+    transcripts["stable_evidence_max_age_days"] = positive_int(
+        transcripts.get("stable_evidence_max_age_days"),
+        "runtime.memory_hardening.transcripts.stable_evidence_max_age_days",
+    )
+    transcripts["rag_mode"] = str(
+        transcripts.get("rag_mode") or DEFAULT_MEMORY_HARDENING["transcripts"]["rag_mode"]
+    )
+    if transcripts["rag_mode"] not in MEMORY_TRANSCRIPT_RAG_MODES:
+        raise SystemExit(
+            "runtime.memory_hardening.transcripts.rag_mode must be detailed_summary_only, raw_and_summary, or raw_only"
+        )
+    settings["transcripts"] = transcripts
 
     if settings["provider_profile"] != "launch_ready_only":
         raise SystemExit(
@@ -1448,11 +1510,40 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
         )
     if settings["openai_model"] not in MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]:
         raise SystemExit("runtime.memory_hardening.openai_model must stay in launch-ready OpenAI families")
+    if settings["anthropic_effort"] != "xhigh":
+        raise SystemExit("runtime.memory_hardening.anthropic_effort must stay xhigh for public builds")
+    if settings["openai_reasoning_effort"] != "xhigh":
+        raise SystemExit(
+            "runtime.memory_hardening.openai_reasoning_effort must stay xhigh for public builds"
+        )
 
     return settings
 
 
-def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
+def resolve_memory_hardening_model_tuple(
+    config: dict[str, Any],
+    settings: dict[str, Any],
+) -> dict[str, str]:
+    available = [provider for provider in enabled_provider_names(config) if provider in {"anthropic", "openai"}]
+    provider = choose_provider(available, ["anthropic", "openai"], available[0] if available else "")
+    if provider == "anthropic":
+        return {
+            "provider": "anthropic",
+            "model": settings["anthropic_model"],
+            "effort": settings["anthropic_effort"],
+            "effort_env": "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT",
+        }
+    if provider == "openai":
+        return {
+            "provider": "openai",
+            "model": settings["openai_model"],
+            "effort": settings["openai_reasoning_effort"],
+            "effort_env": "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT",
+        }
+    return {"provider": "", "model": "", "effort": "", "effort_env": ""}
+
+
+def resolve_auth_settings(config: dict[str, Any]) -> dict[str, Any]:
     runtime = config.get("runtime", {}) or {}
     auth = runtime.get("auth", {}) or {}
     return {
@@ -1461,6 +1552,11 @@ def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
             auth.get("bootstrap_registration_once"), False
         ),
         "allow_password_reset": resolve_bool(auth.get("allow_password_reset"), False),
+        "connected_accounts_return_origin": str(
+            auth.get("connected_accounts_return_origin", "") or ""
+        )
+        .strip()
+        .rstrip("/"),
     }
 
 
@@ -1505,9 +1601,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     ).strip() or DEFAULT_MAIN_AGENT_ID
     default_conversation_recall = conversation_recall_enabled(config)
     memory_hardening = resolve_memory_hardening_settings(config)
+    memory_hardening_model = resolve_memory_hardening_model_tuple(config, memory_hardening)
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
-    start_rag_api = "true" if default_conversation_recall else "false"
+    transcripts_source_dir = memory_hardening["transcripts"]["source_dir"]
+    start_rag_api = "true" if default_conversation_recall or transcripts_source_dir else "false"
     code_interpreter_is_enabled = code_interpreter_enabled(config)
     web_search_settings = resolve_web_search_settings(config)
     web_search_is_enabled = web_search_settings["enabled"] == "true"
@@ -1564,6 +1662,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         else "false",
         "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": memory_hardening["schedule"],
         "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": memory_hardening["timezone"],
+        "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL": memory_hardening["operator_user_email"],
         "VIVENTIUM_MEMORY_HARDENING_LOOKBACK_DAYS": str(memory_hardening["lookback_days"]),
         "VIVENTIUM_MEMORY_HARDENING_MIN_USER_IDLE_MINUTES": str(
             memory_hardening["min_user_idle_minutes"]
@@ -1579,8 +1678,29 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if memory_hardening["dry_run_first"]
         else "false",
         "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE": memory_hardening["provider_profile"],
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER": memory_hardening_model["provider"],
+        "VIVENTIUM_MEMORY_HARDENING_MODEL": memory_hardening_model["model"],
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT": memory_hardening_model["effort"],
         "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL": memory_hardening["anthropic_model"],
+        "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT": memory_hardening["anthropic_effort"],
         "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": memory_hardening["openai_model"],
+        "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT": memory_hardening[
+            "openai_reasoning_effort"
+        ],
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR": transcripts_source_dir,
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN": str(
+            memory_hardening["transcripts"]["max_files_per_run"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE": str(
+            memory_hardening["transcripts"]["max_chars_per_file"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS": str(
+            memory_hardening["transcripts"]["summary_max_chars"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS": str(
+            memory_hardening["transcripts"]["stable_evidence_max_age_days"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE": memory_hardening["transcripts"]["rag_mode"],
         "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE": "owner",
         "VIVENTIUM_TELEGRAM_BACKEND": "librechat",
         "VIVENTIUM_TELEGRAM_AGENT_ID": default_main_agent_id,
@@ -1604,6 +1724,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if auth_settings["bootstrap_registration_once"]
         else "false",
         "ALLOW_PASSWORD_RESET": "true" if auth_settings["allow_password_reset"] else "false",
+        "VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN": auth_settings[
+            "connected_accounts_return_origin"
+        ],
         "ALLOW_SOCIAL_LOGIN": "false",
         "ALLOW_SOCIAL_REGISTRATION": "false",
         "ALLOW_UNVERIFIED_EMAIL_LOGIN": "true",

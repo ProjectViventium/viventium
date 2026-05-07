@@ -64,6 +64,21 @@ Authoritative execution matrix:
 | Viventium User Help | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
 | Google | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` |
 
+Model inventory rule:
+
+- Do not configure a phantom Anthropic model to satisfy UI expectations. On the May 6, 2026 local
+  inventory, `claude-sonnet-4-7` is not exposed by source-of-truth model specs or the local runtime;
+  the launch-ready Sonnet family remains `claude-sonnet-4-6`.
+- Background agents that are latency-sensitive but still use Anthropic Sonnet may declare
+  `fallback_llm_provider: openAI`, `fallback_llm_model: gpt-5.4`, and
+  `fallback_llm_model_parameters.reasoning_effort: high`. Phase B runtime owns retrying that
+  configured backup once for provider timeout/abort/recoverable provider failures; prompt-only
+  changes must not be used to hide those errors.
+- Phase B execution has a bounded outer guard so a stuck or aborted background run cannot leave the
+  UI on permanent progress. The guard is the agent execution timeout plus a small grace window;
+  `VIVENTIUM_CORTEX_EXECUTION_GUARD_GRACE_MS` may tune only that grace window, defaults to 15s,
+  and is clamped between 0s and 60s.
+
 Anthropic Opus budgeting rule:
 
 - For background agents, Anthropic Opus is reserved for:
@@ -80,6 +95,9 @@ Canonical model-parameter rule:
 - Illegal examples:
   - `reasoning_effort` surviving on an Anthropic execution bag
   - `thinkingBudget` or `thinking` surviving on an OpenAI execution bag
+  - sampling controls such as `temperature`, `topP`, penalties, `n`, or `logprobs` surviving on an
+    OpenAI reasoning-style execution bag known to reject sampling, such as `gpt-5`, `gpt-5-pro`,
+    Viventium's configured `gpt-5.4` runtime family, or `o1`/`o3`
 - The runtime normalization and built-in seed/upsert path must both resolve the canonical
   model-parameter bag for the final provider family instead of blindly merging stale keys.
 
@@ -113,6 +131,9 @@ Canonical model-parameter rule:
   part, they must not narrate tool, worker, browser, schedule, or runtime status.
 - Cortex execution that returns empty output or the exact no-response token `{NTA}` is silent
   success. It must not render a visible "Insight from ..." card.
+- Silent success is still terminal. Runtime must emit and persist a structured completion payload
+  with `status=complete`, `silent=true`, and `no_response=true` so any previous brewing/progress row
+  is replaced instead of leaving the UI stuck on "checking" or "analyzing".
 
 ## Non-Blocking Main-Agent Communication Contract
 
@@ -126,26 +147,63 @@ Requirements:
   tied to the originating conversation and assistant message. In-memory callbacks may improve
   latency, but they must not be the only delivery path.
 - The communication payload should carry structured provenance such as cortex id/name, activation
-  scope, result text, tool-call counts, timestamps, and error/degradation state. It must not carry
-  secrets, raw logs, browser screenshots, local absolute paths, or private runtime artifacts.
+  scope, activated-agent one-line description, direct-action surface scope keys, result text,
+  tool-call counts, timestamps, and error/degradation state. It must not carry secrets, raw logs,
+  browser screenshots, local absolute paths, or private runtime artifacts.
+- Completion payloads must distinguish three terminal outcomes: visible insight, silent no-response
+  success, and error. Logs should report visible insight counts, silent completion counts, and error
+  counts separately so empty `{NTA}` output is not misclassified as an unexpected failure.
+- Activation awareness injected into the main-agent turn must tell the main agent which background
+  agents activated, why they activated, what scope they own, and which activated scopes the main
+  agent can cover through connected direct tools.
+- If an activated background scope is also covered by a connected main-agent direct-action surface,
+  Phase A must run the main agent first. The main agent should use its own verified tool results for
+  the directly owned portion while Phase B continues as supplemental evidence.
+- Direct-action scope declarations may mark `same_scope_background_allowed=true` when the matching
+  background agent should still activate for supplemental Phase B evidence. This flag is generic; it
+  must not branch on agent names or prompt text.
+- If a background agent's configured activation scope exactly matches a connected main-agent
+  direct-action scope and `same_scope_background_allowed` is not true, runtime must structurally
+  suppress that activation after classifier output. This is not user-text NLU; it is a guardrail
+  between two structured scope declarations.
 - Background agents provide evidence only. They do not decide whether the user should see a
   follow-up message.
 - The main-agent follow-up/adjudication path owns the visible decision. It receives the background
   evidence as an injected continuation prompt, compares it to the response the main agent already
-  gave, and either writes a concise same-conversation follow-up or outputs exactly `{NTA}`.
+  gave, and either writes a concise same-conversation follow-up as a new assistant message or outputs
+  exactly `{NTA}`.
+- Phase B follow-ups are nonblocking additions. Runtime must not replace, overwrite, or rewrite the
+  original Phase A assistant message when Phase B completes.
+- Phase B may still upsert structured cortex status/insight parts onto the Phase A message for
+  durable progress/history. That parent content-part upsert is not a Phase A text replacement; the
+  Phase A text and authored answer remain unchanged.
+- If the originating Phase A response text is exactly `{NTA}` and Phase B later has substantive
+  insight text, merged context, or an allowed deferred error, `{NTA}` is treated as an internal
+  no-visible-answer marker for adjudication. Phase B may force a visible new assistant follow-up,
+  but it must still append as a separate message rather than editing Phase A.
 - If the conversation has moved on since the originating response, the adjudication prompt must also
   include the newer visible user/assistant exchange so the main agent can avoid stale or interruptive
   follow-ups without runtime text matching.
 - `{NTA}` means silent success. It is valid for redundant, irrelevant, or non-actionable
   background results and must not be delivered to web, Telegram, or voice users.
-- For normal non-replacement follow-ups in a moved-on conversation, empty generation or follow-up LLM
-  failure stays silent; deterministic raw insight fallback is reserved for deferred-primary flows
-  that explicitly own the user-visible answer.
+- Web rendering must hide runtime-generated hold text parts marked as no-response, such as a
+  scheduler Phase A `{NTA}` marker, using the structured runtime-hold flag rather than broad
+  keyword filtering. The stored parent message is not edited; only the internal hold token is not
+  rendered.
+- For moved-on conversations, empty generation or follow-up LLM failure usually stays silent; forced
+  follow-up fallback is reserved for cases where Phase A intentionally had no visible answer or a
+  deterministic hold while useful Phase B evidence arrived.
 - Errors and degradation are not hidden behind `{NTA}`. If a background worker or cortex has a real
   blocker that changes the user outcome, the follow-up path must surface a concise blocker or
   failure message.
+- Deferred error copy should preserve the failure class when known: provider access denied,
+  provider credentials rejected, rate-limited provider, timeout, and runtime-restart recovery are
+  different user-visible situations and should not all collapse to the same generic line.
 - Surface adapters such as web, Telegram, and voice poll the same persisted follow-up state. They
   must not invent separate delivery logic that bypasses the main-agent adjudication/NTA gate.
+- Direct-action worker callbacks that are already adjudicated as user-visible still need durable
+  surface delivery when they originate from Telegram or voice. The same principle applies: in-memory
+  pollers are fast paths only; DB-backed callback/delivery rows own late, restart-safe delivery.
 - The implementation must stay generic: no runtime prompt-text matching, no hardcoded cortex names,
   and no tool-substring NLU. Structured metadata and source-of-truth activation prompts own scope.
 
@@ -161,6 +219,21 @@ Requirements:
   `thinking: false` explicitly and be re-validated against the current Anthropic API contract before
   shipping.
 
+## OpenAI Runtime Compatibility
+
+- OpenAI reasoning-style background and follow-up runs must not send sampling controls that the
+  configured provider runtime rejects.
+- This guard applies before and after agent initialization because runtime hydration can materialize
+  model parameters after the source-of-truth copy is made.
+- The source-of-truth bundle and runtime canonical parameter map must not ship `temperature`,
+  `topP`, penalties, `n`, `logprobs`, or related sampling fields for OpenAI no-sampling reasoning
+  runs such as `gpt-5`, dash-suffixed `gpt-5` reasoning variants, Viventium's configured `gpt-5.4`
+  runtime family, or `o1`/`o3`.
+- Do not blindly generalize the `gpt-5.4` runtime rule to every dotted `gpt-5.x` model id. Some
+  upstream OpenAI initialization paths treat versioned dotted IDs as sampling-capable; new dotted
+  model IDs must be added to the no-sampling compatibility set only after runtime evidence or an
+  upstream provider-contract change.
+
 ## Memory Context Parity
 
 Background cortices should receive the same shared context blocks the main agent sees when the
@@ -172,15 +245,21 @@ feature is enabled:
 
 ## Tool Cortex Breathing Hold
 
-When a tool-focused cortex activates, the system should avoid producing a premature answer from
-memory. Instead, it should emit a short holding acknowledgement and post the actual result once the
+When a tool-focused cortex activates and the main agent has no matching connected direct-action
+surface for that activation scope, the system should avoid producing a premature answer from memory.
+Instead, it should emit a short holding acknowledgement and post the actual result once the
 background cortex finishes.
 
 Runtime rules:
 
-- hold decisions should come from structured activation metadata
-- live tool requests may defer
+- hold decisions come from structured activation metadata plus declared direct-action scope keys
+- live tool requests may defer only when no activated direct-action scope is available to the main
+  agent
 - generic conversational follow-ups should not defer just because a productivity cortex activated
+- stale active cortex rows from a process restart must be repaired to terminal error state on startup
+  so web, Telegram, scheduler, and voice clients do not display permanent progress
+- stale recovery cutoff must be at least the configured Phase B execution timeout plus a grace
+  window, so a routine restart does not mark legitimate in-flight Phase B work as failed
 
 ## Background-Agent QA Standard
 
@@ -215,8 +294,16 @@ Use this order so the fix stays surgical:
   decide activation or to prune activation history based on guessed semantics.
 - When activation phrasing needs to expand, fix the source-of-truth activation prompt and prove it
   with live evals.
+- Product-help cortices are for user-facing usage/navigation/onboarding help, not operator
+  diagnostics. They must not activate for incident triage, root-cause analysis, logs/database/code
+  investigation, model inventory questions, provider routing issues, activation mistakes, QA, or
+  fix requests.
 - When the classifier provider is unavailable, fix reliability with `activation.fallbacks`, not with
   deterministic runtime heuristics.
+- A full-tunnel VPN can make the Groq activation provider return `403 Access denied` even when the
+  key and model config are correct. Before changing activation prompts or runtime code, verify the
+  provider egress path; the supported local fix is split tunneling or disabling the VPN for Groq/API
+  provider traffic, then rerunning the real Phase A/Phase B QA.
 - Activation and execution must be diagnosed separately. A productivity cortex can activate
   correctly and still fail later if its execution-model credential or connected account is expired.
 - Direct proof-by-execution requests, such as asking Viventium to run a GlassHive/Codex/Claude

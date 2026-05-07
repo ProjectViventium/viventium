@@ -287,7 +287,7 @@ API_KEY = (
 ASSEMBLYAI_API_KEY = os.environ.get('ASSEMBLYAI_API_KEY')
 ASSEMBLYAI_BASE_URL = os.environ.get('ASSEMBLYAI_BASE_URL', 'https://api.assemblyai.com/v2')
 # === VIVENTIUM END ===
-MODEL = os.environ.get('MODEL', 'grok-4-fast-reasoning')
+MODEL = os.environ.get('MODEL', 'grok-4.3')
 TTS_VOICE = os.environ.get('TTS_VOICE', 'alloy')
 TTS_RESPONSE_FORMAT = os.environ.get('TTS_RESPONSE_FORMAT', 'mp3')
 TTS_PROVIDER = resolve_tts_provider(os.environ)

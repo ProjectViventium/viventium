@@ -46,6 +46,7 @@ DIRECTORY_REGISTRATION_ALGORITHM = "rsa-sha256"
 UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
 UPNPC_LOCAL_IP_RE = re.compile(r"Local LAN ip address\s*:\s*([0-9.]+)")
 UPNPC_MAPPING_RE = re.compile(r"^\s*\d+\s+([A-Z]+)\s+(\d+)->([0-9.]+):(\d+)\b")
+LOCAL_INET_RE = re.compile(r"\binet\s+([0-9]+(?:\.[0-9]+){3})\b")
 SURFACE_KEYS = ("client", "api", "playground", "livekit")
 COMMON_BINARY_PATHS: dict[str, tuple[str, ...]] = {
     "brew": (
@@ -409,6 +410,36 @@ def state_is_healthy(state: dict[str, Any]) -> bool:
     return False
 
 
+def state_matches_requested_livekit_node_ip(
+    provider: str,
+    args: argparse.Namespace,
+    state: dict[str, Any],
+) -> bool:
+    if provider != "public_https_edge":
+        return True
+
+    current = str(state.get("livekit_node_ip") or "").strip()
+    requested = str(getattr(args, "livekit_node_ip", "") or "").strip()
+    if requested:
+        return current == requested
+
+    router = state.get("router") or {}
+    local_ip = str(router.get("local_ip") or "").strip()
+    if local_ip:
+        if current != local_ip:
+            return False
+
+    assigned_ips = assigned_local_ipv4s()
+    if assigned_ips:
+        return current in assigned_ips
+
+    detected_lan_ip = detect_lan_ipv4()
+    if detected_lan_ip:
+        return current == detected_lan_ip
+
+    return True
+
+
 def with_lock(lock_path: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+", encoding="utf-8")
@@ -724,11 +755,47 @@ def detect_lan_ipv4() -> str:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("8.8.8.8", 80))
             candidate = str(sock.getsockname()[0] or "").strip()
-            if candidate and not candidate.startswith("127."):
+            if is_usable_local_ipv4(candidate):
                 return candidate
     except Exception:
         pass
     return derive_local_ip_from_hostname(socket.gethostname())
+
+
+def is_usable_local_ipv4(candidate: str) -> bool:
+    value = str(candidate or "").strip()
+    return bool(value) and not value.startswith("127.") and not value.startswith("169.254.")
+
+
+def assigned_local_ipv4s() -> set[str]:
+    addresses: set[str] = set()
+
+    for hostname in {socket.gethostname(), socket.getfqdn()}:
+        if not hostname:
+            continue
+        try:
+            for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+                candidate = str(info[4][0] or "").strip()
+                if is_usable_local_ipv4(candidate):
+                    addresses.add(candidate)
+        except Exception:
+            continue
+
+    for command in (["ifconfig"], ["ip", "-4", "addr", "show"]):
+        try:
+            result = run_checked(command, timeout_seconds=4)
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            continue
+        if result.returncode != 0:
+            continue
+        for match in LOCAL_INET_RE.finditer(result.stdout or ""):
+            candidate = match.group(1)
+            if is_usable_local_ipv4(candidate):
+                addresses.add(candidate)
+        if addresses:
+            break
+
+    return addresses
 
 
 def parse_upnpc_listing(output: str) -> dict[str, Any]:
@@ -1624,10 +1691,11 @@ def start_public_https_edge(
             except Exception:
                 continue
         raise
+    node_ip = str(args.livekit_node_ip or "").strip() or lan_ip
     state = build_state(
         "public_https_edge",
         surfaces,
-        livekit_node_ip=public_ip,
+        livekit_node_ip=node_ip,
         extras={
             "public_ip": public_ip,
             "trust_note": manual_note,
@@ -1718,7 +1786,14 @@ def cmd_start(args: argparse.Namespace) -> int:
     log_dir = Path(args.log_dir)
     lock_handle = with_lock(state_path.with_suffix(".lock"))
     try:
+        provider = str(args.provider or "cloudflare_quick_tunnel").strip().lower()
         existing = load_state(state_path)
+        if existing and str(existing.get("provider") or "").strip() != provider:
+            stop_state(existing)
+            existing = {}
+        elif existing and not state_matches_requested_livekit_node_ip(provider, args, existing):
+            stop_state(existing)
+            existing = {}
         if state_is_healthy(existing):
             print(json.dumps(existing))
             return 0
@@ -1726,7 +1801,6 @@ def cmd_start(args: argparse.Namespace) -> int:
         if existing:
             stop_state(existing)
 
-        provider = str(args.provider or "cloudflare_quick_tunnel").strip().lower()
         try:
             if provider == "cloudflare_quick_tunnel":
                 state = start_cloudflare(args, log_dir=log_dir)

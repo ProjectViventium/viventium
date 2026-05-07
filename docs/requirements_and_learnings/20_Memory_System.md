@@ -1,7 +1,7 @@
 # Memory System: v0_3 vs v0_4 Analysis + Improvement Notes
 
-**Document Version:** 2.7
-**Date:** 2026-04-25
+**Document Version:** 2.8
+**Date:** 2026-05-05
 **Owner:** Viventium Core
 **Scope:** High-level comparison of memory UX in v0_3 (Python) vs v0_4 (LibreChat), with public-safe lessons and implementation notes.
 
@@ -34,10 +34,12 @@ discipline:
 
 ## Product Surface Distinction
 
-The v0_4 product has two different continuity surfaces that must not be conflated:
+The v0_4 product has four different continuity surfaces that must not be conflated:
 
 1. Saved memories
 2. Conversation recall
+3. Meeting transcript recall
+4. Listen-Only call transcript evidence
 
 ### Saved memories
 
@@ -55,11 +57,99 @@ The v0_4 product has two different continuity surfaces that must not be conflate
 - When enabled, the decision to search prior chats is model-owned through system-prompt/tool
   instructions; runtime must not use prompt-text regexes to decide recall intent.
 
+### Meeting transcript recall
+
+- Optional, local-first input from `VIVENTIUM_MEMORY_TRANSCRIPTS_DIR`.
+- Owned by the saved-memory hardening operator and the existing file-search/RAG pipeline.
+- Raw transcript files are never inserted as synthetic chat messages.
+- Each new or changed transcript is first summarized as its own unit by the configured high-effort
+  memory-hardening model. The summarizer receives the raw transcript envelope plus deterministic
+  metadata: filename, file mtime, current date, configured/user-derived display names, optional
+  calendar match when available, and the transcript caveat prompt.
+- The saved-memory hardener receives the generated detailed summary plus provenance/evidence
+  metadata, not the raw transcript body. This keeps raw transcript token load out of the hardener
+  while preserving the transcript as soft meeting evidence.
+- The runtime does no semantic parsing, column detection, participant extraction, or filename
+  interpretation. CSV, TXT, MD, JSON, VTT, SRT, and similar text files are all data for the model.
+- The configured transcript folder is expected to contain transcript artifacts, not downloader
+  state or operational logs. Text sidecars in that folder are intentionally treated as untrusted
+  candidate evidence and can consume transcript caps; download routines should keep their state in
+  a sibling state folder unless an explicit ignore-rule feature is added.
+- Transcript evidence is softer than chat evidence. A single transcript can support
+  meeting-scoped `moments` or `context`; stable beliefs, identity, direction, or durable preferences
+  require either two recent meeting transcripts or transcript plus chat evidence.
+- Stable-memory transcript recency is validated against deterministic file metadata from the
+  scanned workpack, not model-supplied timestamps.
+- Any non-noop hardener operation must carry valid evidence. Empty evidence is never enough for
+  stable memory or transcript-derived writes.
+- Prompt-injection protection comes from explicit untrusted-data sentinels and deterministic output
+  validators, not from string-matching transcript content.
+- Content-hash state prevents unchanged files and rename-only changes from being reprocessed.
+- Files deferred by deterministic transcript caps are not considered processed; later scheduled or
+  manual runs must retry them even when mtime, size, and content hash are unchanged.
+- Normal transcripts under the per-file/model-safe limit must be supplied completely to the
+  transcript summarizer. A run-level character budget must never slice a normal transcript.
+- Oversized text transcripts that would require partial input are deferred rather than promoted as
+  complete recall. Binary or non-text inputs remain skipped as non-text.
+- If the configured transcript source folder changes, per-user processed-content state from the old
+  folder must not be reused for the new folder. Old artifacts become stale derived state and the new
+  folder is processed under its own source-folder hash.
+- Runtime recall attaches only artifacts whose stored source-folder hash matches the currently
+  configured transcript folder, so artifacts from an old opt-in folder do not silently reappear
+  after a directory change.
+- Runtime recall attaches transcript vector artifacts only when the local RAG/vector runtime is
+  configured and healthy. If vector runtime is unreachable, transcript recall must be advertised as
+  unavailable instead of exposing dead file_search resources.
+- Transcript RAG defaults to `detailed_summary_only`: the runtime file-search database stores and
+  attaches detailed summary artifacts by default. `raw_and_summary` and `raw_only` are explicit
+  QA/operator modes.
+- If detailed meeting summaries and derived conversation recall both return file_search hits,
+  ranking must remain evidence-based: low-signal assistant no-access/no-memory disclaimers should
+  not outrank current transcript content, but transcript source class must not blanket-override
+  stronger chat-history evidence.
+- Transcript vector upload temp files are private local artifacts and must be written with explicit
+  owner-only permissions.
+
+### Listen-Only call transcript evidence
+
+- Listen-Only Mode is live voice presence without live response. It saves transcribed call turns for
+  later consolidation while bypassing the live Agents controller, TTS, tools, background cortices,
+  title generation, and the live LibreChat Memory Agent.
+- Listen-Only entries are structured transcript evidence stored with message metadata so they remain
+  visible in the owning conversation history. They are not synthetic user chat messages:
+  `isCreatedByUser=false`, `sender="Listen-Only"`, `tokenCount=0`, and
+  `metadata.viventium.type="listen_only_transcript"`. They must opt out of Meili indexing with
+  `_meiliIndex=false`.
+- Live agent context must skip these entries even when they sit in the same conversation tree. After
+  Listen-Only is turned off, the next normal assistant response must resume from the latest
+  non-Listen-Only parent and must not spend live prompt tokens on ambient transcripts.
+- Consecutive Listen-Only entries in the same visible timeline should be threaded linearly under
+  the latest Listen-Only row, not as sibling branches under the same live parent. This is a UI tree
+  shape rule only; memory and recall keep using the `listen_only_transcript` metadata boundary.
+- The memory hardener receives these entries as `ambient_transcript` evidence. It must treat them
+  like transcript evidence: softer than chat, untrusted as instructions, and insufficient by itself
+  for stable identity, durable preferences, long-term direction, or beliefs unless corroborated.
+- Stable-memory corroboration must count distinct ambient sources, not adjacent rows. Two rows from
+  the same Listen-Only call session are one ambient source for stable-memory gating; a stable write
+  needs either normal conversation evidence plus recent ambient evidence, or multiple distinct
+  ambient source ids. Transcript-scoped keys such as `context` and `moments` can use single-session
+  ambient context.
+- Conversation recall excludes Listen-Only transcript entries at the corpus query boundary and in
+  fallback filters so overheard room text does not masquerade as user-authored chat history or
+  starve normal messages from the recall window.
+- Same-microphone audio is not true speaker diarization. Speaker labels are trusted only when they
+  arrive from structured LiveKit participant or track identity.
+
 ### Why this distinction matters
 
 - A recent correction in chat should usually be recovered by conversation recall even if it was
   never promoted into durable memory.
 - Saved memory should not be silently mutated to compensate for broken recent-conversation recall.
+- Transcript recall should not silently promote audience-specific or outdated meeting language into
+  durable identity. It should preserve important transitions while letting stale details decay or be
+  compacted.
+- Listen-Only recall follows the same caution: being present in a room is useful memory evidence,
+  not blanket proof of the user's stable beliefs or instructions.
 - If the product later adds an explicit “continuity state” surface for scheduled consolidation or
   working summaries, that should be designed as its own bounded layer with TTL/audit rules, not by
   overloading saved-memory semantics.
@@ -455,7 +545,9 @@ bin/viventium memory-harden apply --run-id <run-id>
 Product contract:
 
 - semantic hardening is opt-in and default-off
-- default schedule is daily `0 5 * * *` when enabled
+- default schedule is daily `0 3 * * *` when enabled
+- daily schedules run at local macOS wall-clock time; `timezone` is exported for logs/operator
+  context and must not be confused with a LaunchAgent timezone override
 - default lookback is 7 days
 - default idle gate skips users active in the last 60 minutes
 - default input cap is 500,000 estimated characters and full-lookback mode is on by default
@@ -463,6 +555,8 @@ Product contract:
   batch hardener prompt
 - if the 7-day corpus exceeds the configured input cap, the job fails closed for that user unless
   the operator explicitly allows partial lookback
+- when `dry_run_first` is enabled, the first scheduled apply after a fresh dry-run marker is absent
+  performs a dry-run and writes the marker; the next scheduled run can apply
 - the batch hardener must not rewrite `working`, because `working` is owned by the current
   conversation
 - model output is a proposal only; database writes go through the existing memory methods and
@@ -470,8 +564,23 @@ Product contract:
 - raw proposals and rollback snapshots stay under App Support state
 - redacted run logs record memory-instruction presence/hash, lookback coverage, message counts,
   conversation counts, prompt size, and changed key names without storing raw conversation text
-- macOS installs reconcile the LaunchAgent from generated config; non-macOS installs need an
-  operator-managed cron/systemd equivalent
+- macOS installs reconcile the LaunchAgent from generated config; the scheduled job invokes the
+  memory-hardening wrapper directly from the plist so it is not blocked by a long-running
+  user-facing CLI launcher lock. Non-macOS installs need an operator-managed cron/systemd
+  equivalent.
+- `runtime.memory_hardening.operator_user_email` optionally scopes scheduled/helper hardening to one
+  local account; empty means all local users are eligible
+- the compiler emits the selected hardening provider/model/effort tuple from configured foundation
+  auth, preferring Claude Code `claude-opus-4-7` at `xhigh` when Anthropic is available and falling
+  back to Codex/OpenAI `gpt-5.5` at `xhigh` when OpenAI is the available foundation route
+- the OpenAI/Codex hardening path must pass a structured output schema and `xhigh` reasoning effort
+  to the Codex CLI, matching the compiler-emitted tuple instead of relying on stale internal
+  hardener fallbacks
+- the macOS status-bar helper may expose an Advanced action for manual transcript ingest; that
+  action must call the memory-hardening wrapper directly, surface the active user scope before and
+  after the run, surface redacted count telemetry such as files checked, summaries uploaded, and
+  files deferred by caps, bypass the idle gate because it is an explicit user action, and log only
+  status/scope/counts, never transcript text
 - public docs and QA artifacts must contain only hashed user ids, counts, key names, and policy
   outcomes
 

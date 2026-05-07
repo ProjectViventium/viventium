@@ -281,6 +281,30 @@ from config import TIMEOUT as time_out, POLLING_TIMEOUT
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger()
 
+# === VIVENTIUM START ===
+# Feature: Telegram Bot API token redaction in local logs.
+class _TelegramTokenRedactionFilter(logging.Filter):
+    _token_pattern = re.compile(r"(bot)[0-9]{6,}:[A-Za-z0-9_-]{20,}")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        def _redact(value):
+            if isinstance(value, str):
+                return self._token_pattern.sub(r"\1[REDACTED]", value)
+            return value
+
+        record.msg = _redact(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact(arg) for arg in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {key: _redact(value) for key, value in record.args.items()}
+        return True
+
+_telegram_token_redaction_filter = _TelegramTokenRedactionFilter()
+logger.addFilter(_telegram_token_redaction_filter)
+for _handler in logger.handlers:
+    _handler.addFilter(_telegram_token_redaction_filter)
+# === VIVENTIUM END ===
+
 logging.getLogger("httpx").setLevel(logging.CRITICAL)
 logging.getLogger("chromadb.telemetry.posthog").setLevel(logging.WARNING)
 logging.getLogger('googleapicliet.discovery_cache').setLevel(logging.ERROR)
@@ -2246,6 +2270,8 @@ async def post_init(application: Application) -> None:
 
     if config.ChatGPTbot:
         config.ChatGPTbot.set_on_message_callback(on_proactive_message)
+        if hasattr(config.ChatGPTbot, "start_glasshive_delivery_dispatcher"):
+            config.ChatGPTbot.start_glasshive_delivery_dispatcher()
         logging.info(
             "✅ Registered proactive message callback with Telegram bridge (%s)",
             getattr(config, "VIVENTIUM_TELEGRAM_BACKEND", "unknown"),
@@ -2263,6 +2289,12 @@ async def post_init(application: Application) -> None:
         "I am an Assistant, a large language model trained by OpenAI. I will do my best to help answer your questions."
     )
     await application.bot.set_my_description(description)
+
+
+async def post_shutdown(application: Application) -> None:
+    _ = application
+    if config.ChatGPTbot and hasattr(config.ChatGPTbot, "stop_glasshive_delivery_dispatcher"):
+        config.ChatGPTbot.stop_glasshive_delivery_dispatcher()
 
 if __name__ == '__main__':
     # ========================================================================
@@ -2325,6 +2357,7 @@ if __name__ == '__main__':
         # Rate limiter to prevent hitting Telegram API limits
         .rate_limiter(AIORateLimiter(max_retries=5))
         .post_init(post_init)
+        .post_shutdown(post_shutdown)
         .build()
     )
 

@@ -231,7 +231,25 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_turn_detection, "vad")
         self.assertEqual(env.voice_min_endpointing_delay_s, 1.4)
         self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.35)
         self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 1.0)
+
+    def test_local_whisper_respects_explicit_vad_min_speech_override(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                    "VIVENTIUM_STT_VAD_MIN_SPEECH": "0.22",
+                },
+                clear=True,
+            ),
+            patch("worker._turn_detector_model_is_cached", return_value=False),
+        ):
+            env = load_env()
+            vad_kwargs = _silero_vad_kwargs_for_env(env)
+
+        self.assertEqual(vad_kwargs["min_speech_duration"], 0.22)
 
     def test_local_whisper_respects_explicit_vad_min_silence_override(self) -> None:
         with (
@@ -274,8 +292,10 @@ class TestWorkerTurnHandling(unittest.TestCase):
             assemblyai_key = _vad_kwargs_cache_key(_silero_vad_kwargs_for_env(updated))
 
         self.assertEqual(env.voice_turn_detection, "vad")
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.35)
         self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 1.0)
         self.assertEqual(updated.voice_turn_detection, "stt")
+        self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_speech_duration"], 0.1)
         self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_silence_duration"], 0.5)
         self.assertNotEqual(local_key, assemblyai_key)
 

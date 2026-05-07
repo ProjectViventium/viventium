@@ -54,11 +54,16 @@ Sources:
 1. `AgentClient.chatCompletion` builds the payload.
 2. Previous background insights are extracted and injected into the system prompt.
 3. Phase A activation detection runs with a 2s total time budget.
-4. Activated agent metadata is injected into the system prompt.
+4. Activated agent metadata is injected into the system prompt, including one-line descriptions,
+   activation scopes, and any matching main-agent direct-action scope keys.
 5. UI activation cards are emitted via SSE (`on_cortex_update`).
-6. Main agent response streams normally (non-blocking).
-7. Phase B executes activated agents in parallel, emitting brewing/complete SSE updates.
-8. Completion data is persisted and merged onto the canonical assistant message.
+6. Main agent response streams normally (non-blocking). If the activated scope is also covered by a
+   connected main-agent direct-action surface, the main agent uses its own tools in Phase A and Phase
+   B becomes supplemental.
+7. Phase B executes activated agents in parallel, emitting brewing and terminal SSE updates.
+   Terminal updates include visible insight, silent no-response success, and error states.
+8. Completion data is persisted and merged onto the canonical assistant message. Silent
+   no-response completion replaces the previous brewing part but renders no visible card.
 9. A single follow-up message is generated (LLM-driven) if insights exist and the user has not sent new input.
 
 ## UI Label Sanitization

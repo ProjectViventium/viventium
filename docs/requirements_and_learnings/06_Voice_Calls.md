@@ -22,6 +22,8 @@ background-cortex behavior.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
 - Wing Mode must be a simple opt-in voice behavior, not a separate hardcoded agent path.
+- Listen-Only Mode must be a listening-only voice behavior that captures transcript evidence without
+  producing an assistant response.
 - Only one LiveKit worker may speak for a call session at a time.
 
 ## Public-Safe Specifications
@@ -84,10 +86,56 @@ background-cortex behavior.
   route selection.
 - Runtime should use the persisted call-session flag as the source of truth for whether Wing Mode is on.
 
+### Listen-Only Mode
+- Product name: **Listen-Only Mode**.
+- Listen-Only Mode is for presence and learning without live interaction: the room can be
+  transcribed and saved, but Viventium must not answer, speak, run tools, call the Agents
+  controller, generate a title through an LLM, invoke background cortices, or trigger the live
+  LibreChat Memory Agent.
+- Runtime must use a persisted call-session flag as the source of truth. Listen-Only Mode and Wing
+  Mode are mutually exclusive; enabling one clears the other.
+- The modern playground exposes Listen-Only as an icon-sized control beside the voice-mode controls.
+  Its user-facing copy must feel like cognitive presence, not surveillance or evidence gathering:
+  Viventium is here with the user, only listening and remembering later. The tooltip must still make
+  the boundaries clear: the conversation is kept for later memory consolidation, no live
+  response/tool/memory path runs, and same-microphone audio does not provide true speaker
+  diarization. Separate speaker labels are only available when structured LiveKit participant/track
+  identity is available.
+- Listen-Only uses the current listening route. For the intended low-cost setup, choose the local
+  `pywhispercpp` / WhisperCPP route; the mode itself must not silently remap STT providers.
+- The voice route may still use the existing turn coalescing boundary so one spoken thought becomes
+  one saved transcript entry. Coalescing must only return an already saved Listen-Only result inside
+  the short duplicate-return window when the incoming text is already captured by the saved text; a
+  later or different ambient turn with the same call/live-parent key must save as a new transcript
+  row.
+- If a Listen-Only call starts from `conversationId="new"`, the first concrete conversation id must
+  be claimed atomically at the call-session layer so concurrent transcript saves cannot split one
+  listening session across multiple LibreChat conversations.
+- Saved entries are structured transcript evidence, not user-authored chat turns:
+  - `isCreatedByUser=false`
+  - `sender="Listen-Only"`
+  - `tokenCount=0`
+  - `_meiliIndex=false`
+  - `metadata.viventium.type="listen_only_transcript"`
+  - `metadata.viventium.mode="listen_only"`
+- Saved entries may remain visible in conversation history, but the live agent history loader and
+  voice-thread parent resolver must skip them. Turning Listen-Only off must not cause ambient
+  transcripts to be sent to the next live LLM call as prior assistant context.
+- When the latest visible conversation row is already a Listen-Only transcript, the next
+  Listen-Only transcript must parent to that row so ambient transcript entries form a linear
+  transcript lane instead of one LibreChat branch per utterance. If the latest row is not
+  Listen-Only, persistence falls back to the resolved live parent.
+- Conversation recall must exclude these entries from the normal prior-chat corpus. The daily
+  memory hardener may read them as `ambient_transcript` soft evidence and must apply the same
+  transcript corroboration discipline used for meeting transcripts before writing stable memory.
+- Runtime must not add prompt-text classifiers, keyword gates, or agent-name branches to implement
+  Listen-Only. The owning switch is structured call-session state.
+
 ### Voice Gateway Contract
 - `POST /api/viventium/calls` returns the call session id, room name, conversation id, and playground URL.
 - `GET /api/viventium/calls/:callSessionId/state` returns the current session state.
-- `POST /api/viventium/calls/:callSessionId/state` renews the session TTL and can update Wing Mode.
+- `POST /api/viventium/calls/:callSessionId/state` renews the session TTL and can update Wing Mode
+  and Listen-Only Mode.
 - Voice gateway requests must carry the shared call-session secret and session identity.
 - Agent dispatch metadata for modern-playground calls must be hydrated from the authoritative
   call-session voice settings server-side before dispatch creation; do not rely on the browser's
@@ -265,6 +313,9 @@ background-cortex behavior.
     not kill the idle process before the worker can accept calls
   - local Whisper VAD fallback defaults to a longer silence budget than remote/STT-owned routes, and
     explicit `VIVENTIUM_STT_VAD_MIN_SILENCE` still overrides that default
+  - local Whisper VAD fallback defaults to a slightly longer minimum speech threshold than
+    remote/STT-owned routes, and explicit `VIVENTIUM_STT_VAD_MIN_SPEECH` still overrides that
+    default
   - runtime logs must state why a user turn completed, using normalized reason labels such as
     `vad_silence`, `stt_end_of_turn`, or `semantic_turn_detector`
 - Per-call requested voice-route overrides must recompute the effective turn-taking defaults from the

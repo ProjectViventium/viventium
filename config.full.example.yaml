@@ -15,6 +15,10 @@ runtime:
     # Keep browser password reset off unless real email delivery is configured.
     # Safer operator path: bin/viventium password-reset-link <email>
     allow_password_reset: false
+    # Optional connected-account OAuth browser return override.
+    # Leave blank to return through the configured DOMAIN_SERVER/public API origin.
+    # Set only for local QA/off-network operator cases, e.g. http://localhost:3190.
+    connected_accounts_return_origin: ""
   network:
     # Remote browser voice calls from other devices need a real HTTPS/WSS deployment path for the
     # web UI and LiveKit media plane. Local installs should default to disabled until the operator
@@ -57,8 +61,10 @@ runtime:
     # Semantic hardening is opt-in because it sends local memory/conversation context
     # through the host-authenticated Claude Code or Codex CLI session.
     enabled: false
-    schedule: "0 5 * * *"
+    schedule: "0 3 * * *"
     timezone: America/Toronto
+    # Optional: scope hardening to one local account email. Empty means all local users.
+    operator_user_email: ""
     lookback_days: 7
     min_user_idle_minutes: 60
     max_changes_per_user: 3
@@ -67,7 +73,17 @@ runtime:
     dry_run_first: true
     provider_profile: launch_ready_only
     anthropic_model: claude-opus-4-7
-    openai_model: gpt-5.4
+    anthropic_effort: xhigh
+    openai_model: gpt-5.5
+    openai_reasoning_effort: xhigh
+    transcripts:
+      # Optional local folder for meeting transcripts. Empty disables transcript ingestion.
+      source_dir: ""
+      max_files_per_run: 20
+      max_chars_per_file: 500000
+      summary_max_chars: 32000
+      stable_evidence_max_age_days: 90
+      rag_mode: detailed_summary_only
   # Shared background follow-up window for LibreChat, live voice, and Telegram.
   # This is the Phase B window that still allows a late main-agent follow-up to surface
   # after background insights finish.

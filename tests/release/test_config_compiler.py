@@ -74,17 +74,156 @@ def source_of_truth_built_in_agent_map() -> dict[str, str]:
     }
 
 
+XAI_CURRENT_DEFAULT_MODELS = [
+    "grok-4.3",
+    "grok-4.20-multi-agent-0309",
+    "grok-4.20-0309-reasoning",
+    "grok-4.20-0309-non-reasoning",
+]
+
+XAI_RETIRED_MODEL_IDS = {
+    "grok-4-1-fast-reasoning",
+    "grok-4-1-fast-non-reasoning",
+    "grok-4-fast-reasoning",
+    "grok-4-fast-non-reasoning",
+    "grok-4-0709",
+    "grok-code-fast-1",
+    "grok-3",
+    "grok-imagine-image-pro",
+}
+
+
+def custom_endpoint(endpoints: list[dict], name: str) -> dict:
+    for endpoint in endpoints:
+        if endpoint.get("name") == name:
+            return endpoint
+    raise AssertionError(f"missing custom endpoint {name!r}")
+
+
 def test_memory_hardening_rejects_non_launch_ready_openai_model() -> None:
     with pytest.raises(SystemExit, match="openai_model must stay in launch-ready"):
         config_compiler.resolve_memory_hardening_settings(
             {
                 "runtime": {
                     "memory_hardening": {
-                        "openai_model": "gpt-5.5",
+                        "openai_model": "gpt-5.4",
                     }
                 }
             }
         )
+
+
+def test_build_custom_endpoints_xai_defaults_to_grok_43() -> None:
+    xai = custom_endpoint(config_compiler.build_custom_endpoints(), "xai")
+    models = xai["models"]["default"]
+
+    assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
+    assert not any("experimental-beta-0304" in model for model in models)
+    assert xai["titleModel"] == "grok-4.3"
+    assert xai["summaryModel"] == "grok-4.3"
+    assert xai["titleModel"] not in XAI_RETIRED_MODEL_IDS
+    assert xai["summaryModel"] not in XAI_RETIRED_MODEL_IDS
+
+
+def test_source_template_xai_endpoint_uses_current_stable_models() -> None:
+    source = load_source_of_truth_librechat_yaml()
+    xai = custom_endpoint(source["endpoints"]["custom"], "xai")
+    models = xai["models"]["default"]
+
+    assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
+    assert not any("experimental-beta-0304" in model for model in models)
+    assert XAI_RETIRED_MODEL_IDS.isdisjoint(models)
+    assert xai["titleModel"] == "grok-4.3"
+    assert xai["summaryModel"] == "grok-4.3"
+
+
+def test_rendered_librechat_yaml_xai_endpoint_uses_grok_43_after_source_template_merge() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+    xai = custom_endpoint(librechat_yaml["endpoints"]["custom"], "xai")
+    models = xai["models"]["default"]
+
+    assert models[:4] == XAI_CURRENT_DEFAULT_MODELS
+    assert XAI_RETIRED_MODEL_IDS.isdisjoint({xai["titleModel"], xai["summaryModel"]})
+    assert xai["titleModel"] == "grok-4.3"
+    assert xai["summaryModel"] == "grok-4.3"
+
+
+def test_rendered_librechat_yaml_exposes_grok_43_in_model_specs() -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+    grok_spec = next(
+        item for item in librechat_yaml["modelSpecs"]["list"] if item.get("name") == "grok-4.3"
+    )
+
+    assert grok_spec["label"] == "Grok 4.3"
+    assert grok_spec["group"] == "xai"
+    assert grok_spec["preset"]["endpoint"] == "xai"
+    assert grok_spec["preset"]["model"] == "grok-4.3"
 
 
 def test_config_compiler_minimal(tmp_path: Path) -> None:
@@ -168,7 +307,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ENABLED=false" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_SCHEDULE='0 5 * * *'" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_SCHEDULE='0 3 * * *'" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_LOOKBACK_DAYS=7" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MIN_USER_IDLE_MINUTES=60" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MAX_CHANGES_PER_USER=3" in runtime_env
@@ -176,8 +315,18 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_REQUIRE_FULL_LOOKBACK=true" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST=true" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.5" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-4-7" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.4" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.5" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=xhigh" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=20" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=500000" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=32000" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=90" in runtime_env
     assert "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE=owner" in runtime_env
     assert "START_RAG_API=false" in runtime_env
     assert "EMBEDDINGS_PROVIDER=ollama" in runtime_env
@@ -1375,6 +1524,7 @@ def test_config_compiler_renders_runtime_auth_controls(tmp_path: Path) -> None:
                 "allow_registration": False,
                 "bootstrap_registration_once": True,
                 "allow_password_reset": False,
+                "connected_accounts_return_origin": "http://localhost:3190/",
             },
             "call_session_secret": {"secret_value": "call-session-test"},
         },
@@ -1422,6 +1572,7 @@ def test_config_compiler_renders_runtime_auth_controls(tmp_path: Path) -> None:
     assert "ALLOW_REGISTRATION=false" in runtime_env
     assert "VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE=true" in runtime_env
     assert "ALLOW_PASSWORD_RESET=false" in runtime_env
+    assert "VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN=http://localhost:3190" in runtime_env
 
 
 def test_resolve_voice_settings_keeps_local_first_stt_on_intel_even_when_openai_key_exists(
@@ -2767,6 +2918,80 @@ def test_config_compiler_disables_rag_bootstrap_when_conversation_recall_default
     assert "START_RAG_API=false" in runtime_env
 
 
+def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_path: Path) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-transcripts"},
+            "personalization": {"default_conversation_recall": False},
+            "memory_hardening": {
+                "operator_user_email": "qa@example.com",
+                "transcripts": {
+                    "source_dir": "/path/to/transcripts",
+                    "max_files_per_run": 12,
+                    "max_chars_per_file": 200000,
+                    "summary_max_chars": 28000,
+                    "stable_evidence_max_age_days": 45,
+                    "rag_mode": "detailed_summary_only",
+                }
+            },
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled", "stt_provider": "whisper_local", "tts_provider": "browser"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
+    assert "START_RAG_API=true" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE=detailed_summary_only" in runtime_env
+
+
 def test_config_compiler_respects_explicit_retrieval_embeddings_override(tmp_path: Path) -> None:
     config = {
         "version": 1,
@@ -2892,6 +3117,9 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=anthropic" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=claude-opus-4-7" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
     assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-6"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
@@ -2975,6 +3203,9 @@ def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_fo
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
 
     assert env["VIVENTIUM_OPENAI_AUTH_MODE"] == "connected_account"
+    assert env["VIVENTIUM_MEMORY_HARDENING_PROVIDER"] == "openai"
+    assert env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-5.5"
+    assert env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "xhigh"
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
 

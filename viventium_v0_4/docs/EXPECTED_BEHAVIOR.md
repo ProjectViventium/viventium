@@ -23,12 +23,17 @@ This document defines the system behavior that must remain true regardless of fu
 
 ### Case B: One or more background agents activate
 1. Phase A activation detection runs for all configured background agents (2s total budget).
-2. Activated agent metadata (name, reason, confidence) is collated.
+2. Activated agent metadata (name, one-line description, reason, confidence, activation scope, and
+   direct-action scope coverage) is collated.
 3. Activation awareness is injected into the main agent system prompt.
 4. UI shows activation cards before any assistant text.
-5. Main agent responds without blocking (background agents continue running).
+5. Main agent responds without blocking (background agents continue running). If the main agent has
+   connected tools for an activated scope, it uses those tools directly in Phase A while Phase B
+   remains supplemental.
 6. Phase B executes all activated agents in parallel.
-7. UI shows brewing then complete status for each activated agent.
+7. UI shows brewing, then each activated agent reaches a terminal state:
+   visible complete insight, hidden silent no-response completion, or visible error/degradation.
+   A silent `{NTA}`/empty completion must clear progress and must not leave a stuck brewing row.
 8. After all activated agents complete, a single follow-up assistant message may be created
    (batched insights).
 9. If the user sends a newer message before completion, the follow-up adjudicator receives the
@@ -38,6 +43,8 @@ This document defines the system behavior that must remain true regardless of fu
 ## UI Order and Timing Guarantees
 - Activation cards must appear before the main response (if any activations occurred).
 - The main response must not wait for background agents to finish.
+- A deterministic hold is allowed only when an activated tool scope has no matching main-agent
+  direct-action surface.
 - Background completion rows should update independently while the user can continue chatting.
 - Follow-up appears only once all activated agents are done, and only once per user turn.
 

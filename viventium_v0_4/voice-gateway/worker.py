@@ -78,6 +78,7 @@ def optional_module_available(module_name: str) -> bool:
 HAS_TURN_DETECTOR = optional_module_available("livekit.plugins.turn_detector.multilingual")
 _TURN_DETECTOR_RUNNER_NAME = "lk_end_of_utterance_multilingual"
 _LOCAL_WHISPER_STT_PROVIDERS = {"pywhispercpp", "whisper_local"}
+_LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
 _LOCAL_WHISPER_VAD_MIN_SILENCE_S = "1.0"
 _TURN_DETECTOR_REQUIRED_ROOT_FILES = (
     "config.json",
@@ -135,6 +136,24 @@ _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
 def _glasshive_callback_is_terminal(latest: dict[str, Any]) -> bool:
     event = str(latest.get("event") or "").strip()
     return not event or event in _TERMINAL_GLASSHIVE_CALLBACK_EVENTS
+
+
+def _voice_followup_tts_max_chars() -> int:
+    try:
+        configured = int((os.getenv("VIVENTIUM_VOICE_FOLLOWUP_TTS_MAX_CHARS") or "").strip())
+    except Exception:
+        configured = 2400
+    return max(500, min(configured or 2400, 8000))
+
+
+def cap_voice_followup_for_tts(text: str) -> str:
+    value = str(text or "").strip()
+    limit = _voice_followup_tts_max_chars()
+    if len(value) <= limit:
+        return value
+    tail = "\n\nI have the full report in the chat."
+    budget = max(100, limit - len(tail) - 3)
+    return f"{value[:budget].rstrip()}...{tail}"
 
 # === VIVENTIUM START ===
 # Feature: No-response tag ({NTA}) suppression for passive/background follow-ups.
@@ -1676,13 +1695,12 @@ def _attach_room_diagnostics(ctx: JobContext, *, call_session_id: str) -> None:
 
 def _silero_vad_kwargs_for_env(env: Optional[Env] = None) -> dict[str, Any]:
     source = os.environ
-    if (
-        env is not None
-        and _is_local_whisper_stt(env.stt_provider)
-        and not (os.getenv("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip()
-    ):
+    if env is not None and _is_local_whisper_stt(env.stt_provider):
         source = dict(os.environ)
-        source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
+        if not (os.getenv("VIVENTIUM_STT_VAD_MIN_SPEECH") or "").strip():
+            source["VIVENTIUM_STT_VAD_MIN_SPEECH"] = _LOCAL_WHISPER_VAD_MIN_SPEECH_S
+        if not (os.getenv("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip():
+            source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
     return get_silero_vad_kwargs(source)
 
 
@@ -2036,10 +2054,36 @@ class CortexFollowupScheduler:
                                     and text.strip()
                                     and _glasshive_callback_is_terminal(latest)
                                 ):
-                                    text = text.strip()
+                                    delivery = await self._claim_glasshive_delivery(session, latest)
+                                    if delivery:
+                                        text = str(
+                                            delivery.get("fullText")
+                                            or delivery.get("text")
+                                            or text
+                                        ).strip()
+                                    else:
+                                        text = text.strip()
                                     if is_no_response_only(text):
+                                        if delivery:
+                                            await self._mark_glasshive_delivery_status(
+                                                session,
+                                                delivery,
+                                                "suppressed",
+                                                reason="{NTA}",
+                                            )
                                         return
-                                    self._speak(text, seq, allow_stale_delivery=allow_stale_delivery)
+                                    spoken = self._speak(
+                                        text,
+                                        seq,
+                                        allow_stale_delivery=allow_stale_delivery,
+                                    )
+                                    if delivery:
+                                        await self._mark_glasshive_delivery_status(
+                                            session,
+                                            delivery,
+                                            "sent" if spoken else "failed",
+                                            error="" if spoken else "voice follow-up was not spoken",
+                                        )
                                     return
 
                     data = None
@@ -2160,21 +2204,103 @@ class CortexFollowupScheduler:
             return None
         return None
 
-    def _speak(self, text: str, seq: int, *, allow_stale_delivery: bool = False) -> None:
-        if not allow_stale_delivery and seq != self._seq:
+    async def _claim_glasshive_delivery(
+        self, session: aiohttp.ClientSession, latest: dict[str, Any]
+    ) -> Optional[dict[str, Any]]:
+        callback_id = str(latest.get("callbackId") or latest.get("callback_id") or "").strip()
+        if not callback_id:
+            return None
+        url = f"{self._origin}/api/viventium/voice/glasshive/deliveries/claim"
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        try:
+            async with session.post(
+                url,
+                headers=headers,
+                json={
+                    "callbackId": callback_id,
+                    "leaseMs": 600_000,
+                    "dispatcherId": f"voice-{self._auth.call_session_id}",
+                },
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                payload = await resp.json()
+                deliveries = payload.get("deliveries") if isinstance(payload, dict) else None
+                if isinstance(deliveries, list) and deliveries:
+                    first = deliveries[0]
+                    return first if isinstance(first, dict) else None
+        except Exception:
+            return None
+        return None
+
+    async def _mark_glasshive_delivery_status(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+        status: str,
+        *,
+        error: str = "",
+        reason: str = "",
+    ) -> None:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id:
             return
+        url = f"{self._origin}/api/viventium/voice/glasshive/deliveries/{delivery_id}/status"
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        payload: dict[str, Any] = {"claimId": claim_id, "status": status}
+        if error:
+            payload["error"] = error[:1000]
+        if reason:
+            payload["reason"] = reason[:1000]
+        try:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status == 409:
+                    logger.warning(
+                        "[voice-gateway] GlassHive delivery claim was lost before status=%s",
+                        status,
+                    )
+                    return
+                if resp.status != 200:
+                    logger.warning(
+                        "[voice-gateway] GlassHive delivery status update failed (status=%s)",
+                        resp.status,
+                    )
+        except Exception as exc:
+            logger.warning("[voice-gateway] GlassHive delivery status update failed: %s", exc)
+
+    def _speak(self, text: str, seq: int, *, allow_stale_delivery: bool = False) -> bool:
+        if not allow_stale_delivery and seq != self._seq:
+            return False
         try:
             # No-response is an intentional "say nothing" signal.
             if is_no_response_only(text):
-                return
+                return False
             cleaned = sanitize_voice_followup_text(text)
             if contains_no_response_tag(text):
                 cleaned = strip_inline_nta(cleaned)
             if not cleaned:
-                return
+                return False
+            cleaned = cap_voice_followup_for_tts(cleaned)
             self._session.say(cleaned, allow_interruptions=True, add_to_chat_ctx=False)
+            return True
         except Exception as exc:
             logger.warning("[voice-gateway] Failed to speak follow-up: %s", exc)
+            return False
 # === VIVENTIUM END ===
 
 

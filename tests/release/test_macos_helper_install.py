@@ -496,6 +496,15 @@ def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_p
 
     helper_binary = fake_home / "Applications" / "Viventium.app" / "Contents" / "MacOS" / "ViventiumHelper"
     assert helper_binary.exists()
+    helper_strings = subprocess.run(
+        ["/usr/bin/strings", str(helper_binary)],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert "Advanced" in helper_strings
+    assert "Ingest Meeting Transcripts" in helper_strings
+    assert "helper-transcript-ingest.log" in helper_strings
     signature = subprocess.run(
         ["/usr/bin/codesign", "-dv", str(fake_home / "Applications" / "Viventium.app")],
         text=True,
@@ -633,6 +642,54 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'alert.messageText = "Backup snapshot created"' in source
     assert 'alert.messageText = "Backup snapshot failed"' in source
     assert 'private nonisolated static func latestSnapshotPath(appSupportDir: String) -> String?' in source
+    assert '@Published private(set) var transcriptIngestInProgress: Bool = false' in source
+    assert "private struct CommandCaptureResult" in source
+    assert "var transcriptIngestActionLabel: String {" in source
+    assert 'self.transcriptIngestInProgress ? "Ingesting Transcripts..." : "Ingest Meeting Transcripts"' in source
+    assert "func ingestMeetingTranscripts() {" in source
+    assert "private enum TranscriptIngestSourceStatus: Equatable" in source
+    assert "private static func transcriptIngestSourceStatus(config: HelperConfig) -> TranscriptIngestSourceStatus" in source
+    assert "private static func transcriptIngestScopeDescription(config: HelperConfig) -> String" in source
+    assert 'values["VIVENTIUM_MEMORY_TRANSCRIPTS_DIR"]' in source
+    assert 'values["VIVENTIUM_MEMORY_HARDENING_USER_EMAIL"]' in source
+    assert '"all opted-in local users"' in source
+    assert 'confirm.messageText = "Ingest meeting transcripts?"' in source
+    assert 'confirm.informativeText = "Viventium will process the configured transcript source for \\(ingestScope)."' in source
+    assert 'self.log("Transcript ingest blocked; no configured transcript source")' in source
+    assert 'self.log("Transcript ingest blocked; configured transcript source is unavailable")' in source
+    assert 'self.log("Manual transcript ingest requested; scope: \\(ingestScope)")' in source
+    assert 'logFileName: "helper-transcript-ingest.log"' in source
+    assert '"Manual transcript ingest requested; scope: \\(ingestScope)"' in source
+    assert "let runResult = Self.runMemoryHardeningCaptured(" in source
+    assert 'arguments: ["ingest-transcripts", "--apply", "--ignore-idle-gate", "--json"]' in source
+    assert "let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)" in source
+    assert "private nonisolated static func runMemoryHardeningStatusOnly(" in source
+    assert "private nonisolated static func runMemoryHardeningCaptured(" in source
+    captured_section = source.split(
+        "private nonisolated static func runMemoryHardeningCaptured(",
+        1,
+    )[1].split("private nonisolated static func transcriptIngestRunSummary", 1)[0]
+    assert 'process.executableURL = URL(fileURLWithPath: "/usr/bin/env")' in source
+    assert '"\\(repoRoot)/scripts/viventium/memory_harden.py"' in source
+    assert 'environment["VIVENTIUM_APP_SUPPORT_DIR"] = appSupportDir' in source
+    assert "NSTemporaryDirectory()" in source
+    assert "process.standardOutput = stdoutHandle ?? FileHandle.nullDevice" in source
+    assert "String(contentsOf: stdoutURL, encoding: .utf8)" in source
+    assert "FileManager.default.removeItem(at: stdoutURL)" in source
+    assert "let stdoutPipe = Pipe()" not in captured_section
+    assert "private nonisolated static func transcriptIngestRunSummary(stdout: String) -> String?" in source
+    assert '"0 files deferred by caps"' in source
+    assert 'files deferred by caps; run ingest again or let the 3am job continue' in source
+    assert "private nonisolated static func runCLIStatusOnly(" in source
+    assert "process.standardOutput = FileHandle.nullDevice" in source
+    assert "process.standardError = FileHandle.nullDevice" in source
+    assert 'alert.messageText = "Transcript ingest completed"' in source
+    assert '"Viventium processed the configured transcript source for \\(ingestScope)."' in source
+    assert 'alert.messageText = "Transcript ingest failed"' in source
+    assert 'Menu("Advanced")' in source
+    assert 'Button(self.controller.transcriptIngestActionLabel) {' in source
+    assert "self.controller.ingestMeetingTranscripts()" in source
+    assert "func readRuntimeValues(appSupportDir: String) -> [String: String]" in source
     assert '@Published private(set) var showInStatusBarEnabled: Bool = true' in source
     assert "private var config: HelperConfig?" in source
     assert 'self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true' in source

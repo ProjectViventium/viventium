@@ -11,6 +11,8 @@ Additional current QA artifacts:
 - `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
 - `qa/background_agents/telegram_scheduler_fallback_2026-04-24.md` — scheduled Telegram degraded-delivery regression for deferred fallback provenance
 - `qa/background_agents/scheduled_live_fact_truthfulness_2026-04-25.md` — scheduled live-fact truthfulness regression for weather/news/markets/web facts without verified tool evidence
+- `qa/background_agents/phase_a_phase_b_reliability_2026-05-06.md` — Phase A direct-tool / Phase B supplemental background-agent reliability regression with terminal silent-completion coverage
+- `qa/background_agents/cortex_phase_b_fallback_2026-05-06.md` — Phase B execution fallback and activation narrowing regression for support/confirmation cortices
 
 ## Requirements Under Test
 

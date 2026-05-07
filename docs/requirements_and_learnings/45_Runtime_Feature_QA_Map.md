@@ -12,6 +12,7 @@ verification, and regression checks stay grounded in one place.
 - `qa/installer-resilience/README.md`
 - `qa/installer-piped-bootstrap/README.md`
 - `qa/installer-wait-taglines/README.md`
+- `qa/config-compiler-xai-models/README.md`
 - `qa/continuity-ops/README.md`
 - `qa/remote-access/README.md`
 
@@ -21,6 +22,7 @@ Use these when changing:
 - `bin/viventium`
 - start/stop/status/doctor flows
 - public remote-access posture surfaced by the local runtime
+- provider model inventory compiled into generated `librechat.yaml`
 - first-account browser onboarding on clean installs
 - clean-install helper/bootstrap behavior
 - continuity-aware snapshot / restore / upgrade behavior
@@ -35,6 +37,7 @@ Use these when changing:
 - `qa/background_agents/05_coverage_matrix.md`
 - `qa/background_agents/06_agent_signoff_manifest.md`
 - `qa/background_agents/activation_reliability_2026-04-12.md`
+- `qa/background_agents/cortex_phase_b_fallback_2026-05-06.md`
 
 Use these when changing:
 
@@ -59,6 +62,8 @@ Use this when changing:
 
 - `qa/memory-continuity/README.md`
 - `qa/memory-hardening/README.md`
+- `qa/meeting-transcript-memory/README.md`
+- `qa/listen-only-mode/README.md`
 
 Use these when changing:
 
@@ -66,6 +71,9 @@ Use these when changing:
 - memory maintenance and compaction
 - scheduled memory hardening
 - memory hardening model governance
+- meeting transcript folder ingestion, transcript RAG attachment, and transcript evidence promotion
+  gates
+- Listen-Only call transcript persistence, no-response behavior, and transcript evidence boundaries
 - rollback/audit handling for saved-memory changes
 - QA-account parity used to test memory continuity without dirtying the owner account
 

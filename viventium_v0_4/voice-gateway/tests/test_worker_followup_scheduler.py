@@ -132,6 +132,90 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session.say_calls), 1)
         self.assertEqual(session.say_calls[0]["text"], "The worker finished the invoice check.")
 
+    async def test_claims_glasshive_delivery_before_speaking_full_text(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+        marked: list[tuple[str, str]] = []
+
+        async def _fake_fetch_cortex(self, _http_session, _message_id):
+            return {"insights": [], "followUp": None}
+
+        async def _fake_fetch_glasshive(self, _http_session, _message_id):
+            return {
+                "latest": {
+                    "event": "run.completed",
+                    "text": "Short preview.",
+                    "callbackId": "cb_voice",
+                }
+            }
+
+        async def _fake_claim(self, _http_session, latest):
+            assert latest["callbackId"] == "cb_voice"
+            return {
+                "deliveryId": "ghcd_voice",
+                "claimId": "claim_voice",
+                "text": "Short preview.",
+                "fullText": "Full voice callback result.",
+            }
+
+        async def _fake_mark(self, _http_session, delivery, status, *, error="", reason=""):
+            _ = error, reason
+            marked.append((delivery["deliveryId"], status))
+
+        scheduler._fetch_cortex = MethodType(_fake_fetch_cortex, scheduler)
+        scheduler._fetch_glasshive = MethodType(_fake_fetch_glasshive, scheduler)
+        scheduler._claim_glasshive_delivery = MethodType(_fake_claim, scheduler)
+        scheduler._mark_glasshive_delivery_status = MethodType(_fake_mark, scheduler)
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule("msg_123", [], "", glasshive_expected=True)
+            await scheduler._task
+
+        self.assertEqual(session.say_calls[0]["text"], "Full voice callback result.")
+        self.assertEqual(marked, [("ghcd_voice", "sent")])
+
+    async def test_caps_long_glasshive_delivery_before_voice_tts(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session)
+
+        async def _fake_fetch_cortex(self, _http_session, _message_id):
+            return {"insights": [], "followUp": None}
+
+        async def _fake_fetch_glasshive(self, _http_session, _message_id):
+            return {
+                "latest": {
+                    "event": "run.completed",
+                    "text": "Short preview.",
+                    "callbackId": "cb_voice_long",
+                }
+            }
+
+        async def _fake_claim(self, _http_session, latest):
+            assert latest["callbackId"] == "cb_voice_long"
+            return {
+                "deliveryId": "ghcd_voice_long",
+                "claimId": "claim_voice_long",
+                "text": "Short preview.",
+                "fullText": "A" * 5000,
+            }
+
+        async def _fake_mark(self, _http_session, delivery, status, *, error="", reason=""):
+            _ = delivery, status, error, reason
+
+        scheduler._fetch_cortex = MethodType(_fake_fetch_cortex, scheduler)
+        scheduler._fetch_glasshive = MethodType(_fake_fetch_glasshive, scheduler)
+        scheduler._claim_glasshive_delivery = MethodType(_fake_claim, scheduler)
+        scheduler._mark_glasshive_delivery_status = MethodType(_fake_mark, scheduler)
+
+        with mock.patch.dict(os.environ, {"VIVENTIUM_VOICE_FOLLOWUP_TTS_MAX_CHARS": "800"}):
+            with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+                scheduler.schedule("msg_123", [], "", glasshive_expected=True)
+                await scheduler._task
+
+        spoken = str(session.say_calls[0]["text"])
+        self.assertLessEqual(len(spoken), 800)
+        self.assertIn("full report in the chat", spoken)
+
     async def test_waits_for_terminal_glasshive_callback_result(self) -> None:
         session = _DummySession()
         scheduler = self._build_scheduler(session=session, timeout_s=0.6, interval_s=0.25)

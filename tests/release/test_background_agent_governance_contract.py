@@ -89,7 +89,8 @@ def _load_runtime_models_contract() -> dict:
                 "runtimeFamilies: Array.from(runtime.APPROVED_BACKGROUND_RUNTIME_FAMILIES),"
                 "activationFamilies: Array.from(runtime.APPROVED_BACKGROUND_ACTIVATION_FAMILIES),"
                 "builtInAgentIds: Array.from(runtime.BUILT_IN_BACKGROUND_AGENT_IDS),"
-                "runtimeEnvAgentIds: Object.keys(runtime.AGENT_RUNTIME_ENV_BY_ID)"
+                "runtimeEnvAgentIds: Object.keys(runtime.AGENT_RUNTIME_ENV_BY_ID),"
+                "canonicalParameters: runtime.CANONICAL_BUILT_IN_BACKGROUND_MODEL_PARAMETERS"
                 "}));"
             ),
             str(RUNTIME_MODELS_SCRIPT_PATH),
@@ -147,6 +148,102 @@ def test_background_agent_execution_models_stay_in_launch_ready_families() -> No
         assert execution_family in APPROVED_EXECUTION_FAMILIES, (
             f"{agent.get('name')} drifted to non-approved execution family {execution_family}"
         )
+
+
+def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> None:
+    bundle = _load_source_of_truth()
+    sampling_params = {
+        "frequencyPenalty",
+        "frequency_penalty",
+        "presencePenalty",
+        "presence_penalty",
+        "temperature",
+        "topP",
+        "top_p",
+        "logitBias",
+        "logit_bias",
+        "n",
+        "logprobs",
+        "topLogprobs",
+        "top_logprobs",
+    }
+
+    def is_openai_reasoning_without_sampling(model: str) -> bool:
+        normalized = (model or "").strip().lower()
+        explicit_no_sampling_models = {"gpt-5.4"}
+        return bool(
+            re.match(r"^o[13](?:[-.]|$)", normalized)
+            or re.match(r"^gpt-5(?!\.|-chat)(?:-|$)", normalized)
+            or normalized in explicit_no_sampling_models
+        )
+
+    for agent in bundle.get("backgroundAgents", []):
+        model = agent.get("model_parameters", {}).get("model") or agent.get("model") or ""
+        if agent.get("provider") != "openAI" or not is_openai_reasoning_without_sampling(model):
+            continue
+        forbidden = sampling_params & set((agent.get("model_parameters") or {}).keys())
+        assert not forbidden, (
+            f"{agent.get('name')} ships unsupported OpenAI reasoning sampling params: {sorted(forbidden)}"
+        )
+
+    runtime_contract = _load_runtime_models_contract()
+    canonical_parameters = runtime_contract["canonicalParameters"] or {}
+    for agent_id, by_provider in canonical_parameters.items():
+        for provider, params in (by_provider or {}).items():
+            if provider != "openAI":
+                continue
+            forbidden = sampling_params & set((params or {}).keys())
+            assert not forbidden, (
+                f"Runtime canonical model parameters for {agent_id} ship unsupported OpenAI "
+                f"reasoning sampling params: {sorted(forbidden)}"
+            )
+
+
+def test_timeout_prone_background_agents_have_gpt_54_high_fallback() -> None:
+    bundle = _load_source_of_truth()
+
+    for agent_name in ("Confirmation Bias", "Viventium User Help"):
+        agent = _background_agent_by_name(bundle, agent_name)
+        assert agent.get("fallback_llm_provider") == "openAI"
+        assert agent.get("fallback_llm_model") == "gpt-5.4"
+        assert agent.get("fallback_llm_model_parameters", {}).get("model") == "gpt-5.4"
+        assert agent.get("fallback_llm_model_parameters", {}).get("reasoning_effort") == "high"
+
+
+def test_support_and_confirmation_activation_prompts_exclude_broad_status_checks() -> None:
+    bundle = _load_source_of_truth()
+    cortices_by_agent_id = {
+        cortex.get("agent_id"): cortex
+        for cortex in bundle.get("mainAgent", {}).get("background_cortices", [])
+        if cortex.get("agent_id")
+    }
+
+    expectations = {
+        "agent_viventium_confirmation_bias_95aeb3": [
+            "concrete claim, plan, conclusion, or assumption",
+            "routine status checks",
+            "check everything",
+            "what is the state of everything",
+            "live-data gathering",
+        ],
+        "agent_viventium_support_95aeb3": [
+            "explicitly asks how to use Viventium itself",
+            "Broad status checks",
+            "check everything",
+            "what is the state of everything",
+            "using Viventium to do work",
+            "Required positive gate",
+            "failed or behaved a certain way",
+            "developer/operator diagnostics",
+            "background-agent errors",
+            "model picker availability",
+        ],
+    }
+
+    for agent_id, required_phrases in expectations.items():
+        prompt = cortices_by_agent_id[agent_id]["activation"]["prompt"].lower()
+        for phrase in required_phrases:
+            assert phrase.lower() in prompt
 
 
 def test_local_source_of_truth_main_agent_stays_on_claude_opus_46() -> None:
@@ -207,6 +304,24 @@ def test_background_cortex_activation_models_stay_on_llama_4_scout() -> None:
         )
 
 
+def test_productivity_activation_classifiers_keep_provider_fallbacks() -> None:
+    bundle = _load_source_of_truth()
+    cortices_by_agent_id = {
+        cortex.get("agent_id"): cortex
+        for cortex in bundle.get("mainAgent", {}).get("background_cortices", [])
+        if cortex.get("agent_id")
+    }
+
+    expected_fallbacks = [
+        {"provider": "openai", "model": "gpt-5.4"},
+        {"provider": "anthropic", "model": "claude-haiku-4-5"},
+    ]
+
+    for agent_id in ("agent_viventium_online_tool_use_95aeb3", "agent_8Y1d7JNhpubtvzYz3hvEv"):
+        activation = cortices_by_agent_id[agent_id].get("activation") or {}
+        assert activation.get("fallbacks") == expected_fallbacks
+
+
 def test_live_fact_truthfulness_guard_stays_in_shipped_agent_prompts() -> None:
     bundle = _load_source_of_truth()
     main_instructions = (bundle.get("mainAgent", {}).get("instructions") or "").lower()
@@ -246,5 +361,10 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
     ]
 
     assert anthropic_names == ["claude-sonnet-4-6", "claude-opus-4-7"]
+    assert "claude-sonnet-4-7" not in {
+        spec.get("name")
+        for spec in model_specs
+        if spec.get("preset", {}).get("endpoint") == "anthropic"
+    }
     assert source.get("endpoints", {}).get("anthropic", {}).get("summaryModel") == "claude-sonnet-4-6"
     assert source.get("balance", {}).get("enabled") is False

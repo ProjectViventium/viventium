@@ -1676,6 +1676,12 @@ START_SCHEDULING_MCP="${START_SCHEDULING_MCP:-true}"
 START_GLASSHIVE="${START_GLASSHIVE:-true}"
 START_RAG_API="${START_RAG_API:-true}"
 # === VIVENTIUM START ===
+# Feature: Meeting transcript memory ingestion requires the RAG API when a transcript folder is configured.
+# === VIVENTIUM END ===
+if [[ -n "${VIVENTIUM_MEMORY_TRANSCRIPTS_DIR:-}" ]]; then
+  START_RAG_API=true
+fi
+# === VIVENTIUM START ===
 # Feature: Skyvern service toggle (default on).
 # === VIVENTIUM END ===
 START_SKYVERN="${START_SKYVERN:-true}"
@@ -3018,6 +3024,20 @@ default_voice_stt_vad_min_silence() {
   fi
 
   printf '%s\n' "0.5"
+}
+
+default_voice_stt_vad_min_speech() {
+  local provider="${1:-${VIVENTIUM_STT_PROVIDER:-whisper_local}}"
+  provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$provider" == "whisper_local" || "$provider" == "pywhispercpp" ]]; then
+    # Local whisper uses VAD to decide committed turns when semantic turn detection is
+    # unavailable. Keep it less eager than remote/STT-owned routes so one-syllable
+    # room noise does not become a persisted user turn.
+    printf '%s\n' "0.35"
+    return 0
+  fi
+
+  printf '%s\n' "0.1"
 }
 
 host_supports_local_chatterbox_mlx() {
@@ -9999,7 +10019,11 @@ PY
         else
           export VIVENTIUM_STT_VAD_MIN_SILENCE
         fi
-        export VIVENTIUM_STT_VAD_MIN_SPEECH="${VIVENTIUM_STT_VAD_MIN_SPEECH:-0.1}"
+        if [[ -z "${VIVENTIUM_STT_VAD_MIN_SPEECH:-}" ]]; then
+          export VIVENTIUM_STT_VAD_MIN_SPEECH="$(default_voice_stt_vad_min_speech "$VIVENTIUM_STT_PROVIDER")"
+        else
+          export VIVENTIUM_STT_VAD_MIN_SPEECH
+        fi
         export VIVENTIUM_STT_VAD_FORCE_CPU="${VIVENTIUM_STT_VAD_FORCE_CPU:-}"
         export ASSEMBLYAI_API_KEY="${ASSEMBLYAI_API_KEY:-}"
         # Voice configuration (ElevenLabs TTS - matching old viventium_v1 voice)

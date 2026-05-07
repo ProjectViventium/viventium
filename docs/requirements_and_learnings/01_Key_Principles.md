@@ -359,6 +359,10 @@ A developer referring to a single document about a respective feature **must per
   - `anthropic / claude-sonnet-4-6`
   - `anthropic / claude-opus-4-7`
   - `openAI / gpt-5.4`
+- Do not add a model picker entry or built-in agent assignment for a model that the target provider
+  inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
+  supported Anthropic model for Viventium; use `claude-sonnet-4-6` or `claude-opus-4-7` until a
+  verified provider catalog and model QA update replace this baseline.
 - Foundation provider rule:
   - Groq is the current launch-ready primary for activation detection under the shipped 2-second
     Phase A budget

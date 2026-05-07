@@ -1,6 +1,8 @@
 import os
 import sys
 import unittest
+import asyncio
+from unittest.mock import patch
 
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 
@@ -8,6 +10,8 @@ from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from librechat_llm import (
+    LibreChatAuth,
+    LibreChatLLM,
     _extract_final_response_text,
     _extract_final_response_message_id,
     _extract_last_user_text,
@@ -19,6 +23,42 @@ from librechat_llm import (
     is_no_response_only,
     format_insights_for_direct_speech,
 )
+
+
+class _FakeListenOnlyResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return {"status": "listen_only", "listenOnly": True}
+
+    async def text(self):
+        return ""
+
+
+class _FakeListenOnlySession:
+    def __init__(self, *args, **kwargs):
+        self.post_calls = []
+        self.get_calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, *args, **kwargs):
+        self.post_calls.append((args, kwargs))
+        return _FakeListenOnlyResponse()
+
+    def get(self, *args, **kwargs):
+        self.get_calls.append((args, kwargs))
+        raise AssertionError("Listen-Only responses must not open an SSE stream")
 
 
 class TestExtractLastUserText(unittest.TestCase):
@@ -43,6 +83,26 @@ class TestExtractLastUserText(unittest.TestCase):
     def test_ignores_empty_and_whitespace(self) -> None:
         ctx = ChatContext(items=[ChatMessage(role="user", content=[" ", "\n", "\t"])])
         self.assertEqual(_extract_last_user_text(ctx), "")
+
+
+class TestListenOnlyStream(unittest.TestCase):
+    def test_listen_only_response_returns_without_stream_subscription(self) -> None:
+        fake_session = _FakeListenOnlySession()
+
+        async def run_stream() -> None:
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["ambient transcript"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            stream = llm.chat(chat_ctx=ctx)
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                await stream._run()
+
+        asyncio.run(run_stream())
+
+        self.assertEqual(len(fake_session.post_calls), 1)
+        self.assertEqual(fake_session.get_calls, [])
 
 
 class TestFinalEventHelpers(unittest.TestCase):

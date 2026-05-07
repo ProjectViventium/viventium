@@ -194,7 +194,12 @@ Host-worker UX and callback requirements:
 - The callback path is a durable communication line between GlassHive and the originating Viventium
   conversation. It must be signed, replay-protected, anchored to the assistant response message,
   persisted in a local callback outbox until delivered, persisted in the conversation store after
-  receiver acceptance, and pollable by web, Telegram, and voice surfaces.
+  receiver acceptance, and projected into a durable surface-delivery ledger for non-web surfaces
+  such as Telegram and live voice.
+- Surface delivery state must be DB-backed and idempotent. Telegram and voice can still poll during
+  the original turn for low latency, but terminal/actionable callbacks must survive the poll window,
+  bot/gateway restart, and LibreChat process restart. Delivery rows need claim leases, retry/backoff,
+  sent/failed/suppressed states, and backlog observability.
 - This communication line must work after the original chat request has ended, after UI refresh,
   and across long-running or parallel workers. The user should not have to ask "what happened?" for
   GlassHive to return the result.
@@ -216,8 +221,15 @@ Host-worker UX and callback requirements:
   rendering preserves paragraphs, redacts common local/private path forms, and uses the same visible
   length budget as the GlassHive terminal callback selector so the selected result is not truncated
   again.
+- Long completion reports may have a short visible web preview plus a sanitized full-text delivery
+  payload for Telegram/voice or document-style follow-up. Raw callback payloads, raw logs, local
+  absolute paths, screenshots, and secret-bearing command output must not be copied into the public
+  callback message or delivery ledger.
 - Completion selection must happen before truncating stored CLI output. Long progress streams should
   never push the final assistant result out of the retained text window.
+- Host CLI output retention may cap the already-selected/redacted user-facing output for storage,
+  but that cap must keep the selected result, not arbitrary progress chatter. If selector behavior
+  changes, rerun long `FINAL REPORT:` callback QA before shipping.
 - Repeated visible callbacks for one worker run update a single task-status message instead of
   creating a chain of callback branches.
 - Visible callbacks must include the assistant response `message_id` for the originating turn.

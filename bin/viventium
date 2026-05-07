@@ -580,7 +580,8 @@ Usage:
   bin/viventium memory-harden apply [--run-id <id>] [--user-email <email>]
   bin/viventium memory-harden rollback --run-id <id>
   bin/viventium memory-harden status
-  bin/viventium memory-harden install-schedule [--schedule "0 5 * * *"]
+  bin/viventium memory-harden ingest-transcripts --dry-run|--apply [--user-email <email>] [--transcript-rag-mode detailed_summary_only]
+  bin/viventium memory-harden install-schedule [--schedule "0 3 * * *"]
   bin/viventium memory-harden uninstall-schedule
 
 Runs local saved-memory hardening as an operator job. Raw proposals and rollback
@@ -778,7 +779,7 @@ sync_memory_hardening_schedule() {
       --repo-root "$REPO_ROOT" \
       --app-support-dir "$APP_SUPPORT_DIR" \
       --runtime-dir "$RUNTIME_DIR" \
-      install-schedule --schedule "${schedule:-0 5 * * *}" --json >/dev/null; then
+      install-schedule --schedule "${schedule:-0 3 * * *}" --json >/dev/null; then
       echo "Warning: failed to install memory hardening schedule." >&2
       return 1
     fi
@@ -1257,7 +1258,7 @@ maybe_reexec_active_runtime_checkout() {
   shift || true
 
   case "$command_name" in
-    start|launch|stop|install-helper|uninstall-helper|status-bar)
+    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden)
       ;;
     *)
       return 0

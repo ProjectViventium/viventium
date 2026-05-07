@@ -16,6 +16,10 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 5. Voice Gateway streams audio → LibreChat `/api/viventium/voice/chat` and speaks the response.
 6. Background insights are surfaced after the main response (same contract as text).
 
+Listen-Only Mode is the intentional exception to steps 5-6: the voice route saves the transcribed
+turn as structured transcript evidence and returns `status=listen_only` without starting an Agents
+stream, TTS, follow-up polling, tools, background cortices, title generation, or live memory writes.
+
 ### Playground Deep-Link Parameters
 - `roomName`: LiveKit room id
 - `callSessionId`: authentication context for the voice gateway
@@ -84,6 +88,23 @@ The design intentionally opens the LiveKit Agents Playground instead of rebuildi
 - Internal `cortex_insight` content remains available in LibreChat's background-insight UI, but it
   must not be voiced directly into the modern playground transcript/TTS path.
 - Voice follow-up requests set `suppressBackgroundCortices=true` to prevent recursion.
+
+## Listen-Only Mode
+- Listen-Only Mode is a persisted call-session state, mutually exclusive with Wing Mode.
+- It uses the current STT route. Local `pywhispercpp` / WhisperCPP is the intended low-cost route,
+  but runtime must not silently remap the user's selected listening provider.
+- `/api/viventium/voice/chat` still authenticates the voice worker, resolves the conversation, and
+  coalesces rapid same-parent speech. When `listenOnlyModeEnabled` is true, it saves a
+  `listen_only_transcript` message with `tokenCount=0` and returns no stream id.
+- The Listen-Only save path intentionally returns before `validateConvoAccess` and endpoint-option
+  construction because the request is already bound to the server-side call session and no
+  browser-supplied conversation target is trusted.
+- The LiveKit LLM bridge treats `listenOnly=true` / `status=listen_only` as terminal silence.
+- Listen-Only entries are not user-authored chat turns and are excluded from normal conversation
+  recall corpus construction and live agent prompt history. The daily memory hardener can read them
+  as `ambient_transcript` soft evidence.
+- Same-microphone audio is not treated as diarized. Speaker labels come only from structured
+  LiveKit participant/track metadata when that metadata is present.
 
 ## Agent LLM Routes and Fallback
 - The live call LLM defaults to the selected agent provider/model.
@@ -268,7 +289,8 @@ Supported providers:
 - `openai` (uses `VIVENTIUM_OPENAI_STT_MODEL`, wrapped in StreamAdapter+VAD when available)
 
 VAD tuning (shared with v1):
-- `VIVENTIUM_STT_VAD_MIN_SPEECH` (default `0.1`)
+- `VIVENTIUM_STT_VAD_MIN_SPEECH` (default `0.1`; local Whisper fallback defaults to `0.35`
+  unless explicitly configured)
 - `VIVENTIUM_STT_VAD_MIN_SILENCE` (default `0.5`; local Whisper fallback defaults to `1.0`
   unless explicitly configured)
 - `VIVENTIUM_STT_VAD_ACTIVATION` (default `0.4`)
@@ -291,7 +313,8 @@ Notes:
 - `whisper_local` / `pywhispercpp` inherits the shared interruption knobs and saved-route contract,
   but it remains a StreamAdapter + Silero VAD path when semantic turn detection is unavailable. It
   does not get AssemblyAI-native endpointing knobs. Its VAD fallback uses a longer silence budget
-  than remote/STT-owned routes so short reflective pauses do not become committed user turns.
+  and a slightly longer minimum speech threshold than remote/STT-owned routes so short reflective
+  pauses, coughs, and one-syllable room noise do not become committed user turns.
 - Local Whisper routes default `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=inf`; CPU load during model
   warm-up is not a reliable overload signal and must not make LiveKit stop dispatching jobs to a
   healthy local worker.

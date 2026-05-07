@@ -83,6 +83,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - Human-facing browser auth posture must compile from canonical config too:
   - `runtime.auth.allow_registration` -> `ALLOW_REGISTRATION`
   - `runtime.auth.allow_password_reset` -> `ALLOW_PASSWORD_RESET`
+  - `runtime.auth.connected_accounts_return_origin` ->
+    `VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN`; leave blank for the normal configured
+    `DOMAIN_SERVER`/public API return path, and set it only for local/off-network connected-account
+    OAuth QA when the completion page must return to a localhost browser
 - Generated runtime config must not silently preserve hidden provider defaults from the source
   template when the installer/compiler already knows the machine's real auth surface.
 - `librechat.yaml` memory-writer provider/model must be compiled from the actually available
@@ -97,7 +101,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - `runtime.memory_hardening` is the canonical source for the local saved-memory hardening operator
   job:
   - default is `enabled: false`
-  - default schedule is `0 5 * * *`
+  - default schedule is `0 3 * * *`
+  - schedules are local macOS wall-clock time; the exported timezone value is operator context,
+    not a LaunchAgent timezone conversion
+  - `operator_user_email` optionally scopes scheduled/helper hardening to one local account; empty
+    means all local users are eligible
   - default lookback is 7 days
   - default idle gate is 60 minutes
   - default max semantic edits is 3 keys per user per run
@@ -106,17 +114,66 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     7-day corpus unless an operator explicitly allows partial lookback
   - install, configure, upgrade, compile-config, and start reconcile the macOS LaunchAgent from
     the generated env: enabled configs install the daily schedule, disabled configs remove it
+  - the installed macOS LaunchAgent command must invoke `scripts/viventium/memory_harden.py`
+    directly with the generated runtime dir instead of routing scheduled hardening through
+    `bin/viventium`; the user-facing launcher may be running when the 3am job fires
+  - the LaunchAgent working directory must be App Support, not the repo checkout, so unattended
+    jobs do not inherit macOS protected-folder working-directory failures when a developer checkout
+    is under Documents/Desktop/Downloads
+  - the LaunchAgent command must start the wrapper with a minimal `env -i` environment; provider
+    keys and runtime settings are loaded inside the wrapper from generated Viventium runtime files,
+    not inherited from unrelated user-session launchd variables
+  - the wrapper's generated env load order must match the public CLI: legacy repo/local env files
+    are compatibility fallbacks, then `runtime.env`, `runtime.local.env`, and
+    `service-env/librechat.env` load in that order so canonical generated runtime state wins
+  - `bin/viventium memory-harden` participates in active-runtime-checkout re-exec, so helper/manual
+    hardening and schedule installation use the same protected-folder-safe runtime checkout resolver
+    as start/stop/helper commands
   - disabling the schedule clears the dry-run-first marker so a later re-enable gets the same
     first-run guard
+  - when `dry_run_first` is enabled, the first scheduled apply with no marker performs a dry-run
+    and writes the marker before future scheduled applies can mutate memory
   - non-macOS operators must wire an equivalent cron/systemd timer; the public CLI currently
     auto-installs schedules only through macOS LaunchAgents
   - `provider_profile` must stay `launch_ready_only`
-  - default Anthropic hardening model is `claude-opus-4-7`
-  - default OpenAI hardening model is `gpt-5.4`
-  - introducing a newer model family such as `gpt-5.5` requires updating model governance and
-    release contract tests first
+  - default Anthropic hardening tuple is `anthropic / claude-opus-4-7 / xhigh`; the root wrapper
+    passes it to the Claude Code CLI path as the explicit provider/model plus
+    `VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh`
+  - default OpenAI hardening tuple is `openai / gpt-5.5 / xhigh`; the compiler emits
+    `VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=xhigh` alongside the explicit
+    provider/model tuple for the Codex CLI path
+  - optional meeting transcript ingestion is configured under
+    `runtime.memory_hardening.transcripts`
+  - `transcripts.source_dir` compiles to `VIVENTIUM_MEMORY_TRANSCRIPTS_DIR`; empty disables the
+    transcript lane
+  - transcript caps are deterministic cost controls, not content judgment:
+    `max_files_per_run` default 20, `max_chars_per_file` default 500,000,
+    `summary_max_chars` default 32,000, and stable-evidence decay default 90 days
+  - transcript files deferred by a per-run cap are not terminal; the next scheduled/helper run must
+    retry them even when mtime, size, and content hash are unchanged
+  - transcript RAG mode defaults to `detailed_summary_only`, which means raw transcripts are first
+    summarized as complete per-transcript units and detailed summary artifacts are stored/attached
+    for normal file_search recall; `raw_and_summary` and `raw_only` are explicit operator/QA modes
+  - a configured but unhealthy RAG/vector runtime must not block chat-only memory hardening:
+    transcript vector lifecycle and transcript-derived memory writes are deferred, while chat-only
+    accepted operations may still apply
+  - when a transcript source directory is configured, generated runtime must start the RAG sidecar
+    even if default conversation recall is off, because transcript summary artifacts are
+    vector-backed file_search resources
+  - the macOS helper's manual `Advanced > Ingest Meeting Transcripts` action uses the same wrapper
+    path, shows the active operator scope before and after the run, bypasses the idle gate because
+    it is user-triggered, and writes only status/scope/count helper logs
+  - introducing a future newer model family requires updating model governance and release contract
+    tests first
 - Endpoint helper config must not hide unavailable provider dependencies:
   - Anthropic conversation-title generation must stay on Anthropic instead of routing through xAI
+  - xAI custom endpoint inventory is an explicit compiler/source-template contract:
+    `grok-4.3` is the default and title/summary model, current 4.20 stable IDs use the dated
+    `0309` forms documented by xAI, and model IDs scheduled for xAI's May 15, 2026 retirement must
+    not be used as generated defaults
+  - Keep the compiler fallback and `local.librechat.yaml` source-template xAI endpoint aligned;
+    the source template currently wins same-name custom endpoint merges in generated
+    `librechat.yaml`
 - Retrieval-runtime prerequisites must stay honest across install/start surfaces:
   - if conversation recall is configured to use Ollama embeddings, preflight, install summary,
     doctor, and launcher readiness must all surface the same local-runtime dependency

@@ -66,39 +66,59 @@ class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
     def test_get_stt_uses_shared_vad_kwargs(self) -> None:
         expected_kwargs = {
             "sample_rate": 16000,
-            "min_speech_duration": 0.1,
-            "min_silence_duration": 1.2,
+            "min_speech_duration": 0.35,
+            "min_silence_duration": 1.0,
             "max_buffered_speech": 900.0,
             "activation_threshold": 0.4,
             "force_cpu": False,
         }
 
-        with mock.patch.object(
-            pywhispercpp_provider,
-            "PyWhisperCppSTT",
-            return_value="fake-stt",
-        ) as stt_cls:
-            with mock.patch.object(
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(
+                pywhispercpp_provider,
+                "PyWhisperCppSTT",
+                return_value="fake-stt",
+            ) as stt_cls,
+            mock.patch.object(
                 pywhispercpp_provider,
                 "get_silero_vad_kwargs",
                 return_value=expected_kwargs,
-            ) as get_kwargs:
-                with mock.patch(
-                    "livekit.plugins.silero.VAD.load",
-                    return_value="fake-vad",
-                ) as vad_load:
-                    with mock.patch.object(
-                        pywhispercpp_provider,
-                        "StreamAdapter",
-                        return_value="fake-adapter",
-                    ) as adapter_cls:
-                        result = pywhispercpp_provider.get_stt()
+            ) as get_kwargs,
+            mock.patch(
+                "livekit.plugins.silero.VAD.load",
+                return_value="fake-vad",
+            ) as vad_load,
+            mock.patch.object(
+                pywhispercpp_provider,
+                "StreamAdapter",
+                return_value="fake-adapter",
+            ) as adapter_cls,
+        ):
+            result = pywhispercpp_provider.get_stt()
 
         self.assertEqual(result, "fake-adapter")
-        stt_cls.assert_called_once_with(language=os.getenv("VIVENTIUM_STT_LANGUAGE", "en"))
-        get_kwargs.assert_called_once_with()
+        stt_cls.assert_called_once_with(language="en")
+        get_kwargs.assert_called_once()
+        vad_env = get_kwargs.call_args.args[0]
+        self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SPEECH"], "0.35")
+        self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SILENCE"], "1.0")
         vad_load.assert_called_once_with(**expected_kwargs)
         adapter_cls.assert_called_once_with(stt="fake-stt", vad="fake-vad")
+
+    def test_local_whisper_vad_defaults_respect_explicit_overrides(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_VAD_MIN_SPEECH": "0.22",
+                "VIVENTIUM_STT_VAD_MIN_SILENCE": "0.9",
+            },
+            clear=True,
+        ):
+            vad_env = pywhispercpp_provider._local_whisper_vad_env()
+
+        self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SPEECH"], "0.22")
+        self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SILENCE"], "0.9")
 
     def test_intel_default_threads_are_lowered(self) -> None:
         with (

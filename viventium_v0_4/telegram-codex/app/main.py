@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from pathlib import Path
 
 from app.access_control import AccessControl
@@ -15,9 +16,31 @@ from app.telegram_bot import TelegramCodexBot
 from app.transcribe_local import LocalWhisperTranscriber
 
 
+_TELEGRAM_BOT_TOKEN_RE = re.compile(r"(bot)[0-9]{6,}:[A-Za-z0-9_-]{20,}")
+
+
+def redact_telegram_bot_tokens(value):
+    if isinstance(value, str):
+        return _TELEGRAM_BOT_TOKEN_RE.sub(r"\1[REDACTED]", value)
+    return value
+
+
+class TelegramTokenRedactionFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = redact_telegram_bot_tokens(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_telegram_bot_tokens(arg) for arg in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {
+                key: redact_telegram_bot_tokens(arg) for key, arg in record.args.items()
+            }
+        return True
+
+
 def configure_logging(logs_dir: Path) -> None:
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / "telegram_codex.log"
+    redaction_filter = TelegramTokenRedactionFilter()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -25,7 +48,13 @@ def configure_logging(logs_dir: Path) -> None:
             logging.FileHandler(log_path, encoding="utf-8"),
             logging.StreamHandler(),
         ],
+        force=True,
     )
+    root_logger = logging.getLogger()
+    root_logger.addFilter(redaction_filter)
+    for handler in root_logger.handlers:
+        handler.addFilter(redaction_filter)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 async def _run() -> None:

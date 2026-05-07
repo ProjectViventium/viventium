@@ -20,9 +20,10 @@ stream back to Telegram through the existing bridge.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
 - Telegram must mirror direct-action worker completion delivery. When a LibreChat turn starts a
-  GlassHive worker, the bot should keep polling the persisted GlassHive callback state long enough
-  for real host-browser/desktop work to finish and should send the final result automatically in the
-  same Telegram chat.
+  GlassHive worker, the callback receiver must persist both the same-conversation web callback and
+  a durable Telegram delivery row. The bot may use in-turn polling as a fast path, but late worker
+  results must still be claimed from the delivery ledger and sent automatically in the same
+  Telegram chat after the original poll window ends or after a bot restart.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
 - Detached/local launches must not leave Telegram pointed at a dead LibreChat localhost origin after
   frontend dev-server exits or launcher-side supervision gaps.
@@ -144,6 +145,29 @@ stream back to Telegram through the existing bridge.
 - Non-secret voice delivery timing logs must be available in normal runtime logs. Each voice-routed
   Telegram turn should log the gate decision, TTS start, TTS chunk duration/bytes, and Telegram audio
   send duration without logging bot tokens, API keys, raw private message text, or local paths.
+- GlassHive callback delivery logs must include non-secret observability states: callback accepted,
+  delivery enqueued, claimed, sent, failed, suppressed, retry count, and backlog age. Telegram Bot
+  API token-bearing URLs must be redacted from local logs and from persisted delivery failure
+  reasons.
+- A callback is not successfully accepted for Telegram or voice until both the same-conversation
+  callback message and the surface delivery ledger row are durable. If ledger enqueue fails after
+  message persistence, the callback receiver must return a retryable failure so GlassHive retries
+  rather than marking the callback delivered.
+- Duplicate callback repair must be DB-backed, not process-memory-only. If a callback message was
+  already persisted but the Telegram/voice delivery row is missing after a restart or partial
+  failure, a repeated signed callback with the same callback id must repair the missing delivery
+  row without creating a duplicate conversation message.
+- Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
+  collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
+- Telegram GlassHive delivery dispatcher tuning is operational only:
+  - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S` controls the background delivery poll interval
+    and defaults to 5 seconds.
+  - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_BATCH_SIZE` controls each claim batch and is capped at
+    25.
+  - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_LEASE_MS` controls the claim lease and defaults to 10
+    minutes, capped at 10 minutes. A lost claim must be returned as a conflict and logged as
+    observability, not silently treated as a successful status update.
+  - These knobs must not replace the durable delivery ledger or become correctness requirements.
 
 ## Telegram Attachments
 
