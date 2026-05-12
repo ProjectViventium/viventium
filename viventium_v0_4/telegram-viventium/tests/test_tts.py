@@ -172,7 +172,7 @@ def test_resolve_tts_selection_supports_xai_alias_and_voice_variant(monkeypatch)
         sys.modules,
         "config",
         _fake_config(
-            XAI_API_KEY="synthetic_xai_key",
+            XAI_API_KEY="x",
             TTS_PROVIDER_PRIMARY="openai",
             TTS_PROVIDER_FALLBACK="",
         ),
@@ -197,7 +197,7 @@ def test_resolve_tts_selection_supports_xai_tts_specific_key(monkeypatch):
         sys.modules,
         "config",
         _fake_config(
-            VIVENTIUM_XAI_TTS_API_KEY="synthetic_xai_tts_key",
+            VIVENTIUM_XAI_TTS_API_KEY="t",
             XAI_API_KEY="",
             TTS_PROVIDER_PRIMARY="openai",
             TTS_PROVIDER_FALLBACK="",
@@ -358,7 +358,7 @@ async def test_synthesize_speech_xai_uses_tts_endpoint_and_preserves_xai_tags(mo
         sys.modules,
         "config",
         _fake_config(
-            XAI_API_KEY="synthetic_xai_key",
+            XAI_API_KEY="x",
             TTS_PROVIDER_PRIMARY="xai",
             TTS_PROVIDER_FALLBACK="",
             VIVENTIUM_XAI_VOICE="Sal",
@@ -398,7 +398,7 @@ async def test_synthesize_speech_xai_uses_tts_endpoint_and_preserves_xai_tags(mo
 
     assert voice_bytes == b"mp3-bytes"
     assert seen["url"] == "https://api.x.ai/v1/tts"
-    assert seen["headers"]["Authorization"] == "Bearer synthetic_xai_key"
+    assert seen["headers"]["Authorization"] == "Bearer x"
     assert seen["payload"]["voice_id"] == "Eve"
     assert seen["payload"]["language"] == "en"
     assert seen["payload"]["output_format"] == {
@@ -417,8 +417,8 @@ async def test_synthesize_speech_xai_prefers_tts_specific_key_and_saved_voice(mo
         sys.modules,
         "config",
         _fake_config(
-            VIVENTIUM_XAI_TTS_API_KEY="synthetic_xai_tts_key",
-            XAI_API_KEY="synthetic_xai_llm_key",
+            VIVENTIUM_XAI_TTS_API_KEY="t",
+            XAI_API_KEY="l",
             TTS_PROVIDER_PRIMARY="openai",
             TTS_PROVIDER_FALLBACK="",
             VIVENTIUM_XAI_VOICE="Sal",
@@ -457,7 +457,7 @@ async def test_synthesize_speech_xai_prefers_tts_specific_key_and_saved_voice(mo
 
     assert voice_bytes == b"mp3-bytes"
     assert seen["url"] == "https://api.x.ai/v1/tts"
-    assert seen["headers"]["Authorization"] == "Bearer synthetic_xai_tts_key"
+    assert seen["headers"]["Authorization"] == "Bearer t"
     assert seen["payload"]["voice_id"] == "Rex"
 
 
@@ -469,7 +469,7 @@ async def test_synthesize_speech_xai_strips_malformed_square_wrapper_tags(monkey
         sys.modules,
         "config",
         _fake_config(
-            XAI_API_KEY="synthetic_xai_key",
+            XAI_API_KEY="x",
             TTS_PROVIDER_PRIMARY="xai",
             TTS_PROVIDER_FALLBACK="openai",
             VIVENTIUM_XAI_VOICE="Sal",

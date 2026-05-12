@@ -752,6 +752,44 @@ def test_build_service_rows_marks_conversation_recall_starting_when_stack_should
     assert services["Conversation Recall"] == ("Starting", "http://localhost:8110")
 
 
+def test_build_service_rows_marks_conversation_recall_running_from_health_endpoint(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "personalization": {"default_conversation_recall": True},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    def fake_http_ok(url: str) -> bool:
+        return url == "http://localhost:8110/health"
+
+    monkeypatch.setattr(install_summary, "http_ok", fake_http_ok)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {"RAG_API_URL": "http://localhost:8110"},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Conversation Recall"] == ("Running", "http://localhost:8110")
+
+
 def test_resolve_summary_heading_reports_live_startup_when_stack_should_be_live(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -827,6 +865,89 @@ def test_build_service_rows_reports_auth_posture() -> None:
     )
     assert services["Account Sign-up"] == ("Closed", "Only existing accounts can sign in")
     assert "password-reset-link" in services["Password Reset"][1]
+
+
+def test_build_service_rows_does_not_report_connect_openai_when_account_route_is_configured() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "auth": {
+                "allow_registration": False,
+                "allow_password_reset": False,
+            },
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        "VIVENTIUM_OPENAI_AUTH_MODE": "connected_account",
+    }
+
+    rows = install_summary.build_service_rows(config, runtime_env, probe_live=False)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    status, detail = services["Primary AI"]
+    assert status == "Configured"
+    assert "Connect OpenAI" not in detail
+    assert "account-scoped route configured" in detail
+
+
+def test_build_service_rows_finds_repo_local_telegram_pid_files(monkeypatch, tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": True},
+            "telegram_codex": {"enabled": True},
+        },
+    }
+    runtime_env = {
+        "BOT_TOKEN": VALID_TELEGRAM_TOKEN,
+        "TELEGRAM_CODEX_BOT_TOKEN": VALID_TELEGRAM_TOKEN,
+    }
+    runtime_dir = tmp_path / "app-support" / "runtime"
+    runtime_dir.mkdir(parents=True)
+    stale_state = tmp_path / "app-support" / "state" / "runtime" / "isolated"
+    stale_state.mkdir(parents=True)
+    (stale_state / "telegram_bot.pid").write_text("111\n", encoding="utf-8")
+    (stale_state / "telegram_codex.pid").write_text("222\n", encoding="utf-8")
+
+    repo_root = tmp_path / "checkout"
+    repo_state = repo_root / ".viventium" / "runtime" / "isolated"
+    repo_state.mkdir(parents=True)
+    bot_pid = repo_state / "telegram_bot.pid"
+    codex_pid = repo_state / "telegram_codex.pid"
+    bot_pid.write_text("333\n", encoding="utf-8")
+    codex_pid.write_text("444\n", encoding="utf-8")
+
+    def fake_pid_running(path: Path) -> bool:
+        return path in {bot_pid, codex_pid}
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(install_summary, "pid_file_process_running", fake_pid_running)
+
+    rows = install_summary.build_service_rows(
+        config,
+        runtime_env,
+        runtime_dir=runtime_dir,
+        repo_root=repo_root,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Telegram Bridge"] == ("Running", "Polling Telegram bridge on this Mac")
+    assert services["Telegram Codex"] == ("Running", "Polling Telegram Codex on this Mac")
 
 
 def test_build_service_rows_reports_bootstrap_only_registration_mode() -> None:

@@ -85,6 +85,11 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - Prompt-injection protection comes from explicit untrusted-data sentinels and deterministic output
   validators, not from string-matching transcript content.
 - Content-hash state prevents unchanged files and rename-only changes from being reprocessed.
+- Processed state is only valid when the expected vector artifact still exists. Apply runs must
+  requeue indexed transcript content when Mongo bookkeeping says `embedded=true` but the local
+  vector store no longer has the corresponding summary/raw document.
+- User/source-scoped derived transcript artifacts that are no longer represented in the current
+  processed-content index are stale and must not remain attached as live recall evidence.
 - Files deferred by deterministic transcript caps are not considered processed; later scheduled or
   manual runs must retry them even when mtime, size, and content hash are unchanged.
 - Normal transcripts under the per-file/model-safe limit must be supplied completely to the

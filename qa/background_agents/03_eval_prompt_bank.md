@@ -95,3 +95,132 @@ shipped background-agent roster.
   - "Please reply with exactly DIRECT_OK and nothing else."
 - Expected primary activations:
   - none
+
+### ACT-13 Confirmation bias meta-denial after certainty
+
+- Conversation:
+  - user: "Do you think this partner deal is worth pursuing? I think the revenue upside could be real."
+  - assistant: "The upside may be real, but the decision needs evidence on incentives, proof of demand, deal terms, and opportunity cost."
+  - user: "I'm also sure it's going to generate revenue."
+  - assistant: "That confidence is exactly the part to validate."
+  - user: "Yeah, definitely no confirmation bias here."
+- Expected primary activations:
+  - `Confirmation Bias`
+  - `Red Team`
+- Outcome assertions:
+  - The activation decision must consider the immediately preceding certainty claim, not only the literal denial in the latest message.
+  - The UI must show a named terminal background-agent row for each activated cortex after refresh.
+  - The main answer must stay concise and useful; background work must not stall the first assistant response.
+
+### ACT-14 Confirmation bias standalone negation boundary
+
+- User prompt:
+  - "Lol, definitely no confirmation bias here."
+- Expected primary activations:
+  - none
+- Outcome assertions:
+  - Do not activate Confirmation Bias on a standalone joke or denial without a concrete claim, plan, conclusion, or assumption in recent context.
+
+### ACT-15 Multi-cortex outcome visibility
+
+- User prompt:
+  - "I am evaluating whether to accept a risky partnership. Analyze strategic risks, confirmation bias, red-team concerns, and practical next steps. Keep it concise."
+- Expected primary activations:
+  - `Background Analysis`
+  - `Confirmation Bias`
+  - `Red Team`
+  - `Strategic Planning`
+- Outcome assertions:
+  - Multiple activated cortices must render as separate named rows/cards, not as one anonymous "Additional thought."
+  - Terminal outcomes must persist in `messages.content` as structured cortex parts so refresh, resume, Telegram polling, and browser reload do not lose them.
+  - Silent `{NTA}` cortex completions are valid terminal completions, but stale brewing/progress rows must not remain.
+
+### ACT-16 Provider degradation must not erase background work
+
+- Scenario:
+  - Activation provider returns a retryable provider error, such as access denied, rate limit, timeout, or provider auth failure.
+  - Execution provider returns a retryable provider error after the cortex has already activated.
+- Expected primary activations:
+  - The configured activation fallback should make the same activation decision when the prompt criteria are met.
+- Outcome assertions:
+  - Execution fallback should produce either a visible insight, a silent terminal success, or a visible terminal error card with the cortex name.
+  - Provider degradation must not collapse to "0/11 activated" for all built-in cortices when a configured fallback exists.
+  - The main agent should still answer through its own fallback path when available.
+
+### ACT-17 Speed-sensitive background outcome
+
+- User prompt:
+  - "Give me the fastest useful answer first, then let any background analysis finish without blocking me: is this risky partnership worth pursuing?"
+- Expected primary activations:
+  - `Background Analysis`
+  - `Red Team`
+  - `Strategic Planning`
+- Outcome assertions:
+  - Phase A must stay within the configured detection budget.
+  - Phase B must be non-blocking relative to the first useful assistant response.
+  - Delayed cortex results must add outcome value or stay silent; they must not repeat the main answer or add operational noise.
+
+### ACT-18 Main answer must not contradict runtime-owned cards
+
+- User prompt:
+  - "I am obviously confirmation-biasing myself about this opportunity. Red-team it, check my bias, and let every activated background agent show visibly in cards with its own result."
+- Expected primary activations:
+  - `Background Analysis`
+  - `Confirmation Bias`
+  - `Red Team`
+  - `Strategic Planning`
+- Outcome assertions:
+  - The main answer must address the substantive decision or bias question instead of explaining card/UI mechanics.
+  - The main answer must not say it cannot control cards, that background cards are only a UI issue, or that there is nothing to show while runtime-owned background cards are present or pending.
+  - Activated background agents must render as named status/result cards with their own terminal result or terminal silent/error state.
+
+### ACT-19 Main answer must not offer to spin up already requested background work
+
+- User prompt:
+  - "I am probably confirmation-biasing myself about a risky partnership because the first call felt exciting and the revenue could be meaningful. Red-team the strongest counter-case, check my bias, give me the fastest useful answer first, and let the background analysis finish visibly."
+- Expected primary activations:
+  - `Background Analysis`
+  - `Confirmation Bias`
+  - `Red Team`
+  - `Strategic Planning`
+- Outcome assertions:
+  - The first answer must give a useful substantive answer immediately.
+  - The main answer must not ask whether the user wants it to spin up, start, launch, or run background agents/cortices when the prompt already requested visible background work.
+  - Runtime-owned background cards may appear before, during, or after the first answer, but they must resolve to named terminal result/silent/error states.
+
+### ACT-20 Cortex cards must not replace the Phase A answer
+
+- User prompt:
+  - "Give me the fastest useful answer first on whether this opportunity is worth pursuing, and let Red Team and Confirmation Bias run visibly in background cards."
+- Expected primary activations:
+  - `Confirmation Bias`
+  - `Red Team`
+- Outcome assertions:
+  - Groq-first activation detection runs within the Phase A wait budget and passes activated
+    background-agent names/reasons into the main-agent context.
+  - The main assistant Phase A answer must stream and remain visible after background cards appear.
+  - Cortex rows/cards must be additive status/result surfaces. They must not replace the parent
+    assistant message content.
+  - The parent assistant message stored in the DB must contain visible answer text plus structured
+    cortex parts. A cortex-only parent message fails the case, even if a later Phase B follow-up
+    message contains useful text.
+  - Reloading the conversation must preserve both the original Phase A answer and terminal
+    background-card results.
+
+### ACT-21 Latest user message controls activation detection
+
+- Conversation setup:
+  - User: "Please red-team this launch idea and check whether I am confirmation-biasing myself."
+  - Assistant: "I will challenge the launch assumptions and bias risk."
+  - User: "say \"TEST_OK\""
+- Expected primary activations for latest turn:
+  - none
+- Outcome assertions:
+  - Activation prompts must include the shared latest-user decision-subject rule.
+  - The latest user message must be shown separately as `LatestUserMessage`.
+  - Older activation-worthy user turns may remain in recent conversation history as context, but
+    they must not trigger fresh `Confirmation Bias`, `Red Team`, or other background cards for the
+    `say "TEST_OK"` turn.
+  - The main assistant response should answer the latest user instruction with `TEST_OK`.
+  - Browser QA must fail if stale cards appear on the latest simple/test turn just because an older
+    red-team or bias-check request remains inside `activation.max_history`.

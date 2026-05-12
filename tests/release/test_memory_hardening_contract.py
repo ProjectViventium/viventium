@@ -118,6 +118,7 @@ def test_memory_hardening_wrapper_loads_canonical_runtime_env_stack(tmp_path: Pa
     )
     (service_env_dir / "librechat.env").write_text(
         "CONFIG_PATH=/service/librechat.yaml\n"
+        "MONGO_URI=''\n"
         "SERVICE_ONLY=1\n",
         encoding="utf-8",
     )
@@ -138,6 +139,64 @@ def test_memory_hardening_wrapper_loads_canonical_runtime_env_stack(tmp_path: Pa
     assert env["LEGACY_LOCAL"] == "1"
     assert env["LOCAL_ONLY"] == "1"
     assert env["SERVICE_ONLY"] == "1"
+
+
+def test_memory_hardening_wrapper_prefers_compiled_runtime_over_ambient_shell_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class Args:
+        repo_root = ROOT
+        command = "status"
+        mongo_uri = None
+        config_path = None
+        run_id = None
+        user_email = None
+        user_id = None
+        lookback_days = None
+        min_user_idle_minutes = None
+        max_changes_per_user = None
+        max_input_chars = None
+        provider = None
+        model = None
+        proposal_file = None
+        transcripts_dir = None
+        transcript_max_files_per_run = None
+        transcript_max_chars_per_file = None
+        transcript_summary_max_chars = None
+        transcript_rag_mode = None
+        allow_delete = False
+        ignore_idle_gate = False
+        skip_model_probe = False
+        allow_partial_lookback = False
+        scheduled = False
+        json = False
+
+    Args.app_support_dir = tmp_path / "app-support"
+    Args.runtime_dir = tmp_path / "app-support" / "runtime"
+
+    class Completed:
+        returncode = 0
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Completed()
+
+    monkeypatch.setenv("RAG_API_URL", "http://stale-shell-rag")
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+
+    status = memory_harden.run_node(
+        Args(),
+        {
+            "RAG_API_URL": "http://compiled-rag",
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+        },
+    )
+
+    assert status == 0
+    assert calls[0][1]["env"]["RAG_API_URL"] == "http://compiled-rag"
 
 
 def test_memory_hardening_wrapper_uses_provider_specific_model_for_override() -> None:

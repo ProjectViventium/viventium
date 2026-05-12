@@ -175,13 +175,21 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Clean-machine acceptance beats "works on the owner laptop."
 - Use `qa/` as the home for end-to-end QA plans and reports. If the needed feature area does not
   exist yet, create it instead of scattering QA notes elsewhere.
-- Keep one living QA source of truth per feature or flow. Start by writing the QA plan and test
-  cases, then execute against that plan.
+- Follow `qa/README.md` as the QA operating contract. Keep one living QA source of truth per feature
+  or flow, update its cases before or alongside the code change, and save dated public-safe results
+  under the owning feature folder.
+- Every escaped bug or production miss must become a reusable synthetic regression case in the
+  relevant `qa/<feature>/cases.md`, with expected outcome, forbidden result, evidence to capture,
+  and last-run status.
 - For non-trivial feature or bug work, run an independent QA pass after implementation. Prefer a
   separate agent or clearly separated QA pass, and save public-safe evidence and findings under
   `qa/<feature>/`.
-- Use real-browser QA for user-facing flows when relevant, such as Playwright CLI or equivalent
-  browser automation.
+- Use real-browser QA for browser-facing flows, such as Playwright CLI or equivalent. The minimum
+  acceptance loop is: real browser prompt/action -> visible UI outcome -> expanded/detail state ->
+  refresh or persistence check when relevant -> backend/log/DB confirmation -> final wording does
+  not contradict the visible state.
+- Logs, DB rows, API responses, source inspection, model completions, and unit tests are supporting
+  evidence, not substitutes for any required visible-UI, detail-state, persistence, or wording step.
 - Do not rely on mocked-only tests to justify end-to-end claims. Use synthetic non-personal test
   data, and never expose secrets, private chats, attachments, or customer data in QA artifacts.
 - When release or public-readiness is in scope, use `qa/` as the acceptance contract.

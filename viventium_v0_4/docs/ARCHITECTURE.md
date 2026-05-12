@@ -89,8 +89,12 @@ Implementation references:
 - Suppressed when a newer user input is detected (`ResponseController.lastUserInputTime`).
 
 ## Activation Cooldown
-- Enforced in `BackgroundCortexService` via an in-memory cooldown map keyed by user+agent.
-- Prevents rapid re-activation within `activation.cooldown_ms`.
+- Enforced in `BackgroundCortexService` via an in-memory cooldown map keyed by agent plus the
+  structured request identity when available.
+- Request identity uses user, conversation, and message ids rather than prompt text or provider
+  labels. A live calendar check must not suppress a distinct email check from the same user just
+  because both use the productivity cortices.
+- Prevents duplicate activation work for the same request within `activation.cooldown_ms`.
 
 ## Activation Detection Payload
 - Each activation check is an LLM classification that returns JSON:

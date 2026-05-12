@@ -50,7 +50,10 @@ def runtime_env_candidates(runtime_dir: Path, librechat_dir: Path) -> tuple[Path
 def load_runtime_env(runtime_dir: Path, librechat_dir: Path) -> dict[str, str]:
     env: dict[str, str] = {}
     for candidate in runtime_env_candidates(runtime_dir, librechat_dir):
-        env.update(parse_env_file(candidate))
+        for key, value in parse_env_file(candidate).items():
+            if value == "" and env.get(key):
+                continue
+            env[key] = value
     return env
 
 

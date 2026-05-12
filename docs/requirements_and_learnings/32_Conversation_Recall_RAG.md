@@ -51,6 +51,9 @@ evidence.
   matches the configured transcript RAG mode. The vector runtime must also be configured and
   healthy; otherwise transcript resources stay unattached rather than pretending dead vector files
   are searchable.
+- Before a transcript artifact is attached or skipped as already processed, vector-store existence
+  must be checked against the current source index. A missing vector document invalidates the
+  processed shortcut and requeues the transcript for summary/vector repair.
 - Do not materialize meeting transcript summaries as fake conversations. Conversation recall remains
   chat history; transcript recall remains transcript evidence.
 - Do not index Listen-Only transcript entries into the normal prior-chat corpus. They are visible

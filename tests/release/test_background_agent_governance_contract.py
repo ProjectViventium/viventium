@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from scripts.viventium.prompt_registry import load_and_resolve_prompt_refs
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_OF_TRUTH_PATH = (
@@ -21,6 +23,9 @@ PROMPT_BANK_PATH = ROOT / "qa" / "background_agents" / "03_eval_prompt_bank.md"
 RUNTIME_MODELS_SCRIPT_PATH = (
     ROOT / "viventium_v0_4" / "LibreChat" / "scripts" / "viventium-agent-runtime-models.js"
 )
+AGENT_CLIENT_PATH = (
+    ROOT / "viventium_v0_4" / "LibreChat" / "api" / "server" / "controllers" / "agents" / "client.js"
+)
 
 APPROVED_EXECUTION_FAMILIES = {
     ("anthropic", "claude-sonnet-4-6"),
@@ -28,15 +33,18 @@ APPROVED_EXECUTION_FAMILIES = {
     ("openAI", "gpt-5.4"),
 }
 APPROVED_ACTIVATION_FAMILY = ("groq", "meta-llama/llama-4-scout-17b-16e-instruct")
+APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.20-non-reasoning")
 APPROVED_MAIN_AGENT_FAMILY = ("anthropic", "claude-opus-4-7")
 
 
 def _load_source_of_truth() -> dict:
-    return yaml.safe_load(SOURCE_OF_TRUTH_PATH.read_text(encoding="utf-8"))
+    return load_and_resolve_prompt_refs(yaml.safe_load(SOURCE_OF_TRUTH_PATH.read_text(encoding="utf-8")))
 
 
 def _load_librechat_source_of_truth() -> dict:
-    return yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_PATH.read_text(encoding="utf-8"))
+    return load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_PATH.read_text(encoding="utf-8"))
+    )
 
 
 def _extract_table_first_column(markdown_path: Path, heading: str, header_label: str) -> list[str]:
@@ -132,6 +140,52 @@ def test_signoff_manifest_references_prompt_bank_scenarios_that_exist() -> None:
     assert referenced_ids <= prompt_bank_ids
 
 
+def test_promoted_background_agent_outcome_regressions_stay_in_prompt_bank() -> None:
+    prompt_bank_text = PROMPT_BANK_PATH.read_text(encoding="utf-8")
+    coverage_text = COVERAGE_MATRIX_PATH.read_text(encoding="utf-8")
+    readme_text = (ROOT / "qa" / "background_agents" / "README.md").read_text(encoding="utf-8")
+    background_doc_text = (
+        ROOT / "docs" / "requirements_and_learnings" / "02_Background_Agents.md"
+    ).read_text(encoding="utf-8")
+
+    promoted_ids = {"ACT-13", "ACT-14", "ACT-15", "ACT-16", "ACT-17", "ACT-18", "ACT-19"}
+    assert promoted_ids <= _extract_scenario_ids(PROMPT_BANK_PATH)
+    for scenario_id in promoted_ids:
+        assert scenario_id in coverage_text
+
+    required_prompt_bank_phrases = [
+        "Yeah, definitely no confirmation bias here.",
+        "The activation decision must consider the immediately preceding certainty claim",
+        "Multi-cortex outcome visibility",
+        "Provider degradation must not erase background work",
+        "Speed-sensitive background outcome",
+        "Main answer must not contradict runtime-owned cards",
+        "Main answer must not offer to spin up already requested background work",
+        "Phase A must stay within the configured detection budget",
+        "structured cortex parts",
+        "must not say it cannot control cards",
+        "must not ask whether the user wants it to spin up",
+    ]
+    for phrase in required_prompt_bank_phrases:
+        assert phrase in prompt_bank_text
+
+    required_outcome_phrases = [
+        "end-user outcome quality and speed",
+        "public-safe synthetic regression",
+        "first assistant response remains fast and useful",
+        "activated background agents are named",
+    ]
+    for phrase in required_outcome_phrases:
+        assert phrase in readme_text
+
+    for phrase in [
+        "Background-agent acceptance is outcome-first",
+        "fast useful first answer",
+        "public-safe synthetic regression",
+    ]:
+        assert phrase in background_doc_text
+
+
 def test_background_agent_execution_models_stay_in_launch_ready_families() -> None:
     bundle = _load_source_of_truth()
     background_agents = bundle.get("backgroundAgents", [])
@@ -199,15 +253,20 @@ def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> Non
             )
 
 
-def test_timeout_prone_background_agents_have_gpt_54_high_fallback() -> None:
+def test_timeout_prone_background_agents_have_reachable_fallback() -> None:
     bundle = _load_source_of_truth()
 
-    for agent_name in ("Confirmation Bias", "Viventium User Help"):
+    expected = {
+        "Confirmation Bias": ("xai", "grok-4.3", {}),
+        "Viventium User Help": ("openAI", "gpt-5.4", {"reasoning_effort": "high"}),
+    }
+    for agent_name, (provider, model, parameter_expectations) in expected.items():
         agent = _background_agent_by_name(bundle, agent_name)
-        assert agent.get("fallback_llm_provider") == "openAI"
-        assert agent.get("fallback_llm_model") == "gpt-5.4"
-        assert agent.get("fallback_llm_model_parameters", {}).get("model") == "gpt-5.4"
-        assert agent.get("fallback_llm_model_parameters", {}).get("reasoning_effort") == "high"
+        assert agent.get("fallback_llm_provider") == provider
+        assert agent.get("fallback_llm_model") == model
+        assert agent.get("fallback_llm_model_parameters", {}).get("model") == model
+        for key, value in parameter_expectations.items():
+            assert agent.get("fallback_llm_model_parameters", {}).get(key) == value
 
 
 def test_support_and_confirmation_activation_prompts_exclude_broad_status_checks() -> None:
@@ -246,7 +305,25 @@ def test_support_and_confirmation_activation_prompts_exclude_broad_status_checks
             assert phrase.lower() in prompt
 
 
-def test_local_source_of_truth_main_agent_stays_on_claude_opus_46() -> None:
+def test_red_team_activation_prompt_covers_explicit_pressure_test_requests() -> None:
+    bundle = _load_source_of_truth()
+    cortices_by_agent_id = {
+        cortex.get("agent_id"): cortex
+        for cortex in bundle.get("mainAgent", {}).get("background_cortices", [])
+        if cortex.get("agent_id")
+    }
+    prompt = cortices_by_agent_id["agent_viventium_red_team_95aeb3"]["activation"]["prompt"].lower()
+
+    for phrase in [
+        "explicitly asks to red-team",
+        "pressure-test",
+        "strongest counter-case",
+        "concrete idea, plan, claim, or decision",
+    ]:
+        assert phrase in prompt
+
+
+def test_local_source_of_truth_main_agent_stays_on_claude_opus_47() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
@@ -272,7 +349,8 @@ def test_runtime_models_script_exports_match_release_contract() -> None:
         f"{provider}::{model}" for provider, model in APPROVED_EXECUTION_FAMILIES
     }
     assert set(runtime_contract["activationFamilies"]) == {
-        f"{APPROVED_ACTIVATION_FAMILY[0]}::{APPROVED_ACTIVATION_FAMILY[1]}"
+        f"{APPROVED_ACTIVATION_FAMILY[0]}::{APPROVED_ACTIVATION_FAMILY[1]}",
+        f"{APPROVED_ACTIVATION_OVERRIDE_FAMILY[0]}::{APPROVED_ACTIVATION_OVERRIDE_FAMILY[1]}",
     }
 
 
@@ -304,7 +382,7 @@ def test_background_cortex_activation_models_stay_on_llama_4_scout() -> None:
         )
 
 
-def test_productivity_activation_classifiers_keep_provider_fallbacks() -> None:
+def test_all_background_activation_classifiers_keep_provider_fallbacks() -> None:
     bundle = _load_source_of_truth()
     cortices_by_agent_id = {
         cortex.get("agent_id"): cortex
@@ -313,11 +391,15 @@ def test_productivity_activation_classifiers_keep_provider_fallbacks() -> None:
     }
 
     expected_fallbacks = [
+        {"provider": "xai", "model": "grok-4.20-non-reasoning"},
         {"provider": "openai", "model": "gpt-5.4"},
         {"provider": "anthropic", "model": "claude-haiku-4-5"},
     ]
 
-    for agent_id in ("agent_viventium_online_tool_use_95aeb3", "agent_8Y1d7JNhpubtvzYz3hvEv"):
+    source_agent_ids = {agent["id"] for agent in bundle.get("backgroundAgents", [])}
+    assert set(cortices_by_agent_id) == source_agent_ids
+
+    for agent_id in sorted(source_agent_ids):
         activation = cortices_by_agent_id[agent_id].get("activation") or {}
         assert activation.get("fallbacks") == expected_fallbacks
 
@@ -349,6 +431,22 @@ def test_live_fact_truthfulness_guard_stays_in_shipped_agent_prompts() -> None:
         assert "omit" in instructions and "guess" in instructions, (
             f"{agent.get('name')} must omit unverified live facts instead of guessing"
         )
+
+
+def test_main_agent_background_cortex_prompt_does_not_contradict_runtime_cards() -> None:
+    bundle = _load_source_of_truth()
+    main_instructions = (bundle.get("mainAgent", {}).get("instructions") or "").lower()
+    runtime_client = AGENT_CLIENT_PATH.read_text(encoding="utf-8").lower()
+
+    for phrase in [
+        "runtime may display background-cortex status/result cards outside your text",
+        "do not claim you cannot control those cards",
+        "do not say there is nothing to show",
+        "do not offer to start, spin up, launch, or run background agents/cortices",
+        "let runtime-owned cards speak for themselves",
+    ]:
+        assert phrase in main_instructions
+        assert phrase in runtime_client
 
 
 def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> None:

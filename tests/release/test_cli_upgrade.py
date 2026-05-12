@@ -2226,6 +2226,43 @@ exit 0
     )
     (fake_bin / "lsof").chmod(0o755)
 
+    (fake_bin / "curl").write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+
+write_code_only=0
+url=""
+while (($#)); do
+  case "$1" in
+    -w)
+      shift
+      [[ "${1:-}" == "%{http_code}" ]] && write_code_only=1
+      ;;
+    http://*|https://*)
+      url="$1"
+      ;;
+  esac
+  shift || true
+done
+
+case "$url" in
+  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/)
+    if [[ "$write_code_only" == "1" ]]; then
+      printf '200'
+    fi
+    exit 0
+    ;;
+esac
+
+if [[ "$write_code_only" == "1" ]]; then
+  printf '000'
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    (fake_bin / "curl").chmod(0o755)
+
     (fake_bin / "pgrep").write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         "if [[ \"$*\" == *\"npm ci\"* ]]; then\n"

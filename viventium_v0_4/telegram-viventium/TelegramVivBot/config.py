@@ -35,8 +35,17 @@ def _get_float_env(name, default=None):
     if value is None:
         return default
     try:
-        return float(value)
-    except ValueError:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+def _get_int_env(name, default=None):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
         return default
 
 def _get_bool_env(name, default=None):
@@ -94,14 +103,14 @@ def _normalize_local_whisper_lang(value):
 # Align Telegram STT with the canonical runtime env when the legacy knob is unset.
 WHISPER_MODE = resolve_whisper_mode(os.environ)
 LOCAL_WHISPER_MODEL_PATH = os.environ.get("LOCAL_WHISPER_MODEL_PATH")
-LOCAL_WHISPER_THREADS = int(os.environ.get("LOCAL_WHISPER_THREADS", "4"))
+LOCAL_WHISPER_THREADS = _get_int_env("LOCAL_WHISPER_THREADS", 4)
 LOCAL_WHISPER_LANG = _normalize_local_whisper_lang(os.environ.get("LOCAL_WHISPER_LANG", "auto"))
 LOCAL_WHISPER_VERBOSE = os.environ.get("LOCAL_WHISPER_VERBOSE", "false").lower() == "true"
 
 from telegram import InlineKeyboardButton
 
 NICK = os.environ.get('NICK', None)
-PORT = int(os.environ.get('PORT', '8080'))
+PORT = _get_int_env('PORT', 8080)
 BOT_TOKEN = os.environ.get('BOT_TOKEN', None)
 # === VIVENTIUM START ===
 # Telegram backend selection (librechat default, livekit legacy).
@@ -110,8 +119,8 @@ VIVENTIUM_TELEGRAM_BACKEND = os.environ.get('VIVENTIUM_TELEGRAM_BACKEND', 'libre
 VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED = _get_bool_env(
     'VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED', True
 )
-VIVENTIUM_TELEGRAM_MAX_FILE_SIZE = int(
-    os.environ.get('VIVENTIUM_TELEGRAM_MAX_FILE_SIZE', '10485760')
+VIVENTIUM_TELEGRAM_MAX_FILE_SIZE = _get_int_env(
+    'VIVENTIUM_TELEGRAM_MAX_FILE_SIZE', 10485760
 )
 VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED = _get_bool_env(
     'VIVENTIUM_TELEGRAM_LOCAL_BOT_API_ENABLED', False
@@ -131,7 +140,7 @@ VIVENTIUM_TELEGRAM_FILE_TEXT_FALLBACK = _get_bool_env(
     'VIVENTIUM_TELEGRAM_FILE_TEXT_FALLBACK', False
 )
 # === VIVENTIUM END ===
-RESET_TIME = int(os.environ.get('RESET_TIME', '3600'))
+RESET_TIME = _get_int_env('RESET_TIME', 3600)
 if RESET_TIME < 60:
     RESET_TIME = 60
 
@@ -169,7 +178,7 @@ if RESET_TIME < 60:
 #
 # Previous default: 65536 (excessive for small deployments)
 # Current default: 8 (optimized for small deployments)
-CONNECTION_POOL_SIZE = int(os.environ.get('CONNECTION_POOL_SIZE', '8'))
+CONNECTION_POOL_SIZE = _get_int_env('CONNECTION_POOL_SIZE', 8)
 
 # ----------------------------------------------------------------------------
 # GET_UPDATES_CONNECTION_POOL_SIZE
@@ -192,7 +201,7 @@ CONNECTION_POOL_SIZE = int(os.environ.get('CONNECTION_POOL_SIZE', '8'))
 #
 # Previous default: 65536 (excessive for small deployments)
 # Current default: 8 (optimized for small deployments)
-GET_UPDATES_CONNECTION_POOL_SIZE = int(os.environ.get('GET_UPDATES_CONNECTION_POOL_SIZE', '8'))
+GET_UPDATES_CONNECTION_POOL_SIZE = _get_int_env('GET_UPDATES_CONNECTION_POOL_SIZE', 8)
 
 # ----------------------------------------------------------------------------
 # TIMEOUT
@@ -216,7 +225,7 @@ GET_UPDATES_CONNECTION_POOL_SIZE = int(os.environ.get('GET_UPDATES_CONNECTION_PO
 #
 # Previous default: 600 seconds (10 minutes - excessive)
 # Current default: 30 seconds (optimized for small deployments)
-TIMEOUT = int(os.environ.get('TIMEOUT', '30'))
+TIMEOUT = _get_int_env('TIMEOUT', 30)
 if TIMEOUT < 10:
     TIMEOUT = 10  # Minimum 10 seconds to prevent too-aggressive timeouts
 
@@ -267,7 +276,7 @@ CONCURRENT_UPDATES = _get_bool_env('CONCURRENT_UPDATES', False)
 #
 # Previous default: 600 seconds (excessive, caused high resource usage)
 # Current default: 30 seconds (optimized for small deployments)
-POLLING_TIMEOUT = int(os.environ.get('POLLING_TIMEOUT', '30'))
+POLLING_TIMEOUT = _get_int_env('POLLING_TIMEOUT', 30)
 if POLLING_TIMEOUT < 10:
     POLLING_TIMEOUT = 10  # Minimum 10 seconds to prevent excessive polling
 
@@ -333,7 +342,7 @@ VIVENTIUM_CARTESIA_MODEL_ID = os.environ.get('VIVENTIUM_CARTESIA_MODEL_ID', 'son
 VIVENTIUM_CARTESIA_VOICE_ID = os.environ.get(
     'VIVENTIUM_CARTESIA_VOICE_ID', 'e8e5fffb-252c-436d-b842-8879b84445b6'
 )
-VIVENTIUM_CARTESIA_SAMPLE_RATE = int(float(os.environ.get('VIVENTIUM_CARTESIA_SAMPLE_RATE', '44100')))
+VIVENTIUM_CARTESIA_SAMPLE_RATE = _get_int_env('VIVENTIUM_CARTESIA_SAMPLE_RATE', 44100)
 VIVENTIUM_CARTESIA_SPEED = _get_float_env('VIVENTIUM_CARTESIA_SPEED', 1.0)
 VIVENTIUM_CARTESIA_VOLUME = _get_float_env('VIVENTIUM_CARTESIA_VOLUME', 1.0)
 VIVENTIUM_CARTESIA_EMOTION = os.environ.get('VIVENTIUM_CARTESIA_EMOTION', 'neutral')
@@ -348,12 +357,11 @@ VIVENTIUM_XAI_TTS_API_URL = os.environ.get('VIVENTIUM_XAI_TTS_API_URL', 'https:/
 VIVENTIUM_XAI_VOICE = os.environ.get('VIVENTIUM_XAI_VOICE', 'Sal')
 VIVENTIUM_XAI_LANGUAGE = os.environ.get('VIVENTIUM_XAI_LANGUAGE', 'en')
 VIVENTIUM_XAI_TTS_CODEC = os.environ.get('VIVENTIUM_XAI_TTS_CODEC', 'mp3')
-VIVENTIUM_XAI_TTS_SAMPLE_RATE = int(float(
-    os.environ.get('VIVENTIUM_XAI_TTS_SAMPLE_RATE')
-    or os.environ.get('VIVENTIUM_XAI_SAMPLE_RATE')
-    or '24000'
-))
-VIVENTIUM_XAI_TTS_BIT_RATE = int(float(os.environ.get('VIVENTIUM_XAI_TTS_BIT_RATE', '128000')))
+VIVENTIUM_XAI_TTS_SAMPLE_RATE = _get_int_env(
+    'VIVENTIUM_XAI_TTS_SAMPLE_RATE',
+    _get_int_env('VIVENTIUM_XAI_SAMPLE_RATE', 24000),
+)
+VIVENTIUM_XAI_TTS_BIT_RATE = _get_int_env('VIVENTIUM_XAI_TTS_BIT_RATE', 128000)
 # === VIVENTIUM END ===
 
 WEB_HOOK = os.environ.get('WEB_HOOK', None)
@@ -604,7 +612,7 @@ def get_telegram_call_link_result(conversation_key):
             "error": "telegramUserId is required",
         }
 
-    cache_ttl_s = max(int(os.environ.get("VIVENTIUM_TELEGRAM_CALL_LINK_CACHE_TTL_S", "480")), 0)
+    cache_ttl_s = max(_get_int_env("VIVENTIUM_TELEGRAM_CALL_LINK_CACHE_TTL_S", 480), 0)
     now = time.time()
     cached = _CALL_URL_CACHE.get(normalized_user_id)
     if cached and cached.get("expires_at", 0) > now:

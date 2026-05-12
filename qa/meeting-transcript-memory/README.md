@@ -236,3 +236,35 @@ node qa/meeting-transcript-memory/evals/run-evals.cjs
   the scanner intentionally passes text-like files through without semantic parsing. This needs a
   product-level decision: keep the transcript folder transcript-only, move downloader state beside
   the folder, or add explicit configurable ignore rules for operational sidecars.
+
+## 2026-05-07 Missing-Vector Repair Evidence
+
+- Root cause reproduced against the live local runtime: Mongo held processed meeting-transcript
+  summary rows marked `embedded=true`, while PGVector had no chunks for those `file_id`s. That made
+  file_search return only unrelated conversation recall even after transcript ingest appeared
+  successful.
+- Fix: apply-mode transcript scanning now verifies current processed-content state against the
+  vector store. Missing summary/raw documents requeue the full indexed content hash for repair;
+  the shortcut no longer trusts Mongo `embedded=true` alone.
+- Fix: the memory-hardening wrapper now loads generated runtime env without letting empty service
+  placeholders erase real lower-level runtime values, and explicit operator env still wins.
+- Fix: transcript vector metadata now stores the full source content hash plus completeness counts
+  (`inputComplete`, raw/supplied/summary chars) so future repair and audits can reason from stable
+  artifact metadata.
+- Fix: orphan derived summary artifacts for the selected user/source that are no longer present in
+  a non-empty current processed-content index are treated as stale lifecycle artifacts instead of
+  being attached forever. Missing/empty indexes do not trigger bulk deletion.
+- Live repair proof used the real configured model and local Mongo + PGVector. An intentionally
+  deleted processed summary artifact was requeued (`files_pending=1`,
+  `files_requeued_missing_vectors=1`), uploaded back to PGVector, and its Mongo metadata was
+  rewritten with a full content hash and complete-input counters.
+- Live consistency proof after repair used sanitized QA-account data: all currently processed
+  transcript summary artifacts for that account were present in PGVector, with zero missing vector
+  rows.
+- Live no-op proof after repair showed no pending or requeued files and zero model-input chars,
+  proving unchanged synced transcripts do not waste model/read tokens.
+- Regression suite:
+  - backend hardener tests: 44 passed
+  - packages API transcript/initialize tests: 24 passed
+  - release memory/config/helper tests: 25 passed
+  - transcript eval harness: 7 passed, 0 failed

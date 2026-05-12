@@ -53,12 +53,60 @@ def write_config(path: Path, payload: dict) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
+def minimal_compile_config() -> dict:
+    return {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+
 def load_source_of_truth_agents_bundle() -> dict:
-    return yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    return config_compiler.resolve_source_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
 
 
 def load_source_of_truth_librechat_yaml() -> dict:
-    return yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8"))
+    return config_compiler.resolve_source_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8"))
+    )
+
+
+def test_source_prompt_refs_fail_closed_when_registry_is_missing() -> None:
+    with pytest.raises(SystemExit, match="source YAML contains promptRef entries"):
+        config_compiler.resolve_source_prompt_refs({"instructions": {"promptRef": "main.identity"}}, {})
+
+
+def test_source_prompt_refs_allow_plain_values_when_registry_is_missing() -> None:
+    assert config_compiler.resolve_source_prompt_refs({"instructions": "plain"}, {}) == {
+        "instructions": "plain"
+    }
 
 
 def source_of_truth_built_in_agent_map() -> dict[str, str]:
@@ -76,9 +124,9 @@ def source_of_truth_built_in_agent_map() -> dict[str, str]:
 
 XAI_CURRENT_DEFAULT_MODELS = [
     "grok-4.3",
+    "grok-4.20-non-reasoning",
     "grok-4.20-multi-agent-0309",
     "grok-4.20-0309-reasoning",
-    "grok-4.20-0309-non-reasoning",
 ]
 
 XAI_RETIRED_MODEL_IDS = {
@@ -123,6 +171,161 @@ def test_build_custom_endpoints_xai_defaults_to_grok_43() -> None:
     assert xai["summaryModel"] == "grok-4.3"
     assert xai["titleModel"] not in XAI_RETIRED_MODEL_IDS
     assert xai["summaryModel"] not in XAI_RETIRED_MODEL_IDS
+
+
+def test_source_of_truth_candidates_reject_generated_app_support_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support_root = tmp_path / "Library" / "Application Support" / "Viventium"
+    generated_source = app_support_root / "runtime" / "local.librechat.yaml"
+    generated_source.parent.mkdir(parents=True)
+    generated_source.write_text("version: test\n", encoding="utf-8")
+    monkeypatch.setattr(config_compiler, "APP_SUPPORT_VIVENTIUM_DIR", app_support_root)
+    monkeypatch.setattr(config_compiler, "SOURCE_OF_TRUTH_LIBRECHAT_YAML", tmp_path / "missing.yaml")
+    monkeypatch.setenv("VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH", str(generated_source))
+
+    with pytest.raises(SystemExit, match="Generated App Support runtime files"):
+        config_compiler.resolve_source_of_truth_librechat_yaml_candidates()
+
+
+def test_prompt_bundle_drift_check_passes_for_matching_live_bundle(tmp_path: Path) -> None:
+    live_bundle = tmp_path / "prompt-bundle.json"
+    payload = config_compiler.build_prompt_bundle()
+    live_bundle.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+    report = config_compiler.check_prompt_bundle_drift(live_bundle_path=live_bundle)
+
+    assert report["status"] == "ok"
+    assert report["drift_count"] == 0
+    assert report["diff"] == {"added": [], "removed": [], "changed": []}
+
+
+def test_prompt_bundle_candidates_include_local_state_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    monkeypatch.setenv("VIVENTIUM_STATE_ROOT", str(state_root))
+
+    candidates = config_compiler.default_live_prompt_bundle_candidates()
+
+    assert (state_root / "prompt-bundle.json").resolve() in candidates
+
+
+def test_prompt_bundle_candidates_include_runtime_profile_state_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_support_root = tmp_path / "app-support" / "Viventium"
+    monkeypatch.setattr(config_compiler, "APP_SUPPORT_VIVENTIUM_DIR", app_support_root)
+    monkeypatch.setenv("VIVENTIUM_RUNTIME_PROFILE", "qa-profile")
+
+    candidates = config_compiler.default_live_prompt_bundle_candidates()
+
+    assert (
+        config_compiler.REPO_ROOT / ".viventium" / "runtime" / "qa-profile" / "prompt-bundle.json"
+    ).resolve() in candidates
+    assert (
+        app_support_root / "state" / "runtime" / "qa-profile" / "prompt-bundle.json"
+    ).resolve() in candidates
+
+
+def test_prompt_bundle_drift_check_fails_closed_on_stale_live_bundle(tmp_path: Path) -> None:
+    live_bundle = tmp_path / "prompt-bundle.json"
+    payload = copy.deepcopy(config_compiler.build_prompt_bundle())
+    first_prompt_id = sorted(payload["prompts"])[0]
+    payload["prompts"][first_prompt_id]["content_hash"] = "stalehash"
+    live_bundle.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+    report = config_compiler.check_prompt_bundle_drift(live_bundle_path=live_bundle)
+    reviewed = config_compiler.check_prompt_bundle_drift(
+        live_bundle_path=live_bundle,
+        compare_reviewed=True,
+    )
+
+    assert report["status"] == "blocked"
+    assert report["reason"] == "prompt_bundle_drift"
+    assert first_prompt_id in report["diff"]["changed"]
+    assert reviewed["status"] == "reviewed_drift"
+
+
+def test_prompt_bundle_drift_check_blocks_when_no_live_bundle(tmp_path: Path) -> None:
+    report = config_compiler.check_prompt_bundle_drift(live_bundle_path=tmp_path / "missing.json")
+
+    assert report["status"] == "blocked"
+    assert report["reason"] == "no_live_prompt_bundle_found"
+
+
+def test_runtime_config_drift_check_passes_for_matching_live_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    write_config(config_path, minimal_compile_config())
+    live_payload = config_compiler.render_current_librechat_config(
+        config_path=config_path,
+        output_dir=runtime_dir,
+    )
+    live_path = runtime_dir / "librechat.yaml"
+    live_path.write_text(yaml.safe_dump(live_payload, sort_keys=False), encoding="utf-8")
+
+    report = config_compiler.check_runtime_config_drift(
+        config_path=config_path,
+        live_runtime_config_path=live_path,
+    )
+
+    assert report["status"] == "ok"
+    assert report["drift_count"] == 0
+    assert report["diff"]["live_vs_compiled"] == {
+        "added": [],
+        "removed": [],
+        "changed": [],
+        "drift_count": 0,
+    }
+    assert "section_hashes" in report["compiled_now"]
+    assert "mcpServers" in report["compiled_now"]["section_hashes"]
+
+
+def test_runtime_config_drift_check_fails_closed_on_stale_live_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    write_config(config_path, minimal_compile_config())
+    live_payload = config_compiler.render_current_librechat_config(
+        config_path=config_path,
+        output_dir=runtime_dir,
+    )
+    live_payload["viventium"]["primaryProvider"] = "stale-provider"
+    live_path = runtime_dir / "librechat.yaml"
+    live_path.write_text(yaml.safe_dump(live_payload, sort_keys=False), encoding="utf-8")
+
+    report = config_compiler.check_runtime_config_drift(
+        config_path=config_path,
+        live_runtime_config_path=live_path,
+    )
+    reviewed = config_compiler.check_runtime_config_drift(
+        config_path=config_path,
+        live_runtime_config_path=live_path,
+        compare_reviewed=True,
+    )
+
+    assert report["status"] == "blocked"
+    assert report["reason"] == "runtime_config_drift"
+    assert "viventium" in report["diff"]["live_vs_compiled"]["changed"]
+    assert reviewed["status"] == "reviewed_drift"
+
+
+def test_runtime_config_drift_check_blocks_when_no_live_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path, minimal_compile_config())
+
+    report = config_compiler.check_runtime_config_drift(
+        config_path=config_path,
+        live_runtime_config_path=tmp_path / "missing-librechat.yaml",
+    )
+
+    assert report["status"] == "blocked"
+    assert report["reason"] == "no_live_runtime_config_found"
 
 
 def test_source_template_xai_endpoint_uses_current_stable_models() -> None:
@@ -287,6 +490,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
     librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
     librechat_yaml = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+    prompt_bundle = json.loads((output_dir / "prompt-bundle.json").read_text(encoding="utf-8"))
     summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
 
     assert "GROQ_API_KEY=groq-test" in runtime_env
@@ -328,6 +532,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=500000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=32000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=90" in runtime_env
+    assert f"VIVENTIUM_PROMPT_BUNDLE_PATH={output_dir / 'prompt-bundle.json'}" in runtime_env
+    assert "VIVENTIUM_PROMPT_FRAME_FILE_LOG=0" in runtime_env
     assert "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE=owner" in runtime_env
     assert "START_RAG_API=false" in runtime_env
     assert "EMBEDDINGS_PROVIDER=ollama" in runtime_env
@@ -338,6 +544,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_RAG_EMBEDDINGS_PROFILE=medium" in runtime_env
     assert "START_CODE_INTERPRETER=false" in runtime_env
     assert "START_GLASSHIVE=false" in runtime_env
+    assert "GLASSHIVE_OPERATOR_BASE_URL=" not in runtime_env
     assert "GLASSHIVE_DEFAULT_LAUNCH_SURFACE=" not in runtime_env
     assert "GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP=" not in runtime_env
     assert "START_SEARXNG=false" in runtime_env
@@ -359,7 +566,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "GOOGLE_KEY=user_provided" in runtime_env
     assert "OPENROUTER_API_KEY=user_provided" in runtime_env
     assert "PERPLEXITY_API_KEY=user_provided" in runtime_env
-    assert "XAI_API_KEY=user_provided" in runtime_env
+    assert "GROQ_API_KEY=groq-test" in runtime_env
     assert 'SCHEDULING_MCP_URL=http://localhost:7110/mcp' in runtime_env
     assert librechat_yaml["interface"]["defaultAgent"] == "agent_viventium_main_95aeb3"
     assert librechat_yaml["endpoints"]["agents"]["defaultId"] == "agent_viventium_main_95aeb3"
@@ -371,6 +578,10 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["memory"]["personalize"] is True
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert prompt_bundle["prompt_count"] >= 50
+    assert "main.conscious_agent" in prompt_bundle["prompts"]
+    assert prompt_bundle["prompts"]["main.identity"]["content_hash"]
+    assert summary["prompt_registry"]["prompt_count"] == prompt_bundle["prompt_count"]
     assert (
         librechat_yaml["viventium"]["conversation_recall"]["prompt"]
         == load_source_of_truth_librechat_yaml()["viventium"]["conversation_recall"]["prompt"]
@@ -465,6 +676,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     }
 
     disabled_env = config_compiler.render_runtime_env(base_config, config_compiler.build_agent_assignments(base_config))
+    assert "GLASSHIVE_OPERATOR_BASE_URL" not in disabled_env
     assert "GLASSHIVE_DEFAULT_LAUNCH_SURFACE" not in disabled_env
     assert "GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP" not in disabled_env
     assert "WPR_IDLE_DESKTOP_PRIME_BROWSER" not in disabled_env
@@ -494,9 +706,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert disabled_host_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "false"
     assert disabled_host_env["WPR_DEFAULT_EXECUTION_MODE"] == "docker"
     disabled_host_mcp = config_compiler.build_mcp_servers(disabled_host_config, {"lc_api_port": 3080}, "agent-main")
-    disabled_host_instructions = disabled_host_mcp["glasshive-workers-projects"]["serverInstructions"]
-    assert "Host-native workers are disabled" in disabled_host_instructions
-    assert "execution_mode='host' and the matching profile" not in disabled_host_instructions
+    assert disabled_host_mcp["glasshive-workers-projects"]["serverInstructions"] is True
 
     enabled_config = copy.deepcopy(base_config)
     enabled_config["integrations"]["glasshive"] = {
@@ -513,6 +723,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     }
     enabled_env = config_compiler.render_runtime_env(enabled_config, config_compiler.build_agent_assignments(enabled_config))
     assert enabled_env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] == "desktop"
+    assert enabled_env["GLASSHIVE_OPERATOR_BASE_URL"] == "http://127.0.0.1:8780"
     assert enabled_env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] == "true"
     assert enabled_env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] == "true"
     assert enabled_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
@@ -543,6 +754,93 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert glasshive_headers["X-Viventium-Telegram-Message-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}"
     assert glasshive_headers["X-Viventium-Request-Files"] == "{{LIBRECHAT_BODY_FILES_JSON_B64}}"
     assert glasshive_headers["X-Viventium-Tool-Resources"] == "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}"
+
+
+def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(
+        config_compiler.shutil,
+        "which",
+        lambda name: f"/usr/local/bin/{name}" if name in {"codex", "claude"} else None,
+    )
+
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+        },
+        "llm": {
+            "activation": {"provider": "groq", "auth_mode": "api_key", "secret_value": "groq-test"},
+            "primary": {"provider": "openai", "auth_mode": "api_key", "secret_value": "openai-test"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": True},
+            "ms365": {"enabled": True},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+            "glasshive": {"enabled": True},
+        },
+        "agents": {},
+    }
+
+    servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")
+    scheduling = servers["scheduling-cortex"]["serverInstructions"]
+    glasshive = servers["glasshive-workers-projects"]["serverInstructions"]
+    ms365 = servers["ms-365"]["serverInstructions"].lower()
+    google_workspace = servers["google_workspace"]["serverInstructions"].lower()
+
+    assert scheduling is True
+    assert glasshive is True
+    assert servers["scheduling-cortex"]["viventiumTrustedServerInstructions"] is True
+    assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
+
+    for instructions, product_phrase, other_provider in [
+        (ms365, "microsoft 365 owns authenticated outlook mail", "google workspace"),
+        (google_workspace, "google workspace owns authenticated gmail", "microsoft 365"),
+    ]:
+        for phrase in [
+            product_phrase,
+            "default to read-only inspection",
+            "explicitly asks",
+            "auth is missing/expired",
+            "do not fabricate",
+            "prevent duplicates",
+            "structured ids/metadata",
+            "user-facing verified results",
+            "do not branch on prompt text",
+            other_provider,
+        ]:
+            assert phrase in instructions
+
+
+def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -> None:
+    source = load_source_of_truth_librechat_yaml()
+    servers = source["mcpServers"]
+
+    scheduling = servers["scheduling-cortex"]["serverInstructions"]
+    glasshive = servers["glasshive-workers-projects"]["serverInstructions"]
+    ms365 = servers["ms-365"]["serverInstructions"].lower()
+    google_workspace = servers["google_workspace"]["serverInstructions"].lower()
+
+    assert scheduling is True
+    assert glasshive is True
+    assert servers["scheduling-cortex"]["viventiumTrustedServerInstructions"] is True
+    assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
+
+    for instructions in [ms365, google_workspace]:
+        assert "default to read-only inspection" in instructions
+        assert "auth is missing/expired" in instructions
+        assert "prevent duplicates" in instructions
+        assert "do not fabricate" in instructions
+        assert "do not branch on prompt text" in instructions
 
 
 def test_config_compiler_compile_phase_ignores_stale_generated_source_override(tmp_path: Path) -> None:
@@ -850,7 +1148,7 @@ def test_config_compiler_full_run_requires_openai_or_anthropic_foundation(tmp_pa
     assert "At least one of OpenAI or Anthropic must be configured" in completed.stderr
 
 
-def test_config_compiler_full_run_requires_groq_credential(tmp_path: Path) -> None:
+def test_config_compiler_full_run_requires_groq_activation_credential(tmp_path: Path) -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -902,7 +1200,62 @@ def test_config_compiler_full_run_requires_groq_credential(tmp_path: Path) -> No
     )
 
     assert completed.returncode != 0
-    assert "Missing required Groq credential." in completed.stderr
+    assert "Missing required Groq activation credential." in completed.stderr
+
+
+def test_config_compiler_full_run_accepts_default_groq_activation_without_xai(tmp_path: Path) -> None:
+    config = minimal_compile_config()
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "GROQ_API_KEY=groq-test" in runtime_env
+    assert "XAI_API_KEY=xai-test" not in runtime_env
+
+
+def test_config_compiler_full_run_accepts_explicit_xai_activation_override(tmp_path: Path) -> None:
+    config = minimal_compile_config()
+    config["llm"]["activation"] = {
+        "provider": "xai",
+        "auth_mode": "api_key",
+        "secret_value": "xai-test",
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "XAI_API_KEY=xai-test" in runtime_env
+    assert "GROQ_API_KEY=" not in runtime_env
+    assert "VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER=xai" in runtime_env
+    assert "VIVENTIUM_BACKGROUND_ACTIVATION_MODEL=grok-4.20-non-reasoning" in runtime_env
 
 
 def test_render_runtime_env_exports_explicit_background_role_assignments() -> None:
@@ -2863,7 +3216,7 @@ def test_config_compiler_exports_dormant_voice_provider_keys_for_precall_selecti
     assert "ELEVENLABS_API_KEY=elevenlabs-dormant" in runtime_env
     assert "ELEVEN_API_KEY=elevenlabs-dormant" in runtime_env
     assert "VIVENTIUM_XAI_TTS_API_KEY=synthetic_xai_dormant" in runtime_env
-    assert "XAI_API_KEY=synthetic_xai_dormant" in runtime_env
+    assert "GROQ_API_KEY=groq-test" in runtime_env
 
 
 def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_path: Path) -> None:
@@ -3318,9 +3671,9 @@ def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret
         },
         "llm": {
             "activation": {
-                "provider": "groq",
+                "provider": "xai",
                 "auth_mode": "api_key",
-                "secret_ref": "keychain://viventium/groq_api_key",
+                "secret_ref": "keychain://viventium/x_ai_api_key",
             },
             "primary": {
                 "provider": "openai",
@@ -3348,7 +3701,7 @@ def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret
     existing_runtime_env.write_text(
         "\n".join(
             [
-                "GROQ_API_KEY=groq-existing",
+                "XAI_API_KEY=xai-existing",
                 "OPENAI_API_KEY=openai-existing",
                 f"BOT_TOKEN={VALID_TELEGRAM_EXISTING_TOKEN}",
                 "VIVENTIUM_CALL_SESSION_SECRET=call-secret-existing",
@@ -3366,7 +3719,7 @@ def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret
     env = os.environ.copy()
     env["VIVENTIUM_ENV_FILE"] = str(existing_runtime_env)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
-    for key in ("GROQ_API_KEY", "OPENAI_API_KEY", "BOT_TOKEN"):
+    for key in ("XAI_API_KEY", "OPENAI_API_KEY", "BOT_TOKEN"):
         env.pop(key, None)
 
     subprocess.run(
@@ -3385,7 +3738,7 @@ def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
 
-    assert "GROQ_API_KEY=groq-existing" in runtime_env
+    assert "XAI_API_KEY=xai-existing" in runtime_env
     assert "OPENAI_API_KEY=openai-existing" in runtime_env
     assert f"BOT_TOKEN={VALID_TELEGRAM_EXISTING_TOKEN}" in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-secret-existing" in runtime_env

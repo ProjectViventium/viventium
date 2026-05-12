@@ -133,6 +133,68 @@ Known operational follow-up:
   GlassHive callback correctness issue, but it can still cause Telegram to report a temporary
   reachability failure while the API is restarting.
 
+## 2026-05-08 Regression: Operator Handoff And Callback Branching
+
+Trigger: a web-chat user asked Viventium to run a Docker GlassHive worker without blocking chat,
+then watch, steer, and receive the result in the same conversation. The worker could complete, but
+the visible handoff was unreliable: the model could expose the raw workstation/noVNC page instead of
+the operator page, completed HTML deliverables could remain on the GlassHive placeholder page,
+GlassHive tool rows could disappear after completion, and late callbacks could appear as sibling
+assistant branches instead of continuing the active chat.
+
+Expected behavior:
+
+- Web chat can delegate long-running GlassHive work without blocking normal follow-up messages.
+- The model receives and surfaces the operator `watch` URL for web/API surfaces; raw noVNC URLs are
+  diagnostic-only.
+- The operator page exposes watch, pause/play, interrupt, steer, and takeover controls while the
+  worker is running or ready.
+- When a worker creates a browser-deliverable page, the sandbox browser opens that page so the
+  operator view shows the result, not the placeholder.
+- GlassHive tool calls remain visible and expandable after completion, like other tool calls.
+- Late GlassHive callbacks append to the active conversation leaf. If the user has just typed a
+  follow-up and the assistant response is not persisted yet, the receiver returns a retryable status
+  instead of writing a sibling branch.
+
+Public-safe root cause:
+
+- GlassHive exposed multiple URL concepts to the model, and the raw workstation URL could be chosen
+  even when the product contract required the operator URL.
+- The runtime detected the completed result text but did not structurally promote a generated HTML
+  deliverable into the visible workstation browser for Docker workers.
+- LibreChat had a GlassHive-specific display optimization that could hide completed GlassHive tool
+  rows.
+- The callback receiver used the original request/assistant anchor too aggressively as the visible
+  tree parent. Once the user had continued the conversation, a late completion could be stored as an
+  alternate assistant sibling.
+- Docker Codex resume output did not share the host-native final-report contract, so a resumed steer
+  run could repeat stale previous-result text even when the workspace file changed correctly.
+
+Regression coverage added or re-run:
+
+- GlassHive runtime tests cover operator URL emission for web/API surfaces, URL omission for
+  non-web surfaces, deliverable payloads, worker takeover URL shape, Docker final-report command
+  injection, and final-report parsing on resume.
+- LibreChat callback route tests cover leaf-aware callback append, retryable callback handling while
+  a moved-on user message is the current leaf, repeated status update for the same run, and distinct
+  later runs from the same worker appending without overwriting earlier results.
+- LibreChat frontend tests cover persistent GlassHive tool rows and clearer GlassHive tool labels.
+- Config compiler tests cover generated `GLASSHIVE_OPERATOR_BASE_URL`.
+- Browser QA with synthetic content verified:
+  - chat remained usable while a Docker worker ran
+  - the model surfaced an operator watch URL
+  - the operator page exposed ready status, pause/play, interrupt, menu, and steer controls
+  - the sandbox browser opened the delivered `index.html` page
+  - a steer request changed the workspace file and visible page state
+  - a late signed callback appended to the active conversation line without sibling navigation
+  - a second callback from the same worker but a different run appended after the first callback
+
+Second-opinion review:
+
+- A review-only local Claude pass agreed with the operator/deliverable direction and flagged the
+  same-worker callback overwrite risk. The implementation now scopes callback updates by both
+  worker and run id, while distinct later runs append as new results.
+
 ## Latest Public-Safe QA Snapshot
 
 Executed with synthetic data and temporary runtime directories only:

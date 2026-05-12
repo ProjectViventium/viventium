@@ -17,6 +17,11 @@
 3. **Transport flexibility**
    - Support HTTP/streamable HTTP for server mode.
    - Support STDIO for local subprocess mode.
+   - WebSocket MCP transport is not enabled by default for public/runtime use. The current upstream
+     SDK transport does not expose a connect-time DNS/lookup hook, so it cannot provide the same
+     DNS-rebinding SSRF protection as HTTP/S transports. Use streamable HTTP or SSE for networked
+     MCP servers. A local developer-only unsafe override may exist for diagnostics, but production
+     must reject it.
 
 4. **Configuration by environment**
    - All secrets and endpoints must be configurable via `.env`.
@@ -89,6 +94,42 @@
   must not expand env secrets or OpenID tokens.
 - User-created MCP servers must not be able to set this flag through the public MCP creation UI/API.
   It belongs to reviewed source-of-truth/runtime config.
+
+### MCP-Owned Instruction Contract
+
+Capability cognition belongs at the MCP boundary, not in the user-level Viventium agent prompt.
+First-party external MCPs must be useful to any capable host agent, whether the host is LibreChat,
+another desktop agent, or a future Viventium surface.
+
+Each first-party MCP that owns meaningful behavior must advertise, through top-level server
+instructions and tool descriptions:
+
+- what capability it owns
+- when to use it and when not to use it
+- required and optional inputs
+- expected result shape and high-signal fields
+- common blockers and retry/diagnostic paths
+- idempotency, duplicate-prevention, and callback behavior
+- which details are user-facing and which are diagnostics-only
+
+The main Viventium agent prompt may describe orchestration principles, for example "use the
+connected execution tool when real browser/desktop/local work is requested." It must not carry
+manuals for GlassHive worker profiles, Scheduling Cortex CRUD mechanics, or other external MCP
+tool-specific behavior once the owning MCP advertises that behavior itself.
+
+For LibreChat configs:
+
+- `serverInstructions: true` means "fetch server-provided MCP instructions."
+- `serverInstructions: <string>` is a host-side override and should be reserved for Viventium-owned
+  host policy that cannot live in the external MCP.
+- `startup: false` servers still need server-provided instruction visibility before prompt
+  compaction can remove duplicate main-prompt manuals.
+- OAuth/user-specific instructions must not be fetched from app-level context. Server instructions
+  stay static; per-user or per-request facts belong in tool results or structured request context.
+
+Regression requirement: a `serverInstructions: true` value must never be injected into the LLM
+context as the literal text `true`. If the server instructions cannot be fetched, the MCP block
+must be omitted and observability must show the missing instruction source.
 
 ---
 

@@ -27,6 +27,10 @@ background-cortex behavior.
 - The shipped background follow-up window should stay in parity across LibreChat, live voice, and
   Telegram unless a future doc explicitly splits those defaults.
 - Voice-mode output must be plain conversational text and strip citation markers before TTS.
+- Voice-call prompt output should use simple ASCII punctuation unless the active TTS provider
+  explicitly requires provider-owned markup. Smart punctuation such as long dashes can survive into
+  TTS text in ways that sound unnatural, so the voice surface prompt should prefer commas, periods,
+  and short spoken phrasing.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
@@ -61,6 +65,9 @@ background-cortex behavior.
 - The fallback route is a secondary provider/model for recoverable primary-route failures before
   any assistant text is produced, including provider rate limits, credential failures, and temporary
   provider outages.
+- If the provider stream terminates after visible assistant text already exists, the saved web/chat
+  history must keep the partial text and log the termination without rendering a second fatal error
+  card in the same assistant message. Runtime must not switch to fallback mid-answer.
 - For live voice calls, runtime chooses fallback candidates in this order:
   1. the voice-specific fallback route, when configured
   2. the general agent fallback route, when the voice-specific route is unset or unavailable before
@@ -86,6 +93,10 @@ background-cortex behavior.
   to the assistant or obviously require the assistant's memory, tools, or role in the call.
 - Even when the user is talking to the assistant, Wing Mode should default to `{NTA}` unless the
   assistant has a clear, useful, additive contribution to make.
+- Emotional, tired, stressed, or vulnerable-sounding ambient self-talk is not enough by itself to
+  speak. Wing Mode must not answer with support, reflection, or "space to talk" unless the user
+  directly addresses Viventium, asks for help, or there is a clear time-sensitive/safety-critical
+  intervention.
 - The first-enable disclosure should show the current STT route, TTS route, and effective assistant
   call LLM route for the owning agent.
 - The assistant disclosure must show the concrete provider/model and whether that route comes from
@@ -94,6 +105,10 @@ background-cortex behavior.
   from the effective call LLM so users understand resilience without confusing it with STT/TTS
   route selection.
 - Runtime should use the persisted call-session flag as the source of truth for whether Wing Mode is on.
+- Wing Mode suppresses background-cortex activation for that turn. Ambient voice presence is not a
+  permission to spend cortex tokens or surface delayed follow-ups; only direct, explicit user
+  engagement should route through the normal assistant/cortex path after Wing Mode is no longer the
+  active surface for that turn.
 
 ### Listen-Only Mode
 - Product name: **Listen-Only Mode**.

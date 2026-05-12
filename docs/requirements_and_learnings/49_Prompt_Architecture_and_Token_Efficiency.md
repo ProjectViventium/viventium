@@ -1,9 +1,9 @@
 # Prompt Architecture and Token Efficiency
 
-**Document Version:** 0.2
-**Date:** 2026-05-05
+**Document Version:** 0.3
+**Date:** 2026-05-07
 **Owner:** Viventium Core
-**Status:** Proposal reviewed by ClaudeViv; pending human approval
+**Status:** Phase 0 baseline and pre-compaction hardening in progress on local critical branch
 **Scope:** Main Viventium prompt, surface prompts, MCP/server instructions, background cortex
 activation/execution prompts, Phase B follow-up/NTA prompts, memory-context injection, and prompt
 observability.
@@ -35,6 +35,174 @@ ClaudeViv review conclusion:
 - Prefer provider-native structured output for follow-up decisions; do not parse free-text JSON as
   the primary contract.
 - Make drift gates fail closed, matching agent-sync discipline.
+
+## Implementation Log
+
+### 2026-05-09 Local QA Baseline Evidence
+
+Ran a local QA baseline pass against the active local stack and QA account after prompt
+registry, MCP-instruction ownership, Wing, telemetry, and eval-harness fixes. This is useful
+engineering evidence, but it is not a public release signoff by itself: raw prompts, transcripts,
+runtime logs, browser state, and connected-account artifacts remain private and must not be
+published. Public release readiness still requires sanitized diffs, committed nested component
+state, parent pin agreement, and a final review-only pass.
+
+- Exact-model prompt bank: local run completed the selected bank with semantic-judge pass counts
+  recorded in private evidence. Treat the public summary as a sanitized local baseline, not as raw
+  reproducible model-output evidence.
+- Native Chrome/Playwright surface QA: local run covered web, scheduler, Telegram gateway, voice
+  gateway, Wing, and Listen-Only metadata routes with public-safe summaries only.
+- LiveKit playground QA: local QA-owned call-session behavior was checked in Chrome. Public docs
+  intentionally do not include raw account/session artifacts.
+- Telegram bridge QA: exercised the local Telegram gateway path and the Python Telegram bridge
+  renderer through QA-owned synthetic mappings without sending a real owner Telegram message.
+- Prompt-frame telemetry post-patch smoke: current prompt frames cover main assembly/runtime,
+  cortex activation/execution, run creation, and Phase B follow-up with `unknown_layer_names=[]`
+  and populated source/runtime/compiler hashes.
+- Prompt observability dashboards were regenerated in public-safe form; private full-text dashboard
+  output is local-only and must stay outside public commits.
+
+Residual limits from this closure pass:
+
+- The QA account has Microsoft 365 connected, but Google Workspace was not connected in the local
+  token store at signoff time. Google-specific read-only behavior therefore remains covered as an
+  auth/availability-path check, not as a live Google-data retrieval proof.
+- The Telegram `@Computer` proof deliberately used the local gateway/bridge and QA synthetic
+  mapping. A true owner-originating Telegram client message was not sent because that would mutate
+  the owner chat/account and conflict with QA-account isolation.
+- Full Phase B provider-native structured decisioning and main prompt compaction remain future
+  gates. The current branch creates the prompt source of truth, observability, eval harness, MCP
+  ownership groundwork, and surface fixes needed before compaction can safely proceed.
+- Claude and ClaudeViv review required two scope clarifications:
+  - The branch is not Git-reviewable until the parent and nested LibreChat working-tree changes are
+    committed locally; public reports currently describe local working-tree state.
+  - The current prompt-bundle drift check proves live bundle vs source bundle parity, not the full
+    future A/B/C runtime/source/compiled config gate.
+- Pre-existing Phase B fallback text heuristics remain and must be explicitly retired or bounded in
+  the structured-decisioning phase: lexical overlap insight dedupe and question-sentence stripping.
+
+### 2026-05-09 Strict Eval Gates And Wing Surface Correction
+
+Added stricter no-mock eval quality gates after review showed that API completion and semantic
+judging were still not enough to defend prompt changes:
+
+- Exact-model and native-surface evals now fail when distinct cases collapse to the same visible
+  answer unless the duplicate is an intentional silence/suppression case or a structured runtime
+  hold that later resolves with delayed/cortex evidence.
+- Exact-model and native-surface evals now fail when async/tool-routed cases end in generic pending
+  language without post-case evidence that the routed work produced a completed insight, callback,
+  or honest limitation.
+- Each eval record carries `hasRuntimeHold`, `pendingCortexStatuses`, duplicate-response quality
+  failures, and unresolved-async quality failures so dashboards and reports cannot mistake transport
+  completion for behavioral success.
+
+Native QA history exposed a Wing Mode regression: ambient self-talk in a passive call could receive
+supportive reflection instead of `{NTA}`. The fix lives in the Wing surface prompt, not runtime
+intent matching: Wing now explicitly treats silence as the default and forbids emotional-support
+responses to ambient personal speech unless the user directly addresses Viventium, asks for help, or
+there is a clear time-sensitive/safety-critical reason to intervene.
+
+### 2026-05-09 Prompt Source-Of-Truth Registry
+
+Added the first tracked prompt-registry source-of-truth slice:
+
+- Added `viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/` as the Viventium-owned
+  prompt source tree.
+- Split the main Viventium agent prompt into prompt-registry sections and a composite
+  `main.conscious_agent` include.
+- Extracted global no-response, conversation recall, memory archivist, MCP server instructions,
+  cortex activation/execution prompts, surface prompts, and Phase B follow-up ownership prompts.
+- Added `promptRef` support for Viventium source YAML. Compiled/runtime YAML still receives plain
+  strings so LibreChat's upstream shape stays intact.
+- Added a prompt-registry compiler/validator with frontmatter checks, duplicate-id failure,
+  include-cycle failure, public-tree private-pattern scanning, strict-variable support, and runtime
+  placeholder preservation for LibreChat variables such as `{{current_user}}`.
+- Added a compiled `prompt-bundle.json` output to the config compiler and a runtime
+  `promptRegistry` loader for code-owned surface prompts. Runtime lookups use the boot-loaded
+  bundle with inline fallbacks, not per-request Markdown reads.
+- Added local prompt-frame JSONL file logging under a private observability directory when explicitly
+  enabled, with CI/production refusal.
+- Added a static prompt observatory dashboard generator with public-safe mode and private full-text
+  mode.
+- Added JS/Python promptRef parity coverage after ClaudeViv flagged future drift risk around
+  `promptVars`, strict variables, and runtime-placeholder preservation.
+- Added a Scheduling Cortex FastMCP-vs-registry instruction parity test so top-level MCP cognition
+  does not drift between the server and LibreChat YAML surfaces.
+
+This change does not compact the main prompt or change user-level live agent instructions by itself.
+Compaction remains blocked behind real-surface frame-manifest evals.
+
+### 2026-05-09 MCP Instruction Ownership Review
+
+Official MCP, OpenAI, Anthropic, LibreChat, and FastMCP guidance all point to the same architecture:
+tool capability knowledge should be advertised by the server/tool contract that owns the capability.
+The main Viventium prompt should describe identity, policy, and orchestration, not copy external MCP
+manuals into user-level agent instructions.
+
+Claude review found one critical LibreChat-path gap: for `startup: false` MCPs,
+`serverInstructions: true` could remain unresolved because startup inspection skips metadata fetch.
+If that unresolved boolean reached prompt assembly, the context could lose the server instructions
+or inject the literal text `true`.
+
+Applied guardrail:
+
+- `MCPManager.formatInstructionsForContext()` now accepts only non-empty string instructions or
+  fetches server-provided instructions on demand for non-OAuth app-level MCPs.
+- Resolved server instructions are cached for the manager lifetime.
+- OAuth/user-specific MCP instructions are not fetched from app-level context; per-user facts must
+  come through tool results or structured request context.
+- Added a focused Jest regression suite covering unresolved boolean protection, lazy
+  server-instruction fetch, filtering, OAuth skip, and string `"true"` handling.
+
+This is still not permission to compact the main prompt. Remaining gates before compaction:
+
+- GlassHive low-level tools must pass the MCP tool-description checklist.
+- GlassHive server instructions need a parity or single-source test comparable to Scheduling Cortex.
+- Native-surface evals must prove real tool selection and user-facing behavior after the main-prompt
+  operational manuals are removed.
+- The prompt-bundle A/B/C drift gate must prove live, compiled, and source prompt hashes agree.
+
+### 2026-05-07 Local Critical Branch
+
+Branch: `codex/prompt-architecture-critical`
+
+Implemented so far:
+
+- Phase 0: private backup, QA-account parity, and public-safe QA scaffold.
+- Phase 1: provider-doc reference pack and prompt ownership audit.
+- Phase 2: metadata-only prompt-frame telemetry around main, cortex, and Phase B follow-up paths.
+- Phase 3: Scheduling Cortex and GlassHive MCP instruction ownership.
+- Phase 3.5: MS365 and Google Workspace MCP instruction ownership, added after Claude review found
+  productivity MCPs were still too skeletal for safe main-prompt compaction.
+- Phase 4: no-mock exact-model eval harness baseline through the local QA account.
+
+Important discoveries:
+
+- Live eval transport completion is not enough; the harness initially completed 3 cases while
+  extracting empty assistant text. The harness now parses assistant content arrays, stores raw SSE
+  events only in the private evidence area, and fails non-silent cases with empty visible output.
+- The first Phase 4 report overstated coverage. The harness now reports `partial_baseline` unless
+  the full prompt bank runs, and it lists cases/surfaces covered.
+- Source and compiled LibreChat hashes currently diverge after Phase 3.5. This is expected until
+  runtime config is regenerated/reloaded, but it means live productivity MCP behavior is not yet
+  proven against the new instructions.
+- Local JWT fallback is useful for owner-machine QA but sensitive. It now requires an explicit
+  local-only opt-in and refuses CI/production.
+- Main prompt compaction remains blocked until live MCP instruction hash agreement, full
+  exact-model coverage, real voice/Telegram/Wing/scheduler/listen-only runners, and browser QA pass.
+
+Validated in local/targeted suites so far. These counts are engineering evidence, not final
+public-release signoff until the branch is committed, public-safety scanned, and the parent/nested
+component pins agree:
+
+- Config compiler release tests: `76/76`
+- Install summary plus eval-harness release tests: `35/35`
+- Prompt-frame telemetry Jest tests: `7/7`
+- Scheduling Cortex pytest suite: `83/83`
+- Live QA-account exact-model baseline: `3/3` selected web cases, reported as partial baseline.
+
+The working tree also contains unrelated pre-existing memory/transcript edits. They are out of
+scope for this prompt-architecture implementation and must be reviewed/staged separately.
 
 ## Inputs And Evidence
 

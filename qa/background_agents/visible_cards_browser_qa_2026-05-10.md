@@ -1,0 +1,47 @@
+# Background Agent Visible Cards Browser QA
+- Started: 2026-05-12T06:39:41.601Z
+- Scope: local synthetic browser run with public-safe hashes only; release approval still requires committed diffs, nested pin agreement, scans, and review-only gates.
+- Agent ID configuration: default local QA agent IDs are used unless VIVENTIUM_QA_REQUIRED_CORTEX_AGENT_IDS_JSON overrides them.
+- Client hash: `1907c09a5927cc92`
+- API hash: `49e73564e9d328ef`
+- QA user hash: `81e4cc23445985a8`
+- Agent hash: `ed61775c0d925dba`
+- Prompt hash: `bb8bf06bec077ed6`
+- Conversation hash: `6238d690e4871d56`
+- Required visible cards: Red Team, Confirmation Bias
+- Runtime required agents: 3
+- Runtime missing required agent hashes: none
+- Runtime cortex fallback agents configured: Red Team, Confirmation Bias
+- Runtime activation expected provider: groq
+- Runtime activation expected model hash: `01327cd998eaac21`
+- Runtime activation drift agents: none
+- Runtime activation config pass: true
+- Runtime provisioning pass: true
+- Conversation fallback navigation used: false
+- Initial visible cards: Red Team, Confirmation Bias
+- Reload visible cards: Red Team, Confirmation Bias
+- Parent assistant hash: `2ce2d59ebb9909ac`
+- Parent visible answer text length: 4021
+- Parent visible answer present: true
+- Parent cortex-only failure: false
+- Initial parent answer visible: true
+- Reload parent answer visible: true
+- Phase B follow-up message count: 0
+- Background-agent footer visible: true
+- Terminal state visible: true
+- Why-this-ran visible: true
+- Forbidden main-agent wording matches: 0
+- Main error banner matches: 0
+- Stored assistant message count: 1
+- Stored cortex part count: 8
+- Stored cortex cards: Red Team, Confirmation Bias
+- Stored terminal cortex results: Red Team, Confirmation Bias
+- Stored successful cortex insights: Red Team, Confirmation Bias
+- Stored cortex errors: none
+- Console error count: 0
+- Failed request count: 0
+- Failed request route classes: none
+- Critical HTTP error count: 0
+- Critical HTTP error routes: none
+- Result: PASS
+- Interpretation: PASS: required cards were visible, the parent answer was visible and durable, and terminal insights persisted after reload.
