@@ -211,3 +211,47 @@ Verification:
 - Added regression coverage that mismatched WAV segment params are rejected instead of raw-concatted.
 - Added regression coverage for structural voice-marker counts.
 - Passed: `uv run --with pytest --with pytest-asyncio python -m pytest ../tests/test_bot_stream_preview.py ../tests/test_librechat_bridge.py ../tests/test_tts.py ../tests/test_voice_preferences.py ../tests/test_singleton.py -q`
+
+## 2026-05-07 xAI Wrapper Tag Display Leak
+
+Observed state:
+
+- A Telegram voice-mode reply displayed an xAI wrapper closing tag (`[/soft]`) in the visible text.
+- The same class of leak could also expose well-formed xAI angle wrapper tags in Telegram HTML
+  rendering because Telegram display cleanup had Cartesia coverage but no xAI wrapper coverage.
+
+Root cause:
+
+- xAI wrapping tags are documented as angle tags such as `<soft>TEXT</soft>`.
+- The Telegram display sanitizer stripped generic lowercase bracket stage directions like `[soft]`
+  but did not recognize slash-prefixed malformed wrapper remnants like `[/soft]`.
+- Telegram display sanitizer also did not strip well-formed xAI angle wrappers, even though the
+  LibreChat/web display sanitizer did.
+
+Fix:
+
+- Telegram display cleanup now reads the shared xAI capability contract and strips xAI wrapping
+  tags for user-visible text:
+  - well-formed angle wrappers preserve inner text
+  - orphan angle wrapper tags are removed
+  - square pseudo-wrapper tags such as `[soft]` and `[/soft]` are removed
+- xAI Telegram TTS cleanup strips malformed square pseudo-wrapper tags before calling xAI REST TTS.
+  Well-formed documented xAI tags remain available for xAI synthesis.
+- xAI Telegram TTS cleanup also strips Cartesia-only bracket aliases such as `[soft laugh]`,
+  `[gentle sigh]`, and `[breath out]` so a Cartesia-trained response cannot leak unsupported
+  stage directions into xAI audio.
+- LiveKit voice display/fallback cleanup now strips the same malformed xAI pseudo-wrapper tags so
+  transcript display and non-xAI fallbacks do not regress independently.
+- The LiveKit xAI plugin endpoint/sample-rate override now fails loudly if the pinned plugin stops
+  exposing the constants the runtime patches.
+
+Verification:
+
+- Synthetic reproduction `Hello.[/soft] Next sentence.` sanitizes to `Hello. Next sentence.` for
+  Telegram display/rendering.
+- Passed: `python3 -m py_compile TelegramVivBot/utils/librechat_bridge.py TelegramVivBot/utils/tts.py voice-gateway/sse.py voice-gateway/worker.py`
+- Passed: `TelegramVivBot/.venv/bin/python -m pytest tests/test_librechat_bridge.py tests/test_tts.py -q`
+- Passed: `TelegramVivBot/.venv/bin/python -m pytest -q` (`264 passed`)
+- Passed: `voice-gateway/.venv/bin/python -m pytest tests/test_sse.py tests/test_worker_ref_audio_validation.py -q`
+- Passed: `voice-gateway/.venv/bin/python -m pytest tests -q` (`221 passed`, one existing `audioop` deprecation warning)
+- Passed: LibreChat `surfacePrompts` and Telegram route Jest tests.

@@ -1,0 +1,7 @@
+1
+00:00:01,000 --> 00:00:04,000
+Sam: SRT fixture says Project Lantern keeps the Tuesday launch checklist.
+
+2
+00:00:05,000 --> 00:00:08,000
+Lee: SRT fixture marks the older Monday launch note as stale.

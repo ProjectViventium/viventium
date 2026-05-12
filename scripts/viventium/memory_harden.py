@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_SCHEDULE = "0 5 * * *"
+DEFAULT_SCHEDULE = "0 3 * * *"
 DEFAULT_TIMEZONE = "America/Toronto"
 LAUNCH_AGENT_LABEL = "ai.viventium.memory-harden"
 
@@ -35,15 +35,25 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def load_runtime_env(runtime_dir: Path, librechat_dir: Path) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for candidate in (
-        runtime_dir / "runtime.env",
+def runtime_env_candidates(runtime_dir: Path, librechat_dir: Path) -> tuple[Path, ...]:
+    """Return env files from lowest to highest precedence."""
+    return (
+        librechat_dir / ".env",
         runtime_dir / "local.env",
         runtime_dir / "librechat.env",
-        librechat_dir / ".env",
-    ):
-        env.update(parse_env_file(candidate))
+        runtime_dir / "runtime.env",
+        runtime_dir / "runtime.local.env",
+        runtime_dir / "service-env" / "librechat.env",
+    )
+
+
+def load_runtime_env(runtime_dir: Path, librechat_dir: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for candidate in runtime_env_candidates(runtime_dir, librechat_dir):
+        for key, value in parse_env_file(candidate).items():
+            if value == "" and env.get(key):
+                continue
+            env[key] = value
     return env
 
 
@@ -75,16 +85,51 @@ def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> d
     hour, minute = cron_to_launchd_time(schedule)
     plist_path = launch_agent_path()
     plist_path.parent.mkdir(parents=True, exist_ok=True)
-    command = f"{shlex.quote(str(args.repo_root / 'bin' / 'viventium'))} memory-harden apply --scheduled"
-    if args.user_email:
-        command += f" --user-email {shlex.quote(args.user_email)}"
+    logs_dir = args.app_support_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    launch_path = ":".join(
+        [
+            str(Path.home() / ".local" / "bin"),
+            str(Path.home() / ".codex" / "bin"),
+            "/Applications/Codex.app/Contents/Resources",
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+    )
+    clean_env = " ".join(
+        [
+            f"HOME={shlex.quote(str(Path.home()))}",
+            f"USER={shlex.quote(os.environ.get('USER', ''))}",
+            f"LOGNAME={shlex.quote(os.environ.get('LOGNAME', os.environ.get('USER', '')))}",
+            "SHELL=/bin/zsh",
+            f"PATH={shlex.quote(launch_path)}",
+            "LANG=en_US.UTF-8",
+            "LC_ALL=en_US.UTF-8",
+        ]
+    )
+    command = (
+        f"/usr/bin/env -i {clean_env} "
+        f"python3 {shlex.quote(str(args.repo_root / 'scripts' / 'viventium' / 'memory_harden.py'))} "
+        f"--repo-root {shlex.quote(str(args.repo_root))} "
+        f"--app-support-dir {shlex.quote(str(args.app_support_dir))} "
+        f"--runtime-dir {shlex.quote(str(args.runtime_dir))} "
+        "apply --scheduled"
+    )
+    operator_user_email = args.user_email or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_USER_EMAIL")
+    if operator_user_email:
+        command += f" --user-email {shlex.quote(operator_user_email)}"
     payload = {
         "Label": LAUNCH_AGENT_LABEL,
         "ProgramArguments": ["/bin/bash", "-lc", command],
         "StartCalendarInterval": {"Hour": hour, "Minute": minute},
-        "StandardOutPath": str(args.app_support_dir / "logs" / "memory-hardening.log"),
-        "StandardErrorPath": str(args.app_support_dir / "logs" / "memory-hardening.err.log"),
-        "WorkingDirectory": str(args.repo_root),
+        "StandardOutPath": str(logs_dir / "memory-hardening.log"),
+        "StandardErrorPath": str(logs_dir / "memory-hardening.err.log"),
+        "WorkingDirectory": str(args.app_support_dir),
         "RunAtLoad": False,
     }
     with plist_path.open("wb") as handle:
@@ -116,16 +161,40 @@ def uninstall_schedule(args: argparse.Namespace) -> dict[str, object]:
     return {"installed": False, "label": LAUNCH_AGENT_LABEL, "plist": str(plist_path)}
 
 
+def model_for_provider(provider: str | None, runtime_env: dict[str, str]) -> str:
+    normalized = str(provider or "").strip().lower().replace("-", "_")
+    if normalized in {"anthropic", "claude", "claude_code"}:
+        return runtime_env.get("VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL", "")
+    if normalized in {"openai", "openai_api", "codex"}:
+        return runtime_env.get("VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL", "")
+    return ""
+
+
+def user_email_for_run(args: argparse.Namespace, runtime_env: dict[str, str]) -> str:
+    if getattr(args, "user_id", None):
+        return str(getattr(args, "user_email", "") or "")
+    return str(
+        getattr(args, "user_email", "")
+        or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_USER_EMAIL")
+        or ""
+    ).strip()
+
+
 def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[str]:
     script = args.repo_root / "viventium_v0_4" / "LibreChat" / "scripts" / "viventium-memory-hardening.js"
+    node_mode = args.command
+    if args.command == "ingest-transcripts":
+        node_mode = "apply" if args.apply else "dry-run"
     command = [
         "node",
         str(script),
         "--mode",
-        args.command,
+        node_mode,
         "--app-support-dir",
         str(args.app_support_dir),
     ]
+    if args.command == "ingest-transcripts":
+        command.append("--transcripts-only")
     mongo_uri = args.mongo_uri or runtime_env.get("MONGO_URI")
     config_path = (
         args.config_path
@@ -139,8 +208,9 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
         command.extend(["--config-path", config_path])
     if args.run_id:
         command.extend(["--run-id", args.run_id])
-    if args.user_email:
-        command.extend(["--user-email", args.user_email])
+    operator_user_email = user_email_for_run(args, runtime_env)
+    if operator_user_email:
+        command.extend(["--user-email", operator_user_email])
     if args.user_id:
         command.extend(["--user-id", args.user_id])
     if args.lookback_days is not None:
@@ -151,12 +221,31 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
         command.extend(["--max-changes-per-user", str(args.max_changes_per_user)])
     if args.max_input_chars is not None:
         command.extend(["--max-input-chars", str(args.max_input_chars)])
-    if args.provider:
-        command.extend(["--provider", args.provider])
-    if args.model:
-        command.extend(["--model", args.model])
+    provider = args.provider or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER")
+    model = (
+        args.model
+        or (model_for_provider(args.provider, runtime_env) if args.provider else "")
+        or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_MODEL")
+    )
+    if provider:
+        command.extend(["--provider", provider])
+    if model:
+        command.extend(["--model", model])
     if args.proposal_file:
         command.extend(["--proposal-file", args.proposal_file])
+    if getattr(args, "transcripts_dir", None):
+        command.extend(["--transcripts-dir", args.transcripts_dir])
+    if getattr(args, "transcript_max_files_per_run", None) is not None:
+        command.extend(["--transcript-max-files-per-run", str(args.transcript_max_files_per_run)])
+    if getattr(args, "transcript_max_chars_per_file", None) is not None:
+        command.extend(["--transcript-max-chars-per-file", str(args.transcript_max_chars_per_file)])
+    if getattr(args, "transcript_summary_max_chars", None) is not None:
+        command.extend(["--transcript-summary-max-chars", str(args.transcript_summary_max_chars)])
+    transcript_rag_mode = getattr(args, "transcript_rag_mode", None) or runtime_env.get(
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE"
+    )
+    if transcript_rag_mode:
+        command.extend(["--transcript-rag-mode", transcript_rag_mode])
     if args.allow_delete:
         command.append("--allow-delete")
     if args.ignore_idle_gate:
@@ -176,15 +265,26 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
     env["VIVENTIUM_APP_SUPPORT_DIR"] = str(args.app_support_dir)
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_SCHEDULE", DEFAULT_SCHEDULE)
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_TIMEZONE", DEFAULT_TIMEZONE)
+    env.setdefault("VIVENTIUM_MEMORY_HARDENING_PROVIDER", env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER", ""))
+    env.setdefault("VIVENTIUM_MEMORY_HARDENING_MODEL", env.get("VIVENTIUM_MEMORY_HARDENING_MODEL", ""))
+    env.setdefault("VIVENTIUM_MEMORY_HARDENING_EFFORT", "xhigh")
+    env.setdefault("VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
+    env.setdefault("VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
+    scheduled_apply = args.command == "apply" or (
+        args.command == "ingest-transcripts" and getattr(args, "apply", False)
+    )
     if (
-        args.command == "apply"
+        scheduled_apply
         and getattr(args, "scheduled", False)
         and env.get("VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST", "true").lower()
         in {"1", "true", "yes", "on"}
     ):
         marker = args.app_support_dir / "state" / "memory-hardening" / "dry-run-first-complete"
         if not marker.exists():
-            args.command = "dry-run"
+            if args.command == "ingest-transcripts":
+                args.apply = False
+            else:
+                args.command = "dry-run"
             result = subprocess.run(
                 node_command(args, runtime_env),
                 cwd=args.repo_root / "viventium_v0_4" / "LibreChat",
@@ -225,12 +325,42 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--provider")
         sub.add_argument("--model")
         sub.add_argument("--proposal-file")
+        sub.add_argument("--transcripts-dir")
+        sub.add_argument("--transcript-max-files-per-run", type=int)
+        sub.add_argument("--transcript-max-chars-per-file", type=int)
+        sub.add_argument("--transcript-summary-max-chars", type=int)
+        sub.add_argument("--transcript-rag-mode")
         sub.add_argument("--allow-delete", action="store_true")
         sub.add_argument("--ignore-idle-gate", action="store_true")
         sub.add_argument("--skip-model-probe", action="store_true")
         sub.add_argument("--allow-partial-lookback", action="store_true")
         sub.add_argument("--scheduled", action="store_true")
         sub.add_argument("--json", action="store_true")
+    ingest = subparsers.add_parser("ingest-transcripts")
+    ingest_mode = ingest.add_mutually_exclusive_group()
+    ingest_mode.add_argument("--dry-run", action="store_true", default=True)
+    ingest_mode.add_argument("--apply", action="store_true")
+    ingest.add_argument("--run-id")
+    ingest.add_argument("--user-email")
+    ingest.add_argument("--user-id")
+    ingest.add_argument("--lookback-days", type=int)
+    ingest.add_argument("--min-user-idle-minutes", type=int)
+    ingest.add_argument("--max-changes-per-user", type=int)
+    ingest.add_argument("--max-input-chars", type=int)
+    ingest.add_argument("--provider")
+    ingest.add_argument("--model")
+    ingest.add_argument("--proposal-file")
+    ingest.add_argument("--transcripts-dir")
+    ingest.add_argument("--transcript-max-files-per-run", type=int)
+    ingest.add_argument("--transcript-max-chars-per-file", type=int)
+    ingest.add_argument("--transcript-summary-max-chars", type=int)
+    ingest.add_argument("--transcript-rag-mode")
+    ingest.add_argument("--allow-delete", action="store_true")
+    ingest.add_argument("--ignore-idle-gate", action="store_true")
+    ingest.add_argument("--skip-model-probe", action="store_true")
+    ingest.add_argument("--allow-partial-lookback", action="store_true")
+    ingest.add_argument("--scheduled", action="store_true")
+    ingest.add_argument("--json", action="store_true")
     install = subparsers.add_parser("install-schedule")
     install.add_argument("--schedule")
     install.add_argument("--user-email")

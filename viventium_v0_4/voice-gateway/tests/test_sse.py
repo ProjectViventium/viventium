@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # === VIVENTIUM START ===
 from sse import (
     VoiceControlDisplayFilter,
+    _XAI_WRAPPING_TAG_NAMES,
     iter_sse_json_events,
     extract_cortex_message_id,
     extract_raw_text_deltas,
@@ -261,6 +262,29 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Hello", cleaned)
         self.assertIn("secrets", cleaned)
 
+    def test_strip_voice_control_tags_strips_xai_wrapping_tags(self) -> None:
+        text = "I need <whisper>this quiet</whisper> and <slow><soft>gentle</soft></slow>."
+        cleaned = strip_voice_control_tags(text)
+        self.assertEqual(cleaned, "I need this quiet and gentle.")
+        self.assertNotIn("<whisper>", cleaned)
+        self.assertNotIn("<slow>", cleaned)
+        self.assertNotIn("<soft>", cleaned)
+
+    def test_strip_voice_control_tags_strips_malformed_xai_square_wrappers(self) -> None:
+        text = "<soft>Morning. You have warmth.[/soft] If needed."
+        cleaned = strip_voice_control_tags(text)
+        self.assertEqual(cleaned, "Morning. You have warmth. If needed.")
+        self.assertNotIn("<soft>", cleaned)
+        self.assertNotIn("[/soft]", cleaned)
+
+    def test_strip_voice_control_tags_strips_every_malformed_xai_square_wrapper(self) -> None:
+        for tag in _XAI_WRAPPING_TAG_NAMES:
+            with self.subTest(tag=tag):
+                cleaned = strip_voice_control_tags(f"Lead [{tag}] keep [/{tag}] tail.")
+                self.assertEqual(cleaned, "Lead keep tail.")
+                self.assertNotIn(f"[{tag}]", cleaned)
+                self.assertNotIn(f"[/{tag}]", cleaned)
+
     def test_sanitize_voice_followup_text_strips_voice_control_tags(self) -> None:
         """Follow-up sanitization now strips voice control tags before speech."""
         text = '<emotion value="excited"/>Great news! [laughter] Check it out.'
@@ -282,6 +306,20 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         chunks = ["Hello ", "[laugh", "ter] world"]
         cleaned = "".join(display.feed(chunk) for chunk in chunks)
         self.assertEqual(cleaned, "Hello  world")
+
+    def test_voice_control_display_filter_strips_split_xai_wrapping_tag(self) -> None:
+        display = VoiceControlDisplayFilter()
+        chunks = ["Hello ", "<whis", "per>secret</whisper> world"]
+        cleaned = "".join(display.feed(chunk) for chunk in chunks)
+        cleaned += display.feed("", final=True)
+        self.assertEqual(cleaned, "Hello secret world")
+
+    def test_voice_control_display_filter_strips_malformed_xai_square_wrapper(self) -> None:
+        display = VoiceControlDisplayFilter()
+        chunks = ["Morning. ", "You have warmth.[/so", "ft] If needed."]
+        cleaned = "".join(display.feed(chunk) for chunk in chunks)
+        cleaned += display.feed("", final=True)
+        self.assertEqual(cleaned, "Morning. You have warmth. If needed.")
 
     def test_voice_control_display_filter_preserves_non_voice_markup(self) -> None:
         display = VoiceControlDisplayFilter()

@@ -353,6 +353,270 @@ def test_cmd_start_cloudflare_saves_state_without_waiting_for_local_targets(monk
     assert saved["public_livekit_url"] == "wss://example.trycloudflare.com"
 
 
+def test_public_https_edge_state_rebuilds_when_livekit_node_ip_contract_changes(
+    monkeypatch,
+) -> None:
+    module = load_module()
+
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+
+    args = types.SimpleNamespace(livekit_node_ip="")
+    state = {
+        "provider": "public_https_edge",
+        "livekit_node_ip": "203.0.113.42",
+        "router": {"local_ip": "192.168.50.10"},
+    }
+
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is False
+
+    state["livekit_node_ip"] = "192.168.50.10"
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is True
+
+    args.livekit_node_ip = "198.51.100.24"
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is False
+
+    state["livekit_node_ip"] = "198.51.100.24"
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is True
+
+
+def test_public_https_edge_state_rejects_self_consistent_stale_livekit_node_ip(
+    monkeypatch,
+) -> None:
+    module = load_module()
+
+    args = types.SimpleNamespace(livekit_node_ip="")
+    state = {
+        "provider": "public_https_edge",
+        "livekit_node_ip": "192.168.50.10",
+        "router": {"local_ip": "192.168.50.10"},
+    }
+
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.60.10"})
+    monkeypatch.setattr(module, "detect_lan_ipv4", lambda: "192.168.60.10")
+
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is False
+
+    state["livekit_node_ip"] = "192.168.60.10"
+    state["router"]["local_ip"] = "192.168.60.10"
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is True
+
+
+def test_public_https_edge_state_allows_assigned_non_default_livekit_node_ip(
+    monkeypatch,
+) -> None:
+    module = load_module()
+
+    args = types.SimpleNamespace(livekit_node_ip="")
+    state = {
+        "provider": "public_https_edge",
+        "livekit_node_ip": "192.168.50.10",
+        "router": {"local_ip": "192.168.50.10"},
+    }
+
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.60.10", "192.168.50.10"})
+    monkeypatch.setattr(module, "detect_lan_ipv4", lambda: "192.168.60.10")
+
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is True
+
+
+def test_public_https_edge_state_preserves_explicit_livekit_node_ip_override(
+    monkeypatch,
+) -> None:
+    module = load_module()
+
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    monkeypatch.setattr(module, "detect_lan_ipv4", lambda: "192.168.50.10")
+
+    args = types.SimpleNamespace(livekit_node_ip="100.64.0.12")
+    state = {
+        "provider": "public_https_edge",
+        "livekit_node_ip": "100.64.0.12",
+        "router": {"local_ip": "192.168.50.10"},
+    }
+
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is True
+
+
+def test_public_https_edge_state_handles_missing_router_local_ip(monkeypatch) -> None:
+    module = load_module()
+
+    args = types.SimpleNamespace(livekit_node_ip="")
+    state = {
+        "provider": "public_https_edge",
+        "livekit_node_ip": "192.168.50.10",
+    }
+
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.50.10"})
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is True
+
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.60.10"})
+    assert module.state_matches_requested_livekit_node_ip("public_https_edge", args, state) is False
+
+
+def test_livekit_node_ip_state_validation_is_scoped_to_public_https_edge() -> None:
+    module = load_module()
+
+    args = types.SimpleNamespace(livekit_node_ip="")
+    state = {
+        "provider": "cloudflare_quick_tunnel",
+        "livekit_node_ip": "203.0.113.42",
+        "router": {"local_ip": "192.168.50.10"},
+    }
+
+    for provider in ("cloudflare_quick_tunnel", "tailscale_tailnet_https", "netbird_selfhosted_mesh"):
+        assert module.state_matches_requested_livekit_node_ip(provider, args, state) is True
+
+
+def test_assigned_local_ipv4s_parses_macos_ifconfig_and_filters_special_ranges(
+    monkeypatch,
+) -> None:
+    module = load_module()
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(module.socket, "gethostname", lambda: "viventium-test")
+    monkeypatch.setattr(module.socket, "getfqdn", lambda: "viventium-test.local")
+    monkeypatch.setattr(module.socket, "getaddrinfo", lambda *_args, **_kwargs: [])
+
+    def fake_run_checked(command: list[str], **_kwargs):
+        commands.append(command)
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout="""
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+    inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+    inet6 fe80::1%en0 prefixlen 64 secured scopeid 0x6
+    inet 169.254.10.5 netmask 0xffff0000 broadcast 169.254.255.255
+    inet 192.168.50.10 netmask 0xffffff00 broadcast 192.168.50.255
+""",
+        )
+
+    monkeypatch.setattr(module, "run_checked", fake_run_checked)
+
+    assert module.assigned_local_ipv4s() == {"192.168.50.10"}
+    assert commands == [["ifconfig"]]
+
+
+def test_assigned_local_ipv4s_falls_back_to_linux_ip_output(monkeypatch) -> None:
+    module = load_module()
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(module.socket, "gethostname", lambda: "viventium-test")
+    monkeypatch.setattr(module.socket, "getfqdn", lambda: "viventium-test.local")
+    monkeypatch.setattr(module.socket, "getaddrinfo", lambda *_args, **_kwargs: [])
+
+    def fake_run_checked(command: list[str], **_kwargs):
+        commands.append(command)
+        if command == ["ifconfig"]:
+            return types.SimpleNamespace(returncode=0, stdout="")
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout="""
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+    inet 192.168.60.10/24 brd 192.168.60.255 scope global eth0
+    inet6 fe80::1/64 scope link
+""",
+        )
+
+    monkeypatch.setattr(module, "run_checked", fake_run_checked)
+
+    assert module.assigned_local_ipv4s() == {"192.168.60.10"}
+    assert commands == [["ifconfig"], ["ip", "-4", "addr", "show"]]
+
+
+def test_assigned_local_ipv4s_uses_getaddrinfo_when_interface_commands_fail(
+    monkeypatch,
+) -> None:
+    module = load_module()
+
+    monkeypatch.setattr(module.socket, "gethostname", lambda: "viventium-test")
+    monkeypatch.setattr(module.socket, "getfqdn", lambda: "viventium-test.local")
+    monkeypatch.setattr(
+        module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (module.socket.AF_INET, None, None, None, ("127.0.0.1", 0)),
+            (module.socket.AF_INET, None, None, None, ("192.168.70.10", 0)),
+        ],
+    )
+    monkeypatch.setattr(module, "run_checked", lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+
+    assert module.assigned_local_ipv4s() == {"192.168.70.10"}
+
+
+def test_cmd_start_public_https_edge_rebuilds_stale_livekit_node_ip_state(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = load_module()
+
+    class DummyLock:
+        def fileno(self):
+            return 0
+
+        def close(self):
+            return None
+
+    stale_state = {
+        "provider": "public_https_edge",
+        "livekit_node_ip": "192.168.50.10",
+        "router": {"local_ip": "192.168.50.10"},
+        "caddy": {"pid": 777},
+        "client": {"target": "http://127.0.0.1:3190", "public_url": "https://app.example.test"},
+    }
+    rebuilt_state = {
+        "provider": "public_https_edge",
+        "livekit_node_ip": "192.168.60.10",
+        "router": {"local_ip": "192.168.60.10"},
+        "caddy": {"pid": 888},
+        "client": {"target": "http://127.0.0.1:3190", "public_url": "https://app.example.test"},
+    }
+    stopped: list[dict[str, object]] = []
+    saved: dict[str, object] = {}
+    starts: list[object] = []
+
+    monkeypatch.setattr(module, "with_lock", lambda _path: DummyLock())
+    monkeypatch.setattr(module.fcntl, "flock", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "load_state", lambda _path: dict(stale_state))
+    monkeypatch.setattr(module, "stop_state", lambda state: stopped.append(dict(state)))
+    monkeypatch.setattr(module, "state_is_healthy", lambda state: bool(state))
+    monkeypatch.setattr(module, "assigned_local_ipv4s", lambda: {"192.168.60.10"})
+    monkeypatch.setattr(module, "detect_lan_ipv4", lambda: "192.168.60.10")
+    monkeypatch.setattr(
+        module,
+        "start_public_https_edge",
+        lambda args, *, state_path, log_dir: starts.append(args) or dict(rebuilt_state),
+    )
+    monkeypatch.setattr(module, "save_state", lambda _path, state: saved.update(state))
+
+    args = types.SimpleNamespace(
+        state_file=str(tmp_path / "public-network.json"),
+        log_dir=str(tmp_path / "logs"),
+        client_port=3190,
+        api_port=3180,
+        playground_port=3300,
+        livekit_port=7888,
+        livekit_tcp_port=7889,
+        livekit_udp_port=7890,
+        livekit_turn_tls_port=5349,
+        public_client_origin="",
+        public_api_origin="",
+        public_playground_origin="",
+        public_livekit_url="",
+        livekit_node_ip="",
+        caddy_data_dir="",
+        provider="public_https_edge",
+        auto_install=False,
+        timeout_seconds=5,
+        command="start",
+    )
+
+    assert module.cmd_start(args) == 0
+
+    assert stopped == [stale_state]
+    assert len(starts) == 1
+    assert saved["livekit_node_ip"] == "192.168.60.10"
+
+
 def test_cmd_refresh_mappings_renews_saved_public_edge_ports(monkeypatch, tmp_path: Path) -> None:
     module = load_module()
     captured: list[tuple[str, int, str, int, int]] = []
@@ -637,7 +901,7 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert saved["public_api_url"] == "https://api.203.0.113.42.sslip.io"
     assert saved["public_playground_url"] == "https://playground.203.0.113.42.sslip.io"
     assert saved["public_livekit_url"] == "wss://livekit.203.0.113.42.sslip.io"
-    assert saved["livekit_node_ip"] == "203.0.113.42"
+    assert saved["livekit_node_ip"] == "192.168.50.10"
     assert saved["directory_instance_id"] == "instance-123"
     assert saved["directory_public_key_fingerprint"] == "sha256:test-fingerprint"
     assert (
@@ -652,6 +916,83 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert saved["livekit_turn_tls_port"] == 5349
     assert saved["livekit_turn_cert_file"] == "/tmp/livekit-turn.crt"
     assert saved["livekit_turn_key_file"] == "/tmp/livekit-turn.key"
+
+
+def test_cmd_start_public_https_edge_preserves_explicit_livekit_node_ip(monkeypatch, tmp_path: Path) -> None:
+    module = load_module()
+
+    class DummyLock:
+        def fileno(self):
+            return 0
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(module, "with_lock", lambda _path: DummyLock())
+    monkeypatch.setattr(module.fcntl, "flock", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "load_state", lambda _path: {})
+    monkeypatch.setattr(module, "ensure_caddy", lambda _auto_install: "/opt/homebrew/bin/caddy")
+    monkeypatch.setattr(module, "ensure_upnpc", lambda _auto_install: "/opt/homebrew/bin/upnpc")
+    monkeypatch.setattr(
+        module,
+        "resolve_binary",
+        lambda name: "/opt/homebrew/bin/upnpc" if name == "upnpc" else None,
+    )
+    monkeypatch.setattr(
+        module,
+        "list_upnpc_state",
+        lambda _bin: {"external_ip": "203.0.113.42", "local_ip": "192.168.50.10", "mappings": {}},
+    )
+    monkeypatch.setattr(module, "discover_public_ipv4", lambda _bin=None: "203.0.113.42")
+    monkeypatch.setattr(module, "pick_caddy_admin_port", lambda: 2019)
+    ports = iter([4080, 4443])
+    monkeypatch.setattr(module, "pick_free_port", lambda: next(ports))
+    monkeypatch.setattr(module, "ensure_upnp_mapping", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "start_caddy_process", lambda *_args, **_kwargs: 777)
+    monkeypatch.setattr(
+        module,
+        "wait_for_public_caddy_hosts",
+        lambda _hostnames, *, https_port, timeout_seconds: None,
+    )
+    monkeypatch.setattr(module, "resolve_public_edge_livekit_cert_pair", lambda *_args: ("", ""))
+    monkeypatch.setattr(
+        module,
+        "ensure_directory_identity",
+        lambda _state_path: {
+            "instance_id": "instance-123",
+            "public_key_fingerprint": "sha256:test-fingerprint",
+            "public_key_pem": "PUBLIC-KEY",
+            "registration_algorithm": "rsa-sha256",
+        },
+    )
+    saved: dict[str, object] = {}
+    monkeypatch.setattr(module, "save_state", lambda _path, state: saved.update(state))
+
+    args = types.SimpleNamespace(
+        state_file=str(tmp_path / "public-network.json"),
+        log_dir=str(tmp_path / "logs"),
+        client_port=3190,
+        api_port=3180,
+        playground_port=3300,
+        livekit_port=7888,
+        livekit_tcp_port=7889,
+        livekit_udp_port=7890,
+        livekit_turn_tls_port=5349,
+        public_client_origin="",
+        public_api_origin="",
+        public_playground_origin="",
+        public_livekit_url="",
+        livekit_node_ip="198.51.100.24",
+        caddy_data_dir="",
+        provider="public_https_edge",
+        auto_install=False,
+        timeout_seconds=5,
+        command="start",
+    )
+
+    assert module.cmd_start(args) == 0
+
+    assert saved["livekit_node_ip"] == "198.51.100.24"
 
 
 def test_cmd_start_persists_error_state_when_remote_access_bootstrap_fails(monkeypatch, tmp_path: Path) -> None:

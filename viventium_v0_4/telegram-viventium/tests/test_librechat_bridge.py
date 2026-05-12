@@ -22,6 +22,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     extract_final_response_text,
     extract_response_message_id,
     extract_text_deltas,
+    glasshive_callback_is_terminal,
     has_active_cortex,
     LibreChatBridge,
     LibreChatSession,
@@ -29,6 +30,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     render_telegram_markdown,
     sanitize_telegram_display_text,
     sanitize_telegram_text,
+    _XAI_WRAPPING_TAG_NAMES,
 )
 
 
@@ -67,6 +69,10 @@ def test_payload_has_glasshive_tool_call_uses_mcp_server_identity():
             },
         }
     )
+
+
+def test_glasshive_artifact_callback_is_terminal_for_fast_path():
+    assert glasshive_callback_is_terminal({"event": "artifact.created"})
 
 
 def test_sanitize_telegram_text_removes_consecutive_citations():
@@ -157,6 +163,48 @@ def test_voice_markup_display_sanitizer_preserves_default_markdown_rendering():
     assert "<b>there</b>" in rendered_voice
     assert display_text == "Hello **there**"
 # === VIVENTIUM END ===
+
+
+def test_voice_markup_display_sanitizer_strips_xai_wrapping_tags():
+    text = '<soft>Morning. You have warmth.</soft> **There**'
+
+    rendered_voice = render_telegram_markdown(text, strip_voice_markup=True)
+    display_text = sanitize_telegram_display_text(text)
+
+    assert "<soft>" not in rendered_voice
+    assert "&lt;soft&gt;" not in rendered_voice
+    assert "</soft>" not in rendered_voice
+    assert "Morning. You have warmth." in rendered_voice
+    assert "<b>There</b>" in rendered_voice
+    assert display_text == "Morning. You have warmth. **There**"
+
+
+def test_voice_markup_display_sanitizer_strips_malformed_xai_square_wrappers():
+    text = (
+        "Morning. You have warmth coming at you.[/soft] "
+        "If needed, I can sort the signal."
+    )
+
+    rendered_voice = render_telegram_markdown(text, strip_voice_markup=True)
+    display_text = sanitize_telegram_display_text(text)
+
+    assert "[/soft]" not in rendered_voice
+    assert "[/soft]" not in display_text
+    assert rendered_voice == "Morning. You have warmth coming at you. If needed, I can sort the signal."
+    assert display_text == "Morning. You have warmth coming at you. If needed, I can sort the signal."
+
+
+@pytest.mark.parametrize("tag", _XAI_WRAPPING_TAG_NAMES)
+def test_voice_markup_display_sanitizer_strips_each_xai_square_wrapper(tag):
+    text = f"Lead [{tag}] keep this [/{tag}] tail."
+
+    rendered_voice = render_telegram_markdown(text, strip_voice_markup=True)
+    display_text = sanitize_telegram_display_text(text)
+
+    assert f"[{tag}]" not in rendered_voice
+    assert f"[/{tag}]" not in rendered_voice
+    assert rendered_voice == "Lead keep this tail."
+    assert display_text == "Lead keep this tail."
 
 
 def test_render_telegram_markdown_preserves_preescaped_text():
@@ -307,6 +355,16 @@ def test_stream_error_message_classifies_tool_errors():
     assert (
         _stream_error_message("OpenAI connected account needs reconnect in Settings > Account > Connected Accounts.")
         == "OpenAI connected account needs reconnect in Settings > Account > Connected Accounts."
+    )
+    assert (
+        _stream_error_message(
+            "An error occurred while processing the request: 401 Provided authentication token is expired. Troubleshooting URL: MODEL_AUTHENTICATION"
+        )
+        == "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+    )
+    assert (
+        _stream_error_message('401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}')
+        == "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
     )
     assert _stream_error_message("plain timeout") == "Connection error. Please retry."
 
@@ -1691,6 +1749,158 @@ async def test_poll_for_followup_sends_glasshive_callback_without_cortex_parts()
     assert len(messages) == 1
     assert messages[0][0] == 303
     assert "worker finished" in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_claims_durable_glasshive_delivery_before_sending():
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-claim"
+    chat_id = "313:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="313",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-claim"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-claim"
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "latest": {
+                "event": "run.completed",
+                "text": "Short preview.",
+                "callbackId": "cb_claimed",
+            }
+        }
+
+    async def fake_claim(latest):
+        assert latest["callbackId"] == "cb_claimed"
+        return {
+            "deliveryId": "ghcd_claimed",
+            "claimId": "claim_1",
+            "telegramChatId": "313",
+            "text": "Short preview.",
+            "fullText": "Full durable worker report.",
+        }
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_delivery_for_callback = fake_claim  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert len(messages) == 1
+    assert messages[0][0] == 313
+    assert "Full durable worker report" in messages[0][1]
+    assert marked == [("ghcd_claimed", "sent", "", "")]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_waits_for_delivery_row_instead_of_legacy_sending():
+    bridge = _make_bridge()
+    legacy_sends = []
+
+    stream_id = "stream-glasshive-race"
+    chat_id = "313:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="313",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-race"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-race"
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.05
+    bridge.followup_grace_s = 0.01
+    bridge.glasshive_timeout_s = 0.05
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "latest": {
+                "event": "run.completed",
+                "text": "Worker finished.",
+                "callbackId": "cb_row_not_visible_yet",
+            }
+        }
+
+    async def fake_claim(latest):
+        assert latest["callbackId"] == "cb_row_not_visible_yet"
+        return None
+
+    async def fake_send_once(*args, **kwargs):
+        legacy_sends.append((args, kwargs))
+        return True
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_delivery_for_callback = fake_claim  # type: ignore[assignment]
+    bridge._send_followup_text_once = fake_send_once  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert legacy_sends == []
+
+
+@pytest.mark.asyncio
+async def test_glasshive_dispatcher_delivers_late_callback_without_stream_state():
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+
+    sent = await bridge._deliver_glasshive_delivery(
+        {
+            "deliveryId": "ghcd_late",
+            "claimId": "claim_late",
+            "telegramChatId": "404",
+            "text": "Preview.",
+            "fullText": "Late worker completion delivered after poll timeout.",
+        }
+    )
+
+    assert sent is True
+    assert messages == [(404, "Late worker completion delivered after poll timeout.")]
+    assert marked == [("ghcd_late", "sent", "", "")]
 
 
 @pytest.mark.asyncio

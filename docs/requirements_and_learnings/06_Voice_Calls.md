@@ -9,6 +9,15 @@ background-cortex behavior.
 - Call sessions must survive process restarts and multi-instance deployments.
 - Voice gateway authentication must rely on a shared secret plus call-session identity.
 - Conversation continuity must be preserved.
+- Voice conversation reuse is owned by the persisted call-session agent identity. Some
+  provider-backed ephemeral agent conversations are stored with their provider endpoint rather than
+  `agents`; the voice resolver may reuse those only when the conversation `agent_id` exactly
+  matches the active call-session `agentId`.
+- This provider-backed shape is expected for ephemeral agent ids: LibreChat initializes
+  non-ephemeral agents with endpoint `agents`, but ephemeral provider agents are saved under their
+  underlying provider endpoint while retaining structured `agent_id`. Voice continuity must respect
+  that existing storage contract instead of assuming every valid agent conversation has
+  endpoint `agents`.
 - Premature endpointing must not fork one spoken sentence into multiple sibling user turns.
 - Turn-taking must balance two failure modes across short and long speech:
   - do not interrupt the user mid-thought because a short reflective pause looked like end-of-turn
@@ -18,10 +27,16 @@ background-cortex behavior.
 - The shipped background follow-up window should stay in parity across LibreChat, live voice, and
   Telegram unless a future doc explicitly splits those defaults.
 - Voice-mode output must be plain conversational text and strip citation markers before TTS.
+- Voice-call prompt output should use simple ASCII punctuation unless the active TTS provider
+  explicitly requires provider-owned markup. Smart punctuation such as long dashes can survive into
+  TTS text in ways that sound unnatural, so the voice surface prompt should prefer commas, periods,
+  and short spoken phrasing.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
 - Wing Mode must be a simple opt-in voice behavior, not a separate hardcoded agent path.
+- Listen-Only Mode must be a listening-only voice behavior that saves ambient transcript records without
+  producing an assistant response.
 - Only one LiveKit worker may speak for a call session at a time.
 
 ## Public-Safe Specifications
@@ -50,6 +65,9 @@ background-cortex behavior.
 - The fallback route is a secondary provider/model for recoverable primary-route failures before
   any assistant text is produced, including provider rate limits, credential failures, and temporary
   provider outages.
+- If the provider stream terminates after visible assistant text already exists, the saved web/chat
+  history must keep the partial text and log the termination without rendering a second fatal error
+  card in the same assistant message. Runtime must not switch to fallback mid-answer.
 - For live voice calls, runtime chooses fallback candidates in this order:
   1. the voice-specific fallback route, when configured
   2. the general agent fallback route, when the voice-specific route is unset or unavailable before
@@ -75,6 +93,10 @@ background-cortex behavior.
   to the assistant or obviously require the assistant's memory, tools, or role in the call.
 - Even when the user is talking to the assistant, Wing Mode should default to `{NTA}` unless the
   assistant has a clear, useful, additive contribution to make.
+- Emotional, tired, stressed, or vulnerable-sounding ambient self-talk is not enough by itself to
+  speak. Wing Mode must not answer with support, reflection, or "space to talk" unless the user
+  directly addresses Viventium, asks for help, or there is a clear time-sensitive/safety-critical
+  intervention.
 - The first-enable disclosure should show the current STT route, TTS route, and effective assistant
   call LLM route for the owning agent.
 - The assistant disclosure must show the concrete provider/model and whether that route comes from
@@ -83,11 +105,61 @@ background-cortex behavior.
   from the effective call LLM so users understand resilience without confusing it with STT/TTS
   route selection.
 - Runtime should use the persisted call-session flag as the source of truth for whether Wing Mode is on.
+- Wing Mode suppresses background-cortex activation for that turn. Ambient voice presence is not a
+  permission to spend cortex tokens or surface delayed follow-ups; only direct, explicit user
+  engagement should route through the normal assistant/cortex path after Wing Mode is no longer the
+  active surface for that turn.
+
+### Listen-Only Mode
+- Product name: **Listen-Only Mode**.
+- Listen-Only Mode is for presence and learning without live interaction: the room can be
+  transcribed and saved, but Viventium must not answer, speak, run tools, call the Agents
+  controller, generate a title through an LLM, invoke background cortices, or trigger the live
+  LibreChat Memory Agent.
+- Runtime must use a persisted call-session flag as the source of truth. Listen-Only Mode and Wing
+  Mode are mutually exclusive; enabling one clears the other.
+- The modern playground exposes Listen-Only as an icon-sized control beside the voice-mode controls.
+  Its user-facing copy must feel like cognitive presence, not surveillance, logging, or recordkeeping:
+  Viventium is here with the user, only listening and remembering later. The tooltip must still make
+  the boundaries clear: the conversation is kept for later memory consolidation, no live
+  response/tool/memory path runs, and same-microphone audio does not provide true speaker
+  diarization. Separate speaker labels are only available when structured LiveKit participant/track
+  identity is available.
+- Listen-Only uses the current listening route. For the intended low-cost setup, choose the local
+  `pywhispercpp` / WhisperCPP route; the mode itself must not silently remap STT providers.
+- The voice route may still use the existing turn coalescing boundary so one spoken thought becomes
+  one saved transcript entry. Coalescing must only return an already saved Listen-Only result inside
+  the short duplicate-return window when the incoming text is already captured by the saved text; a
+  later or different ambient turn with the same call/live-parent key must save as a new transcript
+  row.
+- If a Listen-Only call starts from `conversationId="new"`, the first concrete conversation id must
+  be claimed atomically at the call-session layer so concurrent transcript saves cannot split one
+  listening session across multiple LibreChat conversations.
+- Saved entries are structured ambient transcript records, not user-authored chat turns:
+  - `isCreatedByUser=false`
+  - `sender="Listen-Only"`
+  - `tokenCount=0`
+  - `_meiliIndex=false`
+  - `metadata.viventium.type="listen_only_transcript"`
+  - `metadata.viventium.mode="listen_only"`
+- Saved entries may remain visible in conversation history, but the live agent history loader and
+  voice-thread parent resolver must skip them. Turning Listen-Only off must not cause ambient
+  transcripts to be sent to the next live LLM call as prior assistant context.
+- When the latest visible conversation row is already a Listen-Only transcript, the next
+  Listen-Only transcript must parent to that row so ambient transcript entries form a linear
+  transcript lane instead of one LibreChat branch per utterance. If the latest row is not
+  Listen-Only, persistence falls back to the resolved live parent.
+- Conversation recall must exclude these entries from the normal prior-chat corpus. The daily
+  memory hardener may read them as `ambient_transcript` soft evidence and must apply the same
+  transcript corroboration discipline used for meeting transcripts before writing stable memory.
+- Runtime must not add prompt-text classifiers, keyword gates, or agent-name branches to implement
+  Listen-Only. The owning switch is structured call-session state.
 
 ### Voice Gateway Contract
 - `POST /api/viventium/calls` returns the call session id, room name, conversation id, and playground URL.
 - `GET /api/viventium/calls/:callSessionId/state` returns the current session state.
-- `POST /api/viventium/calls/:callSessionId/state` renews the session TTL and can update Wing Mode.
+- `POST /api/viventium/calls/:callSessionId/state` renews the session TTL and can update Wing Mode
+  and Listen-Only Mode.
 - Voice gateway requests must carry the shared call-session secret and session identity.
 - Agent dispatch metadata for modern-playground calls must be hydrated from the authoritative
   call-session voice settings server-side before dispatch creation; do not rely on the browser's
@@ -265,6 +337,9 @@ background-cortex behavior.
     not kill the idle process before the worker can accept calls
   - local Whisper VAD fallback defaults to a longer silence budget than remote/STT-owned routes, and
     explicit `VIVENTIUM_STT_VAD_MIN_SILENCE` still overrides that default
+  - local Whisper VAD fallback defaults to a slightly longer minimum speech threshold than
+    remote/STT-owned routes, and explicit `VIVENTIUM_STT_VAD_MIN_SPEECH` still overrides that
+    default
   - runtime logs must state why a user turn completed, using normalized reason labels such as
     `vad_silence`, `stt_end_of_turn`, or `semantic_turn_detector`
 - Per-call requested voice-route overrides must recompute the effective turn-taking defaults from the
@@ -276,6 +351,51 @@ background-cortex behavior.
   - prefer explicit compiler-emitted defaults over leaving the plugin/API path ambiguous
 - The same ownership contract must work for both short exchanges and long continuous speech; fixes
   must widen the structural runtime contract, not hardcode one reproduced sentence shape.
+
+### xAI Standalone TTS Contract
+- xAI is a first-class TTS provider separate from the older Grok Voice Agent API adapter. The
+  user-facing provider label is **xAI**; engineering docs may still call the underlying API
+  "standalone xAI TTS" when the distinction from the legacy Voice Agent adapter matters.
+- Recommendation order for Speaking providers:
+  - Local Chatterbox remains the preferred first choice when available because it is local and
+    covered.
+  - After Local Chatterbox, xAI Voice is the recommended hosted voice route for general use because
+    as of 2026-05-07 the official xAI TTS pricing page lists $4.20 per 1M TTS input characters
+    (`https://docs.x.ai/developers/models/text-to-speech`), materially below the effective public
+    Cartesia bundled-character cost from Cartesia's published pricing (`https://cartesia.ai/pricing`),
+    and local QA found it fast and high quality. Keep this as product guidance, not a runtime
+    default flip.
+  - Cartesia remains the recommended expressive/Sonic-3 route when the use case specifically needs
+    Cartesia emotion controls, `[laughter]`, or Sonic-3 SSML-like markup.
+- Default xAI voice calls use standalone TTS:
+  - REST full-text endpoint: `https://api.x.ai/v1/tts`
+  - LiveKit streaming endpoint, via `livekit-plugins-xai`: `wss://api.x.ai/v1/tts`
+  - legacy Grok Voice Agent routing is allowed only when explicitly configured with
+    `VIVENTIUM_XAI_TTS_API=voice_agent`
+- xAI TTS capabilities live in `viventium_v0_4/shared/voice/xai_tts_capabilities.json`.
+  Prompt builders, Telegram TTS, voice-gateway capability metadata, display sanitizers, and tests
+  must consume that contract instead of maintaining independent xAI tag lists.
+- xAI speech tags are provider-specific speech markup, not SSML:
+  - inline tags include `[pause]`, `[long-pause]`, `[hum-tune]`, `[laugh]`, `[chuckle]`,
+    `[giggle]`, `[cry]`, `[tsk]`, `[tongue-click]`, `[lip-smack]`, `[breath]`, `[inhale]`,
+    `[exhale]`, and `[sigh]`
+  - wrapping tags include `<soft>`, `<whisper>`, `<loud>`, `<build-intensity>`,
+    `<decrease-intensity>`, `<higher-pitch>`, `<lower-pitch>`, `<slow>`, `<fast>`,
+    `<sing-song>`, `<singing>`, `<laugh-speak>`, and `<emphasis>`
+- xAI does not expose a Cartesia-style `generation_config.emotion`. The model-facing prompt may
+  ask the LLM to express tone with natural wording plus documented xAI speech tags; runtime must
+  not infer or invent emotion controls.
+- Provider dialects must remain isolated:
+  - Cartesia routes may preserve Cartesia Sonic-3 SSML-like tags and `[laughter]`
+  - xAI routes may preserve xAI speech tags but must strip Cartesia-only tags and Cartesia-only
+    bracket aliases before xAI synthesis
+  - OpenAI/ElevenLabs fallbacks strip all provider voice-control markup before synthesis
+  - saved/displayed assistant text strips provider markup while preserving spoken inner text
+  - display sanitizers must also strip malformed xAI wrapper remnants such as `[soft]...[/soft]`
+    and orphan closing tags like `[/soft]`; malformed provider markup is never user-facing text
+- Telegram voice-note and always-voice replies must use the same saved Speaking route as the modern
+  playground for xAI too. The resolved xAI route variant is the xAI `voice_id`, and Telegram must
+  prefer `VIVENTIUM_XAI_TTS_API_KEY` over a generic `XAI_API_KEY` just like the LiveKit gateway.
 
 ### Remote Browser Voice Contract
 - Enabling remote access must not break the canonical localhost voice path.

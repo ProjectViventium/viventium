@@ -20,9 +20,10 @@ stream back to Telegram through the existing bridge.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
 - Telegram must mirror direct-action worker completion delivery. When a LibreChat turn starts a
-  GlassHive worker, the bot should keep polling the persisted GlassHive callback state long enough
-  for real host-browser/desktop work to finish and should send the final result automatically in the
-  same Telegram chat.
+  GlassHive worker, the callback receiver must persist both the same-conversation web callback and
+  a durable Telegram delivery row. The bot may use in-turn polling as a fast path, but late worker
+  results must still be claimed from the delivery ledger and sent automatically in the same
+  Telegram chat after the original poll window ends or after a bot restart.
 - Telegram must deliver LibreChat message attachments back to the Telegram user.
 - Detached/local launches must not leave Telegram pointed at a dead LibreChat localhost origin after
   frontend dev-server exits or launcher-side supervision gaps.
@@ -92,6 +93,24 @@ stream back to Telegram through the existing bridge.
   - default logs should still include non-secret structural counts for `[laughter]`,
     `<emotion>`, `<break>`, `<speed>`, `<volume>`, and `<spell>` so formatting loss can be
     diagnosed without publishing transcript content
+- When the resolved Speaking route is xAI, Telegram follows the standalone xAI TTS contract:
+  - the canonical xAI capability contract is
+    `viventium_v0_4/shared/voice/xai_tts_capabilities.json`
+  - the saved route's `tts.variant` is the xAI `voice_id`, so a user selecting `Eve`, `Rex`, or
+    another xAI voice in the modern playground gets the same voice in Telegram audio replies
+  - Telegram prefers `VIVENTIUM_XAI_TTS_API_KEY` for synthesis and only falls back to `XAI_API_KEY`
+    for compatibility, matching the LiveKit gateway's xAI voice-key precedence
+  - Telegram calls `POST https://api.x.ai/v1/tts` with `text`, `voice_id`, `language`, and a
+    structured `output_format`
+  - xAI inline and wrapping speech tags from the shared contract are preserved for xAI synthesis
+  - Telegram must not split xAI text into generic 800-character fallback chunks because that can
+    break xAI wrapping tags and create invalid concatenated MP3 output
+  - user-visible Telegram text must strip xAI tags even when the model emits malformed wrapper
+    syntax such as `[soft]...[/soft]` or an orphan closing tag like `[/soft]`
+  - Cartesia-only tags such as `<emotion>`, `<break>`, `<speed>`, `<volume>`, `<spell>`,
+    `[laughter]`, and Cartesia-only bracket aliases like `[soft laugh]` or `[gentle sigh]` are
+    stripped before xAI synthesis
+  - OpenAI/ElevenLabs fallbacks still strip all provider markup before synthesis
 - `/call` should open the browser into the modern voice surface using a browser-facing URL.
 - Raw LAN/IP browser-voice links should not be presented as a supported path unless they are
   explicitly known-good for the current deployment.
@@ -144,6 +163,29 @@ stream back to Telegram through the existing bridge.
 - Non-secret voice delivery timing logs must be available in normal runtime logs. Each voice-routed
   Telegram turn should log the gate decision, TTS start, TTS chunk duration/bytes, and Telegram audio
   send duration without logging bot tokens, API keys, raw private message text, or local paths.
+- GlassHive callback delivery logs must include non-secret observability states: callback accepted,
+  delivery enqueued, claimed, sent, failed, suppressed, retry count, and backlog age. Telegram Bot
+  API token-bearing URLs must be redacted from local logs and from persisted delivery failure
+  reasons.
+- A callback is not successfully accepted for Telegram or voice until both the same-conversation
+  callback message and the surface delivery ledger row are durable. If ledger enqueue fails after
+  message persistence, the callback receiver must return a retryable failure so GlassHive retries
+  rather than marking the callback delivered.
+- Duplicate callback repair must be DB-backed, not process-memory-only. If a callback message was
+  already persisted but the Telegram/voice delivery row is missing after a restart or partial
+  failure, a repeated signed callback with the same callback id must repair the missing delivery
+  row without creating a duplicate conversation message.
+- Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
+  collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
+- Telegram GlassHive delivery dispatcher tuning is operational only:
+  - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S` controls the background delivery poll interval
+    and defaults to 5 seconds.
+  - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_BATCH_SIZE` controls each claim batch and is capped at
+    25.
+  - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_LEASE_MS` controls the claim lease and defaults to 10
+    minutes, capped at 10 minutes. A lost claim must be returned as a conflict and logged as
+    observability, not silently treated as a successful status update.
+  - These knobs must not replace the durable delivery ledger or become correctness requirements.
 
 ## Telegram Attachments
 

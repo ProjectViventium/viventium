@@ -37,6 +37,8 @@ properties:
             type: boolean
           allow_password_reset:
             type: boolean
+          connected_accounts_return_origin:
+            type: string
       personalization:
         type: object
         properties:
@@ -50,6 +52,8 @@ properties:
           schedule:
             type: string
           timezone:
+            type: string
+          operator_user_email:
             type: string
           lookback_days:
             type: integer
@@ -68,8 +72,30 @@ properties:
             enum: [launch_ready_only]
           anthropic_model:
             type: string
+          anthropic_effort:
+            type: string
+            enum: [xhigh]
           openai_model:
             type: string
+          openai_reasoning_effort:
+            type: string
+            enum: [xhigh]
+          transcripts:
+            type: object
+            properties:
+              source_dir:
+                type: string
+              max_files_per_run:
+                type: integer
+              max_chars_per_file:
+                type: integer
+              summary_max_chars:
+                type: integer
+              stable_evidence_max_age_days:
+                type: integer
+              rag_mode:
+                type: string
+                enum: [detailed_summary_only, raw_and_summary, raw_only]
       background_followup_window_s:
         type: number
       glasshive_followup_timeout_s:

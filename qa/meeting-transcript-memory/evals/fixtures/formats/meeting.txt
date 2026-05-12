@@ -1,0 +1,2 @@
+10:00 Sam: TXT fixture says Project Lantern keeps the Tuesday launch checklist.
+10:04 Lee: TXT fixture marks the older Monday launch note as stale.

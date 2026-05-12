@@ -580,7 +580,8 @@ Usage:
   bin/viventium memory-harden apply [--run-id <id>] [--user-email <email>]
   bin/viventium memory-harden rollback --run-id <id>
   bin/viventium memory-harden status
-  bin/viventium memory-harden install-schedule [--schedule "0 5 * * *"]
+  bin/viventium memory-harden ingest-transcripts --dry-run|--apply [--user-email <email>] [--transcript-rag-mode detailed_summary_only]
+  bin/viventium memory-harden install-schedule [--schedule "0 3 * * *"]
   bin/viventium memory-harden uninstall-schedule
 
 Runs local saved-memory hardening as an operator job. Raw proposals and rollback
@@ -778,7 +779,7 @@ sync_memory_hardening_schedule() {
       --repo-root "$REPO_ROOT" \
       --app-support-dir "$APP_SUPPORT_DIR" \
       --runtime-dir "$RUNTIME_DIR" \
-      install-schedule --schedule "${schedule:-0 5 * * *}" --json >/dev/null; then
+      install-schedule --schedule "${schedule:-0 3 * * *}" --json >/dev/null; then
       echo "Warning: failed to install memory hardening schedule." >&2
       return 1
     fi
@@ -1257,7 +1258,7 @@ maybe_reexec_active_runtime_checkout() {
   shift || true
 
   case "$command_name" in
-    start|launch|stop|install-helper|uninstall-helper|status-bar)
+    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden)
       ;;
     *)
       return 0
@@ -1518,7 +1519,7 @@ print_install_summary() {
 
 needs_connected_accounts_guidance() {
   refresh_repo_python
-  "$PYTHON_BIN" - "$CONFIG_FILE" <<'PY'
+  "$PYTHON_BIN" - "$CONFIG_FILE" "$RUNTIME_DIR" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -1533,8 +1534,53 @@ def configured(node):
     )
 
 
+def parse_env_file(path):
+    values = {}
+    if not path.is_file():
+        return values
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip()
+        if (value.startswith("'") and value.endswith("'")) or (
+            value.startswith('"') and value.endswith('"')
+        ):
+            value = value[1:-1]
+        values[key.strip()] = value
+    return values
+
+
+def runtime_connected(config, runtime_env, provider):
+    provider = str(provider or "").strip().lower()
+    if provider not in {"openai", "anthropic"}:
+        return False
+    llm = config.get("llm", {}) or {}
+    configured_connected = any(
+        str(node.get("provider") or "").strip().lower() == provider
+        and str(node.get("auth_mode") or "").strip().lower() == "connected_account"
+        for node in (llm.get("primary", {}) or {}, llm.get("secondary", {}) or {})
+    )
+    if not configured_connected:
+        return False
+    env_key = {
+        "openai": "VIVENTIUM_OPENAI_AUTH_MODE",
+        "anthropic": "VIVENTIUM_ANTHROPIC_AUTH_MODE",
+    }[provider]
+    return (
+        str(runtime_env.get("VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and str(runtime_env.get(env_key) or "").strip().lower() == "connected_account"
+    )
+
+
 config_path = Path(sys.argv[1])
+runtime_dir = Path(sys.argv[2])
 config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+runtime_env = {}
+runtime_env.update(parse_env_file(runtime_dir / "runtime.env"))
+runtime_env.update(parse_env_file(runtime_dir / "runtime.local.env"))
 llm = config.get("llm", {}) or {}
 primary = llm.get("primary", {}) or {}
 secondary = llm.get("secondary", {}) or {}
@@ -1557,6 +1603,8 @@ foundation_present = any(
 ) or any(
     provider_name in {"openai", "anthropic"} and configured(node)
     for provider_name, node in extra_provider_keys.items()
+ ) or any(
+    runtime_connected(config, runtime_env, provider) for provider in ("openai", "anthropic")
 )
 
 integrations = config.get("integrations", {}) or {}

@@ -1,7 +1,7 @@
 # Conversation Recall RAG
 
-**Document Version:** 2.2
-**Date:** 2026-04-09
+**Document Version:** 2.3
+**Date:** 2026-05-05
 **Owner:** Viventium Core
 **Status:** Implemented in `viventium_v0_4`
 
@@ -14,6 +14,18 @@ This feature adds two user-facing controls:
 
 1. Global recall for the full user corpus.
 2. Agent-level recall scoped to conversations where that agent was used.
+
+The same file-search surface also carries optional meeting transcript recall resources when
+`VIVENTIUM_MEMORY_TRANSCRIPTS_DIR` is configured and the memory hardening operator has processed
+new or changed transcript files. Those transcript resources are separate from the conversation
+recall corpus and use the `meeting_transcript` file context.
+
+Listen-Only Mode call transcripts are another transcript-evidence lane. They are stored as
+structured `listen_only_transcript` message metadata for the owning conversation history, but they
+are excluded from the normal conversation recall corpus and from live agent prompt-history loading.
+They are excluded at the recall corpus query boundary, are not Meili-indexed, are excluded from
+source-only lexical rescue, and are treated by memory hardening as soft `ambient_transcript`
+evidence.
 
 ## Product Requirements
 
@@ -30,6 +42,23 @@ This feature adds two user-facing controls:
 - Embed them via the existing vector pipeline.
 - Persist as file records with a recall context.
 - Inject these files into runtime file-search resources when policy allows.
+- Persist processed meeting transcript artifacts as user-scoped vector files with the
+  `meeting_transcript` context. The default transcript RAG mode is `detailed_summary_only`, so only
+  detailed `meeting_summary:*` artifacts are stored and attached for normal recall; `raw_and_summary`
+  and `raw_only` are explicit operator/QA modes.
+- Attach meeting transcript artifacts to file_search only when a valid transcript folder is
+  configured, the artifact source-folder hash matches the current folder, and the artifact kind
+  matches the configured transcript RAG mode. The vector runtime must also be configured and
+  healthy; otherwise transcript resources stay unattached rather than pretending dead vector files
+  are searchable.
+- Before a transcript artifact is attached or skipped as already processed, vector-store existence
+  must be checked against the current source index. A missing vector document invalidates the
+  processed shortcut and requeues the transcript for summary/vector repair.
+- Do not materialize meeting transcript summaries as fake conversations. Conversation recall remains
+  chat history; transcript recall remains transcript evidence.
+- Do not index Listen-Only transcript entries into the normal prior-chat corpus. They are visible
+  transcript evidence, not user-authored chat history, and must be filtered before the raw
+  message-limit window is applied.
 - When the configured embeddings provider is explicitly OpenAI, prefer a user-scoped OpenAI auth
   override when the current user has a connected OpenAI account or stored OpenAI user key
   available through LibreChat.
@@ -191,6 +220,20 @@ This feature adds two user-facing controls:
   - source-only conversation-recall resource attachment at runtime
   - source-backed lexical rescue and reranking inside `file_search`
   - no proactive recall snippet injection before the model chooses the tool
+- The lexical rescue path may tokenize the active file-search query to retrieve source messages, but
+  it must not use query terms as an activation or routing gate. Once conversation-recall files are
+  attached, bounded source rescue is a structural fallback inside the tool path.
+- Recall corpus filtering should prefer structured provenance such as `file_search` source
+  attachments, listen-only metadata, and internal control markers. Do not drop normal user content
+  merely because it discusses memory, chat history, or retrieval.
+- Source-only lexical rescue must project message metadata and exclude
+  `metadata.viventium.type="listen_only_transcript"` / `mode="listen_only"` before scoring. This
+  prevents ambient transcript text from bypassing the normal recall-corpus exclusion when vector
+  recall is unavailable or stale.
+- When direct meeting-transcript summaries and derived conversation-recall snippets both return
+  results for the same file_search call, ranking must remain evidence-based. Assistant no-access
+  or no-memory disclaimers are low-signal derived recall, but direct transcript evidence must not
+  receive a blanket source-class override over stronger chat-history evidence.
 
 ### Indexing timing contract
 

@@ -40,6 +40,13 @@ from livekit.agents import (
 from livekit.agents.worker import WorkerType
 from livekit.plugins import openai
 
+try:
+    from livekit.plugins import xai as xai_plugin
+    HAS_XAI_TTS = True
+except ImportError:
+    HAS_XAI_TTS = False
+    xai_plugin = None
+
 # === VIVENTIUM START ===
 # Feature: Text transcripts must still surface when TTS fails.
 # Purpose: LiveKit RoomIO defaults to syncing transcript output to audio playout. If TTS fails
@@ -78,6 +85,7 @@ def optional_module_available(module_name: str) -> bool:
 HAS_TURN_DETECTOR = optional_module_available("livekit.plugins.turn_detector.multilingual")
 _TURN_DETECTOR_RUNNER_NAME = "lk_end_of_utterance_multilingual"
 _LOCAL_WHISPER_STT_PROVIDERS = {"pywhispercpp", "whisper_local"}
+_LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
 _LOCAL_WHISPER_VAD_MIN_SILENCE_S = "1.0"
 _TURN_DETECTOR_REQUIRED_ROOT_FILES = (
     "config.json",
@@ -122,6 +130,41 @@ from fallback_tts import FallbackTTS, ProviderAttempt
 
 logger = logging.getLogger("voice-gateway")
 
+_XAI_TTS_CAPABILITIES_PATH = Path(__file__).resolve().parent.parent / "shared" / "voice" / "xai_tts_capabilities.json"
+
+
+def _load_xai_tts_capabilities() -> dict[str, Any]:
+    try:
+        with _XAI_TTS_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        logger.exception("Failed to load xAI TTS capability contract from %s", _XAI_TTS_CAPABILITIES_PATH)
+    return {
+        "defaults": {"voice_id": "Sal", "language": "en", "livekit_sample_rate": 24000},
+        "voices": [{"id": "Sal", "label": "Sal"}],
+        "endpoints": {"websocket": "wss://api.x.ai/v1/tts"},
+    }
+
+
+XAI_TTS_CAPABILITIES = _load_xai_tts_capabilities()
+XAI_TTS_DEFAULTS = XAI_TTS_CAPABILITIES.get("defaults", {}) if isinstance(XAI_TTS_CAPABILITIES.get("defaults"), dict) else {}
+XAI_TTS_ENDPOINTS = XAI_TTS_CAPABILITIES.get("endpoints", {}) if isinstance(XAI_TTS_CAPABILITIES.get("endpoints"), dict) else {}
+XAI_TTS_DISPLAY_LABEL = str(XAI_TTS_CAPABILITIES.get("display_label") or "xAI").strip() or "xAI"
+XAI_TTS_VOICE_PRESETS = [
+    (
+        str(voice.get("id") or "").strip(),
+        str(voice.get("label") or voice.get("id") or "").strip(),
+    )
+    for voice in (XAI_TTS_CAPABILITIES.get("voices") or [])
+    if isinstance(voice, dict) and str(voice.get("id") or "").strip()
+]
+DEFAULT_XAI_TTS_VOICE = str(XAI_TTS_DEFAULTS.get("voice_id") or "Sal").strip() or "Sal"
+DEFAULT_XAI_TTS_LANGUAGE = str(XAI_TTS_DEFAULTS.get("language") or "en").strip() or "en"
+DEFAULT_XAI_TTS_WS_URL = str(XAI_TTS_ENDPOINTS.get("websocket") or "wss://api.x.ai/v1/tts").strip() or "wss://api.x.ai/v1/tts"
+DEFAULT_XAI_TTS_SAMPLE_RATE = int(float(XAI_TTS_DEFAULTS.get("livekit_sample_rate") or 24000))
+
 _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
     "run.completed",
     "run.failed",
@@ -135,6 +178,24 @@ _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
 def _glasshive_callback_is_terminal(latest: dict[str, Any]) -> bool:
     event = str(latest.get("event") or "").strip()
     return not event or event in _TERMINAL_GLASSHIVE_CALLBACK_EVENTS
+
+
+def _voice_followup_tts_max_chars() -> int:
+    try:
+        configured = int((os.getenv("VIVENTIUM_VOICE_FOLLOWUP_TTS_MAX_CHARS") or "").strip())
+    except Exception:
+        configured = 2400
+    return max(500, min(configured or 2400, 8000))
+
+
+def cap_voice_followup_for_tts(text: str) -> str:
+    value = str(text or "").strip()
+    limit = _voice_followup_tts_max_chars()
+    if len(value) <= limit:
+        return value
+    tail = "\n\nI have the full report in the chat."
+    budget = max(100, limit - len(tail) - 3)
+    return f"{value[:budget].rstrip()}...{tail}"
 
 # === VIVENTIUM START ===
 # Feature: No-response tag ({NTA}) suppression for passive/background follow-ups.
@@ -211,8 +272,12 @@ class Env:
     # Example: primary=cartesia, fallback=elevenlabs
     tts_provider_fallback: str  # "" | "elevenlabs" | "openai" | "xai" | "cartesia" | "local_chatterbox_turbo_mlx_8bit"
 
-    # xAI Grok Voice settings (Voice Agent API)
+    # xAI standalone TTS settings, with an explicit legacy Voice Agent mode.
+    xai_tts_api: str
+    xai_tts_api_key: str
     xai_voice: str
+    xai_language: str
+    xai_tts_ws_url: str
     xai_wss_url: str
     xai_sample_rate: int
     xai_instructions: str
@@ -653,12 +718,17 @@ def _load_turn_detector_model_class() -> Any:
 # Feature: Normalize voice provider labels for downstream prompt injection
 def _normalize_voice_provider(provider: str) -> str:
     value = (provider or "").strip().lower()
-    if value in {"grok", "xai_grok_voice"}:
+    if value in {"grok", "xai_grok_voice", "x_ai"}:
         return "xai"
     if not value:
         return "openai"
     return value
 # === VIVENTIUM END ===
+
+
+def _is_real_api_key(value: str) -> bool:
+    normalized = (value or "").strip()
+    return bool(normalized and normalized.lower() not in {"user_provided", "placeholder"})
 
 
 # === VIVENTIUM START ===
@@ -773,7 +843,7 @@ def _provider_display_label(provider: str, *, modality: str) -> str:
         "local_chatterbox_turbo_mlx_8bit": "Local Chatterbox",
         "openai": "OpenAI",
         "pywhispercpp": "Whisper.cpp Local",
-        "xai": "xAI Grok Voice",
+        "xai": XAI_TTS_DISPLAY_LABEL,
     }
     label = labels.get(provider_key)
     if label:
@@ -805,7 +875,8 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
     assemblyai_api_key = (os.getenv("ASSEMBLYAI_API_KEY", "") or "").strip()
     cartesia_api_key = (os.getenv("CARTESIA_API_KEY", "") or "").strip()
     eleven_api_key = ((os.getenv("ELEVEN_API_KEY") or os.getenv("ELEVENLABS_API_KEY")) or "").strip()
-    xai_api_key = (os.getenv("XAI_API_KEY", "") or "").strip()
+    xai_api_key = (env.xai_tts_api_key or os.getenv("XAI_API_KEY", "") or "").strip()
+    xai_runtime_supported = env.xai_tts_api == "voice_agent" or HAS_XAI_TTS
     has_pywhispercpp = importlib.util.find_spec("pywhispercpp") is not None
     has_mlx_audio = importlib.util.find_spec("mlx_audio") is not None
     apple_silicon = sys.platform == "darwin" and platform.machine().lower() == "arm64"
@@ -911,11 +982,13 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "modality": "tts",
             "label": _provider_display_label("xai", modality="tts"),
             "isLocal": False,
-            "available": bool(xai_api_key),
-            "unavailableReason": None if xai_api_key else "XAI_API_KEY not set",
+            "available": bool(xai_runtime_supported and _is_real_api_key(xai_api_key)),
+            "unavailableReason": None
+            if xai_runtime_supported and _is_real_api_key(xai_api_key)
+            else "xAI plugin or VIVENTIUM_XAI_TTS_API_KEY/XAI_API_KEY missing",
             "acceptsInlineVoiceControls": True,
             "variantLabel": _provider_variant_type("xai", modality="tts"),
-            "variants": _dedupe_variants(env.xai_voice, "Ara", "Rex", "Sal", "Eve", "Leo"),
+            "variants": _dedupe_variants(*XAI_TTS_VOICE_PRESETS, env.xai_voice),
         },
         {
             "id": "local_chatterbox_turbo_mlx_8bit",
@@ -979,6 +1052,27 @@ def _build_tts_provider_attempt(
         tts=tts_impl,
         sanitize_voice_markup=not accepts_inline_voice_controls,
     )
+
+
+def _configure_xai_standalone_tts_plugin(*, ws_url: str, sample_rate: int) -> None:
+    """Align LiveKit's xAI plugin module constants with our compiled runtime config."""
+    if xai_plugin is None:
+        return
+    tts_module = getattr(xai_plugin, "tts", None)
+    if tts_module is None:
+        raise RuntimeError("xAI TTS plugin module does not expose live endpoint controls.")
+    missing = [
+        attr
+        for attr in ("XAI_WEBSOCKET_URL", "SAMPLE_RATE")
+        if not hasattr(tts_module, attr)
+    ]
+    if missing:
+        raise RuntimeError(
+            "xAI TTS plugin endpoint controls are unavailable: "
+            + ", ".join(missing)
+        )
+    setattr(tts_module, "XAI_WEBSOCKET_URL", ws_url)
+    setattr(tts_module, "SAMPLE_RATE", int(sample_rate))
 
 
 def _apply_requested_voice_route(
@@ -1284,8 +1378,13 @@ def start_health_server() -> None:
 def load_env() -> Env:
     # Determine TTS provider (default to elevenlabs if available, otherwise openai)
     default_tts_provider = "elevenlabs" if HAS_ELEVENLABS else "openai"
-    tts_provider = (os.getenv("VIVENTIUM_TTS_PROVIDER", default_tts_provider).strip() or default_tts_provider).lower()
-    tts_provider_fallback = (os.getenv("VIVENTIUM_TTS_PROVIDER_FALLBACK", "").strip() or "").lower()
+    tts_provider = _normalize_voice_provider(
+        os.getenv("VIVENTIUM_TTS_PROVIDER", default_tts_provider).strip() or default_tts_provider
+    )
+    raw_tts_provider_fallback = os.getenv("VIVENTIUM_TTS_PROVIDER_FALLBACK", "").strip() or ""
+    tts_provider_fallback = (
+        _normalize_voice_provider(raw_tts_provider_fallback) if raw_tts_provider_fallback else ""
+    )
     if tts_provider_fallback in {"0", "false", "off", "none"}:
         tts_provider_fallback = ""
     # If the primary provider can fail at runtime (Cartesia credit exhaustion, MLX model OOM, etc.),
@@ -1357,10 +1456,24 @@ def load_env() -> Env:
         or "gpt-4o-mini-transcribe",
         tts_provider=tts_provider,
         tts_provider_fallback=tts_provider_fallback,
-        # xAI Grok Voice settings (Available: Ara, Rex, Sal, Eve, Leo)
-        xai_voice=(os.getenv("VIVENTIUM_XAI_VOICE", "Sal").strip() or "Sal"),
-        xai_wss_url=(os.getenv("VIVENTIUM_XAI_WSS_URL", "wss://api.x.ai/v1/realtime").strip() or "wss://api.x.ai/v1/realtime"),
-        xai_sample_rate=int(float(os.getenv("VIVENTIUM_XAI_SAMPLE_RATE", "24000"))),
+        # xAI standalone TTS settings (Available: Ara, Eve, Leo, Rex, Sal).
+        # Set VIVENTIUM_XAI_TTS_API=voice_agent only to use the older Grok Voice Agent adapter.
+        xai_tts_api=(os.getenv("VIVENTIUM_XAI_TTS_API", "tts").strip().lower() or "tts"),
+        xai_tts_api_key=(os.getenv("VIVENTIUM_XAI_TTS_API_KEY", "").strip() or ""),
+        xai_voice=(os.getenv("VIVENTIUM_XAI_VOICE", DEFAULT_XAI_TTS_VOICE).strip() or DEFAULT_XAI_TTS_VOICE),
+        xai_language=(os.getenv("VIVENTIUM_XAI_LANGUAGE", DEFAULT_XAI_TTS_LANGUAGE).strip() or DEFAULT_XAI_TTS_LANGUAGE),
+        xai_tts_ws_url=(
+            os.getenv("VIVENTIUM_XAI_TTS_WS_URL", DEFAULT_XAI_TTS_WS_URL).strip()
+            or DEFAULT_XAI_TTS_WS_URL
+        ),
+        xai_wss_url=(
+            os.getenv(
+                "VIVENTIUM_XAI_VOICE_AGENT_WSS_URL",
+                os.getenv("VIVENTIUM_XAI_WSS_URL", "wss://api.x.ai/v1/realtime"),
+            ).strip()
+            or "wss://api.x.ai/v1/realtime"
+        ),
+        xai_sample_rate=int(float(os.getenv("VIVENTIUM_XAI_SAMPLE_RATE", str(DEFAULT_XAI_TTS_SAMPLE_RATE)))),
         xai_instructions=(os.getenv("VIVENTIUM_XAI_INSTRUCTIONS", "").strip() or ""),
         # ElevenLabs settings (matching old viventium_v1 config)
         elevenlabs_voice_id=os.getenv("VIVENTIUM_FC_CONSCIOUS_VOICE_ID", "CrmDm7REHG6iBx8uySLf").strip()
@@ -1676,13 +1789,12 @@ def _attach_room_diagnostics(ctx: JobContext, *, call_session_id: str) -> None:
 
 def _silero_vad_kwargs_for_env(env: Optional[Env] = None) -> dict[str, Any]:
     source = os.environ
-    if (
-        env is not None
-        and _is_local_whisper_stt(env.stt_provider)
-        and not (os.getenv("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip()
-    ):
+    if env is not None and _is_local_whisper_stt(env.stt_provider):
         source = dict(os.environ)
-        source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
+        if not (os.getenv("VIVENTIUM_STT_VAD_MIN_SPEECH") or "").strip():
+            source["VIVENTIUM_STT_VAD_MIN_SPEECH"] = _LOCAL_WHISPER_VAD_MIN_SPEECH_S
+        if not (os.getenv("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip():
+            source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
     return get_silero_vad_kwargs(source)
 
 
@@ -2036,10 +2148,36 @@ class CortexFollowupScheduler:
                                     and text.strip()
                                     and _glasshive_callback_is_terminal(latest)
                                 ):
-                                    text = text.strip()
+                                    delivery = await self._claim_glasshive_delivery(session, latest)
+                                    if delivery:
+                                        text = str(
+                                            delivery.get("fullText")
+                                            or delivery.get("text")
+                                            or text
+                                        ).strip()
+                                    else:
+                                        text = text.strip()
                                     if is_no_response_only(text):
+                                        if delivery:
+                                            await self._mark_glasshive_delivery_status(
+                                                session,
+                                                delivery,
+                                                "suppressed",
+                                                reason="{NTA}",
+                                            )
                                         return
-                                    self._speak(text, seq, allow_stale_delivery=allow_stale_delivery)
+                                    spoken = self._speak(
+                                        text,
+                                        seq,
+                                        allow_stale_delivery=allow_stale_delivery,
+                                    )
+                                    if delivery:
+                                        await self._mark_glasshive_delivery_status(
+                                            session,
+                                            delivery,
+                                            "sent" if spoken else "failed",
+                                            error="" if spoken else "voice follow-up was not spoken",
+                                        )
                                     return
 
                     data = None
@@ -2160,21 +2298,103 @@ class CortexFollowupScheduler:
             return None
         return None
 
-    def _speak(self, text: str, seq: int, *, allow_stale_delivery: bool = False) -> None:
-        if not allow_stale_delivery and seq != self._seq:
+    async def _claim_glasshive_delivery(
+        self, session: aiohttp.ClientSession, latest: dict[str, Any]
+    ) -> Optional[dict[str, Any]]:
+        callback_id = str(latest.get("callbackId") or latest.get("callback_id") or "").strip()
+        if not callback_id:
+            return None
+        url = f"{self._origin}/api/viventium/voice/glasshive/deliveries/claim"
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        try:
+            async with session.post(
+                url,
+                headers=headers,
+                json={
+                    "callbackId": callback_id,
+                    "leaseMs": 600_000,
+                    "dispatcherId": f"voice-{self._auth.call_session_id}",
+                },
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                payload = await resp.json()
+                deliveries = payload.get("deliveries") if isinstance(payload, dict) else None
+                if isinstance(deliveries, list) and deliveries:
+                    first = deliveries[0]
+                    return first if isinstance(first, dict) else None
+        except Exception:
+            return None
+        return None
+
+    async def _mark_glasshive_delivery_status(
+        self,
+        session: aiohttp.ClientSession,
+        delivery: dict[str, Any],
+        status: str,
+        *,
+        error: str = "",
+        reason: str = "",
+    ) -> None:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id:
             return
+        url = f"{self._origin}/api/viventium/voice/glasshive/deliveries/{delivery_id}/status"
+        headers = {
+            "X-VIVENTIUM-CALL-SESSION": self._auth.call_session_id,
+            "X-VIVENTIUM-CALL-SECRET": self._auth.call_secret,
+        }
+        if self._auth.job_id:
+            headers["X-VIVENTIUM-JOB-ID"] = self._auth.job_id
+        if self._auth.worker_id:
+            headers["X-VIVENTIUM-WORKER-ID"] = self._auth.worker_id
+        payload: dict[str, Any] = {"claimId": claim_id, "status": status}
+        if error:
+            payload["error"] = error[:1000]
+        if reason:
+            payload["reason"] = reason[:1000]
+        try:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status == 409:
+                    logger.warning(
+                        "[voice-gateway] GlassHive delivery claim was lost before status=%s",
+                        status,
+                    )
+                    return
+                if resp.status != 200:
+                    logger.warning(
+                        "[voice-gateway] GlassHive delivery status update failed (status=%s)",
+                        resp.status,
+                    )
+        except Exception as exc:
+            logger.warning("[voice-gateway] GlassHive delivery status update failed: %s", exc)
+
+    def _speak(self, text: str, seq: int, *, allow_stale_delivery: bool = False) -> bool:
+        if not allow_stale_delivery and seq != self._seq:
+            return False
         try:
             # No-response is an intentional "say nothing" signal.
             if is_no_response_only(text):
-                return
+                return False
             cleaned = sanitize_voice_followup_text(text)
             if contains_no_response_tag(text):
                 cleaned = strip_inline_nta(cleaned)
             if not cleaned:
-                return
+                return False
+            cleaned = cap_voice_followup_for_tts(cleaned)
             self._session.say(cleaned, allow_interruptions=True, add_to_chat_ctx=False)
+            return True
         except Exception as exc:
             logger.warning("[voice-gateway] Failed to speak follow-up: %s", exc)
+            return False
 # === VIVENTIUM END ===
 
 
@@ -2381,32 +2601,68 @@ async def entrypoint(ctx: JobContext) -> None:
                 return (_build_openai_tts(), actual_voice_provider)
         # === VIVENTIUM END ===
 
-        # TTS (Cartesia, xAI Grok Voice, ElevenLabs, or OpenAI)
-        if provider in {"xai", "grok", "xai_grok_voice"}:
-            xai_api_key = (os.getenv("XAI_API_KEY", "") or "").strip()
-            if not xai_api_key:
+        # TTS (Cartesia, xAI standalone TTS, legacy xAI Grok Voice Agent, ElevenLabs, or OpenAI)
+        if provider in {"xai", "x_ai", "grok", "xai_grok_voice"}:
+            xai_api_key = (env.xai_tts_api_key or os.getenv("XAI_API_KEY", "") or "").strip()
+            if not _is_real_api_key(xai_api_key):
                 logger.warning(
-                    "xAI Grok Voice requested but XAI_API_KEY not set. Falling back to OpenAI TTS."
+                    "xAI TTS requested but a real VIVENTIUM_XAI_TTS_API_KEY or XAI_API_KEY is not set. Falling back to OpenAI TTS."
+                )
+                actual_voice_provider = "openai"
+                return (_build_openai_tts(), actual_voice_provider)
+
+            if env.xai_tts_api == "voice_agent":
+                _log_selection(
+                    "Using legacy xAI Grok Voice Agent TTS (voice=%s, sample_rate=%s, wss=%s)",
+                    env.xai_voice,
+                    env.xai_sample_rate,
+                    env.xai_wss_url,
+                )
+                return (
+                    XaiGrokVoiceTTS(
+                        config=XaiGrokVoiceConfig(
+                            api_key=xai_api_key,
+                            voice=env.xai_voice,
+                            wss_url=env.xai_wss_url,
+                            sample_rate=env.xai_sample_rate,
+                            num_channels=1,
+                            instructions=env.xai_instructions,
+                        )
+                    ),
+                    actual_voice_provider,
+                )
+
+            if env.xai_tts_api not in {"", "tts"}:
+                logger.warning(
+                    "Unsupported VIVENTIUM_XAI_TTS_API=%s; falling back to OpenAI TTS.",
+                    env.xai_tts_api,
+                )
+                actual_voice_provider = "openai"
+                return (_build_openai_tts(), actual_voice_provider)
+
+            if not HAS_XAI_TTS or xai_plugin is None:
+                logger.warning(
+                    "xAI TTS requested but livekit-plugins-xai is not installed. Falling back to OpenAI TTS."
                 )
                 actual_voice_provider = "openai"
                 return (_build_openai_tts(), actual_voice_provider)
 
             _log_selection(
-                "Using xAI Grok Voice TTS (voice=%s, sample_rate=%s, wss=%s)",
+                "Using xAI standalone TTS (voice=%s, language=%s, sample_rate=%s, ws=%s)",
                 env.xai_voice,
+                env.xai_language,
                 env.xai_sample_rate,
-                env.xai_wss_url,
+                env.xai_tts_ws_url,
+            )
+            _configure_xai_standalone_tts_plugin(
+                ws_url=env.xai_tts_ws_url,
+                sample_rate=env.xai_sample_rate,
             )
             return (
-                XaiGrokVoiceTTS(
-                    config=XaiGrokVoiceConfig(
-                        api_key=xai_api_key,
-                        voice=env.xai_voice,
-                        wss_url=env.xai_wss_url,
-                        sample_rate=env.xai_sample_rate,
-                        num_channels=1,
-                        instructions=env.xai_instructions,
-                    )
+                xai_plugin.TTS(
+                    api_key=xai_api_key,
+                    voice=env.xai_voice,
+                    language=env.xai_language,
                 ),
                 actual_voice_provider,
             )

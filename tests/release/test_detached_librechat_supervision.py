@@ -112,6 +112,41 @@ def test_telegram_bot_survives_detached_launcher_exit() -> None:
     )
 
 
+def test_telegram_restart_kills_scoped_orphan_bot_processes() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    stop_block = launcher_text[
+        launcher_text.index("stop_running_services() {") :
+        launcher_text.index("\ncleanup() {")
+    ]
+    start_telegram_bot = launcher_text[
+        launcher_text.index("start_telegram_bot() {") :
+        launcher_text.index("\nschedule_deferred_telegram_bot_start() {")
+    ]
+
+    assert 'kill_by_pattern_scoped "python.*bot.py" "$telegram_dir/TelegramVivBot"' in stop_block
+    assert 'kill_by_pattern_scoped "python.*bot.py" "$PWD"' in start_telegram_bot
+    assert start_telegram_bot.index('if [[ "$RESTART_SERVICES" == "true" ]]; then') < start_telegram_bot.index(
+        'kill_by_pattern_scoped "python.*bot.py" "$PWD"'
+    )
+
+
+def test_cleanup_kills_librechat_processes_only_inside_librechat_scope() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    cleanup_block = launcher_text[
+        launcher_text.index("cleanup() {") :
+        launcher_text.index("\ntrap cleanup")
+    ]
+
+    assert 'pkill -f "node.*api/server"' not in cleanup_block
+    assert 'pkill -f "vite.*client"' not in cleanup_block
+    assert 'kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"' in cleanup_block
+    assert 'kill_by_pattern_scoped "vite.*client" "$LIBRECHAT_DIR"' in cleanup_block
+
+
 def test_voice_gateway_requirements_check_detects_version_drift(tmp_path: Path) -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"

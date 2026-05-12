@@ -696,3 +696,64 @@ Runtime checks:
 - Root cause fixed at the correct ownership boundary: durable call-session state is no longer
   mistaken for durable LiveKit dispatch state, and transient runtime fetch failures no longer leak
   raw browser exception text to the call UI.
+
+---
+
+## Date
+
+- 2026-05-07
+
+## Scope
+
+- Verify standalone xAI Text-to-Speech appears as a selectable modern-playground Speaking provider,
+  uses the supported xAI TTS key path, and routes LiveKit TTS through xAI instead of the legacy
+  Grok Voice Agent adapter.
+
+## Checks Executed
+
+1. Direct xAI TTS API smoke test from the local Keychain voice provider secret.
+   - Result: `POST https://api.x.ai/v1/tts` returned `200` with MP3 bytes.
+2. Live voice-gateway capability probe.
+   - Result: `GET /capabilities` returned `xAI` as available with voices
+     `Ara`, `Eve`, `Leo`, `Rex`, and `Sal`.
+3. Browser QA with Chrome against `http://localhost:3300`.
+   - Result: the Speaking dropdown showed `xAI`, selecting `Eve` changed the card to
+     `xAI / Eve` with a metered badge.
+   - Follow-up DOM QA: the Speaking menu contains `xAI` exactly once and contains neither
+     `xAI TTS` nor `xAI Grok Voice`.
+4. Fresh QA call-session launch with requested voice route `tts.provider=xai`,
+   `tts.variant=Eve`.
+   - Result: the modern playground opened without the stale expired-session warning, joined LiveKit,
+     and showed the connected call controls.
+5. Voice-gateway runtime log review.
+   - Result: the worker instantiated standalone xAI TTS:
+     `Using xAI standalone TTS (voice=Eve, language=en, sample_rate=24000, ws=wss://api.x.ai/v1/tts)`.
+6. Automated checks:
+   - `voice-gateway` tests: `217 passed`
+   - config compiler release tests: `74 passed`
+   - focused xAI/voice-gateway tests: `31 passed`
+   - Telegram test suite: `243 passed`
+   - LibreChat prompt/Telegram route tests: `82 passed`
+   - modern playground typecheck and lint: passed
+
+## Findings
+
+- The dedicated TTS credential candidate was rejected by xAI as an incorrect API key.
+- The existing voice provider credential worked against the official TTS endpoint and was stored in
+  the supported Keychain-backed voice provider path.
+- xAI TTS now has a dedicated runtime secret env path for voice use, so it does not have to overwrite
+  a separate Grok LLM key.
+- The standalone LiveKit xAI plugin path now consumes the compiled TTS WebSocket endpoint and sample
+  rate instead of silently relying on plugin module defaults.
+- Telegram now receives xAI voice settings and the dedicated TTS key in its generated runtime env,
+  xAI Telegram synthesis uses the saved Speaking variant as `voice_id`, and the Telegram bot keeps
+  xAI wrapped text in one synthesis request so xAI speech tags are not split across fallback chunks.
+- The live stack was restarted after recompiling runtime config; the running capability label is now
+  `xAI`, not the legacy `xAI Grok Voice` label or the temporary `xAI TTS` label.
+
+## QA Conclusion
+
+- Standalone xAI voice is visible and selectable in the live modern playground.
+- A fresh local call can join LiveKit with `xAI / Eve` selected.
+- The voice gateway routes that call through `livekit.plugins.xai.TTS` and the documented
+  `wss://api.x.ai/v1/tts` path.

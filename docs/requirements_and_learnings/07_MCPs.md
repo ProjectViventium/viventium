@@ -17,6 +17,11 @@
 3. **Transport flexibility**
    - Support HTTP/streamable HTTP for server mode.
    - Support STDIO for local subprocess mode.
+   - WebSocket MCP transport is not enabled by default for public/runtime use. The current upstream
+     SDK transport does not expose a connect-time DNS/lookup hook, so it cannot provide the same
+     DNS-rebinding SSRF protection as HTTP/S transports. Use streamable HTTP or SSE for networked
+     MCP servers. A local developer-only unsafe override may exist for diagnostics, but production
+     must reject it.
 
 4. **Configuration by environment**
    - All secrets and endpoints must be configurable via `.env`.
@@ -89,6 +94,42 @@
   must not expand env secrets or OpenID tokens.
 - User-created MCP servers must not be able to set this flag through the public MCP creation UI/API.
   It belongs to reviewed source-of-truth/runtime config.
+
+### MCP-Owned Instruction Contract
+
+Capability cognition belongs at the MCP boundary, not in the user-level Viventium agent prompt.
+First-party external MCPs must be useful to any capable host agent, whether the host is LibreChat,
+another desktop agent, or a future Viventium surface.
+
+Each first-party MCP that owns meaningful behavior must advertise, through top-level server
+instructions and tool descriptions:
+
+- what capability it owns
+- when to use it and when not to use it
+- required and optional inputs
+- expected result shape and high-signal fields
+- common blockers and retry/diagnostic paths
+- idempotency, duplicate-prevention, and callback behavior
+- which details are user-facing and which are diagnostics-only
+
+The main Viventium agent prompt may describe orchestration principles, for example "use the
+connected execution tool when real browser/desktop/local work is requested." It must not carry
+manuals for GlassHive worker profiles, Scheduling Cortex CRUD mechanics, or other external MCP
+tool-specific behavior once the owning MCP advertises that behavior itself.
+
+For LibreChat configs:
+
+- `serverInstructions: true` means "fetch server-provided MCP instructions."
+- `serverInstructions: <string>` is a host-side override and should be reserved for Viventium-owned
+  host policy that cannot live in the external MCP.
+- `startup: false` servers still need server-provided instruction visibility before prompt
+  compaction can remove duplicate main-prompt manuals.
+- OAuth/user-specific instructions must not be fetched from app-level context. Server instructions
+  stay static; per-user or per-request facts belong in tool results or structured request context.
+
+Regression requirement: a `serverInstructions: true` value must never be injected into the LLM
+context as the literal text `true`. If the server instructions cannot be fetched, the MCP block
+must be omitted and observability must show the missing instruction source.
 
 ---
 
@@ -362,6 +403,48 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
   - non-empty discovered tool inventory
   - real user-scoped tool execution
 - A saved OAuth token without reconnection/discovery is not enough to call the local surface healthy.
+
+### RCA: Google OAuth Reauth Loop From Revoked Grant (2026-05-06)
+
+#### Symptoms
+- Local `google_workspace` repeatedly opened Google OAuth even though token-looking records existed.
+- The affected user had stored Google MCP client/refresh records but no current usable
+  `mcp:google_workspace` access-token record.
+- The isolated Google MCP durable token file existed on disk, but refresh attempts still failed.
+
+#### Root Cause
+1. The Google upstream grant was no longer refreshable. Logs showed refresh failure with
+   `invalid_grant` after the MCP transport reported `invalid_token` / authentication required.
+2. Existing Mongo and disk state proved persistence existed, but not that the grant was still valid.
+   Persisted stale refresh state cannot silently recover after Google expires or revokes the grant.
+3. Copying another local user's OAuth token records into a QA user does not create a durable Google
+   session. OAuth grants are account/user/client scoped and may be revoked or rotated upstream.
+
+#### Product Fix
+1. On refresh failures classified as non-refreshable OAuth grants, LibreChat must delete the exact
+   user/server MCP OAuth token set. The classifier should parse structured OAuth error codes when
+   present and cover terminal re-consent/re-client cases such as `invalid_grant`,
+   `unauthorized_client`, `invalid_client`, `consent_required`, `interaction_required`, and
+   `login_required`.
+   - `mcp:<server>`
+   - `mcp:<server>:refresh`
+   - `mcp:<server>:client`
+2. The cleanup must use exact AND semantics across `userId`, `type`, and `identifier`. Do not use
+   the existing broad `deleteTokens` helper because its historical semantics are OR-based.
+3. After cleanup, the next connection attempt should start a clean OAuth reconnect and log that the
+   stored grant was no longer refreshable. This is expected to require one fresh Google consent; it
+   is not a persistence failure.
+4. Transient refresh errors such as network failures must not delete stored OAuth state.
+
+#### QA Rule
+- Validate Google auth incidents across three layers before changing runtime code:
+  - Mongo token records by current authenticated user ID
+  - durable Google MCP proxy/credential state on disk, without exposing token values
+  - logs for `invalid_token`, non-refreshable OAuth codes such as `invalid_grant`,
+    `unauthorized_client`, `invalid_client`, `consent_required`, `interaction_required`, and
+    `login_required`, plus refresh success/failure
+- A token-present state is not accepted as "connected" until tool discovery or a real user-scoped
+  Google tool call succeeds after refresh/reconnect.
 
 ### Validation
 1. Canonical local restart path:

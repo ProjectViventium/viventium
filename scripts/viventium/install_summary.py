@@ -123,6 +123,33 @@ def configured_foundation_connected_account_labels(config: dict[str, Any]) -> li
     return labels
 
 
+def foundation_connected_account_runtime_configured(
+    config: dict[str, Any], runtime_env: dict[str, str], provider: str
+) -> bool:
+    provider = str(provider or "").strip().lower()
+    if provider not in {"openai", "anthropic"}:
+        return False
+    llm = config.get("llm", {}) or {}
+    configured = False
+    for node in (llm.get("primary", {}) or {}, llm.get("secondary", {}) or {}):
+        if str(node.get("provider") or "").strip().lower() != provider:
+            continue
+        if str(node.get("auth_mode") or "").strip().lower() == "connected_account":
+            configured = True
+            break
+    if not configured:
+        return False
+
+    env_key = {
+        "openai": "VIVENTIUM_OPENAI_AUTH_MODE",
+        "anthropic": "VIVENTIUM_ANTHROPIC_AUTH_MODE",
+    }[provider]
+    return (
+        resolve_bool(runtime_env.get("VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH"), False)
+        and str(runtime_env.get(env_key) or "").strip().lower() == "connected_account"
+    )
+
+
 def runtime_port(config: dict[str, Any], runtime_env: dict[str, str], env_key: str, key: str, default: int) -> int:
     raw_env = str(runtime_env.get(env_key, "") or "").strip()
     if raw_env.isdigit():
@@ -260,6 +287,17 @@ def runtime_profile_name(config: dict[str, Any], runtime_env: dict[str, str]) ->
     return resolved or "isolated"
 
 
+def append_unique_path(paths: list[Path], path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        resolved = path.expanduser().resolve()
+    except Exception:
+        resolved = path.expanduser()
+    if resolved not in paths:
+        paths.append(resolved)
+
+
 def normalize_remote_call_mode(config: dict[str, Any]) -> str:
     runtime = config.get("runtime", {}) or {}
     network = runtime.get("network", {}) or {}
@@ -276,9 +314,33 @@ def runtime_state_root(
     runtime_env: dict[str, str],
     runtime_dir: Path | None,
 ) -> Path | None:
+    explicit_state_root = str(runtime_env.get("VIVENTIUM_STATE_ROOT") or "").strip()
+    if explicit_state_root:
+        return Path(explicit_state_root).expanduser()
     if runtime_dir is None:
         return None
     return runtime_dir.parent / "state" / "runtime" / runtime_profile_name(config, runtime_env)
+
+
+def runtime_state_root_candidates(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+    repo_root: Path | None = None,
+) -> list[Path]:
+    roots: list[Path] = []
+    append_unique_path(roots, runtime_state_root(config, runtime_env, runtime_dir))
+    if runtime_dir is not None:
+        append_unique_path(
+            roots,
+            runtime_dir.parent / "state" / "runtime" / runtime_profile_name(config, runtime_env),
+        )
+    if repo_root is not None:
+        append_unique_path(
+            roots,
+            repo_root / ".viventium" / "runtime" / runtime_profile_name(config, runtime_env),
+        )
+    return roots
 
 
 def stack_owner_state_file(
@@ -488,6 +550,7 @@ def telegram_service_status(
     config: dict[str, Any],
     runtime_env: dict[str, str],
     runtime_dir: Path | None,
+    repo_root: Path | None,
     probe_live: bool,
     token_env_key: str,
     log_file_name: str,
@@ -498,24 +561,31 @@ def telegram_service_status(
     pending_detail: str | None = None,
 ) -> tuple[str, str]:
     token = str(runtime_env.get(token_env_key, "") or "").strip()
-    state_root = runtime_state_root(config, runtime_env, runtime_dir)
+    state_roots = runtime_state_root_candidates(config, runtime_env, runtime_dir, repo_root)
     log_detail = "Starts with Viventium"
     process_running = False
     pending_running = False
 
-    if state_root is not None:
+    if state_roots:
+        log_detail = str(state_roots[0] / "logs" / log_file_name)
+
+    for state_root in state_roots:
         log_detail = str(state_root / "logs" / log_file_name)
         pid_candidates = (
             state_root / pid_file_name,
             state_root / "logs" / pid_file_name,
         )
         process_running = any(pid_file_process_running(candidate) for candidate in pid_candidates)
+        if process_running:
+            break
         if pending_pid_file_name:
             pending_pid_candidates = (
                 state_root / pending_pid_file_name,
                 state_root / "logs" / pending_pid_file_name,
             )
-            pending_running = any(pid_file_process_running(candidate) for candidate in pending_pid_candidates)
+            pending_running = pending_running or any(
+                pid_file_process_running(candidate) for candidate in pending_pid_candidates
+            )
         if not pending_running and pending_marker_file_name:
             pending_marker_candidates = (
                 state_root / pending_marker_file_name,
@@ -721,6 +791,11 @@ def build_service_rows(
     if primary_auth_mode == "connected_account":
         if foundation_api_key_present(config):
             primary_detail = f"{primary_label} connected account or API-key fallback"
+        elif foundation_connected_account_runtime_configured(config, runtime_env, primary_provider):
+            primary_detail = (
+                f"{primary_label} account-scoped route configured; verify the signed-in user's "
+                "Connected Accounts page for OAuth state"
+            )
         else:
             primary_status = "Action Required"
             primary_detail = (
@@ -763,6 +838,7 @@ def build_service_rows(
             config=config,
             runtime_env=runtime_env,
             runtime_dir=runtime_dir,
+            repo_root=repo_root,
             probe_live=probe_live,
             token_env_key="BOT_TOKEN",
             log_file_name="telegram_bot.log",
@@ -778,6 +854,7 @@ def build_service_rows(
             config=config,
             runtime_env=runtime_env,
             runtime_dir=runtime_dir,
+            repo_root=repo_root,
             probe_live=probe_live,
             token_env_key="TELEGRAM_CODEX_BOT_TOKEN",
             log_file_name="telegram_codex.log",
@@ -786,7 +863,11 @@ def build_service_rows(
         )
         rows.append(("Telegram Codex", telegram_codex_status, telegram_codex_detail))
     if resolve_bool((((config.get("runtime") or {}).get("personalization") or {}).get("default_conversation_recall")), False):
-        conversation_recall_running = probe_live and rag_api_url and http_ok(rag_api_url)
+        conversation_recall_health_url = f"{rag_api_url.rstrip('/')}/health" if rag_api_url else ""
+        conversation_recall_running = probe_live and rag_api_url and any_http_ok(
+            conversation_recall_health_url,
+            rag_api_url,
+        )
         conversation_recall_status = (
             "Running"
             if conversation_recall_running
@@ -1027,9 +1108,13 @@ def build_next_steps(
     return next_steps
 
 
-def build_connected_accounts_notice(config: dict[str, Any]) -> str | None:
+def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[str, str] | None = None) -> str | None:
+    runtime_env = runtime_env or {}
     integrations = config.get("integrations", {}) or {}
-    foundation_needed = not foundation_api_key_present(config)
+    foundation_needed = not foundation_api_key_present(config) and not any(
+        foundation_connected_account_runtime_configured(config, runtime_env, provider)
+        for provider in ("openai", "anthropic")
+    )
     google_workspace_enabled = resolve_bool(
         (integrations.get("google_workspace") or {}).get("enabled"),
         False,
@@ -1133,7 +1218,7 @@ def main() -> None:
             style="yellow",
         )
 
-    connected_accounts_notice = build_connected_accounts_notice(config)
+    connected_accounts_notice = build_connected_accounts_notice(config, runtime_env)
     if connected_accounts_notice:
         ui.print_blank()
         ui.print_section(

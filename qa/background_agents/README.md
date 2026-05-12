@@ -11,6 +11,26 @@ Additional current QA artifacts:
 - `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
 - `qa/background_agents/telegram_scheduler_fallback_2026-04-24.md` — scheduled Telegram degraded-delivery regression for deferred fallback provenance
 - `qa/background_agents/scheduled_live_fact_truthfulness_2026-04-25.md` — scheduled live-fact truthfulness regression for weather/news/markets/web facts without verified tool evidence
+- `qa/background_agents/phase_a_phase_b_reliability_2026-05-06.md` — Phase A direct-tool / Phase B supplemental background-agent reliability regression with terminal silent-completion coverage
+- `qa/background_agents/cortex_phase_b_fallback_2026-05-06.md` — Phase B execution fallback and activation narrowing regression for support/confirmation cortices
+- `qa/background_agents/phase_b_main_fallback_persistence_2026-05-09.md` — main-model fallback regression proving in-flight Phase B work is preserved and persisted against the final fallback/primary answer
+- `qa/background_agents/late_stream_termination_rendering_2026-05-09.md` — web rendering/backend persistence regression for assistant messages that have visible text plus a late stream-termination error part
+- `qa/background_agents/visible_cards_browser_qa_2026-05-10.md` — real browser regression proving named background-agent cards are visible, persisted after reload, and stored as successful terminal cortex insights
+
+## Outcome Philosophy
+
+Viventium background-agent QA is judged by end-user outcome quality and speed, not by isolated
+internal green lights. A case is not production-ready when the classifier merely returns the
+expected boolean. It must also prove the user gets a useful first answer quickly, background work
+does not block that first answer, activated cortices are visible by name, terminal results persist
+after refresh/restart, and degraded provider paths still produce a clear outcome instead of silent
+loss.
+
+Every production miss should be promoted into a public-safe synthetic regression case in
+`cases.md` / `03_eval_prompt_bank.md` and cross-referenced from `05_coverage_matrix.md`. Preserve
+the behavior shape, not private transcript text. Include both positive and negative controls when
+the issue is prompt-sensitive, especially for multi-turn activation decisions such as confidence,
+sarcasm, denial, and recent-context carryover.
 
 ## Requirements Under Test
 
@@ -87,3 +107,14 @@ Additional current QA artifacts:
 - Scheduled live-fact sections such as weather/news/markets/web facts must only be included when a
   verified tool/cortex result exists; productivity cortices must omit out-of-scope live facts instead
   of guessing.
+- Promoted outcome regressions must verify the full user-facing path:
+  - the first assistant response remains fast and useful
+  - activated background agents are named in visible rows/cards
+  - activation detection judges the latest user message as the decision subject; older
+    activation-worthy turns in `activation.max_history` are context only and must not create stale
+    duplicate cards on a later simple/test/acknowledgement turn
+  - each terminal result is a structured `messages.content` cortex part
+  - refresh/reload preserves those rows/cards
+  - the originating Phase A parent assistant message still contains visible answer text when cards
+    attach; a cortex-only parent is a failed run unless the turn intentionally produced `{NTA}`
+  - provider degradation resolves through configured fallbacks or a visible terminal error

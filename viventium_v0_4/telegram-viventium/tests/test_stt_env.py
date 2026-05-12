@@ -105,7 +105,7 @@ def test_resolve_tts_provider_uses_canonical_runtime_provider():
         "VIVENTIUM_TTS_PROVIDER": "x_ai",
     }
 
-    assert resolve_tts_provider(env) == "x_ai"
+    assert resolve_tts_provider(env) == "xai"
 
 
 def test_resolve_tts_provider_fallback_uses_canonical_runtime_fallback():

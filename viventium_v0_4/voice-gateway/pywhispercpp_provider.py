@@ -39,6 +39,8 @@ except ImportError as exc:
 
 _logger = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Model] = {}
+_LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
+_LOCAL_WHISPER_VAD_MIN_SILENCE_S = "1.0"
 
 # Common hallucination phrases Whisper outputs on silence/noise
 # Based on research: https://github.com/ggml-org/whisper.cpp/issues/1724
@@ -58,6 +60,15 @@ HALLUCINATION_PHRASES = {
     "- okay",
     "- okay.",
 }
+
+
+def _local_whisper_vad_env() -> dict[str, str]:
+    source = dict(os.environ)
+    if not (source.get("VIVENTIUM_STT_VAD_MIN_SPEECH") or "").strip():
+        source["VIVENTIUM_STT_VAD_MIN_SPEECH"] = _LOCAL_WHISPER_VAD_MIN_SPEECH_S
+    if not (source.get("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip():
+        source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
+    return source
 
 
 def _default_model_name(configured_model: Optional[str] = None) -> str:
@@ -247,7 +258,7 @@ def get_stt(*, model_name: Optional[str] = None, language: Optional[str] = None)
 
     stt = PyWhisperCppSTT(**stt_kwargs)
 
-    vad_kwargs = get_silero_vad_kwargs()
+    vad_kwargs = get_silero_vad_kwargs(_local_whisper_vad_env())
     _logger.info(
         "Loading PyWhisperCpp StreamAdapter VAD min_speech=%ss min_silence=%ss activation=%s max_buffered_speech=%ss force_cpu=%s",
         vad_kwargs["min_speech_duration"],

@@ -54,7 +54,25 @@ This index lists the Viventium-specific changes and where they live.
 ## Voice Concurrency Control
 - Voice sessions bypass concurrent limiter (configurable): `LibreChat/api/server/controllers/agents/request.js`
 
+## Meeting Transcript Memory / Recall
+- Scheduled/manual hardening and transcript pass-through envelopes:
+  `LibreChat/scripts/viventium-memory-hardening.js`
+- Runtime transcript file-search attachment:
+  `LibreChat/packages/api/src/agents/initialize.ts`,
+  `LibreChat/packages/api/src/agents/meetingTranscripts.ts`
+- Transcript file context/type metadata:
+  `LibreChat/packages/data-provider/src/types/files.ts`,
+  `LibreChat/packages/data-schemas/src/schema/file.ts`
+- File-search source rendering and mixed recall behavior:
+  `LibreChat/api/app/clients/tools/util/fileSearch.js`
+- macOS manual ingest entrypoint:
+  `../../apps/macos/ViventiumHelper/Sources/ViventiumHelper/ViventiumHelperApp.swift`
+
 ## Tests
 - Background follow-up tests: `LibreChat/api/test/services/viventium/backgroundCortexFollowUpService.test.js`
 - Voice insight service tests: `LibreChat/api/test/services/viventium/voiceCortexInsightsService.test.js`
 - Cartesia TTS normalization tests: `voice-gateway/tests/test_cartesia_tts.py`
+- Meeting transcript hardening tests:
+  `LibreChat/api/test/scripts/viventium-memory-hardening.test.js`
+- Meeting transcript runtime helper tests:
+  `LibreChat/packages/api/src/agents/meetingTranscripts.test.ts`

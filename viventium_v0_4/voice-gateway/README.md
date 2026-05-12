@@ -85,14 +85,25 @@ This service is the **voice bridge** between:
       and control ranges are sourced from
       `viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json`; update that contract
       first when Cartesia changes the documented Sonic-3 surface.
-  - **xAI Grok Voice ("Voice Agent API")**
-    - Requires: `XAI_API_KEY`
+  - **xAI standalone TTS**
+    - User-facing label: `xAI`
+    - Requires: `VIVENTIUM_XAI_TTS_API_KEY` or compatibility `XAI_API_KEY`
     - Optional knobs:
-      - `VIVENTIUM_XAI_VOICE` (default `Eve`; choices in xAI docs include `Ara`, `Rex`, `Sal`, `Eve`, `Leo`)
-      - `VIVENTIUM_XAI_WSS_URL` (default `wss://api.x.ai/v1/realtime`)
+      - `VIVENTIUM_XAI_TTS_API` (default `tts`; set `voice_agent` only for the legacy Grok Voice Agent adapter)
+      - `VIVENTIUM_XAI_VOICE` (default `Sal`; choices from xAI docs: `Ara`, `Eve`, `Leo`, `Rex`, `Sal`)
+      - `VIVENTIUM_XAI_LANGUAGE` (default `en`; `auto` is also supported by xAI)
+      - `VIVENTIUM_XAI_TTS_WS_URL` (documented standalone TTS WebSocket: `wss://api.x.ai/v1/tts`)
       - `VIVENTIUM_XAI_SAMPLE_RATE` (default `24000`)
+    - Live voice calls use the first-party `livekit-plugins-xai` standalone TTS path, which streams
+      PCM audio from `wss://api.x.ai/v1/tts`.
+    - The xAI prompt may use documented xAI speech tags from
+      `viventium_v0_4/shared/voice/xai_tts_capabilities.json`. These are not SSML and must not be
+      mixed with Cartesia controls.
+  - **xAI Grok Voice Agent legacy mode**
+    - Enable only with `VIVENTIUM_XAI_TTS_API=voice_agent`.
+    - Optional knobs:
+      - `VIVENTIUM_XAI_VOICE_AGENT_WSS_URL` or legacy `VIVENTIUM_XAI_WSS_URL` (default `wss://api.x.ai/v1/realtime`)
       - `VIVENTIUM_XAI_INSTRUCTIONS` (optional strict prompt override)
-    - Docs: `https://docs.x.ai/docs/guides/voice/agent`
 
 - **Turn detection (optional)**
   - `VIVENTIUM_TURN_DETECTION`

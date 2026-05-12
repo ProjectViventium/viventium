@@ -73,8 +73,9 @@ disabled.
 - `worker_delegate_once` must not return project, worker, run, alias, or execution plumbing to the
   model by default. Those fields are available only through an explicit diagnostics flag or the
   lower-level status tools, so routine chat turns cannot accidentally leak internal IDs.
-- Host worker prompts must require a final user-facing completion block, headed `FINAL REPORT:`,
-  so callback delivery can surface results instead of progress chatter.
+- CLI worker prompts, including Docker and host-native CLI workers, must require a final
+  user-facing completion block, headed `FINAL REPORT:`, so callback delivery can surface results
+  instead of progress chatter or stale resumed-session summaries.
 - CLI output parsing must treat intermediate assistant messages as progress. For Codex/Claude-style
   workers, GlassHive should publish the explicit `FINAL REPORT:` section when present, otherwise the
   latest assistant result, not a concatenation of every progress message.
@@ -194,7 +195,12 @@ Host-worker UX and callback requirements:
 - The callback path is a durable communication line between GlassHive and the originating Viventium
   conversation. It must be signed, replay-protected, anchored to the assistant response message,
   persisted in a local callback outbox until delivered, persisted in the conversation store after
-  receiver acceptance, and pollable by web, Telegram, and voice surfaces.
+  receiver acceptance, and projected into a durable surface-delivery ledger for non-web surfaces
+  such as Telegram and live voice.
+- Surface delivery state must be DB-backed and idempotent. Telegram and voice can still poll during
+  the original turn for low latency, but terminal/actionable callbacks must survive the poll window,
+  bot/gateway restart, and LibreChat process restart. Delivery rows need claim leases, retry/backoff,
+  sent/failed/suppressed states, and backlog observability.
 - This communication line must work after the original chat request has ended, after UI refresh,
   and across long-running or parallel workers. The user should not have to ask "what happened?" for
   GlassHive to return the result.
@@ -216,8 +222,15 @@ Host-worker UX and callback requirements:
   rendering preserves paragraphs, redacts common local/private path forms, and uses the same visible
   length budget as the GlassHive terminal callback selector so the selected result is not truncated
   again.
+- Long completion reports may have a short visible web preview plus a sanitized full-text delivery
+  payload for Telegram/voice or document-style follow-up. Raw callback payloads, raw logs, local
+  absolute paths, screenshots, and secret-bearing command output must not be copied into the public
+  callback message or delivery ledger.
 - Completion selection must happen before truncating stored CLI output. Long progress streams should
   never push the final assistant result out of the retained text window.
+- Host CLI output retention may cap the already-selected/redacted user-facing output for storage,
+  but that cap must keep the selected result, not arbitrary progress chatter. If selector behavior
+  changes, rerun long `FINAL REPORT:` callback QA before shipping.
 - Repeated visible callbacks for one worker run update a single task-status message instead of
   creating a chain of callback branches.
 - Visible callbacks must include the assistant response `message_id` for the originating turn.
@@ -408,11 +421,16 @@ verification with `401 Unauthorized`.
 Callback persistence must be branch-safe in LibreChat's message tree. GlassHive callback payloads
 carry both the original parent context and the assistant response `message_id` for the turn that
 started the worker. The callback receiver requires the assistant response id as the tree anchor for
-visible callbacks. Later visible callbacks for the same run update the existing GlassHive status
-message instead of creating new callback children. The original semantic parent and the compact event
-history stay in metadata. This prevents worker status updates from rendering as multiple sibling
-branches under the same user message, including the race where a callback arrives before the
-assistant response has finished saving.
+visible callbacks. If that anchor is still the active leaf and is a blank assistant placeholder, the
+receiver may update it. If an existing GlassHive status message for the same run is the active leaf,
+later visible callbacks for that run update the same status message. If the conversation has moved
+on, the callback must append under the current conversation leaf and keep the original request parent
+and anchor in metadata. Distinct later worker runs append linearly rather than overwriting an earlier
+run result. If the current moved-on leaf is a user message, the receiver returns retryable `425` so
+GlassHive can deliver after the assistant reply is persisted. Metadata must distinguish
+`parentMessageId` (original semantic request parent), `treeParentMessageId` (actual persisted chat
+parent), and `anchorMessageId` (assistant response anchor). This prevents worker callbacks from
+rendering as sibling branches under older messages while preserving the original execution lineage.
 
 Voice and Telegram must surface the same persisted callback message after the main stream ends.
 They should poll the callback state by assistant message id and conversation id, just as they poll
@@ -499,6 +517,14 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
 - **Launch failure audit trail**: if a project launch fails after worker creation but before the first run is queued, the worker is marked failed and a `worker.launch_failed` event is recorded instead of leaving an orphaned ready worker
 - **Orphan active-run cleanup**: startup/admin reconcile marks a `running` run as interrupted when the associated worker process is no longer alive, so stale runtime rows do not appear as current active work
 - **User-facing naming**: the glossy/operator UI should present persistent personal environments as `Workspaces` rather than exposing raw worker IDs or `sandbox` terminology in the primary flow
+- **Canonical operator URL**: user-facing watch, steer, and takeover requests must surface the
+  configured GlassHive operator `/watch/{worker}` URL. Raw noVNC desktop URLs are diagnostic-only
+  implementation details and must not be the primary chat-visible view.
+- **Completed deliverable promotion**: for Docker workers with structured webpage deliverables,
+  GlassHive must open the deliverable in the sandbox browser once the run completes. Host-native
+  workers must not auto-open the user's real browser without explicit consent and must not place
+  `file://` host paths in callback payloads; host deliverables may expose a safe relative
+  `workspace_path` plus `browser_url_available=false` instead.
 - **Steer redirect semantics**: the glossy watch footer `Steer + send` path must interrupt the active run, kill the exact live run session/process tree, auto-start the replacement steer run, and keep that replacement run in execution mode until the redirected action is actually performed or a blocker is raised
 - **Queue follow-up gestures**: the same footer must also support non-interrupting queued follow-ups through long-press `Send` and `Cmd/Ctrl+Enter` or modifier-click send; those gestures route through `worker_message`, preserve the current active run, and visibly explain the queue behavior in the footer UI
 - **Queue follow-up lifecycle**: once a queued follow-up becomes the active run, GlassHive must keep the worker in `running` until that follow-up itself settles; healing/recovery paths must not regress the worker to `ready` while the replacement run is still executing
@@ -567,6 +593,7 @@ persistent home and workspace mounts.
 | `WPR_MCP_HOST` | `127.0.0.1` | MCP server bind |
 | `WPR_MCP_PORT` | `8767` | MCP server port |
 | `WPR_MCP_BASE_URL` | `http://127.0.0.1:8766` | Control plane URL |
+| `GLASSHIVE_OPERATOR_BASE_URL` | `http://127.0.0.1:8780` | User-facing GlassHive operator UI origin used for `/watch/{worker}` links |
 | `GLASSHIVE_DEFAULT_LAUNCH_SURFACE` | `desktop` | Project-first UI default initial watch surface (`desktop`, `terminal`, `auto`) |
 | `GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP` | `true` | When desktop-first watch is used, auto-open the active live run terminal inside the desktop |
 | `WPR_IDLE_DESKTOP_PRIME_BROWSER` | `true` | Prime fresh worker desktops with the GlassHive placeholder browser page instead of the inherited base-image splash |

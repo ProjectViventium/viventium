@@ -134,6 +134,42 @@
   what was pushed or left local, and what still needs live QA, without dumping raw logs or private
   machine details.
 
+### 2.6 Production QA Operating Discipline
+- `qa/README.md` is the QA operating contract. Every developer and AI agent must treat it as the
+  source of truth for QA folder shape, case metadata, run reports, public-safety rules, and
+  user-grade acceptance.
+- Keep one living QA area per feature or flow:
+  - `qa/<feature>/README.md` for scope, owning docs, surfaces, quality bar, and latest status
+  - `qa/<feature>/cases.md` for durable case IDs, expected outcomes, forbidden outcomes, automation,
+    and last-run links
+  - `qa/<feature>/reports/YYYY-MM-DD-<topic>.md` for dated execution evidence and residual risks
+- When touching a feature, update the relevant QA cases before or alongside the implementation and
+  rerun the impacted existing cases. Do not leave the QA source of truth stale while adding one-off
+  notes elsewhere.
+- Every escaped defect, production miss, user-reported failure, or "we missed this in QA" lesson must
+  be promoted into a reusable synthetic regression case. Preserve the behavioral shape and expected
+  outcome, but remove private transcript text, personal names, account details, screenshots, tokens,
+  local paths, and machine-specific state.
+- User-facing behavior requires user-grade QA. For browser-visible flows, the acceptance loop is:
+  `real browser prompt/action -> visible UI outcome -> expanded/detail state -> refresh or
+  persistence check when relevant -> backend/log/DB confirmation -> final model/runtime wording does
+  not contradict the visible state`.
+- Logs, DB rows, API responses, source inspection, model completions, and unit tests are supporting
+  evidence, not substitutes for any required visible-UI, detail-state, persistence, or wording step.
+  Skipping the visible browser step is not acceptable for browser-visible behavior even when backend
+  evidence says the operation succeeded.
+- For non-browser surfaces, use the nearest real product loop: Telegram send/receive plus ledger,
+  Voice/LiveKit call plus transcript/latency, Scheduler trigger plus delivery ledger, installer/CLI
+  command plus installed artifact, and MCP/tool call plus auth/tool-result/failure-copy verification.
+- Mocked tests, unit tests, API checks, logs, or DB rows can support QA, but they do not replace the
+  user-visible acceptance path when the product surface is visible to the user.
+- Public QA artifacts must be sanitized: no secrets, private prompts, personal chats, customer data,
+  local absolute paths, account identifiers, conversation IDs, message IDs, session/call IDs,
+  Telegram chat IDs, Mongo `_id` values, screenshots with private content, database exports, App
+  Support state, cookies, raw provider request/response IDs, stack traces with private paths, or raw
+  runtime dumps. Store raw private evidence only in the approved private location and summarize
+  public-safe counts, hashes, timestamps, and conclusions in `qa/`.
+
 ### 3. Study Before Acting
 - **Do not make assumptions** about the codebase, components, or anything
 - **You must provide proof and references** to truth in codebase and online resources to ensure you are grounded in reality and not making things up
@@ -359,6 +395,10 @@ A developer referring to a single document about a respective feature **must per
   - `anthropic / claude-sonnet-4-6`
   - `anthropic / claude-opus-4-7`
   - `openAI / gpt-5.4`
+- Do not add a model picker entry or built-in agent assignment for a model that the target provider
+  inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
+  supported Anthropic model for Viventium; use `claude-sonnet-4-6` or `claude-opus-4-7` until a
+  verified provider catalog and model QA update replace this baseline.
 - Foundation provider rule:
   - Groq is the current launch-ready primary for activation detection under the shipped 2-second
     Phase A budget
@@ -518,6 +558,8 @@ A developer referring to a single document about a respective feature **must per
 - Run tests yourself and observe the results
 - If tests fail, analyze the failure and make necessary adjustments
 - **Make sure test files are in an organized folder and not all over the place!**
+- Update or create the owning `qa/<feature>/README.md` and `qa/<feature>/cases.md`
+- Add dated QA run evidence under the feature QA folder before claiming user-facing completion
 - Follow existing test organization patterns:
   - Backend tests: `viventium_v0_3_py/viventium_v1/tests/`
   - Unit tests: `viventium_v0_3_py/viventium_v1/tests/unit/`
@@ -552,6 +594,13 @@ Before making any change, ensure:
 - [ ] Confirmed prompt/config edits are used only for model-generated issues
 - [ ] Reused existing context signals before adding new plumbing (fields/routes/config)
 - [ ] Checked behavior impact across Telegram, Scheduler, Web UI, and Voice
+- [ ] Updated the relevant `qa/<feature>/README.md` and `qa/<feature>/cases.md`
+- [ ] Promoted any escaped/user-reported defect into a synthetic regression case
+- [ ] Ran impacted existing QA cases, not only the new happy path
+- [ ] For user-visible browser behavior, completed the real-browser loop: visible UI, expanded/detail
+      state, persistence where relevant, backend/log/DB confirmation, and non-contradictory final wording
+- [ ] Confirmed logs, DB rows, API responses, source inspection, model completions, or unit tests were
+      not used as substitutes for the required user-visible QA path
 - [ ] Planned minimal changes that leverage existing code
 - [ ] Wrapped VIVENTIUM modifications with START/END comments
 - [ ] Created/updated tests for new features

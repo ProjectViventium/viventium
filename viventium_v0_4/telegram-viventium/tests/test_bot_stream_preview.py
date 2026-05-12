@@ -551,6 +551,79 @@ def test_get_viventium_response_final_tts_prefers_conversation_voice_route(monke
     assert len(context.bot.audios) == 1
 
 
+def test_get_viventium_response_xai_tts_does_not_split_wrapped_text(monkeypatch):
+    saved_route = {
+        "tts": {
+            "provider": "xai",
+            "variant": "Eve",
+        }
+    }
+    long_wrapped_text = "<whisper>" + ("this xAI line should stay together. " * 40) + "</whisper>"
+    seen = {"chunks": []}
+
+    class _RouteRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield long_wrapped_text
+
+        def get_cached_voice_route(self, key):
+            return saved_route if key == "chat-1:user-1" else None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    async def _fake_synthesize(text, convo_id, *, voice_route=None):
+        seen["chunks"].append(text)
+        seen["convo_id"] = convo_id
+        seen["voice_route"] = voice_route
+        return b"voice-bytes"
+
+    def _fake_resolve_tts_selection(*, voice_route=None):
+        seen["resolved_voice_route"] = voice_route
+        return {"provider": "xai", "variant": "Eve", "source": "saved"}
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: True)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+    monkeypatch.setattr(tg_bot, "resolve_tts_selection", _fake_resolve_tts_selection)
+
+    update_message = _FakeUpdateMessage()
+    context = _FakeContext()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=update_message,
+            context=context,
+            title="",
+            robot=_RouteRobot(),
+            message="voice please",
+            chatid="raw-chat",
+            messageid=222,
+            convo_id="chat-1:user-1",
+            message_thread_id=None,
+            voice_note_detected=True,
+            files=None,
+            trace_id="test-final-xai-tts-no-split",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert seen["voice_route"] == saved_route
+    assert seen["resolved_voice_route"] == saved_route
+    assert seen["convo_id"] == "chat-1:user-1"
+    assert seen["chunks"] == [long_wrapped_text]
+    assert len(context.bot.audios) == 1
+
+
 def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
     forwarded_calls = []
 

@@ -37,8 +37,9 @@ absolute home-directory paths.
 - Callback receiver repairs callback message timestamps when a blank assistant anchor was created
   before the user message, so chronological and tree views both show the user request before the
   worker result.
-- Telegram and voice surfaces poll the same persisted GlassHive callback message so worker
-  completion/blockers reach the originating chat/call without a manual status follow-up.
+- Telegram and voice surfaces use the same persisted GlassHive callback message plus a durable
+  surface-delivery ledger so worker completion/blockers reach the originating chat/call without a
+  manual status follow-up, even after the original in-turn poller exits.
 - Web, Telegram, and voice arm the long GlassHive callback polling window only from structured
   GlassHive MCP/tool evidence, not from ordinary non-GlassHive tool calls.
 - Missing host OpenClaw CLI degrades only `@openclaw`; Codex and Claude host workers remain usable.
@@ -76,6 +77,123 @@ When destructive confirmation is enabled, workers must checkpoint before:
 - Browser QA: a synthetic browser task uses host browser access without publishing screenshots.
 - Callback QA: signed `run.completed`, `run.failed`, and `checkpoint.ready` callbacks appear in the
   originating conversation.
+- Callback delivery QA: late Telegram-surface callbacks are enqueued, claimed, delivered once,
+  retried on failure, and observable in backlog checks without relying on prompt text or in-memory
+  request state.
+
+## 2026-05-05 Regression: Telegram GlassHive Completion Delivery
+
+Trigger: a Telegram user asked Viventium to delegate a GlassHive task and expected the worker result
+to return automatically in the same Telegram chat. The worker completed, but the final result was
+visible only after manual follow-up or local inspection.
+
+Expected behavior:
+
+- Telegram, web, API, and voice use the same agent/MCP path for GlassHive delegation.
+- A GlassHive completion callback persists one same-conversation callback message and enqueues one
+  durable Telegram delivery row.
+- Telegram sends the result after the original in-turn poll window, process restart, or transient
+  disconnect without requiring the user to ask what happened.
+
+Public-safe root cause:
+
+- Telegram had a short in-memory poller fast path, but no guaranteed delivery row for late
+  GlassHive callbacks on the Telegram surface.
+- LibreChat accepted and persisted a Telegram-surface callback even when delivery enqueue failed,
+  so GlassHive marked the callback delivered while Telegram had no durable work item to claim.
+- Duplicate callback handling checked process memory before DB repair, so a recently accepted
+  callback could block repair of a missing Telegram delivery row until the replay cache expired.
+- A local provider token expiry surfaced to Telegram as a generic connection error, masking that no
+  GlassHive worker had actually been started for that turn.
+- Local Telegram sidecar logs could include token-bearing Bot API URLs when third-party HTTP logs
+  were enabled.
+
+Regression coverage added or re-run:
+
+- LibreChat callback route tests now cover retryable delivery-enqueue failure, persisted duplicate
+  repair, and repair while the callback id is still in the in-memory replay cache.
+- GlassHive callback delivery service tests cover sanitized full-text enqueue behavior and the
+  conflict-free Mongo upsert contract.
+- OpenAI connected-account initialization tests cover refreshing expired OpenAI subscription
+  credentials and returning reconnect guidance when refresh is impossible.
+- Telegram bridge tests cover provider-authentication error mapping to user-actionable reconnect
+  guidance instead of a generic connection error.
+- Telegram sidecar logging tests cover redaction of token-bearing Bot API URLs.
+- Live user-path QA with synthetic text verified:
+  - a Telegram request reached Viventium and created a host `codex-cli` GlassHive worker
+  - the worker completed on the host execution path
+  - the callback outbox posted `run.completed`
+  - the Mongo delivery ledger row reached `sent`
+  - the final callback appeared in the same Telegram chat without manual follow-up
+
+Known operational follow-up:
+
+- The local developer stack can still be made unhealthy by multiple stale LibreChat nodemon
+  supervisors competing for the API port. That is a launcher/supervision hygiene issue, not a
+  GlassHive callback correctness issue, but it can still cause Telegram to report a temporary
+  reachability failure while the API is restarting.
+
+## 2026-05-08 Regression: Operator Handoff And Callback Branching
+
+Trigger: a web-chat user asked Viventium to run a Docker GlassHive worker without blocking chat,
+then watch, steer, and receive the result in the same conversation. The worker could complete, but
+the visible handoff was unreliable: the model could expose the raw workstation/noVNC page instead of
+the operator page, completed HTML deliverables could remain on the GlassHive placeholder page,
+GlassHive tool rows could disappear after completion, and late callbacks could appear as sibling
+assistant branches instead of continuing the active chat.
+
+Expected behavior:
+
+- Web chat can delegate long-running GlassHive work without blocking normal follow-up messages.
+- The model receives and surfaces the operator `watch` URL for web/API surfaces; raw noVNC URLs are
+  diagnostic-only.
+- The operator page exposes watch, pause/play, interrupt, steer, and takeover controls while the
+  worker is running or ready.
+- When a worker creates a browser-deliverable page, the sandbox browser opens that page so the
+  operator view shows the result, not the placeholder.
+- GlassHive tool calls remain visible and expandable after completion, like other tool calls.
+- Late GlassHive callbacks append to the active conversation leaf. If the user has just typed a
+  follow-up and the assistant response is not persisted yet, the receiver returns a retryable status
+  instead of writing a sibling branch.
+
+Public-safe root cause:
+
+- GlassHive exposed multiple URL concepts to the model, and the raw workstation URL could be chosen
+  even when the product contract required the operator URL.
+- The runtime detected the completed result text but did not structurally promote a generated HTML
+  deliverable into the visible workstation browser for Docker workers.
+- LibreChat had a GlassHive-specific display optimization that could hide completed GlassHive tool
+  rows.
+- The callback receiver used the original request/assistant anchor too aggressively as the visible
+  tree parent. Once the user had continued the conversation, a late completion could be stored as an
+  alternate assistant sibling.
+- Docker Codex resume output did not share the host-native final-report contract, so a resumed steer
+  run could repeat stale previous-result text even when the workspace file changed correctly.
+
+Regression coverage added or re-run:
+
+- GlassHive runtime tests cover operator URL emission for web/API surfaces, URL omission for
+  non-web surfaces, deliverable payloads, worker takeover URL shape, Docker final-report command
+  injection, and final-report parsing on resume.
+- LibreChat callback route tests cover leaf-aware callback append, retryable callback handling while
+  a moved-on user message is the current leaf, repeated status update for the same run, and distinct
+  later runs from the same worker appending without overwriting earlier results.
+- LibreChat frontend tests cover persistent GlassHive tool rows and clearer GlassHive tool labels.
+- Config compiler tests cover generated `GLASSHIVE_OPERATOR_BASE_URL`.
+- Browser QA with synthetic content verified:
+  - chat remained usable while a Docker worker ran
+  - the model surfaced an operator watch URL
+  - the operator page exposed ready status, pause/play, interrupt, menu, and steer controls
+  - the sandbox browser opened the delivered `index.html` page
+  - a steer request changed the workspace file and visible page state
+  - a late signed callback appended to the active conversation line without sibling navigation
+  - a second callback from the same worker but a different run appended after the first callback
+
+Second-opinion review:
+
+- A review-only local Claude pass agreed with the operator/deliverable direction and flagged the
+  same-worker callback overwrite risk. The implementation now scopes callback updates by both
+  worker and run id, while distinct later runs append as new results.
 
 ## Latest Public-Safe QA Snapshot
 
@@ -462,6 +580,74 @@ Regression coverage added or re-run:
   crash rendering with array-method errors.
 - Telegram and Voice tests cover long GlassHive callback polling and same-surface completion
   delivery after a newer user turn.
+
+## 2026-05-06 Follow-Up: Durable Telegram GlassHive Callback Delivery
+
+Telegram QA for a long-running GlassHive research task exposed a restart-safe delivery gap. The
+worker completed and LibreChat accepted the signed callback, but Telegram did not send the result
+until the user manually asked for status much later.
+
+Public-safe root cause:
+
+- Telegram same-surface delivery depended on an in-memory per-turn poller. The poller expired before
+  the worker's terminal callback arrived.
+- LibreChat had persisted the `glasshive_worker_callback`, but there was no DB-backed Telegram
+  delivery ledger or dispatcher to claim and send late callbacks after the poller ended.
+- Long worker output was selected after a fixed CLI-output truncation point, so a `FINAL REPORT:`
+  block could be lost before callback extraction. That would have reduced a long research result to
+  a short tail even if delivery succeeded.
+- Local Telegram HTTP logs could expose bot-token URLs; logs must redact those before they leave the
+  process.
+
+Fixes:
+
+- LibreChat now writes a `ViventiumGlassHiveCallbackDelivery` row when a visible Telegram or live
+  voice GlassHive callback is accepted. The row has stable delivery ids, claim leases, retry/backoff,
+  sent/failed/suppressed states, full-text payload support, and backlog observability.
+- Telegram keeps the in-turn poller as a fast path, but both the fast path and the background
+  dispatcher claim the same delivery row before sending. That prevents duplicate delivery while
+  allowing late callback delivery after timeout or bot restart.
+- Voice claims the same ledger for live-call callback speech. If the call is no longer active, the
+  persisted callback and delivery state remain observable rather than disappearing into an expired
+  in-memory task.
+- GlassHive completion callback extraction preserves the selected `FINAL REPORT:` content before
+  truncating retained CLI output. Visible web text remains bounded; sanitized full text can be
+  delivered through the surface ledger.
+- Telegram Bot API token-bearing URLs are redacted in bot logs.
+- Coder was reviewed only for control-plane patterns. The adopted pattern is explicit queue/claim
+  state and auditability; no Coder description routing, workspace preset naming, AGPL code/schema,
+  or macOS-host firewall promise was copied.
+- ClaudeViv review identified two production blockers during this pass: a duplicate-delivery race
+  while the delivery row was becoming claimable, and handler-bypassing token redaction. The poller
+  now waits for the ledger for callback-id-bearing terminal results, and token redaction is attached
+  to the configured log handlers.
+- A follow-up review also found that a short claim lease could allow a second dispatcher to reclaim
+  a long Telegram delivery while the first dispatcher was still chunk-sending it. Delivery claims now
+  use a 10-minute lease by default, and stale claim status updates return/log a conflict instead of
+  being treated as silent success.
+- Delivery failure/suppression reasons are redacted before Mongo persistence, so token-bearing Bot
+  API URLs do not land in the durable callback ledger.
+- Telegram fast-path terminal callback handling now includes `artifact.created`, matching the
+  LibreChat callback receiver's user-visible event set. Delivery status transitions log
+  sent/failed/suppressed state changes for operator observability.
+
+Regression coverage added or re-run:
+
+- LibreChat callback route tests cover enqueueing a durable delivery row and preserving sanitized
+  full-text callback metadata.
+- LibreChat delivery service tests cover claim-by-surface without prompt matching, 10-minute default
+  leases, failure-reason redaction, and prove raw callback `full_message` text is not used as a
+  fallback after route sanitization.
+- Telegram and voice route tests cover bridge-secret delivery claims, claim-id status updates, and
+  lost-claim conflict responses.
+- Telegram bridge tests cover fast-path durable claim before sending and late dispatcher delivery
+  without stream state. They also cover the race where a callback message is visible before its
+  delivery row is claimable; the in-turn poller waits for the ledger instead of legacy-sending, and
+  `artifact.created` is treated as a terminal callback for the fast path.
+- Voice route and gateway tests cover scoped delivery claim plus full-text speech from the claimed
+  callback row, including capping long reports before TTS while leaving the full text in chat.
+- GlassHive runtime tests cover long `FINAL REPORT:` preservation and terminal callback full-text
+  selection before visible preview truncation.
 
 ## 2026-04-29 Key-Principles Check
 

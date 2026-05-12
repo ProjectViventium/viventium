@@ -19,7 +19,9 @@ import os
 import re
 import time
 import urllib.parse
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
 
 import httpx
@@ -97,6 +99,47 @@ _VOICE_SPEED_RE = re.compile(r'<speed\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGN
 _VOICE_VOLUME_RE = re.compile(r'<volume\s+ratio=["\']?[^"\'>]+["\']?\s*/>', re.IGNORECASE)
 _VOICE_SPELL_RE = re.compile(r"<spell>([\s\S]*?)</spell>", re.IGNORECASE)
 _VOICE_BRACKET_RE = re.compile(r"\[([A-Za-z][A-Za-z' -]{1,40})\]")
+_XAI_TTS_CAPABILITIES_PATH = (
+    Path(__file__).resolve().parents[3] / "shared" / "voice" / "xai_tts_capabilities.json"
+)
+
+
+def _load_xai_wrapping_tag_names() -> tuple[str, ...]:
+    try:
+        with _XAI_TTS_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        tags = ((payload or {}).get("speech_tags") or {}).get("wrapping") or []
+        return tuple(
+            str(tag).strip().lower()
+            for tag in tags
+            if isinstance(tag, str) and str(tag).strip()
+        )
+    except Exception:
+        return (
+            "soft",
+            "whisper",
+            "loud",
+            "build-intensity",
+            "decrease-intensity",
+            "higher-pitch",
+            "lower-pitch",
+            "slow",
+            "fast",
+            "sing-song",
+            "singing",
+            "laugh-speak",
+            "emphasis",
+        )
+
+
+_XAI_WRAPPING_TAG_NAMES = _load_xai_wrapping_tag_names()
+_XAI_TAG_PATTERN = "|".join(re.escape(tag) for tag in _XAI_WRAPPING_TAG_NAMES)
+_VOICE_XAI_WRAPPER_RE = re.compile(
+    r"<(?P<tag>%s)>(?P<text>[\s\S]*?)</(?P=tag)>" % _XAI_TAG_PATTERN,
+    re.IGNORECASE,
+)
+_VOICE_XAI_ANGLE_TAG_RE = re.compile(r"</?(?:%s)\s*>" % _XAI_TAG_PATTERN, re.IGNORECASE)
+_VOICE_XAI_BRACKET_TAG_RE = re.compile(r"\[\s*/?\s*(?:%s)\s*\]" % _XAI_TAG_PATTERN, re.IGNORECASE)
 _TOOL_TRANSCRIPT_LINE_RE = re.compile(
     r"^\s*Tool:\s+.*_mcp_[A-Za-z0-9_.-]+.*(?:\r?\n|$)",
     re.IGNORECASE | re.MULTILINE,
@@ -121,6 +164,7 @@ _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
     "run.interrupted",
     "checkpoint.ready",
     "takeover.requested",
+    "artifact.created",
 }
 # === VIVENTIUM END ===
 
@@ -225,6 +269,13 @@ def strip_voice_control_tags_for_display(text: str) -> str:
     cleaned = _VOICE_SPEED_RE.sub("", cleaned)
     cleaned = _VOICE_VOLUME_RE.sub("", cleaned)
     cleaned = _VOICE_SPELL_RE.sub(r"\1", cleaned)
+    while True:
+        updated = _VOICE_XAI_WRAPPER_RE.sub(lambda match: match.group("text") or "", cleaned)
+        if updated == cleaned:
+            break
+        cleaned = updated
+    cleaned = _VOICE_XAI_ANGLE_TAG_RE.sub("", cleaned)
+    cleaned = _VOICE_XAI_BRACKET_TAG_RE.sub("", cleaned)
     cleaned = _VOICE_BRACKET_RE.sub(_strip_voice_bracket_marker, cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned.strip()
@@ -727,6 +778,14 @@ def _stream_error_message(error: Optional[str]) -> str:
         lowered = error.lower()
         if "credit balance is too low" in lowered or "plans & billing" in lowered:
             return "Provider billing issue. Please check Plans & Billing."
+        if (
+            "token_expired" in lowered
+            or "provided authentication token is expired" in lowered
+            or "model_authentication" in lowered
+            or "invalid authentication credentials" in lowered
+            or "authentication_error" in lowered
+        ):
+            return "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
         if "connected account needs reconnect" in lowered:
             return sanitize_telegram_text(error)
         if "tool" in lowered or "mcp" in lowered or "oauth" in lowered:
@@ -990,6 +1049,30 @@ class LibreChatBridge:
             (os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S") or "").strip(),
             600.0,
         )
+        self.glasshive_delivery_poll_s = _parse_positive_float(
+            (os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S") or "").strip(),
+            5.0,
+        )
+        self.glasshive_delivery_batch_size = max(
+            1,
+            min(
+                _parse_non_negative_int(
+                    (os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_BATCH_SIZE") or "").strip(),
+                    10,
+                ),
+                25,
+            ),
+        )
+        self.glasshive_delivery_lease_ms = max(
+            5_000,
+            min(
+                _parse_non_negative_int(
+                    (os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_LEASE_MS") or "").strip(),
+                    600_000,
+                ),
+                600_000,
+            ),
+        )
         if self.followup_timeout_s < self.followup_grace_s:
             self.followup_timeout_s = self.followup_grace_s
         if self.glasshive_timeout_s < 1.0:
@@ -1022,6 +1105,8 @@ class LibreChatBridge:
         self._brief_main_reply_by_stream: dict[str, bool] = {}
         self._voice_route_by_chat: dict[str, dict[str, Any]] = {}
         self._voice_route_by_stream: dict[str, dict[str, Any]] = {}
+        self._glasshive_delivery_dispatcher_task: Optional[asyncio.Task] = None
+        self._glasshive_delivery_dispatcher_id = f"tg-{uuid.uuid4().hex[:12]}"
         # === VIVENTIUM END ===
         # === VIVENTIUM START ===
         # Feature: Optional per-chat serialization (disable for OpenClaw-style responsiveness).
@@ -1041,6 +1126,133 @@ class LibreChatBridge:
 
     def set_on_message_callback(self, callback: Callable[..., Awaitable[None]]):
         self.on_message_callback = callback
+
+    # === VIVENTIUM START ===
+    # Feature: Durable GlassHive Telegram delivery dispatcher.
+    # Purpose: Deliver callbacks that arrive after the original request poller exits
+    # or after the Telegram bridge restarts.
+    def start_glasshive_delivery_dispatcher(self) -> None:
+        if self._glasshive_delivery_dispatcher_task and not self._glasshive_delivery_dispatcher_task.done():
+            return
+        if not self.base_url or not self.secret:
+            logger.warning("GlassHive delivery dispatcher disabled: missing LibreChat origin or Telegram secret")
+            return
+        self._glasshive_delivery_dispatcher_task = asyncio.create_task(
+            self._run_glasshive_delivery_dispatcher(),
+            name="glasshive-telegram-delivery-dispatcher",
+        )
+        self._track_task(self._glasshive_delivery_dispatcher_task)
+
+    def stop_glasshive_delivery_dispatcher(self) -> None:
+        task = self._glasshive_delivery_dispatcher_task
+        if task and not task.done():
+            task.cancel()
+        self._glasshive_delivery_dispatcher_task = None
+
+    async def _run_glasshive_delivery_dispatcher(self) -> None:
+        interval_s = max(self.glasshive_delivery_poll_s, 1.0)
+        while True:
+            try:
+                claimed = await self._claim_glasshive_deliveries(limit=self.glasshive_delivery_batch_size)
+                if not claimed:
+                    await asyncio.sleep(interval_s)
+                    continue
+                for delivery in claimed:
+                    await self._deliver_glasshive_delivery(delivery)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.warning("GlassHive delivery dispatcher failed: %s", exc)
+                await asyncio.sleep(interval_s)
+
+    async def _claim_glasshive_deliveries(
+        self,
+        *,
+        limit: int = 10,
+        callback_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        if not self.base_url or not self.secret:
+            return []
+        url = f"{self.base_url}/api/viventium/telegram/glasshive/deliveries/claim"
+        headers = {"X-VIVENTIUM-TELEGRAM-SECRET": self.secret}
+        payload: dict[str, Any] = {
+            "limit": max(1, min(int(limit or 1), 25)),
+            "leaseMs": self.glasshive_delivery_lease_ms,
+            "dispatcherId": self._glasshive_delivery_dispatcher_id,
+        }
+        if callback_id:
+            payload["callbackId"] = callback_id
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                raise RuntimeError(f"GlassHive delivery claim failed ({response.status_code})")
+            data = response.json()
+        deliveries = data.get("deliveries") if isinstance(data, dict) else None
+        return [item for item in deliveries if isinstance(item, dict)] if isinstance(deliveries, list) else []
+
+    async def _mark_glasshive_delivery_status(
+        self,
+        delivery: dict[str, Any],
+        status: str,
+        *,
+        error: str = "",
+        reason: str = "",
+    ) -> None:
+        delivery_id = str(delivery.get("deliveryId") or "").strip()
+        claim_id = str(delivery.get("claimId") or "").strip()
+        if not delivery_id or not claim_id:
+            return
+        url = f"{self.base_url}/api/viventium/telegram/glasshive/deliveries/{urllib.parse.quote(delivery_id)}/status"
+        headers = {"X-VIVENTIUM-TELEGRAM-SECRET": self.secret}
+        payload = {"claimId": claim_id, "status": status}
+        if error:
+            payload["error"] = error[:1000]
+        if reason:
+            payload["reason"] = reason[:1000]
+        timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code == 409:
+                logger.warning("GlassHive delivery claim was lost before status=%s", status)
+                return
+            if response.status_code != 200:
+                raise RuntimeError(f"GlassHive delivery status update failed ({response.status_code})")
+
+    async def _claim_glasshive_delivery_for_callback(
+        self,
+        latest: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        callback_id = str(latest.get("callbackId") or latest.get("callback_id") or "").strip()
+        if not callback_id:
+            return None
+        claimed = await self._claim_glasshive_deliveries(limit=1, callback_id=callback_id)
+        return claimed[0] if claimed else None
+
+    async def _deliver_glasshive_delivery(self, delivery: dict[str, Any]) -> bool:
+        chat_id = str(delivery.get("telegramChatId") or "").strip()
+        text = str(delivery.get("fullText") or delivery.get("text") or "").strip()
+        if not chat_id or not text:
+            await self._mark_glasshive_delivery_status(
+                delivery,
+                "suppressed",
+                reason="missing Telegram chat id or text",
+            )
+            return False
+        if is_no_response_only(text):
+            await self._mark_glasshive_delivery_status(delivery, "suppressed", reason="{NTA}")
+            return True
+        try:
+            sent = await self._send_followup_text(chat_id, text)
+            if sent:
+                await self._mark_glasshive_delivery_status(delivery, "sent")
+                return True
+            await self._mark_glasshive_delivery_status(delivery, "failed", error="Telegram send returned false")
+            return False
+        except Exception as exc:
+            await self._mark_glasshive_delivery_status(delivery, "failed", error=str(exc))
+            return False
+    # === VIVENTIUM END ===
 
     def get_cached_voice_route(self, chat_id: str) -> Optional[dict[str, Any]]:
         normalized_chat_id = str(chat_id or "").strip()
@@ -1308,9 +1520,9 @@ class LibreChatBridge:
         preference_convo_id: Optional[str] = None,
         raw_message: Optional[str] = None,
         stream_id: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         if not self.on_message_callback:
-            return
+            return False
         # === VIVENTIUM START ===
         # Feature: Proactive follow-up voice parity.
         # Purpose: Apply existing voice preference gate + TTS for callback delivery.
@@ -1411,15 +1623,17 @@ class LibreChatBridge:
                             payload_parse_mode="HTML",
                             payload_voice_audio=voice_audio if index == last_index else None,
                         )
-                    return
+                    return True
             # === VIVENTIUM END ===
             await _invoke_callback(
                 message,
                 payload_parse_mode=parse_mode,
                 payload_voice_audio=voice_audio,
             )
+            return True
         except Exception as exc:
             logger.warning("Failed to deliver Telegram callback: %s", exc)
+            return False
 
     # Track cortex activity seen on SSE so DB polling doesn't exit before persistence catches up.
     def _mark_cortex_seen(self, stream_id: str) -> None:
@@ -2136,16 +2350,32 @@ class LibreChatBridge:
                         if isinstance(latest, dict):
                             text = latest.get("text")
                             if isinstance(text, str) and text.strip() and glasshive_callback_is_terminal(latest):
-                                if is_no_response_only(text):
-                                    self._mark_followup_sent(stream_id)
-                                    self._cancel_insight_task(stream_id)
-                                    return
-                                sent = await self._send_followup_text_once(
-                                    chat_id,
-                                    text,
-                                    stream_id=stream_id,
-                                )
+                                delivery = await self._claim_glasshive_delivery_for_callback(latest)
+                                if delivery:
+                                    sent = await self._deliver_glasshive_delivery(delivery)
+                                else:
+                                    callback_id = str(
+                                        latest.get("callbackId") or latest.get("callback_id") or ""
+                                    ).strip()
+                                    if callback_id:
+                                        # The callback message can become visible milliseconds
+                                        # before the durable surface-delivery row is committed.
+                                        # For callback-id-bearing worker results, wait for the
+                                        # ledger row/dispatcher instead of legacy-sending and
+                                        # risking a duplicate Telegram message.
+                                        await asyncio.sleep(self.followup_interval_s)
+                                        continue
+                                    if is_no_response_only(text):
+                                        self._mark_followup_sent(stream_id)
+                                        self._cancel_insight_task(stream_id)
+                                        return
+                                    sent = await self._send_followup_text_once(
+                                        chat_id,
+                                        text,
+                                        stream_id=stream_id,
+                                    )
                                 if sent:
+                                    self._mark_followup_sent(stream_id)
                                     self._cancel_insight_task(stream_id)
                                 return
 
@@ -2578,13 +2808,13 @@ class LibreChatBridge:
         text: str,
         *,
         stream_id: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         if not text:
-            return
+            return False
         # === VIVENTIUM START ===
         # Feature: No-response tag ({NTA}) should never be delivered to Telegram users.
         if is_no_response_only(text):
-            return
+            return False
         # === VIVENTIUM END ===
         # === VIVENTIUM NOTE ===
         # Fix: Always render HTML for text display, even when input was voice.
@@ -2592,16 +2822,16 @@ class LibreChatBridge:
         parse_mode = "HTML"
         # === VIVENTIUM NOTE END ===
         if not message:
-            return
+            return False
         target_chat_id = self._resolve_telegram_chat_id(chat_id=chat_id, stream_id=stream_id)
         if target_chat_id is None:
-            return
+            return False
         self._trace(
             "LibreChatBridge sending follow-up: chat_id=%s length=%s",
             chat_id,
             len(message),
         )
-        await self._deliver_callback(
+        return await self._deliver_callback(
             target_chat_id,
             message,
             parse_mode=parse_mode,

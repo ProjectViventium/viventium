@@ -39,12 +39,16 @@ def resolve_api_whisper_config(
 
 def resolve_tts_provider(env) -> str:
     explicit_provider = str(env.get("TTS_PROVIDER") or "").strip().lower()
+    if explicit_provider in {"x_ai", "grok", "xai_grok_voice"}:
+        return "xai"
     if explicit_provider:
         return explicit_provider
 
     canonical_provider = str(env.get("VIVENTIUM_TTS_PROVIDER") or "").strip().lower()
     if canonical_provider in {"browser", "automatic", "auto", "local_automatic"}:
         return "openai"
+    if canonical_provider in {"x_ai", "grok", "xai_grok_voice"}:
+        return "xai"
     if canonical_provider:
         return canonical_provider
 
@@ -59,6 +63,8 @@ def resolve_tts_provider_fallback(env, primary_provider) -> str:
     ).strip().lower()
     if explicit_fallback in {"0", "false", "off", "none"}:
         return ""
+    if explicit_fallback in {"x_ai", "grok", "xai_grok_voice"}:
+        return "xai"
     if explicit_fallback:
         return explicit_fallback
 

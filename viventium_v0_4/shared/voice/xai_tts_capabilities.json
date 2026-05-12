@@ -1,0 +1,146 @@
+{
+  "provider": "xai",
+  "display_label": "xAI",
+  "model_id": "tts-1",
+  "api": "text_to_speech",
+  "source_urls": [
+    "https://docs.x.ai/developers/model-capabilities/audio/text-to-speech",
+    "https://docs.livekit.io/agents/models/tts/xai/",
+    "https://docs.livekit.io/reference/python/livekit/plugins/xai/index.html"
+  ],
+  "pricing_urls": [
+    "https://docs.x.ai/developers/models/text-to-speech",
+    "https://docs.x.ai/developers/models"
+  ],
+  "endpoints": {
+    "rest": "https://api.x.ai/v1/tts",
+    "websocket": "wss://api.x.ai/v1/tts"
+  },
+  "limits": {
+    "rest_text_max_chars": 15000,
+    "websocket_text_delta_max_chars": 15000,
+    "websocket_concurrent_sessions_per_team": 50
+  },
+  "defaults": {
+    "voice_id": "Sal",
+    "language": "en",
+    "livekit_codec": "pcm",
+    "livekit_sample_rate": 24000,
+    "telegram_codec": "mp3",
+    "telegram_sample_rate": 24000,
+    "telegram_bit_rate": 128000
+  },
+  "voices": [
+    {
+      "id": "Ara",
+      "label": "Ara",
+      "description": "Warm and friendly"
+    },
+    {
+      "id": "Eve",
+      "label": "Eve",
+      "description": "Energetic and upbeat"
+    },
+    {
+      "id": "Leo",
+      "label": "Leo",
+      "description": "Authoritative and strong"
+    },
+    {
+      "id": "Rex",
+      "label": "Rex",
+      "description": "Confident and clear"
+    },
+    {
+      "id": "Sal",
+      "label": "Sal",
+      "description": "Smooth and balanced"
+    }
+  ],
+  "languages": [
+    "auto",
+    "en",
+    "ar-EG",
+    "ar-SA",
+    "ar-AE",
+    "bn",
+    "zh",
+    "fr",
+    "de",
+    "hi",
+    "id",
+    "it",
+    "ja",
+    "ko",
+    "pt-BR",
+    "pt-PT",
+    "ru",
+    "es-MX",
+    "es-ES",
+    "tr",
+    "vi"
+  ],
+  "output_formats": [
+    {
+      "codec": "mp3",
+      "sample_rates": [22050, 24000, 44100],
+      "bit_rates": [32000, 64000, 96000, 128000, 192000]
+    },
+    {
+      "codec": "wav",
+      "sample_rates": [16000, 44100, 48000]
+    },
+    {
+      "codec": "pcm",
+      "sample_rates": [8000, 16000, 22050, 24000, 44100, 48000]
+    },
+    {
+      "codec": "mulaw",
+      "aliases": ["ulaw"],
+      "sample_rates": [8000, 16000, 22050, 24000, 44100, 48000]
+    },
+    {
+      "codec": "alaw",
+      "sample_rates": [8000, 16000, 22050, 24000, 44100, 48000]
+    }
+  ],
+  "speech_tags": {
+    "inline": [
+      "[pause]",
+      "[long-pause]",
+      "[hum-tune]",
+      "[laugh]",
+      "[chuckle]",
+      "[giggle]",
+      "[cry]",
+      "[tsk]",
+      "[tongue-click]",
+      "[lip-smack]",
+      "[breath]",
+      "[inhale]",
+      "[exhale]",
+      "[sigh]"
+    ],
+    "wrapping": [
+      "soft",
+      "whisper",
+      "loud",
+      "build-intensity",
+      "decrease-intensity",
+      "higher-pitch",
+      "lower-pitch",
+      "slow",
+      "fast",
+      "sing-song",
+      "singing",
+      "laugh-speak",
+      "emphasis"
+    ]
+  },
+  "prompt_notes": [
+    "xAI TTS speech tags are provider-specific; they are not SSML and should not be mixed with Cartesia tags.",
+    "xAI TTS has no Cartesia-style emotion parameter. Tone and emotion are controlled by natural wording plus documented xAI speech tags.",
+    "Wrapping tags must include closing tags and should be used sparingly on short phrases.",
+    "Only the LLM may author voice-control markup; runtime preserves, validates, routes, or strips it for display/fallback."
+  ]
+}

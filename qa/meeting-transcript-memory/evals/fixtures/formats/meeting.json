@@ -1,0 +1,15 @@
+{
+  "meeting": "Project Lantern format fixture",
+  "turns": [
+    {
+      "speaker": "Sam",
+      "timestamp": "2026-05-05T10:00:00Z",
+      "text": "JSON fixture says Project Lantern keeps the Tuesday launch checklist."
+    },
+    {
+      "speaker": "Lee",
+      "timestamp": "2026-05-05T10:04:00Z",
+      "text": "JSON fixture marks the older Monday launch note as stale."
+    }
+  ]
+}

@@ -22,6 +22,13 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from telegram_tokens import telegram_bot_token_validation_error
 from retrieval_config import resolve_retrieval_embeddings_settings
+from prompt_registry import (
+    PromptRegistryError,
+    build_prompt_bundle,
+    load_prompt_registry,
+    render_prompt,
+    resolve_prompt_refs,
+)
 
 CONFIG_VERSION = 1
 DEFAULT_MAIN_AGENT_ID = "agent_viventium_main_95aeb3"
@@ -48,6 +55,14 @@ DEFAULT_CARTESIA_EMOTION = "neutral"
 DEFAULT_CARTESIA_LANGUAGE = "en"
 DEFAULT_CARTESIA_MAX_BUFFER_DELAY_MS = "120"
 DEFAULT_CARTESIA_SEGMENT_SILENCE_MS = "80"
+DEFAULT_XAI_TTS_API = "tts"
+DEFAULT_XAI_TTS_API_URL = "https://api.x.ai/v1/tts"
+DEFAULT_XAI_TTS_WS_URL = "wss://api.x.ai/v1/tts"
+DEFAULT_XAI_TTS_VOICE = "Sal"
+DEFAULT_XAI_TTS_LANGUAGE = "en"
+DEFAULT_XAI_TTS_SAMPLE_RATE = "24000"
+DEFAULT_XAI_TTS_CODEC = "mp3"
+DEFAULT_XAI_TTS_BIT_RATE = "128000"
 DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
 DEFAULT_GLASSHIVE_FOLLOWUP_TIMEOUT_S = "600"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
@@ -208,6 +223,7 @@ VOICE_PROVIDER_KEYCHAIN_SERVICES = {
     "assemblyai": "viventium/assemblyai_api_key",
     "cartesia": "viventium/cartesia_api_key",
     "elevenlabs": "viventium/elevenlabs_api_key",
+    "xai": "viventium/x_ai_api_key",
 }
 
 MODEL_MAP = {
@@ -240,29 +256,30 @@ MODEL_MAP = {
         "memory": "claude-sonnet-4-6",
     },
     "x_ai": {
-        "conscious": "grok-4-1-fast-non-reasoning",
-        "background_analysis": "grok-4-1-fast-non-reasoning",
-        "confirmation_bias": "grok-4-1-fast-non-reasoning",
-        "red_team": "grok-4-1-fast-non-reasoning",
-        "deep_research": "grok-4-1-fast-non-reasoning",
-        "productivity": "grok-4-1-fast-non-reasoning",
-        "parietal": "grok-4-1-fast-non-reasoning",
-        "pattern_recognition": "grok-4-1-fast-non-reasoning",
-        "emotional_resonance": "grok-4-1-fast-non-reasoning",
-        "strategic_planning": "grok-4-1-fast-non-reasoning",
-        "support": "grok-4-1-fast-non-reasoning",
-        "memory": "grok-4-1-fast-non-reasoning",
+        "conscious": "grok-4.3",
+        "background_analysis": "grok-4.3",
+        "confirmation_bias": "grok-4.3",
+        "red_team": "grok-4.3",
+        "deep_research": "grok-4.3",
+        "productivity": "grok-4.3",
+        "parietal": "grok-4.3",
+        "pattern_recognition": "grok-4.3",
+        "emotional_resonance": "grok-4.3",
+        "strategic_planning": "grok-4.3",
+        "support": "grok-4.3",
+        "memory": "grok-4.3",
     },
 }
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
-    "anthropic": {"claude-opus-4-7", "claude-sonnet-4-6"},
-    "openai": {"gpt-5.4"},
+    "anthropic": {"claude-opus-4-7"},
+    "openai": {"gpt-5.5"},
 }
 DEFAULT_MEMORY_HARDENING = {
     "enabled": False,
-    "schedule": "0 5 * * *",
+    "schedule": "0 3 * * *",
     "timezone": "America/Toronto",
+    "operator_user_email": "",
     "lookback_days": 7,
     "min_user_idle_minutes": 60,
     "max_changes_per_user": 3,
@@ -271,11 +288,41 @@ DEFAULT_MEMORY_HARDENING = {
     "dry_run_first": True,
     "provider_profile": "launch_ready_only",
     "anthropic_model": "claude-opus-4-7",
-    "openai_model": "gpt-5.4",
+    "anthropic_effort": "xhigh",
+    "openai_model": "gpt-5.5",
+    "openai_reasoning_effort": "xhigh",
+    "transcripts": {
+        "source_dir": "",
+        "max_files_per_run": 20,
+        "max_chars_per_file": 500000,
+        "summary_max_chars": 32000,
+        "stable_evidence_max_age_days": 90,
+        "rag_mode": "detailed_summary_only",
+    },
 }
+
+MEMORY_TRANSCRIPT_RAG_MODES = {"detailed_summary_only", "raw_and_summary", "raw_only"}
 
 CURRENT_BACKGROUND_ACTIVATION_PROVIDER = "groq"
 CURRENT_BACKGROUND_ACTIVATION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+CURRENT_BACKGROUND_ACTIVATION_PROVIDER_ALIASES = {"groq"}
+OPTIONAL_BACKGROUND_ACTIVATION_PROVIDER_ALIASES = {"xai", "x_ai"}
+BACKGROUND_ACTIVATION_MODELS_BY_PROVIDER = {
+    "groq": CURRENT_BACKGROUND_ACTIVATION_MODEL,
+    "xai": "grok-4.20-non-reasoning",
+}
+XAI_GROK_43_MODEL_SPEC = {
+    "name": "grok-4.3",
+    "label": "Grok 4.3",
+    "description": "xAI Grok",
+    "group": "xai",
+    "groupIcon": "xai",
+    "iconURL": "xai",
+    "preset": {
+        "endpoint": "xai",
+        "model": "grok-4.3",
+    },
+}
 
 CURATED_ADDED_ENDPOINTS = [
     "agents",
@@ -327,19 +374,16 @@ CURATED_CUSTOM_ENDPOINTS = [
         "apiKeyEnv": "XAI_API_KEY",
         "baseURL": "https://api.x.ai/v1",
         "models": [
-            "grok-4-1-fast-non-reasoning",
-            "grok-4-1-fast-reasoning",
-            "grok-4-fast-non-reasoning",
-            "grok-4-fast-reasoning",
-            "grok-4-0709",
-            "grok-code-fast-1",
-            "grok-3-mini",
-            "grok-3",
+            "grok-4.3",
+            "grok-4.20-non-reasoning",
+            "grok-4.20-multi-agent-0309",
+            "grok-4.20-0309-reasoning",
+            "grok-4.20-0309-non-reasoning",
             "grok-2-vision-1212",
             "grok-2-image-1212",
         ],
-        "titleModel": "grok-4-1-fast-non-reasoning",
-        "summaryModel": "grok-4-1-fast-non-reasoning",
+        "titleModel": "grok-4.3",
+        "summaryModel": "grok-4.3",
         "modelDisplayLabel": "Grok",
         "fetch": True,
         "titleMethod": "completion",
@@ -447,6 +491,34 @@ SOURCE_OF_TRUTH_AGENTS_BUNDLE = (
     / "viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml"
 )
 DEFAULT_VIVENTIUM_AGENT_ICON_URL = "/assets/logo.svg"
+APP_SUPPORT_VIVENTIUM_DIR = Path.home() / "Library" / "Application Support" / "Viventium"
+_SOURCE_PROMPT_REGISTRY_CACHE: dict[str, Any] | None = None
+PROMPT_AFFECTING_RUNTIME_CONFIG_SECTIONS = (
+    "version",
+    "cache",
+    "registration",
+    "interface",
+    "modelSpecs",
+    "viventium",
+    "mcpSettings",
+    "mcpServers",
+    "endpoints",
+    "memory",
+    "webSearch",
+    "speech",
+    "balance",
+)
+SECRET_CONFIG_KEY_FRAGMENTS = (
+    "secret",
+    "token",
+    "password",
+    "apikey",
+    "api_key",
+    "clientsecret",
+    "client_secret",
+    "refreshtoken",
+    "refresh_token",
+)
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -454,6 +526,39 @@ def load_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise SystemExit(f"Config file must be a mapping: {path}")
     return data
+
+
+def validate_config(config: dict[str, Any], config_path: Path) -> None:
+    if int(config.get("version", 0)) != CONFIG_VERSION:
+        raise SystemExit(f"Unsupported config version in {config_path}")
+
+    activation_provider = normalize_provider_name(config["llm"]["activation"].get("provider"))
+    allowed_activation_providers = CURRENT_BACKGROUND_ACTIVATION_PROVIDER_ALIASES | OPTIONAL_BACKGROUND_ACTIVATION_PROVIDER_ALIASES
+    if activation_provider not in allowed_activation_providers:
+        raise SystemExit(
+            "Activation provider must be Groq by default, or xAI only as an explicit override."
+        )
+    if not provider_secret(config["llm"]["activation"]):
+        provider_label = "xAI" if activation_provider == "xai" else "Groq"
+        raise SystemExit(f"Missing required {provider_label} activation credential.")
+
+
+def is_generated_viventium_runtime_path(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(APP_SUPPORT_VIVENTIUM_DIR.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _source_prompt_registry() -> dict[str, Any]:
+    global _SOURCE_PROMPT_REGISTRY_CACHE
+    if _SOURCE_PROMPT_REGISTRY_CACHE is None:
+        try:
+            _SOURCE_PROMPT_REGISTRY_CACHE = load_prompt_registry()
+        except PromptRegistryError as exc:
+            raise SystemExit(f"Prompt registry validation failed: {exc}") from exc
+    return _SOURCE_PROMPT_REGISTRY_CACHE
 
 
 def resolve_source_of_truth_librechat_yaml_candidates() -> list[Path]:
@@ -473,25 +578,79 @@ def resolve_source_of_truth_librechat_yaml_candidates() -> list[Path]:
         add_candidate(SOURCE_OF_TRUTH_LIBRECHAT_YAML)
         if explicit:
             add_candidate(explicit)
-        return candidates
+    else:
+        if explicit:
+            add_candidate(explicit)
+        add_candidate(SOURCE_OF_TRUTH_LIBRECHAT_YAML)
 
-    if explicit:
-        add_candidate(explicit)
-    add_candidate(SOURCE_OF_TRUTH_LIBRECHAT_YAML)
+    rejected = [candidate for candidate in candidates if is_generated_viventium_runtime_path(candidate)]
+    candidates = [candidate for candidate in candidates if candidate not in rejected]
+    explicit_generated = False
+    for raw in (private, explicit):
+        if raw and is_generated_viventium_runtime_path(Path(raw).expanduser().resolve()):
+            explicit_generated = True
+            break
+    if rejected and (explicit_generated or not candidates):
+        rejected_text = ", ".join(str(path) for path in rejected)
+        raise SystemExit(
+            "Generated App Support runtime files are not valid source-of-truth inputs. "
+            f"Rejected: {rejected_text}. Use "
+            f"{SOURCE_OF_TRUTH_LIBRECHAT_YAML} or an approved private source path."
+        )
     return candidates
 
 
 def load_source_of_truth_librechat_yaml() -> dict[str, Any]:
     for candidate in resolve_source_of_truth_librechat_yaml_candidates():
         if candidate.is_file():
-            return load_yaml(candidate)
+            return resolve_source_prompt_refs(load_yaml(candidate))
     return {}
 
 
 def load_source_of_truth_agents_bundle() -> dict[str, Any]:
     if not SOURCE_OF_TRUTH_AGENTS_BUNDLE.is_file():
         return {}
-    return load_yaml(SOURCE_OF_TRUTH_AGENTS_BUNDLE)
+    return resolve_source_prompt_refs(load_yaml(SOURCE_OF_TRUTH_AGENTS_BUNDLE))
+
+
+def resolve_source_prompt_refs(value: Any, registry: dict[str, Any] | None = None) -> Any:
+    registry = registry if registry is not None else _source_prompt_registry()
+    if not registry:
+        if _contains_prompt_ref(value):
+            raise SystemExit(
+                "Prompt reference resolution failed: source YAML contains promptRef entries, "
+                "but the Viventium prompt registry is empty or missing."
+            )
+        return value
+    try:
+        return resolve_prompt_refs(value, registry)
+    except PromptRegistryError as exc:
+        raise SystemExit(f"Prompt reference resolution failed: {exc}") from exc
+
+
+def _contains_prompt_ref(value: Any) -> bool:
+    if isinstance(value, dict):
+        if "promptRef" in value or "promptRefs" in value:
+            return True
+        return any(_contains_prompt_ref(nested) for nested in value.values())
+    if isinstance(value, list):
+        return any(_contains_prompt_ref(nested) for nested in value)
+    return False
+
+
+def source_prompt_text(
+    prompt_id: str,
+    fallback: str,
+    *,
+    variables: dict[str, Any] | None = None,
+) -> str:
+    try:
+        registry = _source_prompt_registry()
+        if not registry:
+            return fallback
+        return render_prompt(prompt_id, registry, variables=variables or {}).strip()
+    except PromptRegistryError as exc:
+        raise SystemExit(f"Prompt registry validation failed for {prompt_id}: {exc}") from exc
 
 
 def deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -979,6 +1138,25 @@ def provider_secret(node: dict[str, Any]) -> str:
     return resolve_secret(node.get("secret_ref") or node.get("secret_value") or "")
 
 
+def normalize_provider_name(provider: Any) -> str:
+    normalized = str(provider or "").strip().lower()
+    if normalized in {"x_ai", "grok", "xai_grok_voice"}:
+        return "xai"
+    return normalized
+
+
+def current_background_activation_secret(config: dict[str, Any]) -> str:
+    """Return only the configured primary activation credential.
+
+    Fallback provider keys live under ``llm.extra_provider_keys`` and are exported independently.
+    They must not silently replace the Groq-first activation credential because that masks VPN or
+    provider-routing failures as a product routing change.
+    """
+    llm = config.get("llm", {}) or {}
+    activation = llm.get("activation", {}) or {}
+    return provider_secret(activation)
+
+
 def validated_telegram_bot_token(node: dict[str, Any], integration_key: str) -> str:
     token = provider_secret(node)
     validation_error = telegram_bot_token_validation_error(token)
@@ -1037,9 +1215,16 @@ def resolve_voice_provider_secret(
     resolved_voice: dict[str, str],
     provider_name: str,
 ) -> str:
+    provider_name = normalize_voice_tts_provider(provider_name)
     provider_keys = voice.get("provider_keys", {}) or {}
     if isinstance(provider_keys, dict):
-        configured = provider_keys.get(provider_name)
+        key_candidates = [provider_name]
+        if provider_name == "xai":
+            key_candidates.extend(["x_ai", "grok", "xai_grok_voice"])
+        configured = next(
+            (provider_keys.get(candidate) for candidate in key_candidates if provider_keys.get(candidate)),
+            None,
+        )
         if isinstance(configured, dict):
             resolved = resolve_optional_secret(
                 configured.get("secret_ref") or configured.get("secret_value") or ""
@@ -1066,6 +1251,11 @@ def resolve_voice_provider_secret(
         if resolved:
             return resolved
 
+    if provider_name == "xai" and resolved_voice["tts_provider"] == "xai":
+        resolved = optional_nested_secret(voice, "tts")
+        if resolved:
+            return resolved
+
     service = VOICE_PROVIDER_KEYCHAIN_SERVICES.get(provider_name)
     if not service:
         return ""
@@ -1077,6 +1267,18 @@ def cartesia_tts_settings(tts_config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(tts_config, dict):
         return {}
     nested = tts_config.get("cartesia")
+    if isinstance(nested, dict):
+        merged = dict(tts_config)
+        merged.update(nested)
+        return merged
+    return tts_config
+
+
+def xai_tts_settings(tts_config: dict[str, Any]) -> dict[str, Any]:
+    """Return xAI-specific TTS settings while preserving legacy voice.tts shape."""
+    if not isinstance(tts_config, dict):
+        return {}
+    nested = tts_config.get("xai") or tts_config.get("x_ai")
     if isinstance(nested, dict):
         merged = dict(tts_config)
         merged.update(nested)
@@ -1140,7 +1342,10 @@ def build_model_specs(_default_main_agent_id: str) -> dict[str, Any]:
     return {
         "prioritize": False,
         "addedEndpoints": CURATED_ADDED_ENDPOINTS,
-        "list": build_built_in_agent_model_specs(_default_main_agent_id),
+        "list": [
+            *build_built_in_agent_model_specs(_default_main_agent_id),
+            copy.deepcopy(XAI_GROK_43_MODEL_SPEC),
+        ],
     }
 
 
@@ -1283,13 +1488,20 @@ def normalize_telegram_stt_provider(value: Any, field_path: str) -> str:
     return provider
 
 
+def normalize_voice_tts_provider(value: Any) -> str:
+    provider = str(value or "").strip().lower()
+    if provider in {"x_ai", "grok", "xai_grok_voice"}:
+        return "xai"
+    return provider
+
+
 def resolve_voice_settings(config: dict[str, Any]) -> dict[str, str]:
     voice = config.get("voice", {}) or {}
     voice_mode = str(voice.get("mode", "disabled") or "disabled").strip().lower()
     raw_stt_provider = str(voice.get("stt_provider", "") or "").strip().lower()
     stt_provider = raw_stt_provider or "whisper_local"
-    tts_provider = str(voice.get("tts_provider", "") or "").strip().lower()
-    tts_provider_fallback = str(voice.get("tts_provider_fallback", "") or "").strip().lower()
+    tts_provider = normalize_voice_tts_provider(voice.get("tts_provider", ""))
+    tts_provider_fallback = normalize_voice_tts_provider(voice.get("tts_provider_fallback", ""))
 
     if voice_mode == "local":
         # `browser` is a user-facing/client-side intent, not an instruction to silently route the
@@ -1411,11 +1623,17 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     if raw and not isinstance(raw, dict):
         raise SystemExit("runtime.memory_hardening must be a mapping when provided")
 
-    settings = dict(DEFAULT_MEMORY_HARDENING)
+    settings = copy.deepcopy(DEFAULT_MEMORY_HARDENING)
     settings.update(raw)
+    raw_transcripts = raw.get("transcripts", {}) if isinstance(raw, dict) else {}
+    if raw_transcripts and not isinstance(raw_transcripts, dict):
+        raise SystemExit("runtime.memory_hardening.transcripts must be a mapping when provided")
+    transcripts = dict(DEFAULT_MEMORY_HARDENING["transcripts"])
+    transcripts.update(raw_transcripts or {})
     settings["enabled"] = resolve_bool(settings.get("enabled"), False)
     settings["dry_run_first"] = resolve_bool(settings.get("dry_run_first"), True)
     settings["require_full_lookback"] = resolve_bool(settings.get("require_full_lookback"), True)
+    settings["operator_user_email"] = str(settings.get("operator_user_email") or "").strip()
     settings["schedule"] = str(settings.get("schedule") or DEFAULT_MEMORY_HARDENING["schedule"])
     settings["timezone"] = str(settings.get("timezone") or DEFAULT_MEMORY_HARDENING["timezone"])
     settings["provider_profile"] = str(
@@ -1436,7 +1654,39 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings["anthropic_model"] = str(
         settings.get("anthropic_model") or DEFAULT_MEMORY_HARDENING["anthropic_model"]
     )
+    settings["anthropic_effort"] = str(
+        settings.get("anthropic_effort") or DEFAULT_MEMORY_HARDENING["anthropic_effort"]
+    )
     settings["openai_model"] = str(settings.get("openai_model") or DEFAULT_MEMORY_HARDENING["openai_model"])
+    settings["openai_reasoning_effort"] = str(
+        settings.get("openai_reasoning_effort")
+        or DEFAULT_MEMORY_HARDENING["openai_reasoning_effort"]
+    )
+    transcripts["source_dir"] = str(transcripts.get("source_dir") or "").strip()
+    transcripts["max_files_per_run"] = positive_int(
+        transcripts.get("max_files_per_run"),
+        "runtime.memory_hardening.transcripts.max_files_per_run",
+    )
+    transcripts["max_chars_per_file"] = positive_int(
+        transcripts.get("max_chars_per_file"),
+        "runtime.memory_hardening.transcripts.max_chars_per_file",
+    )
+    transcripts["summary_max_chars"] = positive_int(
+        transcripts.get("summary_max_chars"),
+        "runtime.memory_hardening.transcripts.summary_max_chars",
+    )
+    transcripts["stable_evidence_max_age_days"] = positive_int(
+        transcripts.get("stable_evidence_max_age_days"),
+        "runtime.memory_hardening.transcripts.stable_evidence_max_age_days",
+    )
+    transcripts["rag_mode"] = str(
+        transcripts.get("rag_mode") or DEFAULT_MEMORY_HARDENING["transcripts"]["rag_mode"]
+    )
+    if transcripts["rag_mode"] not in MEMORY_TRANSCRIPT_RAG_MODES:
+        raise SystemExit(
+            "runtime.memory_hardening.transcripts.rag_mode must be detailed_summary_only, raw_and_summary, or raw_only"
+        )
+    settings["transcripts"] = transcripts
 
     if settings["provider_profile"] != "launch_ready_only":
         raise SystemExit(
@@ -1448,11 +1698,40 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
         )
     if settings["openai_model"] not in MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]:
         raise SystemExit("runtime.memory_hardening.openai_model must stay in launch-ready OpenAI families")
+    if settings["anthropic_effort"] != "xhigh":
+        raise SystemExit("runtime.memory_hardening.anthropic_effort must stay xhigh for public builds")
+    if settings["openai_reasoning_effort"] != "xhigh":
+        raise SystemExit(
+            "runtime.memory_hardening.openai_reasoning_effort must stay xhigh for public builds"
+        )
 
     return settings
 
 
-def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
+def resolve_memory_hardening_model_tuple(
+    config: dict[str, Any],
+    settings: dict[str, Any],
+) -> dict[str, str]:
+    available = [provider for provider in enabled_provider_names(config) if provider in {"anthropic", "openai"}]
+    provider = choose_provider(available, ["anthropic", "openai"], available[0] if available else "")
+    if provider == "anthropic":
+        return {
+            "provider": "anthropic",
+            "model": settings["anthropic_model"],
+            "effort": settings["anthropic_effort"],
+            "effort_env": "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT",
+        }
+    if provider == "openai":
+        return {
+            "provider": "openai",
+            "model": settings["openai_model"],
+            "effort": settings["openai_reasoning_effort"],
+            "effort_env": "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT",
+        }
+    return {"provider": "", "model": "", "effort": "", "effort_env": ""}
+
+
+def resolve_auth_settings(config: dict[str, Any]) -> dict[str, Any]:
     runtime = config.get("runtime", {}) or {}
     auth = runtime.get("auth", {}) or {}
     return {
@@ -1461,6 +1740,11 @@ def resolve_auth_settings(config: dict[str, Any]) -> dict[str, bool]:
             auth.get("bootstrap_registration_once"), False
         ),
         "allow_password_reset": resolve_bool(auth.get("allow_password_reset"), False),
+        "connected_accounts_return_origin": str(
+            auth.get("connected_accounts_return_origin", "") or ""
+        )
+        .strip()
+        .rstrip("/"),
     }
 
 
@@ -1505,9 +1789,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     ).strip() or DEFAULT_MAIN_AGENT_ID
     default_conversation_recall = conversation_recall_enabled(config)
     memory_hardening = resolve_memory_hardening_settings(config)
+    memory_hardening_model = resolve_memory_hardening_model_tuple(config, memory_hardening)
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
-    start_rag_api = "true" if default_conversation_recall else "false"
+    transcripts_source_dir = memory_hardening["transcripts"]["source_dir"]
+    start_rag_api = "true" if default_conversation_recall or transcripts_source_dir else "false"
     code_interpreter_is_enabled = code_interpreter_enabled(config)
     web_search_settings = resolve_web_search_settings(config)
     web_search_is_enabled = web_search_settings["enabled"] == "true"
@@ -1535,6 +1821,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_GOOGLE_MCP_PORT": str(profile["google_mcp_port"]),
         "VIVENTIUM_SCHEDULING_MCP_PORT": str(profile["scheduling_mcp_port"]),
         "VIVENTIUM_RAG_API_PORT": str(profile["rag_api_port"]),
+        "RAG_API_URL": f"http://localhost:{profile['rag_api_port']}"
+        if start_rag_api == "true"
+        else "",
         "VIVENTIUM_CODE_INTERPRETER_PORT": str(profile["code_interpreter_port"]),
         "VIVENTIUM_SKYVERN_API_PORT": str(profile["skyvern_api_port"]),
         "VIVENTIUM_SKYVERN_UI_PORT": str(profile["skyvern_ui_port"]),
@@ -1550,7 +1839,6 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "SAFE_MODE": "1",
         "VIVENTIUM_ENABLE_SUBCONSCIOUS": "1",
         "VIVENTIUM_SUBCONSCIOUS_ENABLE": "all",
-        "GROQ_API_KEY": provider_secret(llm["activation"]),
         "VIVENTIUM_PRIMARY_PROVIDER": llm["primary"]["provider"],
         "VIVENTIUM_PRIMARY_AUTH_MODE": llm["primary"]["auth_mode"],
         "VIVENTIUM_SECONDARY_PROVIDER": llm.get("secondary", {}).get("provider", "none"),
@@ -1564,6 +1852,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         else "false",
         "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": memory_hardening["schedule"],
         "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": memory_hardening["timezone"],
+        "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL": memory_hardening["operator_user_email"],
         "VIVENTIUM_MEMORY_HARDENING_LOOKBACK_DAYS": str(memory_hardening["lookback_days"]),
         "VIVENTIUM_MEMORY_HARDENING_MIN_USER_IDLE_MINUTES": str(
             memory_hardening["min_user_idle_minutes"]
@@ -1579,8 +1868,29 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if memory_hardening["dry_run_first"]
         else "false",
         "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE": memory_hardening["provider_profile"],
+        "VIVENTIUM_MEMORY_HARDENING_PROVIDER": memory_hardening_model["provider"],
+        "VIVENTIUM_MEMORY_HARDENING_MODEL": memory_hardening_model["model"],
+        "VIVENTIUM_MEMORY_HARDENING_EFFORT": memory_hardening_model["effort"],
         "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL": memory_hardening["anthropic_model"],
+        "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT": memory_hardening["anthropic_effort"],
         "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": memory_hardening["openai_model"],
+        "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT": memory_hardening[
+            "openai_reasoning_effort"
+        ],
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR": transcripts_source_dir,
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN": str(
+            memory_hardening["transcripts"]["max_files_per_run"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE": str(
+            memory_hardening["transcripts"]["max_chars_per_file"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS": str(
+            memory_hardening["transcripts"]["summary_max_chars"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS": str(
+            memory_hardening["transcripts"]["stable_evidence_max_age_days"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE": memory_hardening["transcripts"]["rag_mode"],
         "VIVENTIUM_BUILTIN_AGENT_PUBLIC_ROLE": "owner",
         "VIVENTIUM_TELEGRAM_BACKEND": "librechat",
         "VIVENTIUM_TELEGRAM_AGENT_ID": default_main_agent_id,
@@ -1604,6 +1914,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if auth_settings["bootstrap_registration_once"]
         else "false",
         "ALLOW_PASSWORD_RESET": "true" if auth_settings["allow_password_reset"] else "false",
+        "VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN": auth_settings[
+            "connected_accounts_return_origin"
+        ],
+        "VIVENTIUM_PROMPT_FRAME_FILE_LOG": "0",
         "ALLOW_SOCIAL_LOGIN": "false",
         "ALLOW_SOCIAL_REGISTRATION": "false",
         "ALLOW_UNVERIFIED_EMAIL_LOGIN": "true",
@@ -1629,10 +1943,22 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
     }
 
+    activation_node = llm["activation"]
+    activation_provider = normalize_provider_name(activation_node.get("provider"))
+    activation_secret = current_background_activation_secret(config)
+    if activation_provider == "groq" and activation_secret:
+        env["GROQ_API_KEY"] = activation_secret
+    elif activation_provider == "xai" and activation_secret:
+        env["XAI_API_KEY"] = activation_secret
+
     if retrieval_embeddings["provider"] == "ollama":
         env["OLLAMA_BASE_URL"] = retrieval_embeddings["ollama_base_url"]
 
     if glasshive_is_enabled:
+        glasshive_operator_base_url = str(
+            integrations.get("glasshive", {}).get("operator_base_url") or "http://127.0.0.1:8780"
+        ).rstrip("/")
+        env["GLASSHIVE_OPERATOR_BASE_URL"] = glasshive_operator_base_url
         env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
@@ -1835,16 +2161,22 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_CORTEX_STRATEGIC_PLANNING_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_STRATEGIC_PLANNING_LLM_MODEL"] = assignments["strategic_planning"]
     env["VIVENTIUM_CORTEX_SUPPORT_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] = assignments["support"]
     env["OTUC_LLM_PROVIDER"], env["OTUC_LLM_MODEL"] = assignments["productivity"]
-    env["VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER"] = CURRENT_BACKGROUND_ACTIVATION_PROVIDER
-    env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] = CURRENT_BACKGROUND_ACTIVATION_MODEL
-    env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_ACTIVATION_LLM_PROVIDER"] = CURRENT_BACKGROUND_ACTIVATION_PROVIDER
-    env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_ACTIVATION_LLM_MODEL"] = CURRENT_BACKGROUND_ACTIVATION_MODEL
-    env["VIVENTIUM_CORTEX_DEEP_RESEARCH_ACTIVATION_LLM_PROVIDER"] = CURRENT_BACKGROUND_ACTIVATION_PROVIDER
-    env["VIVENTIUM_CORTEX_DEEP_RESEARCH_ACTIVATION_LLM_MODEL"] = CURRENT_BACKGROUND_ACTIVATION_MODEL
-    env["VIVENTIUM_CORTEX_PARIETAL_CORTEX_ACTIVATION_LLM_PROVIDER"] = CURRENT_BACKGROUND_ACTIVATION_PROVIDER
-    env["VIVENTIUM_CORTEX_PARIETAL_CORTEX_ACTIVATION_LLM_MODEL"] = CURRENT_BACKGROUND_ACTIVATION_MODEL
-    env["OTUC_ACTIVATION_PROVIDER"] = CURRENT_BACKGROUND_ACTIVATION_PROVIDER
-    env["OTUC_ACTIVATION_LLM"] = CURRENT_BACKGROUND_ACTIVATION_MODEL
+    activation_runtime_provider = (
+        activation_provider
+        if activation_provider in BACKGROUND_ACTIVATION_MODELS_BY_PROVIDER
+        else CURRENT_BACKGROUND_ACTIVATION_PROVIDER
+    )
+    activation_runtime_model = BACKGROUND_ACTIVATION_MODELS_BY_PROVIDER[activation_runtime_provider]
+    env["VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER"] = activation_runtime_provider
+    env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] = activation_runtime_model
+    env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_ACTIVATION_LLM_PROVIDER"] = activation_runtime_provider
+    env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_ACTIVATION_LLM_MODEL"] = activation_runtime_model
+    env["VIVENTIUM_CORTEX_DEEP_RESEARCH_ACTIVATION_LLM_PROVIDER"] = activation_runtime_provider
+    env["VIVENTIUM_CORTEX_DEEP_RESEARCH_ACTIVATION_LLM_MODEL"] = activation_runtime_model
+    env["VIVENTIUM_CORTEX_PARIETAL_CORTEX_ACTIVATION_LLM_PROVIDER"] = activation_runtime_provider
+    env["VIVENTIUM_CORTEX_PARIETAL_CORTEX_ACTIVATION_LLM_MODEL"] = activation_runtime_model
+    env["OTUC_ACTIVATION_PROVIDER"] = activation_runtime_provider
+    env["OTUC_ACTIVATION_LLM"] = activation_runtime_model
 
     voice_mode = resolved_voice["mode"]
     env["VIVENTIUM_VOICE_ENABLED"] = "true" if voice_mode != "disabled" else "false"
@@ -1981,6 +2313,49 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS"] = (
             configured_segment_silence_ms or DEFAULT_CARTESIA_SEGMENT_SILENCE_MS
         )
+    xai_voice_key = ""
+    if "xai" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]}:
+        xai_config = xai_tts_settings(tts_config)
+        configured_tts_api = str(xai_config.get("tts_api", "") or "").strip().lower()
+        if configured_tts_api and configured_tts_api not in {"tts", "voice_agent"}:
+            raise SystemExit("xAI voice calls support tts_api values 'tts' or 'voice_agent'")
+        configured_voice = str(
+            xai_config.get("voice_id") or xai_config.get("voice") or ""
+        ).strip()
+        configured_language = str(xai_config.get("language", "") or "").strip()
+        configured_sample_rate = str(xai_config.get("sample_rate", "") or "").strip()
+        output_format = xai_config.get("output_format")
+        if not isinstance(output_format, dict):
+            output_format = {}
+        configured_tts_codec = str(
+            xai_config.get("codec") or output_format.get("codec") or ""
+        ).strip()
+        configured_tts_sample_rate = str(
+            xai_config.get("tts_sample_rate")
+            or xai_config.get("output_sample_rate")
+            or output_format.get("sample_rate")
+            or ""
+        ).strip()
+        configured_tts_bit_rate = str(
+            xai_config.get("bit_rate") or output_format.get("bit_rate") or ""
+        ).strip()
+        configured_api_url = str(xai_config.get("api_url", "") or "").strip()
+        configured_ws_url = str(xai_config.get("ws_url", "") or "").strip()
+        env["VIVENTIUM_XAI_TTS_API"] = configured_tts_api or DEFAULT_XAI_TTS_API
+        env["VIVENTIUM_XAI_TTS_API_URL"] = configured_api_url or DEFAULT_XAI_TTS_API_URL
+        env["VIVENTIUM_XAI_TTS_WS_URL"] = configured_ws_url or DEFAULT_XAI_TTS_WS_URL
+        env["VIVENTIUM_XAI_VOICE"] = configured_voice or DEFAULT_XAI_TTS_VOICE
+        env["VIVENTIUM_XAI_LANGUAGE"] = configured_language or DEFAULT_XAI_TTS_LANGUAGE
+        env["VIVENTIUM_XAI_SAMPLE_RATE"] = (
+            configured_sample_rate or DEFAULT_XAI_TTS_SAMPLE_RATE
+        )
+        env["VIVENTIUM_XAI_TTS_CODEC"] = configured_tts_codec or DEFAULT_XAI_TTS_CODEC
+        env["VIVENTIUM_XAI_TTS_SAMPLE_RATE"] = (
+            configured_tts_sample_rate
+            or configured_sample_rate
+            or DEFAULT_XAI_TTS_SAMPLE_RATE
+        )
+        env["VIVENTIUM_XAI_TTS_BIT_RATE"] = configured_tts_bit_rate or DEFAULT_XAI_TTS_BIT_RATE
     assemblyai_key = resolve_voice_provider_secret(voice, resolved_voice, "assemblyai")
     if assemblyai_key:
         env["ASSEMBLYAI_API_KEY"] = assemblyai_key
@@ -2021,6 +2396,16 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     if cartesia_key:
         env["CARTESIA_API_KEY"] = cartesia_key
 
+    voice_provider_keys = voice.get("provider_keys", {}) or {}
+    has_xai_voice_provider_key = (
+        isinstance(voice_provider_keys, dict)
+        and any(alias in voice_provider_keys for alias in ("xai", "x_ai", "grok", "xai_grok_voice"))
+    )
+    if "xai" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]} or has_xai_voice_provider_key:
+        xai_voice_key = resolve_voice_provider_secret(voice, resolved_voice, "xai")
+        if xai_voice_key:
+            env["VIVENTIUM_XAI_TTS_API_KEY"] = xai_voice_key
+
     for provider_name, secret_value in (llm.get("extra_provider_keys") or {}).items():
         resolved = resolve_secret(secret_value)
         if not resolved:
@@ -2029,8 +2414,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             env["OPENAI_API_KEY"] = resolved
         elif provider_name == "anthropic":
             env["ANTHROPIC_API_KEY"] = resolved
-        elif provider_name == "x_ai":
-            env["XAI_API_KEY"] = resolved
+        elif provider_name in {"x_ai", "xai"}:
+            env.setdefault("XAI_API_KEY", resolved)
         elif provider_name == "openrouter":
             env["OPENROUTER_API_KEY"] = resolved
         elif provider_name == "perplexity":
@@ -2044,6 +2429,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
 
     for key, value in build_legacy_env_imports(config).items():
         env.setdefault(key, value)
+
+    if xai_voice_key:
+        env.setdefault("XAI_API_KEY", xai_voice_key)
 
     if code_interpreter_is_enabled:
         env.setdefault("LIBRECHAT_CODE_BASEURL", f"http://localhost:{profile['code_interpreter_port']}")
@@ -2192,71 +2580,12 @@ def build_mcp_servers(
             "startup": False,
             "chatMenu": True,
             "timeout": 120000,
-            "serverInstructions": (
-                "Scheduling Cortex MCP for reminders, recurring jobs, and schedule management."
-            ),
+            "serverInstructions": True,
+            "viventiumTrustedServerInstructions": True,
         },
     }
 
     if glasshive_enabled(config):
-        host_worker = resolve_glasshive_host_worker_settings(config)
-        codex_mention = host_worker["mentions"]["codex"]
-        claude_mention = host_worker["mentions"]["claude"]
-        openclaw_mention = host_worker["mentions"]["openclaw"]
-        if host_worker["enabled"]:
-            glasshive_server_instructions = (
-                "GlassHive MCP for persistent projects, resumable workers, workstation "
-                "sandboxes, host-native workers, and live operator takeover. The user does "
-                "not have to name GlassHive, Codex, Computer Use, or local machine; when they "
-                "ask Viventium to act in a real browser, desktop app, local file, local project, "
-                "installed tool, or current computer session, this is the execution surface. "
-                "If the request is to open, navigate, click, type, inspect, or read from a real "
-                "browser/desktop/local app, dispatch the action through this tool path instead "
-                "of answering from memory or inference. Default to host-native execution for "
-                "the user's real Chrome/browser profile, main computer, desktop apps, OS tools, "
-                "host files, and installed CLIs; ask one concise clarification only when host "
-                "vs sandbox is genuinely ambiguous. Use Docker/workstation only for isolated "
-                "sandbox, disposable browser, risky untrusted browsing, or explicit sandbox "
-                "requests. Prefer codex-cli for available host browser/desktop/file/code "
-                "execution, claude-code when Claude is explicitly requested, and "
-                "openclaw-general only when installed or explicitly requested. "
-                f"For configured mentions "
-                f"{codex_mention}, {claude_mention}, and {openclaw_mention}, create or resume "
-                "a worker with execution_mode='host' and the matching profile. Current request "
-                "upload metadata is projected through headers; preserve those existing file "
-                "references in bootstrap_bundle_json instead of creating a separate upload path. "
-                "After worker_run, queued only means accepted; final results, blockers, approvals, "
-                "and artifacts should return through the same-chat callback path. For fresh one-off "
-                "host browser/desktop/local tasks, prefer worker_delegate_once instead of manually "
-                "listing projects and chaining low-level project/worker tools. After worker_delegate_once "
-                "returns callback_ready=true, do not call worker_live or run_get in the same chat turn "
-                "unless the user explicitly asked for diagnostics or live status; send one short "
-                "acknowledgement and let the callback deliver completion. Preserve the user's "
-                "success condition and response-format constraints in the worker instruction; if "
-                "the user asks for a short or exact answer, do not add screenshots, logs, IDs, "
-                "artifact paths, or extra evidence to the user-visible final result unless needed "
-                "to explain a blocker. If acknowledging "
-                "delegation to the user, use the returned user_status or one similarly short "
-                "outcome-focused sentence; avoid worker/run/provider/queue jargon unless diagnostics "
-                "were requested."
-            )
-        else:
-            glasshive_server_instructions = (
-                "GlassHive MCP for persistent projects, resumable workers, workstation "
-                "sandboxes, and live operator takeover. Host-native workers are disabled by "
-                "the current Viventium config; do not create, resume, or run workers with "
-                "execution_mode='host'. Use Docker execution when a worker is still appropriate, "
-                "or tell the main agent that host-computer execution is disabled. Current request "
-                "upload metadata is projected through headers; preserve those existing file "
-                "references in bootstrap_bundle_json instead of creating a separate upload path. "
-                "For fresh one-off worker tasks, prefer worker_delegate_once instead of manually "
-                "listing projects and chaining low-level project/worker tools. After worker_delegate_once "
-                "returns callback_ready=true, do not call worker_live or run_get in the same chat turn "
-                "unless the user explicitly asked for diagnostics or live status; send one short "
-                "acknowledgement and let the callback deliver completion. After lower-level worker_run, "
-                "queued only means accepted; final results, blockers, approvals, and artifacts should "
-                "return through the same-chat callback path when callback context is available."
-            )
         servers["glasshive-workers-projects"] = {
             "type": "streamable-http",
             "url": "${GLASSHIVE_MCP_URL}",
@@ -2283,7 +2612,8 @@ def build_mcp_servers(
             "startup": False,
             "chatMenu": True,
             "timeout": 120000,
-            "serverInstructions": glasshive_server_instructions,
+            "serverInstructions": True,
+            "viventiumTrustedServerInstructions": True,
         }
 
     if integrations.get("ms365", {}).get("enabled"):
@@ -2302,9 +2632,30 @@ def build_mcp_servers(
                 "client_secret": "${MS365_MCP_CLIENT_SECRET}",
                 "scope": "${MS365_MCP_SCOPE}",
             },
-            "serverInstructions": (
-                "This MCP server provides access to Microsoft 365 mail, calendar, files, "
-                "teams, contacts, tasks, and notes using the authenticated user account."
+            "serverInstructions": source_prompt_text(
+                "mcp.ms365.server",
+                (
+                    "Microsoft 365 owns authenticated Outlook mail, calendar, OneDrive files, "
+                    "Excel ranges, search, Teams/contacts/tasks/notes where exposed by tool schemas, "
+                    "and verified Microsoft productivity facts. Use it when the user asks about "
+                    "Outlook, Microsoft calendar, OneDrive, Excel, Microsoft search, or a general "
+                    "productivity check where the available evidence may live in MS365. Do not use it "
+                    "for Google Workspace, web/news/weather facts, local files, or schedule/reminder "
+                    "management owned by another MCP. Inputs come from the user request, current "
+                    "conversation, current date/time/timezone, authenticated LibreChat user, and the "
+                    "tool schemas; do not assume another account or tenant. Default to read-only "
+                    "inspection for mail, calendar, files, and search. Send, delete, move, invite, "
+                    "edit, or otherwise mutate only when the user explicitly asks, the tool supports "
+                    "the mutation, and impact is clear; draft or summarize when confirmation is "
+                    "needed. Return concise user-facing verified results, not API fields, OAuth "
+                    "details, server names, or plumbing. If auth is missing/expired, scope is "
+                    "insufficient, rate limits hit, an item is not found, or a tool errors, report the "
+                    "specific limitation plainly and do not fabricate. Prevent duplicates by "
+                    "checking/listing/searching existing items and using structured IDs/metadata when "
+                    "available before creating or updating. Prefer exact tool outputs over memory. Do "
+                    "not branch on prompt text, display names, provider labels, or user identity; use "
+                    "declared capabilities, structured fields, IDs, timestamps, and tool evidence."
+                ),
             ),
         }
 
@@ -2324,9 +2675,30 @@ def build_mcp_servers(
                 ),
                 "scope": "${GOOGLE_WORKSPACE_MCP_SCOPE}",
             },
-            "serverInstructions": (
-                "This MCP server provides access to Google Workspace mail, calendar, drive, "
-                "docs, sheets, slides, tasks, forms, and chat using the authenticated user."
+            "serverInstructions": source_prompt_text(
+                "mcp.google_workspace.server",
+                (
+                    "Google Workspace owns authenticated Gmail, Google Calendar, Drive, Docs, Sheets, "
+                    "Slides, Tasks, Forms, Chat where exposed by tool schemas, and verified Google "
+                    "productivity facts. Use it when the user asks about Gmail, Google Calendar, "
+                    "Drive, Docs, Sheets, Slides, or a general productivity check where the available "
+                    "evidence may live in Google Workspace. Do not use it for Microsoft 365, "
+                    "web/news/weather facts, local files, or schedule/reminder management owned by "
+                    "another MCP. Inputs come from the user request, current conversation, current "
+                    "date/time/timezone, authenticated LibreChat user, and the tool schemas; do not "
+                    "assume another Google account or workspace. Default to read-only inspection for "
+                    "mail, calendar, files, docs, sheets, slides, and search. Send, delete, share, "
+                    "invite, edit, or otherwise mutate only when the user explicitly asks, the tool "
+                    "supports the mutation, and impact is clear; draft or summarize when confirmation "
+                    "is needed. Return concise user-facing verified results, not API fields, OAuth "
+                    "details, server names, or plumbing. If auth is missing/expired, scope is "
+                    "insufficient, rate limits hit, an item is not found, or a tool errors, report the "
+                    "specific limitation plainly and do not fabricate. Prevent duplicates by "
+                    "checking/listing/searching existing items and using structured IDs/metadata when "
+                    "available before creating or updating. Prefer exact tool outputs over memory. Do "
+                    "not branch on prompt text, display names, provider labels, or user identity; use "
+                    "declared capabilities, structured fields, IDs, timestamps, and tool evidence."
+                ),
             ),
         }
 
@@ -2464,6 +2836,15 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "ANTHROPIC_API_KEY",
         "XAI_API_KEY",
         "GROQ_API_KEY",
+        "MONGO_URI",
+        "RAG_API_URL",
+        "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE",
         "VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER",
         "VIVENTIUM_FC_CONSCIOUS_LLM_MODEL",
     ]
@@ -2485,6 +2866,15 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH",
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID",
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH",
+        "XAI_API_KEY",
+        "VIVENTIUM_XAI_TTS_API_KEY",
+        "VIVENTIUM_XAI_TTS_API_URL",
+        "VIVENTIUM_XAI_VOICE",
+        "VIVENTIUM_XAI_LANGUAGE",
+        "VIVENTIUM_XAI_SAMPLE_RATE",
+        "VIVENTIUM_XAI_TTS_CODEC",
+        "VIVENTIUM_XAI_TTS_SAMPLE_RATE",
+        "VIVENTIUM_XAI_TTS_BIT_RATE",
     ]
     telegram_codex_keys = ["TELEGRAM_CODEX_BOT_TOKEN", "TELEGRAM_CODEX_BOT_USERNAME"]
     skyvern_keys = ["START_SKYVERN"]
@@ -2575,27 +2965,438 @@ def render_telegram_codex_projects() -> str:
     return yaml.safe_dump(payload, sort_keys=False)
 
 
+def _json_hash(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def default_live_prompt_bundle_candidates() -> list[Path]:
+    candidates: list[Path] = []
+
+    def add(raw: str | Path) -> None:
+        path = Path(raw).expanduser().resolve()
+        if path not in candidates:
+            candidates.append(path)
+
+    env_path = os.environ.get("VIVENTIUM_PROMPT_BUNDLE_PATH", "").strip()
+    if env_path:
+        add(env_path)
+
+    state_root = os.environ.get("VIVENTIUM_STATE_ROOT", "").strip()
+    if state_root:
+        add(Path(state_root) / "prompt-bundle.json")
+
+    runtime_profiles: list[str] = []
+    env_profile = os.environ.get("VIVENTIUM_RUNTIME_PROFILE", "").strip()
+    for profile_name in (env_profile, "isolated", "compat"):
+        if profile_name and profile_name not in runtime_profiles:
+            runtime_profiles.append(profile_name)
+
+    common_names = [
+        APP_SUPPORT_VIVENTIUM_DIR / "runtime" / "prompt-bundle.json",
+    ]
+    for profile_name in runtime_profiles:
+        common_names.extend(
+            [
+                APP_SUPPORT_VIVENTIUM_DIR / "runtime" / profile_name / "prompt-bundle.json",
+                APP_SUPPORT_VIVENTIUM_DIR / "state" / "runtime" / profile_name / "prompt-bundle.json",
+                REPO_ROOT / ".viventium" / "runtime" / profile_name / "prompt-bundle.json",
+            ]
+        )
+    for path in common_names:
+        add(path)
+
+    if APP_SUPPORT_VIVENTIUM_DIR.exists():
+        for path in sorted(APP_SUPPORT_VIVENTIUM_DIR.rglob("prompt-bundle.json")):
+            add(path)
+    return candidates
+
+
+def load_live_prompt_bundle(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"Unable to read live prompt bundle {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Live prompt bundle is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("prompts"), dict):
+        raise SystemExit(f"Live prompt bundle has invalid shape: {path}")
+    return payload
+
+
+def prompt_bundle_hashes(bundle: dict[str, Any]) -> dict[str, str]:
+    prompts = bundle.get("prompts") if isinstance(bundle, dict) else {}
+    if not isinstance(prompts, dict):
+        return {}
+    hashes: dict[str, str] = {}
+    for prompt_id, prompt in prompts.items():
+        if isinstance(prompt, dict):
+            content_hash = str(prompt.get("content_hash") or "").strip()
+            if content_hash:
+                hashes[str(prompt_id)] = content_hash
+    return hashes
+
+
+def check_prompt_bundle_drift(
+    *,
+    live_bundle_path: Path | None = None,
+    compare_reviewed: bool = False,
+) -> dict[str, Any]:
+    candidates = [live_bundle_path.expanduser().resolve()] if live_bundle_path else []
+    if not candidates:
+        candidates = default_live_prompt_bundle_candidates()
+
+    live_path = next((path for path in candidates if path.is_file()), None)
+    source_bundle = build_prompt_bundle()
+    report: dict[str, Any] = {
+        "check": "prompt_bundle_drift",
+        "status": "blocked",
+        "compare_reviewed": compare_reviewed,
+        "live_path": str(live_path) if live_path else "",
+        "candidate_count": len(candidates),
+        "source": {
+            "prompt_count": source_bundle.get("prompt_count", 0),
+            "bundle_hash": _json_hash(source_bundle),
+        },
+        "live": {},
+        "diff": {
+            "added": [],
+            "removed": [],
+            "changed": [],
+        },
+    }
+
+    if not live_path:
+        report["reason"] = "no_live_prompt_bundle_found"
+        return report
+
+    live_bundle = load_live_prompt_bundle(live_path)
+    source_hashes = prompt_bundle_hashes(source_bundle)
+    live_hashes = prompt_bundle_hashes(live_bundle)
+    source_ids = set(source_hashes)
+    live_ids = set(live_hashes)
+    changed = sorted(
+        prompt_id
+        for prompt_id in source_ids & live_ids
+        if source_hashes.get(prompt_id) != live_hashes.get(prompt_id)
+    )
+    diff = {
+        "added": sorted(source_ids - live_ids),
+        "removed": sorted(live_ids - source_ids),
+        "changed": changed,
+    }
+    report["live"] = {
+        "prompt_count": live_bundle.get("prompt_count", len(live_hashes)),
+        "bundle_hash": _json_hash(live_bundle),
+    }
+    report["diff"] = diff
+    drift_count = len(diff["added"]) + len(diff["removed"]) + len(diff["changed"])
+    report["drift_count"] = drift_count
+    if drift_count:
+        report["status"] = "reviewed_drift" if compare_reviewed else "blocked"
+        report["reason"] = "prompt_bundle_drift"
+    else:
+        report["status"] = "ok"
+        report["reason"] = "none"
+    return report
+
+
+def default_live_runtime_config_candidates() -> list[Path]:
+    candidates: list[Path] = []
+
+    def add(raw: str | Path) -> None:
+        path = Path(raw).expanduser().resolve()
+        if path not in candidates:
+            candidates.append(path)
+
+    for env_name in (
+        "CONFIG_PATH",
+        "VIVENTIUM_LIBRECHAT_CONFIG_PATH",
+        "VIVENTIUM_RUNTIME_CONFIG_PATH",
+    ):
+        env_path = os.environ.get(env_name, "").strip()
+        if env_path:
+            add(env_path)
+
+    runtime_dir = os.environ.get("VIVENTIUM_RUNTIME_DIR", "").strip()
+    if runtime_dir:
+        add(Path(runtime_dir) / "librechat.yaml")
+
+    state_root = os.environ.get("VIVENTIUM_STATE_ROOT", "").strip()
+    if state_root:
+        add(Path(state_root) / "librechat.yaml")
+        add(Path(state_root) / "librechat.generated.yaml")
+
+    runtime_profiles: list[str] = []
+    env_profile = os.environ.get("VIVENTIUM_RUNTIME_PROFILE", "").strip()
+    for profile_name in (env_profile, "isolated", "compat"):
+        if profile_name and profile_name not in runtime_profiles:
+            runtime_profiles.append(profile_name)
+
+    add(APP_SUPPORT_VIVENTIUM_DIR / "runtime" / "librechat.yaml")
+    for profile_name in runtime_profiles:
+        add(APP_SUPPORT_VIVENTIUM_DIR / "runtime" / profile_name / "librechat.yaml")
+        add(APP_SUPPORT_VIVENTIUM_DIR / "state" / "runtime" / profile_name / "librechat.yaml")
+        add(
+            APP_SUPPORT_VIVENTIUM_DIR
+            / "state"
+            / "runtime"
+            / profile_name
+            / "librechat.generated.yaml"
+        )
+        add(REPO_ROOT / ".viventium" / "runtime" / profile_name / "librechat.yaml")
+
+    return candidates
+
+
+def load_live_runtime_config(path: Path) -> dict[str, Any]:
+    try:
+        payload = load_yaml(path)
+    except OSError as exc:
+        raise SystemExit(f"Unable to read live runtime config {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"Live runtime config has invalid shape: {path}")
+    return payload
+
+
+def _redacted_runtime_config_value(value: Any, key_path: tuple[str, ...] = ()) -> Any:
+    current_key = key_path[-1].lower() if key_path else ""
+    normalized_key = current_key.replace("-", "_")
+    compact_key = normalized_key.replace("_", "")
+    if isinstance(value, dict):
+        return {
+            str(key): _redacted_runtime_config_value(item, (*key_path, str(key)))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redacted_runtime_config_value(item, key_path) for item in value]
+    if isinstance(value, str) and any(
+        fragment in normalized_key or fragment in compact_key
+        for fragment in SECRET_CONFIG_KEY_FRAGMENTS
+    ):
+        return "<redacted>" if value else ""
+    return value
+
+
+def normalize_prompt_affecting_runtime_config(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for section in PROMPT_AFFECTING_RUNTIME_CONFIG_SECTIONS:
+        if section in payload:
+            normalized[section] = _redacted_runtime_config_value(payload[section], (section,))
+    return normalized
+
+
+def runtime_config_section_hashes(payload: dict[str, Any]) -> dict[str, str]:
+    normalized = normalize_prompt_affecting_runtime_config(payload)
+    return {section: _json_hash(value) for section, value in sorted(normalized.items())}
+
+
+def _section_hash_report(payload: dict[str, Any]) -> dict[str, Any]:
+    hashes = runtime_config_section_hashes(payload)
+    return {
+        "section_count": len(hashes),
+        "hash": _json_hash(normalize_prompt_affecting_runtime_config(payload)),
+        "section_hashes": hashes,
+    }
+
+
+def _diff_section_hashes(
+    left_hashes: dict[str, str],
+    right_hashes: dict[str, str],
+) -> dict[str, Any]:
+    left_sections = set(left_hashes)
+    right_sections = set(right_hashes)
+    changed = sorted(
+        section
+        for section in left_sections & right_sections
+        if left_hashes.get(section) != right_hashes.get(section)
+    )
+    diff = {
+        "added": sorted(left_sections - right_sections),
+        "removed": sorted(right_sections - left_sections),
+        "changed": changed,
+    }
+    diff["drift_count"] = len(diff["added"]) + len(diff["removed"]) + len(diff["changed"])
+    return diff
+
+
+def render_current_librechat_config(
+    *,
+    config_path: Path,
+    output_dir: Path | None = None,
+) -> dict[str, Any]:
+    config = load_yaml(config_path)
+    validate_config(config, config_path)
+    assignments = build_agent_assignments(config)
+    env = render_runtime_env(config, assignments)
+    prompt_bundle_path = (output_dir or APP_SUPPORT_VIVENTIUM_DIR / "runtime") / "prompt-bundle.json"
+    env["VIVENTIUM_PROMPT_BUNDLE_PATH"] = str(prompt_bundle_path)
+    return yaml.safe_load(render_librechat_yaml(config, assignments, env)) or {}
+
+
+def check_runtime_config_drift(
+    *,
+    config_path: Path,
+    live_runtime_config_path: Path | None = None,
+    compare_reviewed: bool = False,
+) -> dict[str, Any]:
+    candidates = [live_runtime_config_path.expanduser().resolve()] if live_runtime_config_path else []
+    if not candidates:
+        candidates = default_live_runtime_config_candidates()
+
+    live_path = next((path for path in candidates if path.is_file()), None)
+    compiled_output_dir = live_path.parent if live_path else APP_SUPPORT_VIVENTIUM_DIR / "runtime"
+    compiled_now = render_current_librechat_config(
+        config_path=config_path.expanduser().resolve(),
+        output_dir=compiled_output_dir,
+    )
+    source = load_source_of_truth_librechat_yaml()
+    report: dict[str, Any] = {
+        "check": "runtime_config_drift",
+        "status": "blocked",
+        "compare_reviewed": compare_reviewed,
+        "config_path": str(config_path),
+        "live_path": str(live_path) if live_path else "",
+        "candidate_count": len(candidates),
+        "source": _section_hash_report(source),
+        "compiled_now": _section_hash_report(compiled_now),
+        "live": {},
+        "diff": {
+            "live_vs_source": {"added": [], "removed": [], "changed": [], "drift_count": 0},
+            "live_vs_compiled": {"added": [], "removed": [], "changed": [], "drift_count": 0},
+            "source_vs_compiled": _diff_section_hashes(
+                runtime_config_section_hashes(source),
+                runtime_config_section_hashes(compiled_now),
+            ),
+        },
+    }
+
+    if not live_path:
+        report["reason"] = "no_live_runtime_config_found"
+        return report
+
+    live = load_live_runtime_config(live_path)
+    report["live"] = _section_hash_report(live)
+    live_hashes = runtime_config_section_hashes(live)
+    report["diff"]["live_vs_source"] = _diff_section_hashes(
+        live_hashes,
+        runtime_config_section_hashes(source),
+    )
+    report["diff"]["live_vs_compiled"] = _diff_section_hashes(
+        live_hashes,
+        runtime_config_section_hashes(compiled_now),
+    )
+    drift_count = report["diff"]["live_vs_compiled"]["drift_count"]
+    report["drift_count"] = drift_count
+    if drift_count:
+        report["status"] = "reviewed_drift" if compare_reviewed else "blocked"
+        report["reason"] = "runtime_config_drift"
+    else:
+        report["status"] = "ok"
+        report["reason"] = "none"
+    return report
+
+
+def drift_report_allows_success(report: dict[str, Any], compare_reviewed: bool) -> bool:
+    return report["status"] == "ok" or (
+        report["status"] == "reviewed_drift" and compare_reviewed
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compile Viventium config.yaml into runtime files.")
-    parser.add_argument("--config", required=True, help="Path to config.yaml")
-    parser.add_argument("--output-dir", required=True, help="Directory for generated files")
+    parser.add_argument("--config", help="Path to config.yaml")
+    parser.add_argument("--output-dir", help="Directory for generated files")
     parser.add_argument("--dry-run", action="store_true", help="Validate and print summary without writing files")
+    parser.add_argument(
+        "--check-prompt-drift",
+        action="store_true",
+        help="Compare the live installed prompt-bundle.json against the current source registry.",
+    )
+    parser.add_argument(
+        "--prompt-bundle-path",
+        help="Explicit live prompt-bundle.json path for --check-prompt-drift.",
+    )
+    parser.add_argument(
+        "--check-runtime-config-drift",
+        action="store_true",
+        help=(
+            "Compare the live installed librechat.yaml prompt-affecting sections against "
+            "a fresh compile from config/source."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-config-path",
+        "--live-runtime-config-path",
+        dest="runtime_config_path",
+        help="Explicit live librechat.yaml path for --check-runtime-config-drift.",
+    )
+    parser.add_argument(
+        "--compare-reviewed",
+        action="store_true",
+        help="Allow a drift check with known drift to exit successfully after human review.",
+    )
     args = parser.parse_args()
+
+    if args.check_prompt_drift or args.check_runtime_config_drift:
+        reports: list[dict[str, Any]] = []
+        if args.check_prompt_drift:
+            reports.append(
+                check_prompt_bundle_drift(
+                    live_bundle_path=Path(args.prompt_bundle_path).expanduser().resolve()
+                    if args.prompt_bundle_path
+                    else None,
+                    compare_reviewed=args.compare_reviewed,
+                )
+            )
+        if args.check_runtime_config_drift:
+            if not args.config:
+                parser.error("--config is required with --check-runtime-config-drift")
+            reports.append(
+                check_runtime_config_drift(
+                    config_path=Path(args.config).expanduser().resolve(),
+                    live_runtime_config_path=Path(args.runtime_config_path).expanduser().resolve()
+                    if args.runtime_config_path
+                    else None,
+                    compare_reviewed=args.compare_reviewed,
+                )
+            )
+        if len(reports) == 1:
+            print(json.dumps(reports[0], indent=2, sort_keys=True))
+        else:
+            print(
+                json.dumps(
+                    {
+                        "status": "ok"
+                        if all(
+                            drift_report_allows_success(report, args.compare_reviewed)
+                            for report in reports
+                        )
+                        else "blocked",
+                        "checks": reports,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        if all(drift_report_allows_success(report, args.compare_reviewed) for report in reports):
+            return
+        raise SystemExit(1)
+
+    if not args.config or not args.output_dir:
+        parser.error("--config and --output-dir are required unless a drift check is used")
 
     config_path = Path(args.config).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
     config = load_yaml(config_path)
-
-    if int(config.get("version", 0)) != CONFIG_VERSION:
-        raise SystemExit(f"Unsupported config version in {config_path}")
-
-    if config["llm"]["activation"].get("provider") != "groq":
-        raise SystemExit("Activation provider must remain Groq.")
-    if not provider_secret(config["llm"]["activation"]):
-        raise SystemExit("Missing required Groq credential.")
+    validate_config(config, config_path)
 
     assignments = build_agent_assignments(config)
     env = render_runtime_env(config, assignments)
+    prompt_bundle_path = output_dir / "prompt-bundle.json"
+    env["VIVENTIUM_PROMPT_BUNDLE_PATH"] = str(prompt_bundle_path)
+    prompt_bundle = build_prompt_bundle()
     librechat_yaml = render_librechat_yaml(config, assignments, env)
     summary = {
         "config": str(config_path),
@@ -2604,6 +3405,10 @@ def main() -> None:
         "voice_mode": config.get("voice", {}).get("mode", "disabled"),
         "primary_provider": config["llm"]["primary"]["provider"],
         "telegram_codex_enabled": telegram_codex_enabled(config),
+        "prompt_registry": {
+            "prompt_count": prompt_bundle["prompt_count"],
+            "prompt_bundle": str(prompt_bundle_path),
+        },
         "assignments": assignments,
     }
 
@@ -2615,6 +3420,11 @@ def main() -> None:
     dump_env(output_dir / "runtime.env", env)
     dump_env(output_dir / "runtime.local.env", {})
     (output_dir / "librechat.yaml").write_text(librechat_yaml, encoding="utf-8")
+    prompt_bundle_path.write_text(
+        json.dumps(prompt_bundle, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    prompt_bundle_path.chmod(0o600)
     render_service_envs(output_dir, env)
     telegram_codex_dir = output_dir / "telegram-codex"
     telegram_codex_dir.mkdir(parents=True, exist_ok=True)

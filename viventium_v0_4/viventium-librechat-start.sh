@@ -399,9 +399,38 @@ if [[ -z "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE" ]]; then
   fi
 fi
 TELEGRAM_CONFIG_ENV_FILE="${VIVENTIUM_TELEGRAM_ENV_FILE:-$(resolve_path_or_default   "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE"   "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE"   "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/service-env/telegram.config.env"   "$TELEGRAM_DIR_PRIMARY/config.env"   "$VIVENTIUM_PRIVATE_CURATED_DIR/configs/telegram/config.env"   "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/telegram-viventium/config.env")}"
-TELEGRAM_CODEX_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_ENV_FILE:-$TELEGRAM_CODEX_DIR/.env}"
-TELEGRAM_CODEX_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE:-$TELEGRAM_CODEX_DIR/config/settings.yaml}"
-TELEGRAM_CODEX_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE:-$TELEGRAM_CODEX_DIR/config/projects.yaml}"
+# === VIVENTIUM START ===
+# Feature: Prefer compiled Telegram Codex runtime config when running the local source launcher.
+# Rationale: Direct local-source starts should use the same user-owned generated runtime files
+# that bin/viventium exports, instead of falling back to ungenerated source checkout config.
+TELEGRAM_CODEX_RUNTIME_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_RUNTIME_ENV_FILE:-}"
+TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE:-}"
+TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE:-}"
+if [[ -z "$TELEGRAM_CODEX_RUNTIME_ENV_FILE" ]]; then
+  if [[ -n "${VIVENTIUM_ENV_FILE:-}" ]]; then
+    TELEGRAM_CODEX_RUNTIME_ENV_FILE="$(dirname "$VIVENTIUM_ENV_FILE")/service-env/telegram-codex.env"
+  else
+    TELEGRAM_CODEX_RUNTIME_ENV_FILE="$VIVENTIUM_APP_SUPPORT_ROOT/runtime/service-env/telegram-codex.env"
+  fi
+fi
+if [[ -z "$TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE" ]]; then
+  if [[ -n "${VIVENTIUM_ENV_FILE:-}" ]]; then
+    TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE="$(dirname "$VIVENTIUM_ENV_FILE")/telegram-codex/settings.yaml"
+  else
+    TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE="$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/settings.yaml"
+  fi
+fi
+if [[ -z "$TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE" ]]; then
+  if [[ -n "${VIVENTIUM_ENV_FILE:-}" ]]; then
+    TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE="$(dirname "$VIVENTIUM_ENV_FILE")/telegram-codex/projects.yaml"
+  else
+    TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE="$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/projects.yaml"
+  fi
+fi
+TELEGRAM_CODEX_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_ENV_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_ENV_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/service-env/telegram-codex.env" "$TELEGRAM_CODEX_DIR/.env")}"
+TELEGRAM_CODEX_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/settings.yaml" "$TELEGRAM_CODEX_DIR/config/settings.yaml")}"
+TELEGRAM_CODEX_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/projects.yaml" "$TELEGRAM_CODEX_DIR/config/projects.yaml")}"
+# === VIVENTIUM END ===
 TELEGRAM_USER_CONFIGS_DIR="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-$(resolve_dir_or_default \
   "$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs" \
   "$TELEGRAM_DIR_PRIMARY/TelegramVivBot/user_configs" \
@@ -1352,6 +1381,7 @@ SCHEDULING_MCP_PORT="${SCHEDULING_MCP_PORT:-$VIVENTIUM_SCHEDULING_MCP_PORT}"
 GLASSHIVE_RUNTIME_PORT="${GLASSHIVE_RUNTIME_PORT:-8766}"
 GLASSHIVE_MCP_PORT="${GLASSHIVE_MCP_PORT:-8767}"
 GLASSHIVE_UI_PORT="${GLASSHIVE_UI_PORT:-8780}"
+export GLASSHIVE_OPERATOR_BASE_URL="${GLASSHIVE_OPERATOR_BASE_URL:-http://127.0.0.1:${GLASSHIVE_UI_PORT}}"
 SCHEDULER_SECRET_GENERATED=false
 if [[ -z "${VIVENTIUM_SCHEDULER_SECRET:-}" ]]; then
   if [[ -n "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
@@ -1675,6 +1705,12 @@ START_MS365_MCP="${START_MS365_MCP:-true}"
 START_SCHEDULING_MCP="${START_SCHEDULING_MCP:-true}"
 START_GLASSHIVE="${START_GLASSHIVE:-true}"
 START_RAG_API="${START_RAG_API:-true}"
+# === VIVENTIUM START ===
+# Feature: Meeting transcript memory ingestion requires the RAG API when a transcript folder is configured.
+# === VIVENTIUM END ===
+if [[ -n "${VIVENTIUM_MEMORY_TRANSCRIPTS_DIR:-}" ]]; then
+  START_RAG_API=true
+fi
 # === VIVENTIUM START ===
 # Feature: Skyvern service toggle (default on).
 # === VIVENTIUM END ===
@@ -3020,6 +3056,20 @@ default_voice_stt_vad_min_silence() {
   printf '%s\n' "0.5"
 }
 
+default_voice_stt_vad_min_speech() {
+  local provider="${1:-${VIVENTIUM_STT_PROVIDER:-whisper_local}}"
+  provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$provider" == "whisper_local" || "$provider" == "pywhispercpp" ]]; then
+    # Local whisper uses VAD to decide committed turns when semantic turn detection is
+    # unavailable. Keep it less eager than remote/STT-owned routes so one-syllable
+    # room noise does not become a persisted user turn.
+    printf '%s\n' "0.35"
+    return 0
+  fi
+
+  printf '%s\n' "0.1"
+}
+
 host_supports_local_chatterbox_mlx() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
     return 1
@@ -3094,6 +3144,8 @@ ensure_librechat_yaml() {
 render_librechat_config() {
   local source="$LIBRECHAT_DIR/librechat.yaml"
   local target="$LOG_ROOT/librechat.generated.yaml"
+  local prompt_bundle_target="${VIVENTIUM_PROMPT_BUNDLE_PATH:-$LOG_ROOT/prompt-bundle.json}"
+  local prompt_registry_script="$VIVENTIUM_CORE_DIR/scripts/viventium/prompt_registry.py"
 
   if [[ ! -f "$source" ]]; then
     log_warn "LibreChat config not found: $source"
@@ -3103,6 +3155,9 @@ render_librechat_config() {
 SOURCE="$source" TARGET="$target" "$PYTHON_BIN" - <<'PY'
 import os
 import json
+import importlib.util
+import sys
+from pathlib import Path
 
 source = os.environ["SOURCE"]
 target = os.environ["TARGET"]
@@ -3161,12 +3216,41 @@ for key, value in replacements.items():
         continue
     data = data.replace(key, value)
 
+public_root = Path(source).resolve().parents[2]
+prompt_registry_path = public_root / "scripts" / "viventium" / "prompt_registry.py"
+spec = importlib.util.spec_from_file_location("viventium_prompt_registry", prompt_registry_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"Unable to load prompt registry compiler: {prompt_registry_path}")
+prompt_registry = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = prompt_registry
+spec.loader.exec_module(prompt_registry)
+
+parsed = prompt_registry.yaml.safe_load(data)
+resolved = prompt_registry.load_and_resolve_prompt_refs(parsed)
+data = prompt_registry.yaml.safe_dump(resolved, sort_keys=False, allow_unicode=True)
+
 with open(target, "w", encoding="utf-8") as handle:
     handle.write(data)
 PY
 
   export CONFIG_PATH="$target"
   log_info "LibreChat config generated at $target"
+
+  # === VIVENTIUM START ===
+  # Feature: prompt source-of-truth runtime bundle.
+  # Purpose: code-owned Viventium prompt surfaces load the compiled registry bundle
+  # from the running local runtime, instead of depending on inline fallback strings.
+  if [[ ! -f "$prompt_registry_script" ]]; then
+    log_warn "Prompt registry compiler not found: $prompt_registry_script"
+    return 1
+  fi
+  "$PYTHON_BIN" "$prompt_registry_script" --json-out "$prompt_bundle_target" || {
+    log_error "Failed to compile prompt registry bundle at $prompt_bundle_target"
+    return 1
+  }
+  export VIVENTIUM_PROMPT_BUNDLE_PATH="$prompt_bundle_target"
+  log_info "Prompt registry bundle generated at $prompt_bundle_target"
+  # === VIVENTIUM END ===
   return 0
 }
 
@@ -3702,6 +3786,7 @@ EOF
   local firecrawl_api_url="${FIRECRAWL_API_URL:-${firecrawl_base_url%/}}"
   local firecrawl_version="${FIRECRAWL_VERSION:-v2}"
   local glasshive_mcp_url="${GLASSHIVE_MCP_URL:-http://127.0.0.1:8767/mcp}"
+  local glasshive_operator_base_url="${GLASSHIVE_OPERATOR_BASE_URL:-http://127.0.0.1:${GLASSHIVE_UI_PORT:-8780}}"
 
   upsert_env_kv "$env_file" "LIBRECHAT_CODE_BASEURL" "$librechat_code_baseurl"
   upsert_env_kv "$env_file" "LIBRECHAT_CODE_API_KEY" "$librechat_code_api_key"
@@ -3713,6 +3798,7 @@ EOF
   upsert_env_kv "$env_file" "FIRECRAWL_API_URL" "$firecrawl_api_url"
   upsert_env_kv "$env_file" "FIRECRAWL_VERSION" "$firecrawl_version"
   upsert_env_kv "$env_file" "GLASSHIVE_MCP_URL" "$glasshive_mcp_url"
+  upsert_env_kv "$env_file" "GLASSHIVE_OPERATOR_BASE_URL" "$glasshive_operator_base_url"
 
   export LIBRECHAT_CODE_BASEURL="$librechat_code_baseurl"
   export LIBRECHAT_CODE_API_KEY="$librechat_code_api_key"
@@ -3724,6 +3810,7 @@ EOF
   export FIRECRAWL_API_URL="$firecrawl_api_url"
   export FIRECRAWL_VERSION="$firecrawl_version"
   export GLASSHIVE_MCP_URL="$glasshive_mcp_url"
+  export GLASSHIVE_OPERATOR_BASE_URL="$glasshive_operator_base_url"
   return 0
 }
 
@@ -5256,6 +5343,7 @@ stop_running_services() {
   kill_by_pattern_scoped "TelegramVivBot.*bot.py" "$ROOT_DIR"
   if [[ -n "$telegram_dir" ]]; then
     kill_by_pattern_scoped "uv run python bot.py" "$telegram_dir"
+    kill_by_pattern_scoped "python.*bot.py" "$telegram_dir/TelegramVivBot"
   fi
 
   local telegram_codex_pid
@@ -6810,8 +6898,8 @@ cleanup() {
   [[ "$LIBRECHAT_STARTED_BY_SCRIPT" == "true" && -n "${LIBRECHAT_PID:-}" ]] && kill "${LIBRECHAT_PID}" 2>/dev/null || true
   [[ -n "${OPTIONAL_DOCKER_RECOVERY_PID:-}" ]] && kill "${OPTIONAL_DOCKER_RECOVERY_PID}" 2>/dev/null || true
   if [[ "$LIBRECHAT_STARTED_BY_SCRIPT" == "true" ]]; then
-    pkill -f "node.*api/server" 2>/dev/null || true
-    pkill -f "vite.*client" 2>/dev/null || true
+    kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"
+    kill_by_pattern_scoped "vite.*client" "$LIBRECHAT_DIR"
   fi
   [[ "$V1_AGENT_STARTED_BY_SCRIPT" == "true" && -n "${V1_AGENT_PID:-}" ]] && kill "${V1_AGENT_PID}" 2>/dev/null || true
   [[ "$TELEGRAM_STARTED_BY_SCRIPT" == "true" && -n "${TELEGRAM_BOT_PID:-}" ]] && kill "${TELEGRAM_BOT_PID}" 2>/dev/null || true
@@ -8485,6 +8573,10 @@ start_telegram_bot() {
   fi
   if [[ "$RESTART_SERVICES" == "true" ]]; then
     stop_telegram_launchctl_job
+    # Stale pidfile-free Telegram bot processes can keep the BotFather polling lock
+    # while making a restart look healthy. Kill only bot.py processes whose cwd is
+    # inside this Viventium Telegram bot directory.
+    kill_by_pattern_scoped "python.*bot.py" "$PWD"
   fi
   EXISTING_TELEGRAM_PIDS=""
   if telegram_pid_is_running; then
@@ -8727,6 +8819,15 @@ PY
     VIVENTIUM_TELEGRAM_TRACE
     VIVENTIUM_TELEGRAM_TIMING_ENABLED
     VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S
+    XAI_API_KEY
+    VIVENTIUM_XAI_TTS_API_KEY
+    VIVENTIUM_XAI_TTS_API_URL
+    VIVENTIUM_XAI_VOICE
+    VIVENTIUM_XAI_LANGUAGE
+    VIVENTIUM_XAI_SAMPLE_RATE
+    VIVENTIUM_XAI_TTS_CODEC
+    VIVENTIUM_XAI_TTS_SAMPLE_RATE
+    VIVENTIUM_XAI_TTS_BIT_RATE
   )
   local telegram_runtime_env_name
   for telegram_runtime_env_name in "${telegram_runtime_env_names[@]}"; do
@@ -9999,7 +10100,11 @@ PY
         else
           export VIVENTIUM_STT_VAD_MIN_SILENCE
         fi
-        export VIVENTIUM_STT_VAD_MIN_SPEECH="${VIVENTIUM_STT_VAD_MIN_SPEECH:-0.1}"
+        if [[ -z "${VIVENTIUM_STT_VAD_MIN_SPEECH:-}" ]]; then
+          export VIVENTIUM_STT_VAD_MIN_SPEECH="$(default_voice_stt_vad_min_speech "$VIVENTIUM_STT_PROVIDER")"
+        else
+          export VIVENTIUM_STT_VAD_MIN_SPEECH
+        fi
         export VIVENTIUM_STT_VAD_FORCE_CPU="${VIVENTIUM_STT_VAD_FORCE_CPU:-}"
         export ASSEMBLYAI_API_KEY="${ASSEMBLYAI_API_KEY:-}"
         # Voice configuration (ElevenLabs TTS - matching old viventium_v1 voice)
@@ -10012,8 +10117,9 @@ PY
         fi
         # Also export ELEVENLABS_API_KEY for backward compatibility
         export ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
-        # xAI Grok Voice configuration (Available voices: Ara, Rex, Sal, Eve, Leo)
+        # xAI voice configuration (standalone TTS by default; legacy realtime adapter is opt-in)
         export XAI_API_KEY="${XAI_API_KEY:-}"
+        export VIVENTIUM_XAI_TTS_API_KEY="${VIVENTIUM_XAI_TTS_API_KEY:-}"
         export VIVENTIUM_XAI_VOICE="${VIVENTIUM_XAI_VOICE:-Sal}"
         export VIVENTIUM_XAI_WSS_URL="${VIVENTIUM_XAI_WSS_URL:-wss://api.x.ai/v1/realtime}"
         export VIVENTIUM_XAI_SAMPLE_RATE="${VIVENTIUM_XAI_SAMPLE_RATE:-24000}"
@@ -10034,8 +10140,8 @@ PY
         else
           echo -e "${YELLOW}[viventium]${NC} WARNING: ELEVEN_API_KEY not set - ElevenLabs TTS will fallback to OpenAI"
         fi
-        if [[ -n "${XAI_API_KEY:-}" ]]; then
-          echo -e "${CYAN}[viventium]${NC} XAI_API_KEY is set (${XAI_API_KEY:0:8}...) - xAI Grok Voice available"
+        if [[ -n "${VIVENTIUM_XAI_TTS_API_KEY:-}" || -n "${XAI_API_KEY:-}" ]]; then
+          echo -e "${CYAN}[viventium]${NC} xAI voice available"
         fi
         if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
           echo -e "${CYAN}[viventium]${NC} CARTESIA_API_KEY is set (${CARTESIA_API_KEY:0:8}...) - Cartesia TTS available"

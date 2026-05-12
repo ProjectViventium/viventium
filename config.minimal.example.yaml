@@ -11,6 +11,9 @@ runtime:
     # Keep this off unless you have real email delivery configured.
     # For a one-time operator-issued reset link, use: bin/viventium password-reset-link <email>
     allow_password_reset: false
+    # Optional connected-account OAuth browser return override. Leave blank for the normal
+    # configured public API origin; set only for local QA/off-network operator cases.
+    connected_accounts_return_origin: ""
   network:
     # Supported modes: disabled, cloudflare_quick_tunnel, tailscale_tailnet_https,
     # netbird_selfhosted_mesh, public_https_edge.
@@ -34,8 +37,9 @@ runtime:
     default_conversation_recall: false
   memory_hardening:
     enabled: false
-    schedule: "0 5 * * *"
+    schedule: "0 3 * * *"
     timezone: America/Toronto
+    operator_user_email: ""
     lookback_days: 7
     min_user_idle_minutes: 60
     max_changes_per_user: 3
@@ -44,7 +48,16 @@ runtime:
     dry_run_first: true
     provider_profile: launch_ready_only
     anthropic_model: claude-opus-4-7
-    openai_model: gpt-5.4
+    anthropic_effort: xhigh
+    openai_model: gpt-5.5
+    openai_reasoning_effort: xhigh
+    transcripts:
+      source_dir: ""
+      max_files_per_run: 20
+      max_chars_per_file: 500000
+      summary_max_chars: 32000
+      stable_evidence_max_age_days: 90
+      rag_mode: detailed_summary_only
   background_followup_window_s: 30
   ports:
     lc_api_port: 3180

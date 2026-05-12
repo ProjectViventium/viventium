@@ -56,8 +56,8 @@ viventium:
   installMode: docker
   primaryProvider: openai
   consciousAgent:
-    provider: x_ai
-    model: grok-4-1-fast-non-reasoning
+    provider: openai
+    model: gpt-5.4
 mcpSettings:
   allowedDomains:
     - localhost
@@ -136,6 +136,6 @@ endpoints:
       baseURL: https://api.x.ai/v1
       models:
         default:
-          - grok-4-1-fast-non-reasoning
+          - grok-4.3
       titleConvo: true
-      summaryModel: grok-4-1-fast-non-reasoning
+      summaryModel: grok-4.3

@@ -66,6 +66,14 @@ def _fake_config(**overrides):
         "VIVENTIUM_CARTESIA_SPEED": 1.0,
         "VIVENTIUM_CARTESIA_VOICE_ID": "voice-id",
         "VIVENTIUM_CARTESIA_VOLUME": 1.0,
+        "VIVENTIUM_XAI_TTS_API_KEY": "",
+        "XAI_API_KEY": "",
+        "VIVENTIUM_XAI_TTS_API_URL": "https://api.x.ai/v1/tts",
+        "VIVENTIUM_XAI_VOICE": "Sal",
+        "VIVENTIUM_XAI_LANGUAGE": "en",
+        "VIVENTIUM_XAI_TTS_CODEC": "mp3",
+        "VIVENTIUM_XAI_TTS_SAMPLE_RATE": 24000,
+        "VIVENTIUM_XAI_TTS_BIT_RATE": 128000,
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
@@ -156,6 +164,57 @@ def test_resolve_tts_selection_treats_cartesia_variant_as_voice_id(monkeypatch):
 
     assert resolved["provider"] == "cartesia"
     assert resolved["variant"] == "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+    assert resolved["source"] == "saved"
+
+
+def test_resolve_tts_selection_supports_xai_alias_and_voice_variant(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            XAI_API_KEY="x",
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+        ),
+    )
+
+    resolved = tts_module.resolve_tts_selection(
+        voice_route={
+            "tts": {
+                "provider": "x_ai",
+                "variant": "Eve",
+            }
+        }
+    )
+
+    assert resolved["provider"] == "xai"
+    assert resolved["variant"] == "Eve"
+    assert resolved["source"] == "saved"
+
+
+def test_resolve_tts_selection_supports_xai_tts_specific_key(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            VIVENTIUM_XAI_TTS_API_KEY="t",
+            XAI_API_KEY="",
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+        ),
+    )
+
+    resolved = tts_module.resolve_tts_selection(
+        voice_route={
+            "tts": {
+                "provider": "xai",
+                "variant": "Rex",
+            }
+        }
+    )
+
+    assert resolved["provider"] == "xai"
+    assert resolved["variant"] == "Rex"
     assert resolved["source"] == "saved"
 
 
@@ -289,6 +348,168 @@ async def test_synthesize_speech_cartesia_uses_voice_variant_not_model_id(monkey
     assert seen["headers"]["Cartesia-Version"] == tts_module._CARTESIA_SONIC3_API_VERSION
     assert seen["payload"]["model_id"] == "sonic-3"
     assert seen["payload"]["voice"] == {"mode": "id", "id": lyra_voice_id}
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_xai_uses_tts_endpoint_and_preserves_xai_tags(monkeypatch):
+    seen = {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            XAI_API_KEY="x",
+            TTS_PROVIDER_PRIMARY="xai",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_XAI_VOICE="Sal",
+            VIVENTIUM_XAI_LANGUAGE="en",
+        ),
+    )
+
+    class _Response:
+        content = b"mp3-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, headers=None, content=None, **_kwargs):
+            seen["url"] = url
+            seen["headers"] = headers or {}
+            seen["payload"] = json.loads(content)
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech(
+        '<emotion value="excited"/>Hi [laugh]. <whisper>secret</whisper> [laughter]',
+        "conv-1",
+        voice_route={"tts": {"provider": "xai", "variant": "Eve"}},
+    )
+
+    assert voice_bytes == b"mp3-bytes"
+    assert seen["url"] == "https://api.x.ai/v1/tts"
+    assert seen["headers"]["Authorization"] == "Bearer x"
+    assert seen["payload"]["voice_id"] == "Eve"
+    assert seen["payload"]["language"] == "en"
+    assert seen["payload"]["output_format"] == {
+        "codec": "mp3",
+        "sample_rate": 24000,
+        "bit_rate": 128000,
+    }
+    assert seen["payload"]["text"] == 'Hi [laugh]. <whisper>secret</whisper>'
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_xai_prefers_tts_specific_key_and_saved_voice(monkeypatch):
+    seen = {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            VIVENTIUM_XAI_TTS_API_KEY="t",
+            XAI_API_KEY="l",
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+            VIVENTIUM_XAI_VOICE="Sal",
+        ),
+    )
+
+    class _Response:
+        content = b"mp3-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, headers=None, content=None, **_kwargs):
+            seen["url"] = url
+            seen["headers"] = headers or {}
+            seen["payload"] = json.loads(content)
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech(
+        "Hello [laugh].",
+        "conv-1",
+        voice_route={"tts": {"provider": "xai", "variant": "Rex"}},
+    )
+
+    assert voice_bytes == b"mp3-bytes"
+    assert seen["url"] == "https://api.x.ai/v1/tts"
+    assert seen["headers"]["Authorization"] == "Bearer t"
+    assert seen["payload"]["voice_id"] == "Rex"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_xai_strips_malformed_square_wrapper_tags(monkeypatch):
+    seen = {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            XAI_API_KEY="x",
+            TTS_PROVIDER_PRIMARY="xai",
+            TTS_PROVIDER_FALLBACK="openai",
+            VIVENTIUM_XAI_VOICE="Sal",
+        ),
+    )
+
+    class _Response:
+        content = b"mp3-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, headers=None, content=None, **_kwargs):
+            seen["url"] = url
+            seen["headers"] = headers or {}
+            seen["payload"] = json.loads(content)
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech(
+        "<soft>Morning. You have warmth.[/soft] If needed.",
+        "conv-1",
+        voice_route={"tts": {"provider": "xai", "variant": "Eve"}},
+    )
+
+    assert voice_bytes == b"mp3-bytes"
+    assert seen["payload"]["text"] == "Morning. You have warmth. If needed."
+    assert "<soft>" not in seen["payload"]["text"]
+    assert "[/soft]" not in seen["payload"]["text"]
 
 
 @pytest.mark.asyncio
@@ -632,3 +853,62 @@ def test_strip_voice_control_tags_for_non_cartesia_fallback():
         )
         == "Hi ABC"
     )
+
+
+def test_strip_voice_control_tags_removes_xai_wrapping_for_non_xai_fallback():
+    assert (
+        tts_module._strip_voice_control_tags(
+            "Hi <whisper>quiet</whisper> and <slow><soft>gentle</soft></slow> [laugh]"
+        )
+        == "Hi quiet and gentle"
+    )
+
+
+def test_strip_voice_control_tags_removes_malformed_xai_wrappers_for_fallback():
+    assert (
+        tts_module._strip_voice_control_tags(
+            "<soft>Morning. You have warmth.[/soft] If needed."
+        )
+        == "Morning. You have warmth. If needed."
+    )
+
+
+def test_strip_cartesia_markup_for_xai_preserves_documented_xai_tags():
+    inline = " ".join(f"[{tag}]" for tag in tts_module._XAI_TTS_INLINE_TAGS)
+    wrapping = " ".join(
+        f"<{tag}>text-{index}</{tag}>"
+        for index, tag in enumerate(tts_module._XAI_TTS_WRAPPING_TAGS)
+    )
+
+    cleaned = tts_module._strip_cartesia_markup_for_xai(f"{inline} {wrapping}")
+
+    for tag in tts_module._XAI_TTS_INLINE_TAGS:
+        assert f"[{tag}]" in cleaned
+    for tag in tts_module._XAI_TTS_WRAPPING_TAGS:
+        assert f"<{tag}>" in cleaned
+        assert f"</{tag}>" in cleaned
+
+
+def test_strip_cartesia_markup_for_xai_strips_cartesia_only_bracket_aliases():
+    cleaned = tts_module._strip_cartesia_markup_for_xai(
+        "Hi [soft laugh] [gentle sigh] [breath out] [laugh] [sigh] [Section 3]."
+    )
+
+    assert cleaned == "Hi [laugh] [sigh] [Section 3]."
+    assert "[soft laugh]" not in cleaned
+    assert "[gentle sigh]" not in cleaned
+    assert "[breath out]" not in cleaned
+
+
+def test_strip_cartesia_markup_for_xai_strips_every_malformed_wrapping_tag():
+    for tag in tts_module._XAI_TTS_WRAPPING_TAGS:
+        cleaned = tts_module._strip_cartesia_markup_for_xai(
+            f"<{tag}>Keep this.</{tag}> [{tag}] tail [/{tag}] done."
+        )
+        assert cleaned == f"<{tag}>Keep this.</{tag}> tail done."
+        assert f"[{tag}]" not in cleaned
+        assert f"[/{tag}]" not in cleaned
+
+
+def test_xai_fallback_wrapping_vocabulary_covers_documented_tags():
+    assert set(tts_module._XAI_TTS_FALLBACK_WRAPPING_TAGS) == set(tts_module._XAI_TTS_WRAPPING_TAGS)

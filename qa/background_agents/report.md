@@ -40,7 +40,7 @@
    - updated the live Mongo agent documents so:
      - `agent_viventium_confirmation_bias_95aeb3` now has `model_parameters.thinking: false`
      - `agent_viventium_emotional_resonance_95aeb3` now has `model_parameters.thinking: false`
-   - restarted the local LibreChat backend worker and verified it was listening again on `http://localhost:3180`
+   - restarted the local LibreChat backend worker and verified the local API listener recovered
 7. Review-only second opinion:
    - attempted local `claude -p` review-only pass with explicit timeout
    - helper did not return usable findings before timing out
@@ -94,7 +94,7 @@
 - backend runtime verification:
   - restarted the backend worker under nodemon
   - verified a fresh `api/server/index.js` process was running
-  - verified `http://localhost:3180` was listening again after restart
+  - verified the local API listener recovered after restart
 
 ### Second Opinion Attempt
 

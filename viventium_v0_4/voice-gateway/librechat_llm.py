@@ -655,6 +655,19 @@ class _LibreChatLLMStream(llm.LLMStream):
                     body = await resp.text()
                     raise RuntimeError(f"LibreChat voice chat failed: {resp.status} {body}")
                 payload = await resp.json()
+                # === VIVENTIUM START ===
+                # Feature: Listen-Only Mode
+                # Purpose: The voice route can save the transcript and intentionally return no
+                # stream; LiveKit should emit no assistant tokens or TTS.
+                if payload.get("listenOnly") is True or payload.get("status") == "listen_only":
+                    if log_latency:
+                        logger.info(
+                            "[VoiceLatency] listen_only_saved_ms=%s request_id=%s",
+                            int((time.time() - started_at) * 1000),
+                            self._request_id,
+                        )
+                    return
+                # === VIVENTIUM END ===
                 stream_id = payload.get("streamId")
                 post_sent_at = time.time()
                 if log_latency:

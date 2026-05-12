@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from scripts.viventium.prompt_registry import load_and_resolve_prompt_refs
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_OF_TRUTH_AGENTS_BUNDLE = (
@@ -77,13 +79,17 @@ LIBRECHAT_YAML = (
 
 
 def _load_activation_by_agent_id() -> dict[str, dict]:
-    bundle = yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
     cortices = bundle["mainAgent"]["background_cortices"]
     return {entry["agent_id"]: entry["activation"] for entry in cortices}
 
 
 def _load_background_agents_by_id() -> dict[str, dict]:
-    bundle = yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
     return {entry["id"]: entry for entry in bundle["backgroundAgents"]}
 
 
@@ -102,7 +108,9 @@ def test_productivity_activation_models_follow_documented_local_recommendation()
 
 
 def test_source_of_truth_bundle_does_not_embed_owner_specific_identity() -> None:
-    bundle = yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
     owner = bundle["meta"]["user"]
 
     assert owner["email"] == "user@viventium.local"
@@ -165,7 +173,8 @@ def test_productivity_activation_configs_define_provider_fallback_chain() -> Non
         activation = activation_by_agent_id[agent_id]
         fallbacks = activation["fallbacks"]
         assert isinstance(fallbacks, list)
-        assert len(fallbacks) >= 2
+        assert fallbacks[0] == {"provider": "xai", "model": "grok-4.20-non-reasoning"}
+        assert len(fallbacks) >= 3
         assert all(isinstance(entry.get("provider"), str) and entry["provider"] for entry in fallbacks)
         assert all(isinstance(entry.get("model"), str) and entry["model"] for entry in fallbacks)
 
@@ -230,7 +239,9 @@ def test_background_agent_execution_models_stay_within_launch_ready_families() -
 
 
 def test_background_agents_do_not_drift_back_to_deprecated_runtime_models() -> None:
-    bundle = yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
     serialized = yaml.safe_dump(bundle, sort_keys=True)
     sync_source = SYNC_AGENTS_SCRIPT.read_text(encoding="utf-8")
     compiler_source = CONFIG_COMPILER.read_text(encoding="utf-8")

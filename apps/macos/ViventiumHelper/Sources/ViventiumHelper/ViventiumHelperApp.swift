@@ -29,6 +29,17 @@ private struct StopCommandOutcome {
     let terminatedLingeringCommand: Bool
 }
 
+private struct CommandCaptureResult {
+    let exitStatus: Int32
+    let stdout: String
+}
+
+private enum TranscriptIngestSourceStatus: Equatable {
+    case ready
+    case notConfigured
+    case unavailable
+}
+
 enum StackState: Equatable {
     case running
     case stopped
@@ -84,6 +95,7 @@ final class HelperController: ObservableObject {
         }
     }
     @Published private(set) var snapshotInProgress: Bool = false
+    @Published private(set) var transcriptIngestInProgress: Bool = false
     @Published private(set) var openURLString: String = "http://localhost:3190"
     @Published private(set) var launchAtLoginEnabled: Bool = false
     @Published private(set) var showInStatusBarEnabled: Bool = true
@@ -142,6 +154,14 @@ final class HelperController: ObservableObject {
 
     var backupActionDisabled: Bool {
         self.snapshotInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
+    }
+
+    var transcriptIngestActionLabel: String {
+        self.transcriptIngestInProgress ? "Ingesting Transcripts..." : "Ingest Meeting Transcripts"
+    }
+
+    var transcriptIngestActionDisabled: Bool {
+        self.transcriptIngestInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
     }
 
     var showsStatusRow: Bool {
@@ -312,6 +332,109 @@ final class HelperController: ObservableObject {
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
                 }
+            }
+        }
+    }
+
+    func ingestMeetingTranscripts() {
+        guard let config else {
+            let alert = NSAlert()
+            alert.messageText = "Missing helper config"
+            alert.informativeText = "Reinstall the Viventium helper from this checkout, then try again."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "ingest meeting transcripts")
+            return
+        }
+        guard !self.transcriptIngestInProgress else {
+            return
+        }
+
+        switch Self.transcriptIngestSourceStatus(config: config) {
+        case .ready:
+            break
+        case .notConfigured:
+            self.log("Transcript ingest blocked; no configured transcript source")
+            self.presentTranscriptIngestAlert(
+                title: "No transcript source is configured",
+                message: "Configure runtime.memory_hardening.transcripts.source_dir, then refresh Viventium before ingesting transcripts."
+            )
+            return
+        case .unavailable:
+            self.log("Transcript ingest blocked; configured transcript source is unavailable")
+            self.presentTranscriptIngestAlert(
+                title: "Transcript source is unavailable",
+                message: "The configured transcript source folder could not be read as a folder. Check the Viventium config and try again."
+            )
+            return
+        }
+
+        let ingestScope = Self.transcriptIngestScopeDescription(config: config)
+        let confirm = NSAlert()
+        confirm.messageText = "Ingest meeting transcripts?"
+        confirm.informativeText = "Viventium will process the configured transcript source for \(ingestScope)."
+        confirm.alertStyle = .informational
+        confirm.addButton(withTitle: "Ingest")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else {
+            self.log("Manual transcript ingest cancelled; scope: \(ingestScope)")
+            return
+        }
+
+        self.transcriptIngestInProgress = true
+        self.log("Manual transcript ingest requested; scope: \(ingestScope)")
+        Self.appendHelperLog(
+            Self.makeNamedHelperLogURL(appSupportDir: config.appSupportDir, logFileName: "helper-transcript-ingest.log"),
+            "Manual transcript ingest requested; scope: \(ingestScope)"
+        )
+
+        Task.detached(priority: .userInitiated) {
+            let runResult = Self.runMemoryHardeningCaptured(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["ingest-transcripts", "--apply", "--ignore-idle-gate", "--json"]
+            )
+            let exitStatus = runResult.exitStatus
+            let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)
+            await MainActor.run {
+                self.transcriptIngestInProgress = false
+                let logSummary = runSummary.map { "; \($0.message)" } ?? ""
+                let statusMessage = exitStatus == 0
+                    ? (
+                        runSummary?.skipped == true
+                            ? "Manual transcript ingest skipped; scope: \(ingestScope)\(logSummary)"
+                            : "Manual transcript ingest completed; scope: \(ingestScope)\(logSummary)"
+                    )
+                    : "Manual transcript ingest failed with status \(exitStatus); scope: \(ingestScope)\(logSummary)"
+                self.log(statusMessage)
+                Self.appendHelperLog(
+                    Self.makeNamedHelperLogURL(
+                        appSupportDir: config.appSupportDir,
+                        logFileName: "helper-transcript-ingest.log"
+                    ),
+                    statusMessage
+                )
+                let alert = NSAlert()
+                if exitStatus == 0 {
+                    alert.messageText = runSummary?.skipped == true ? "Transcript ingest skipped" : "Transcript ingest completed"
+                    alert.informativeText = [
+                        runSummary?.skipped == true
+                            ? "Viventium did not scan the configured transcript source for \(ingestScope)."
+                            : "Viventium processed the configured transcript source for \(ingestScope).",
+                        runSummary?.message,
+                    ].compactMap { $0 }.joined(separator: "\n\n")
+                    alert.alertStyle = .informational
+                } else {
+                    alert.messageText = "Transcript ingest failed"
+                    alert.informativeText = "The ingest was scoped to \(ingestScope). Check helper-transcript-ingest.log for status, then run the same CLI command from Terminal if detailed diagnostics are needed."
+                    alert.alertStyle = .warning
+                }
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
             }
         }
     }
@@ -613,7 +736,7 @@ final class HelperController: ObservableObject {
             guard !Task.isCancelled else {
                 return
             }
-            await MainActor.run {
+            await MainActor.run { [weak self] in
                 guard let self else {
                     return
                 }
@@ -634,6 +757,15 @@ final class HelperController: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "Viventium helper needs a safe checkout"
         alert.informativeText = "Install or update Viventium from a checkout outside Documents, Desktop, and Downloads, or explicitly choose a developer checkout with `bin/viventium runtime-checkout use --this --allow-protected-folder`."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func presentTranscriptIngestAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
@@ -850,13 +982,17 @@ final class HelperController: ObservableObject {
     }
 
     private static func repoRootUsesMacOSProtectedFolderAccess(_ repoRoot: String) -> Bool {
+        self.pathUsesMacOSProtectedFolderAccess(repoRoot)
+    }
+
+    private static func pathUsesMacOSProtectedFolderAccess(_ path: String) -> Bool {
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
         let protectedRoots = [
             "\(homeDirectory)/Documents",
             "\(homeDirectory)/Desktop",
             "\(homeDirectory)/Downloads",
         ]
-        return protectedRoots.contains { self.path(repoRoot, isWithin: $0) }
+        return protectedRoots.contains { self.path(path, isWithin: $0) }
     }
 
     private static func path(_ candidate: String, isWithin parentDirectory: String) -> Bool {
@@ -877,6 +1013,36 @@ final class HelperController: ObservableObject {
         FileManager.default.isExecutableFile(atPath: "\(candidate)/bin/viventium") &&
             FileManager.default.fileExists(atPath: "\(candidate)/scripts/viventium/common.sh") &&
             FileManager.default.fileExists(atPath: "\(candidate)/viventium_v0_4/viventium-librechat-start.sh")
+    }
+
+    private static func transcriptIngestSourceStatus(config: HelperConfig) -> TranscriptIngestSourceStatus {
+        let values = RuntimeEnvParser().readRuntimeValues(appSupportDir: config.appSupportDir)
+        guard
+            let rawSource = values["VIVENTIUM_MEMORY_TRANSCRIPTS_DIR"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !rawSource.isEmpty
+        else {
+            return .notConfigured
+        }
+
+        let sourcePath = (rawSource as NSString).expandingTildeInPath
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: sourcePath, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            return .unavailable
+        }
+
+        return .ready
+    }
+
+    private static func transcriptIngestScopeDescription(config: HelperConfig) -> String {
+        let values = RuntimeEnvParser().readRuntimeValues(appSupportDir: config.appSupportDir)
+        let scope = (values["VIVENTIUM_MEMORY_HARDENING_USER_EMAIL"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if scope.isEmpty {
+            return "all opted-in local users"
+        }
+        return "account \(scope)"
     }
 
     private nonisolated static func makeHelperLogURL(appSupportDir: String?) -> URL? {
@@ -1738,6 +1904,166 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
     }
 
+    @discardableResult
+    private nonisolated static func runCLIStatusOnly(
+        repoRoot: String,
+        appSupportDir: String,
+        arguments: [String],
+        environmentOverrides: [String: String] = [:]
+    ) -> Int32 {
+        let process = self.makeCLIProcess(
+            repoRoot: repoRoot,
+            appSupportDir: appSupportDir,
+            arguments: arguments,
+            environmentOverrides: environmentOverrides
+        )
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        } catch {
+            return -1
+        }
+    }
+
+    @discardableResult
+    private nonisolated static func runMemoryHardeningStatusOnly(
+        repoRoot: String,
+        appSupportDir: String,
+        arguments: [String],
+        environmentOverrides: [String: String] = [:]
+    ) -> Int32 {
+        self.runMemoryHardeningCaptured(
+            repoRoot: repoRoot,
+            appSupportDir: appSupportDir,
+            arguments: arguments,
+            environmentOverrides: environmentOverrides
+        ).exitStatus
+    }
+
+    private nonisolated static func runMemoryHardeningCaptured(
+        repoRoot: String,
+        appSupportDir: String,
+        arguments: [String],
+        environmentOverrides: [String: String] = [:]
+    ) -> CommandCaptureResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.currentDirectoryURL = URL(fileURLWithPath: repoRoot, isDirectory: true)
+        process.arguments = [
+            "python3",
+            "\(repoRoot)/scripts/viventium/memory_harden.py",
+            "--repo-root",
+            repoRoot,
+            "--app-support-dir",
+            appSupportDir,
+            "--runtime-dir",
+            "\(appSupportDir)/runtime",
+        ] + arguments
+        var environment = self.makeCLIEnvironment()
+        environment["PWD"] = repoRoot
+        environment["VIVENTIUM_APP_SUPPORT_DIR"] = appSupportDir
+        environment["VIVENTIUM_ENV_FILE"] = "\(appSupportDir)/runtime/runtime.env"
+        environment["VIVENTIUM_ENV_LOCAL_FILE"] = "\(appSupportDir)/runtime/runtime.local.env"
+        for (key, value) in environmentOverrides {
+            environment[key] = value
+        }
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        let stdoutURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("viventium-helper-memory-\(UUID().uuidString).json")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        let stdoutHandle = try? FileHandle(forWritingTo: stdoutURL)
+        process.standardOutput = stdoutHandle ?? FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        defer {
+            try? stdoutHandle?.close()
+            try? FileManager.default.removeItem(at: stdoutURL)
+        }
+        do {
+            try process.run()
+            process.waitUntilExit()
+            try? stdoutHandle?.close()
+            let stdout = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
+            return CommandCaptureResult(exitStatus: process.terminationStatus, stdout: stdout)
+        } catch {
+            return CommandCaptureResult(exitStatus: -1, stdout: "")
+        }
+    }
+
+    private struct TranscriptIngestSummary {
+        let message: String
+        let skipped: Bool
+    }
+
+    private nonisolated static func transcriptIngestRunSummary(stdout: String) -> TranscriptIngestSummary? {
+        guard
+            let data = stdout.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        let users = root["users"] as? [[String: Any]] ?? []
+        let skippedReasons = users.compactMap { user -> String? in
+            let status = (user["status"] as? String) ?? ""
+            let reason = (user["reason"] as? String) ?? ""
+            if status == "skipped" && !reason.isEmpty {
+                return reason
+            }
+            return nil
+        }
+        let transcriptStats = users.compactMap { $0["transcript_ingest"] as? [String: Any] }
+        let filesSeen = transcriptStats.reduce(0) { $0 + self.intValue($1["files_seen"]) }
+        let filesPendingBeforeRun = transcriptStats.reduce(0) { $0 + self.intValue($1["files_pending"]) }
+        let filesDeferredByCap = transcriptStats.reduce(0) { $0 + self.intValue($1["files_skipped_by_cap"]) }
+        let applyResults = root["apply_results"] as? [[String: Any]] ?? []
+        let vectorStats = applyResults.compactMap { $0["transcript_vectors"] as? [String: Any] }
+        let uploaded = vectorStats.reduce(0) { $0 + self.intValue($1["uploaded"]) }
+        let deleted = vectorStats.reduce(0) { $0 + self.intValue($1["deleted"]) }
+
+        var parts: [String] = []
+        if transcriptStats.isEmpty && !skippedReasons.isEmpty {
+            let uniqueReasons = Array(Set(skippedReasons)).sorted().joined(separator: ", ")
+            parts.append("No transcript scan ran: \(uniqueReasons)")
+        }
+        if filesSeen > 0 {
+            parts.append("\(filesSeen) source files checked")
+        }
+        if filesPendingBeforeRun > 0 {
+            parts.append("\(filesPendingBeforeRun) pending at start")
+        }
+        if uploaded > 0 {
+            parts.append("\(uploaded) transcript summaries uploaded")
+        }
+        if deleted > 0 {
+            parts.append("\(deleted) stale transcript artifacts removed")
+        }
+        if filesDeferredByCap > 0 {
+            parts.append("\(filesDeferredByCap) files deferred by caps; run ingest again or let the 3am job continue")
+        } else if filesSeen > 0 {
+            parts.append("0 files deferred by caps")
+        }
+        return parts.isEmpty
+            ? nil
+            : TranscriptIngestSummary(message: parts.joined(separator: "; "), skipped: transcriptStats.isEmpty && !skippedReasons.isEmpty)
+    }
+
+    private nonisolated static func intValue(_ value: Any?) -> Int {
+        if let value = value as? Int {
+            return value
+        }
+        if let value = value as? NSNumber {
+            return value.intValue
+        }
+        if let value = value as? String {
+            return Int(value) ?? 0
+        }
+        return 0
+    }
+
     private nonisolated static func latestSnapshotPath(appSupportDir: String) -> String? {
         let latestPathURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("snapshots/LATEST_PATH")
@@ -1768,12 +2094,7 @@ private struct RuntimePorts {
 
 private struct RuntimeEnvParser {
     func readRuntime(appSupportDir: String) -> RuntimePorts {
-        let runtimeDir = "\(appSupportDir)/runtime"
-        var values = self.parseFile("\(runtimeDir)/runtime.env")
-        let localValues = self.parseFile("\(runtimeDir)/runtime.local.env")
-        for (key, value) in localValues {
-            values[key] = value
-        }
+        let values = self.readRuntimeValues(appSupportDir: appSupportDir)
         let apiPort = Int(values["VIVENTIUM_LC_API_PORT"] ?? "") ?? 3180
         let frontendPort = Int(values["VIVENTIUM_LC_FRONTEND_PORT"] ?? "") ?? 3190
         let playgroundPort = Int(values["VIVENTIUM_PLAYGROUND_PORT"] ?? "") ?? 3300
@@ -1785,6 +2106,16 @@ private struct RuntimeEnvParser {
             runtimeProfile: runtimeProfile,
             managedStopCheckURLs: self.managedStopCheckURLs(values: values)
         )
+    }
+
+    func readRuntimeValues(appSupportDir: String) -> [String: String] {
+        let runtimeDir = "\(appSupportDir)/runtime"
+        var values = self.parseFile("\(runtimeDir)/runtime.env")
+        let localValues = self.parseFile("\(runtimeDir)/runtime.local.env")
+        for (key, value) in localValues {
+            values[key] = value
+        }
+        return values
     }
 
     private func parseFile(_ path: String) -> [String: String] {
@@ -2058,6 +2389,12 @@ struct ViventiumHelperApp: App {
                 self.controller.createBackupSnapshot()
             }
             .disabled(self.controller.backupActionDisabled)
+            Menu("Advanced") {
+                Button(self.controller.transcriptIngestActionLabel) {
+                    self.controller.ingestMeetingTranscripts()
+                }
+                .disabled(self.controller.transcriptIngestActionDisabled)
+            }
             Toggle(
                 "Start at Login",
                 isOn: Binding(

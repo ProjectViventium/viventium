@@ -55,6 +55,13 @@ def default_local_tts_provider() -> str:
     return "openai"
 
 
+def normalize_voice_tts_provider(value: Any) -> str:
+    provider = str(value or "").strip().lower()
+    if provider in {"x_ai", "grok", "xai_grok_voice"}:
+        return "xai"
+    return provider
+
+
 def is_apple_silicon_mac() -> bool:
     return platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
 
@@ -351,11 +358,15 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     if stt_provider == "assemblyai":
         maybe_store_secret(voice.setdefault("stt", {}), "viventium/assemblyai_api_key")
 
-    tts_provider = str(voice.get("tts_provider") or "").strip().lower()
+    tts_provider = normalize_voice_tts_provider(voice.get("tts_provider"))
+    if tts_provider:
+        voice["tts_provider"] = tts_provider
     if tts_provider == "elevenlabs":
         maybe_store_secret(voice.setdefault("tts", {}), "viventium/elevenlabs_api_key")
     elif tts_provider == "cartesia":
         maybe_store_secret(voice.setdefault("tts", {}), "viventium/cartesia_api_key")
+    elif tts_provider == "xai":
+        maybe_store_secret(voice.setdefault("tts", {}), "viventium/x_ai_api_key")
 
     provider_keys = voice.get("provider_keys") or {}
     if not isinstance(provider_keys, dict):
@@ -367,14 +378,19 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
         provider_keys.setdefault("elevenlabs", dict(voice.get("tts") or {}))
     if tts_provider == "cartesia" and secret_is_configured(voice.get("tts")):
         provider_keys.setdefault("cartesia", dict(voice.get("tts") or {}))
+    if tts_provider == "xai" and secret_is_configured(voice.get("tts")):
+        provider_keys.setdefault("xai", dict(voice.get("tts") or {}))
 
     normalized_provider_keys: dict[str, Any] = {}
     for provider_name, service in (
         ("assemblyai", "viventium/assemblyai_api_key"),
         ("elevenlabs", "viventium/elevenlabs_api_key"),
         ("cartesia", "viventium/cartesia_api_key"),
+        ("xai", "viventium/x_ai_api_key"),
     ):
         configured_value = provider_keys.get(provider_name)
+        if not configured_value and provider_name == "xai":
+            configured_value = provider_keys.get("x_ai")
         if not configured_value:
             continue
         normalized_node = normalize_secret_node(configured_value, service)
@@ -971,12 +987,12 @@ def prompt_voice_settings(ui: InstallerUI, config: dict[str, Any], advanced: boo
     voice["tts_provider"] = ui.select(
         "Hosted text-to-speech provider",
         [
-            SelectOption("x_ai", "xAI"),
+            SelectOption("cartesia", "Cartesia"),
+            SelectOption("xai", "xAI"),
             SelectOption("openai", "OpenAI"),
             SelectOption("elevenlabs", "ElevenLabs"),
-            SelectOption("cartesia", "Cartesia"),
         ],
-        default="x_ai",
+        default="cartesia",
     )
     if voice["stt_provider"] == "assemblyai":
         secret_node = prompt_optional_secret(
@@ -999,6 +1015,14 @@ def prompt_voice_settings(ui: InstallerUI, config: dict[str, Any], advanced: boo
             ui,
             "Cartesia API key",
             "viventium/cartesia_api_key",
+        )
+        if secret_node:
+            voice["tts"] = secret_node
+    elif voice["tts_provider"] == "xai":
+        secret_node = prompt_optional_secret(
+            ui,
+            "xAI API key",
+            "viventium/x_ai_api_key",
         )
         if secret_node:
             voice["tts"] = secret_node
