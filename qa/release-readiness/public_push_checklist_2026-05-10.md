@@ -100,13 +100,14 @@ working-tree validation from pushed/reviewable Git state.
       bundle, runtime YAML/env, running local process, nested component commit, and parent
       `components.lock.json`.
 - [x] Nested LibreChat feature branch is committed and pushed to `origin`.
-- [ ] Parent feature branch is committed after updating the nested component pin.
-- [ ] Pull requests to `main` are opened for each changed public repo.
-- [ ] Pull requests are reviewed against this checklist before merge.
+- [x] Parent feature branch is committed after updating the nested component pin.
+- [x] Pull requests to `main` are opened for each changed public repo:
+      GlassHive #10, Viventium LibreChat #8, Viventium parent #12.
+- [x] Pull requests are reviewed against this checklist before merge.
 - [ ] Do not merge while any production blocker remains.
 
 ## Current Known Blockers
 
-- Parent commit, push, PR creation, and PR review/merge remain the final packaging gates.
+- PR merge remains the final publication gate.
 - Client typecheck is not a clean release gate yet; Jest passes, but the broader client typecheck
   still reports existing unrelated type debt.

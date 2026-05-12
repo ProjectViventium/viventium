@@ -49,6 +49,6 @@
   after reload, successful stored terminal insights, Groq-first activation config with no drift, no
   stale-history cortex cards on the latest simple turn, and no critical HTTP errors for that
   environment; release approval still requires the remaining packaging and review gates.
-- Known gaps: PR creation, PR review, and merge remain the final publication gates.
+- Known gaps: PR merge remains the final publication gate.
 - Next required hardening: keep provider-native structured Phase B and full doc-49 runtime/source/
   compiled A/B/C drift gate as explicit post-baseline work before main-prompt compaction.
