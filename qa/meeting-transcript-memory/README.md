@@ -92,6 +92,37 @@ are supplied, then seeds synthetic summary-only transcript artifacts into that Q
 broad inventory and focused detail recall through the visible LibreChat UI, and writes public-safe
 results under `qa/meeting-transcript-memory/reports/`.
 
+## 2026-05-12 Local Live QA Evidence
+
+- `bin/viventium status`: ready; LibreChat frontend on `localhost:<port>`, API on
+  `localhost:<port>`, Conversation Recall/RAG on `localhost:<port>`, and Telegram surfaces running.
+- RAG health and UI health checks passed before browser QA.
+- `VIVENTIUM_QA_ALLOW_LOCAL_JWT=1 VIVENTIUM_QA_OWNER_EMAIL=<owner-account-email>
+  VIVENTIUM_QA_EMAIL=<qa-account-email> node
+  qa/meeting-transcript-memory/evals/run-live-browser-qa.cjs --headless --client-base
+  http://localhost:3190 --api-base http://localhost:3180`: pass.
+- Public-safe report:
+  `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T02-30-02-460Z.md`.
+- QA account hash selected: `79232c0a29b5`; owner meeting-transcript count unchanged.
+- Browser evidence: broad inventory prompt used file_search and retrieved one transcript inventory
+  source on the first turn; focused detail prompt used file_search and retrieved meeting-summary
+  sources with the synthetic marker present.
+- Default mode still uploaded zero raw transcript artifacts for recall.
+- Regression evidence: `node qa/meeting-transcript-memory/evals/run-evals.cjs` passed all 10
+  public-safe evals; backend hardener/file_search tests passed 83/83; packages API transcript and
+  RAG presence tests passed 44/44; packages API build regenerated `dist/`.
+- Runtime fix covered by this pass: RAG document presence now uses a lightweight `/exists` check,
+  meeting transcript RAG queries batch through `/query_multiple` with file-count-scaled top-k,
+  transcript artifact presence is verified in one batch call, mixed transcript/recall results
+  preserve matched transcript evidence, source-backed transcript inventory attaches without waiting
+  on vector existence, and recall literal rescue excludes active prompt echoes.
+- Reproducibility fix after Claude review: the LibreChat component changes were committed at
+  `e1c71a8ec129238eff7a7c7c13e43d77f012bcc4`, and `components.lock.json` now pins that commit.
+- Operational note: local Mongo crashed during an earlier QA attempt because the owner runtime data
+  directory had a missing WiredTiger collection file. The original data directory was backed up
+  outside the public repo, QA used a repaired clone, and the failure reason is preserved in local
+  runtime Mongo logs rather than public artifacts.
+
 ## 2026-05-06 Final-Pass Evidence
 
 - `node --check viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js`: pass

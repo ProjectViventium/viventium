@@ -53,8 +53,9 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   imply incomplete visibility over the processed transcript set.
 - Evidence to capture: file_search tool calls, retrieved sources, and final assistant answer.
 - Last run: 2026-05-12, automated regression passed in
-  `api/test/app/clients/tools/util/fileSearch.test.js` and
-  `qa/meeting-transcript-memory/evals/run-evals.cjs`.
+  `api/test/app/clients/tools/util/fileSearch.test.js`,
+  `qa/meeting-transcript-memory/evals/run-evals.cjs`, and live browser report
+  `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T02-30-02-460Z.md`.
 
 ## MTM-005: Failed Hardening Runs Must Leave Redacted Failure Evidence
 
@@ -81,4 +82,4 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Evidence to capture: redacted RAG health, owner-count unchanged check, QA-account source counts,
   file_search source attachments, and public-safe recovery note.
 - Last run: 2026-05-12, live browser regression passed in
-  `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T00-56-58-307Z.md`.
+  `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T02-30-02-460Z.md`.

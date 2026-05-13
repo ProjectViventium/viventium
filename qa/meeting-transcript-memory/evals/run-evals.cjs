@@ -260,14 +260,18 @@ const checks = {
             ],
           };
         }
-        if (body.file_id === 'meeting_summary:qa:alpha') {
+        if (Array.isArray(body.file_ids) && body.file_ids.includes('meeting_summary:qa:alpha')) {
           return {
             data: [
               [
                 {
                   page_content:
                     '10:00 Speaker Alpha and the user discussed SF customer discovery, onboarding risk, and follow-up product notes.',
-                  metadata: { source: '/safe/meeting-transcript-summary-alpha.txt', page: 1 },
+                  metadata: {
+                    file_id: 'meeting_summary:qa:alpha',
+                    source: '/safe/meeting-transcript-summary-alpha.txt',
+                    page: 1,
+                  },
                 },
                 0.3,
               ],

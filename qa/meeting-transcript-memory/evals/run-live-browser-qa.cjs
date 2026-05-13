@@ -481,6 +481,7 @@ function summarizeSources(message, marker) {
     Array.isArray(attachment?.file_search?.sources) ? attachment.file_search.sources : [],
   );
   const fileNames = sources.map((source) => String(source.fileName || ''));
+  const fileIds = sources.map((source) => String(source.fileId || ''));
   const contents = sources.map((source) => String(source.content || ''));
   return {
     toolCallCount: Array.isArray(message?.content)
@@ -488,8 +489,26 @@ function summarizeSources(message, marker) {
       : 0,
     attachmentCount: attachments.length,
     sourceCount: sources.length,
-    inventorySourceCount: fileNames.filter((name) => name.includes('meeting-transcript-inventory')).length,
-    summarySourceCount: fileNames.filter((name) => name.includes('meeting-transcript-summary')).length,
+    inventorySourceCount: sources.filter((source, index) => {
+      const fileId = fileIds[index];
+      const fileName = fileNames[index];
+      const content = contents[index];
+      return (
+        fileId.startsWith('meeting_inventory:') ||
+        fileName.includes('meeting-transcript-inventory') ||
+        content.includes('Transcript artifact kind: inventory')
+      );
+    }).length,
+    summarySourceCount: sources.filter((source, index) => {
+      const fileId = fileIds[index];
+      const fileName = fileNames[index];
+      const content = contents[index];
+      return (
+        fileId.startsWith('meeting_summary:') ||
+        fileName.includes('meeting-transcript-summary') ||
+        content.includes('Transcript artifact kind: summary')
+      );
+    }).length,
     markerInSources: contents.some((content) => content.includes(marker)),
     fileNameHashes: fileNames.map((name) => hashValue(name, 10)).slice(0, 12),
   };
