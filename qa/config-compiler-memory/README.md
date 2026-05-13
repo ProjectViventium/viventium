@@ -28,11 +28,11 @@ template.
 ## Test Cases
 
 1. OpenAI-only foundation config compiles memory to `openai / gpt-5.4`.
-2. Anthropic-only connected-account config compiles memory to `anthropic / claude-sonnet-4-6`.
+2. Anthropic-only connected-account config compiles memory to `anthropic / claude-sonnet-4-5`.
 3. Dual-foundation configs keep existing role assignments and compile memory using configured
    foundation order.
 4. Generated Anthropic endpoint config sets `titleEndpoint: anthropic` and
-   `titleModel: claude-sonnet-4-6`.
+   `titleModel: claude-sonnet-4-5`.
 5. The actual local config compiles to the expected runtime output and the live local runtime can be
    refreshed through the public stop/start path.
 

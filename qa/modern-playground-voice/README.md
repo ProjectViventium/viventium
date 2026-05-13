@@ -178,6 +178,83 @@ Observed behavior before the fix:
   setup succeeded, but the browser could not establish the peer connection because ICE checks
   received no media response.
 
+### 2026-05-12 Local Whisper Model Route Regression
+
+Observed RCA before the fix:
+- The modern playground could display `Whisper.cpp Local / Best quality - large-v3-turbo` even when
+  the local cache contained a corrupt or wrong `ggml-large-v3-turbo.bin` artifact.
+- The cached artifact did not match the official whisper.cpp checksum for `large-v3-turbo`. The
+  bundled pywhispercpp native path aborted when asked to transcribe with it. LiveKit interpreted the
+  worker exit as the agent leaving the room, so the browser showed
+  `Session ended / Agent left the room unexpectedly`.
+- A stale generated App Support `runtime.env` could also make a direct source launch advertise a
+  different local STT model than canonical `config.yaml`, even after the selected model artifact was
+  repaired.
+- The TTS selection was not the cause; the crash happened in local STT before the turn could complete.
+
+Fix verification:
+- Local whisper.cpp preserves the selected model, including `large-v3-turbo`.
+- The voice gateway now checks the selected model against the official whisper.cpp SHA-1, atomically
+  re-downloads that exact artifact if it is missing or corrupt, and load-validates it in an isolated
+  subprocess before the worker uses it.
+- The voice gateway and Telegram local-whisper paths use the same shared Whisper.cpp model registry,
+  exact-model checksum, cache override, and atomic replacement discipline.
+- A local Whisper.cpp prewarm failure now fails the worker startup honestly instead of registering a
+  worker that will leave the LiveKit room on first use.
+- Local Whisper.cpp downloads now run with an explicit timeout, and diagnostic escape hatches that
+  weaken exact-model validation log visible warnings when used.
+- Supported `bin/viventium start` launches regenerate runtime outputs before startup, and direct
+  source launches do the same unless they are already being called from that canonical entrypoint.
+- The modern playground and call-session route no longer silently remap saved/requested
+  `large-v3-turbo` selections to another model.
+
+Automated checks:
+- `python3 -m py_compile viventium_v0_4/shared/whisper_cpp_models.py viventium_v0_4/voice-gateway/pywhispercpp_provider.py viventium_v0_4/voice-gateway/worker.py viventium_v0_4/telegram-codex/app/config.py viventium_v0_4/telegram-codex/app/transcribe_local.py viventium_v0_4/telegram-viventium/TelegramVivBot/config.py`
+  - Result: passed
+- `cd viventium_v0_4/voice-gateway && .venv/bin/python -m pytest tests/test_pywhispercpp_provider.py tests/test_worker_turn_handling.py tests/test_silero_vad_config.py tests/test_worker_ref_audio_validation.py -q`
+  - Result: `83 passed`, `1 warning`
+- `cd viventium_v0_4/telegram-codex && uv run python -m pytest tests/test_config.py tests/test_transcribe_local_models.py -q`
+  - Result: `7 passed`
+- `cd viventium_v0_4/agent-starter-react && pnpm exec tsc --noEmit`
+  - Result: passed
+- `cd viventium_v0_4/LibreChat/api && npm run test:ci -- --runInBand server/services/viventium/__tests__/CallSessionService.spec.js server/routes/viventium/__tests__/telegram.spec.js`
+  - Result: `2 passed`, `47 tests passed`
+- `uv run --with pytest --with PyYAML python -m pytest tests/release/test_config_compiler.py -q`
+  - Result: `92 passed`
+- `cd viventium_v0_4/telegram-viventium/TelegramVivBot && uv run python -m pytest ../tests/test_config_numeric_env.py ../tests/test_stt_env.py ../tests/test_stt_telegram_assemblyai.py ../tests/test_voice_preferences.py -q`
+  - Result: `48 passed`
+
+Runtime evidence:
+- Voice-specific live health passed for the LibreChat API, LibreChat frontend, modern playground,
+  and LiveKit-adjacent voice gateway. This MPV-002 run does not claim full optional-sidecar signoff.
+- Voice gateway capabilities must report the selected local STT model and include
+  `large-v3-turbo` as a normal local Whisper.cpp variant.
+- Voice gateway startup logs must show exact-model preflight/self-heal followed by selected-model
+  prewarm and worker registration.
+- The selected cached model's SHA-1 must match the official whisper.cpp checksum for the advertised
+  variant.
+- Real-browser Playwright verification must show the selected local Whisper.cpp model in the
+  Listening selector. A standalone playground opened without a LibreChat call-session deep link may
+  still show the launch button disabled; that is separate from the model self-heal path.
+- Latest live verification showed `Whisper.cpp Local / Best quality - large-v3-turbo (Recommended)`
+  in the browser and `Whisper.cpp Local • large-v3-turbo` from the capability API after launcher
+  regeneration.
+- The same "preserve selected model" behavior is covered in LibreChat call-session service tests so
+  saved voice routes cannot be silently rewritten.
+- ClaudeViv review classified the core selected-model, checksum self-heal, isolated validation,
+  fail-honest startup, and docs/QA claims as confirmed. It flagged Telegram's lack of voice-gateway
+  depth load-validation as a non-blocking release-slice follow-up, not a contradiction of this
+  modern-playground fix.
+
+Residual scope:
+- This run verified the modern playground route selector, live worker registration, and model
+  catalog. It did not claim a full microphone utterance transcript, because the standalone playground
+  page was opened without a LibreChat call-session deep link.
+- Telegram local-whisper helpers are aligned at the shared registry, checksum, cache override, and
+  atomic file replacement layer. The deeper isolated subprocess load-validation retry is currently
+  voice-gateway-only and should be lifted into a shared helper in a follow-up if Telegram local voice
+  QA becomes a release blocker.
+
 Fix verification target:
 - With no explicit `runtime.network.livekit_node_ip` override, public-edge state is reusable only
   when the saved LiveKit node IP is still assigned to a local interface.

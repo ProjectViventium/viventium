@@ -39,7 +39,7 @@ then time out before producing an insight. The covered surfaces are:
   - Viventium User Help activation prompt, diagnostic `{NTA}` output guard, `web_search`, and
     `openAI / gpt-5.4` high fallback.
 - Runtime API health returned `OK`.
-- Runtime model config exposes `claude-sonnet-4-6` and `claude-opus-4-7`; it does not expose
+- Runtime model config exposes `claude-sonnet-4-5` and `claude-opus-4-7`; it does not expose
   `claude-sonnet-4-7`.
 - Authenticated runtime `/api/models` exposes `openAI: ["gpt-5.4", ...]`, so the configured
   background fallback model is present in the live model catalog used by fallback validation.

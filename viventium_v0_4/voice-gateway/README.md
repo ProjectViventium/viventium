@@ -45,6 +45,10 @@ This service is the **voice bridge** between:
   - `STT_PROVIDER` (legacy fallback; v1 parity)
   - Allowed: `whisper_local` / `pywhispercpp`, `assemblyai`, `openai`
   - `whisper_local` uses local whisper.cpp + Silero VAD via StreamAdapter.
+  - Local whisper.cpp preserves the selected model. Startup checks the official whisper.cpp
+    checksum for the exact selected artifact, re-downloads that same artifact if it is missing or
+    corrupt, and validates model load in an isolated subprocess before the worker uses it. Runtime
+    must not silently swap `large-v3-turbo` or any other selected local model for another model.
   - `assemblyai` requires `ASSEMBLYAI_API_KEY`.
   - `openai` uses `VIVENTIUM_OPENAI_STT_MODEL` and is wrapped with VAD when available.
 

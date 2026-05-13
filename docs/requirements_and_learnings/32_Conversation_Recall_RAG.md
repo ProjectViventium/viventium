@@ -44,8 +44,13 @@ evidence.
 - Inject these files into runtime file-search resources when policy allows.
 - Persist processed meeting transcript artifacts as user-scoped vector files with the
   `meeting_transcript` context. The default transcript RAG mode is `detailed_summary_only`, so only
-  detailed `meeting_summary:*` artifacts are stored and attached for normal recall; `raw_and_summary`
-  and `raw_only` are explicit operator/QA modes.
+  detailed `meeting_summary:*` artifacts plus the source-scoped `meeting_inventory:*` table of
+  contents artifact are stored and attached for normal recall; `raw_and_summary` and `raw_only` are
+  explicit operator/QA modes.
+- The transcript inventory artifact is source-backed in file_search. Runtime returns its compact
+  inventory text from Mongo metadata before vector querying, so broad questions such as “what recent
+  transcripts do you see?” have a complete list surface. Specific topic/person questions still use
+  the detailed summary artifacts for semantic retrieval and answer detail.
 - Attach meeting transcript artifacts to file_search only when a valid transcript folder is
   configured, the artifact source-folder hash matches the current folder, and the artifact kind
   matches the configured transcript RAG mode. The vector runtime must also be configured and

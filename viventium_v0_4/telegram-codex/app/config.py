@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import re
 import sys
 from dataclasses import dataclass
@@ -28,6 +29,16 @@ def _resolve_path(root: Path, raw: str) -> Path:
     if path.is_absolute():
         return path.resolve()
     return (root / path).resolve()
+
+
+def _default_local_whisper_model_name() -> str:
+    if platform.machine().lower() == "x86_64":
+        return "small"
+    return "large-v3-turbo"
+
+
+def _normalize_local_whisper_model_name(value: object) -> str:
+    return str(value or "").strip() or _default_local_whisper_model_name()
 
 
 def _default_machine_state_root() -> Path:
@@ -249,7 +260,7 @@ def load_config(root: Path | None = None) -> AppConfig:
         transcription=TranscriptionSettings(
             whisper_mode=str(transcription_raw.get("whisper_mode") or "pywhispercpp"),
             language=str(transcription_raw.get("language") or "en"),
-            model_name=str(transcription_raw.get("model_name") or "large-v3-turbo"),
+            model_name=_normalize_local_whisper_model_name(transcription_raw.get("model_name")),
             model_path=str(transcription_raw.get("model_path") or ""),
             threads=int(transcription_raw.get("threads") or 8),
         ),

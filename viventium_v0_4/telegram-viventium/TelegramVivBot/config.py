@@ -1,12 +1,26 @@
-import os
-import subprocess
-import logging
-import time
 import asyncio
+import hashlib
+import logging
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
 
 # CRITICAL: Load .env BEFORE any imports that read environment variables!
 from dotenv import load_dotenv
 load_dotenv()
+logger = logging.getLogger(__name__)
+
+_SHARED_PATH = Path(__file__).resolve().parents[2] / "shared"
+if str(_SHARED_PATH) not in sys.path:
+    sys.path.insert(0, str(_SHARED_PATH))
+
+from whisper_cpp_models import MODEL_FILENAMES as _LOCAL_WHISPER_MODEL_FILES
+from whisper_cpp_models import MODEL_SHA1 as _LOCAL_WHISPER_MODEL_SHA1
+from whisper_cpp_models import default_model_name as default_whisper_cpp_model_name
 
 # REMOVED: i18n - Using hardcoded English strings for simplicity
 from utils.tts import prepare_tts_text
@@ -97,6 +111,88 @@ def _normalize_local_whisper_lang(value):
     if normalized.lower() in {"auto", "detect", "auto-detect", "autodetect", "none", "null"}:
         return ""
     return normalized
+
+
+def _default_local_whisper_model_name():
+    return default_whisper_cpp_model_name()
+
+
+def _normalize_local_whisper_model_name(value):
+    return str(value or "").strip() or _default_local_whisper_model_name()
+
+
+def _sha1_file(path):
+    digest = hashlib.sha1()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _local_whisper_download_timeout_s():
+    try:
+        return max(
+            10.0,
+            float((os.environ.get("VIVENTIUM_LOCAL_WHISPER_DOWNLOAD_TIMEOUT_S") or "").strip()),
+        )
+    except Exception:
+        return 300.0
+
+
+def _download_local_whisper_model(filename, model_path, expected_sha1):
+    model_path = Path(model_path)
+    url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}"
+    tmp_path = model_path.with_name(f".{model_path.name}.{os.getpid()}.download")
+    tmp_path.unlink(missing_ok=True)
+    previous_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(_local_whisper_download_timeout_s())
+    try:
+        logger.info(f"Downloading Whisper model {filename} to {model_path}")
+        urllib.request.urlretrieve(url, tmp_path)
+        actual_sha1 = _sha1_file(tmp_path)
+        if actual_sha1 != expected_sha1:
+            raise RuntimeError(
+                f"Downloaded whisper.cpp model {filename} failed checksum: "
+                f"expected {expected_sha1}, got {actual_sha1}"
+            )
+        os.replace(tmp_path, model_path)
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
+        tmp_path.unlink(missing_ok=True)
+
+
+def _ensure_local_whisper_model_file(model_name, model_dir=None):
+    filename = _LOCAL_WHISPER_MODEL_FILES.get(model_name)
+    if not filename:
+        known_models = ", ".join(sorted(_LOCAL_WHISPER_MODEL_FILES))
+        raise RuntimeError(
+            f"Unsupported local whisper.cpp model '{model_name}'. Known models: {known_models}"
+        )
+    expected_sha1 = _LOCAL_WHISPER_MODEL_SHA1.get(filename)
+    if not expected_sha1:
+        raise RuntimeError(f"Missing checksum for local whisper.cpp model '{model_name}'")
+
+    configured_cache_dir = (os.environ.get("VIVENTIUM_WHISPER_CACHE_DIR") or "").strip()
+    default_model_dir = (
+        Path(configured_cache_dir).expanduser()
+        if configured_cache_dir
+        else Path.home() / ".cache" / "whisper"
+    )
+    model_dir = Path(model_dir or default_model_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / filename
+    if model_path.exists():
+        actual_sha1 = _sha1_file(model_path)
+        if actual_sha1 == expected_sha1:
+            logger.info(f"Using cached Whisper model: {model_path}")
+            return model_path
+        logger.warning(
+            f"Cached Whisper model failed checksum; redownloading exact selected model: {model_path}"
+        )
+
+    _download_local_whisper_model(filename, model_path, expected_sha1)
+    logger.info(f"Downloaded {model_name} successfully")
+    return model_path
 # === VIVENTIUM END ===
 
 # Optional local whisper integration
@@ -1153,41 +1249,17 @@ def InitEngine(chat_id=None, initialize_stt=True):
     if WHISPER_MODE in ("local", "pywhispercpp"):
         try:
             from pywhispercpp.model import Model
-            from pathlib import Path
-
             # Auto-download model if path not specified (like viventium_v1)
             model_path = LOCAL_WHISPER_MODEL_PATH
             if not model_path or model_path == "/path/to/your/ggml-model.bin":
                 # Default model name
-                model_name = os.environ.get("LOCAL_WHISPER_MODEL_NAME", "large-v3-turbo")
-                
-                # Map model names to filenames (matches viventium_v1)
-                model_map = {
-                    "tiny": "ggml-tiny.bin",
-                    "base": "ggml-base.bin", 
-                    "small": "ggml-small.bin",
-                    "medium": "ggml-medium.bin",
-                    "large": "ggml-large.bin",
-                    "large-v1": "ggml-large-v1.bin",
-                    "large-v2": "ggml-large-v2.bin",
-                    "large-v3": "ggml-large-v3.bin",
-                    "large-v3-turbo": "ggml-large-v3-turbo.bin",
-                }
-                
-                filename = model_map.get(model_name, "ggml-large-v3-turbo.bin")
-                model_dir = Path.home() / ".cache" / "whisper"
-                model_dir.mkdir(parents=True, exist_ok=True)
-                model_path = str(model_dir / filename)
-                
-                # Download if not exists
-                if not Path(model_path).exists():
-                    logger.info(f"Downloading Whisper model {model_name} to {model_path}")
-                    import urllib.request
-                    url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}"
-                    urllib.request.urlretrieve(url, model_path)
-                    logger.info(f"Downloaded {model_name} successfully")
-                else:
-                    logger.info(f"Using cached Whisper model: {model_path}")
+                model_name = _normalize_local_whisper_model_name(os.environ.get("LOCAL_WHISPER_MODEL_NAME"))
+                model_path = str(_ensure_local_whisper_model_file(model_name))
+            else:
+                logger.warning(
+                    "LOCAL_WHISPER_MODEL_PATH is set; Telegram Viventium will load this explicit path without "
+                    "managed checksum self-heal or redownload."
+                )
 
             logger.info(f"Loading Whisper model from {model_path} with {LOCAL_WHISPER_THREADS} threads")
             local_whisper = Model(model_path, n_threads=LOCAL_WHISPER_THREADS)

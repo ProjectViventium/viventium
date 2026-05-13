@@ -224,3 +224,17 @@ shipped background-agent roster.
   - The main assistant response should answer the latest user instruction with `TEST_OK`.
   - Browser QA must fail if stale cards appear on the latest simple/test turn just because an older
     red-team or bias-check request remains inside `activation.max_history`.
+
+### ACT-22 Browser QA environment blockers are explicit
+
+- Setup:
+  - Run the browser QA harness with a synthetic local QA user whose auth works, but whose configured
+    main-agent model account is not connected.
+- Expected primary activations:
+  - not evaluated
+- Outcome assertions:
+  - The harness must inspect the visible browser state while waiting for the setup conversation.
+  - If the browser shows a login rejection, connected-account reconnect requirement, or generation
+    environment error, the report must mark `Result: BLOCKED` with a public-safe reason.
+  - Blocked provider/auth evidence must not be counted as an activation-model failure or success.
+  - A blocked browser run cannot satisfy ACT-18 through ACT-21 outcome signoff.

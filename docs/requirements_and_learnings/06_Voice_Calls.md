@@ -298,6 +298,28 @@ background-cortex behavior.
 - Local whisper.cpp (`whisper_local` / `pywhispercpp`) remains a StreamAdapter + Silero VAD path:
   - it inherits shared interruption handling and saved-route plumbing
   - it does not gain AssemblyAI-native endpointing knobs
+  - the selected local model must be preserved; runtime must not silently change `large-v3-turbo`
+    or any other selected Whisper.cpp model into a different model to recover
+  - direct source launches and `bin/viventium start` must regenerate canonical App Support runtime
+    files from `config.yaml` before loading `runtime.env`, so stale generated env cannot make the
+    status bar, modern playground, or voice gateway advertise a different Whisper.cpp model than the
+    user selected
+	  - the launcher and runtime must self-heal the exact selected model by checking the official
+	    whisper.cpp checksum, atomically re-downloading a missing or corrupt cached artifact, and
+	    validating load in an isolated subprocess before the worker uses it
+	  - local Whisper.cpp downloads must use a bounded timeout and leave the previous cache file in
+	    place if the new download fails checksum
+	  - local Whisper model filenames and checksums live in the shared
+	    `viventium_v0_4/shared/whisper_cpp_models.py` contract; voice gateway and Telegram local
+	    transcription paths must import that contract instead of carrying separate model/SHA tables
+	  - voice gateway prewarm is part of readiness for local Whisper routes; if exact-model prewarm
+	    fails after self-heal, the worker must refuse to register instead of advertising a broken local
+	    STT route
+	  - diagnostic escape hatches that weaken the safety net, such as disabling isolated local
+	    Whisper load validation, disabling launcher preflight, or pointing at an explicit unmanaged
+	    model path, must log a visible warning
+	  - if exact-model self-heal still fails, voice startup must fail honestly with the local
+	    Whisper.cpp class of failure instead of silently switching to another model or hosted STT route
   - when the optional multilingual semantic turn detector is installed, the exact cached assets are
     present, and the LiveKit inference runner is registered before worker construction, local Whisper
     may use `turn_detector` so end-of-turn is decided by the gateway's semantic turn-taking layer

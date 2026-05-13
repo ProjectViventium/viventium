@@ -392,12 +392,12 @@ A developer referring to a single document about a respective feature **must per
 
 #### Model Governance Rule (Launch-Ready Baseline)
 - Out-of-the-box Viventium background agents must stay within the current launch-ready model families unless a newer documented evaluation replaces them:
-  - `anthropic / claude-sonnet-4-6`
+  - `anthropic / claude-sonnet-4-5`
   - `anthropic / claude-opus-4-7`
   - `openAI / gpt-5.4`
 - Do not add a model picker entry or built-in agent assignment for a model that the target provider
   inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
-  supported Anthropic model for Viventium; use `claude-sonnet-4-6` or `claude-opus-4-7` until a
+  supported Anthropic model for Viventium; use `claude-sonnet-4-5` or `claude-opus-4-7` until a
   verified provider catalog and model QA update replace this baseline.
 - Foundation provider rule:
   - Groq is the current launch-ready primary for activation detection under the shipped 2-second
@@ -486,7 +486,7 @@ A developer referring to a single document about a respective feature **must per
 ### Deployment Env Parity (Model Lists)
 - **`<PROVIDER>_MODELS` env vars take absolute priority** over hard-coded model lists in LibreChat code
 - When set, `getAnthropicModels()` / `getGoogleModels()` / etc. return `splitAndTrim(process.env.<PROVIDER>_MODELS)` directly
-- **When adding new models** (e.g., `claude-sonnet-4-6`), update the env var on the container — no code changes or rebuild needed:
+- **When adding new models** (e.g., `claude-sonnet-4-5`), update the env var on the container — no code changes or rebuild needed:
   ```bash
   update the target runtime env so `ANTHROPIC_MODELS` includes the new values
   ```

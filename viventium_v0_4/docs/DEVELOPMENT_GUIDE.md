@@ -137,6 +137,10 @@ ASSEMBLYAI_API_KEY=... (only if VIVENTIUM_STT_PROVIDER=assemblyai)
 
 Notes:
 - `STT_PROVIDER` (legacy v1) is honored if `VIVENTIUM_STT_PROVIDER` is unset.
+- Local whisper.cpp preserves the selected model. The launcher checks the official whisper.cpp
+  checksum, atomically re-downloads the exact selected artifact if it is missing or corrupt, and
+  validates model load in a subprocess before the worker uses it. Do not recover by silently
+  changing `large-v3-turbo` or any other selected local model into a different model.
 - Silero VAD needs Python <= 3.12; the launcher rebuilds the voice-gateway venv if needed.
 
 <!-- === VIVENTIUM START ===

@@ -20,6 +20,7 @@ When adding a new production-miss regression, add the case to `03_eval_prompt_ba
 | `ACT-19` | Main answer must not offer to start background work that is already requested/running | Full browser loop, named cards, persistence/DB confirmation, forbidden wording check |
 | `ACT-20` | Background cards must never erase the original Phase A answer | Full browser loop, parent-message text survival, named cards, reload persistence, cortex-only parent failure |
 | `ACT-21` | Activation detection must judge the latest user message, not stale history | Multi-turn browser/API loop, latest-message prompt evidence, no duplicate stale activation cards |
+| `ACT-22` | Browser QA must classify visible environment/auth blocks instead of timing out vaguely | Visible UI error capture, sanitized block reason, no false activation verdict |
 
 ## Required User-Grade Loop For Card Regressions
 
@@ -44,6 +45,9 @@ For any background-agent Web UI change, QA must prove:
   subject. Older activation-worthy user turns may be included as context, but they must not produce
   fresh cards when the latest user turn is only a simple reply, test instruction, correction,
   provider clarification, or output-only command.
+- browser QA must classify visible login, connected-account, and generation-environment blockers
+  as blocked evidence with a sanitized reason. A provider/auth block must not be reported as an
+  activation failure, and a blocked browser run does not satisfy outcome signoff.
 
 ## Incident Promotion Checklist
 

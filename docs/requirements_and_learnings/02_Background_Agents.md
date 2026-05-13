@@ -52,23 +52,23 @@ Authoritative execution matrix:
 
 | Agent | Shipped Mixed Baseline | OpenAI-only install | Anthropic-only install | OpenAI + Anthropic install |
 | --- | --- | --- | --- | --- |
-| Background Analysis | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
-| Confirmation Bias | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
+| Background Analysis | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
+| Confirmation Bias | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
 | Red Team | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` |
 | Deep Research | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` |
-| MS365 | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` |
-| Parietal Cortex | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` |
-| Pattern Recognition | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
-| Emotional Resonance | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
+| MS365 | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
+| Parietal Cortex | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
+| Pattern Recognition | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
+| Emotional Resonance | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
 | Strategic Planning | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `anthropic / claude-opus-4-7` |
-| Viventium User Help | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `anthropic / claude-sonnet-4-6` |
-| Google | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-6` | `openAI / gpt-5.4` |
+| Viventium User Help | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
+| Google | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
 
 Model inventory rule:
 
 - Do not configure a phantom Anthropic model to satisfy UI expectations. On the May 6, 2026 local
   inventory, `claude-sonnet-4-7` is not exposed by source-of-truth model specs or the local runtime;
-  the launch-ready Sonnet family remains `claude-sonnet-4-6`.
+  the launch-ready Sonnet family remains `claude-sonnet-4-5`.
 - Background agents that are latency-sensitive but still use Anthropic Sonnet must declare a
   reachable execution fallback. The mixed local baseline uses `xai / grok-4.3` for Confirmation
   Bias because OpenAI can be rate-limited on local QA, while other timeout-prone cortices may use
@@ -275,7 +275,8 @@ Requirements:
   just explicit `thinking` fields already present in the source-of-truth YAML.
 - Background-cortex execution should therefore re-check the final initialized Anthropic config before
   Phase B execution and remove `temperature` if thinking is active.
-- Current shipped Anthropic Sonnet 4.6 built-ins should not carry explicit `temperature` at all.
+- Current shipped Anthropic Sonnet 4.5 built-ins that use thinking should not carry explicit
+  `temperature` at all.
 - If a future Anthropic built-in ever intentionally reintroduces temperature tuning, it must set
   `thinking: false` explicitly and be re-validated against the current Anthropic API contract before
   shipping.

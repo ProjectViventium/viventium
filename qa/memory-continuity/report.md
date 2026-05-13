@@ -54,7 +54,7 @@
 4. Restarted the local runtime onto the generated configuration with:
    - `bin/viventium start --restart --modern-playground`
 5. Verified after restart that:
-   - generated runtime memory config now points at `anthropic / claude-sonnet-4-6`
+   - generated runtime memory config now points at `anthropic / claude-sonnet-4-5`
    - recent helper logs no longer show `Provider openai not supported`
    - the saved-memory product path removed the stale forgotten references from the affected keys
      without manual Mongo edits
@@ -224,7 +224,7 @@
   that the memory prompt itself chose not to update memory.
 - After local restart onto the fixed generated runtime, public-safe inspection confirmed:
   - `memory.agent.provider: anthropic`
-  - `memory.agent.model: claude-sonnet-4-6`
+  - `memory.agent.model: claude-sonnet-4-5`
   - no fresh unsupported-provider init failures in the recent helper log window
 
 ### 2.1 OpenAI Codex connected-account memory runs also needed request-shape normalization
@@ -403,7 +403,7 @@
   - `model: gpt-5.4`
 - Generated runtime memory writer after restart:
   - `provider: anthropic`
-  - `model: claude-sonnet-4-6`
+  - `model: claude-sonnet-4-5`
 - Source-of-truth memory writer window:
   - `messageWindowSize: 15`
 - Source-of-truth older-user-context bounds:
