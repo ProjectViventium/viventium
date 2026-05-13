@@ -231,11 +231,25 @@ node qa/meeting-transcript-memory/evals/run-evals.cjs
 - Oversized-transcript contradiction found by later review: partial transcript input must not be
   stored as complete recall. Regression coverage now verifies oversized text is deferred and normal
   transcripts are not sliced by a shared run-level character cap.
-- Source-folder hygiene gap found during live QA: text sidecar files in the configured transcript
-  folder, such as downloader state/log files, are currently treated as transcript candidates because
-  the scanner intentionally passes text-like files through without semantic parsing. This needs a
-  product-level decision: keep the transcript folder transcript-only, move downloader state beside
-  the folder, or add explicit configurable ignore rules for operational sidecars.
+- Source-folder hygiene gap follow-up: the scanner still treats text-like files as transcript
+  candidates by default, but operator/dowloader sidecars can now be excluded with deterministic
+  relative-path ignore globs (`VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS` or
+  `--transcript-ignore-glob`). This keeps semantic judgment with the summarizer while preventing
+  known bookkeeping files from consuming transcript caps.
+
+## 2026-05-12 Inventory + Observability Follow-Up
+
+- Transcript summaries now carry optional agent-authored inventory metadata: display title,
+  one-line context, date/time, and participants when knowable.
+- Apply/no-op transcript runs refresh a source-scoped `meeting_inventory:*` file-search artifact
+  from current processed summary rows. The inventory is recall metadata, not saved memory.
+- Runtime file_search returns the inventory artifact directly from source metadata so broad
+  “what recent transcripts do you see?” questions have a complete list/TOC surface before semantic
+  summary retrieval.
+- Failed hardening runs now persist redacted failure artifacts (`summary.json`,
+  `failure.redacted.json`, `run-log.redacted.jsonl`) with phase/reason/status/timeout details.
+- Synthetic regressions added for source-folder sidecar ignore, broad transcript inventory, and
+  failed-run durability.
 
 ## 2026-05-07 Missing-Vector Repair Evidence
 

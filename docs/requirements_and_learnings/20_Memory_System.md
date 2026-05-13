@@ -71,10 +71,11 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   while preserving the transcript as soft meeting evidence.
 - The runtime does no semantic parsing, column detection, participant extraction, or filename
   interpretation. CSV, TXT, MD, JSON, VTT, SRT, and similar text files are all data for the model.
-- The configured transcript folder is expected to contain transcript artifacts, not downloader
-  state or operational logs. Text sidecars in that folder are intentionally treated as untrusted
-  candidate evidence and can consume transcript caps; download routines should keep their state in
-  a sibling state folder unless an explicit ignore-rule feature is added.
+- The configured transcript folder is expected to contain transcript artifacts. Downloader state or
+  operational logs should live outside the source folder when possible. When a downloader must leave
+  bookkeeping beside transcript files, `VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS` or
+  `--transcript-ignore-glob` can exclude relative path globs deterministically. Ignore rules are
+  path/lifecycle bookkeeping only; they must not parse transcript content or infer meeting meaning.
 - Transcript evidence is softer than chat evidence. A single transcript can support
   meeting-scoped `moments` or `context`; stable beliefs, identity, direction, or durable preferences
   require either two recent meeting transcripts or transcript plus chat evidence.
@@ -108,12 +109,21 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - Transcript RAG defaults to `detailed_summary_only`: the runtime file-search database stores and
   attaches detailed summary artifacts by default. `raw_and_summary` and `raw_only` are explicit
   QA/operator modes.
+- Each detailed summary also carries agent-authored inventory fields when knowable: display title,
+  one-line context, meeting date/time, and participants. The hardener builds a current
+  user/source-scoped `meeting_inventory:*` file-search artifact from processed summary metadata.
+  That inventory is a transcript-recall table of contents, not a saved-memory key, so it can be
+  regenerated, repaired, and stale-pruned with the vector lifecycle without polluting durable memory.
 - If detailed meeting summaries and derived conversation recall both return file_search hits,
   ranking must remain evidence-based: low-signal assistant no-access/no-memory disclaimers should
   not outrank current transcript content, but transcript source class must not blanket-override
   stronger chat-history evidence.
 - Transcript vector upload temp files are private local artifacts and must be written with explicit
   owner-only permissions.
+- Every hardening run should leave an inspectable local run directory. Failed runs must persist a
+  redacted `summary.json`, `failure.redacted.json`, and `run-log.redacted.jsonl` with phase, reason,
+  error class, timeout/status/signal when available, and message hash/preview without leaking
+  private paths, account identifiers, secrets, or transcript text.
 
 ### Listen-Only call transcript evidence
 
@@ -342,7 +352,7 @@ both code and QA:
 - The owned product fix is:
   - treat Anthropic default thinking as active when sanitizing memory-writer config
   - remove `temperature` whenever Anthropic thinking is active by default or explicitly
-  - for adaptive-era Anthropic models currently used by Viventium memory (`claude-sonnet-4-6`),
+  - for adaptive-era Anthropic models currently used by Viventium memory (`claude-sonnet-4-5`),
     omit explicit `temperature` entirely from the shipped memory-writer config so fresh installs do
     not rely on runtime stripping to stay valid
   - if the memory run is also forcing tool use, remove `thinking` entirely instead of setting it to

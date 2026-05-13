@@ -32,6 +32,18 @@
     {
       "id": "mixed-source-relevance-ranking",
       "expect": "When meeting transcript summaries and derived conversation recall both return hits, ranking remains evidence-based and current detailed transcript content outranks stale assistant no-access disclaimers."
+    },
+    {
+      "id": "source-backed-inventory",
+      "expect": "A meeting_inventory resource returns the transcript TOC/list as source-backed evidence even when vector similarity returns no summary hits."
+    },
+    {
+      "id": "inventory-does-not-crowd-focused-summary",
+      "expect": "For narrow meeting-detail questions, a highly relevant meeting_summary hit appears ahead of the source-backed inventory."
+    },
+    {
+      "id": "configured-sidecar-ignore",
+      "expect": "Configured relative-path ignore globs exclude downloader bookkeeping sidecars without parsing transcript semantics."
     }
   ]
 }

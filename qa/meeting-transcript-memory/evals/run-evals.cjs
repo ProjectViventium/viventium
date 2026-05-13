@@ -315,6 +315,144 @@ const checks = {
       'first source should expose the current detailed meeting summary',
     );
   },
+
+  'source-backed-inventory': async () => {
+    let vectorQueryCount = 0;
+    const { createFileSearchTool } = loadFileSearchWithMocks({
+      axiosPost: async () => {
+        vectorQueryCount += 1;
+        return { data: [] };
+      },
+    });
+    const tool = await createFileSearchTool({
+      userId: 'qa-user',
+      files: [
+        {
+          file_id: 'meeting_inventory:qa:sourcehash',
+          filename: 'meeting-transcript-inventory-sourcehash.txt',
+          metadata: {
+            meetingTranscriptArtifactId: 'meeting_transcript_inventory:current',
+            meetingTranscriptKind: 'inventory',
+            meetingTranscriptDisplayTitle: 'Meeting transcript inventory',
+            meetingTranscriptOneLineSummary: 'Current transcript list.',
+            meetingTranscriptInventoryText: [
+              'Meeting transcript inventory / table of contents.',
+              'Current processed transcript summaries: 2',
+              '1. Project Lantern review',
+              '   Date/time: 2026-05-05T18:30:00.000Z',
+              '   Participants: Sam, Lee',
+              '   Context: Tuesday launch checklist and stale Monday plan.',
+              '2. Partner discovery call',
+              '   Participants: Avery, Morgan',
+              '   Context: Use-case priorities for a second meeting.',
+            ].join('\n'),
+          },
+        },
+        {
+          file_id: 'meeting_summary:qa:alpha',
+          filename: 'meeting-transcript-summary-alpha.txt',
+          metadata: {
+            meetingTranscriptArtifactId: 'meeting_transcript:alpha',
+            meetingTranscriptKind: 'summary',
+          },
+        },
+      ],
+    });
+    const [formatted, artifact] = await tool.func({
+      query: 'what recent transcripts do you see?',
+    });
+    assert(vectorQueryCount === 1, 'inventory should be returned from metadata, only summary should query vector API');
+    assert(formatted.includes('Transcript artifact kind: inventory'), 'inventory result should be clearly labeled');
+    assert(formatted.includes('Current processed transcript summaries: 2'), 'inventory count should be visible');
+    assert(formatted.includes('Project Lantern review'), 'inventory should list transcript entries');
+    assert(
+      artifact?.file_search?.sources?.[0]?.fileId === 'meeting_inventory:qa:sourcehash',
+      'first source artifact should be the inventory file',
+    );
+  },
+
+  'inventory-does-not-crowd-focused-summary': async () => {
+    const { createFileSearchTool } = loadFileSearchWithMocks({
+      axiosPost: async () => ({
+        data: [
+          [
+            {
+              page_content:
+                '10:00 Sam said the Tuesday launch checklist is current and the Monday plan is stale.',
+              metadata: { source: '/safe/meeting-transcript-summary-alpha.txt', page: 1 },
+            },
+            0.05,
+          ],
+        ],
+      }),
+    });
+    const tool = await createFileSearchTool({
+      userId: 'qa-user',
+      files: [
+        {
+          file_id: 'meeting_inventory:qa:sourcehash',
+          filename: 'meeting-transcript-inventory-sourcehash.txt',
+          metadata: {
+            meetingTranscriptArtifactId: 'meeting_transcript_inventory:current',
+            meetingTranscriptKind: 'inventory',
+            meetingTranscriptInventoryText:
+              '1. Project Lantern review\n   Participants: Sam, Lee\n   Context: Launch checklist.',
+          },
+        },
+        {
+          file_id: 'meeting_summary:qa:alpha',
+          filename: 'meeting-transcript-summary-alpha.txt',
+          metadata: {
+            meetingTranscriptArtifactId: 'meeting_transcript:alpha',
+            meetingTranscriptKind: 'summary',
+          },
+        },
+      ],
+    });
+    const [formatted, artifact] = await tool.func({
+      query: 'what did Sam say about the Tuesday launch checklist?',
+    });
+    assert(
+      formatted.indexOf('meeting-transcript-summary-alpha.txt') <
+        formatted.indexOf('meeting-transcript-inventory-sourcehash.txt'),
+      'focused summary result should be ranked ahead of inventory',
+    );
+    assert(
+      artifact?.file_search?.sources?.[0]?.fileId === 'meeting_summary:qa:alpha',
+      'first source should be the focused meeting summary',
+    );
+  },
+
+  'configured-sidecar-ignore': () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'viventium-transcript-eval-ignore-'));
+    const stateDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'viventium-transcript-eval-ignore-state-'),
+    );
+    try {
+      fs.mkdirSync(path.join(tempDir, 'state'), { recursive: true });
+      fs.writeFileSync(path.join(tempDir, 'meeting.txt'), 'Speaker A: real transcript.', 'utf8');
+      fs.writeFileSync(path.join(tempDir, '.transcript_state.json'), '{"hidden":true}', 'utf8');
+      fs.writeFileSync(path.join(tempDir, 'state', 'index.json'), '{"downloaded":true}', 'utf8');
+      const scan = hardener.scanTranscriptDirectory({
+        user: { _id: '507f1f77bcf86cd799439011', email: 'qa@example.com', name: 'QA User' },
+        options: {
+          transcriptsDir: tempDir,
+          transcriptIgnoreGlobs: ['state/**'],
+          transcriptMaxFilesPerRun: 20,
+          transcriptMaxCharsPerFile: 500000,
+          transcriptSummaryMaxChars: 32000,
+        },
+        now: new Date('2026-05-05T12:00:00Z'),
+        transcriptStateDir: stateDir,
+      });
+      assert(scan.transcripts.length === 1, 'ignore globs should leave only the real transcript');
+      assert(scan.transcripts[0].filename === 'meeting.txt', 'sidecar should not become transcript evidence');
+      assert(scan.telemetry.files_ignored_by_config === 2, 'ignore count should be observable');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  },
 };
 
 async function main() {
