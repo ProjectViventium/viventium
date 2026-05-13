@@ -38,6 +38,10 @@
       "expect": "A meeting_inventory resource returns the transcript TOC/list as source-backed evidence even when vector similarity returns no summary hits."
     },
     {
+      "id": "broad-chronological-inventory-retrieval-contract",
+      "expect": "Broad queries such as 'list my recent conversations based on transcripts chronologically' retrieve an inventory payload with every transcript's title, date/time, participants, and one-line context so the assistant can answer in chronological summary form."
+    },
+    {
       "id": "inventory-does-not-crowd-focused-summary",
       "expect": "For narrow meeting-detail questions, a highly relevant meeting_summary hit appears ahead of the source-backed inventory."
     },

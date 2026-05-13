@@ -34,6 +34,11 @@ Validates the local transcript memory lane:
    case explicitly requires owner-account parity after backup.
 12. The fixture evals are executable and fail when an expected transcript-quality assertion lacks a
     runner.
+13. After an on-demand transcript ingest, broad questions such as "list my recent conversations
+    based on transcripts chronologically and give me a 5 line summary based on the actual context"
+    retrieve the transcript inventory, enumerate processed transcript entries with date/time,
+    participants, and one-line context, and preserve the transcript caveat instead of answering from
+    a few semantically lucky chunks.
 
 ### Item 7/8 RAG Quality Addendum
 
@@ -89,8 +94,25 @@ node qa/meeting-transcript-memory/evals/run-live-browser-qa.cjs --headless --cli
 
 It fails closed unless an explicit owner-account refusal guard and an explicit non-owner QA account
 are supplied, then seeds synthetic summary-only transcript artifacts into that QA account, verifies
-broad inventory and focused detail recall through the visible LibreChat UI, and writes public-safe
-results under `qa/meeting-transcript-memory/reports/`.
+the chronological recent-transcripts inventory question, broad inventory recall, and focused detail
+recall through the visible LibreChat UI, and writes public-safe results under
+`qa/meeting-transcript-memory/reports/`.
+
+## 2026-05-13 Chronological Transcript Recall Evidence
+
+- `bin/viventium status`: ready; LibreChat frontend on `localhost:<port>`, API on
+  `localhost:<port>`, and Conversation Recall/RAG on `localhost:<port>`.
+- `node qa/meeting-transcript-memory/evals/run-evals.cjs`: pass, 11/11 executable public-safe evals,
+  including `broad-chronological-inventory-retrieval-contract`.
+- Live browser QA with the non-owner QA account passed:
+  `qa/meeting-transcript-memory/reports/2026-05-13-live-browser-qa-2026-05-13T03-13-06-493Z.md`.
+- The live browser answer for the chronological recent-transcripts prompt used `file_search`,
+  retrieved the transcript inventory, listed all seeded transcript entries, ordered them
+  chronologically, included visible dates, participants, and meeting context, stayed near the
+  requested concise-summary shape, and preserved the transcript caveat. This prompt uses the raw
+  user-facing wording from MTM-007 rather than an explicit "use file_search" instruction.
+- Owner meeting-transcript count remained unchanged, prior synthetic QA artifacts were cleaned
+  before seeding, and default recall mode still uploaded zero raw transcript artifacts.
 
 ## 2026-05-12 Local Live QA Evidence
 

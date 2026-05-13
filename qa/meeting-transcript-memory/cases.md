@@ -83,3 +83,21 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   file_search source attachments, and public-safe recovery note.
 - Last run: 2026-05-12, live browser regression passed in
   `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T02-30-02-460Z.md`.
+
+## MTM-007: Chronological Recent Transcript Summary Must Use Inventory Context
+
+- Scenario: After `Ingest Meeting Transcripts` or the equivalent on-demand hardener path has
+  processed new transcript summaries, the user asks: "list my recent conversations based on
+  transcripts chronologically and give me a 5 line summary based on the actual context."
+- Expected outcome: The assistant uses `file_search`, retrieves the meeting transcript inventory,
+  lists the processed transcript entries in the requested chronological order, includes visible
+  date/time, participants, and one-line meeting context for each entry, and adds a transcript
+  caveat line.
+- Forbidden result: The answer relies on only a few semantic summary chunks, omits known processed
+  transcripts from the current source folder, loses who/when/context, or treats transcript-only
+  statements as durable user beliefs.
+- Evidence to capture: visible browser answer, file_search tool call, inventory source count,
+  source-backed inventory payload, answer-shape checks, and owner-account untouched check.
+- Last run: 2026-05-13, executable eval and live browser QA passed in
+  `qa/meeting-transcript-memory/evals/run-evals.cjs` and
+  `qa/meeting-transcript-memory/reports/2026-05-13-live-browser-qa-2026-05-13T03-13-06-493Z.md`.
