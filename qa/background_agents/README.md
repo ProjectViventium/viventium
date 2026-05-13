@@ -45,7 +45,7 @@ sarcasm, denial, and recent-context carryover.
   not drift onto Anthropic/Google-only `thinkingBudget`.
 - When Anthropic is the execution family, only `Red Team`, `Deep Research`, and `Strategic
   Planning` may use `claude-opus-4-7`; other background agents must stay on
-  `claude-sonnet-4-6`.
+  `claude-sonnet-4-5`.
 - Built-in background-agent provider rewrites must replace provider-specific `model_parameters`
   with the canonical bag for the final provider family instead of blindly merging stale keys.
 - Local LibreChat startup must continue sourcing built-in agent truth from
@@ -59,8 +59,8 @@ sarcasm, denial, and recent-context carryover.
 
 ## Test Cases
 
-1. Anthropic endpoint tests verify Sonnet 4.6 and Opus 4.7 remove `temperature` when default
-   thinking becomes active.
+1. Anthropic endpoint tests verify Sonnet 4.5 removes `temperature` when enabled thinking becomes
+   active, and Opus 4.7 removes `temperature` for adaptive thinking.
 2. Memory-agent tests verify Anthropic adaptive thinking also strips `temperature`, while disabled
    thinking does not.
 3. Background-cortex service tests verify both:

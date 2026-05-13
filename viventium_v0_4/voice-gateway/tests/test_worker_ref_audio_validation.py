@@ -274,6 +274,31 @@ class TestRefAudioValidation(unittest.TestCase):
         tts_cls.assert_not_called()
         self.assertNotIn("prewarmed_local_chatterbox_tts", proc.userdata)
 
+    def test_prewarm_process_fails_closed_on_local_whisper_prewarm_failure(self) -> None:
+        proc = SimpleNamespace(userdata={})
+        fake_prewarm = Mock(side_effect=RuntimeError("bad local model"))
+        fake_pywhispercpp_provider = SimpleNamespace(prewarm_model=fake_prewarm)
+
+        with (
+            patch(
+                "worker.load_env",
+                return_value=SimpleNamespace(
+                    stt_provider="whisper_local",
+                    stt_model="large-v3-turbo",
+                    tts_provider="openai",
+                    tts_provider_fallback="",
+                    mlx_audio_model_id="",
+                    voice_prewarm_local_tts=False,
+                ),
+            ),
+            patch("worker.load_vad", return_value=None),
+            patch.dict(sys.modules, {"pywhispercpp_provider": fake_pywhispercpp_provider}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "worker will not register"):
+                prewarm_process(proc)
+
+        fake_prewarm.assert_called_once_with("large-v3-turbo")
+
     def test_apply_requested_voice_route_uses_available_requested_variants(self) -> None:
         with patch.dict(
             os.environ,
@@ -445,6 +470,29 @@ class TestRefAudioValidation(unittest.TestCase):
                 and "(Recommended)" in variant["label"]
                 for variant in whisper_capability["variants"]
             )
+        )
+
+    def test_load_env_preserves_selected_local_whisper_model(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                "VIVENTIUM_STT_MODEL": "large-v3-turbo",
+            },
+            clear=True,
+        ):
+            env = load_env()
+            capabilities = _build_voice_capability_catalog(env)
+
+        self.assertEqual(env.stt_model, "large-v3-turbo")
+        whisper_capability = next(
+            entry
+            for entry in capabilities
+            if entry["modality"] == "stt" and entry["id"] == "pywhispercpp"
+        )
+        self.assertEqual(whisper_capability["variants"][0]["id"], "large-v3-turbo")
+        self.assertTrue(
+            any(variant["id"] == "large-v3-turbo" for variant in whisper_capability["variants"])
         )
 
     def test_build_configured_voice_route_metadata_matches_runtime_env(self) -> None:

@@ -87,6 +87,18 @@ _TURN_DETECTOR_RUNNER_NAME = "lk_end_of_utterance_multilingual"
 _LOCAL_WHISPER_STT_PROVIDERS = {"pywhispercpp", "whisper_local"}
 _LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
 _LOCAL_WHISPER_VAD_MIN_SILENCE_S = "1.0"
+_LOCAL_WHISPER_MODELS = (
+    "tiny.en",
+    "base.en",
+    "small",
+    "small.en",
+    "medium",
+    "medium.en",
+    "large-v3",
+    "large-v3-q5_0",
+    "large-v3-turbo",
+    "large-v3-turbo-q5_0",
+)
 _TURN_DETECTOR_REQUIRED_ROOT_FILES = (
     "config.json",
     "languages.json",
@@ -746,8 +758,23 @@ def _normalize_stt_provider(provider: str) -> str:
 
 def _default_local_stt_model() -> str:
     if platform.machine().lower() == "x86_64":
-        return "tiny.en"
+        return "small"
     return "large-v3-turbo"
+
+
+def _normalize_local_stt_model(model_name: str) -> str:
+    return (model_name or "").strip() or _default_local_stt_model()
+
+
+def _local_whisper_model_variants(recommended_model: str) -> list[tuple[str, str]]:
+    ordered_models = [recommended_model, *_LOCAL_WHISPER_MODELS]
+    return [
+        (
+            model_id,
+            _local_whisper_variant_label(model_id, recommended_model=recommended_model),
+        )
+        for model_id in ordered_models
+    ]
 
 
 def _dedupe_variants(*values: Any) -> list[dict[str, str]]:
@@ -781,9 +808,14 @@ def _local_whisper_variant_label(model_id: str, *, recommended_model: str) -> st
     labels = {
         "tiny.en": "Fastest",
         "base.en": "Light",
+        "small": "Balanced",
         "small.en": "Balanced",
         "medium": "More accurate",
+        "medium.en": "More accurate",
+        "large-v3": "Highest accuracy",
+        "large-v3-q5_0": "Highest accuracy quantized",
         "large-v3-turbo": "Best quality",
+        "large-v3-turbo-q5_0": "Best quality quantized",
     }
     descriptor = labels.get(model_key)
     if descriptor:
@@ -880,7 +912,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
     has_pywhispercpp = importlib.util.find_spec("pywhispercpp") is not None
     has_mlx_audio = importlib.util.find_spec("mlx_audio") is not None
     apple_silicon = sys.platform == "darwin" and platform.machine().lower() == "arm64"
-    recommended_local_stt_model = env.stt_model or _default_local_stt_model()
+    recommended_local_stt_model = _normalize_local_stt_model(env.stt_model)
 
     capabilities: list[dict[str, Any]] = [
         {
@@ -918,26 +950,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "available": has_pywhispercpp,
             "unavailableReason": None if has_pywhispercpp else "pywhispercpp package not installed",
             "variantLabel": _provider_variant_type("pywhispercpp", modality="stt"),
-            "variants": _dedupe_variants(
-                (
-                    recommended_local_stt_model,
-                    _local_whisper_variant_label(
-                        recommended_local_stt_model,
-                        recommended_model=recommended_local_stt_model,
-                    ),
-                ),
-                ("tiny.en", _local_whisper_variant_label("tiny.en", recommended_model=recommended_local_stt_model)),
-                ("base.en", _local_whisper_variant_label("base.en", recommended_model=recommended_local_stt_model)),
-                ("small.en", _local_whisper_variant_label("small.en", recommended_model=recommended_local_stt_model)),
-                ("medium", _local_whisper_variant_label("medium", recommended_model=recommended_local_stt_model)),
-                (
-                    "large-v3-turbo",
-                    _local_whisper_variant_label(
-                        "large-v3-turbo",
-                        recommended_model=recommended_local_stt_model,
-                    ),
-                ),
-            ),
+            "variants": _dedupe_variants(*_local_whisper_model_variants(recommended_local_stt_model)),
         },
         {
             "id": "openai",
@@ -1450,7 +1463,7 @@ def load_env() -> Env:
         or "http://localhost:3180",
         call_session_secret=os.getenv("VIVENTIUM_CALL_SESSION_SECRET", "").strip(),
         stt_provider=stt_provider.strip() or "whisper_local",
-        stt_model=(os.getenv("VIVENTIUM_STT_MODEL", "").strip() or _default_local_stt_model()),
+        stt_model=_normalize_local_stt_model(os.getenv("VIVENTIUM_STT_MODEL", "")),
         stt_language=(os.getenv("VIVENTIUM_STT_LANGUAGE", "en").strip() or "en"),
         openai_stt_model=os.getenv("VIVENTIUM_OPENAI_STT_MODEL", "gpt-4o-mini-transcribe").strip()
         or "gpt-4o-mini-transcribe",
@@ -1874,7 +1887,10 @@ def build_stt_selection(env: Env, vad: Optional[Any]) -> tuple[Any, str]:
                 "pywhispercpp",
             )
         except Exception as exc:
-            logger.warning("PyWhisperCpp STT unavailable: %s", exc)
+            raise RuntimeError(
+                "Local Whisper.cpp STT was selected but could not be made ready. "
+                "The voice gateway will not silently switch to another STT provider."
+            ) from exc
 
     if provider == "whisperlivekit":
         logger.warning("whisperlivekit STT not bundled in voice-gateway; falling back.")
@@ -1921,7 +1937,17 @@ def prewarm_process(proc: JobProcess) -> None:
             "[voice-gateway] Prewarming local whisper.cpp STT model (%s)",
             env.stt_model,
         )
-        prewarm_model(env.stt_model)
+        try:
+            prewarm_model(env.stt_model)
+        except Exception as exc:
+            logger.error(
+                "[voice-gateway] Local whisper.cpp STT prewarm failed for %s; refusing to register an unhealthy local STT worker: %s",
+                env.stt_model,
+                exc,
+            )
+            raise RuntimeError(
+                f"Local Whisper.cpp STT prewarm failed for {env.stt_model}; worker will not register."
+            ) from exc
 
     tts_providers = {
         _normalize_voice_provider(env.tts_provider),

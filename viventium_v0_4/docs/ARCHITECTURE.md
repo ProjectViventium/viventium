@@ -99,7 +99,14 @@ Implementation references:
 ## Activation Detection Payload
 - Each activation check is an LLM classification that returns JSON:
   - `activate` (boolean), `confidence` (0..1), `reason` (short string).
-- Detection uses the most recent messages capped by `activation.max_history`.
+- Detection receives the most recent messages capped by `activation.max_history`, but the latest
+  human/user message is the only activation decision subject.
+- Earlier turns are context only. They may resolve references in the latest message, but they must
+  not reactivate a cortex just because an older activation-worthy user request still appears in
+  history.
+- The shared decision-subject rule is source-owned at
+  `config.viventium.background_cortices.activation_subject_rule.prompt` and is injected into every
+  cortex activation prompt before `## Latest User Intent` and `## Recent Conversation`.
 
 ## Export Formatting
 - Background updates are converted to readable text during export in `useExportConversation.ts`.

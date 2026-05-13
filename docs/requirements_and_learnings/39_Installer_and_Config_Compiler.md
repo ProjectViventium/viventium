@@ -653,7 +653,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
     running helper logs showed the unsupported-provider initialization failure
   - after the compiler/runtime fix and restart, the generated runtime pointed memory at
-    `anthropic / claude-sonnet-4-6`
+    `anthropic / claude-sonnet-4-5`
   - the saved-memory path then ran through product code without manual App Support or Mongo edits
 - On April 9, 2026, the same ownership rule extended to local-first conversation recall:
   - the compiler must emit the selected retrieval embeddings provider/model explicitly

@@ -195,16 +195,16 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     expected = {
-        "agent_viventium_background_analysis_95aeb3": ("anthropic", "claude-sonnet-4-6"),
-        "agent_viventium_confirmation_bias_95aeb3": ("anthropic", "claude-sonnet-4-6"),
+        "agent_viventium_background_analysis_95aeb3": ("anthropic", "claude-sonnet-4-5"),
+        "agent_viventium_confirmation_bias_95aeb3": ("anthropic", "claude-sonnet-4-5"),
         "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.4"),
         "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.4"),
         "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.4"),
         "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.4"),
-        "agent_viventium_pattern_recognition_95aeb3": ("anthropic", "claude-sonnet-4-6"),
-        "agent_viventium_emotional_resonance_95aeb3": ("anthropic", "claude-sonnet-4-6"),
+        "agent_viventium_pattern_recognition_95aeb3": ("anthropic", "claude-sonnet-4-5"),
+        "agent_viventium_emotional_resonance_95aeb3": ("anthropic", "claude-sonnet-4-5"),
         "agent_viventium_strategic_planning_95aeb3": ("anthropic", "claude-opus-4-7"),
-        "agent_viventium_support_95aeb3": ("anthropic", "claude-sonnet-4-6"),
+        "agent_viventium_support_95aeb3": ("anthropic", "claude-sonnet-4-5"),
         "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.4"),
     }
 
@@ -228,7 +228,7 @@ def test_background_agent_execution_models_stay_within_launch_ready_families() -
     agents_by_id = _load_background_agents_by_id()
 
     allowed = {
-        ("anthropic", "claude-sonnet-4-6"),
+        ("anthropic", "claude-sonnet-4-5"),
         ("anthropic", "claude-opus-4-7"),
         ("openAI", "gpt-5.4"),
     }

@@ -19,12 +19,14 @@
 ## Interpretation
 
 - Coverage in this matrix is activation coverage, not full execution QA.
-- Cases with outcome assertions (`ACT-13`, `ACT-14`, `ACT-15`, `ACT-16`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-21`) are promoted incident regressions. They
+- Cases with outcome assertions (`ACT-13`, `ACT-14`, `ACT-15`, `ACT-16`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-21`, `ACT-22`) are promoted incident regressions. They
   are not satisfied by an activation-only pass; QA must verify user-visible quality, named cortex
   visibility, durable `messages.content` persistence, first-response speed, and preservation of the
   original Phase A parent answer when background cards attach.
 - `ACT-21` specifically protects the configurable `activation.max_history` feature: history may
   provide context, but the latest human/user message is the activation decision subject.
+- `ACT-22` protects QA observability itself: visible provider/auth environment blockers must be
+  reported as blocked evidence, not as ambiguous missing-conversation failures.
 - Productivity agents require separate execution and connected-account verification after activation.
 - Provider and real-browser evidence for the current shipped activation family is recorded in:
   - `qa/background_agents/visible_cards_browser_qa_2026-05-10.md`

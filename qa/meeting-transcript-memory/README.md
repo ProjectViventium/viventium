@@ -78,6 +78,20 @@ uv run --with pytest --with pyyaml python -m pytest tests/release/test_config_co
    trap question. Expected: Viventium recalls meeting-scoped context but does not convert
    transcript-only language into stable identity unless corroborated.
 
+The reusable live browser harness is:
+
+```bash
+VIVENTIUM_QA_ALLOW_LOCAL_JWT=1 \
+VIVENTIUM_QA_OWNER_EMAIL=<owner-account-email> \
+VIVENTIUM_QA_EMAIL=<qa-account-email> \
+node qa/meeting-transcript-memory/evals/run-live-browser-qa.cjs --headless --client-base http://localhost:3190 --api-base http://localhost:3180
+```
+
+It fails closed unless an explicit owner-account refusal guard and an explicit non-owner QA account
+are supplied, then seeds synthetic summary-only transcript artifacts into that QA account, verifies
+broad inventory and focused detail recall through the visible LibreChat UI, and writes public-safe
+results under `qa/meeting-transcript-memory/reports/`.
+
 ## 2026-05-06 Final-Pass Evidence
 
 - `node --check viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js`: pass

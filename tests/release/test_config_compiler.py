@@ -47,6 +47,7 @@ CONFIG_COMPILER_SPEC = importlib.util.spec_from_file_location(
 assert CONFIG_COMPILER_SPEC and CONFIG_COMPILER_SPEC.loader
 config_compiler = importlib.util.module_from_spec(CONFIG_COMPILER_SPEC)
 CONFIG_COMPILER_SPEC.loader.exec_module(config_compiler)
+START_SCRIPT = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
 
 
 def write_config(path: Path, payload: dict) -> None:
@@ -107,6 +108,19 @@ def test_source_prompt_refs_allow_plain_values_when_registry_is_missing() -> Non
     assert config_compiler.resolve_source_prompt_refs({"instructions": "plain"}, {}) == {
         "instructions": "plain"
     }
+
+
+def test_direct_launcher_regenerates_canonical_runtime_before_loading_env() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+
+    assert "regenerate_canonical_runtime_env_if_needed" in script
+    assert 'VIVENTIUM_CANONICAL_ENV_LOCK_EXISTING_KEYS:-}" == "1"' in script
+    assert 'VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"' in script
+    assert 'VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH=""' in script
+    assert '"$PYTHON_BIN" "$compiler" --config "$canonical_config_file" --output-dir "$canonical_runtime_dir"' in script
+    assert script.index("regenerate_canonical_runtime_env_if_needed\n# === VIVENTIUM END ===") < script.index(
+        "# Load .env first, then .env.local"
+    )
 
 
 def source_of_truth_built_in_agent_map() -> dict[str, str]:
@@ -601,7 +615,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert built_in_agents == source_of_truth_built_in_agent_map()
     assert "azureOpenAI" not in librechat_yaml["endpoints"]
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
     assert all(
         item.get("preset", {}).get("endpoint") != "azureOpenAI"
         for item in librechat_yaml["modelSpecs"]["list"]
@@ -1021,7 +1035,7 @@ def test_render_librechat_yaml_preserves_defaults_and_overlays_compiled_memory_a
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
     assert librechat_yaml["viventium"]["background_cortices"]["activation_format"]["brew_begin_tag"]
     assert librechat_yaml["balance"]["enabled"] is False
     assert librechat_yaml["balance"]["startBalance"] == 200000
@@ -1067,13 +1081,13 @@ def test_build_agent_assignments_anthropic_only_uses_current_claude47_profile() 
     assignments = config_compiler.build_agent_assignments(config)
 
     assert assignments["conscious"] == ("anthropic", "claude-opus-4-7")
-    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["red_team"] == ("anthropic", "claude-opus-4-7")
     assert assignments["deep_research"] == ("anthropic", "claude-opus-4-7")
-    assert assignments["productivity"] == ("anthropic", "claude-sonnet-4-6")
-    assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["productivity"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-7")
-    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
 
 def test_build_agent_assignments_requires_openai_or_anthropic_foundation() -> None:
@@ -1294,13 +1308,13 @@ def test_render_runtime_env_exports_explicit_background_role_assignments() -> No
     env = config_compiler.render_runtime_env(config, assignments)
 
     assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"] == "anthropic"
-    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "claude-sonnet-4-6"
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "claude-sonnet-4-5"
     assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_PROVIDER"] == "openai"
     assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_MODEL"] == "gpt-5.4"
     assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_PROVIDER"] == "openai"
     assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_MODEL"] == "gpt-5.4"
     assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_PROVIDER"] == "anthropic"
-    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] == "claude-sonnet-4-6"
+    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] == "claude-sonnet-4-5"
     assert env["VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER"] == "groq"
     assert env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] == "meta-llama/llama-4-scout-17b-16e-instruct"
 
@@ -1344,17 +1358,17 @@ def test_build_agent_assignments_use_current_generation_models() -> None:
     assignments = config_compiler.build_agent_assignments(config)
 
     assert assignments["conscious"] == ("anthropic", "claude-opus-4-7")
-    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-6")
-    assert assignments["confirmation_bias"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["confirmation_bias"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["red_team"] == ("openai", "gpt-5.4")
     assert assignments["deep_research"] == ("openai", "gpt-5.4")
     assert assignments["productivity"] == ("openai", "gpt-5.4")
     assert assignments["parietal"] == ("openai", "gpt-5.4")
-    assert assignments["pattern_recognition"] == ("anthropic", "claude-sonnet-4-6")
-    assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["pattern_recognition"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-7")
-    assert assignments["support"] == ("anthropic", "claude-sonnet-4-6")
-    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["support"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
 def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> None:
     config = {
@@ -1394,7 +1408,7 @@ def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> No
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-6")
+    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
 
 def test_build_agent_assignments_limits_anthropic_opus_background_usage() -> None:
@@ -1631,9 +1645,9 @@ def test_prune_unavailable_source_defaults_preserves_anthropic_for_connected_acc
         "modelSpecs": {
             "list": [
                 {
-                    "name": "claude-sonnet-4-6",
-                    "label": "Claude Sonnet 4 6",
-                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-6"},
+                    "name": "claude-sonnet-4-5",
+                    "label": "Claude Sonnet 4.5",
+                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-5"},
                 },
                 {
                     "name": "viventium",
@@ -1642,7 +1656,7 @@ def test_prune_unavailable_source_defaults_preserves_anthropic_for_connected_acc
             ],
             "addedEndpoints": ["agents", "anthropic", "openAI"],
         },
-        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-6"}},
+        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-5"}},
     }
     preserved = config_compiler.prune_unavailable_source_defaults(
         payload,
@@ -1664,9 +1678,9 @@ def test_prune_unavailable_source_defaults_prunes_unusable_anthropic_direct_entr
         "modelSpecs": {
             "list": [
                 {
-                    "name": "claude-sonnet-4-6",
-                    "label": "Claude Sonnet 4 6",
-                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-6"},
+                    "name": "claude-sonnet-4-5",
+                    "label": "Claude Sonnet 4.5",
+                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-5"},
                 },
                 {
                     "name": "viventium",
@@ -1675,7 +1689,7 @@ def test_prune_unavailable_source_defaults_prunes_unusable_anthropic_direct_entr
             ],
             "addedEndpoints": ["agents", "anthropic", "openAI"],
         },
-        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-6"}},
+        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-5"}},
     }
     pruned = config_compiler.prune_unavailable_source_defaults(
         payload,
@@ -1694,9 +1708,9 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
         "modelSpecs": {
             "list": [
                 {
-                    "name": "claude-sonnet-4-6",
-                    "label": "Claude Sonnet 4 6",
-                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-6"},
+                    "name": "claude-sonnet-4-5",
+                    "label": "Claude Sonnet 4.5",
+                    "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-5"},
                 },
                 {
                     "name": "claude-opus-4-7",
@@ -1705,19 +1719,19 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
                 },
             ]
         },
-        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-6"}},
+        "endpoints": {"anthropic": {"summaryModel": "claude-sonnet-4-5"}},
     }
     normalized = config_compiler.prune_unavailable_source_defaults(
         payload,
         {"ANTHROPIC_API_KEY": "anthropic-test"},
     )
     assert [entry["name"] for entry in normalized["modelSpecs"]["list"]] == [
-        "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
         "claude-opus-4-7",
     ]
-    assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Sonnet 4 6"
+    assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Sonnet 4.5"
     assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4 7"
-    assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-sonnet-4-6"
+    assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-sonnet-4-5"
 
 
 def test_source_of_truth_built_in_agent_avatars_use_portable_asset_paths() -> None:
@@ -2075,6 +2089,8 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
 
     assert telegram_codex_settings["bot"]["private_chat_only"] is True
     assert telegram_codex_settings["transcription"]["language"] == "en"
+    expected_local_whisper_model = "small" if platform.machine().lower() == "x86_64" else "large-v3-turbo"
+    assert telegram_codex_settings["transcription"]["model_name"] == expected_local_whisper_model
     assert telegram_codex_settings["runtime"]["stable_pairing_root"].endswith("state/telegram-codex/paired-users")
     assert telegram_codex_settings["runtime"]["legacy_paired_users_path"].endswith(
         "state/runtime/isolated/telegram-codex/state/paired_users.json"
@@ -2086,6 +2102,67 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in telegram_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-secret-2" in telegram_env
     assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in telegram_codex_env
+
+
+@pytest.mark.parametrize("stt_model", ["base.en", "large-v3-turbo"])
+def test_config_compiler_emits_local_voice_stt_model_override(tmp_path: Path, stt_model: str) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-secret-stt-model"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "groq-test",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "local",
+            "stt_provider": "whisper_local",
+            "stt_model": stt_model,
+            "tts_provider": "browser",
+        },
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_STT_PROVIDER=whisper_local" in runtime_env
+    assert f"VIVENTIUM_STT_MODEL={stt_model}" in runtime_env
 
 
 def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path) -> None:
@@ -3569,9 +3646,9 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "VIVENTIUM_MEMORY_HARDENING_MODEL=claude-opus-4-7" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
-    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-6"
+    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
 
 
 def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other_foundation_exists() -> None:
@@ -3610,9 +3687,9 @@ def test_render_librechat_yaml_uses_connected_anthropic_for_memory_when_no_other
     librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
 
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
-    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-6"
+    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
-    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-6"
+    assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
 
 
 def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_foundation_exists() -> None:

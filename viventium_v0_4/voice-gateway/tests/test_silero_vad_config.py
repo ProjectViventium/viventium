@@ -56,12 +56,19 @@ class TestSileroVadConfig(unittest.TestCase):
 
 
 class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
-    def test_intel_defaults_use_tiny_english_model(self) -> None:
+    def test_intel_defaults_use_smaller_local_model(self) -> None:
         with (
             mock.patch("pywhispercpp_provider.platform.machine", return_value="x86_64"),
             mock.patch.dict(os.environ, {}, clear=True),
         ):
-            self.assertEqual(pywhispercpp_provider._default_model_name(), "tiny.en")
+            self.assertEqual(pywhispercpp_provider._default_model_name(), "small")
+
+    def test_apple_silicon_defaults_use_best_local_model(self) -> None:
+        with (
+            mock.patch("pywhispercpp_provider.platform.machine", return_value="arm64"),
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            self.assertEqual(pywhispercpp_provider._default_model_name(), "large-v3-turbo")
 
     def test_get_stt_uses_shared_vad_kwargs(self) -> None:
         expected_kwargs = {
@@ -124,13 +131,18 @@ class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
         with (
             mock.patch("pywhispercpp_provider.platform.machine", return_value="x86_64"),
             mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(
+                pywhispercpp_provider,
+                "ensure_model_ready",
+                return_value="/tmp/ggml-small.bin",
+            ),
             mock.patch.object(pywhispercpp_provider, "Model", return_value="fake-model") as model_cls,
         ):
-            pywhispercpp_provider._MODEL = None
+            pywhispercpp_provider._MODEL_CACHE.clear()
             pywhispercpp_provider._get_model()
 
         self.assertEqual(model_cls.call_args.kwargs["n_threads"], 2)
-        pywhispercpp_provider._MODEL = None
+        pywhispercpp_provider._MODEL_CACHE.clear()
 
 
 if __name__ == "__main__":

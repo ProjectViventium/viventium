@@ -42,6 +42,9 @@ For installer, runtime, release, or publish-boundary work, also read:
   hostnames, personal emails, home-directory paths, laptop names, or secret-bearing command lines.
   Use public-safe placeholders such as `/path/to/viventium`, `~/Library/Application Support/...`,
   `<temp>`, `example.com`, and synthetic non-personal values.
+- Do not reuse QA accounts, brand names, business domains, customer names, or private operating
+  context from another project. Viventium repo, runtime QA, and public evidence must stay
+  Viventium-scoped unless a source-of-truth doc explicitly requires an integration boundary.
 - Treat credentials, passwords, tokens, and secrets that appear in chat as transient secrets. They
   must not be echoed into docs, tests, commits, QA artifacts, Claude prompts, or sub-agent handoffs.
 - If something is useful but not public-safe, move it to the designated

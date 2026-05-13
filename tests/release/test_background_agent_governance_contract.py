@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -26,9 +27,18 @@ RUNTIME_MODELS_SCRIPT_PATH = (
 AGENT_CLIENT_PATH = (
     ROOT / "viventium_v0_4" / "LibreChat" / "api" / "server" / "controllers" / "agents" / "client.js"
 )
+BACKGROUND_CORTEX_SERVICE = (
+    ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "api"
+    / "server"
+    / "services"
+    / "BackgroundCortexService.js"
+)
 
 APPROVED_EXECUTION_FAMILIES = {
-    ("anthropic", "claude-sonnet-4-6"),
+    ("anthropic", "claude-sonnet-4-5"),
     ("anthropic", "claude-opus-4-7"),
     ("openAI", "gpt-5.4"),
 }
@@ -84,6 +94,19 @@ def _extract_manifest_names(markdown_path: Path) -> list[str]:
 def _extract_scenario_ids(markdown_path: Path) -> set[str]:
     text = markdown_path.read_text(encoding="utf-8")
     return set(re.findall(r"^###\s+([A-Z]{2,3}-\d{2})\b", text, flags=re.MULTILINE))
+
+
+def _extract_js_joined_string_constant(js_path: Path, constant_name: str) -> str:
+    text = js_path.read_text(encoding="utf-8")
+    match = re.search(
+        rf"const\s+{re.escape(constant_name)}\s*=\s*\[(?P<body>.*?)\]\.join\(' '\);",
+        text,
+        flags=re.DOTALL,
+    )
+    assert match, f"Could not find JS string-array constant {constant_name!r}"
+    literals = re.findall(r"(?P<literal>'(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\")\s*,?", match.group("body"))
+    assert literals, f"Could not parse string literals for {constant_name!r}"
+    return " ".join(ast.literal_eval(literal) for literal in literals)
 
 
 def _load_runtime_models_contract() -> dict:
@@ -404,6 +427,45 @@ def test_all_background_activation_classifiers_keep_provider_fallbacks() -> None
         assert activation.get("fallbacks") == expected_fallbacks
 
 
+def test_activation_decision_subject_rule_is_source_owned_and_global() -> None:
+    raw_agents = yaml.safe_load(SOURCE_OF_TRUTH_PATH.read_text(encoding="utf-8"))
+    raw_librechat = yaml.safe_load(SOURCE_OF_TRUTH_LIBRECHAT_PATH.read_text(encoding="utf-8"))
+    expected_prompt_ref = {"promptRef": "cortex.background_activation_decision_subject"}
+
+    for source in (raw_agents, raw_librechat):
+        root = source.get("config") or source
+        rule = root["viventium"]["background_cortices"]["activation_subject_rule"]
+        assert rule["enabled"] is True
+        assert rule["prompt"] == expected_prompt_ref
+
+    for resolved in (_load_source_of_truth(), _load_librechat_source_of_truth()):
+        root = resolved.get("config") or resolved
+        rule = root["viventium"]["background_cortices"]["activation_subject_rule"]
+        prompt = rule["prompt"]
+        assert "Judge activation only for the latest human/user message" in prompt
+        assert "Use earlier \"Recent Conversation\" turns only to resolve references" in prompt
+        assert "Never activate only because an older user request appears in history" in prompt
+
+    service_source = BACKGROUND_CORTEX_SERVICE.read_text(encoding="utf-8")
+    assert "buildActivationDecisionSubjectSection" in service_source
+    assert "buildLatestUserIntentSection" in service_source
+    assert "getPromptText(promptId, fallback, variables)" in service_source
+
+
+def test_activation_decision_subject_fallback_matches_source_prompt_body() -> None:
+    resolved = _load_source_of_truth()
+    rule = resolved["config"]["viventium"]["background_cortices"]["activation_subject_rule"]
+    registry_prompt = " ".join(str(rule["prompt"]).split())
+    inline_fallback = " ".join(
+        _extract_js_joined_string_constant(
+            BACKGROUND_CORTEX_SERVICE,
+            "DEFAULT_ACTIVATION_DECISION_SUBJECT_RULE",
+        ).split()
+    )
+
+    assert inline_fallback == registry_prompt
+
+
 def test_live_fact_truthfulness_guard_stays_in_shipped_agent_prompts() -> None:
     bundle = _load_source_of_truth()
     main_instructions = (bundle.get("mainAgent", {}).get("instructions") or "").lower()
@@ -458,11 +520,11 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
         if spec.get("preset", {}).get("endpoint") == "anthropic"
     ]
 
-    assert anthropic_names == ["claude-sonnet-4-6", "claude-opus-4-7"]
+    assert anthropic_names == ["claude-sonnet-4-5", "claude-opus-4-7"]
     assert "claude-sonnet-4-7" not in {
         spec.get("name")
         for spec in model_specs
         if spec.get("preset", {}).get("endpoint") == "anthropic"
     }
-    assert source.get("endpoints", {}).get("anthropic", {}).get("summaryModel") == "claude-sonnet-4-6"
+    assert source.get("endpoints", {}).get("anthropic", {}).get("summaryModel") == "claude-sonnet-4-5"
     assert source.get("balance", {}).get("enabled") is False

@@ -249,6 +249,40 @@ async function visibleBodyText(page) {
   return page.locator('body').innerText({ timeout: 10000 });
 }
 
+async function readVisibleEnvironmentBlock(page) {
+  if (!page) {
+    return '';
+  }
+  const text = await visibleBodyText(page).catch(() => '');
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+  if (/connected account needs reconnect/i.test(normalized)) {
+    return 'model_connected_account_reconnect_required';
+  }
+  if (/unable to login with the information provided/i.test(normalized)) {
+    return 'login_rejected_by_runtime';
+  }
+  if (/something went wrong/i.test(normalized) && /processing the request/i.test(normalized)) {
+    return `visible_generation_error:${sanitizePublicError(normalized)}`;
+  }
+  return '';
+}
+
+function throwEnvironmentBlock(reason) {
+  const error = new Error(`environment_blocked:${reason}`);
+  error.qaBlocked = true;
+  throw error;
+}
+
+function exitCodeForResult(result) {
+  if (result?.pass) {
+    return 0;
+  }
+  return result?.environmentBlocked ? 2 : 1;
+}
+
 function extractConversationIdFromUrl(url) {
   try {
     const match = new URL(url).pathname.match(/^\/c\/([^/?#]+)$/);
@@ -258,7 +292,7 @@ function extractConversationIdFromUrl(url) {
   }
 }
 
-async function waitForConversationForPrompt({ qaAuth, prompt, startedAt, timeoutMs }) {
+async function waitForConversationForPrompt({ qaAuth, prompt, startedAt, timeoutMs, page }) {
   const deadline = Date.now() + timeoutMs;
   const startedDate = new Date(startedAt);
   while (Date.now() < deadline) {
@@ -273,6 +307,10 @@ async function waitForConversationForPrompt({ qaAuth, prompt, startedAt, timeout
     );
     if (userMessage?.conversationId) {
       return String(userMessage.conversationId);
+    }
+    const visibleBlock = await readVisibleEnvironmentBlock(page);
+    if (visibleBlock) {
+      throwEnvironmentBlock(visibleBlock);
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -492,6 +530,8 @@ async function run() {
     latestScopedCortexPartCount: 0,
     latestScopedCortexNames: [],
     directAccessTokenFallbackUsed: false,
+    environmentBlocked: false,
+    environmentBlockReason: '',
     testOkVisibleBeforeReload: false,
     testOkVisibleAfterReload: false,
     pass: false,
@@ -524,6 +564,7 @@ async function run() {
       prompt: args.setupPrompt,
       startedAt: args.startedAt,
       timeoutMs: args.timeoutMs,
+      page,
     });
     result.conversationIdHash = hashValue(conversationId);
     if (extractConversationIdFromUrl(page.url()) !== conversationId) {
@@ -621,6 +662,12 @@ async function run() {
       result.latestScopedCortexPartCount === 0 &&
       result.latestPhaseBChildVisibleTextCount === 0;
   } catch (error) {
+    if (error?.qaBlocked || String(error?.message || '').startsWith('environment_blocked:')) {
+      result.environmentBlocked = true;
+      result.environmentBlockReason = sanitizePublicError(
+        String(error?.message || '').replace(/^environment_blocked:/, ''),
+      );
+    }
     result.error = sanitizePublicError(error?.message || error || 'qa_failed');
   } finally {
     if (browser) {
@@ -657,7 +704,11 @@ async function run() {
     `- Latest scoped cortex part count: ${result.latestScopedCortexPartCount}`,
     `- Latest scoped cortex names: ${result.latestScopedCortexNames.join(', ') || 'none'}`,
     `- Direct access-token fallback used: ${Boolean(result.directAccessTokenFallbackUsed)}`,
-    `- Result: ${result.pass ? 'PASS' : 'FAIL'}`,
+    `- Environment blocked: ${Boolean(result.environmentBlocked)}`,
+    result.environmentBlockReason
+      ? `- Environment block reason: ${result.environmentBlockReason}`
+      : '',
+    `- Result: ${result.pass ? 'PASS' : result.environmentBlocked ? 'BLOCKED' : 'FAIL'}`,
     result.error ? `- Error: ${result.error}` : '',
     '',
   ]
@@ -666,7 +717,23 @@ async function run() {
   fs.mkdirSync(path.dirname(args.out), { recursive: true });
   fs.writeFileSync(args.out, `${report}\n`, 'utf8');
   console.log(JSON.stringify(result, null, 2));
-  process.exit(result.pass ? 0 : 1);
+  return result;
 }
 
-run();
+if (require.main === module) {
+  run()
+    .then((result) => {
+      process.exit(exitCodeForResult(result));
+    })
+    .catch((error) => {
+      console.error(sanitizePublicError(error?.message || error || 'qa_failed'));
+      process.exit(1);
+    });
+}
+
+module.exports = {
+  exitCodeForResult,
+  readVisibleEnvironmentBlock,
+  sanitizePublicError,
+  throwEnvironmentBlock,
+};

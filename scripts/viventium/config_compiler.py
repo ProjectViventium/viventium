@@ -243,17 +243,17 @@ MODEL_MAP = {
     },
     "anthropic": {
         "conscious": "claude-opus-4-7",
-        "background_analysis": "claude-sonnet-4-6",
-        "confirmation_bias": "claude-sonnet-4-6",
+        "background_analysis": "claude-sonnet-4-5",
+        "confirmation_bias": "claude-sonnet-4-5",
         "red_team": "claude-opus-4-7",
         "deep_research": "claude-opus-4-7",
-        "productivity": "claude-sonnet-4-6",
-        "parietal": "claude-sonnet-4-6",
-        "pattern_recognition": "claude-sonnet-4-6",
-        "emotional_resonance": "claude-sonnet-4-6",
+        "productivity": "claude-sonnet-4-5",
+        "parietal": "claude-sonnet-4-5",
+        "pattern_recognition": "claude-sonnet-4-5",
+        "emotional_resonance": "claude-sonnet-4-5",
         "strategic_planning": "claude-opus-4-7",
-        "support": "claude-sonnet-4-6",
-        "memory": "claude-sonnet-4-6",
+        "support": "claude-sonnet-4-5",
+        "memory": "claude-sonnet-4-5",
     },
     "x_ai": {
         "conscious": "grok-4.3",
@@ -1500,6 +1500,7 @@ def resolve_voice_settings(config: dict[str, Any]) -> dict[str, str]:
     voice_mode = str(voice.get("mode", "disabled") or "disabled").strip().lower()
     raw_stt_provider = str(voice.get("stt_provider", "") or "").strip().lower()
     stt_provider = raw_stt_provider or "whisper_local"
+    stt_model = str(voice.get("stt_model", "") or "").strip()
     tts_provider = normalize_voice_tts_provider(voice.get("tts_provider", ""))
     tts_provider_fallback = normalize_voice_tts_provider(voice.get("tts_provider_fallback", ""))
 
@@ -1536,6 +1537,7 @@ def resolve_voice_settings(config: dict[str, Any]) -> dict[str, str]:
     return {
         "mode": voice_mode,
         "stt_provider": stt_provider,
+        "stt_model": stt_model,
         "tts_provider": tts_provider,
         "tts_provider_fallback": tts_provider_fallback,
     }
@@ -2181,6 +2183,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     voice_mode = resolved_voice["mode"]
     env["VIVENTIUM_VOICE_ENABLED"] = "true" if voice_mode != "disabled" else "false"
     env["VIVENTIUM_STT_PROVIDER"] = resolved_voice["stt_provider"]
+    if resolved_voice.get("stt_model"):
+        env["VIVENTIUM_STT_MODEL"] = resolved_voice["stt_model"]
     env["VIVENTIUM_TTS_PROVIDER"] = resolved_voice["tts_provider"]
     env["TTS_PROVIDER_PRIMARY"] = resolved_voice["tts_provider"]
     turn_handling = voice.get("turn_handling", {}) or {}
@@ -2888,7 +2892,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
 def _telegram_codex_default_model_name() -> str:
     machine = platform.machine().lower()
     if machine == "x86_64":
-        return "tiny.en"
+        return "small"
     return "large-v3-turbo"
 
 

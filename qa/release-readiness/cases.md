@@ -12,6 +12,7 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 | `REL-002` | Nested repo boundary | Nested component diffs are reviewed independently before parent pin update | LibreChat nested repo | `git diff --check`, targeted tests, line-by-line review | 2026-05-12 PASS |
 | `REL-003` | Reproducible component pin | Parent manifest points to the pushed nested commit | Parent `components.lock.json` | Git status/commit SHA inspection | 2026-05-12 PASS |
 | `REL-004` | User-grade QA evidence | Browser-visible background-agent behavior works without contradictory main errors | Web UI | `node qa/background_agents/evals/run-visible-cards-browser-qa.cjs --headless` | 2026-05-11 local / 2026-05-12 UTC PASS |
+| `REL-005` | Project boundary contamination | Viventium public tree contains no cross-project brand/account markers | Parent repo plus nested source tree | `python3 -m pytest tests/release/test_project_boundary_contamination.py -q` | 2026-05-12 PASS |
 
 ## `REL-001` - Public Diff Hygiene
 
@@ -28,6 +29,22 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Automation: shell scans plus independent review.
 - Last run: 2026-05-12 PASS. Parent, LibreChat, and GlassHive diff checks passed; added-line and
   PR-base scans found no real private values.
+
+## `REL-005` - Project Boundary Contamination
+
+- Requirement: Viventium work must stay Viventium-scoped across repo code, docs, tests, and QA
+  evidence.
+- Risk covered: QA accounts, brand names, domains, or private context from another project enter
+  Viventium source or public artifacts.
+- Preconditions: intended source and QA artifact changes are present.
+- Steps:
+  1. Run `python3 -m pytest tests/release/test_project_boundary_contamination.py -q`.
+  2. Review any hits and remove or replace them with Viventium-scoped synthetic placeholders.
+- Expected result: zero cross-project marker hits in the public tree.
+- Forbidden result: another project's QA account, brand, domain, customer context, or private
+  operating state appears in Viventium code, docs, tests, or QA artifacts.
+- Evidence to capture: pass/fail line from the release test.
+- Last run: 2026-05-12 PASS.
 
 ## `REL-002` - Nested Component Boundary
 

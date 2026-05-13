@@ -68,3 +68,17 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Evidence to capture: redacted failure artifact and status output counts.
 - Last run: 2026-05-12, automated regression passed in
   `api/test/scripts/viventium-memory-hardening.test.js`.
+
+## MTM-006: Live RAG Runtime Must Be Proven Before Browser Recall Signoff
+
+- Scenario: Mongo file rows say meeting transcript artifacts exist, but the local RAG/PGVector
+  runtime is unhealthy or has been rebuilt.
+- Expected outcome: QA checks RAG health before browser signoff, repairs or re-seeds scoped QA
+  transcript vectors, and records whether only synthetic QA artifacts or broader transcript repairs
+  were verified.
+- Forbidden result: Browser QA claims transcript recall works while RAG is down, while vector rows
+  are missing, or after a derived vector rebuild without a scoped repair/reseed.
+- Evidence to capture: redacted RAG health, owner-count unchanged check, QA-account source counts,
+  file_search source attachments, and public-safe recovery note.
+- Last run: 2026-05-12, live browser regression passed in
+  `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T00-56-58-307Z.md`.

@@ -729,6 +729,81 @@ for ((arg_idx = 0; arg_idx < ${#RAW_ARGS[@]}; arg_idx++)); do
   fi
 done
 
+# === VIVENTIUM START ===
+# Feature: Canonical runtime regeneration for direct source launches.
+# Purpose: `bin/viventium start` already recompiles App Support runtime files
+# before launching this script. Direct developer launches must do the same so a
+# stale generated runtime.env cannot override the user's canonical config.yaml.
+launcher_arg_present() {
+  local expected="$1"
+  local candidate=""
+  for candidate in "${RAW_ARGS[@]}"; do
+    if [[ "$candidate" == "$expected" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+truthy_env_value() {
+  local value="${1:-}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
+}
+
+regenerate_canonical_runtime_env_if_needed() {
+  local canonical_config_file="${VIVENTIUM_CONFIG_FILE:-$VIVENTIUM_APP_SUPPORT_ROOT/config.yaml}"
+  local canonical_runtime_dir="${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}"
+  local canonical_env_file="$canonical_runtime_dir/runtime.env"
+  local compiler="$VIVENTIUM_CORE_DIR/scripts/viventium/config_compiler.py"
+  local explicit_env_file="${VIVENTIUM_ENV_FILE:-}"
+  local private_source_of_truth="$LIBRECHAT_PRIVATE_CONFIG_DIR/source_of_truth/local.librechat.yaml"
+
+  if truthy_env_value "${VIVENTIUM_SKIP_CANONICAL_RUNTIME_REGEN:-}"; then
+    return 0
+  fi
+  if [[ "${VIVENTIUM_CANONICAL_ENV_LOCK_EXISTING_KEYS:-}" == "1" ]]; then
+    return 0
+  fi
+  if launcher_arg_present "--stop" || launcher_arg_present "--help" || launcher_arg_present "-h"; then
+    return 0
+  fi
+  if [[ -n "$explicit_env_file" && "$explicit_env_file" != "$canonical_env_file" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$canonical_config_file" || ! -f "$compiler" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$canonical_runtime_dir"
+  echo -e "${CYAN}[viventium]${NC} Regenerating canonical runtime files from config.yaml"
+  if [[ -f "$private_source_of_truth" ]]; then
+    VIVENTIUM_ENV_FILE="$canonical_env_file" \
+    VIVENTIUM_ENV_LOCAL_FILE="$canonical_runtime_dir/runtime.local.env" \
+    VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile" \
+    VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="" \
+    VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH="$private_source_of_truth" \
+    VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="$LIBRECHAT_CANONICAL_ENV_FILE" \
+      "$PYTHON_BIN" "$compiler" --config "$canonical_config_file" --output-dir "$canonical_runtime_dir" || {
+        echo -e "${RED}[viventium]${NC} Failed to regenerate canonical runtime files from $canonical_config_file" >&2
+        exit 1
+      }
+  else
+    VIVENTIUM_ENV_FILE="$canonical_env_file" \
+    VIVENTIUM_ENV_LOCAL_FILE="$canonical_runtime_dir/runtime.local.env" \
+    VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile" \
+    VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="" \
+    VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="$LIBRECHAT_CANONICAL_ENV_FILE" \
+      "$PYTHON_BIN" "$compiler" --config "$canonical_config_file" --output-dir "$canonical_runtime_dir" || {
+        echo -e "${RED}[viventium]${NC} Failed to regenerate canonical runtime files from $canonical_config_file" >&2
+        exit 1
+      }
+  fi
+}
+
+regenerate_canonical_runtime_env_if_needed
+# === VIVENTIUM END ===
+
 # ----------------------------
 # Load environment from the local workspace or the optional companion workspace.
 # ----------------------------
@@ -10145,6 +10220,20 @@ PY
         fi
         if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
           echo -e "${CYAN}[viventium]${NC} CARTESIA_API_KEY is set (${CARTESIA_API_KEY:0:8}...) - Cartesia TTS available"
+        fi
+        voice_stt_provider_normalized="$(printf '%s' "${VIVENTIUM_STT_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')"
+        if [[ "$voice_stt_provider_normalized" == "whisper_local" || "$voice_stt_provider_normalized" == "pywhispercpp" ]]; then
+          local_whisper_preflight="${VIVENTIUM_LOCAL_WHISPER_PREFLIGHT:-1}"
+          local_whisper_preflight="$(printf '%s' "$local_whisper_preflight" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$local_whisper_preflight" != "0" && "$local_whisper_preflight" != "false" && "$local_whisper_preflight" != "off" && "$local_whisper_preflight" != "no" ]]; then
+            echo -e "${CYAN}[viventium]${NC} Checking local whisper.cpp model (model=${VIVENTIUM_STT_MODEL})..."
+            "$voice_python" pywhispercpp_provider.py --ensure-model "$VIVENTIUM_STT_MODEL" >>"$LOG_DIR/voice_gateway_deps.log" 2>&1 || {
+              log_error "Local whisper.cpp model self-heal failed for ${VIVENTIUM_STT_MODEL}; see $LOG_DIR/voice_gateway_deps.log"
+              exit 1
+            }
+          else
+            echo -e "${YELLOW}[viventium]${NC} WARNING: VIVENTIUM_LOCAL_WHISPER_PREFLIGHT is disabled; worker prewarm will still fail closed if the selected model is unhealthy."
+          fi
         fi
         exec "$voice_python" worker.py start \
           --log-level="$VIVENTIUM_VOICE_GATEWAY_LOG_LEVEL" \

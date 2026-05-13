@@ -64,7 +64,7 @@
   - `memory.agent.provider = openai`
   - `memory.agent.model = gpt-5.4`
   - `endpoints.anthropic.titleEndpoint = anthropic`
-  - `endpoints.anthropic.titleModel = claude-sonnet-4-6`
+  - `endpoints.anthropic.titleModel = claude-sonnet-4-5`
 
 ### Live Runtime
 
@@ -72,7 +72,7 @@
   - `memory.agent.provider = openai`
   - `memory.agent.model = gpt-5.4`
   - `endpoints.anthropic.titleEndpoint = anthropic`
-  - `endpoints.anthropic.titleModel = claude-sonnet-4-6`
+  - `endpoints.anthropic.titleModel = claude-sonnet-4-5`
 - Backend runtime verification:
   - started LibreChat backend directly against the generated runtime env + `CONFIG_PATH`
   - `curl -sf http://localhost:3180/api/health` returned `OK`

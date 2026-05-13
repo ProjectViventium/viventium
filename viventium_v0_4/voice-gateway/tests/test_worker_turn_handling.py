@@ -1,6 +1,7 @@
 import inspect
 import os
 import sys
+import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -370,6 +371,26 @@ class TestWorkerTurnHandling(unittest.TestCase):
             min_turn_silence=190,
             max_turn_silence=1250,
         )
+
+    def test_local_whisper_selection_fails_honestly_without_openai_fallback(self) -> None:
+        fake_pywhispercpp_provider = types.ModuleType("pywhispercpp_provider")
+
+        def _fail_get_stt(*_args, **_kwargs):
+            raise RuntimeError("selected model is corrupt")
+
+        fake_pywhispercpp_provider.get_stt = _fail_get_stt
+        env = SimpleNamespace(
+            stt_provider="whisper_local",
+            stt_model="large-v3-turbo",
+            stt_language="en",
+        )
+
+        with (
+            patch.dict(sys.modules, {"pywhispercpp_provider": fake_pywhispercpp_provider}),
+            patch("worker.openai.STT", side_effect=AssertionError("OpenAI fallback must not run")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "will not silently switch"):
+                build_stt_selection(env, vad=object())
 
     def test_load_turn_detection_returns_turn_detector_when_available(self) -> None:
         env = SimpleNamespace(voice_turn_detection="turn_detector", stt_provider="assemblyai")
