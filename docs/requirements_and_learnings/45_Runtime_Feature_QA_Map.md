@@ -77,6 +77,25 @@ Use these when changing:
 - rollback/audit handling for saved-memory changes
 - QA-account parity used to test memory continuity without dirtying the owner account
 
+### Telegram Runtime
+
+- `qa/telegram-runtime/README.md`
+- `qa/telegram-media-prereqs/README.md`
+- `qa/telegram-local-bot-api/README.md`
+- `qa/telegram-detached-api-stability/README.md`
+
+Use these when changing:
+
+- Telegram bridge or Telegram Codex startup, restart, PID, and orphan-process handling
+- status reporting for Telegram polling conflicts, provider authentication failures, and stopped
+  sidecars
+- Telegram runtime logs, local bot API supervision, media prereqs, and detached-process behavior
+- user-visible `bin/viventium status` wording that tells a user whether Telegram is healthy or
+  needs action
+
+Do not include BotFather tokens, chat IDs, usernames, personal Telegram handles, or raw Telegram
+message content in public QA artifacts.
+
 ## Minimum Release Check Expectation
 
 When a change touches one of the runtime surfaces above:

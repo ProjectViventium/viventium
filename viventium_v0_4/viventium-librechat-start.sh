@@ -9043,6 +9043,11 @@ start_telegram_codex() {
     return 1
   fi
 
+  if [[ "$RESTART_SERVICES" == "true" ]]; then
+    kill_by_pattern_scoped "telegram-codex" "$telegram_codex_dir"
+    kill_by_pattern_scoped "uv run telegram-codex" "$telegram_codex_dir"
+  fi
+
   local existing_pids=""
   if telegram_codex_pid_is_running; then
     existing_pids="$(read_pid_file "$TELEGRAM_CODEX_PID_FILE")"

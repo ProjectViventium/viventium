@@ -7,7 +7,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "8ea16b6fe25591f7ce913372261938efa5a5ee2d"
+      "ref": "b78484f909ac47afe75177499f2d390d754a7d12"
     },
     {
       "name": "agents-playground",
@@ -56,7 +56,7 @@
       "path": "viventium_v0_4/MCPs/google_workspace_mcp",
       "origin": "https://github.com/ProjectViventium/google_workspace_mcp.git",
       "upstream": "https://github.com/taylorwilsdon/google_workspace_mcp.git",
-      "ref": "56396cb03183a8e4b8a1291de7d24c40c7991037"
+      "ref": "75293e78775bab02b9ee1da1f79513fb288f7e3d"
     },
     {
       "name": "mcp-youtube-transcript",

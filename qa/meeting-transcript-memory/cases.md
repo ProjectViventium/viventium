@@ -38,9 +38,11 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   being summarized as meetings.
 - Forbidden result: Assistant answers include index/log files as if they were meeting transcripts.
 - Evidence to capture: redacted transcript scan counts and model-visible recall output.
-- Last run: 2026-05-12, automated regression passed in
-  `api/test/scripts/viventium-memory-hardening.test.js` and
-  `qa/meeting-transcript-memory/evals/run-evals.cjs`.
+- Last run: 2026-05-13, automated regression passed in
+  `api/test/scripts/viventium-memory-hardening.test.js`,
+  `qa/meeting-transcript-memory/evals/run-evals.cjs`, and live QA confirmed the configured
+  `_index.json` sidecar was pruned from primary/secondary QA transcript recall in
+  `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
 
 ## MTM-004: Broad Recent-Transcript Questions Need Inventory Coverage
 
@@ -48,14 +50,16 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   lookup.
 - Expected outcome: The assistant can enumerate processed transcript summaries at a useful level,
   then answer with transcript caveats. For narrow follow-up questions, focused transcript summary
-  hits should outrank the broad inventory when they are clearly more relevant.
+  hits should outrank the broad inventory when they are clearly more relevant. The inventory body
+  contains meeting title/date/participants/context, not artifact IDs, stable file IDs, content
+  hashes, or source-folder hashes.
 - Forbidden result: Semantic search returns only a few high-scoring chunks, causing the answer to
   imply incomplete visibility over the processed transcript set.
 - Evidence to capture: file_search tool calls, retrieved sources, and final assistant answer.
-- Last run: 2026-05-12, automated regression passed in
+- Last run: 2026-05-13, automated regression passed in
   `api/test/app/clients/tools/util/fileSearch.test.js`,
   `qa/meeting-transcript-memory/evals/run-evals.cjs`, and live browser report
-  `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T02-30-02-460Z.md`.
+  `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
 
 ## MTM-005: Failed Hardening Runs Must Leave Redacted Failure Evidence
 
@@ -79,7 +83,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   were verified.
 - Forbidden result: Browser QA claims transcript recall works while RAG is down, while vector rows
   are missing, or after a derived vector rebuild without a scoped repair/reseed.
-- Evidence to capture: redacted RAG health, owner-count unchanged check, QA-account source counts,
+- Evidence to capture: redacted RAG health, primary QA count unchanged check, QA-account source counts,
   file_search source attachments, and public-safe recovery note.
 - Last run: 2026-05-12, live browser regression passed in
   `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T02-30-02-460Z.md`.
@@ -97,7 +101,50 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   transcripts from the current source folder, loses who/when/context, or treats transcript-only
   statements as durable user beliefs.
 - Evidence to capture: visible browser answer, file_search tool call, inventory source count,
-  source-backed inventory payload, answer-shape checks, and owner-account untouched check.
+  source-backed inventory payload, answer-shape checks, and primary QA account untouched check.
 - Last run: 2026-05-13, executable eval and live browser QA passed in
   `qa/meeting-transcript-memory/evals/run-evals.cjs` and
-  `qa/meeting-transcript-memory/reports/2026-05-13-live-browser-qa-2026-05-13T03-13-06-493Z.md`.
+  `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
+
+## MTM-008: Active Prompt Echo Must Not Become Recall Evidence
+
+- Scenario: A broad transcript question is saved as the latest user message while source-only
+  conversation recall is also attached.
+- Expected outcome: The active user prompt is excluded from source-backed recall rescue even when
+  current conversation metadata is unavailable, and transcript evidence remains available.
+- Forbidden result: The assistant cites the user's just-submitted prompt as conversation recall
+  evidence for the answer.
+- Evidence to capture: source attachment IDs/content checks and final answer shape.
+- Last run: 2026-05-13, automated regression passed in
+  `api/test/app/clients/tools/util/fileSearch.test.js` and live QA passed in
+  `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
+
+## MTM-009: Transcript Sources Must Lead Broad Transcript Answers
+
+- Scenario: Meeting transcript inventory/summary evidence and conversation recall evidence both
+  match a broad transcript inventory question.
+- Expected outcome: Model-visible output and persisted citation attachments list meeting transcript
+  summary/inventory sources before conversation recall, and source-only recall rescue is skipped
+  once transcript evidence is present.
+- Forbidden result: Older chat or QA prompts outrank transcript inventory/summary evidence and
+  steer the answer away from the processed transcript corpus.
+- Evidence to capture: model-facing `File:` order, stored source order, and visible source cards.
+- Last run: 2026-05-13, automated regressions passed in
+  `api/test/app/clients/tools/util/fileSearch.test.js`,
+  `api/test/services/Files/processFileCitations.test.js`, and live QA passed in
+  `qa/meeting-transcript-memory/reports/2026-05-13-transcript-recall-repair-live-qa.md`.
+
+## MTM-010: Stale Hardening Lock Must Not Block Recovery
+
+- Scenario: A prior memory-hardening process exits without removing its local lock directory, and a
+  later manual transcript ingest or dry-run starts.
+- Expected outcome: If the recorded lock PID is no longer alive, the hardener clears the stale lock,
+  acquires a fresh lock, runs normally, and removes the lock after completion. Very old locks also
+  recover even if the PID has been recycled to an unrelated process.
+- Forbidden result: A dead PID permanently blocks transcript ingest until an operator manually
+  edits local state.
+- Evidence to capture: stale-lock fixture, dry-run exit status, run summary, and post-run lock
+  absence.
+- Last run: 2026-05-13, automated regressions passed in
+  `api/test/scripts/viventium-memory-hardening.test.js`; live primary QA dry-run completed with 0
+  transcript characters fed to the model.

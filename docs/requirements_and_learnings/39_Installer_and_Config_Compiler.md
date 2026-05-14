@@ -65,6 +65,23 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `VIVENTIUM_GLASSHIVE_CALLBACK_URL`
   - `VIVENTIUM_GLASSHIVE_CALLBACK_SECRET`
   - do not rely on manual App Support edits or one laptop's shell exports to make GlassHive launch/watch UX correct
+- Stable developer runtimes are part of the compiler boundary:
+  - `runtime.dev_env.enabled` marks a side-by-side developer runtime config
+  - `runtime.dev_env.shared_singleton_services` declares heavy services that should be referenced
+    rather than duplicated in that dev env
+  - default shared singleton services are recall/RAG, SearXNG, Firecrawl, Google Workspace MCP, and
+    Microsoft 365 MCP
+  - dev envs may offset app-facing ports, but shared singleton service ports must stay aligned with
+    the installed runtime unless the operator explicitly chooses full isolation
+  - generated env must expose the dev-env and shared-singleton state so launcher/helper surfaces can
+    explain what is shared instead of guessing
+- Local work workflows are also compiler/runtime-bound:
+  - `bin/viventium workflows`, `bin/viventium heal`, and `bin/viventium feature-request` must run
+    from the active runtime checkout just like helper/manual operator commands
+  - GlassHive host-worker availability is read from compiled runtime env; workflow commands must not
+    invent a second GlassHive enablement source
+  - when GlassHive host workers are unavailable, workflow commands fail loud unless the operator
+    explicitly chooses documented degraded mode
 - Web search ownership is part of that same compiler contract:
   - the live switch is `integrations.web_search` in canonical App Support config
   - if that input is off or absent, generated runtime must disable `interface.webSearch`, omit the
@@ -146,6 +163,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     `runtime.memory_hardening.transcripts`
   - `transcripts.source_dir` compiles to `VIVENTIUM_MEMORY_TRANSCRIPTS_DIR`; empty disables the
     transcript lane
+  - `transcripts.ignore_globs` compiles to `VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS`; this is the
+    canonical way to exclude downloader manifests, temp files, and other source-folder sidecars
+    without adding semantic transcript parsing
+  - ignore globs are serialized into env as a comma-separated list; glob literals should not contain
+    commas
   - transcript caps are deterministic cost controls, not content judgment:
     `max_files_per_run` default 20, `max_chars_per_file` default 500,000,
     `summary_max_chars` default 32,000, and stable-evidence decay default 90 days

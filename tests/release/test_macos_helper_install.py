@@ -716,7 +716,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "MenuBarExtra(" in source
     assert "isInserted: Binding(" in source
     assert "if self.controller.showsStatusRow {" in source
-    assert '"Show in Status Bar"' in source
+    assert '"Show Status Bar Icon"' in source
     assert 'set: { self.controller.setShowInStatusBar($0) }' in source
     assert '.disabled(self.controller.actionDisabled)' in source
     assert "private nonisolated static func launchCLIProcess(" in source

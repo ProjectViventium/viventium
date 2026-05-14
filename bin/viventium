@@ -489,6 +489,13 @@ Commands:
   uninstall-helper  Remove the macOS Viventium status-bar helper.
   status-bar        Turn the macOS Viventium status-bar helper on or off.
   runtime-checkout  Show or choose the checkout used by helper/start commands.
+  dev-env           Create and run side-by-side local development environments.
+  dev-runtime       Activate or inspect the checkout used by the installed runtime.
+  workflows         Run Viventium GlassHive-backed local work workflows.
+  heal              Alias for workflows start/status/cancel/open-artifacts heal flow.
+  feature-request   Alias for workflows feature-request flow.
+  report-bug        Alias for workflows bug-report flow.
+  bug-report        Compatibility alias for report-bug.
   preflight         Detect and optionally install missing system prerequisites.
   reset             Factory-reset the local Viventium install state under App Support.
   start             Start the current Viventium stack using generated runtime env.
@@ -550,10 +557,14 @@ USAGE
       cat <<'USAGE'
 Usage:
   bin/viventium upgrade [--restart] [--skip-pull] [--allow-dirty]
+  bin/viventium upgrade --check [--json]
   bin/viventium update [--restart] [--skip-pull] [--allow-dirty]
 
 Refreshes the current branch, reruns aggregated preflight, refreshes pinned components,
 recompiles the runtime files, reruns doctor, and optionally restarts the stack.
+
+With --check, reports update availability and blockers without pulling, compiling,
+installing helpers, or changing the running stack.
 USAGE
       ;;
     status)
@@ -658,6 +669,77 @@ For the current checkout:
   bin/viventium runtime-checkout use --this --allow-protected-folder
 USAGE
       ;;
+    dev-env)
+      cat <<'USAGE'
+Usage:
+  bin/viventium dev-env create <name> [--port-offset 1000] [--replace]
+  bin/viventium dev-env list [--json]
+  bin/viventium dev-env status <name> [--json]
+  bin/viventium dev-env run <name> <viventium-command> [args...]
+
+Creates side-by-side local development App Support state for app-facing
+services while keeping heavy singleton services shared by default.
+USAGE
+      ;;
+    dev-runtime)
+      cat <<'USAGE'
+Usage:
+  bin/viventium dev-runtime status
+  bin/viventium dev-runtime activate-current [--validate] [--restart] [--allow-protected-folder] [--allow-dirty-local-testing]
+  bin/viventium dev-runtime clear
+
+Developer-friendly wrapper over runtime-checkout. It does not copy code into
+the installed path; it selects a checkout, validates it, and optionally restarts.
+USAGE
+      ;;
+    workflows)
+      cat <<'USAGE'
+Usage:
+  bin/viventium workflows status [--json]
+  bin/viventium workflows start heal [--mode diagnose|apply] [--provider auto|codex|claude] [--reasoning-effort xhigh]
+  bin/viventium workflows start feature-request --request <text> [--provider auto|codex|claude]
+  bin/viventium workflows start bug-report --what-happened <text> [--steps-to-reproduce <text>] [--expected <text>] [--actual <text>] [--details <text>]
+  bin/viventium workflows start bug-report --request <text>  # compatibility alias for --what-happened
+  bin/viventium workflows approve [--slug <slug>]
+  bin/viventium workflows cancel
+  bin/viventium workflows open-artifacts
+
+Runs Viventium local work workflows through GlassHive host workers when enabled.
+When GlassHive host workers are unavailable, the command fails loud unless an
+explicit degraded mode is requested.
+USAGE
+      ;;
+    heal)
+      cat <<'USAGE'
+Usage:
+  bin/viventium heal start [--mode diagnose|apply] [--provider auto|codex|claude] [--reasoning-effort xhigh]
+  bin/viventium heal status [--json]
+  bin/viventium heal cancel
+  bin/viventium heal open-artifacts
+USAGE
+      ;;
+    feature-request)
+      cat <<'USAGE'
+Usage:
+  bin/viventium feature-request start --request <text> [--provider auto|codex|claude]
+  bin/viventium feature-request approve [--slug <slug>]
+  bin/viventium feature-request status [--json]
+  bin/viventium feature-request cancel
+  bin/viventium feature-request open-artifacts
+USAGE
+      ;;
+    report-bug|bug-report)
+      cat <<'USAGE'
+Usage:
+  bin/viventium report-bug start --what-happened <text> [--steps-to-reproduce <text>] [--expected <text>] [--actual <text>] [--details <text>]
+  bin/viventium report-bug start --request <text>  # compatibility alias for --what-happened
+  bin/viventium report-bug approve [--slug <slug>]
+  bin/viventium report-bug status [--json]
+  bin/viventium report-bug cancel
+  bin/viventium report-bug open-artifacts
+  bin/viventium bug-report ...  # compatibility alias
+USAGE
+      ;;
     shell-init)
       cat <<'USAGE'
 Usage:
@@ -747,11 +829,11 @@ compile_config() {
   ensure_app_support_layout "$APP_SUPPORT_DIR"
   export VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"
   prepare_runtime_exports
-  unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
     --config "$CONFIG_FILE" \
     --output-dir "$RUNTIME_DIR" \
     "$@"
+  unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE
   if [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
   fi
@@ -1252,13 +1334,184 @@ runtime_checkout_command() {
   esac
 }
 
+dev_env_command() {
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+    subcommand_usage dev-env
+    exit 0
+  fi
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/dev_runtime.py" \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --config-file "$CONFIG_FILE" \
+    "$@"
+}
+
+dev_runtime_command() {
+  local action="${1:-status}"
+  shift || true
+  case "$action" in
+    status)
+      runtime_checkout_status
+      ;;
+    clear)
+      runtime_checkout_command clear "$@"
+      ;;
+    activate-current)
+      local validate=0
+      local restart=0
+      local allow_protected=0
+      local allow_dirty=0
+      while [[ $# -gt 0 ]]; do
+        case "${1:-}" in
+          --validate)
+            validate=1
+            shift
+            ;;
+          --restart)
+            restart=1
+            shift
+            ;;
+          --allow-protected-folder)
+            allow_protected=1
+            shift
+            ;;
+          --allow-dirty-local-testing)
+            allow_dirty=1
+            shift
+            ;;
+          --help|-h)
+            subcommand_usage dev-runtime
+            exit 0
+            ;;
+          *)
+            echo "Unknown dev-runtime activate-current option: $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      if [[ "$allow_dirty" != "1" ]]; then
+        ensure_upgradeable_git_state 0
+      fi
+      local runtime_checkout_args=(use --this --no-helper-refresh)
+      if [[ "$allow_protected" == "1" ]]; then
+        runtime_checkout_args+=(--allow-protected-folder)
+      fi
+      runtime_checkout_command "${runtime_checkout_args[@]}"
+      if [[ "$validate" == "1" ]]; then
+        compile_config
+        "$REPO_ROOT/scripts/viventium/doctor.sh" \
+          --config "$CONFIG_FILE" \
+          --runtime-dir "$RUNTIME_DIR" \
+          --repo-root "$REPO_ROOT" \
+          --lock-file "$LOCK_FILE" \
+          --prefer-existing-checkout-head
+        runtime_checkout_refresh_helper
+      fi
+      if [[ "$restart" == "1" ]]; then
+        if is_stack_running; then
+          stop_stack_for_upgrade
+        fi
+        restart_stack_after_upgrade
+      fi
+      ;;
+    --help|-h|help)
+      subcommand_usage dev-runtime
+      ;;
+    *)
+      echo "Unknown dev-runtime action: $action" >&2
+      subcommand_usage dev-runtime >&2
+      exit 1
+      ;;
+  esac
+}
+
+workflows_command() {
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+    subcommand_usage workflows
+    exit 0
+  fi
+  ensure_app_support_layout "$APP_SUPPORT_DIR"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    compile_config >/dev/null
+  fi
+  exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/workflows.py" \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --runtime-dir "$RUNTIME_DIR" \
+    "$@"
+}
+
+heal_command() {
+  local action="${1:-status}"
+  shift || true
+  case "$action" in
+    start)
+      workflows_command start heal "$@"
+      ;;
+    status|cancel|open-artifacts)
+      workflows_command "$action" "$@"
+      ;;
+    --help|-h|help)
+      subcommand_usage heal
+      ;;
+    *)
+      echo "Unknown heal action: $action" >&2
+      subcommand_usage heal >&2
+      exit 1
+      ;;
+  esac
+}
+
+feature_request_command() {
+  local action="${1:-status}"
+  shift || true
+  case "$action" in
+    start)
+      workflows_command start feature-request "$@"
+      ;;
+    status|approve|cancel|open-artifacts)
+      workflows_command "$action" "$@"
+      ;;
+    --help|-h|help)
+      subcommand_usage feature-request
+      ;;
+    *)
+      echo "Unknown feature-request action: $action" >&2
+      subcommand_usage feature-request >&2
+      exit 1
+      ;;
+  esac
+}
+
+report_bug_command() {
+  local action="${1:-status}"
+  shift || true
+  case "$action" in
+    start)
+      workflows_command start bug-report "$@"
+      ;;
+    status|approve|cancel|open-artifacts)
+      workflows_command "$action" "$@"
+      ;;
+    --help|-h|help)
+      subcommand_usage report-bug
+      ;;
+    *)
+      echo "Unknown report-bug action: $action" >&2
+      subcommand_usage report-bug >&2
+      exit 1
+      ;;
+  esac
+}
+
 maybe_reexec_active_runtime_checkout() {
   [[ "${VIVENTIUM_DISABLE_ACTIVE_CHECKOUT_REEXEC:-0}" == "1" ]] && return 0
   local command_name="${1:-}"
   shift || true
 
   case "$command_name" in
-    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden)
+    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|workflows|heal|feature-request|report-bug|bug-report)
       ;;
     *)
       return 0
@@ -2959,13 +3212,21 @@ case "$COMMAND" in
     print_install_summary 0
     ;;
   upgrade|update)
-    acquire_cli_lock "$COMMAND"
-    ensure_app_support_layout "$APP_SUPPORT_DIR"
     AUTO_RESTART=0
     SKIP_PULL=0
     ALLOW_DIRTY=0
+    CHECK_ONLY=0
+    CHECK_JSON=0
     while [[ $# -gt 0 ]]; do
       case "${1:-}" in
+        --check)
+          CHECK_ONLY=1
+          shift
+          ;;
+        --json)
+          CHECK_JSON=1
+          shift
+          ;;
         --restart)
           AUTO_RESTART=1
           shift
@@ -2984,6 +3245,15 @@ case "$COMMAND" in
           ;;
       esac
     done
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    if [[ "$CHECK_ONLY" == "1" ]]; then
+      check_args=(--repo-root "$REPO_ROOT" --app-support-dir "$APP_SUPPORT_DIR")
+      if [[ "$CHECK_JSON" == "1" ]]; then
+        check_args+=(--json)
+      fi
+      exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/upgrade_check.py" "${check_args[@]}"
+    fi
+    acquire_cli_lock "$COMMAND"
     if [[ ! -f "$CONFIG_FILE" ]]; then
       echo "Missing config: $CONFIG_FILE" >&2
       echo "Run: bin/viventium install" >&2
@@ -3256,6 +3526,49 @@ case "$COMMAND" in
       exit 0
     fi
     runtime_checkout_command "$@"
+    ;;
+  dev-env)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage dev-env
+      exit 0
+    fi
+    dev_env_command "$@"
+    ;;
+  dev-runtime)
+    acquire_cli_lock "$COMMAND"
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage dev-runtime
+      exit 0
+    fi
+    dev_runtime_command "$@"
+    ;;
+  workflows)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage workflows
+      exit 0
+    fi
+    workflows_command "$@"
+    ;;
+  heal)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage heal
+      exit 0
+    fi
+    heal_command "$@"
+    ;;
+  feature-request)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage feature-request
+      exit 0
+    fi
+    feature_request_command "$@"
+    ;;
+  report-bug|bug-report)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+      subcommand_usage report-bug
+      exit 0
+    fi
+    report_bug_command "$@"
     ;;
   uninstall-helper)
     acquire_cli_lock "$COMMAND"

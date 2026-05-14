@@ -116,6 +116,12 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   user/source-scoped `meeting_inventory:*` file-search artifact from processed summary metadata.
   That inventory is a transcript-recall table of contents, not a saved-memory key, so it can be
   regenerated, repaired, and stale-pruned with the vector lifecycle without polluting durable memory.
+- The transcript summarizer must keep those inventory fields human-contextual and compact. Artifact
+  IDs, stable file IDs, vector IDs, content hashes, and source-folder hashes remain internal
+  metadata and must not be written into the broad table-of-contents body.
+- The inventory vector text itself must not prepend the generic transcript artifact header; lifecycle
+  identifiers stay in Mongo/vector metadata, while the model-visible inventory remains a compact
+  list for who/when/context recall.
 - Broad transcript questions, including "list my recent conversations based on transcripts
   chronologically and give me a 5 line summary based on the actual context", must use that inventory
   surface to see the processed transcript set before composing the answer. The inventory exists so
@@ -135,6 +141,9 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   redacted `summary.json`, `failure.redacted.json`, and `run-log.redacted.jsonl` with phase, reason,
   error class, timeout/status/signal when available, and message hash/preview without leaking
   private paths, account identifiers, secrets, or transcript text.
+- Memory-hardening locks are concurrency guards, not durable state. A lock with a live recorded PID
+  must fail closed, but a stale lock whose PID no longer exists must be cleared before the next
+  manual or scheduled run so recovery does not require hand-editing local state.
 
 ### Listen-Only call transcript evidence
 

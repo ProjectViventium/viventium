@@ -545,6 +545,51 @@ def cli_operation_running(runtime_dir: Path | None) -> bool:
     return pid_file_process_running(lock_dir / "pid")
 
 
+def recent_log_text(path: Path, *, max_bytes: int = 65536) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            return handle.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def telegram_recent_runtime_issue(log_paths: list[Path]) -> tuple[str, str] | None:
+    issue_checks: tuple[tuple[tuple[str, ...], str, str], ...] = (
+        (
+            (
+                "terminated by other getupdates request",
+                "conflict:",
+                "only one bot instance",
+            ),
+            "Running with issues",
+            "Recent Telegram polling conflict detected. Stop the other bot process using the same BotFather token, then restart Viventium.",
+        ),
+        (
+            (
+                "credentials rejected",
+                "connected-account refresh failed",
+                "invalid_api_key",
+                "authenticationerror",
+                "unauthorized",
+            ),
+            "Running with issues",
+            "Recent AI provider authentication failure detected. Refresh the connected account or API key, then restart Viventium.",
+        ),
+    )
+
+    for path in log_paths:
+        text = recent_log_text(path).lower()
+        if not text:
+            continue
+        for needles, status, detail in issue_checks:
+            if any(needle in text for needle in needles):
+                return status, detail
+    return None
+
+
 def telegram_service_status(
     *,
     config: dict[str, Any],
@@ -565,12 +610,14 @@ def telegram_service_status(
     log_detail = "Starts with Viventium"
     process_running = False
     pending_running = False
+    log_paths: list[Path] = []
 
     if state_roots:
         log_detail = str(state_roots[0] / "logs" / log_file_name)
 
     for state_root in state_roots:
         log_detail = str(state_root / "logs" / log_file_name)
+        log_paths.append(state_root / "logs" / log_file_name)
         pid_candidates = (
             state_root / pid_file_name,
             state_root / "logs" / pid_file_name,
@@ -594,6 +641,9 @@ def telegram_service_status(
             pending_running = any(candidate.is_file() for candidate in pending_marker_candidates)
 
     if process_running:
+        issue = telegram_recent_runtime_issue(log_paths)
+        if issue is not None:
+            return issue
         return "Running", running_detail
 
     if pending_running:
@@ -611,6 +661,11 @@ def telegram_service_status(
             "Misconfigured",
             "Invalid BotFather token. Run bin/viventium configure and re-copy the full <bot_id>:<secret> value from @BotFather.",
         )
+
+    issue = telegram_recent_runtime_issue(log_paths)
+    if probe_live and issue is not None:
+        _status, detail = issue
+        return "Action Required", detail
 
     if probe_live:
         return "Stopped", f"Check {log_detail}"
