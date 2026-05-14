@@ -26,3 +26,13 @@
   checkout.
 - **Evidence to capture:** static launcher regression test and local status after restart.
 - **Last run:** 2026-05-14, static regression coverage added.
+
+## Case TR-004: Provider Rejection Is Not Shown As Connection Error
+
+- **Expected outcome:** A Telegram turn whose LibreChat final event reports rejected model provider
+  credentials returns clear reconnect guidance for the AI provider.
+- **Forbidden result:** Telegram says only `Connection error. Please retry.` or otherwise implies
+  the Telegram transport is broken when the root cause is model-provider auth.
+- **Evidence to capture:** bridge stream regression test, local runtime restart, sanitized status/log
+  class check.
+- **Last run:** 2026-05-14, bridge regression coverage added after escaped user report.
