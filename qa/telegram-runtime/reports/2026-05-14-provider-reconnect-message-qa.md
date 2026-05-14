@@ -15,6 +15,8 @@ credentials as a generic connection error.
   tests/test_librechat_bridge.py -q` passed: 92 tests.
 - `uv run --with pytest --with pyyaml pytest tests/release/test_install_summary.py
   tests/release/test_telegram_codex_runtime_paths.py -q` passed: 38 tests.
+- `PYTHONPATH=. uv run --with pytest --with pyyaml pytest tests/release/ -q` passed: 532 tests,
+  1 skipped.
 - `bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder
   --allow-dirty-local-testing` restarted the local installed runtime from the active checkout.
 - `bin/viventium status` reported Telegram Bridge and Telegram Codex as `Running` after restart.
@@ -23,6 +25,8 @@ credentials as a generic connection error.
 
 - TR-004: Passed by stream-level regression. The bridge now maps the provider rejection wording to
   actionable reconnect guidance instead of the generic connection-error fallback.
+- TR-002: Expanded. Running Telegram services with recent provider-auth evidence stay visible as
+  `Running with issues`; stopped services with the same evidence remain `Action Required`.
 
 ## Boundary
 

@@ -379,6 +379,54 @@ def test_build_service_rows_marks_running_telegram_conflict_as_issue(monkeypatch
     assert "getUpdates" not in telegram_detail
 
 
+def test_build_service_rows_marks_running_telegram_auth_error_as_issue(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": True},
+        },
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    runtime_root = tmp_path / "state" / "runtime" / "isolated"
+    logs_root = runtime_root / "logs"
+    logs_root.mkdir(parents=True)
+    pid_file = runtime_root / "telegram_bot.pid"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    (logs_root / "telegram_bot.log").write_text(
+        "OpenAI connected-account refresh failed while processing a Telegram reply\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "BOT_TOKEN": VALID_TELEGRAM_TOKEN,
+            "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        },
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    telegram_status, telegram_detail = services["Telegram Bridge"]
+    assert telegram_status == "Running with issues"
+    assert "authentication failure" in telegram_detail
+    assert "connected-account refresh failed" not in telegram_detail
+
+
 def test_build_service_rows_marks_stopped_telegram_auth_error_as_action_required(
     monkeypatch, tmp_path: Path
 ) -> None:

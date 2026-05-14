@@ -11,12 +11,13 @@
 
 ## Case TR-002: Provider Authentication Failure Is Actionable
 
-- **Expected outcome:** A stopped Telegram bridge with recent provider-auth evidence is reported as
-  `Action Required` with user-safe refresh guidance.
+- **Expected outcome:** A running Telegram bridge with recent provider-auth evidence is reported as
+  `Running with issues`; a stopped Telegram bridge with the same evidence is reported as
+  `Action Required`. Both states use user-safe refresh guidance.
 - **Forbidden result:** raw provider error text, token values, account identifiers, or private logs
   appear in public status or QA artifacts.
 - **Evidence to capture:** synthetic unit test and public-safe QA report.
-- **Last run:** 2026-05-14, automated synthetic coverage added.
+- **Last run:** 2026-05-14, automated synthetic coverage expanded after escaped user report.
 
 ## Case TR-003: Telegram Codex Restart Clears Scoped Orphans
 
