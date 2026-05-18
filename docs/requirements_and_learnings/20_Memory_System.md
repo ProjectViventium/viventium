@@ -76,6 +76,8 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   bookkeeping beside transcript files, `VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS` or
   `--transcript-ignore-glob` can exclude relative path globs deterministically. Ignore rules are
   path/lifecycle bookkeeping only; they must not parse transcript content or infer meeting meaning.
+  Hidden files, temp/download partials, state directories, and `.log` files are ignored by default
+  as source-folder sidecars.
 - Transcript evidence is softer than chat evidence. A single transcript can support
   meeting-scoped `moments` or `context`; stable beliefs, identity, direction, or durable preferences
   require either two recent meeting transcripts or transcript plus chat evidence.
@@ -114,6 +116,21 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   user/source-scoped `meeting_inventory:*` file-search artifact from processed summary metadata.
   That inventory is a transcript-recall table of contents, not a saved-memory key, so it can be
   regenerated, repaired, and stale-pruned with the vector lifecycle without polluting durable memory.
+- The transcript summarizer must keep those inventory fields human-contextual and compact. Artifact
+  IDs, stable file IDs, vector IDs, content hashes, and source-folder hashes remain internal
+  metadata and must not be written into the broad table-of-contents body.
+- The inventory vector text itself must not prepend the generic transcript artifact header; lifecycle
+  identifiers stay in Mongo/vector metadata, while the model-visible inventory remains a compact
+  list for who/when/context recall.
+- Broad transcript questions, including "list my recent conversations based on transcripts
+  chronologically and give me a 5 line summary based on the actual context", must use that inventory
+  surface to see the processed transcript set before composing the answer. The inventory exists so
+  the model can reason over all current transcript entries with dates, participants, and one-line
+  context; it must not become deterministic semantic extraction or durable memory promotion.
+- Inventory ordering should use the model-authored meeting date/time when present, falling back to
+  file mtime only when the meeting date/time is unknown. If the inventory grows beyond its compact
+  source-backed size limit, it must truncate at entry boundaries and include an explicit omitted-entry
+  marker rather than silently slicing the middle of the list.
 - If detailed meeting summaries and derived conversation recall both return file_search hits,
   ranking must remain evidence-based: low-signal assistant no-access/no-memory disclaimers should
   not outrank current transcript content, but transcript source class must not blanket-override
@@ -124,6 +141,9 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   redacted `summary.json`, `failure.redacted.json`, and `run-log.redacted.jsonl` with phase, reason,
   error class, timeout/status/signal when available, and message hash/preview without leaking
   private paths, account identifiers, secrets, or transcript text.
+- Memory-hardening locks are concurrency guards, not durable state. A lock with a live recorded PID
+  must fail closed, but a stale lock whose PID no longer exists must be cleared before the next
+  manual or scheduled run so recovery does not require hand-editing local state.
 
 ### Listen-Only call transcript evidence
 

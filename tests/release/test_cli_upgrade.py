@@ -45,6 +45,28 @@ def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
 
+def test_compile_config_keeps_compile_phase_for_compiler_process() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "compile_config")
+
+    export_index = function_def.index('export VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"')
+    prepare_index = function_def.index("prepare_runtime_exports")
+    compiler_index = function_def.index('"$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py"')
+    unset_index = function_def.index("unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE")
+
+    assert export_index < prepare_index < compiler_index < unset_index
+
+
+def test_doctor_compiler_invocations_ignore_generated_runtime_source_override() -> None:
+    doctor_source = (REPO_ROOT / "scripts" / "viventium" / "doctor.sh").read_text(encoding="utf-8")
+
+    assert doctor_source.count("VIVENTIUM_LIBRECHAT_SOURCE_PHASE=compile") >= 2
+    assert doctor_source.count("VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH=") >= 2
+    for snippet in doctor_source.split('"$PYTHON_BIN" "$SCRIPT_DIR/config_compiler.py"')[:2]:
+        assert "VIVENTIUM_LIBRECHAT_SOURCE_PHASE=compile" in snippet
+        assert "VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH=" in snippet
+
+
 def run_bash_on_pty(script: str, *, cwd: Path, env: dict[str, str] | None = None) -> tuple[int, str]:
     env_payload = {**os.environ, **(env or {})}
     pid, master_fd = pty.fork()

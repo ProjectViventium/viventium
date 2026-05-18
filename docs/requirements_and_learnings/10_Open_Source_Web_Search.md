@@ -57,6 +57,22 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
   is a degraded web-search state, not automatically a universal "search is dead" state.
 - Runtime auth must accept both `${ENV_VAR}` references in tracked YAML and the
   already-interpolated literal values returned by LibreChat's loaded AppConfig.
+- Model-facing `web_search` failures must preserve the failure class without leaking raw local
+  endpoints or stack details. A failed search provider is not a no-results result. The assistant
+  must be able to distinguish:
+  - configured provider unavailable, including local SearXNG/Firecrawl/Docker services down
+  - provider timeout
+  - rate limit
+  - auth/config missing, such as absent API keys or generated config
+  - request rejected by the provider
+  - successful search with no relevant evidence
+- For named-entity, contact, date, event-detail, or current-fact lookups, one empty/error
+  `web_search` result is an escalation trigger. If browser or host-worker/local-delegation fallback
+  is available, use it before telling the user the lookup cannot be completed. If no fallback is
+  available, say the exact failure class and the retry/setup action.
+- Debug/QA for local search must check Docker daemon/container state before accepting a visible
+  search failure as a product answer. "Docker Desktop is off" and "local provider returned no
+  results" are different outcomes and must be recorded separately.
 - `rerankerType` is optional. If source-of-truth config does not declare a reranker,
   the runtime must not auto-enable one from unrelated ambient shell env.
 - The compose stack includes Redis, RabbitMQ, Postgres (nuq), and the Playwright

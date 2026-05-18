@@ -356,12 +356,13 @@ def test_local_source_of_truth_main_agent_stays_on_claude_opus_47() -> None:
     ) == APPROVED_MAIN_AGENT_FAMILY
 
 
-def test_local_source_of_truth_main_agent_voice_route_defaults_to_fast_anthropic_without_thinking() -> None:
+def test_local_source_of_truth_main_agent_voice_route_uses_launch_ready_anthropic_without_thinking() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
     assert main_agent.get("voice_llm_provider") == "anthropic"
-    assert main_agent.get("voice_llm_model") == "claude-haiku-4-5"
+    assert main_agent.get("voice_llm_model") == "claude-sonnet-4-5"
+    assert main_agent.get("voice_llm_model_parameters", {}).get("model") == "claude-sonnet-4-5"
     assert main_agent.get("voice_llm_model_parameters", {}).get("thinking") is False
 
 
@@ -474,6 +475,8 @@ def test_live_fact_truthfulness_guard_stays_in_shipped_agent_prompts() -> None:
     assert "weather/news/markets/web facts" in main_instructions
     assert "verified tool result" in main_instructions
     assert "omit that section" in main_instructions
+    assert "provider unavailable, timeout, rate limit, auth/config missing" in main_instructions
+    assert "browser/local-delegation fallback" in main_instructions
 
     for agent_name, owned_scope, excluded_scope in [
         ("MS365", "verified ms365 results only", "non-ms365 live facts"),

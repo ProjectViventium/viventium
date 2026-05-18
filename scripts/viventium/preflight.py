@@ -8,6 +8,7 @@ import platform
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -559,7 +560,7 @@ def netbird_livekit_node_ip_ready(config: dict[str, Any]) -> bool:
 
     try:
         socket.gethostbyname(hostname)
-    except Exception:
+    except (OSError, socket.gaierror):
         return False
     return True
 
@@ -1335,6 +1336,10 @@ def print_summary(ui: InstallerUI, config: dict[str, Any], items: list[Preflight
             ("Item", "Why it matters", "What to do"),
             manual_rows,
             style="yellow",
+        )
+        ui.print_note(
+            "Manual attention details:\n"
+            + "\n".join(f"{label}: {action}" for label, _reason, action in manual_rows)
         )
         ui.print_blank()
 

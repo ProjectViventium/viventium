@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -241,6 +242,40 @@ def port_open(port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def process_running_by_name(name: str) -> bool:
+    pgrep_cmd = shutil.which("pgrep")
+    if pgrep_cmd:
+        try:
+            completed = subprocess.run(
+                [pgrep_cmd, "-x", name],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2,
+            )
+        except Exception:
+            completed = None
+        if completed is not None:
+            return completed.returncode == 0 and bool(completed.stdout.strip())
+
+    ps_cmd = shutil.which("ps")
+    if ps_cmd:
+        try:
+            completed = subprocess.run(
+                [ps_cmd, "-axo", "comm="],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2,
+            )
+        except Exception:
+            completed = None
+        if completed is not None and completed.returncode == 0:
+            return any(Path(line.strip()).name == name for line in completed.stdout.splitlines())
+
+    return False
 
 
 def docker_total_memory_bytes() -> int | None:
@@ -542,7 +577,75 @@ def cli_operation_running(runtime_dir: Path | None) -> bool:
     lock_dir = runtime_dir.parent / "state" / "cli-operation.lock"
     if not lock_dir.is_dir():
         return False
-    return pid_file_process_running(lock_dir / "pid")
+    if not pid_file_process_running(lock_dir / "pid"):
+        return False
+
+    command = ""
+    try:
+        command = (lock_dir / "command").read_text(encoding="utf-8").strip().lower()
+    except Exception:
+        command = ""
+
+    startup_window_seconds = int(os.environ.get("VIVENTIUM_CLI_STARTUP_WINDOW_SECONDS") or "600")
+    # Only startup commands get the stale-lock grace window. Other CLI operations still block
+    # status until their process exits because they may intentionally hold a long-running lock.
+    if command in {"start", "launch"} and startup_window_seconds > 0:
+        try:
+            lock_age_seconds = time.time() - max(
+                (lock_dir / "pid").stat().st_mtime,
+                (lock_dir / "command").stat().st_mtime,
+            )
+        except Exception:
+            lock_age_seconds = 0
+        if lock_age_seconds > startup_window_seconds:
+            return False
+
+    return True
+
+
+def recent_log_text(path: Path, *, max_bytes: int = 65536) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            return handle.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def telegram_recent_runtime_issue(log_paths: list[Path]) -> tuple[str, str] | None:
+    issue_checks: tuple[tuple[tuple[str, ...], str, str], ...] = (
+        (
+            (
+                "terminated by other getupdates request",
+                "conflict:",
+                "only one bot instance",
+            ),
+            "Running with issues",
+            "Recent Telegram polling conflict detected. Stop the other bot process using the same BotFather token, then restart Viventium.",
+        ),
+        (
+            (
+                "credentials rejected",
+                "connected-account refresh failed",
+                "invalid_api_key",
+                "authenticationerror",
+                "unauthorized",
+            ),
+            "Running with issues",
+            "Recent AI provider authentication failure detected. Refresh the connected account or API key, then restart Viventium.",
+        ),
+    )
+
+    for path in log_paths:
+        text = recent_log_text(path).lower()
+        if not text:
+            continue
+        for needles, status, detail in issue_checks:
+            if any(needle in text for needle in needles):
+                return status, detail
+    return None
 
 
 def telegram_service_status(
@@ -565,12 +668,14 @@ def telegram_service_status(
     log_detail = "Starts with Viventium"
     process_running = False
     pending_running = False
+    log_paths: list[Path] = []
 
     if state_roots:
         log_detail = str(state_roots[0] / "logs" / log_file_name)
 
     for state_root in state_roots:
         log_detail = str(state_root / "logs" / log_file_name)
+        log_paths.append(state_root / "logs" / log_file_name)
         pid_candidates = (
             state_root / pid_file_name,
             state_root / "logs" / pid_file_name,
@@ -594,6 +699,9 @@ def telegram_service_status(
             pending_running = any(candidate.is_file() for candidate in pending_marker_candidates)
 
     if process_running:
+        issue = telegram_recent_runtime_issue(log_paths)
+        if issue is not None:
+            return issue
         return "Running", running_detail
 
     if pending_running:
@@ -611,6 +719,11 @@ def telegram_service_status(
             "Misconfigured",
             "Invalid BotFather token. Run bin/viventium configure and re-copy the full <bot_id>:<secret> value from @BotFather.",
         )
+
+    issue = telegram_recent_runtime_issue(log_paths)
+    if probe_live and issue is not None:
+        _status, detail = issue
+        return "Action Required", detail
 
     if probe_live:
         return "Stopped", f"Check {log_detail}"
@@ -635,6 +748,73 @@ def mcp_service_status(
                 return "Starting", f"Waiting for {detail}"
             return "Action Required", f"Endpoint not reachable at {detail}"
     return "Configured", detail
+
+
+def helper_config_path(runtime_dir: Path | None) -> Path | None:
+    env_path = str(os.environ.get("VIVENTIUM_HELPER_CONFIG_FILE") or "").strip()
+    if env_path:
+        return Path(env_path).expanduser()
+    if runtime_dir is not None:
+        return runtime_dir.parent / "helper-config.json"
+    return None
+
+
+def macos_helper_status(
+    *,
+    runtime_dir: Path | None,
+    probe_live: bool,
+    stack_should_be_live: bool,
+) -> tuple[str, str, str] | None:
+    if sys.platform != "darwin":
+        return None
+
+    path = helper_config_path(runtime_dir)
+    if path is None or not path.is_file():
+        return None
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return (
+            "macOS Status Bar Helper",
+            "Action Required",
+            "Helper config could not be read. Run bin/viventium launch to refresh it.",
+        )
+
+    if not isinstance(payload, dict):
+        return (
+            "macOS Status Bar Helper",
+            "Action Required",
+            "Helper config is invalid. Run bin/viventium launch to refresh it.",
+        )
+
+    show_in_status_bar = resolve_bool(payload.get("showInStatusBar"), True)
+    if not show_in_status_bar:
+        return (
+            "macOS Status Bar Helper",
+            "Hidden",
+            "Configured to stay out of the macOS status bar",
+        )
+
+    if probe_live and process_running_by_name("ViventiumHelper"):
+        return (
+            "macOS Status Bar Helper",
+            "Running",
+            "Status bar menu is active",
+        )
+
+    if probe_live and stack_should_be_live:
+        return (
+            "macOS Status Bar Helper",
+            "Action Required",
+            "Configured to show in the status bar, but ViventiumHelper is not running. Run bin/viventium launch.",
+        )
+
+    return (
+        "macOS Status Bar Helper",
+        "Configured",
+        "Launch Viventium when you want the status bar menu active",
+    )
 
 
 def local_network_host() -> str | None:
@@ -868,11 +1048,12 @@ def build_service_rows(
             conversation_recall_health_url,
             rag_api_url,
         )
-        conversation_recall_status = (
-            "Running"
-            if conversation_recall_running
-            else ("Starting" if probe_live and stack_should_be_live and rag_api_url else "Configured")
-        )
+        if conversation_recall_running:
+            conversation_recall_status = "Running"
+        elif probe_live and stack_should_be_live and rag_api_url:
+            conversation_recall_status = "Starting" if startup_in_progress else "Action Required"
+        else:
+            conversation_recall_status = "Configured"
         rows.append(
             (
                 "Conversation Recall",
@@ -883,24 +1064,35 @@ def build_service_rows(
     if resolve_bool((integrations.get("web_search") or {}).get("enabled"), False):
         rows.append(("Web Search", "Configured", web_search_summary(config)))
         if searxng_url:
+            searxng_live = probe_live and http_ok(searxng_url)
+            if searxng_live:
+                searxng_status = "Running"
+            elif runtime_env.get("START_SEARXNG") == "true":
+                searxng_status = "Starting" if startup_in_progress else "Action Required"
+            else:
+                searxng_status = "External"
             rows.append(
                 (
                     "SearXNG",
-                    "Running" if (probe_live and http_ok(searxng_url)) else ("Configured" if runtime_env.get("START_SEARXNG") == "true" else "External"),
+                    searxng_status,
                     searxng_url,
                 )
             )
         if firecrawl_url:
             firecrawl_live = probe_live and (http_ok(firecrawl_url) or port_open(3003))
-            firecrawl_status = "Running" if firecrawl_live else (
-                "Configured" if runtime_env.get("START_FIRECRAWL") == "true" else "External"
-            )
+            if firecrawl_live:
+                firecrawl_status = "Running"
+            elif runtime_env.get("START_FIRECRAWL") == "true":
+                firecrawl_status = "Starting" if startup_in_progress else "Action Required"
+            else:
+                firecrawl_status = "External"
             firecrawl_detail = firecrawl_url
             memory_warning = local_firecrawl_memory_warning(config)
             if (
                 probe_live
                 and not firecrawl_live
                 and runtime_env.get("START_FIRECRAWL") == "true"
+                and not startup_in_progress
                 and memory_warning
             ):
                 firecrawl_status = "Needs Docker RAM"
@@ -939,6 +1131,14 @@ def build_service_rows(
     if resolve_bool((integrations.get("openclaw") or {}).get("enabled"), False):
         rows.append(("OpenClaw", "Configured", "Exposure monitoring integration"))
 
+    helper_row = macos_helper_status(
+        runtime_dir=runtime_dir,
+        probe_live=probe_live,
+        stack_should_be_live=stack_should_be_live,
+    )
+    if helper_row is not None:
+        rows.append(helper_row)
+
     checkout_row = stack_owner_checkout_row(config, runtime_env, runtime_dir, repo_root)
     if checkout_row is not None:
         rows.insert(0, checkout_row)
@@ -954,6 +1154,21 @@ def live_core_services_ready(rows: list[tuple[str, str, str]]) -> bool:
     )
 
 
+def live_services_need_attention(rows: list[tuple[str, str, str]]) -> bool:
+    attention_statuses = {
+        "Action Required",
+        "Misconfigured",
+        "Stopped",
+        "Needs Docker RAM",
+        "Running with issues",
+    }
+    return any(status in attention_statuses for _name, status, _detail in rows)
+
+
+def live_services_still_starting(rows: list[tuple[str, str, str]]) -> bool:
+    return any(status == "Starting" for _name, status, _detail in rows)
+
+
 def resolve_summary_heading(
     probe_live: bool,
     rows: list[tuple[str, str, str]],
@@ -964,6 +1179,20 @@ def resolve_summary_heading(
             "Viventium is configured",
             "The table below shows the services this install is set up to run.",
             "Configured Services",
+        )
+
+    if live_core_services_ready(rows) and live_services_need_attention(rows):
+        return (
+            "Viventium needs attention",
+            "The core web surfaces are reachable, but one or more enabled runtime surfaces are not healthy.",
+            "Live Services",
+        )
+
+    if live_core_services_ready(rows) and live_services_still_starting(rows):
+        return (
+            "Viventium is still starting",
+            "The core web surfaces are reachable, but one or more enabled runtime surfaces are still warming up.",
+            "Live Services",
         )
 
     if live_core_services_ready(rows):

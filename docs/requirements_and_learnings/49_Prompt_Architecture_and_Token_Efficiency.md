@@ -38,6 +38,113 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### 2026-05-15 Prompt Workbench Two-Way Sync
+
+Added the first standalone local Prompt Workbench at
+`viventium_v0_4/prompt-workbench/`. The workbench is intentionally outside the LibreChat fork and
+does not introduce a prompt database. It imports the existing prompt registry, config/source
+rendering, agent-sync helper, prompt-frame dashboard reader, git history, and exact-model eval
+harness.
+
+The workbench keeps three prompt states visible:
+
+| State | Owner | Workbench rule |
+| --- | --- | --- |
+| Source | `viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/` and source YAML | Edits create reviewed source drafts only; generated App Support runtime files are never authoring surfaces. |
+| Live | LibreChat Mongo agent records managed by Agent Builder and `viventium-sync-agents.js` | Live changes are protected. Pull/compare surfaces drift before any import or push. |
+| Evaluated | `qa/prompt-architecture/evals/prompt-bank.json` plus exact-model eval run outputs | Runs and reports are tied to prompt hashes; raw eval evidence stays private. |
+
+Sync classification is ledger-backed and public-safe:
+
+- `synced`: rendered source instructions match live instructions.
+- `live-ahead`: live changed since the last reconciled live/source hash.
+- `source-ahead`: source changed since the last reconciled live/source hash.
+- `conflict`: both sides changed or there is no safe baseline for an overwrite.
+
+The private workbench ledger lives under
+`~/Library/Application Support/Viventium/private-user-data/prompt-workbench/sync-ledger.json`. It
+stores ids, hashes, source commit, live version, and eval run references, not raw private prompt
+text. Drafts also live under that private workbench directory and require an idempotency token from
+the reviewed diff before they can be applied.
+
+Two-way sync behavior:
+
+- LibreChat Agent Builder edits are detected through the existing compare/pull path. Clean one-section
+  live edits can become a markdown draft. Multi-section or ambiguous edits must go through manual
+  target selection. Public prompt safety scanning runs before any public markdown draft can be
+  applied; private-looking content is refused from the public prompt tree.
+- Workbench/markdown edits write source drafts only. Pushing live uses
+  `viventium-sync-agents.js push --prompts-only --dry-run` first, then a reviewed push only when the
+  UI supplies the matching review token for the current dry-run.
+- Conflicts block automatic import/push. The user must choose keep-live/import, keep-source/push, or
+  manual merge.
+
+The first UI implements the required operator surfaces: Prompt Flow Dashboard, Prompt Atlas, Prompt
+Detail with Monaco, Live Drift Board, Eval Designer/Results, prompt-frame observability, and a
+LibreChat integration panel that describes the minimal managed-agent badge contract. Promptfoo is
+available only as a secondary local adapter from the canonical Viventium eval bank.
+
+The supported local lifecycle entrypoint is `bin/viventium prompt-workbench <open|start|stop|status>`.
+It builds the local bundle when needed, starts the FastAPI/static workbench on a loopback port, and
+stores only PID/port/url metadata under App Support prompt-workbench state. The macOS helper's
+`Advanced > Prompt Workbench` submenu calls that CLI. This keeps workbench lifecycle separate from
+the Viventium stack: stopping Prompt Workbench must not stop LibreChat, Mongo, native services,
+voice, or the running user-facing runtime.
+
+### 2026-05-16 Prompt Workbench Usability And Eval Clarification
+
+The Prompt Workbench must make the safe next action obvious when source/eval drafts are waiting.
+Eval preview and live push operate on applied source only, so pending source or eval drafts block
+those actions. The UI now routes blocked top-level actions to the relevant draft review surface
+instead of presenting inert `Apply draft first` buttons. Stale source drafts whose target file
+already matches the reviewed draft can be resolved idempotently without rewriting source; eval-bank
+drafts that are semantic no-ops or formatting-only churn are refused.
+
+Eval behavior is split into two human-facing modes:
+
+- **Preview**: validates which eval cases would run, records a public-safe selection summary, makes
+  no model call, and must not be presented as model performance.
+- **Live exact-model run**: calls the canonical exact-model harness and is the path that records
+  performance against prompt hashes.
+
+The Eval Designer must default to all eval cases linked to the selected prompt across families and
+surfaces. Creating or editing eval cases creates a reviewed `eval-edit` draft against the canonical
+eval bank, never a direct source write, and the patch should stay focused on the target case instead
+of reformatting unrelated cases. The create-new-case form must remain responsive to real browser
+click and keyboard input; form text is read at save time so typing does not create source writes or
+intermediate draft churn.
+
+The former `Frames` tab is now `Prompt Traces`. A prompt trace is local metadata about a prompt run:
+surface, model/provider, assembled layers, token estimates, and routing/decision metadata. The
+public-safe UI must explain that concept plainly and must not expose raw private prompt text or
+transcripts.
+
+### 2026-05-14 Voice Latency Prompt-Budget Learning
+
+Live voice latency RCA showed that a simple spoken turn can still carry a large assembled prompt
+frame because voice preserves the same main agent, memory, recall, MCP, tool, background-cortex, and
+surface-prompt contracts as text chat. That is a parity requirement, not accidental dead weight.
+
+The fix direction is therefore **not** a voice-only context budget that silently removes memory or
+agent instructions for calls. A voice-only budget would make voice behavior diverge from web chat
+unless it was explicitly designed, disclosed, eval-gated, and documented as a product mode. The
+least-risk path is shared prompt ownership cleanup:
+
+- keep prompt-frame telemetry on the decisive voice paths so layer size, layer hashes, selected
+  provider/model, and voice flags are visible without logging raw private text
+- reduce duplicated main-prompt material at the shared source layer, not by cutting only the voice
+  runtime path
+- move tool manuals and capability details to MCP/server/tool schemas that already own those
+  capabilities
+- keep provider-specific voice markup in the surface prompt and shared voice capability contracts
+- use provider/runtime prompt caching or prewarm where supported before deleting behaviorally
+  important context
+- prove every reduction with exact-model evals plus real browser/LiveKit QA
+
+This preserves the user-visible rule: Viventium voice calls are the same agent with the same memory,
+permissions, background agents, and truth boundaries unless a future product requirement explicitly
+creates a different mode.
+
 ### 2026-05-09 Local QA Baseline Evidence
 
 Ran a local QA baseline pass against the active local stack and QA account after prompt

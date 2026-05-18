@@ -16,27 +16,37 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-from ApplicationServices import (
-    AXUIElementCopyAttributeValue,
-    AXUIElementCreateApplication,
-    AXUIElementPerformAction,
-    kAXChildrenAttribute,
-    kAXPressAction,
-    kAXRoleAttribute,
-    kAXSubroleAttribute,
-    kAXTitleAttribute,
-)
+try:
+    from ApplicationServices import (
+        AXUIElementCopyAttributeValue,
+        AXUIElementCreateApplication,
+        AXUIElementPerformAction,
+        kAXChildrenAttribute,
+        kAXPressAction,
+        kAXRoleAttribute,
+        kAXSubroleAttribute,
+        kAXTitleAttribute,
+    )
+except ModuleNotFoundError:
+    AXUIElementCopyAttributeValue = None
+    AXUIElementCreateApplication = None
+    AXUIElementPerformAction = None
+    kAXChildrenAttribute = "AXChildren"
+    kAXPressAction = "AXPress"
+    kAXRoleAttribute = "AXRole"
+    kAXSubroleAttribute = "AXSubrole"
+    kAXTitleAttribute = "AXTitle"
 
 
 HEALTH_ENDPOINTS = {
-    "api": ("http://127.0.0.1:3180/api/health", {200}),
-    "web": ("http://127.0.0.1:3190/", {200}),
-    "playground": ("http://127.0.0.1:3300/", {200}),
-    "scheduling_mcp": ("http://127.0.0.1:7110/health", {200}),
-    "livekit": ("http://127.0.0.1:7888/", {200}),
-    "rag": ("http://127.0.0.1:8110/health", {200}),
-    "google_mcp": ("http://127.0.0.1:8111/health", {200}),
-    "ms365_mcp": ("http://127.0.0.1:6274/mcp", {401}),
+    "api": ("http://localhost:3180/api/health", {200}),
+    "web": ("http://localhost:3190/", {200}),
+    "playground": ("http://localhost:3300/", {200}),
+    "scheduling_mcp": ("http://localhost:7110/health", {200}),
+    "livekit": ("http://localhost:7888/", {200}),
+    "rag": ("http://localhost:8110/health", {200}),
+    "google_mcp": ("http://localhost:8111/health", {200}),
+    "ms365_mcp": ("http://localhost:6274/mcp", {401}),
 }
 
 STOP_TIMEOUT_SECONDS = 300
@@ -139,6 +149,8 @@ def wait_until(
 
 
 def helper_menu_item() -> Any:
+    if AXUIElementCreateApplication is None or AXUIElementCopyAttributeValue is None:
+        raise RuntimeError("PyObjC ApplicationServices is unavailable; using AppleScript menu QA fallback")
     pid = helper_pid()
     if pid is None:
         raise RuntimeError("ViventiumHelper is not running")

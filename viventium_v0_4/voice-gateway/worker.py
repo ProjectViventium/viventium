@@ -34,6 +34,7 @@ from livekit.agents import (
     AutoSubscribe,
     JobContext,
     JobProcess,
+    TurnHandlingOptions,
     WorkerOptions,
     cli,
 )
@@ -86,7 +87,7 @@ HAS_TURN_DETECTOR = optional_module_available("livekit.plugins.turn_detector.mul
 _TURN_DETECTOR_RUNNER_NAME = "lk_end_of_utterance_multilingual"
 _LOCAL_WHISPER_STT_PROVIDERS = {"pywhispercpp", "whisper_local"}
 _LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
-_LOCAL_WHISPER_VAD_MIN_SILENCE_S = "1.0"
+_LOCAL_WHISPER_VAD_MIN_SILENCE_S = "0.5"
 _LOCAL_WHISPER_MODELS = (
     "tiny.en",
     "base.en",
@@ -465,6 +466,10 @@ def _parse_bool_env(name: str, fallback: bool) -> bool:
 # === VIVENTIUM END ===
 
 
+def _voice_latency_log_enabled() -> bool:
+    return _parse_bool_env("VIVENTIUM_VOICE_LOG_LATENCY", False)
+
+
 def _normalize_turn_detection(mode: str) -> str:
     normalized = (mode or "").strip().lower()
     if normalized in {"turn_detector", "semantic", "semantic_turn_detector", "multilingual"}:
@@ -600,7 +605,7 @@ def _default_min_endpointing_delay(turn_detection: str, stt_provider: str = "") 
     if turn_detection == "turn_detector":
         return 0.35
     if turn_detection == "vad" and _is_local_whisper_stt(stt_provider):
-        return 1.4
+        return 0.5
     return 0.9
 
 
@@ -2093,6 +2098,18 @@ class CortexFollowupScheduler:
         self._seq += 1
         seq = self._seq
         allow_stale_delivery = should_poll_glasshive
+        if _voice_latency_log_enabled():
+            logger.info(
+                "[VoiceLatency][Followup] scheduled seq=%s message_id=%s cortex_expected=%s pending_insights=%s glasshive_expected=%s timeout_s=%.3f grace_s=%.3f interval_s=%.3f",
+                seq,
+                message_id,
+                should_poll_cortex,
+                len(pending_insights or []),
+                should_poll_glasshive,
+                self._timeout_s,
+                self._grace_s,
+                self._interval_s,
+            )
         if not should_poll_glasshive and self._cortex_task and not self._cortex_task.done():
             self._cortex_task.cancel()
         task = asyncio.create_task(
@@ -2129,12 +2146,22 @@ class CortexFollowupScheduler:
     ) -> None:
         try:
             started_at = time.monotonic()
+            log_latency = _voice_latency_log_enabled()
             deadline_window = max(
                 self._timeout_s if should_poll_cortex else 0.0,
                 self._glasshive_timeout_s if should_poll_glasshive else 0.0,
             )
             if deadline_window <= 0:
                 return
+            if log_latency:
+                logger.info(
+                    "[VoiceLatency][Followup] poll_start seq=%s message_id=%s cortex=%s glasshive=%s timeout_s=%.3f",
+                    seq,
+                    message_id,
+                    should_poll_cortex,
+                    should_poll_glasshive,
+                    deadline_window,
+                )
             deadline = started_at + deadline_window
             cortex_deadline = started_at + self._timeout_s
             merged_insights: list[dict[str, Any]] = list(pending_insights or [])
@@ -2161,6 +2188,14 @@ class CortexFollowupScheduler:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 while time.monotonic() < deadline:
                     if not allow_stale_delivery and seq != self._seq:
+                        if log_latency:
+                            logger.info(
+                                "[VoiceLatency][Followup] stale_cancel_ms=%s seq=%s message_id=%s latest_seq=%s",
+                                int((time.monotonic() - started_at) * 1000),
+                                seq,
+                                message_id,
+                                self._seq,
+                            )
                         return
 
                     if should_poll_glasshive:
@@ -2184,6 +2219,13 @@ class CortexFollowupScheduler:
                                     else:
                                         text = text.strip()
                                     if is_no_response_only(text):
+                                        if log_latency:
+                                            logger.info(
+                                                "[VoiceLatency][Followup] glasshive_no_response_ms=%s seq=%s message_id=%s",
+                                                int((time.monotonic() - started_at) * 1000),
+                                                seq,
+                                                message_id,
+                                            )
                                         if delivery:
                                             await self._mark_glasshive_delivery_status(
                                                 session,
@@ -2192,11 +2234,27 @@ class CortexFollowupScheduler:
                                                 reason="{NTA}",
                                             )
                                         return
+                                    if log_latency:
+                                        logger.info(
+                                            "[VoiceLatency][Followup] glasshive_found_ms=%s seq=%s message_id=%s text_chars=%s",
+                                            int((time.monotonic() - started_at) * 1000),
+                                            seq,
+                                            message_id,
+                                            len(text),
+                                        )
                                     spoken = self._speak(
                                         text,
                                         seq,
                                         allow_stale_delivery=allow_stale_delivery,
                                     )
+                                    if log_latency:
+                                        logger.info(
+                                            "[VoiceLatency][Followup] glasshive_speak_result_ms=%s seq=%s message_id=%s spoken=%s",
+                                            int((time.monotonic() - started_at) * 1000),
+                                            seq,
+                                            message_id,
+                                            spoken,
+                                        )
                                     if delivery:
                                         await self._mark_glasshive_delivery_status(
                                             session,
@@ -2216,12 +2274,35 @@ class CortexFollowupScheduler:
                             if isinstance(text, str) and text.strip():
                                 text = text.strip()
                                 if is_no_response_only(text):
+                                    if log_latency:
+                                        logger.info(
+                                            "[VoiceLatency][Followup] cortex_no_response_ms=%s seq=%s message_id=%s",
+                                            int((time.monotonic() - started_at) * 1000),
+                                            seq,
+                                            message_id,
+                                        )
                                     logger.info(
                                         "[voice-gateway] Suppressing follow-up speech (no-response): message_id=%s",
                                         message_id,
                                     )
                                     return
-                                self._speak(text, seq, allow_stale_delivery=allow_stale_delivery)
+                                if log_latency:
+                                    logger.info(
+                                        "[VoiceLatency][Followup] cortex_followup_found_ms=%s seq=%s message_id=%s text_chars=%s",
+                                        int((time.monotonic() - started_at) * 1000),
+                                        seq,
+                                        message_id,
+                                        len(text),
+                                    )
+                                spoken = self._speak(text, seq, allow_stale_delivery=allow_stale_delivery)
+                                if log_latency:
+                                    logger.info(
+                                        "[VoiceLatency][Followup] cortex_speak_result_ms=%s seq=%s message_id=%s spoken=%s",
+                                        int((time.monotonic() - started_at) * 1000),
+                                        seq,
+                                        message_id,
+                                        spoken,
+                                    )
                                 return
 
                         insights = data.get("insights")
@@ -2229,10 +2310,25 @@ class CortexFollowupScheduler:
                             merged_insights = _merge_insights(merged_insights, insights)
                             if merged_insights and first_insight_at is None:
                                 first_insight_at = time.monotonic()
+                                if log_latency:
+                                    logger.info(
+                                        "[VoiceLatency][Followup] insights_seen_ms=%s seq=%s message_id=%s count=%s",
+                                        int((first_insight_at - started_at) * 1000),
+                                        seq,
+                                        message_id,
+                                        len(merged_insights),
+                                    )
 
                     if merged_insights and first_insight_at is not None:
                         grace_deadline = first_insight_at + self._grace_s
                         if time.monotonic() >= grace_deadline:
+                            if log_latency:
+                                logger.info(
+                                    "[VoiceLatency][Followup] insight_grace_expired_ms=%s seq=%s message_id=%s",
+                                    int((time.monotonic() - started_at) * 1000),
+                                    seq,
+                                    message_id,
+                                )
                             logger.info(
                                 "[voice-gateway] No persisted follow-up before insight grace window expired; keeping background insights silent: message_id=%s",
                                 message_id,
@@ -2244,6 +2340,14 @@ class CortexFollowupScheduler:
             if not allow_stale_delivery and seq != self._seq:
                 return
             if merged_insights:
+                if log_latency:
+                    logger.info(
+                        "[VoiceLatency][Followup] timed_out_after_insights_ms=%s seq=%s message_id=%s count=%s",
+                        int((time.monotonic() - started_at) * 1000),
+                        seq,
+                        message_id,
+                        len(merged_insights),
+                    )
                 logger.info(
                     "[voice-gateway] Follow-up polling timed out after insights with no persisted follow-up; keeping background insights silent: message_id=%s",
                     message_id,
@@ -2939,21 +3043,31 @@ async def entrypoint(ctx: JobContext) -> None:
 
     turn_detection, turn_end_reason = load_turn_detection(env, vad is not None)
 
+    turn_handling: TurnHandlingOptions = {
+        "turn_detection": turn_detection,
+        "endpointing": {
+            "min_delay": env.voice_min_endpointing_delay_s,
+            "max_delay": env.voice_max_endpointing_delay_s,
+        },
+        "interruption": {
+            "enabled": True,
+            "min_duration": env.voice_min_interruption_duration_s,
+            "min_words": env.voice_min_interruption_words,
+            "false_interruption_timeout": env.voice_false_interruption_timeout_s,
+            "resume_false_interruption": env.voice_resume_false_interruption,
+        },
+        "preemptive_generation": {
+            "enabled": False,
+        },
+    }
+
     session = AgentSession(
         vad=vad,
         stt=stt_impl,
         llm=llm_impl,
         tts=tts_impl,
-        turn_detection=turn_detection,
-        allow_interruptions=True,
-        min_interruption_duration=env.voice_min_interruption_duration_s,
-        min_interruption_words=env.voice_min_interruption_words,
-        min_endpointing_delay=env.voice_min_endpointing_delay_s,
-        max_endpointing_delay=env.voice_max_endpointing_delay_s,
-        false_interruption_timeout=env.voice_false_interruption_timeout_s,
-        resume_false_interruption=env.voice_resume_false_interruption,
+        turn_handling=turn_handling,
         min_consecutive_speech_delay=env.voice_min_consecutive_speech_delay_s,
-        preemptive_generation=False,
     )
     logger.info(
         "[voice-gateway] AgentSession callSessionId=%s turn_detection=%s turn_end_reason=%s min_interrupt=%ss min_interrupt_words=%s min_endpoint=%ss max_endpoint=%ss false_interrupt_timeout=%s resume_false_interrupt=%s min_consecutive_speech_delay=%ss",

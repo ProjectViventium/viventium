@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import plistlib
 import stat
 import subprocess
 import hashlib
@@ -39,7 +40,10 @@ BIN_VIVENTIUM = REPO_ROOT / "bin" / "viventium"
 
 def _make_fake_executable(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("#!/bin/sh\n# ingest-transcripts\n# --ignore-idle-gate\nexit 0\n", encoding="utf-8")
+    path.write_text(
+        "#!/bin/sh\n# ingest-transcripts\n# --ignore-idle-gate\n# prompt-workbench\nexit 0\n",
+        encoding="utf-8",
+    )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
@@ -503,9 +507,14 @@ def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_p
         check=True,
     ).stdout
     assert "Advanced" in helper_strings
+    assert "Prompt Workbench" in helper_strings
+    assert "helper-prompt-workbench.log" in helper_strings
+    assert "prompt-workbench" in helper_strings
     assert "Ingest Meeting Transcripts" in helper_strings
     assert "helper-transcript-ingest.log" in helper_strings
     assert "--ignore-idle-gate" in helper_strings
+    assert "Viventium status-bar helper keeps the local runtime available after login." in helper_strings
+    assert "disableAutomaticTermination" in helper_strings
     signature = subprocess.run(
         ["/usr/bin/codesign", "-dv", str(fake_home / "Applications" / "Viventium.app")],
         text=True,
@@ -522,6 +531,8 @@ def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_p
 def test_helper_source_autostarts_stack_on_launch() -> None:
     source = HELPER_SOURCE.read_text(encoding="utf-8")
     install_script = SCRIPT.read_text(encoding="utf-8")
+    info_plist = plistlib.loads(HELPER_INFO_PLIST.read_bytes())
+    init_section = source.split("init() {", 1)[1].split("var actionLabel:", 1)[0]
     quit_section = source.split("func quit() {", 1)[1].split("private func activateHelperLifecycle", 1)[0]
     refresh_section = source.split("private func refreshState(force: Bool = false) {", 1)[1].split(
         "private func maybeAutoStartOnLaunch",
@@ -536,6 +547,11 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
         1,
     )[1].split("nonisolated static func managedServicesRunning", 1)[0]
 
+    assert "private let automaticTerminationReason =" in source
+    assert "Viventium status-bar helper keeps the local runtime available after login." in source
+    assert info_plist["NSSupportsAutomaticTermination"] is False
+    assert "ProcessInfo.processInfo.disableAutomaticTermination(self.automaticTerminationReason)" in init_section
+    assert init_section.index("ProcessInfo.processInfo.disableAutomaticTermination") < init_section.index("self.config = Self.loadConfig()")
     assert 'self?.maybeAutoStartOnLaunch(trigger: "launch")' in source
     assert 'self?.maybeAutoStartOnLaunch(trigger: "poll")' in source
     assert "DispatchQueue.main.asyncAfter" in source
@@ -553,6 +569,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "Helper config repoRoot updated from the active runtime checkout setting" in source
     assert "Helper config repoRoot is inside a protected folder and no public-safe checkout was found" in source
     assert "Helper config intentionally uses an active developer checkout inside a protected folder" in source
+
     assert "Ignoring active runtime checkout because protected-folder access was not explicitly allowed" in source
     assert "private static func resolveSafeRuntimeRepoRoot(_ repoRoot: String) -> String" in source
     assert "private static func applyActiveRuntimeCheckout(_ config: HelperConfig) -> HelperConfig" in source
@@ -716,7 +733,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "MenuBarExtra(" in source
     assert "isInserted: Binding(" in source
     assert "if self.controller.showsStatusRow {" in source
-    assert '"Show in Status Bar"' in source
+    assert '"Show Status Bar Icon"' in source
     assert 'set: { self.controller.setShowInStatusBar($0) }' in source
     assert '.disabled(self.controller.actionDisabled)' in source
     assert "private nonisolated static func launchCLIProcess(" in source
@@ -881,6 +898,31 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'alert.messageText = "Another Viventium workspace owns the running stack"' in source
 
 
+def test_helper_source_exposes_prompt_workbench_submenu_without_stack_stop() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+    submenu = source.split("Menu(self.controller.promptWorkbenchMenuTitle)", 1)[1].split(
+        'Button(self.controller.backupActionLabel)',
+        1,
+    )[0]
+    action_section = source.split("private func runPromptWorkbenchAction", 1)[1].split(
+        "private func runWorkflowControlAction",
+        1,
+    )[0]
+
+    assert 'Button("Open")' in submenu
+    assert 'self.promptWorkbenchActionInProgress ? "Prompt Workbench (Working...)" : "Prompt Workbench"' in source
+    assert 'self.controller.openPromptWorkbench()' in submenu
+    assert 'Button("Start")' in submenu
+    assert 'self.controller.startPromptWorkbench()' in submenu
+    assert 'Button("Stop")' in submenu
+    assert 'self.controller.stopPromptWorkbench()' in submenu
+    assert "Stop only the Prompt Workbench web app" in submenu
+    assert 'arguments: ["prompt-workbench", action, "--json"]' in action_section
+    assert "helper-prompt-workbench.log" in action_section
+    assert 'arguments: ["stop"]' not in action_section
+    assert 'arguments: ["launch"]' not in action_section
+
+
 def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -> None:
     package_source = HELPER_PACKAGE.read_text(encoding="utf-8")
     install_script = SCRIPT.read_text(encoding="utf-8")
@@ -937,6 +979,8 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'verify_installed_bundle' in install_script
     assert "sign_installed_bundle() {" in install_script
     assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_APP_BUNDLE"' in install_script
+    assert 'strings "$installed_executable" | grep -F -- "prompt-workbench" >/dev/null' in install_script
+    assert "Installed helper is missing Prompt Workbench support." in install_script
     assert "sign_installed_bundle" in install_script
     assert 'if [[ "$FORCE_LOCAL_BUILD" == "1" ]]; then' in install_script
     assert 'echo "[viventium] Local helper build was forced and no source build completed successfully" >&2' in install_script

@@ -67,9 +67,10 @@ disabled.
   surface such as `worker_delegate_once`. The main agent should not have to manually list projects,
   create or resume workers, and queue runs for routine tasks; low-level tools remain available for
   explicit status, resume, steering, diagnostics, and multi-worker orchestration.
-- When `worker_delegate_once` reports callback readiness, the main agent should acknowledge once
-  and stop the turn. It should not immediately poll `worker_live`/`run_get` unless the user asked
-  for diagnostics or live status; the callback channel owns completion and blockers.
+- When `worker_delegate_once` reports callback readiness, the main agent should write one short
+  outcome-focused acknowledgement in its own voice and stop the turn. The runtime must not force a
+  literal canned status string. The agent should not immediately poll `worker_live`/`run_get` unless
+  the user asked for diagnostics or live status; the callback channel owns completion and blockers.
 - `worker_delegate_once` must not return project, worker, run, alias, or execution plumbing to the
   model by default. Those fields are available only through an explicit diagnostics flag or the
   lower-level status tools, so routine chat turns cannot accidentally leak internal IDs.
@@ -181,9 +182,14 @@ Host-worker UX and callback requirements:
 - Chat-facing status should focus on the real task outcome. Worker IDs, run IDs, project IDs,
   terminal URLs, ports, and `queued/running` plumbing are diagnostic details and should only be
   shown when the user asks for them.
-- Immediate dispatch messages should be plain and short, for example "On it — opening that now. I'll
-  send the result here." Do not expose internal provider/tool/runtime labels such as Codex, worker,
-  run, host mode, queue, or terminal unless the user asks for diagnostics.
+- Immediate dispatch messages should be plain, short, and composed by the assistant in its own
+  voice. The tool may return acknowledgement guidance, but not a literal phrase that the assistant
+  must quote. Do not expose internal provider/tool/runtime labels such as Codex, worker, run, host
+  mode, queue, or terminal unless the user asks for diagnostics.
+- Delegation results should include a sanitized `delegation_audit` preview so the assistant can
+  self-check the target, success condition, and response constraints it sent to the worker. The full
+  submitted instruction is diagnostics-only and should appear only when diagnostics were explicitly
+  requested.
 - Worker execution must be non-blocking for the main assistant turn. The main agent may dispatch or
   steer a worker and then stop the chat turn; completion, blockers, approvals, and takeover requests
   return through signed callbacks or same-surface polling.

@@ -29,6 +29,50 @@ Start with:
 ```
 Starts LibreChat, LiveKit, Agents Playground, and the voice gateway with consistent secrets.
 
+### Stable Local Prod vs Side-by-Side Dev Env
+
+For Viventium core development, prefer the public CLI runtime boundary instead of launching random
+copies of the stack by hand.
+
+- **Local prod** is the installed user-facing runtime started by the macOS helper. It uses the
+  canonical App Support state and default local ports:
+  - Web: `http://localhost:3190`
+  - API: `http://localhost:3180/api`
+  - Modern Playground: `http://localhost:3300`
+- **Dev env** is an optional side-by-side runtime created by `bin/viventium dev-env`. It gets
+  separate App Support state and offset app-facing ports. With the default `dev` env:
+  - Web: `http://localhost:4190`
+  - API: `http://localhost:4180/api`
+  - Modern Playground: `http://localhost:4300`
+- Heavy singleton services are shared by default and should not be duplicated for ordinary dev runs:
+  recall/RAG, SearXNG, Firecrawl, Google Workspace MCP, and Microsoft 365 MCP.
+
+Use local prod when validating the installed product, helper, Telegram, update, or user-facing
+runtime behavior:
+
+```bash
+bin/viventium dev-runtime status
+bin/viventium status
+```
+
+Use a dev env when testing local changes without disturbing the installed runtime:
+
+```bash
+bin/viventium dev-env create dev
+bin/viventium dev-env status dev
+bin/viventium dev-env run dev start
+```
+
+When the current checkout should become the installed local prod runtime, promote it through the
+runtime-checkout path instead of copying source into install paths:
+
+```bash
+bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder
+```
+
+The canonical product contract for this is
+`docs/requirements_and_learnings/50_Stable_Dev_Runtime.md`.
+
 <!-- === VIVENTIUM START ===
 Section: Launcher flags + modern playground
 Added: 2026-01-11
@@ -43,6 +87,19 @@ Common flags:
 cd LibreChat
 ./scripts/viventium-start.sh
 ```
+
+### Prompt Workbench (Prompt QA)
+```bash
+cd prompt-workbench
+npm install
+npm run build
+npm run serve
+```
+
+Prompt Workbench is a standalone local developer/QA app for source/live/eval prompt reconciliation.
+It reads source prompts from `LibreChat/viventium/source_of_truth`, uses the existing
+`viventium-sync-agents.js` guarded sync path for live LibreChat agents, and stores drafts/ledger
+state under private App Support user data.
 
 ## Development Principles
 

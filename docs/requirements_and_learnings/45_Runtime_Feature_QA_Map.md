@@ -2,94 +2,92 @@
 
 ## Purpose
 
-This document maps runtime feature areas to their owning public QA records so release work, install
-verification, and regression checks stay grounded in one place.
+This is the traceability spine for public Viventium runtime quality:
 
-## Core Runtime Surfaces
+`feature / requirement doc -> QA owner -> cases, reports, or tests -> user-grade surface -> known gaps`
 
-### Installer / Startup / Local Runtime
+Keep detailed requirements in the owning requirements docs and detailed steps/evidence in `qa/`.
+This map should make it obvious where to put new cases, what to rerun, and which owner is
+responsible for public-safe evidence.
 
-- `qa/installer-resilience/README.md`
-- `qa/installer-piped-bootstrap/README.md`
-- `qa/installer-wait-taglines/README.md`
-- `qa/config-compiler-xai-models/README.md`
-- `qa/continuity-ops/README.md`
-- `qa/remote-access/README.md`
+## How To Use
 
-Use these when changing:
+- Start with the changed requirement or runtime surface, then use the row below to find the owning QA
+  area and the user-grade surface that must be exercised.
+- Every row must have a direct QA owner or a small explicit owner set. If a future feature lacks one,
+  create the missing standard QA folder/cases in the same change.
+- Every row must resolve to a natural user use-case checklist. Use
+  [`qa/feature-user-use-case-checklist.md`](../../qa/feature-user-use-case-checklist.md) for the
+  product-wide inventory and the owning `qa/<feature>/cases.md` checklist for the feature-specific
+  steps.
+- Follow the QA operating contract in [`qa/README.md`](../../qa/README.md): automated checks support
+  acceptance, but user-facing behavior needs a real user loop and public-safe evidence.
+- Do not start from a single reported symptom and call the feature covered. Enumerate the obvious
+  real user actions first, then execute them like a checklist against the visible surface and
+  supporting logs, DB/state, source, scripts, docs, nested repos, generated config, and shipped
+  artifacts.
 
-- `install.sh`
-- `bin/viventium`
-- start/stop/status/doctor flows
-- public remote-access posture surfaced by the local runtime
-- provider model inventory compiled into generated `librechat.yaml`
-- first-account browser onboarding on clean installs
-- clean-install helper/bootstrap behavior
-- continuity-aware snapshot / restore / upgrade behavior
-- helper manual backup affordances
-- recall rebuild-marker behavior after restore or continuity repair
+## Feature Traceability Matrix
 
-### Background Agents / Activation / Follow-Up
+| Requirement doc | QA owner(s) | Cases, reports, and automated checks | User-grade surface | Known gaps |
+| --- | --- | --- | --- | --- |
+| [`01_Key_Principles.md`](01_Key_Principles.md) | [`qa/qa-system-audit/`](../../qa/qa-system-audit/), [`qa/release-readiness/`](../../qa/release-readiness/) | [`qa/qa-system-audit/cases.md`](../../qa/qa-system-audit/cases.md), [`qa/release-readiness/cases.md`](../../qa/release-readiness/cases.md), [`test_qa_operating_contract.py`](../../tests/release/test_qa_operating_contract.py), [`test_project_boundary_contamination.py`](../../tests/release/test_project_boundary_contamination.py) | Docs, QA process, release/public-safety review | Release tests now have a central cases-based QA ownership map; add narrower case IDs when a suite gains feature-specific cases. |
+| [`02_Background_Agents.md`](02_Background_Agents.md) | [`qa/background_agents/`](../../qa/background_agents/) | [`cases.md`](../../qa/background_agents/cases.md), [`05_coverage_matrix.md`](../../qa/background_agents/05_coverage_matrix.md), visible-card and activation reports, [`test_background_agent_browser_qa_harness.py`](../../tests/release/test_background_agent_browser_qa_harness.py), [`test_background_agent_governance_contract.py`](../../tests/release/test_background_agent_governance_contract.py), [`test_productivity_activation_source_of_truth.py`](../../tests/release/test_productivity_activation_source_of_truth.py) | Web UI background cards, activation routing, persistence, final-answer wording, Telegram/scheduler follow-up where applicable | 2026-05-17 repair reconciled the release-test governance failures; keep browser-visible card QA current for future behavior changes. |
+| [`03_Telegram_Bridge.md`](03_Telegram_Bridge.md) | [`qa/telegram-runtime/`](../../qa/telegram-runtime/), [`qa/telegram-local-bot-api/`](../../qa/telegram-local-bot-api/), [`qa/telegram-media-prereqs/`](../../qa/telegram-media-prereqs/), [`qa/telegram-detached-api-stability/`](../../qa/telegram-detached-api-stability/), [`qa/telegram-document-attachments/`](../../qa/telegram-document-attachments/), [`qa/telegram-media-downloads/`](../../qa/telegram-media-downloads/), [`qa/telegram-settings-latency/`](../../qa/telegram-settings-latency/), [`qa/telegram-voice-replies/`](../../qa/telegram-voice-replies/), [`qa/web-search-telegram/`](../../qa/web-search-telegram/) | [`qa/telegram-runtime/cases.md`](../../qa/telegram-runtime/cases.md), Telegram reports, [`test_telegram_transcription_error_contract.py`](../../tests/release/test_telegram_transcription_error_contract.py), [`test_telegram_media_prereqs.py`](../../tests/release/test_telegram_media_prereqs.py), [`test_telegram_lazy_startup_contract.py`](../../tests/release/test_telegram_lazy_startup_contract.py), [`test_telegram_codex_runtime_paths.py`](../../tests/release/test_telegram_codex_runtime_paths.py) | Real Telegram send/receive, bot API supervision, media/STT handling, status output, delivery logs | Telegram subareas now have case catalogs; legacy flat reports should be superseded under `reports/` as each flow is rerun. |
+| [`06_Voice_Calls.md`](06_Voice_Calls.md) | [`qa/modern-playground-voice/`](../../qa/modern-playground-voice/), [`qa/voice-call-hardening/`](../../qa/voice-call-hardening/), [`qa/voice-streaming-first/`](../../qa/voice-streaming-first/), [`qa/voice-turn-taking/`](../../qa/voice-turn-taking/) | [`qa/modern-playground-voice/cases.md`](../../qa/modern-playground-voice/cases.md), voice reports, [`test_voice_playground_dispatch_contract.py`](../../tests/release/test_voice_playground_dispatch_contract.py), [`test_config_compiler.py`](../../tests/release/test_config_compiler.py), [`test_native_stack_helpers.py`](../../tests/release/test_native_stack_helpers.py) | LiveKit/playground call flow, voice route selection, transcript, latency, interruption, spoken/text final state | Voice subareas now have case catalogs; keep cross-flow reports linked from the most specific owner. |
+| [`07_MCPs.md`](07_MCPs.md) | [`qa/mcp-tooling/`](../../qa/mcp-tooling/), [`qa/mcp-oauth/`](../../qa/mcp-oauth/), [`qa/glasshive_host_workers/`](../../qa/glasshive_host_workers/), [`qa/background_agents/`](../../qa/background_agents/), [`qa/prompt-architecture/`](../../qa/prompt-architecture/) | [`qa/mcp-tooling/cases.md`](../../qa/mcp-tooling/cases.md), [`qa/mcp-oauth/cases.md`](../../qa/mcp-oauth/cases.md), [`test_ms365_launcher_contract.py`](../../tests/release/test_ms365_launcher_contract.py), [`test_scheduling_mcp_supervision.py`](../../tests/release/test_scheduling_mcp_supervision.py), [`test_config_compiler.py`](../../tests/release/test_config_compiler.py), prompt/MCP readiness reports | Model-visible tool contract, OAuth/auth state, tool result, failure copy, status UI | Broad MCP coverage now has an owner; keep provider-specific OAuth/tool evidence in the most specific folder. |
+| [`08_Citation_Rendering.md`](08_Citation_Rendering.md) | [`qa/citation-rendering/`](../../qa/citation-rendering/) | [`qa/citation-rendering/cases.md`](../../qa/citation-rendering/cases.md), prompt/eval rendering checks where applicable | Web UI answer rendering, citation expansion, sanitized source display | Direct owner exists; rerun browser citation QA when citation UI or source rendering changes. |
+| [`09_Agent_Streaming_Usage.md`](09_Agent_Streaming_Usage.md) | [`qa/agent-streaming-usage/`](../../qa/agent-streaming-usage/), [`qa/background_agents/`](../../qa/background_agents/) | [`qa/agent-streaming-usage/cases.md`](../../qa/agent-streaming-usage/cases.md), [`qa/background_agents/cases.md`](../../qa/background_agents/cases.md), background-agent browser harness | Streaming assistant response, usage metadata, persisted message state | Direct owner exists; rerun persisted UI/API-state QA when streaming metadata changes. |
+| [`10_Open_Source_Web_Search.md`](10_Open_Source_Web_Search.md) | [`qa/web-search/`](../../qa/web-search/), [`qa/web-search-telegram/`](../../qa/web-search-telegram/), runtime coverage in [`qa/installer-resilience/`](../../qa/installer-resilience/) and [`qa/conversation-recall-rag/`](../../qa/conversation-recall-rag/) | [`qa/web-search/cases.md`](../../qa/web-search/cases.md), [`qa/web-search-telegram/cases.md`](../../qa/web-search-telegram/cases.md), [`test_local_web_search_compose.py`](../../tests/release/test_local_web_search_compose.py), [`test_preflight.py`](../../tests/release/test_preflight.py), [`test_config_compiler.py`](../../tests/release/test_config_compiler.py) | Web/Telegram/voice search request, SearXNG/Firecrawl readiness, Docker/provider prerequisite state, failure class, fallback behavior, visible answer grounded in fetched evidence | Browser-wide web-search now has a direct QA owner; Telegram-specific evidence remains in the Telegram web-search owner; failed current-fact lookup QA must prove provider unavailable/timeout/rate-limit/auth/request-rejected/successful-empty distinctions and browser/computer/local-delegation fallback when available. |
+| [`11_Scheduling_Cortex.md`](11_Scheduling_Cortex.md) | [`qa/scheduling-cortex/`](../../qa/scheduling-cortex/), [`qa/background_agents/`](../../qa/background_agents/) | [`qa/scheduling-cortex/cases.md`](../../qa/scheduling-cortex/cases.md), scheduler-related background-agent reports, [`test_scheduling_mcp_supervision.py`](../../tests/release/test_scheduling_mcp_supervision.py), [`test_productivity_activation_source_of_truth.py`](../../tests/release/test_productivity_activation_source_of_truth.py) | Schedule creation/trigger, catch-up behavior, delivery ledger, final visible notification/answer | Dedicated scheduler QA owner now separates MCP supervision, activation, execution, delivery, and public evidence. |
+| [`14_Voice_Latency_and_Memory_RCA.md`](14_Voice_Latency_and_Memory_RCA.md) | [`qa/modern-playground-voice/`](../../qa/modern-playground-voice/), [`qa/voice-call-hardening/`](../../qa/voice-call-hardening/), [`qa/memory-hardening/`](../../qa/memory-hardening/) | Voice latency reports, [`test_voice_playground_dispatch_contract.py`](../../tests/release/test_voice_playground_dispatch_contract.py), [`test_memory_hardening_contract.py`](../../tests/release/test_memory_hardening_contract.py) | Voice call latency, transcript/memory behavior, final spoken/text state | The doc is cloud/RCA-oriented while most public QA is local-runtime oriented; cloud-specific acceptance remains indirect. |
+| [`16_Branding_and_Assets.md`](16_Branding_and_Assets.md) | [`qa/branding-assets/`](../../qa/branding-assets/) | [`qa/branding-assets/cases.md`](../../qa/branding-assets/cases.md), compiler/package asset checks | Web UI favicon/logo, helper/app assets, playground assets | Direct asset QA owner now exists; run browser/helper asset checks whenever assets or packaging change. |
+| [`18_Power_Agents_Beta.md`](18_Power_Agents_Beta.md) | [`qa/glasshive_host_workers/`](../../qa/glasshive_host_workers/), [`qa/glasshive_workspaces/`](../../qa/glasshive_workspaces/), [`qa/glasshive_steer/`](../../qa/glasshive_steer/), [`qa/glasshive_watch_desktop/`](../../qa/glasshive_watch_desktop/) | GlassHive QA READMEs and live reports, [`test_stable_dev_runtime_workflows.py`](../../tests/release/test_stable_dev_runtime_workflows.py), [`test_prompt_registry.py`](../../tests/release/test_prompt_registry.py) | Worker create/resume/run, host-native execution, workstation browser/desktop, MCP callback/status | GlassHive folders now have standard case/report homes; legacy flat evidence should be superseded as flows are rerun. |
+| [`20_Memory_System.md`](20_Memory_System.md) | [`qa/memory-continuity/`](../../qa/memory-continuity/), [`qa/memory-hardening/`](../../qa/memory-hardening/), [`qa/meeting-transcript-memory/`](../../qa/meeting-transcript-memory/), [`qa/listen-only-mode/`](../../qa/listen-only-mode/), [`qa/config-compiler-memory/`](../../qa/config-compiler-memory/), [`qa/conversation-recall-rag/`](../../qa/conversation-recall-rag/) | [`qa/meeting-transcript-memory/cases.md`](../../qa/meeting-transcript-memory/cases.md), memory reports, [`test_memory_hardening_contract.py`](../../tests/release/test_memory_hardening_contract.py), [`test_continuity_audit.py`](../../tests/release/test_continuity_audit.py), [`test_config_compiler.py`](../../tests/release/test_config_compiler.py) | Saved memory, memory hardening, transcript ingestion, recall/RAG, restore/continuity checks | Memory folders now have case catalogs; keep saved-memory, recall, transcript, and restore evidence linked to the most specific owner. |
+| [`21_No_Response_Feature.md`](21_No_Response_Feature.md) | [`qa/no-response/`](../../qa/no-response/), [`qa/listen-only-mode/`](../../qa/listen-only-mode/) | [`qa/no-response/cases.md`](../../qa/no-response/cases.md), [`qa/listen-only-mode/cases.md`](../../qa/listen-only-mode/cases.md), prompt/eval no-response checks | Web/Telegram/voice final response suppression and persisted message state | Direct no-response cases now cover cross-surface suppression and forbidden error hiding. |
+| [`25_Scheduling_Telegram_UX_Fixes.md`](25_Scheduling_Telegram_UX_Fixes.md) | [`qa/background_agents/`](../../qa/background_agents/) and [`qa/telegram-runtime/`](../../qa/telegram-runtime/) | Telegram scheduler fallback report, [`qa/telegram-runtime/cases.md`](../../qa/telegram-runtime/cases.md), [`test_scheduling_mcp_supervision.py`](../../tests/release/test_scheduling_mcp_supervision.py) | Telegram scheduled-message UX, degraded delivery, status/fallback wording | Coverage remains split by surface, but both owners now have case catalogs and release-test links. |
+| [`29_Red_Team_Cortex.md`](29_Red_Team_Cortex.md) | [`qa/red-team-cortex/`](../../qa/red-team-cortex/), [`qa/background_agents/`](../../qa/background_agents/) | [`qa/red-team-cortex/cases.md`](../../qa/red-team-cortex/cases.md), [`qa/background_agents/cases.md`](../../qa/background_agents/cases.md), [`test_background_agent_governance_contract.py`](../../tests/release/test_background_agent_governance_contract.py) | Mistake-detection activation, output contract, final user-visible correction/escalation | Dedicated Red Team cases now cover activation, non-activation, output contract, and final-answer integration. |
+| [`32_Conversation_Recall_RAG.md`](32_Conversation_Recall_RAG.md) | [`qa/conversation-recall-rag/`](../../qa/conversation-recall-rag/), [`qa/memory-continuity/`](../../qa/memory-continuity/), [`qa/continuity-ops/`](../../qa/continuity-ops/) | Recall/RAG reports, [`test_rag_api_override_contract.py`](../../tests/release/test_rag_api_override_contract.py), [`test_ollama_embeddings_prereqs.py`](../../tests/release/test_ollama_embeddings_prereqs.py), [`test_config_compiler.py`](../../tests/release/test_config_compiler.py), [`test_continuity_audit.py`](../../tests/release/test_continuity_audit.py) | Browser recall answers, RAG attachment/source behavior, restore/rebuild marker, persistence | Conversation recall/RAG now has standard case and report homes; fresh RAG service QA is still required when Docker/embedding services are enabled. |
+| [`34_Voice_Chat_LLM_Override.md`](34_Voice_Chat_LLM_Override.md) | [`qa/modern-playground-voice/`](../../qa/modern-playground-voice/) and [`qa/voice-call-hardening/`](../../qa/voice-call-hardening/) | [`qa/modern-playground-voice/cases.md`](../../qa/modern-playground-voice/cases.md), [`test_voice_playground_dispatch_contract.py`](../../tests/release/test_voice_playground_dispatch_contract.py), [`test_config_compiler.py`](../../tests/release/test_config_compiler.py) | Voice settings UI, route dispatch, generated runtime env, actual call fallback behavior | Voice override cases now own the activation-condition checks; keep playground evidence linked to `VMP-` and voice-hardening cases. |
+| [`37_LibreChat_v083_Config_Alignment.md`](37_LibreChat_v083_Config_Alignment.md) | [`qa/config-alignment/`](../../qa/config-alignment/), [`qa/agent-config-continuity/`](../../qa/agent-config-continuity/), [`qa/config-compiler-xai-models/`](../../qa/config-compiler-xai-models/), [`qa/prompt-architecture/`](../../qa/prompt-architecture/) | [`qa/config-alignment/cases.md`](../../qa/config-alignment/cases.md), [`qa/agent-config-continuity/cases.md`](../../qa/agent-config-continuity/cases.md), compiler/model reports, [`test_agent_sync_review_contract.py`](../../tests/release/test_agent_sync_review_contract.py), [`test_config_compiler.py`](../../tests/release/test_config_compiler.py), [`test_prompt_registry.py`](../../tests/release/test_prompt_registry.py) | Source/live/generated LibreChat config, model/provider inventory, agent sync review | Dedicated config-alignment QA now ties source YAML, generated YAML, sync review, and model picker inventory. |
+| [`38_Public_Productization_and_Release.md`](38_Public_Productization_and_Release.md) | [`qa/release-readiness/`](../../qa/release-readiness/), [`qa/documentation-implementation-audit/`](../../qa/documentation-implementation-audit/), [`qa/privacy_publish_audit.md`](../../qa/privacy_publish_audit.md) | [`qa/release-readiness/cases.md`](../../qa/release-readiness/cases.md), [`qa/documentation-implementation-audit/cases.md`](../../qa/documentation-implementation-audit/cases.md), [`test_public_bootstrap_manifests.py`](../../tests/release/test_public_bootstrap_manifests.py), [`test_project_boundary_contamination.py`](../../tests/release/test_project_boundary_contamination.py), [`test_bootstrap_components.py`](../../tests/release/test_bootstrap_components.py) | Fresh public checkout/install path, public-safe diff, component pins, shipped artifacts | 2026-05-17 repair resolved the release-test/doc-QA blockers found in the audit; feature-specific residual risks remain in the audit reports. |
+| [`39_Installer_and_Config_Compiler.md`](39_Installer_and_Config_Compiler.md) | [`qa/installer-resilience/`](../../qa/installer-resilience/), [`qa/installer-piped-bootstrap/`](../../qa/installer-piped-bootstrap/), [`qa/installer-wait-taglines/`](../../qa/installer-wait-taglines/), [`qa/config-compiler-xai-models/`](../../qa/config-compiler-xai-models/), [`qa/config-compiler-memory/`](../../qa/config-compiler-memory/), [`qa/continuity-ops/`](../../qa/continuity-ops/) | Installer/compiler reports, [`test_config_compiler.py`](../../tests/release/test_config_compiler.py), [`test_cli_upgrade.py`](../../tests/release/test_cli_upgrade.py), [`test_preflight.py`](../../tests/release/test_preflight.py), [`test_wizard.py`](../../tests/release/test_wizard.py), [`test_doctor_sh.py`](../../tests/release/test_doctor_sh.py), [`test_install_summary.py`](../../tests/release/test_install_summary.py), [`test_installer_ui.py`](../../tests/release/test_installer_ui.py), [`test_macos_helper_install.py`](../../tests/release/test_macos_helper_install.py) | Public installer/CLI, doctor/status, generated runtime files, helper, clean install/upgrade | Installer/config QA folders now have case catalogs; clean-machine acceptance must still be proven through public commands before release signoff. |
+| [`40_Public_Private_Boundaries_and_License_Matrix.md`](40_Public_Private_Boundaries_and_License_Matrix.md) | [`qa/release-readiness/`](../../qa/release-readiness/), [`qa/documentation-implementation-audit/`](../../qa/documentation-implementation-audit/), [`qa/privacy_publish_audit.md`](../../qa/privacy_publish_audit.md) | [`qa/release-readiness/cases.md`](../../qa/release-readiness/cases.md), [`test_project_boundary_contamination.py`](../../tests/release/test_project_boundary_contamination.py), [`test_private_repo_resolution_contract.py`](../../tests/release/test_private_repo_resolution_contract.py), [`test_public_bootstrap_manifests.py`](../../tests/release/test_public_bootstrap_manifests.py) | Public export/PR diff, private companion boundary, license/pin review | License scan and component provenance are still partly manual per the documentation/implementation audit. |
+| [`45_Runtime_Feature_QA_Map.md`](45_Runtime_Feature_QA_Map.md) | [`qa/qa-system-audit/`](../../qa/qa-system-audit/), [`qa/documentation-implementation-audit/`](../../qa/documentation-implementation-audit/) | [`qa/qa-system-audit/cases.md`](../../qa/qa-system-audit/cases.md), [`qa/documentation-implementation-audit/cases.md`](../../qa/documentation-implementation-audit/cases.md), [`test_qa_operating_contract.py`](../../tests/release/test_qa_operating_contract.py) | Traceability review, docs link review, QA folder inventory | This map is manually maintained; `test_qa_operating_contract.py` now enforces standard QA folder shape and cases-based release-test ownership. |
+| [`47_Remote_Access_and_Tunneling.md`](47_Remote_Access_and_Tunneling.md) | [`qa/remote-access/`](../../qa/remote-access/) | [`qa/remote-access/report.md`](../../qa/remote-access/report.md), [`test_remote_call_tunnel.py`](../../tests/release/test_remote_call_tunnel.py), [`test_preflight.py`](../../tests/release/test_preflight.py), [`test_wizard.py`](../../tests/release/test_wizard.py), [`test_cli_upgrade.py`](../../tests/release/test_cli_upgrade.py) | Browser/voice access over configured local/public origin, tunnel status, helper/CLI copy | Remote-access QA now has case/report homes; external-network QA must stay public-safe. |
+| [`48_GlassHive_Workstation_Sandbox_Runtime.md`](48_GlassHive_Workstation_Sandbox_Runtime.md) | [`qa/glasshive_host_workers/`](../../qa/glasshive_host_workers/), [`qa/glasshive_workspaces/`](../../qa/glasshive_workspaces/), [`qa/glasshive_steer/`](../../qa/glasshive_steer/), [`qa/glasshive_watch_desktop/`](../../qa/glasshive_watch_desktop/) | GlassHive QA READMEs/reports, [`test_stable_dev_runtime_workflows.py`](../../tests/release/test_stable_dev_runtime_workflows.py), [`test_prompt_registry.py`](../../tests/release/test_prompt_registry.py) | GlassHive API/MCP, workstation desktop, host-native worker lifecycle, callback/status | GlassHive workstation folders now have standard case/report homes; rerun host-worker QA before feature release. |
+| [`49_Prompt_Architecture_and_Token_Efficiency.md`](49_Prompt_Architecture_and_Token_Efficiency.md) | [`qa/prompt-architecture/`](../../qa/prompt-architecture/), [`qa/prompt-workbench/`](../../qa/prompt-workbench/) | [`qa/prompt-workbench/cases.md`](../../qa/prompt-workbench/cases.md), prompt-architecture reports, [`test_prompt_registry.py`](../../tests/release/test_prompt_registry.py), [`test_prompt_architecture_eval_harness.py`](../../tests/release/test_prompt_architecture_eval_harness.py), [`test_prompt_workbench.py`](../../tests/release/test_prompt_workbench.py), [`test_no_runtime_nlu.py`](../../tests/release/test_no_runtime_nlu.py) | Prompt source/live sync, Prompt Workbench UI, evals, prompt hashes, no-runtime-NLU guardrails | Prompt-registry release failures were repaired; prompt-architecture now has a case catalog. |
+| [`50_Stable_Dev_Runtime.md`](50_Stable_Dev_Runtime.md) | [`qa/stable-dev-runtime/`](../../qa/stable-dev-runtime/) | [`qa/stable-dev-runtime/cases.md`](../../qa/stable-dev-runtime/cases.md), [`test_stable_dev_runtime_workflows.py`](../../tests/release/test_stable_dev_runtime_workflows.py), [`test_cli_upgrade.py`](../../tests/release/test_cli_upgrade.py), [`test_macos_helper_install.py`](../../tests/release/test_macos_helper_install.py) | Side-by-side dev runtime, activation-current, helper update UX, shared singleton status | Continue proving installed/live helper artifacts separately from source when helper/runtime changes. |
+| [`51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`](51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md) | [`qa/self-healing/`](../../qa/self-healing/), [`qa/feature-request/`](../../qa/feature-request/), [`qa/bug-report/`](../../qa/bug-report/), [`qa/stable-dev-runtime/`](../../qa/stable-dev-runtime/), [`qa/glasshive_host_workers/`](../../qa/glasshive_host_workers/) | [`qa/self-healing/cases.md`](../../qa/self-healing/cases.md), [`qa/feature-request/cases.md`](../../qa/feature-request/cases.md), [`qa/bug-report/cases.md`](../../qa/bug-report/cases.md), [`qa/glasshive_host_workers/cases.md`](../../qa/glasshive_host_workers/cases.md), [`test_stable_dev_runtime_workflows.py`](../../tests/release/test_stable_dev_runtime_workflows.py) | Helper Advanced actions, workflow CLI, approval gates, isolated worktrees, artifacts, PR policy | Core workflow and lower-level GlassHive host-worker folders now have case catalogs; keep dated reports current as flows are rerun. |
+| [`52_Voice_Component_Fork_Modification_Inventory.md`](52_Voice_Component_Fork_Modification_Inventory.md) | [`qa/modern-playground-voice/`](../../qa/modern-playground-voice/), [`qa/voice-call-hardening/`](../../qa/voice-call-hardening/), [`qa/release-readiness/`](../../qa/release-readiness/) | [`qa/modern-playground-voice/cases.md`](../../qa/modern-playground-voice/cases.md), [`qa/voice-call-hardening/cases.md`](../../qa/voice-call-hardening/cases.md), [`qa/release-readiness/cases.md`](../../qa/release-readiness/cases.md), [`test_bootstrap_components.py`](../../tests/release/test_bootstrap_components.py), [`test_public_bootstrap_manifests.py`](../../tests/release/test_public_bootstrap_manifests.py) | Voice component fork replay, component pin review, LiveKit/playground route behavior after upstream updates | The inventory is a porting and release-readiness artifact, not a substitute for replaying user-grade voice QA after component updates. |
 
-- `qa/background_agents/README.md`
-- `qa/background_agents/01_catalog.md`
-- `qa/background_agents/03_eval_prompt_bank.md`
-- `qa/background_agents/05_coverage_matrix.md`
-- `qa/background_agents/06_agent_signoff_manifest.md`
-- `qa/background_agents/activation_reliability_2026-04-12.md`
-- `qa/background_agents/cortex_phase_b_fallback_2026-05-06.md`
+## Known Cross-Cutting Gaps
 
-Use these when changing:
+- Legacy flat reports still exist. Use [`qa/_migration.md`](../../qa/_migration.md) as the burn-down
+  list for superseding them with dated reports under each owning feature folder.
+- The 2026-05-17 repair reconciled the release-test blockers in background-agent governance, prompt
+  registry resolution, and QA operating-contract enforcement. Future regressions must become cases in
+  the owning QA folder.
+- Release tests now have a central cases-based owner map in [`qa/release-test-owners.yaml`](../../qa/release-test-owners.yaml).
+  Add narrower case IDs to that owner folder when a suite starts protecting a more specific flow.
+- Product-wide natural use-case coverage now lives in
+  [`qa/feature-user-use-case-checklist.md`](../../qa/feature-user-use-case-checklist.md). A feature
+  is not release-ready when its map row exists but its natural user checklist has unrun applicable
+  cases.
+- Browser, Telegram, voice, installer/CLI, MCP/tool, scheduler, and GlassHive flows require the real
+  user loop described in [`qa/README.md`](../../qa/README.md); source inspection alone is never enough
+  for user-visible acceptance.
 
-- background-agent activation detection
-- execution/follow-up routing
-- activation provider/model selection
-- user-scoped Google Workspace / Microsoft 365 auth behavior that can block a live tool run after
-  activation already succeeded
-- background-agent source-of-truth prompts or runtime model families
+## Minimum Change Checklist
 
-### Anthropic Runtime Compatibility
+When a change touches any row above:
 
-- `qa/background_agents/report.md`
-
-Use this when changing:
-
-- Anthropic initialization
-- thinking / temperature compatibility
-- shipped Anthropic background-agent defaults
-
-### Memory Continuity And Hardening
-
-- `qa/memory-continuity/README.md`
-- `qa/memory-hardening/README.md`
-- `qa/meeting-transcript-memory/README.md`
-- `qa/listen-only-mode/README.md`
-
-Use these when changing:
-
-- saved-memory writer policy
-- memory maintenance and compaction
-- scheduled memory hardening
-- memory hardening model governance
-- meeting transcript folder ingestion, transcript RAG attachment, and transcript evidence promotion
-  gates
-- Listen-Only call transcript persistence, no-response behavior, and transcript evidence boundaries
-- rollback/audit handling for saved-memory changes
-- QA-account parity used to test memory continuity without dirtying the owner account
-
-## Minimum Release Check Expectation
-
-When a change touches one of the runtime surfaces above:
-
-1. update the owning doc if product truth changed
-2. run the narrowest relevant automated tests
-3. record or refresh public-safe QA evidence when behavior changed materially
-4. verify at least one real user-visible surface where relevant
-5. when the feature depends on connected accounts, prove both layers independently:
-   - activation / routing health
-   - user-scoped service auth health
-
-## Notes
-
-- This file is a map, not the deep source of truth for each feature.
-- Do not duplicate detailed requirements here; extend the owning docs and QA artifacts instead.
+1. Read the requirement doc and the listed QA owner.
+2. Update the owner QA cases and natural user use-case checklist if behavior, acceptance, or observed
+   failure shape changed.
+3. Run the listed focused tests, plus any narrower feature tests discovered from the touched code.
+4. Exercise every applicable natural user use case on the listed user-grade surface when behavior is
+   user-visible.
+5. Compare visible results with logs, DB/state, source, scripts, docs, generated config, nested repos,
+   and shipped/installed artifacts that own or prove the behavior.
+6. Save public-safe evidence under the owner QA folder and leave unresolved gaps visible in this map.

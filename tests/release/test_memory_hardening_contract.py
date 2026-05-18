@@ -330,11 +330,21 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
 
 def test_memory_hardening_cli_reexecs_active_runtime_checkout() -> None:
     text = (ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    reexec_section = text.split("maybe_reexec_active_runtime_checkout() {", 1)[1].split(
+        "yaml_file_has_unique_mapping_keys()",
+        1,
+    )[0]
 
-    assert re.search(
-        r"start\|launch\|stop\|install-helper\|uninstall-helper\|status-bar\|memory-harden\)",
-        text,
-    )
+    for command in [
+        "start",
+        "launch",
+        "stop",
+        "install-helper",
+        "uninstall-helper",
+        "status-bar",
+        "memory-harden",
+    ]:
+        assert command in reexec_section
 
 
 def test_scheduled_transcript_ingest_honors_dry_run_first_marker(tmp_path, monkeypatch) -> None:

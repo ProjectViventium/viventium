@@ -10,39 +10,25 @@ Target shape:
 - `qa/<feature>/cases.md`
 - `qa/<feature>/reports/YYYY-MM-DD-<topic>.md` for new dated reports
 
-## Current Legacy Gaps
+## Current Structural Gaps
+
+As of the 2026-05-17 QA-system repair pass, every top-level feature QA folder has the standard
+`README.md`, `cases.md`, and `reports/` home. New feature QA folders must keep that shape from the
+first commit.
+
+If a future audit finds a missing standard file, add a row here with the feature name, exact missing
+file, and migration trigger. Do not bury structural gaps inside dated reports.
+
+## Reports-Folder Cleanup
+
+These folders already have the standard README/cases source-of-truth shape, or otherwise have enough
+source-of-truth structure for current work, but still have legacy flat dated evidence. Keep old links
+working; put new dated runs under `reports/` and retire or supersede the flat report during the next
+related QA cleanup.
 
 | Feature | Current Gap | Migration Trigger |
 | --- | --- | --- |
-| `agent-config-continuity` | Missing `cases.md` and `reports/`; flat `report.md` only | Next continuity QA change |
-| `background_agents` | Has `cases.md` bridge, but dated reports are still flat files | Next background-agent report cleanup |
-| `config-compiler-memory` | Missing `cases.md` and `reports/`; flat `report.md` only | Next compiler-memory QA change |
-| `config-compiler-xai-models` | Missing `cases.md` and `reports/`; flat `report.md` only | Next model/compiler QA change |
-| `continuity-ops` | Missing `cases.md` and `reports/`; flat `report.md` only | Next continuity ops QA change |
-| `conversation-recall-rag` | Missing `cases.md` and `reports/`; flat `report.md` only | Next recall/RAG QA change |
-| `glasshive_host_workers` | Missing `cases.md` and `reports/` | Next GlassHive host-worker QA change |
-| `glasshive_steer` | Missing `cases.md` and `reports/` | Next GlassHive steer QA change |
-| `glasshive_watch_desktop` | Missing `cases.md` and `reports/` | Next GlassHive watch QA change |
-| `glasshive_workspaces` | Missing `cases.md` and `reports/` | Next GlassHive workspace QA change |
-| `installer-piped-bootstrap` | Missing `cases.md` and `reports/`; flat `report.md` only | Next installer bootstrap QA change |
-| `installer-resilience` | Missing `cases.md` and `reports/`; flat `plan.md`/`report.md` | Next installer resilience QA change |
-| `installer-wait-taglines` | Missing `cases.md` and `reports/`; flat `report.md` only | Next installer UX QA change |
-| `listen-only-mode` | Missing `cases.md` and `reports/`; flat `report.md` only | Next listen-only QA change |
-| `mcp-oauth` | Missing `README.md`, `cases.md`, and `reports/` | Next MCP OAuth QA change |
-| `meeting-transcript-memory` | Missing `cases.md` and `reports/`; has eval subfolder | Next transcript-memory QA change |
-| `memory-continuity` | Missing `cases.md` and `reports/`; flat `report.md` only | Next memory continuity QA change |
-| `memory-hardening` | Missing `cases.md` and `reports/`; flat `report.md` only | Next memory hardening QA change |
-| `modern-playground-voice` | Missing `cases.md` and `reports/`; flat `report.md` only | Next playground voice QA change |
-| `prompt-architecture` | Missing `cases.md`; has `evals/` and `reports/` | Next prompt-architecture QA change |
-| `remote-access` | Missing `cases.md` and `reports/`; flat `report.md` only | Next remote access QA change |
-| `telegram-detached-api-stability` | Missing `cases.md` and `reports/`; flat `report.md` only | Next Telegram API QA change |
-| `telegram-document-attachments` | Missing `cases.md` and `reports/`; flat `report.md` only | Next document attachment QA change |
-| `telegram-local-bot-api` | Missing `cases.md` and `reports/`; flat `report.md` only | Next local bot API QA change |
-| `telegram-media-downloads` | Missing `cases.md` and `reports/`; flat `report.md` only | Next media downloads QA change |
-| `telegram-media-prereqs` | Missing `cases.md` and `reports/`; flat `report.md` only | Next media prereq QA change |
-| `telegram-settings-latency` | Missing `cases.md` and `reports/`; flat `report.md` only | Next settings latency QA change |
-| `telegram-voice-replies` | Missing `cases.md` and `reports/` | Next Telegram voice reply QA change |
-| `voice-call-hardening` | Missing `cases.md` and `reports/`; flat dated reports | Next voice hardening QA change |
-| `voice-streaming-first` | Missing `cases.md` and `reports/`; flat `report.md` only | Next voice streaming QA change |
-| `voice-turn-taking` | Missing `cases.md` and `reports/` | Next voice turn-taking QA change |
-| `web-search-telegram` | Missing `cases.md` and `reports/`; flat `report.md` only | Next web-search Telegram QA change |
+| `background_agents` | Has standard folder shape; dated evidence is still mostly flat files | Next background-agent report cleanup |
+| `meeting-transcript-memory` | Has `README.md`, `cases.md`, `reports/`, and evals, but a flat dated review remains | Next transcript-memory QA cleanup |
+| `modern-playground-voice` | Has `README.md`, `cases.md`, and `reports/`, but legacy `report.md` remains | Next playground voice QA cleanup |
+| `release-readiness` | Has standard folder shape; the dated public-push checklist is still flat | Next release-readiness QA cleanup |

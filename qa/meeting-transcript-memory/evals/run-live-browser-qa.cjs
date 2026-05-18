@@ -65,7 +65,7 @@ function parseArgs(argv) {
         'qa',
         'meeting-transcript-memory',
         'reports',
-        `2026-05-12-live-browser-qa-${stamp}.md`,
+        `${startedAt.toISOString().slice(0, 10)}-live-browser-qa-${stamp}.md`,
       ),
   };
 
@@ -206,12 +206,36 @@ async function countOwnerMeetingTranscriptFiles(db) {
 function transcriptFixture({ marker, sourceHash, userId }) {
   const fixtures = [
     {
+      filename: `mtm-live-qa-atlas-${marker}.txt`,
+      meeting_datetime: '2026-05-10T09:00:00-04:00',
+      display_title: `Atlas kickoff ${marker}`,
+      one_line_summary:
+        'A synthetic kickoff covering scope alignment, data migration risk, and meeting-scoped caveats.',
+      participants: ['Jordan Lee', 'Priya Shah', 'QA User'],
+      expected_context_terms: ['scope alignment', 'data migration'],
+      file_content:
+        `Jordan Lee: ${marker} Atlas kickoff starts with scope alignment for a customer migration pilot.\n` +
+        'Priya Shah: The legacy exports are inconsistent, so data migration risk needs to be preserved.\n' +
+        'QA User: Remember this as kickoff context, not as a stable roadmap commitment.\n',
+      summary:
+        `Detailed meeting transcript summary for ${marker}.\n\n` +
+        'Subject/title: Atlas kickoff.\n' +
+        'Date/time: 2026-05-10 9:00 AM Eastern, from transcript metadata.\n' +
+        'Participants: Jordan Lee, Priya Shah, and QA User.\n' +
+        'Context: synthetic QA meeting used to verify chronological transcript inventory and detailed context recall.\n' +
+        'Who said what: Jordan Lee framed the meeting as scope alignment for a customer migration pilot. Priya Shah flagged inconsistent legacy exports and data migration risk. QA User said the kickoff should be remembered as context, not as a stable roadmap commitment.\n' +
+        'Outcomes/follow-ups: document the migration boundary and list data quality blockers before treating the pilot as complete.\n' +
+        'Risks/concerns: migration risk and inconsistent exports were the main concerns.\n' +
+        'Uncertainties/caveats: this is synthetic transcript evidence and should be interpreted as meeting-scoped context.',
+    },
+    {
       filename: `mtm-live-qa-helios-${marker}.csv`,
       meeting_datetime: '2026-05-12T10:15:00-04:00',
       display_title: `Helios launch review ${marker}`,
       one_line_summary:
         'A synthetic launch-readiness review covering onboarding, risk ownership, and transcript-only caveats.',
       participants: ['Ava Chen', 'Ben Ortiz', 'QA User'],
+      expected_context_terms: ['launch risk', 'Atlas'],
       file_content:
         'speaker,timestamp,text\n' +
         `Ava Chen,2026-05-12T10:15:00-04:00,${marker} asks for the onboarding checklist to be verified before launch.\n` +
@@ -235,6 +259,7 @@ function transcriptFixture({ marker, sourceHash, userId }) {
       one_line_summary:
         'A synthetic customer review covering support escalation, participants, and source-quality caveats.',
       participants: ['Mira Patel', 'Noah Reed', 'QA User'],
+      expected_context_terms: ['support escalation', 'source caveat'],
       file_content:
         `WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nMira Patel: ${marker} Orion customer review starts.\n\n` +
         '00:00:05.000 --> 00:00:09.000\nNoah Reed: Noah owns the support escalation note, while QA User keeps scope caveats explicit.\n',
@@ -248,6 +273,30 @@ function transcriptFixture({ marker, sourceHash, userId }) {
         'Outcomes/follow-ups: Noah owns the support escalation note.\n' +
         'Risks/concerns: support escalation must not be confused with a durable personal preference.\n' +
         'Uncertainties/caveats: this is synthetic transcript evidence and should be interpreted as meeting-scoped context.',
+    },
+    {
+      filename: `mtm-live-qa-nimbus-${marker}.md`,
+      meeting_datetime: '2026-05-13T14:45:00-04:00',
+      display_title: `Nimbus pricing retro ${marker}`,
+      one_line_summary:
+        'A synthetic retro covering a temporary pricing experiment, packaging caution, and evidence thresholds.',
+      participants: ['Sofia Kim', 'Mateo Rivera', 'QA User'],
+      expected_context_terms: ['pricing experiment', 'temporary packaging'],
+      file_content:
+        `# Nimbus pricing retro ${marker}\n\n` +
+        'Sofia Kim: The temporary pricing experiment helped one buyer understand the offer.\n' +
+        'Mateo Rivera: Temporary packaging should not become the default without more evidence.\n' +
+        'QA User: Remember this as a retro, not as my stable pricing preference.\n',
+      summary:
+        `Detailed meeting transcript summary for ${marker}.\n\n` +
+        'Subject/title: Nimbus pricing retro.\n' +
+        'Date/time: 2026-05-13 2:45 PM Eastern, from transcript metadata.\n' +
+        'Participants: Sofia Kim, Mateo Rivera, and QA User.\n' +
+        'Context: synthetic QA meeting used to verify broad transcript recall can list recent meetings without converting meeting-specific statements into stable preferences.\n' +
+        'Who said what: Sofia Kim said the temporary pricing experiment helped one buyer understand the offer. Mateo Rivera warned that temporary packaging should not become the default without more evidence. QA User asked that this be remembered as a retro, not as a stable pricing preference.\n' +
+        'Outcomes/follow-ups: summarize customer objections, keep the experiment time-boxed, and revisit packaging after more evidence.\n' +
+        'Risks/concerns: temporary pricing language could be overread as durable strategy if the transcript caveat is ignored.\n' +
+        'Uncertainties/caveats: this is synthetic transcript evidence and does not establish a permanent pricing direction.',
     },
   ];
 
@@ -272,6 +321,31 @@ function transcriptFixture({ marker, sourceHash, userId }) {
   });
 }
 
+async function findStaleSyntheticTranscriptArtifacts({ db, userId, userObjectId, sourceHash }) {
+  const rows = await db
+    .collection('files')
+    .find({
+      user: { $in: [userId, userObjectId].filter(Boolean) },
+      context: 'meeting_transcript',
+      'metadata.meetingTranscriptSourcePathHash': sourceHash,
+      'metadata.meetingTranscriptSourceStatus': 'qa_synthetic_current',
+      'metadata.meetingTranscriptKind': { $in: ['raw', 'summary'] },
+    })
+    .project({ file_id: 1, metadata: 1 })
+    .toArray();
+
+  const byHash = new Map();
+  for (const row of rows || []) {
+    const metadata = row.metadata || {};
+    const contentHash = metadata.meetingTranscriptContentHash || row.file_id;
+    const entry = byHash.get(contentHash) || { contentHash };
+    if (metadata.meetingTranscriptKind === 'raw') entry.rawFileId = row.file_id;
+    if (metadata.meetingTranscriptKind === 'summary') entry.summaryFileId = row.file_id;
+    byHash.set(contentHash, entry);
+  }
+  return Array.from(byHash.values()).filter((entry) => entry.rawFileId || entry.summaryFileId);
+}
+
 async function seedSyntheticTranscriptArtifacts({ env, db, user, args }) {
   Object.assign(process.env, env);
   const hardener = require(HARDENER_PATH);
@@ -289,12 +363,18 @@ async function seedSyntheticTranscriptArtifacts({ env, db, user, args }) {
 
   const userId = String(user._id);
   const transcripts = transcriptFixture({ marker: args.marker, sourceHash, userId });
+  const staleTranscriptArtifacts = await findStaleSyntheticTranscriptArtifacts({
+    db,
+    userId,
+    userObjectId: user._id,
+    sourceHash,
+  });
   const beforeOwnerCount = await countOwnerMeetingTranscriptFiles(db);
   const lifecycle = await hardener.applyTranscriptVectorLifecycle({
     userProposal: {
       userId,
       transcripts,
-      staleTranscriptArtifacts: [],
+      staleTranscriptArtifacts,
       transcriptRagMode: 'detailed_summary_only',
       transcriptSourcePathHash: sourceHash,
       transcriptInventoryRefresh: true,
@@ -306,6 +386,7 @@ async function seedSyntheticTranscriptArtifacts({ env, db, user, args }) {
     lifecycle,
     sourceHash,
     transcripts,
+    staleSyntheticArtifactCount: staleTranscriptArtifacts.length,
     ownerCountUnchanged:
       beforeOwnerCount === null && afterOwnerCount === null ? null : beforeOwnerCount === afterOwnerCount,
   };
@@ -481,6 +562,7 @@ function summarizeSources(message, marker) {
     Array.isArray(attachment?.file_search?.sources) ? attachment.file_search.sources : [],
   );
   const fileNames = sources.map((source) => String(source.fileName || ''));
+  const fileIds = sources.map((source) => String(source.fileId || ''));
   const contents = sources.map((source) => String(source.content || ''));
   return {
     toolCallCount: Array.isArray(message?.content)
@@ -488,10 +570,106 @@ function summarizeSources(message, marker) {
       : 0,
     attachmentCount: attachments.length,
     sourceCount: sources.length,
-    inventorySourceCount: fileNames.filter((name) => name.includes('meeting-transcript-inventory')).length,
-    summarySourceCount: fileNames.filter((name) => name.includes('meeting-transcript-summary')).length,
+    inventorySourceCount: sources.filter((source, index) => {
+      const fileId = fileIds[index];
+      const fileName = fileNames[index];
+      const content = contents[index];
+      return (
+        fileId.startsWith('meeting_inventory:') ||
+        fileName.includes('meeting-transcript-inventory') ||
+        content.includes('Transcript artifact kind: inventory')
+      );
+    }).length,
+    summarySourceCount: sources.filter((source, index) => {
+      const fileId = fileIds[index];
+      const fileName = fileNames[index];
+      const content = contents[index];
+      return (
+        fileId.startsWith('meeting_summary:') ||
+        fileName.includes('meeting-transcript-summary') ||
+        content.includes('Transcript artifact kind: summary')
+      );
+    }).length,
     markerInSources: contents.some((content) => content.includes(marker)),
     fileNameHashes: fileNames.map((name) => hashValue(name, 10)).slice(0, 12),
+  };
+}
+
+function normalizeForQa(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function stripMarker(value, marker) {
+  return String(value || '').replace(marker, '').replace(/\s+/g, ' ').trim();
+}
+
+function lineCount(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+}
+
+function evaluateChronologicalAnswer({ answerText, bodyText, transcripts, marker }) {
+  const combined = normalizeForQa(answerText || bodyText);
+  const ordered = transcripts
+    .slice()
+    .sort((left, right) => Date.parse(left.meeting_datetime) - Date.parse(right.meeting_datetime));
+  const titleNeedles = ordered.map((transcript) => normalizeForQa(stripMarker(transcript.display_title, marker)));
+  const titlePositions = titleNeedles.map((needle) => combined.indexOf(needle));
+  const allEntries = titlePositions.every((position) => position >= 0);
+  const oldestToNewest =
+    allEntries && titlePositions.every((position, index) => index === 0 || position > titlePositions[index - 1]);
+  const newestToOldest =
+    allEntries && titlePositions.every((position, index) => {
+      const reverseIndex = titlePositions.length - 1 - index;
+      return index === 0 || titlePositions[reverseIndex] > titlePositions[reverseIndex + 1];
+    });
+  const datesVisible = ordered.every((transcript) => {
+    const yearMonthDay = transcript.meeting_datetime.slice(0, 10);
+    const readableDate = yearMonthDay.replace(/-/g, '/');
+    const monthDay = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' })
+      .format(new Date(transcript.meeting_datetime))
+      .toLowerCase();
+    return (
+      combined.includes(yearMonthDay) ||
+      combined.includes(readableDate) ||
+      combined.includes(yearMonthDay.slice(5)) ||
+      combined.includes(monthDay)
+    );
+  });
+  const participantsAndContext = ordered.every((transcript) => {
+    const participantVisible = transcript.participants
+      .filter((participant) => participant !== 'QA User')
+      .some((participant) => combined.includes(normalizeForQa(participant)));
+    const contextVisible = (transcript.expected_context_terms || []).some((term) =>
+      combined.includes(normalizeForQa(term)),
+    );
+    return participantVisible && contextVisible;
+  });
+  const answerLines = lineCount(answerText);
+  const boundedSummaryShape =
+    answerLines >= ordered.length &&
+    answerLines <= Math.max(ordered.length + 4, ordered.length * 9) &&
+    String(answerText || '').length <= 3200;
+  const transcriptCaveat =
+    combined.includes('transcript') &&
+    (combined.includes('not stable') ||
+      combined.includes('stable belief') ||
+      combined.includes('meeting-scoped') ||
+      combined.includes('caveat'));
+  return {
+    allEntries,
+    chronologicallyOrdered: oldestToNewest || newestToOldest,
+    oldestToNewest,
+    newestToOldest,
+    datesVisible,
+    participantsAndContext,
+    boundedSummaryShape,
+    transcriptCaveat,
   };
 }
 
@@ -529,7 +707,7 @@ function writePublicReport({ args, result }) {
   const ownerCountStatus =
     result.ownerCountUnchanged === null ? 'not checked' : result.ownerCountUnchanged ? 'yes' : 'no';
   const lines = [
-    `# 2026-05-12 Meeting Transcript Live Browser QA`,
+    `# ${args.startedAt.toISOString().slice(0, 10)} Meeting Transcript Live Browser QA`,
     '',
     '## Scope',
     '',
@@ -540,6 +718,7 @@ function writePublicReport({ args, result }) {
     `- Status: ${result.pass ? 'PASS' : 'FAIL'}`,
     `- Runtime: frontend ${args.clientBase.replace(/localhost:\d+/, 'localhost:<port>')}; API ${args.apiBase.replace(/localhost:\d+/, 'localhost:<port>')}`,
     `- QA user hash: ${result.qaUserHash || '<missing>'}`,
+    `- Chronological prompt hash: ${hashValue(result.chronologicalPrompt || '')}`,
     `- Inventory prompt hash: ${hashValue(result.inventoryPrompt || '')}`,
     `- Detail prompt hash: ${hashValue(result.detailPrompt || '')}`,
     `- Conversation hash: ${result.conversationHash || '<missing>'}`,
@@ -550,9 +729,19 @@ function writePublicReport({ args, result }) {
     `- Explicit owner refusal guard configured: ${result.ownerGuardConfigured ? 'yes' : 'no'}`,
     `- Non-owner QA account selected: ${result.nonOwnerQa ? 'yes' : 'no'}`,
     `- Owner meeting-transcript count unchanged: ${ownerCountStatus}`,
+    `- Prior synthetic QA transcript artifacts cleaned before seeding: ${result.staleSyntheticArtifactCount}`,
     `- Synthetic summaries uploaded/refreshed: ${result.syntheticSummaryFilesPresent ? 'yes' : 'no'}`,
     `- Inventory artifact present: ${result.inventoryFilePresent ? 'yes' : 'no'}`,
     `- Raw transcript artifacts uploaded in default mode: ${result.rawArtifactCount}`,
+    `- Browser submitted chronological recent-transcripts prompt and received visible response: ${result.chronologicalVisibleResponse ? 'yes' : 'no'}`,
+    `- Chronological response used file_search: ${result.chronologicalSourceSummary.toolCallCount > 0 ? 'yes' : 'no'}`,
+    `- Chronological response used inventory source: ${result.chronologicalSourceSummary.inventorySourceCount > 0 ? 'yes' : 'no'}`,
+    `- Chronological response listed all seeded transcript entries: ${result.answerChecks.chronologicalAllEntries ? 'yes' : 'no'}`,
+    `- Chronological response ordered entries chronologically: ${result.answerChecks.chronologicalOrdered ? 'yes' : 'no'}`,
+    `- Chronological response included visible dates: ${result.answerChecks.chronologicalDatesVisible ? 'yes' : 'no'}`,
+    `- Chronological response included participants and meeting context: ${result.answerChecks.chronologicalParticipantsAndContext ? 'yes' : 'no'}`,
+    `- Chronological response stayed within a bounded summary shape: ${result.answerChecks.chronologicalBoundedSummaryShape ? 'yes' : 'no'}`,
+    `- Chronological response preserved transcript caveat: ${result.answerChecks.chronologicalTranscriptCaveat ? 'yes' : 'no'}`,
     `- Browser submitted inventory prompt and received visible response: ${result.inventoryVisibleResponse ? 'yes' : 'no'}`,
     `- Inventory response used file_search: ${result.inventorySourceSummary.toolCallCount > 0 ? 'yes' : 'no'}`,
     `- Inventory file_search inventory sources: ${result.inventorySourceSummary.inventorySourceCount}`,
@@ -584,12 +773,24 @@ async function main() {
     syntheticSummaryFilesPresent: false,
     inventoryFilePresent: false,
     rawArtifactCount: -1,
+    chronologicalVisibleResponse: false,
     inventoryVisibleResponse: false,
     detailVisibleResponse: false,
     conversationHash: '',
     screenshotSaved: false,
+    chronologicalPrompt: '',
     inventoryPrompt: '',
     detailPrompt: '',
+    staleSyntheticArtifactCount: 0,
+    chronologicalSourceSummary: {
+      toolCallCount: 0,
+      attachmentCount: 0,
+      sourceCount: 0,
+      inventorySourceCount: 0,
+      summarySourceCount: 0,
+      markerInSources: false,
+      fileNameHashes: [],
+    },
     inventorySourceSummary: {
       toolCallCount: 0,
       attachmentCount: 0,
@@ -609,6 +810,14 @@ async function main() {
       fileNameHashes: [],
     },
     answerChecks: {
+      chronologicalAllEntries: false,
+      chronologicalOrdered: false,
+      chronologicalOldestToNewest: false,
+      chronologicalNewestToOldest: false,
+      chronologicalDatesVisible: false,
+      chronologicalParticipantsAndContext: false,
+      chronologicalBoundedSummaryShape: false,
+      chronologicalTranscriptCaveat: false,
       meetingScopedCaveat: false,
       participantsAndDetails: false,
     },
@@ -630,6 +839,7 @@ async function main() {
 
     const userId = String(user._id);
     const summaryFileIds = seeded.transcripts.map((transcript) => transcript.summaryFileId);
+    result.staleSyntheticArtifactCount = seeded.staleSyntheticArtifactCount;
     result.syntheticSummaryFilesPresent =
       (await db.collection('files').countDocuments({
         user: user._id,
@@ -675,6 +885,38 @@ async function main() {
     await page.goto(`${args.clientBase}/c/new`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await installAccessToken(page, auth.accessToken);
 
+    const chronologicalPrompt =
+      'list my recent conversations based on transcripts chronologically and give me a 5 line summary based on the actual context.';
+    result.chronologicalPrompt = chronologicalPrompt;
+    const chronologicalRun = await runBrowserPrompt({
+      page,
+      db,
+      userId,
+      prompt: chronologicalPrompt,
+      startedAt: args.startedAt,
+      timeoutMs: args.timeoutMs,
+      marker: args.marker,
+    });
+    result.conversationHash = hashValue(chronologicalRun.userMessage.conversationId, 12);
+    result.chronologicalVisibleResponse = Boolean(chronologicalRun.answerText || chronologicalRun.bodyText);
+    result.chronologicalSourceSummary = chronologicalRun.sourceSummary;
+    const chronologicalChecks = evaluateChronologicalAnswer({
+      answerText: chronologicalRun.answerText,
+      bodyText: chronologicalRun.bodyText,
+      transcripts: seeded.transcripts,
+      marker: args.marker,
+    });
+    result.answerChecks.chronologicalAllEntries = chronologicalChecks.allEntries;
+    result.answerChecks.chronologicalOrdered = chronologicalChecks.chronologicallyOrdered;
+    result.answerChecks.chronologicalOldestToNewest = chronologicalChecks.oldestToNewest;
+    result.answerChecks.chronologicalNewestToOldest = chronologicalChecks.newestToOldest;
+    result.answerChecks.chronologicalDatesVisible = chronologicalChecks.datesVisible;
+    result.answerChecks.chronologicalParticipantsAndContext = chronologicalChecks.participantsAndContext;
+    result.answerChecks.chronologicalBoundedSummaryShape = chronologicalChecks.boundedSummaryShape;
+    result.answerChecks.chronologicalTranscriptCaveat = chronologicalChecks.transcriptCaveat;
+
+    await page.goto(`${args.clientBase}/c/new`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await installAccessToken(page, auth.accessToken);
     const inventoryPrompt =
       'Use file_search meeting transcript recall to answer a broad inventory question. ' +
       'Retrieve the meeting transcript inventory or table of contents if it is available. ' +
@@ -689,7 +931,6 @@ async function main() {
       timeoutMs: args.timeoutMs,
       marker: args.marker,
     });
-    result.conversationHash = hashValue(inventoryRun.userMessage.conversationId, 12);
     result.inventoryVisibleResponse = Boolean(inventoryRun.answerText || inventoryRun.bodyText);
     result.inventorySourceSummary = inventoryRun.sourceSummary;
 
@@ -723,8 +964,9 @@ async function main() {
       normalizedAnswer.includes('stable user belief');
     result.answerChecks.participantsAndDetails =
       normalizedAnswer.includes('ben ortiz') &&
-      normalizedAnswer.includes('atlas migration') &&
       normalizedAnswer.includes('launch risk') &&
+      normalizedAnswer.includes('noah reed') &&
+      normalizedAnswer.includes('support escalation') &&
       normalizedAnswer.includes('helios') &&
       normalizedAnswer.includes('orion');
     const screenshotPath = path.join(args.outputDir, 'browser-result.png');
@@ -736,6 +978,10 @@ async function main() {
           marker: args.marker,
           qaUserHash: result.qaUserHash,
           conversationHash: result.conversationHash,
+          chronologicalAssistantMessageHash: hashValue(
+            chronologicalRun.assistantMessage.messageId || chronologicalRun.assistantMessage._id,
+            12,
+          ),
           inventoryAssistantMessageHash: hashValue(
             inventoryRun.assistantMessage.messageId || inventoryRun.assistantMessage._id,
             12,
@@ -744,12 +990,26 @@ async function main() {
             detailRun.assistantMessage.messageId || detailRun.assistantMessage._id,
             12,
           ),
+          chronologicalAnswerHash: hashValue(chronologicalRun.answerText, 16),
           inventoryAnswerHash: hashValue(inventoryRun.answerText, 16),
           detailAnswerHash: hashValue(detailRun.answerText, 16),
+          chronologicalAnswerLength: chronologicalRun.answerText.length,
           inventoryAnswerLength: inventoryRun.answerText.length,
           detailAnswerLength: detailRun.answerText.length,
+          staleSyntheticArtifactCount: result.staleSyntheticArtifactCount,
+          chronologicalSourceSummary: result.chronologicalSourceSummary,
           inventorySourceSummary: result.inventorySourceSummary,
           detailSourceSummary: result.detailSourceSummary,
+          chronologicalAnswerChecks: {
+            allEntries: result.answerChecks.chronologicalAllEntries,
+            ordered: result.answerChecks.chronologicalOrdered,
+            oldestToNewest: result.answerChecks.chronologicalOldestToNewest,
+            newestToOldest: result.answerChecks.chronologicalNewestToOldest,
+            datesVisible: result.answerChecks.chronologicalDatesVisible,
+            participantsAndContext: result.answerChecks.chronologicalParticipantsAndContext,
+            boundedSummaryShape: result.answerChecks.chronologicalBoundedSummaryShape,
+            transcriptCaveat: result.answerChecks.chronologicalTranscriptCaveat,
+          },
         },
         null,
         2,
@@ -764,8 +1024,17 @@ async function main() {
       result.syntheticSummaryFilesPresent &&
       result.inventoryFilePresent &&
       result.rawArtifactCount === 0 &&
+      result.chronologicalVisibleResponse &&
       result.inventoryVisibleResponse &&
       result.detailVisibleResponse &&
+      result.chronologicalSourceSummary.toolCallCount > 0 &&
+      result.chronologicalSourceSummary.inventorySourceCount > 0 &&
+      result.answerChecks.chronologicalAllEntries &&
+      result.answerChecks.chronologicalOrdered &&
+      result.answerChecks.chronologicalDatesVisible &&
+      result.answerChecks.chronologicalParticipantsAndContext &&
+      result.answerChecks.chronologicalBoundedSummaryShape &&
+      result.answerChecks.chronologicalTranscriptCaveat &&
       result.inventorySourceSummary.toolCallCount > 0 &&
       result.inventorySourceSummary.inventorySourceCount > 0 &&
       result.detailSourceSummary.toolCallCount > 0 &&
@@ -796,6 +1065,17 @@ async function main() {
         outputDir: args.outputDir,
         qaUserHash: result.qaUserHash,
         conversationHash: result.conversationHash,
+        chronologicalSourceSummary: result.chronologicalSourceSummary,
+        chronologicalAnswerChecks: {
+          allEntries: result.answerChecks.chronologicalAllEntries,
+          ordered: result.answerChecks.chronologicalOrdered,
+          oldestToNewest: result.answerChecks.chronologicalOldestToNewest,
+          newestToOldest: result.answerChecks.chronologicalNewestToOldest,
+          datesVisible: result.answerChecks.chronologicalDatesVisible,
+          participantsAndContext: result.answerChecks.chronologicalParticipantsAndContext,
+          boundedSummaryShape: result.answerChecks.chronologicalBoundedSummaryShape,
+          transcriptCaveat: result.answerChecks.chronologicalTranscriptCaveat,
+        },
         inventorySourceSummary: result.inventorySourceSummary,
         detailSourceSummary: result.detailSourceSummary,
         error: result.error ? sanitizePublicError(result.error) : null,

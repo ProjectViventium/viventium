@@ -311,6 +311,8 @@ PY
   fi
 fi
 
+VIVENTIUM_LIBRECHAT_SOURCE_PHASE=compile \
+VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH= \
 "$PYTHON_BIN" "$SCRIPT_DIR/config_compiler.py" \
   --config "$CONFIG_FILE" \
   --output-dir "$RUNTIME_DIR" \
@@ -324,6 +326,8 @@ cleanup_doctor_tmp() {
 }
 trap cleanup_doctor_tmp EXIT
 
+VIVENTIUM_LIBRECHAT_SOURCE_PHASE=compile \
+VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH= \
 "$PYTHON_BIN" "$SCRIPT_DIR/config_compiler.py" \
   --config "$CONFIG_FILE" \
   --output-dir "$DOCTOR_TMP_COMPILE_DIR" >/dev/null

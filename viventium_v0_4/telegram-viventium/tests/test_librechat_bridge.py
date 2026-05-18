@@ -366,6 +366,14 @@ def test_stream_error_message_classifies_tool_errors():
         _stream_error_message('401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}')
         == "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
     )
+    assert (
+        _stream_error_message("The model provider credentials were rejected.")
+        == "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+    )
+    assert (
+        _stream_error_message("Unauthorized provider credentials")
+        == "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+    )
     assert _stream_error_message("plain timeout") == "Connection error. Please retry."
 
 
@@ -1255,6 +1263,73 @@ async def test_stream_response_ignores_non_file_attachment_events(monkeypatch):
     chunks = [chunk async for chunk in bridge._stream_response("stream-no-file-attach", "444")]
 
     assert chunks == ["Recovered"]
+
+
+@pytest.mark.asyncio
+async def test_stream_response_provider_credentials_error_is_actionable(monkeypatch):
+    bridge = _make_bridge()
+    payloads = [
+        {
+            "final": True,
+            "responseMessage": {
+                "content": [
+                    {
+                        "type": "error",
+                        "error": "The model provider credentials were rejected.",
+                    }
+                ]
+            },
+        }
+    ]
+
+    async def fake_iter_sse_json_events(*, chunk_iter):
+        _ = chunk_iter
+        for payload in payloads:
+            yield payload
+
+    class _SuccessResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def stream(self, *args, **kwargs):
+            _ = args, kwargs
+            return _SuccessResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "iter_sse_json_events", fake_iter_sse_json_events)
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+
+    chunks = [chunk async for chunk in bridge._stream_response("stream-auth", "555")]
+
+    assert chunks == [
+        "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+    ]
 
 
 @pytest.mark.asyncio

@@ -147,7 +147,7 @@ class TestRefAudioValidation(unittest.TestCase):
 
         self.assertEqual(env.voice_min_interruption_duration_s, 0.5)
         self.assertEqual(env.voice_turn_detection, "vad")
-        self.assertEqual(env.voice_min_endpointing_delay_s, 1.4)
+        self.assertEqual(env.voice_min_endpointing_delay_s, 0.5)
         self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
 
     def test_load_env_respects_voice_endpointing_overrides(self) -> None:

@@ -84,6 +84,17 @@ runtime:
       summary_max_chars: 32000
       stable_evidence_max_age_days: 90
       rag_mode: detailed_summary_only
+  dev_env:
+    # Set by `bin/viventium dev-env create`; normal installs leave this off.
+    enabled: false
+    name: ""
+    port_offset: 1000
+    shared_singleton_services:
+      - recall_rag
+      - searxng
+      - firecrawl
+      - google_workspace_mcp
+      - ms365_mcp
   # Shared background follow-up window for LibreChat, live voice, and Telegram.
   # This is the Phase B window that still allows a late main-agent follow-up to surface
   # after background insights finish.
@@ -212,3 +223,8 @@ integrations:
     base_url: http://localhost:8200
   openclaw:
     enabled: true
+feature_requests:
+  pr:
+    # After the user approves the generated feature or bug description and completed local result,
+    # the local work-request workflow may prepare a PR automatically. When false, Viventium prompts first.
+    create_after_user_approval: true

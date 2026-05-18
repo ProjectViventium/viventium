@@ -26,6 +26,8 @@
   <string>13.0</string>
   <key>LSUIElement</key>
   <true/>
+  <key>NSSupportsAutomaticTermination</key>
+  <false/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

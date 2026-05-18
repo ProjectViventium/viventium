@@ -74,7 +74,7 @@ class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
         expected_kwargs = {
             "sample_rate": 16000,
             "min_speech_duration": 0.35,
-            "min_silence_duration": 1.0,
+            "min_silence_duration": 0.5,
             "max_buffered_speech": 900.0,
             "activation_threshold": 0.4,
             "force_cpu": False,
@@ -109,7 +109,7 @@ class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
         get_kwargs.assert_called_once()
         vad_env = get_kwargs.call_args.args[0]
         self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SPEECH"], "0.35")
-        self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SILENCE"], "1.0")
+        self.assertEqual(vad_env["VIVENTIUM_STT_VAD_MIN_SILENCE"], "0.5")
         vad_load.assert_called_once_with(**expected_kwargs)
         adapter_cls.assert_called_once_with(stt="fake-stt", vad="fake-vad")
 

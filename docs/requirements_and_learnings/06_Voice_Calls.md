@@ -211,6 +211,19 @@ background-cortex behavior.
   playout. `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` is an opt-in caption QA mode, not the shipped
   default. The playground transcript reader must key boundaries by LiveKit text-stream id, not by
   segment text or provider names.
+- Voice gateway -> LibreChat streaming must use a per-turn stream id, not a conversation id or other
+  long-lived call identifier, as the SSE stream key. The gateway should send its own turn request id
+  as `streamId` when posting to `/api/viventium/voice/chat`, and the LibreChat voice route must
+  preserve that id in the response. Conversation id and parent message id still own history
+  continuity; stream id only owns the transport channel for that single generated turn.
+- Sequential spoken turns during an open Phase B follow-up window must remain independently
+  streamable. A later turn must not collide with, subscribe to, or complete an earlier turn's stream,
+  and an older Phase B follow-up must still pass moved-on conversation adjudication before it is
+  spoken.
+- Latency instrumentation must be correlatable per user turn. LiveKit's current observability
+  guidance recommends correlating end-of-utterance, LLM TTFT, and TTS TTFB by a per-turn speech id;
+  Viventium's equivalent public-safe correlation key is the voice request/stream id, with
+  call-session and conversation identifiers kept out of public QA artifacts.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -266,6 +279,10 @@ background-cortex behavior.
 - In live voice, only the main agent's user-facing outputs may be spoken:
   - the immediate Phase A main response
   - a persisted Phase B `cortex_followup` main-agent continuation, when one exists
+- Provider reasoning/thinking deltas are not voice response content. Even if a provider emits
+  `on_reasoning_delta` events during a voice call, the voice stream and persisted assistant message
+  must suppress those parts. A voice call transcript must not render LibreChat `Thoughts` cards or
+  save assistant content with `type: "think"`.
 - Voice inherits the shared Phase B moved-on conversation rule: if newer visible messages were
   exchanged before an old background follow-up completes, the main-agent adjudicator receives those
   messages and must choose whether anything is still useful now.
@@ -325,11 +342,12 @@ background-cortex behavior.
     may use `turn_detector` so end-of-turn is decided by the gateway's semantic turn-taking layer
     instead of by a short silence timer
   - when the semantic detector is unavailable, uncached, or lacks a registered local inference
-    runner, local Whisper must fall back to a less-eager VAD profile instead of committing after the
-    historical `0.5s` silence / `0.9s` endpointing profile
+    runner, local Whisper must fall back to the local VAD profile: `0.35s` minimum speech, `0.5s`
+    VAD silence, and `0.5s` local endpointing by default, with explicit env/config overrides still
+    taking precedence
   - first-run detector downloads are best-effort; if the exact detector assets cannot be cached,
-    local Whisper remains functional on the less-eager VAD fallback and the launcher retries on a
-    later start
+    local Whisper remains functional on the local VAD fallback and the launcher retries on a later
+    start
 - Optional voice-gateway plugins must never crash worker boot at module import time:
   - plugin availability checks must treat a missing parent package the same as a missing leaf module
   - semantic turn detection may downgrade at runtime, and worker logs must expose the concrete
@@ -357,8 +375,8 @@ background-cortex behavior.
     expected during model warm-up and must not make the worker disappear from dispatch
   - local Whisper routes default to a longer initialization timeout so cold-start model loading does
     not kill the idle process before the worker can accept calls
-  - local Whisper VAD fallback defaults to a longer silence budget than remote/STT-owned routes, and
-    explicit `VIVENTIUM_STT_VAD_MIN_SILENCE` still overrides that default
+  - local Whisper VAD fallback defaults to the shared `0.5s` silence budget, and explicit
+    `VIVENTIUM_STT_VAD_MIN_SILENCE` still overrides that default
   - local Whisper VAD fallback defaults to a slightly longer minimum speech threshold than
     remote/STT-owned routes, and explicit `VIVENTIUM_STT_VAD_MIN_SPEECH` still overrides that
     default

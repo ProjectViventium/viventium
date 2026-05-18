@@ -56,7 +56,7 @@ except ImportError as exc:
 _logger = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Model] = {}
 _LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
-_LOCAL_WHISPER_VAD_MIN_SILENCE_S = "1.0"
+_LOCAL_WHISPER_VAD_MIN_SILENCE_S = "0.5"
 
 # Common hallucination phrases Whisper outputs on silence/noise
 # Based on research: https://github.com/ggml-org/whisper.cpp/issues/1724

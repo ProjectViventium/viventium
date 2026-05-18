@@ -19,6 +19,59 @@ changes.
 - Existing QA scope must be revisited when touched code can affect that feature. Do not create a new
   isolated report and leave the living feature cases stale.
 
+## Full-View Evidence Gate
+
+This is the prompt every developer and AI agent must satisfy before saying user-visible work is done:
+
+`feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
+
+1. Name the feature, owning requirement, user use case, QA case ID, expected result, actual evidence,
+   and remaining gap or residual risk.
+2. Use the feature like a user through the real product surface: browser/computer, Telegram, voice,
+   installer, CLI, MCP/tool, scheduler, GlassHive, or the applicable public entrypoint.
+3. Inspect supporting evidence from the owning code path, docs and nested docs/repos, scripts or QA
+   harnesses, logs, DB/state/persistence, generated config, shipped/prebuilt artifacts, and runtime
+   outputs when those surfaces apply.
+4. Compare the visible UI/UX or delivered result with the supporting evidence and the documented
+   expected behavior.
+5. Record exactly what was run, what was not run, what evidence proves the result, and what fix
+   remains for any mismatch.
+
+If a required real user path cannot be run, the result is `BLOCKED` or `PARTIAL`, not pass. Mocks,
+unit tests, API responses, logs, DB rows, source inspection, or another model's review can support
+the finding, but they cannot replace required user-path evidence.
+
+## Feature Inventory And Natural Use-Case Gate
+
+QA starts from the full feature map, not from the one symptom that happened to be reported. Before a
+feature, bug, runtime, installer, or release task is accepted:
+
+1. Build or refresh the checklist from the complete feature inventory in
+   [`docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`](../docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md),
+   [`qa/feature-user-use-case-checklist.md`](feature-user-use-case-checklist.md), the owning
+   requirement docs, nested repo docs, scripts, tests, and runtime surfaces.
+2. For every affected feature, enumerate the natural user use cases a real user would obviously try:
+   happy path, first-run/empty state, connected-account or missing-auth state, degraded dependency,
+   retry/recovery, interruption/cancel/update, persistence/reload/restart, cross-surface parity,
+   generated or shipped artifact verification, and public/private safety.
+3. Treat that list as a checklist. Each applicable use case must be `PASS`, `FAIL`, `BLOCKED`, or
+   `PARTIAL` with evidence. Unrun use cases stay visible; they do not disappear into a summary.
+4. Execute the checklist like a user on the real surface when the feature is user-visible:
+   browser/computer, voice/LiveKit, Telegram, installer, CLI, MCP/tool, scheduler, GlassHive, or the
+   supported public entrypoint.
+5. Observe the screen or delivered result and compare it with logs, DB/state, source, generated
+   config, scripts, nested docs/repos, and shipped artifacts that own or prove the behavior.
+6. If a feature depends on local infrastructure, record that prerequisite as its own checklist item.
+   For example, local Web Search requires Docker-backed SearXNG/Firecrawl unless hosted providers are
+   configured. "Docker is off" is a distinct finding that must be caught before accepting a vague
+   user-visible "search failed" answer.
+
+An escaped user-visible failure must add a synthetic public-safe regression case to the owning
+`qa/<feature>/cases.md` and, when it crosses surfaces, to each affected owner. For example, a voice
+call asking the agent to look something up is not only a playground case and not only a web-search
+case; it is the intersection of voice, web search, agent capability config, tool-call persistence,
+logs, and user-facing wording.
+
 ## Feature Folder Standard
 
 New or actively touched feature QA folders should converge on this shape:
@@ -81,6 +134,12 @@ For non-browser surfaces, use the closest real user loop:
   source code.
 - MCP/tool flows: verify the model-visible tool contract, auth state, tool result, final answer, and
   failure copy.
+
+For evidence-retrieval tools such as web search, QA must prove whether "no answer" means a successful
+empty search or an operational failure. Required failure classes include provider unavailable,
+timeout, rate limit, auth/config missing, request rejected, unsupported configuration, and local
+prerequisite unavailable. Named-entity/contact/date/current-fact lookups must exercise the documented
+browser or local-delegation fallback when the primary search provider fails.
 
 ## Regression Selection
 

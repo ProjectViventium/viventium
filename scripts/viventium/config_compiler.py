@@ -293,6 +293,7 @@ DEFAULT_MEMORY_HARDENING = {
     "openai_reasoning_effort": "xhigh",
     "transcripts": {
         "source_dir": "",
+        "ignore_globs": [],
         "max_files_per_run": 20,
         "max_chars_per_file": 500000,
         "summary_max_chars": 32000,
@@ -884,9 +885,15 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
 
     mcp_servers = cleaned.get("mcpServers")
     if isinstance(mcp_servers, dict):
-        if not resolve_bool(env.get("START_MS365_MCP"), False):
+        if not resolve_bool(env.get("START_MS365_MCP"), False) and not resolve_bool(
+            env.get("VIVENTIUM_SHARED_MS365_MCP"),
+            False,
+        ):
             mcp_servers.pop("ms-365", None)
-        if not resolve_bool(env.get("START_GOOGLE_MCP"), False):
+        if not resolve_bool(env.get("START_GOOGLE_MCP"), False) and not resolve_bool(
+            env.get("VIVENTIUM_SHARED_GOOGLE_MCP"),
+            False,
+        ):
             mcp_servers.pop("google_workspace", None)
         if not resolve_bool(env.get("START_GLASSHIVE"), False):
             mcp_servers.pop("glasshive-workers-projects", None)
@@ -940,6 +947,23 @@ def positive_int(value: Any, label: str) -> int:
     if number <= 0:
         raise SystemExit(f"{label} must be greater than zero, got {value!r}")
     return number
+
+
+def string_list(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items = value.replace("\n", ",").split(",")
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raise SystemExit(f"{label} must be a list or comma-separated string when provided")
+    items: list[str] = []
+    for item in raw_items:
+        normalized = str(item).strip()
+        if normalized:
+            items.append(normalized)
+    return items
 
 
 def resolve_bool(value: Any, default: bool) -> bool:
@@ -1613,6 +1637,40 @@ def web_search_local_services_requested(config: dict[str, Any]) -> bool:
     return web_search["search_provider"] == "searxng" or web_search["scraper_provider"] == "firecrawl"
 
 
+SHARED_SINGLETON_SERVICE_ALIASES = {
+    "recall_rag": {"recall_rag", "rag", "rag_api", "conversation_recall"},
+    "searxng": {"searxng", "web_search_searxng"},
+    "firecrawl": {"firecrawl", "web_search_firecrawl"},
+    "google_workspace_mcp": {"google_workspace_mcp", "google_workspace", "google_mcp"},
+    "ms365_mcp": {"ms365_mcp", "ms365", "microsoft_365_mcp"},
+}
+
+
+def runtime_dev_env_settings(config: dict[str, Any]) -> dict[str, Any]:
+    runtime = config.get("runtime", {}) or {}
+    dev_env = runtime.get("dev_env", {}) or {}
+    if not isinstance(dev_env, dict):
+        return {"enabled": False, "name": "", "shared_singleton_services": set()}
+    shared_raw = dev_env.get("shared_singleton_services", []) or []
+    shared: set[str] = set()
+    if isinstance(shared_raw, list):
+        for item in shared_raw:
+            token = str(item or "").strip().lower()
+            for canonical, aliases in SHARED_SINGLETON_SERVICE_ALIASES.items():
+                if token in aliases:
+                    shared.add(canonical)
+    return {
+        "enabled": resolve_bool(dev_env.get("enabled"), False),
+        "name": str(dev_env.get("name") or "").strip(),
+        "shared_singleton_services": shared,
+    }
+
+
+def dev_env_shares_service(config: dict[str, Any], service: str) -> bool:
+    settings = runtime_dev_env_settings(config)
+    return bool(settings["enabled"] and service in settings["shared_singleton_services"])
+
+
 def conversation_recall_enabled(config: dict[str, Any]) -> bool:
     runtime = config.get("runtime", {}) or {}
     personalization = runtime.get("personalization", {}) or {}
@@ -1665,6 +1723,10 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
         or DEFAULT_MEMORY_HARDENING["openai_reasoning_effort"]
     )
     transcripts["source_dir"] = str(transcripts.get("source_dir") or "").strip()
+    transcripts["ignore_globs"] = string_list(
+        transcripts.get("ignore_globs"),
+        "runtime.memory_hardening.transcripts.ignore_globs",
+    )
     transcripts["max_files_per_run"] = positive_int(
         transcripts.get("max_files_per_run"),
         "runtime.memory_hardening.transcripts.max_files_per_run",
@@ -1795,15 +1857,39 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
     transcripts_source_dir = memory_hardening["transcripts"]["source_dir"]
-    start_rag_api = "true" if default_conversation_recall or transcripts_source_dir else "false"
+    dev_env = runtime_dev_env_settings(config)
+    shared_services = dev_env["shared_singleton_services"]
+    shared_rag_api = "recall_rag" in shared_services
+    shared_searxng = "searxng" in shared_services
+    shared_firecrawl = "firecrawl" in shared_services
+    shared_google_mcp = "google_workspace_mcp" in shared_services
+    shared_ms365_mcp = "ms365_mcp" in shared_services
+    start_rag_api = (
+        "true"
+        if (default_conversation_recall or transcripts_source_dir) and not shared_rag_api
+        else "false"
+    )
     code_interpreter_is_enabled = code_interpreter_enabled(config)
     web_search_settings = resolve_web_search_settings(config)
     web_search_is_enabled = web_search_settings["enabled"] == "true"
-    start_searxng = web_search_is_enabled and web_search_settings["search_provider"] == "searxng"
-    start_firecrawl = web_search_is_enabled and web_search_settings["scraper_provider"] == "firecrawl"
+    start_searxng = (
+        web_search_is_enabled
+        and web_search_settings["search_provider"] == "searxng"
+        and not shared_searxng
+    )
+    start_firecrawl = (
+        web_search_is_enabled
+        and web_search_settings["scraper_provider"] == "firecrawl"
+        and not shared_firecrawl
+    )
     telegram_is_enabled = telegram_enabled(config)
     glasshive_is_enabled = glasshive_enabled(config)
     glasshive_host_worker = resolve_glasshive_host_worker_settings(config)
+    feature_request_pr = config.get("feature_requests", {}).get("pr", {}) or {}
+    feature_request_pr_after_approval = resolve_bool(
+        feature_request_pr.get("create_after_user_approval"),
+        True,
+    )
 
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
@@ -1823,8 +1909,17 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_GOOGLE_MCP_PORT": str(profile["google_mcp_port"]),
         "VIVENTIUM_SCHEDULING_MCP_PORT": str(profile["scheduling_mcp_port"]),
         "VIVENTIUM_RAG_API_PORT": str(profile["rag_api_port"]),
+        "VIVENTIUM_DEV_ENV_ENABLED": "true" if dev_env["enabled"] else "false",
+        "VIVENTIUM_DEV_ENV_NAME": str(dev_env["name"]),
+        "VIVENTIUM_SHARED_SINGLETON_SERVICES": ",".join(sorted(shared_services)),
+        "VIVENTIUM_WORK_REQUEST_CREATE_PR_AFTER_USER_APPROVAL": "true"
+        if feature_request_pr_after_approval
+        else "false",
+        "VIVENTIUM_FEATURE_REQUEST_CREATE_PR_AFTER_USER_APPROVAL": "true"
+        if feature_request_pr_after_approval
+        else "false",
         "RAG_API_URL": f"http://localhost:{profile['rag_api_port']}"
-        if start_rag_api == "true"
+        if (start_rag_api == "true" or (default_conversation_recall and shared_rag_api))
         else "",
         "VIVENTIUM_CODE_INTERPRETER_PORT": str(profile["code_interpreter_port"]),
         "VIVENTIUM_SKYVERN_API_PORT": str(profile["skyvern_api_port"]),
@@ -1880,6 +1975,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             "openai_reasoning_effort"
         ],
         "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR": transcripts_source_dir,
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS": ",".join(
+            memory_hardening["transcripts"]["ignore_globs"]
+        ),
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN": str(
             memory_hardening["transcripts"]["max_files_per_run"]
         ),
@@ -1897,8 +1995,13 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_TELEGRAM_BACKEND": "librechat",
         "VIVENTIUM_TELEGRAM_AGENT_ID": default_main_agent_id,
         "VIVENTIUM_MAIN_AGENT_ID": default_main_agent_id,
-        "START_GOOGLE_MCP": "true" if integrations.get("google_workspace", {}).get("enabled") else "false",
-        "START_MS365_MCP": "true" if integrations.get("ms365", {}).get("enabled") else "false",
+        "START_GOOGLE_MCP": "true" if integrations.get("google_workspace", {}).get("enabled") and not shared_google_mcp else "false",
+        "START_MS365_MCP": "true" if integrations.get("ms365", {}).get("enabled") and not shared_ms365_mcp else "false",
+        "VIVENTIUM_SHARED_GOOGLE_MCP": "true" if shared_google_mcp else "false",
+        "VIVENTIUM_SHARED_MS365_MCP": "true" if shared_ms365_mcp else "false",
+        "VIVENTIUM_SHARED_RAG_API": "true" if shared_rag_api else "false",
+        "VIVENTIUM_SHARED_SEARXNG": "true" if shared_searxng else "false",
+        "VIVENTIUM_SHARED_FIRECRAWL": "true" if shared_firecrawl else "false",
         "START_GLASSHIVE": "true" if glasshive_is_enabled else "false",
         "START_SCHEDULING_MCP": "true",
         "START_RAG_API": start_rag_api,
@@ -2150,6 +2253,13 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
+    # Voice fast-profile defaults are runtime outputs, not hand-maintained App Support edits.
+    # They preserve background-agent parity while keeping simple voice turns from blocking first
+    # audio on the full Phase A detection path.
+    env["VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC"] = "true"
+    env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] = "500"
+    env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "false"
+    env["VIVENTIUM_VOICE_LOG_LATENCY"] = "1"
 
     env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"], env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] = assignments["conscious"]
     env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] = assignments["background_analysis"]
@@ -2844,6 +2954,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "RAG_API_URL",
         "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS",

@@ -19,9 +19,16 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
    bag. Voice settings are separate authoring state.
 9. Modern playground disclosures must resolve the effective assistant route from the actual call
    agent and show the concrete provider/model that will answer the call.
-10. Shipped source-of-truth for Anthropic voice routes must set `voice_llm_model_parameters.thinking: false`
-    explicitly so fresh installs and syncs preserve low-latency voice behavior without relying on
-    inheritance from the primary model bag.
+10. Shipped source-of-truth for Anthropic voice routes must use the launch-ready Anthropic voice
+    default exposed in the runtime model inventory, currently `claude-sonnet-4-5`, and set
+    `voice_llm_model_parameters.thinking: false` explicitly so fresh installs and syncs preserve
+    low-latency voice behavior without relying on inheritance from the primary model bag. This is
+    not a generic claim that Sonnet is faster than every Anthropic model; Haiku remains an
+    activation fallback, while the shipped voice route must choose from launch-ready Anthropic
+    models actually exposed to the app.
+11. Voice model parameters must be normalized to the selected voice provider before the runtime call.
+    A provider override must not leak incompatible thinking/reasoning fields from the primary model
+    bag into the voice request.
 
 ## Activation Conditions (all three required)
 | Condition | Source | Check |
@@ -71,8 +78,11 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
   - `isVoiceCallActive(req)` — checks all three conditions
   - `isVoiceModelValid(model, provider, modelsConfig)` — validates against available models
   - `resolveVoiceOverrideAssignment(agent)` — reads only explicit agent `voice_llm_*` fields
-  - `resolveVoiceModelParameters(agent, voiceModel)` — overlays voice-only params on top of the
-    primary bag for runtime use
+  - `resolveVoiceModelParameters(agent, voiceModel, voiceProvider)` — overlays voice-only params on
+    top of the primary bag for runtime use, then normalizes the result for the selected provider
+  - `normalizeVoiceModelParametersForProvider(...)` — strips provider-incompatible thinking fields
+    and maps compatibility shapes such as legacy voice `thinking: false` onto the provider's
+    supported no-reasoning parameter
   - `applyVoiceModelOverride(agent, req, modelsConfig)` — mutates the runtime agent in place
 - **initialize.js**: Calls `applyVoiceModelOverride()` after agent loaded, before `validateAgentModel()`
 - **addedConvo.js**: Same pattern for parallel/handoff agents
@@ -94,6 +104,29 @@ parameter bag for that spoken follow-up path.
   primary model bag.
 - **Voice override cleared after prior tuning**: Clear resets provider/model and stores an empty
   voice parameter bag so stale voice-only settings do not silently persist.
+- **xAI Grok 4.3 no-reasoning voice route**: For xAI Chat Completions, low-latency voice must use
+  `reasoning_effort: "none"` in the provider request. In LibreChat's LangChain ChatOpenAI wrapper,
+  the xAI Chat Completions route must carry that field through `modelKwargs.reasoning_effort`; a
+  plain intermediate `llmConfig.reasoning_effort` can look correct in app logs while failing to
+  reach the final provider request for this custom endpoint. As of the 2026-05 xAI docs and live
+  API probes, there is no accepted `grok-4.3-non-reasoning` slug; the supported non-reasoning
+  route is `grok-4.3` (or its current aliases) with `reasoning_effort: "none"`. Older xAI
+  non-reasoning slugs such as `grok-4-1-fast-non-reasoning` and `grok-4.20-non-reasoning` do not
+  accept `reasoning_effort` on Chat Completions before provider-side retirement redirects, so the
+  adapter must not attach that knob to all xAI model names indiscriminately. Runtime/provider-fetch
+  telemetry must verify the actual request shape, not just the voice config object. `thinking:
+  false` is an Anthropic-shaped field and must not be sent to xAI. Runtime may map legacy live
+  voice params with `thinking: false` to `reasoning_effort: "none"` for compatibility, but the
+  durable voice parameter bag should store the xAI-native shape.
+- **xAI Responses vs Chat Completions**: xAI Responses uses `reasoning: { effort: "none" }`.
+  Viventium's current xAI voice route uses the OpenAI-compatible Chat Completions path, so runtime
+  must preserve `reasoning_effort` for the `xai` endpoint unless `useResponsesApi` is explicitly
+  true. This is provider-specific request-shape normalization, not a silent model remap.
+- **Voice reasoning leak guard**: The Voice Call LLM no-reasoning knob controls the provider
+  request, but the voice surface still must be defensive. If any provider emits reasoning deltas in
+  voice mode, runtime suppresses them from the resumable stream and from saved assistant content.
+  Voice transcripts should contain audible assistant text only; text chat may still show reasoning
+  blocks when that mode/provider is intentionally configured.
 
 ## Files Modified
 | File | Change |

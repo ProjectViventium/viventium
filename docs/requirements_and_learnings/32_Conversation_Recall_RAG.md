@@ -51,6 +51,17 @@ evidence.
   inventory text from Mongo metadata before vector querying, so broad questions such as “what recent
   transcripts do you see?” have a complete list surface. Specific topic/person questions still use
   the detailed summary artifacts for semantic retrieval and answer detail.
+- The inventory must be sufficient for chronological recent-transcript questions: each entry should
+  expose title/subject when knowable, date/time when knowable, participants when knowable,
+  public-safe source/provenance, and a one-line context. Artifact/file IDs stay in internal metadata
+  and detailed summary artifacts, not in the compact broad TOC; source-folder hashes and content
+  hashes are also internal lifecycle metadata, not model-facing inventory content. The assistant
+  should be able to answer "list my recent conversations based on transcripts chronologically and
+  give me a 5 line summary based on the actual context" from inventory plus detailed summaries,
+  while preserving transcript caveats and avoiding stable-belief promotion from one transcript.
+- Inventory ordering uses meeting date/time when that metadata is available and falls back to file
+  mtime only for unknown dates. Oversized inventory output truncates by full entries with an
+  explicit omitted-count marker, so the model is not shown a silently sliced middle range.
 - Attach meeting transcript artifacts to file_search only when a valid transcript folder is
   configured, the artifact source-folder hash matches the current folder, and the artifact kind
   matches the configured transcript RAG mode. The vector runtime must also be configured and

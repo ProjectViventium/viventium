@@ -1,0 +1,102 @@
+# Central ownership map for release-test QA traceability.
+#
+# Each tests/release/test_*.py file must appear here. Prefer the most specific
+# feature QA case catalog that already exists; use release-readiness for broad
+# public packaging and boundary checks.
+release_tests:
+  tests/release/test_agent_sync_review_contract.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_background_agent_browser_qa_harness.py:
+    qa_owner: qa/background_agents/cases.md
+  tests/release/test_background_agent_governance_contract.py:
+    qa_owner: qa/background_agents/cases.md
+  tests/release/test_bootstrap_components.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_cli_upgrade.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_common_sh.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_config_compiler.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_continuity_audit.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_cursor_claude_bridge.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_detached_librechat_api_watchdog.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_detached_librechat_supervision.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_directory_link.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_doctor_sh.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_git_helper.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_install_summary.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_installer_ui.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_librechat_client_defaults.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_librechat_dev_start_config_sync.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_librechat_package_rebuild_contract.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_local_web_search_compose.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_macos_helper_install.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_memory_hardening_contract.py:
+    qa_owner: qa/memory-hardening/cases.md
+  tests/release/test_ms365_launcher_contract.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_native_stack_helpers.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_no_runtime_nlu.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_ollama_embeddings_prereqs.py:
+    qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_preflight.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_private_repo_resolution_contract.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_productivity_activation_live_eval.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_productivity_activation_source_of_truth.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_project_boundary_contamination.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_prompt_architecture_eval_harness.py:
+    qa_owner: qa/prompt-architecture/cases.md
+  tests/release/test_prompt_registry.py:
+    qa_owner: qa/prompt-architecture/cases.md
+  tests/release/test_prompt_workbench.py:
+    qa_owner: qa/prompt-workbench/cases.md
+  tests/release/test_public_bootstrap_manifests.py:
+    qa_owner: qa/release-readiness/cases.md
+  tests/release/test_qa_operating_contract.py:
+    qa_owner: qa/qa-system-audit/cases.md
+  tests/release/test_rag_api_override_contract.py:
+    qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_remote_call_tunnel.py:
+    qa_owner: qa/remote-access/cases.md
+  tests/release/test_scheduling_mcp_supervision.py:
+    qa_owner: qa/background_agents/cases.md
+  tests/release/test_shell_init.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_stable_dev_runtime_workflows.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_stack_port_probe_timeouts.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_telegram_codex_runtime_paths.py:
+    qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_telegram_lazy_startup_contract.py:
+    qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_telegram_media_prereqs.py:
+    qa_owner: qa/telegram-media-prereqs/cases.md
+  tests/release/test_telegram_transcription_error_contract.py:
+    qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_voice_playground_dispatch_contract.py:
+    qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_wizard.py:
+    qa_owner: qa/installer-resilience/cases.md

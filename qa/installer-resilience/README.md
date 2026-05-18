@@ -15,6 +15,8 @@ classes:
 6. helper install from a checkout inside a macOS protected folder must bind the helper runtime to
    the supported safe checkout instead of retriggering Documents/Desktop/Downloads access prompts
 7. native CLI prerequisite drift must be caught by executable probes instead of `PATH` presence
+8. status-bar helper login startup must keep the helper alive long enough to submit and monitor
+   local runtime auto-start
 
 ## Scenarios
 
@@ -197,3 +199,22 @@ Expected behavior:
   UI polling does not turn into avoidable DB load
 - mounted MCP UI controls refresh status periodically so recovery is reflected without a full browser
   reload
+
+### 10. Status-bar helper survives login auto-start
+
+Repro surface:
+
+- macOS login item launches `~/Applications/Viventium.app` after a reboot or sign-in
+- the local runtime is not yet listening on the core API/frontend/playground ports
+
+Expected behavior:
+
+- loginwindow/system logs show the helper launch without an immediate app-death exit
+- the helper process remains alive as the status-bar app
+- helper logs record an auto-start decision and either submit `bin/viventium launch` or explain the
+  explicit blocker
+- the helper disables AppKit automatic termination while it owns status-bar and login auto-start
+  responsibility
+- the shipped helper bundle declares `NSSupportsAutomaticTermination=false`
+- the active runtime checkout remains the existing App Support `active-checkout.json`; no source is
+  copied into install paths

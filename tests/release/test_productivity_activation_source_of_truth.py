@@ -113,7 +113,7 @@ def test_source_of_truth_bundle_does_not_embed_owner_specific_identity() -> None
     )
     owner = bundle["meta"]["user"]
 
-    assert owner["email"] == "user@viventium.local"
+    assert owner["email"] == "user@example.com"
     assert owner["id"] == "placeholder-owner"
 
 

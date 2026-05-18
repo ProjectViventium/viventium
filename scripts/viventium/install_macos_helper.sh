@@ -589,6 +589,10 @@ verify_installed_bundle() {
     echo "[viventium] Installed helper is missing the manual transcript ingest idle-gate override." >&2
     exit 1
   fi
+  if ! strings "$installed_executable" | grep -F -- "prompt-workbench" >/dev/null; then
+    echo "[viventium] Installed helper is missing Prompt Workbench support." >&2
+    exit 1
+  fi
 }
 
 sign_installed_bundle() {

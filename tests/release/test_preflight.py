@@ -384,6 +384,35 @@ def test_preflight_rejects_relative_glasshive_host_workspace_root(monkeypatch) -
     assert by_key["glasshive_host_workspace_root"].status == "missing"
 
 
+def test_netbird_livekit_node_ip_ready_accepts_resolvable_livekit_hostname(monkeypatch) -> None:
+    module = load_preflight_module()
+    calls: list[str] = []
+
+    def fake_gethostbyname(hostname: str) -> str:
+        calls.append(hostname)
+        return "100.64.0.10"
+
+    monkeypatch.setattr(module.socket, "gethostbyname", fake_gethostbyname)
+
+    assert module.netbird_livekit_node_ip_ready(
+        {"runtime": {"network": {"public_livekit_url": "wss://livekit.example.com"}}}
+    )
+    assert calls == ["livekit.example.com"]
+
+
+def test_netbird_livekit_node_ip_ready_rejects_unresolvable_livekit_hostname(monkeypatch) -> None:
+    module = load_preflight_module()
+
+    def fake_gethostbyname(hostname: str) -> str:
+        raise module.socket.gaierror("not found")
+
+    monkeypatch.setattr(module.socket, "gethostbyname", fake_gethostbyname)
+
+    assert not module.netbird_livekit_node_ip_ready(
+        {"runtime": {"network": {"public_livekit_url": "wss://missing.example.com"}}}
+    )
+
+
 def test_preflight_flags_invalid_glasshive_followup_timeout(monkeypatch) -> None:
     module = load_preflight_module()
     for ready_helper in (
@@ -495,6 +524,8 @@ integrations:
     assert completed.returncode == 1
     assert "telegram-bot-api" in completed.stdout
     assert "Telegram local Bot API credentials" in compact_output(completed.stdout)
+    assert "Manual attention details:" in completed.stdout
+    assert "integrations.telegram.local_bot_api.api_id" in compact_output(completed.stdout)
 
 
 def test_preflight_legacy_auto_remote_call_mode_defaults_to_disabled(tmp_path: Path) -> None:
@@ -595,6 +626,32 @@ voice:
     assert "caddy" in completed.stdout
     assert "NetBird remote origins" in completed.stdout
     assert "public_client_origin" in compact_output(completed.stdout)
+    assert "Manual attention details:" in completed.stdout
+
+
+def test_preflight_manual_attention_details_allow_literal_brackets(capsys) -> None:
+    module = load_preflight_module()
+    ui = module.InstallerUI()
+
+    module.print_summary(
+        ui,
+        {"install": {"mode": "native"}, "voice": {"mode": "disabled"}},
+        [
+            module.PreflightItem(
+                key="manual_with_brackets",
+                label="Manual [literal] prerequisite",
+                category="test",
+                reason="prove bracketed text is printed literally",
+                status="missing",
+                install_kind="manual",
+                manual_command="run helper [--literal]",
+            )
+        ],
+    )
+
+    output = capsys.readouterr().out
+    assert "Manual attention details:" in output
+    assert "Manual [literal] prerequisite: run helper [--literal]" in output
 
 
 @pytest.mark.parametrize("remote_call_mode", ["public_https_edge", "custom_domain"])

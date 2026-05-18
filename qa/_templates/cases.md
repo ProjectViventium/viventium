@@ -12,6 +12,17 @@ the folder, such as `BGA-001`, `VOICE-001`, `MCP-001`, or an established existin
 | --- | --- | --- | --- | --- | --- |
 | `<FEATURE>-001` | `<doc/section>` | `<visible outcome>` | `<Web/Telegram/etc>` | `<command or manual>` | `<date/result/report>` |
 
+## Natural User Use Case Checklist
+
+Use this checklist before claiming feature QA is complete. Add feature-specific rows rather than
+leaving this as a generic note.
+
+| Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
+| --- | --- | --- | --- | --- | --- | --- |
+| `<FEATURE>-UC-001` | Happy path a user would try first | `<doc/section>` / `<FEATURE>-001` | `<browser/Telegram/voice/installer/CLI/MCP/scheduler/GlassHive>` | Code, docs/nested docs, logs, DB/state, generated config, scripts, shipped artifacts | `<visible outcome>` | `<date/result/report>` |
+| `<FEATURE>-UC-002` | Missing auth, missing config, degraded dependency, local prerequisite unavailable, or first-run/empty state | `<doc/section>` / `<FEATURE>-002` | `<real surface>` | Health/status, prerequisite state such as Docker/provider health when relevant, logs, DB/state, generated config, docs | Honest failure/recovery copy with no invented result | `<date/result/report>` |
+| `<FEATURE>-UC-003` | Persistence, reload, restart, retry, cancel, update, or cross-surface parity | `<doc/section>` / `<FEATURE>-003` | `<real surface>` | Stored state, logs, linked surface, artifact or delivery check | Visible state and supporting evidence agree | `<date/result/report>` |
+
 ## `<FEATURE>-001` - <Case Name>
 
 - Requirement:
@@ -21,6 +32,7 @@ the folder, such as `BGA-001`, `VOICE-001`, `MCP-001`, or an established existin
 - Expected result:
 - Forbidden result:
 - Evidence to capture:
+- Full-view evidence minimum:
 - Automation:
 - Last run:
 - Notes:
@@ -41,6 +53,8 @@ the folder, such as `BGA-001`, `VOICE-001`, `MCP-001`, or an established existin
 - Expected result: visible UI and stored state agree; final model/runtime wording does not contradict the UI
 - Forbidden result: logs or DB say success but the visible UI is missing, stale, empty, or contradictory
 - Evidence to capture: dated report link, public-safe screenshot if useful, sanitized DB/log counts
+- Full-view evidence minimum: real browser path, visible state, detail/expanded state, refresh when
+  persistence matters, owning code/log/DB confirmation, and explicit note of anything not run
 - Automation: `<command or manual path>`
 - Last run: `<date/result/report>`
 - Notes:
@@ -55,3 +69,8 @@ When a bug reaches a user or real QA surface:
 - [ ] Link the new case from the feature README and any coverage matrix.
 - [ ] Add or update automated coverage when the behavior can be checked deterministically.
 - [ ] Run the impacted existing cases before claiming the fix is complete.
+
+For evidence-retrieval incidents, also preserve the failure class: successful-empty, provider
+unavailable, timeout, rate limit, auth/config missing, request rejected, unsupported configuration,
+or local prerequisite unavailable. Named-entity/contact/date/current-fact failures must include the
+browser/computer/local-delegation fallback result or the blocked reason.

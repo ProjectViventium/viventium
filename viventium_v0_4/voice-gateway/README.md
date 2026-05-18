@@ -116,11 +116,11 @@ This service is the **voice bridge** between:
       - `assemblyai` defaults to `stt`
       - local `whisper_local` / `pywhispercpp` uses `turn_detector` when the optional semantic
         detector plugin and exact cached multilingual assets are present; otherwise it falls back
-        to a less-eager `vad` profile
+        to the local `vad` profile
     - If `vad` is requested while Silero is unavailable, runtime falls back to `stt`.
   - Silero VAD requires Python <= 3.12 and `livekit-plugins-silero`.
   - `VIVENTIUM_STT_VAD_MIN_SILENCE`
-    - Defaults to `1.0` for local Whisper fallback, `0.5` elsewhere.
+    - Defaults to `0.5` for local Whisper fallback and other StreamAdapter VAD paths.
     - Explicit env/config overrides always win.
   - `VIVENTIUM_STT_VAD_MAX_BUFFERED_SPEECH` (defaults to `600`)
     - Maximum duration of one uninterrupted speech segment kept in the Silero buffer.

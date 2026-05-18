@@ -542,6 +542,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.5" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=xhigh" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=20" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=500000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=32000" in runtime_env
@@ -2491,6 +2492,10 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=900" in runtime_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in runtime_env
+    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in runtime_env
+    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in runtime_env
+    assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in runtime_env
 
 
 def test_config_compiler_rejects_invalid_glasshive_followup_timeout(tmp_path: Path) -> None:
@@ -3446,6 +3451,7 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
                 "operator_user_email": "qa@example.com",
                 "transcripts": {
                     "source_dir": "/path/to/transcripts",
+                    "ignore_globs": ["_index.json", "state/**"],
                     "max_files_per_run": 12,
                     "max_chars_per_file": 200000,
                     "summary_max_chars": 28000,
@@ -3502,6 +3508,7 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "RAG_API_URL=http://localhost:8110" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS='_index.json,state/**'" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in runtime_env
@@ -3510,6 +3517,7 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in librechat_env
     assert "RAG_API_URL=http://localhost:8110" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS='_index.json,state/**'" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in librechat_env

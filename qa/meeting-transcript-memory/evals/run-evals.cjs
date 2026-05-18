@@ -260,14 +260,18 @@ const checks = {
             ],
           };
         }
-        if (body.file_id === 'meeting_summary:qa:alpha') {
+        if (Array.isArray(body.file_ids) && body.file_ids.includes('meeting_summary:qa:alpha')) {
           return {
             data: [
               [
                 {
                   page_content:
                     '10:00 Speaker Alpha and the user discussed SF customer discovery, onboarding risk, and follow-up product notes.',
-                  metadata: { source: '/safe/meeting-transcript-summary-alpha.txt', page: 1 },
+                  metadata: {
+                    file_id: 'meeting_summary:qa:alpha',
+                    source: '/safe/meeting-transcript-summary-alpha.txt',
+                    page: 1,
+                  },
                 },
                 0.3,
               ],
@@ -371,6 +375,74 @@ const checks = {
     );
   },
 
+  'broad-chronological-inventory-retrieval-contract': async () => {
+    const { createFileSearchTool } = loadFileSearchWithMocks({
+      axiosPost: async () => ({ data: [] }),
+    });
+    const inventoryText = [
+      'Meeting transcript inventory / table of contents.',
+      'Current processed transcript summaries: 3',
+      '1. Nimbus pricing retro',
+      '   Date/time: 2026-05-13T14:45:00-04:00',
+      '   Participants: Sofia Kim, Mateo Rivera, QA User',
+      '   Context: Temporary pricing experiment and packaging caveat.',
+      '2. Helios launch review',
+      '   Date/time: 2026-05-12T10:15:00-04:00',
+      '   Participants: Ava Chen, Ben Ortiz, QA User',
+      '   Context: Launch risk ownership and onboarding checklist.',
+      '3. Atlas kickoff',
+      '   Date/time: 2026-05-10T09:00:00-04:00',
+      '   Participants: Jordan Lee, Priya Shah, QA User',
+      '   Context: Scope alignment and data migration risk.',
+    ].join('\n');
+    const tool = await createFileSearchTool({
+      userId: 'qa-user',
+      files: [
+        {
+          file_id: 'meeting_inventory:qa:sourcehash',
+          filename: 'meeting-transcript-inventory-sourcehash.txt',
+          metadata: {
+            meetingTranscriptArtifactId: 'meeting_transcript_inventory:current',
+            meetingTranscriptKind: 'inventory',
+            meetingTranscriptDisplayTitle: 'Meeting transcript inventory',
+            meetingTranscriptOneLineSummary: 'Current transcript list.',
+            meetingTranscriptInventoryText: inventoryText,
+          },
+        },
+        {
+          file_id: 'meeting_summary:qa:atlas',
+          filename: 'meeting-transcript-summary-atlas.txt',
+          metadata: {
+            meetingTranscriptArtifactId: 'meeting_transcript:atlas',
+            meetingTranscriptKind: 'summary',
+          },
+        },
+      ],
+    });
+    const [formatted, artifact] = await tool.func({
+      query:
+        'list my recent conversations based on transcripts chronologically and give me a 5 line summary based on the actual context',
+    });
+    assert(
+      artifact?.file_search?.sources?.[0]?.fileId === 'meeting_inventory:qa:sourcehash',
+      'broad chronological inventory query should surface the transcript inventory first',
+    );
+    assert(
+      hasAll(formatted, [
+        'Nimbus pricing retro',
+        'Helios launch review',
+        'Atlas kickoff',
+        'Date/time:',
+        'Participants:',
+        'Context:',
+        'Temporary pricing experiment',
+        'Launch risk ownership',
+        'Scope alignment',
+      ]),
+      'inventory payload should include titles, dates, participants, and one-line context for broad chronological answers',
+    );
+  },
+
   'inventory-does-not-crowd-focused-summary': async () => {
     const { createFileSearchTool } = loadFileSearchWithMocks({
       axiosPost: async () => ({
@@ -433,6 +505,7 @@ const checks = {
       fs.writeFileSync(path.join(tempDir, 'meeting.txt'), 'Speaker A: real transcript.', 'utf8');
       fs.writeFileSync(path.join(tempDir, '.transcript_state.json'), '{"hidden":true}', 'utf8');
       fs.writeFileSync(path.join(tempDir, 'state', 'index.json'), '{"downloaded":true}', 'utf8');
+      fs.writeFileSync(path.join(tempDir, 'download.log'), 'downloader sidecar', 'utf8');
       const scan = hardener.scanTranscriptDirectory({
         user: { _id: '507f1f77bcf86cd799439011', email: 'qa@example.com', name: 'QA User' },
         options: {
@@ -447,7 +520,7 @@ const checks = {
       });
       assert(scan.transcripts.length === 1, 'ignore globs should leave only the real transcript');
       assert(scan.transcripts[0].filename === 'meeting.txt', 'sidecar should not become transcript evidence');
-      assert(scan.telemetry.files_ignored_by_config === 2, 'ignore count should be observable');
+      assert(scan.telemetry.files_ignored_by_config === 3, 'ignore count should be observable');
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
       fs.rmSync(stateDir, { recursive: true, force: true });

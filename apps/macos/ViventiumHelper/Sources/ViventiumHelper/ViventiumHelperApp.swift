@@ -34,6 +34,19 @@ private struct CommandCaptureResult {
     let stdout: String
 }
 
+private struct HealWorkflowSettings {
+    let provider: String
+    let reasoningEffort: String
+}
+
+private struct BugReportInput {
+    let whatHappened: String
+    let stepsToReproduce: String
+    let expected: String
+    let actual: String
+    let details: String
+}
+
 private enum TranscriptIngestSourceStatus: Equatable {
     case ready
     case notConfigured
@@ -96,6 +109,9 @@ final class HelperController: ObservableObject {
     }
     @Published private(set) var snapshotInProgress: Bool = false
     @Published private(set) var transcriptIngestInProgress: Bool = false
+    @Published private(set) var promptWorkbenchActionInProgress: Bool = false
+    @Published private(set) var workflowStatusLabel: String?
+    @Published private(set) var workflowActionInProgress: Bool = false
     @Published private(set) var openURLString: String = "http://localhost:3190"
     @Published private(set) var launchAtLoginEnabled: Bool = false
     @Published private(set) var showInStatusBarEnabled: Bool = true
@@ -118,8 +134,10 @@ final class HelperController: ObservableObject {
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
     private var launchAtLoginRefreshTask: Task<Void, Never>?
+    private let automaticTerminationReason = "Viventium status-bar helper keeps the local runtime available after login."
 
     init() {
+        ProcessInfo.processInfo.disableAutomaticTermination(self.automaticTerminationReason)
         self.config = Self.loadConfig()
         self.helperLogURL = Self.makeHelperLogURL(appSupportDir: self.config?.appSupportDir)
         self.launchAtLoginEnabled = Self.launchAtLoginFastPathEnabled()
@@ -141,7 +159,14 @@ final class HelperController: ObservableObject {
     }
 
     var statusLabel: String {
-        self.stackState.menuLabel
+        if let workflowStatusLabel {
+            return workflowStatusLabel
+        }
+        return self.stackState.menuLabel
+    }
+
+    var menuGlyph: String {
+        self.workflowStatusLabel == nil ? "V" : "V*"
     }
 
     var actionDisabled: Bool {
@@ -162,6 +187,18 @@ final class HelperController: ObservableObject {
 
     var transcriptIngestActionDisabled: Bool {
         self.transcriptIngestInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
+    }
+
+    var promptWorkbenchActionDisabled: Bool {
+        self.promptWorkbenchActionInProgress || self.config == nil || self.configUsesProtectedRepoRoot
+    }
+
+    var promptWorkbenchMenuTitle: String {
+        self.promptWorkbenchActionInProgress ? "Prompt Workbench (Working...)" : "Prompt Workbench"
+    }
+
+    var workflowActionDisabled: Bool {
+        self.workflowActionInProgress || self.config == nil || self.configUsesProtectedRepoRoot
     }
 
     var showsStatusRow: Bool {
@@ -439,6 +476,326 @@ final class HelperController: ObservableObject {
         }
     }
 
+    func checkForUpdates() {
+        guard let config else {
+            self.presentMissingConfigAlert()
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "check for updates")
+            return
+        }
+        self.workflowActionInProgress = true
+        Task.detached(priority: .userInitiated) {
+            let result = Self.runCLICaptured(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["upgrade", "--check", "--json"],
+                logFileName: "helper-update-check.log",
+                timeoutSeconds: 30
+            )
+            let summary = Self.updateCheckSummary(stdout: result.stdout)
+            await MainActor.run {
+                self.workflowActionInProgress = false
+                let alert = NSAlert()
+                if result.exitStatus != 0 {
+                    alert.messageText = "Could not check for updates"
+                    alert.informativeText = "Viventium could not complete the update check. Check helper-update-check.log, then try again."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                    return
+                }
+                alert.messageText = summary.title
+                alert.informativeText = summary.message
+                alert.alertStyle = summary.blockers.isEmpty ? .informational : .warning
+                if summary.updateAvailable && summary.blockers.isEmpty {
+                    alert.addButton(withTitle: "Install Update")
+                    alert.addButton(withTitle: "Cancel")
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        self.installUpdate(config: config)
+                    }
+                } else {
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    func startHealWorkflow() {
+        guard let settings = self.promptForHealSettings() else {
+            return
+        }
+        self.startWorkflow(
+            title: "Start Viventium Heal?",
+            message: "Viventium will use the local GlassHive host-worker workflow with the selected provider and reasoning effort.",
+            arguments: [
+                "heal",
+                "start",
+                "--provider",
+                settings.provider,
+                "--reasoning-effort",
+                settings.reasoningEffort,
+            ],
+            logFileName: "helper-heal.log"
+        )
+    }
+
+    func startFeatureRequestWorkflow() {
+        guard let request = self.promptForFeatureRequest(), !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        self.startWorkflow(
+            title: "Start Feature Request?",
+            message: "Viventium will collect success criteria and non-obvious cases before any implementation work begins.",
+            arguments: ["feature-request", "start", "--request", request],
+            logFileName: "helper-feature-request.log"
+        )
+    }
+
+    func startBugReportWorkflow() {
+        guard let report = self.promptForBugReport(), !report.whatHappened.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        self.startWorkflow(
+            title: "Start Bug Report?",
+            message: "Viventium will collect reproduction details, expected behavior, actual behavior, and QA acceptance before any fix work begins.",
+            arguments: [
+                "report-bug",
+                "start",
+                "--what-happened",
+                report.whatHappened,
+                "--steps-to-reproduce",
+                report.stepsToReproduce,
+                "--expected",
+                report.expected,
+                "--actual",
+                report.actual,
+                "--details",
+                report.details,
+            ],
+            logFileName: "helper-bug-report.log"
+        )
+    }
+
+    func openWorkflowArtifacts() {
+        guard let config else {
+            self.presentMissingConfigAlert()
+            return
+        }
+        _ = Self.runCLI(
+            repoRoot: config.repoRoot,
+            appSupportDir: config.appSupportDir,
+            arguments: ["workflows", "open-artifacts"],
+            logFileName: "helper-workflows.log"
+        )
+    }
+
+    func openPromptWorkbench() {
+        self.runPromptWorkbenchAction(
+            action: "open",
+            successTitle: nil,
+            successFallbackMessage: "Prompt Workbench opened in your browser."
+        )
+    }
+
+    func startPromptWorkbench() {
+        self.runPromptWorkbenchAction(
+            action: "start",
+            successTitle: "Prompt Workbench started",
+            successFallbackMessage: "The local Prompt Workbench web app is running."
+        )
+    }
+
+    func stopPromptWorkbench() {
+        self.runPromptWorkbenchAction(
+            action: "stop",
+            successTitle: "Prompt Workbench stopped",
+            successFallbackMessage: "Only the Prompt Workbench web app was stopped. Viventium keeps its current running state."
+        )
+    }
+
+    func approveFeatureWorkflow() {
+        self.runWorkflowControlAction(
+            title: "Approve Build or Fix?",
+            message: "Viventium will create an isolated local worktree and ask GlassHive to implement only from the approved feature or bug report.",
+            arguments: ["workflows", "approve"],
+            logFileName: "helper-workflows.log"
+        )
+    }
+
+    func cancelWorkflow() {
+        self.runWorkflowControlAction(
+            title: "Cancel Active Workflow?",
+            message: "Viventium will mark the local workflow as cancelled and remove it from the active status view.",
+            arguments: ["workflows", "cancel"],
+            logFileName: "helper-workflows.log"
+        )
+    }
+
+    private func runPromptWorkbenchAction(action: String, successTitle: String?, successFallbackMessage: String) {
+        guard let config else {
+            self.presentMissingConfigAlert()
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "\(action) Prompt Workbench")
+            return
+        }
+        guard !self.promptWorkbenchActionInProgress else {
+            return
+        }
+        self.promptWorkbenchActionInProgress = true
+        self.log("Prompt Workbench \(action) requested")
+        Task.detached(priority: .userInitiated) {
+            let result = Self.runCLICaptured(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["prompt-workbench", action, "--json"],
+                logFileName: "helper-prompt-workbench.log"
+            )
+            let resultURL = Self.parseJSONObject(result.stdout)?["url"] as? String
+            await MainActor.run {
+                self.promptWorkbenchActionInProgress = false
+                if result.exitStatus == 0 {
+                    self.log("Prompt Workbench \(action) completed")
+                    guard let successTitle else {
+                        return
+                    }
+                    let message = resultURL.map { "\($0)\n\n\(successFallbackMessage)" } ?? successFallbackMessage
+                    let alert = NSAlert()
+                    alert.messageText = successTitle
+                    alert.informativeText = message
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                    return
+                }
+
+                self.log("Prompt Workbench \(action) failed with status \(result.exitStatus)")
+                let alert = NSAlert()
+                alert.messageText = "Prompt Workbench action failed"
+                alert.informativeText = "Check helper-prompt-workbench.log, then try again."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+    }
+
+    private func runWorkflowControlAction(title: String, message: String, arguments: [String], logFileName: String) {
+        guard let config else {
+            self.presentMissingConfigAlert()
+            return
+        }
+        guard !self.workflowActionInProgress else {
+            return
+        }
+        let confirm = NSAlert()
+        confirm.messageText = title
+        confirm.informativeText = message
+        confirm.alertStyle = .informational
+        confirm.addButton(withTitle: "Continue")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+        self.workflowActionInProgress = true
+        Task.detached(priority: .userInitiated) {
+            let exitStatus = Self.runCLI(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: arguments,
+                logFileName: logFileName
+            )
+            await MainActor.run {
+                self.workflowActionInProgress = false
+                self.refreshWorkflowStatus(config: config)
+                if exitStatus != 0 {
+                    let alert = NSAlert()
+                    alert.messageText = "Workflow action failed"
+                    alert.informativeText = "Check \(logFileName), then run the same command from Terminal for details."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    private func startWorkflow(title: String, message: String, arguments: [String], logFileName: String) {
+        guard let config else {
+            self.presentMissingConfigAlert()
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "start this workflow")
+            return
+        }
+        guard !self.workflowActionInProgress else {
+            return
+        }
+        let confirm = NSAlert()
+        confirm.messageText = title
+        confirm.informativeText = message
+        confirm.alertStyle = .informational
+        confirm.addButton(withTitle: "Start")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+        self.workflowActionInProgress = true
+        Task.detached(priority: .userInitiated) {
+            let exitStatus = Self.runCLI(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: arguments,
+                logFileName: logFileName
+            )
+            await MainActor.run {
+                self.workflowActionInProgress = false
+                self.refreshWorkflowStatus(config: config)
+                let alert = NSAlert()
+                if exitStatus == 0 {
+                    alert.messageText = "Workflow started"
+                    alert.informativeText = "Open Advanced > Open Work Artifacts to inspect the local run files."
+                    alert.alertStyle = .informational
+                } else {
+                    alert.messageText = "Workflow could not start"
+                    alert.informativeText = "GlassHive host workers may be disabled or unavailable. Check \(logFileName), then run the same command from Terminal for details."
+                    alert.alertStyle = .warning
+                }
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+    }
+
+    private func installUpdate(config: HelperConfig) {
+        self.workflowActionInProgress = true
+        Task.detached(priority: .userInitiated) {
+            let exitStatus = Self.runCLI(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["upgrade", "--restart"],
+                logFileName: "helper-update.log"
+            )
+            await MainActor.run {
+                self.workflowActionInProgress = false
+                self.refreshState(force: true)
+                let alert = NSAlert()
+                alert.messageText = exitStatus == 0 ? "Update installed" : "Update failed"
+                alert.informativeText = exitStatus == 0
+                    ? "Viventium refreshed and restarted. The helper is rechecking the running surfaces."
+                    : "Check helper-update.log and run Heal if the installed runtime is not healthy."
+                alert.alertStyle = exitStatus == 0 ? .informational : .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+    }
+
     func quit() {
         self.log("Quit requested; stopping stack before helper exit")
         self.stopStack(terminateWhenDone: true)
@@ -690,6 +1047,7 @@ final class HelperController: ObservableObject {
         let host = LocalNetworkAddressResolver.currentHost() ?? "localhost"
         self.openURLString = Self.frontendURLString(host: host, port: runtime.frontendPort)
         self.refreshLaunchAtLoginState(force: force)
+        self.refreshWorkflowStatus(config: config)
 
         let allowBusyStateTransition = force
         Task {
@@ -746,9 +1104,138 @@ final class HelperController: ObservableObject {
         }
     }
 
+    private func refreshWorkflowStatus(config: HelperConfig) {
+        self.workflowStatusLabel = Self.workflowStatusLabel(appSupportDir: config.appSupportDir)
+    }
+
     private func beginBusyState(_ state: StackState) {
         self.stackState = state
         self.busyStateGraceDeadline = Date().addingTimeInterval(self.busyStateHandoffGraceSeconds)
+    }
+
+    private func presentMissingConfigAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Missing helper config"
+        alert.informativeText = "Reinstall the Viventium helper from this checkout, then try again."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func promptForHealSettings() -> HealWorkflowSettings? {
+        let alert = NSAlert()
+        alert.messageText = "Heal Settings"
+        alert.informativeText = "Choose the local AI worker Viventium should use for this heal run."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Start")
+        alert.addButton(withTitle: "Cancel")
+
+        let providerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        providerPopup.addItems(withTitles: ["Auto (Codex preferred)", "Codex", "Claude"])
+        providerPopup.selectItem(at: 0)
+
+        let effortPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        effortPopup.addItems(withTitles: ["xHigh", "High", "Medium", "Low"])
+        effortPopup.selectItem(at: 0)
+
+        let providerRow = NSStackView(views: [
+            NSTextField(labelWithString: "Provider"),
+            providerPopup,
+        ])
+        providerRow.orientation = .horizontal
+        providerRow.spacing = 12
+        providerRow.distribution = .fillEqually
+
+        let effortRow = NSStackView(views: [
+            NSTextField(labelWithString: "Thinking"),
+            effortPopup,
+        ])
+        effortRow.orientation = .horizontal
+        effortRow.spacing = 12
+        effortRow.distribution = .fillEqually
+
+        let stack = NSStackView(views: [providerRow, effortRow])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.frame = NSRect(x: 0, y: 0, width: 420, height: 64)
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+
+        let provider: String
+        switch providerPopup.indexOfSelectedItem {
+        case 1:
+            provider = "codex"
+        case 2:
+            provider = "claude"
+        default:
+            provider = "auto"
+        }
+
+        let effort = (effortPopup.titleOfSelectedItem ?? "xHigh").lowercased()
+        return HealWorkflowSettings(provider: provider, reasoningEffort: effort)
+    }
+
+    private func promptForFeatureRequest() -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Feature Request"
+        alert.informativeText = "Describe the feature. Viventium will collect success criteria and edge cases before implementation."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        input.placeholderString = "Example: Add a clearer update progress view"
+        alert.accessoryView = input
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+        return input.stringValue
+    }
+
+    private func promptForBugReport() -> BugReportInput? {
+        let alert = NSAlert()
+        alert.messageText = "Report a Bug"
+        alert.informativeText = "Describe what went wrong. Viventium will collect enough detail to reproduce or validate the bug before any fix starts."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+
+        func row(_ label: String, placeholder: String, required: Bool = false) -> (NSStackView, NSTextField) {
+            let title = NSTextField(labelWithString: required ? "\(label) *" : label)
+            title.toolTip = placeholder
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 430, height: 24))
+            input.placeholderString = placeholder
+            input.toolTip = placeholder
+            let stack = NSStackView(views: [title, input])
+            stack.orientation = .vertical
+            stack.spacing = 4
+            return (stack, input)
+        }
+
+        let happened = row("What happened?", placeholder: "Example: Update check says healthy, but the app does not restart.", required: true)
+        let steps = row("Steps to reproduce", placeholder: "Example: Open helper > Advanced > Check for Updates > Install Update.")
+        let expected = row("What should happen?", placeholder: "Example: Viventium installs the update and comes back healthy.")
+        let actual = row("What happened instead?", placeholder: "Example: The helper still shows Stopped after the update.")
+        let details = row("Other useful details", placeholder: "Example: when it started, affected screen, error text, recent changes.")
+
+        let stack = NSStackView(views: [happened.0, steps.0, expected.0, actual.0, details.0])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.frame = NSRect(x: 0, y: 0, width: 460, height: 260)
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+        return BugReportInput(
+            whatHappened: happened.1.stringValue,
+            stepsToReproduce: steps.1.stringValue,
+            expected: expected.1.stringValue,
+            actual: actual.1.stringValue,
+            details: details.1.stringValue
+        )
     }
 
     private func presentProtectedCheckoutAlert(action: String) {
@@ -1904,6 +2391,159 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
     }
 
+    private nonisolated static func runCLICaptured(
+        repoRoot: String,
+        appSupportDir: String,
+        arguments: [String],
+        logFileName: String? = nil,
+        timeoutSeconds: TimeInterval? = nil
+    ) -> (exitStatus: Int32, stdout: String) {
+        let process = self.makeCLIProcess(
+            repoRoot: repoRoot,
+            appSupportDir: appSupportDir,
+            arguments: arguments,
+            logFileName: logFileName
+        )
+        let stdoutURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("viventium-helper-cli-\(UUID().uuidString).json")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        let stdoutHandle = try? FileHandle(forWritingTo: stdoutURL)
+        process.standardOutput = stdoutHandle ?? FileHandle.nullDevice
+        defer {
+            try? stdoutHandle?.close()
+            try? FileManager.default.removeItem(at: stdoutURL)
+        }
+        do {
+            try process.run()
+            if let timeoutSeconds {
+                let deadline = Date().addingTimeInterval(timeoutSeconds)
+                while process.isRunning && Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+                if process.isRunning {
+                    process.terminate()
+                    process.waitUntilExit()
+                    return (124, "")
+                }
+            }
+            process.waitUntilExit()
+            try? stdoutHandle?.close()
+            let stdout = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
+            return (process.terminationStatus, stdout)
+        } catch {
+            return (-1, "")
+        }
+    }
+
+    private struct UpdateCheckSummary {
+        let title: String
+        let message: String
+        let updateAvailable: Bool
+        let blockers: [String]
+    }
+
+    private nonisolated static func updateCheckSummary(stdout: String) -> UpdateCheckSummary {
+        guard
+            let root = self.parseJSONObject(stdout)
+        else {
+            return UpdateCheckSummary(
+                title: "Could not read update check",
+                message: "The update check did not return readable status.",
+                updateAvailable: false,
+                blockers: ["invalid_json"]
+            )
+        }
+        let updateAvailable = (root["update_available"] as? Bool) ?? false
+        let blockers = (root["blockers"] as? [String]) ?? []
+        if !blockers.isEmpty {
+            return UpdateCheckSummary(
+                title: "Update blocked",
+                message: "Viventium found blockers: \(blockers.joined(separator: ", ")). Resolve them, then check again.",
+                updateAvailable: updateAvailable,
+                blockers: blockers
+            )
+        }
+        if updateAvailable {
+            let behind = (root["commits_behind"] as? Int) ?? 0
+            return UpdateCheckSummary(
+                title: "Update available",
+                message: "Viventium is \(behind) commit(s) behind the configured upstream branch.",
+                updateAvailable: true,
+                blockers: []
+            )
+        }
+        return UpdateCheckSummary(
+            title: "Viventium is up to date",
+            message: "No updates were found for the current branch.",
+            updateAvailable: false,
+            blockers: []
+        )
+    }
+
+    private nonisolated static func parseJSONObject(_ stdout: String) -> [String: Any]? {
+        guard
+            let data = stdout.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return root
+    }
+
+    private nonisolated static func workflowStatusLabel(appSupportDir: String) -> String? {
+        let activeURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("state/workflows/active.json")
+        guard
+            let activeData = try? Data(contentsOf: activeURL),
+            let active = try? JSONSerialization.jsonObject(with: activeData) as? [String: Any],
+            let runDir = active["run_dir"] as? String
+        else {
+            return nil
+        }
+        let summaryURL = URL(fileURLWithPath: runDir, isDirectory: true).appendingPathComponent("summary.json")
+        guard
+            let summaryData = try? Data(contentsOf: summaryURL),
+            let summary = try? JSONSerialization.jsonObject(with: summaryData) as? [String: Any]
+        else {
+            return nil
+        }
+        let state = (summary["state"] as? String) ?? ""
+        guard ["queued", "running", "degraded_ready", "awaiting_approval"].contains(state) else {
+            return nil
+        }
+        let workflow = (summary["workflow"] as? String) ?? ""
+        let phase = (summary["phase"] as? String) ?? "intake"
+        let startedAt = (summary["started_at"] as? String) ?? ""
+        let minutes = self.elapsedMinutes(sinceISO8601: startedAt)
+        if workflow == "feature-request" {
+            if state == "awaiting_approval" {
+                return "Feature Ready"
+            }
+            if phase == "implementation" {
+                return "Building Feature (\(minutes) mins passed)"
+            }
+            return "Feature Intake (\(minutes) mins passed)"
+        }
+        if workflow == "bug-report" {
+            if state == "awaiting_approval" {
+                return "Bug Report Ready"
+            }
+            if phase == "implementation" {
+                return "Fixing Bug (\(minutes) mins passed)"
+            }
+            return "Bug Intake (\(minutes) mins passed)"
+        }
+        return "Healing (\(minutes) mins passed)"
+    }
+
+    private nonisolated static func elapsedMinutes(sinceISO8601 value: String) -> Int {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else {
+            return 0
+        }
+        return max(0, Int(Date().timeIntervalSince(date) / 60.0))
+    }
+
     @discardableResult
     private nonisolated static func runCLIStatusOnly(
         repoRoot: String,
@@ -2385,37 +3025,97 @@ struct ViventiumHelperApp: App {
                 Button(self.controller.statusLabel) {}
                     .disabled(true)
             }
-            Button(self.controller.backupActionLabel) {
-                self.controller.createBackupSnapshot()
-            }
-            .disabled(self.controller.backupActionDisabled)
             Menu("Advanced") {
+                Button("Check for Updates...") {
+                    self.controller.checkForUpdates()
+                }
+                .help("Look for Viventium updates, show blockers, and ask before installing anything.")
+                .disabled(self.controller.workflowActionDisabled)
+                Menu(self.controller.promptWorkbenchMenuTitle) {
+                    Button("Open") {
+                        self.controller.openPromptWorkbench()
+                    }
+                    .help("Start Prompt Workbench if needed, then open it in your browser.")
+                    .disabled(self.controller.promptWorkbenchActionDisabled)
+                    Button("Start") {
+                        self.controller.startPromptWorkbench()
+                    }
+                    .help("Start only the local Prompt Workbench web app.")
+                    .disabled(self.controller.promptWorkbenchActionDisabled)
+                    Button("Stop") {
+                        self.controller.stopPromptWorkbench()
+                    }
+                    .help("Stop only the Prompt Workbench web app; the Viventium runtime keeps its current state.")
+                    .disabled(self.controller.promptWorkbenchActionDisabled)
+                }
+                .disabled(self.controller.promptWorkbenchActionDisabled)
+                Button(self.controller.backupActionLabel) {
+                    self.controller.createBackupSnapshot()
+                }
+                .help("Create a local backup snapshot before risky changes or troubleshooting.")
+                .disabled(self.controller.backupActionDisabled)
+                Divider()
+                Button("Heal Viventium...") {
+                    self.controller.startHealWorkflow()
+                }
+                .help("Ask the local AI workflow to diagnose Viventium from logs, code, state, and docs.")
+                .disabled(self.controller.workflowActionDisabled)
+                Button("Report a Bug...") {
+                    self.controller.startBugReportWorkflow()
+                }
+                .help("Collect what happened, reproduction steps, expected behavior, and actual behavior before a fix starts.")
+                .disabled(self.controller.workflowActionDisabled)
+                Button("Request a Feature...") {
+                    self.controller.startFeatureRequestWorkflow()
+                }
+                .help("Collect success criteria and edge cases before building a requested feature.")
+                .disabled(self.controller.workflowActionDisabled)
+                Button("Approve Build or Fix...") {
+                    self.controller.approveFeatureWorkflow()
+                }
+                .help("Approve the prepared feature or bug report and create an isolated local worktree.")
+                .disabled(self.controller.workflowActionDisabled)
+                Button("Cancel Active Workflow") {
+                    self.controller.cancelWorkflow()
+                }
+                .help("Stop showing the current local workflow as active and clean safe temporary worktrees.")
+                .disabled(self.controller.workflowActionDisabled)
+                Button("Open Work Artifacts") {
+                    self.controller.openWorkflowArtifacts()
+                }
+                .help("Open private local workflow files for the active heal, bug, or feature run.")
+                .disabled(self.controller.workflowActionDisabled)
+                Divider()
                 Button(self.controller.transcriptIngestActionLabel) {
                     self.controller.ingestMeetingTranscripts()
                 }
+                .help("Import local meeting transcripts into Viventium memory when configured.")
                 .disabled(self.controller.transcriptIngestActionDisabled)
+                Divider()
+                Toggle(
+                    "Start Viventium at Login",
+                    isOn: Binding(
+                        get: { self.controller.launchAtLoginEnabled },
+                        set: { self.controller.setLaunchAtLogin($0) }
+                    )
+                )
+                .help("Start the Viventium helper automatically when you sign in to macOS.")
+                Toggle(
+                    "Show Status Bar Icon",
+                    isOn: Binding(
+                        get: { self.controller.showInStatusBarEnabled },
+                        set: { self.controller.setShowInStatusBar($0) }
+                    )
+                )
+                .help("Keep the Viventium menu visible in the macOS status bar.")
             }
-            Toggle(
-                "Start at Login",
-                isOn: Binding(
-                    get: { self.controller.launchAtLoginEnabled },
-                    set: { self.controller.setLaunchAtLogin($0) }
-                )
-            )
-            Toggle(
-                "Show in Status Bar",
-                isOn: Binding(
-                    get: { self.controller.showInStatusBarEnabled },
-                    set: { self.controller.setShowInStatusBar($0) }
-                )
-            )
             Divider()
             Button("Quit") {
                 self.controller.quit()
             }
             .disabled(self.controller.actionDisabled)
         } label: {
-            Text("V")
+            Text(self.controller.menuGlyph)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
         }
 

@@ -29,9 +29,18 @@ VIVENTIUM END -->
   - `api/server/routes/config.js`: default `appTitle` + `helpAndFaqURL` to Viventium.
   - `client/src/routes/Layouts/Startup.tsx`: fallback document title.
   - `client/src/components/Auth/AuthLayout.tsx`: fallback logo alt text.
-  - `client/src/hooks/Endpoint/Icons.tsx` and `client/src/utils/agents.tsx`: agent-avatar
-    fallbacks use `assets/logo.svg` so missing built-in or user agent avatars show the Viventium
-    mark instead of LibreChat's generic feather icon.
+  - `client/src/hooks/Endpoint/Icons.tsx`, `client/src/utils/agents.tsx`, and
+    `client/src/components/Endpoints/*Icon.tsx`: agent/model fallback surfaces use
+    `/assets/logo.svg` so missing built-in or user agent avatars show the Viventium mark instead
+    of LibreChat's generic feather icon.
+  - `client/src/components/Chat/Menus/Endpoints/components/SpecIcon.tsx`: model-spec icon URLs
+    that are local asset paths, such as `/assets/logo.svg`, are rendered as images instead of being
+    treated as built-in icon keys.
+  - `client/src/components/Endpoints/viventiumLogoTheme.ts`,
+    `client/src/components/Endpoints/ViventiumLogoIcon.tsx`, and
+    `client/src/components/Endpoints/URLIcon.tsx`: the Viventium logo SVG receives the active app
+    light/dark `color-scheme` when the user explicitly chooses light or dark mode; `system` mode
+    keeps the SVG's native `prefers-color-scheme` behavior.
 - **Footer branding**:
   - `client/src/components/Chat/Footer.tsx`: uses `Viventium ${Constants.VERSION}` link + `com_ui_latest_footer`.
   - `client/src/locales/**/translation.json`: `com_ui_latest_footer` set to `Viventium — Augmented Human Intelligence`.
@@ -91,9 +100,22 @@ VIVENTIUM END -->
 - **iconURL options in modelSpecs**:
   - Full URL (`https://...`) → displays the image (use this for custom agent avatars)
   - Endpoint name (`agents`, `openAI`, etc.) → displays the endpoint's default icon
-  - Relative path (`/assets/...`) → may not resolve correctly
+  - Relative Viventium asset path (`/assets/logo.svg`) → displays the local Viventium logo image
+    and follows explicit app light/dark theme through `color-scheme`.
 - **Note**: If the agent's avatar is updated via the Agent Builder, the `iconURL` in `librechat.yaml` must be manually updated to match.
 - **Note**: LibreChat does not accept client-sent `iconURL` for conversations; `iconURL` is derived server-side from the selected model spec (`spec`). See `22_Gateway_Conversation_Metadata_Parity.md`.
+
+### Local ModelSpec Logo Resolution (2026-05-18)
+- **Observed issue**: Viventium model specs already used `iconURL: /assets/logo.svg`, but the model
+  selector treated non-HTTP values as built-in icon keys. Because `/assets/logo.svg` was not a key in
+  the endpoint icon map, agent model rows fell through to LibreChat's generic feather icon.
+- **Rule**: Local asset paths, image extensions, HTTP(S) URLs, and `data:image/*` URLs are image
+  sources unless they exactly match a known built-in icon key.
+- **Theme rule**: The canonical `logo.svg` contains light and dark variants. When the app theme is
+  explicitly `light` or `dark`, Viventium logo image elements must set the matching CSS
+  `color-scheme`; when the app theme is `system`, the SVG's own `prefers-color-scheme` media query
+  remains authoritative.
+- **Regression case**: `qa/branding-assets/cases.md` `BRAND-004`.
 
 ### Local Avatar Resolution for Exported Conversation Data (2026-03-05)
 - **Observed issue**: Imported/exported conversation/message docs can contain stale remote `iconURL` values (`https://chat.viventium.ai/...`) that fail locally and fall back to generic icons.

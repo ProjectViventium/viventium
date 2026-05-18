@@ -784,6 +784,10 @@ def _stream_error_message(error: Optional[str]) -> str:
             or "model_authentication" in lowered
             or "invalid authentication credentials" in lowered
             or "authentication_error" in lowered
+            or "provider_unauthorized" in lowered
+            or "provider credentials" in lowered
+            or "credentials were rejected" in lowered
+            or "unauthorized provider credentials" in lowered
         ):
             return "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
         if "connected account needs reconnect" in lowered:

@@ -253,6 +253,75 @@ class _NoResponseStreamGuard:
 # === VIVENTIUM END ===
 
 
+# === VIVENTIUM START ===
+# Feature: Voice TTS chunk boundary guard.
+#
+# Purpose:
+# - Non-streaming TTS providers may synthesize the first tiny LLM delta as its own utterance.
+# - A single-character first delta like "I" can sound like "EEE", and stripped follow-up chunks can
+#   sound concatenated. Buffer only tiny phrase starts; flush on punctuation or a bounded phrase.
+class _VoiceTtsDeltaBuffer:
+    def __init__(self, *, min_first_chars: int = 10, max_chars: int = 48) -> None:
+        self._buffer = ""
+        self._has_emitted = False
+        self._last_emitted_text = ""
+        self._min_first_chars = max(1, min_first_chars)
+        self._max_chars = max(self._min_first_chars, max_chars)
+
+    def _should_flush(self, text: str) -> bool:
+        stripped = text.strip()
+        if not stripped:
+            return False
+        if self._has_emitted:
+            return True
+        if len(stripped) >= self._max_chars:
+            return True
+        if len(stripped) >= 4 and stripped[-1] in ".!?;:":
+            return True
+        if len(stripped) >= self._min_first_chars + 8 and text[-1:].isspace():
+            return True
+        return False
+
+    def _repair_boundary(self, text: str) -> str:
+        if not text or not self._last_emitted_text:
+            return text
+        if text[:1].isspace():
+            return text
+        previous = self._last_emitted_text.rstrip()
+        if not previous:
+            return text
+        # Streaming providers may split "sentence. Next" as "sentence." + "Next".
+        # Repair only sentence-boundary joins so mid-word token chunks stay untouched.
+        if previous[-1] in ".!?;:" and re.match(r"[A-Za-z0-9\"'([]", text[:1]):
+            return f" {text}"
+        return text
+
+    def _mark_emitted(self, text: str) -> str:
+        repaired = self._repair_boundary(text)
+        self._last_emitted_text += repaired
+        return repaired
+
+    def feed(self, delta: str) -> list[str]:
+        if not delta:
+            return []
+        self._buffer += delta
+        if not self._should_flush(self._buffer):
+            return []
+        out = self._buffer
+        self._buffer = ""
+        self._has_emitted = True
+        return [self._mark_emitted(out)]
+
+    def finalize(self) -> list[str]:
+        if not self._buffer:
+            return []
+        out = self._buffer
+        self._buffer = ""
+        self._has_emitted = True
+        return [self._mark_emitted(out)]
+# === VIVENTIUM END ===
+
+
 def _extract_tool_call_name(part: Any) -> str:
     if not isinstance(part, dict):
         return ""
@@ -518,6 +587,78 @@ def _should_log_latency() -> bool:
     return (os.getenv("VIVENTIUM_VOICE_LOG_LATENCY", "") or "").strip() == "1"
 
 
+def _voice_abort_timeout_s() -> float:
+    raw = (os.getenv("VIVENTIUM_VOICE_ABORT_TIMEOUT_S", "") or "").strip()
+    try:
+        value = float(raw) if raw else 2.0
+    except ValueError:
+        value = 2.0
+    return max(0.25, min(value, 10.0))
+
+
+async def _abort_librechat_voice_stream(
+    *,
+    session: aiohttp.ClientSession,
+    origin: str,
+    stream_id: str,
+    headers: dict[str, str],
+    request_id: str,
+    started_at: float,
+    reason: str,
+    log_latency: bool,
+) -> None:
+    abort_url = f"{origin}/api/viventium/voice/stream/{stream_id}/abort"
+    try:
+        async with session.post(
+            abort_url,
+            headers=headers,
+            json={"reason": reason},
+            timeout=aiohttp.ClientTimeout(total=_voice_abort_timeout_s()),
+        ) as resp:
+            if resp.status >= 400:
+                body = await resp.text()
+                logger.warning(
+                    "[LibreChatLLM] Voice abort failed status=%s request_id=%s stream_id=%s body=%s",
+                    resp.status,
+                    request_id,
+                    stream_id,
+                    _summarize_error_for_log(body),
+                )
+                return
+            if log_latency:
+                logger.info(
+                    "[VoiceLatency] abort_post_ms=%s request_id=%s stream_id=%s reason=%s",
+                    int((time.time() - started_at) * 1000),
+                    request_id,
+                    stream_id,
+                    reason,
+                )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "[LibreChatLLM] Voice abort request failed request_id=%s stream_id=%s error=%s",
+            request_id,
+            stream_id,
+            _summarize_error_for_log(str(exc)),
+        )
+
+
+async def _shielded_abort_librechat_voice_stream(**kwargs: Any) -> None:
+    abort_task = asyncio.create_task(_abort_librechat_voice_stream(**kwargs))
+    try:
+        await asyncio.shield(abort_task)
+    except asyncio.CancelledError:
+        current_task = asyncio.current_task()
+        if current_task is not None and hasattr(current_task, "uncancel"):
+            while current_task.cancelling():
+                current_task.uncancel()
+        try:
+            await asyncio.shield(abort_task)
+        finally:
+            raise
+
+
 class LibreChatLLM(llm.LLM):
     """
     A LiveKit Agents LLM implementation backed by LibreChat's voice gateway endpoints.
@@ -630,6 +771,9 @@ class _LibreChatLLMStream(llm.LLMStream):
 
         chat_url = f"{self._origin}/api/viventium/voice/chat"
         stream_id: Optional[str] = None
+        final_event: Optional[dict[str, Any]] = None
+        stream_error: Optional[str] = None
+        cancelled = False
 
         log_latency = _should_log_latency()
         started_at = time.time()
@@ -638,264 +782,317 @@ class _LibreChatLLMStream(llm.LLMStream):
 
         timeout = aiohttp.ClientTimeout(total=self._timeout_s)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # 1) Start resumable generation
-            async with session.post(
-                chat_url,
-                headers=headers,
-                json={
-                    "text": user_text,
-                    "voiceMode": self._llm_impl._voice_mode,
-                    "voiceProvider": self._llm_impl._voice_provider,
-                    # Ensure surface-aware prompt rules apply for voice calls.
-                    "viventiumInputMode": "voice_call",
-                    "viventiumSurface": "voice",
-                },
-            ) as resp:
-                if resp.status >= 400:
-                    body = await resp.text()
-                    raise RuntimeError(f"LibreChat voice chat failed: {resp.status} {body}")
-                payload = await resp.json()
-                # === VIVENTIUM START ===
-                # Feature: Listen-Only Mode
-                # Purpose: The voice route can save the transcript and intentionally return no
-                # stream; LiveKit should emit no assistant tokens or TTS.
-                if payload.get("listenOnly") is True or payload.get("status") == "listen_only":
+            try:
+                # 1) Start resumable generation
+                async with session.post(
+                    chat_url,
+                    headers=headers,
+                    json={
+                        "text": user_text,
+                        "streamId": self._request_id,
+                        "voiceMode": self._llm_impl._voice_mode,
+                        "voiceProvider": self._llm_impl._voice_provider,
+                        # Ensure surface-aware prompt rules apply for voice calls.
+                        "viventiumInputMode": "voice_call",
+                        "viventiumSurface": "voice",
+                    },
+                ) as resp:
+                    if resp.status >= 400:
+                        body = await resp.text()
+                        raise RuntimeError(f"LibreChat voice chat failed: {resp.status} {body}")
+                    payload = await resp.json()
+                    # === VIVENTIUM START ===
+                    # Feature: Listen-Only Mode
+                    # Purpose: The voice route can save the transcript and intentionally return no
+                    # stream; LiveKit should emit no assistant tokens or TTS.
+                    if payload.get("listenOnly") is True or payload.get("status") == "listen_only":
+                        if log_latency:
+                            logger.info(
+                                "[VoiceLatency] listen_only_saved_ms=%s request_id=%s stream_id=%s",
+                                int((time.time() - started_at) * 1000),
+                                self._request_id,
+                                payload.get("streamId") or "",
+                            )
+                        return
+                    # === VIVENTIUM END ===
+                    stream_id = payload.get("streamId")
+                    post_sent_at = time.time()
                     if log_latency:
                         logger.info(
-                            "[VoiceLatency] listen_only_saved_ms=%s request_id=%s",
-                            int((time.time() - started_at) * 1000),
+                            "[VoiceLatency] chat_post_ms=%s request_id=%s stream_id=%s",
+                            int((post_sent_at - started_at) * 1000),
                             self._request_id,
+                            stream_id or "",
                         )
-                    return
+
+                if not isinstance(stream_id, str) or not stream_id:
+                    raise RuntimeError("LibreChat voice chat returned no streamId")
+
+                # 2) Subscribe to SSE stream and forward message deltas
+                sse_url = f"{self._origin}/api/viventium/voice/stream/{stream_id}"
+
+                saw_any_tokens = False
+                first = True
+                # === VIVENTIUM START ===
+                max_retries, retry_delay_s = _get_voice_sse_retry_config()
                 # === VIVENTIUM END ===
-                stream_id = payload.get("streamId")
-                post_sent_at = time.time()
-                if log_latency:
-                    logger.info(
-                        "[VoiceLatency] chat_post_ms=%s request_id=%s",
-                        int((post_sent_at - started_at) * 1000),
-                        self._request_id,
+
+                # Track cortex insights that arrive during streaming (background cortices)
+                pending_insights: list[dict[str, Any]] = []
+                saw_cortex_event = False
+                saw_glasshive_tool_call = False
+                collected_response: list[str] = []
+                # === VIVENTIUM START ===
+                # Guard against `{NTA}` flashing during streaming.
+                no_response_guard = _NoResponseStreamGuard()
+                tts_delta_buffer = _VoiceTtsDeltaBuffer()
+                debug_display_filter = VoiceControlDisplayFilter()
+                # === VIVENTIUM END ===
+                # === VIVENTIUM START ===
+                # Keep the canonical assistant messageId from cortex updates as a follow-up fallback.
+                cortex_message_id = ""
+                # === VIVENTIUM END ===
+
+                def send_chat_delta(content: str) -> None:
+                    nonlocal first
+                    if not content:
+                        return
+                    cd = ChoiceDelta(
+                        role="assistant" if first else None,
+                        content=content,
                     )
+                    first = False
+                    self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=cd))
 
-            if not isinstance(stream_id, str) or not stream_id:
-                raise RuntimeError("LibreChat voice chat returned no streamId")
-
-            # 2) Subscribe to SSE stream and forward message deltas
-            sse_url = f"{self._origin}/api/viventium/voice/stream/{stream_id}"
-
-            saw_any_tokens = False
-            first = True
-            final_event: Optional[dict[str, Any]] = None
-            # === VIVENTIUM START ===
-            stream_error: Optional[str] = None
-            max_retries, retry_delay_s = _get_voice_sse_retry_config()
-            # === VIVENTIUM END ===
-
-            # Track cortex insights that arrive during streaming (background cortices)
-            pending_insights: list[dict[str, Any]] = []
-            saw_cortex_event = False
-            saw_glasshive_tool_call = False
-            collected_response: list[str] = []
-            # === VIVENTIUM START ===
-            # Guard against `{NTA}` flashing during streaming.
-            no_response_guard = _NoResponseStreamGuard()
-            debug_display_filter = VoiceControlDisplayFilter()
-            # === VIVENTIUM END ===
-            # === VIVENTIUM START ===
-            # Keep the canonical assistant messageId from cortex updates as a follow-up fallback.
-            cortex_message_id = ""
-            # === VIVENTIUM END ===
-
-            # === VIVENTIUM START ===
-            attempts = 0
-            while True:
-                try:
-                    async with session.get(
-                        sse_url,
-                        headers=headers,
-                        params={"resume": "true"},
-                    ) as sse_resp:
-                        if sse_resp.status >= 400:
-                            body = await sse_resp.text()
-                            stream_error = f"LibreChat voice stream failed: {sse_resp.status} {body}"
-                            break
-
-                        async for event in iter_sse_json_events(content=sse_resp.content):
-                            stream_error = _extract_stream_error(event)
-                            if stream_error:
+                # === VIVENTIUM START ===
+                attempts = 0
+                while True:
+                    try:
+                        if log_latency:
+                            logger.info(
+                                "[VoiceLatency] stream_subscribe_attempt_ms=%s request_id=%s stream_id=%s attempt=%s",
+                                int((time.time() - started_at) * 1000),
+                                self._request_id,
+                                stream_id,
+                                attempts + 1,
+                            )
+                        async with session.get(
+                            sse_url,
+                            headers=headers,
+                            params={"resume": "true"},
+                        ) as sse_resp:
+                            if sse_resp.status >= 400:
+                                body = await sse_resp.text()
+                                stream_error = f"LibreChat voice stream failed: {sse_resp.status} {body}"
+                                logger.warning(
+                                    "[LibreChatLLM] Voice stream HTTP error status=%s request_id=%s stream_id=%s attempt=%s",
+                                    sse_resp.status,
+                                    self._request_id,
+                                    stream_id,
+                                    attempts + 1,
+                                )
                                 break
 
-                            if event.get("sync"):
-                                continue
+                            async for event in iter_sse_json_events(content=sse_resp.content):
+                                stream_error = _extract_stream_error(event)
+                                if stream_error:
+                                    break
 
-                            if _payload_has_glasshive_tool_call(event):
-                                saw_glasshive_tool_call = True
-
-                            if event.get("final"):
-                                final_event = event
-                                break
-
-                            # === VIVENTIUM START ===
-                            # Capture canonical messageId from any cortex update event.
-                            message_id_candidate = extract_cortex_message_id(event)
-                            if message_id_candidate:
-                                cortex_message_id = message_id_candidate
-                            # === VIVENTIUM END ===
-
-                            # === VIVENTIUM START ===
-                            # Fix: Skip ALL on_cortex_update events from the text delta path.
-                            # Updated: 2026-02-24
-                            #
-                            # Why: extract_cortex_insight() only captures status="complete" events
-                            # and `continue`s. But "activating"/"brewing" cortex events that have
-                            # a "text" field (status label) would fall through to text delta
-                            # extraction, which matches any payload with a "text" key,
-                            # causing cortex status labels to be spoken via TTS.
-                            # Additionally, on_cortex_followup events must not be treated as
-                            # text deltas either — follow-up delivery is handled by the poller.
-                            #
-                            # Fix: Guard all cortex event types before the text delta extraction.
-                            cortex_event_type = event.get("event", "")
-                            if cortex_event_type in ("on_cortex_update", "on_cortex_followup"):
-                                saw_cortex_event = True
-                                # Still capture completed insights for the follow-up poller.
-                                insight = extract_cortex_insight(event)
-                                if insight:
-                                    logger.info(
-                                        "[LibreChatLLM] Captured cortex insight from %s during streaming",
-                                        insight.get("cortex_name", "unknown"),
-                                    )
-                                    pending_insights.append(insight)
-                                continue
-                            # === VIVENTIUM END ===
-
-                            for raw_delta in extract_raw_text_deltas(event):
-                                delta = sanitize_voice_delta_text(raw_delta)
-                                if not delta:
+                                if event.get("sync"):
                                     continue
-                                if _should_debug_voice_markup():
-                                    display_delta = debug_display_filter.feed(delta)
-                                    logger.info(
-                                        "[VoiceMarkup] llm_delta raw_json=%s tts_delta_json=%s display_delta_json=%s",
-                                        _debug_text_json(raw_delta),
-                                        _debug_text_json(delta),
-                                        _debug_text_json(display_delta),
-                                    )
-                                saw_any_tokens = True
-                                if first_token_at is None:
-                                    first_token_at = time.time()
-                                    if log_latency:
-                                        logger.info(
-                                            "[VoiceLatency] ttft_ms=%s request_id=%s",
-                                            int((first_token_at - started_at) * 1000),
-                                            self._request_id,
-                                        )
-                                collected_response.append(delta)
+
+                                if _payload_has_glasshive_tool_call(event):
+                                    saw_glasshive_tool_call = True
+
+                                if event.get("final"):
+                                    final_event = event
+                                    break
+
                                 # === VIVENTIUM START ===
-                                # Suppress `{NTA}` from being spoken/rendered by buffering until decision.
-                                for emit_delta in no_response_guard.feed(delta):
-                                    if not emit_delta:
-                                        continue
-                                    cd = ChoiceDelta(
-                                        role="assistant" if first else None,
-                                        content=emit_delta,
-                                    )
-                                    first = False
-                                    self._event_ch.send_nowait(
-                                        ChatChunk(id=self._request_id, delta=cd)
-                                    )
+                                # Capture canonical messageId from any cortex update event.
+                                message_id_candidate = extract_cortex_message_id(event)
+                                if message_id_candidate:
+                                    cortex_message_id = message_id_candidate
                                 # === VIVENTIUM END ===
+
+                                # === VIVENTIUM START ===
+                                # Fix: Skip ALL on_cortex_update events from the text delta path.
+                                # Updated: 2026-02-24
+                                #
+                                # Why: extract_cortex_insight() only captures status="complete" events
+                                # and `continue`s. But "activating"/"brewing" cortex events that have
+                                # a "text" field (status label) would fall through to text delta
+                                # extraction, which matches any payload with a "text" key,
+                                # causing cortex status labels to be spoken via TTS.
+                                # Additionally, on_cortex_followup events must not be treated as
+                                # text deltas either — follow-up delivery is handled by the poller.
+                                #
+                                # Fix: Guard all cortex event types before the text delta extraction.
+                                cortex_event_type = event.get("event", "")
+                                if cortex_event_type in ("on_cortex_update", "on_cortex_followup"):
+                                    saw_cortex_event = True
+                                    # Still capture completed insights for the follow-up poller.
+                                    insight = extract_cortex_insight(event)
+                                    if insight:
+                                        logger.info(
+                                            "[LibreChatLLM] Captured cortex insight from %s during streaming",
+                                            insight.get("cortex_name", "unknown"),
+                                        )
+                                        pending_insights.append(insight)
+                                    continue
+                                # === VIVENTIUM END ===
+
+                                for raw_delta in extract_raw_text_deltas(event):
+                                    delta = sanitize_voice_delta_text(raw_delta)
+                                    if not delta:
+                                        continue
+                                    if _should_debug_voice_markup():
+                                        display_delta = debug_display_filter.feed(delta)
+                                        logger.info(
+                                            "[VoiceMarkup] llm_delta raw_json=%s tts_delta_json=%s display_delta_json=%s",
+                                            _debug_text_json(raw_delta),
+                                            _debug_text_json(delta),
+                                            _debug_text_json(display_delta),
+                                        )
+                                    saw_any_tokens = True
+                                    if first_token_at is None:
+                                        first_token_at = time.time()
+                                        if log_latency:
+                                            logger.info(
+                                                "[VoiceLatency] ttft_ms=%s request_id=%s stream_id=%s",
+                                                int((first_token_at - started_at) * 1000),
+                                                self._request_id,
+                                                stream_id,
+                                            )
+                                    collected_response.append(delta)
+                                    # === VIVENTIUM START ===
+                                    # Suppress `{NTA}` from being spoken/rendered by buffering until decision.
+                                    for emit_delta in no_response_guard.feed(delta):
+                                        if not emit_delta:
+                                            continue
+                                        for buffered_delta in tts_delta_buffer.feed(emit_delta):
+                                            send_chat_delta(buffered_delta)
+                                    # === VIVENTIUM END ===
+
+                            if stream_error or final_event:
+                                break
 
                         if stream_error or final_event:
                             break
 
-                    if stream_error or final_event:
-                        break
+                        attempts += 1
+                        if attempts > max_retries:
+                            stream_error = "voice stream closed before completion"
+                            break
+                        await asyncio.sleep(retry_delay_s)
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                        attempts += 1
+                        if attempts > max_retries:
+                            stream_error = str(e)
+                            break
+                        await asyncio.sleep(retry_delay_s)
+                # === VIVENTIUM END ===
 
-                    attempts += 1
-                    if attempts > max_retries:
-                        stream_error = "voice stream closed before completion"
-                        break
-                    await asyncio.sleep(retry_delay_s)
-                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                    attempts += 1
-                    if attempts > max_retries:
-                        stream_error = str(e)
-                        break
-                    await asyncio.sleep(retry_delay_s)
-            # === VIVENTIUM END ===
-
-            # Fallback: if LibreChat didn't stream any deltas, emit the final response text (if any)
-            if not saw_any_tokens and final_event:
-                text = _extract_final_response_text(final_event)
-                if text and not is_no_response_only(text):
-                    collected_response.append(text)
-                    self._event_ch.send_nowait(
-                        ChatChunk(
-                            id=self._request_id,
-                            delta=ChoiceDelta(role="assistant", content=text),
-                        ),
+                # Fallback: if LibreChat didn't stream any deltas, emit the final response text (if any)
+                if not saw_any_tokens and final_event:
+                    text = _extract_final_response_text(final_event)
+                    if text and not is_no_response_only(text):
+                        collected_response.append(text)
+                        send_chat_delta(text)
+                # === VIVENTIUM START ===
+                if stream_error:
+                    logger.warning(
+                        "[LibreChatLLM] Voice stream error request_id=%s stream_id=%s error=%s",
+                        self._request_id,
+                        stream_id,
+                        stream_error,
                     )
-            # === VIVENTIUM START ===
-            if stream_error:
-                logger.warning("[LibreChatLLM] Voice stream error: %s", stream_error)
-                fallback = _select_stream_error_message(stream_error)
-                fallback = sanitize_voice_followup_text(fallback)
-                if fallback:
-                    cd = ChoiceDelta(
-                        role="assistant" if first else None,
-                        content=fallback,
+                    fallback = _select_stream_error_message(stream_error)
+                    fallback = sanitize_voice_followup_text(fallback)
+                    if fallback:
+                        collected_response.append(fallback)
+                        # Drop any buffered `{NTA}` deltas if we hit a stream error.
+                        no_response_guard = _NoResponseStreamGuard()
+                        tts_delta_buffer = _VoiceTtsDeltaBuffer()
+                        send_chat_delta(fallback)
+                # === VIVENTIUM END ===
+
+                completed_at = time.time()
+                if log_latency:
+                    logger.info(
+                        "[VoiceLatency] stream_done_ms=%s request_id=%s stream_id=%s final_event=%s stream_error=%s token_events=%s",
+                        int((completed_at - started_at) * 1000),
+                        self._request_id,
+                        stream_id,
+                        bool(final_event),
+                        bool(stream_error),
+                        saw_any_tokens,
                     )
-                    collected_response.append(fallback)
-                    # Drop any buffered `{NTA}` deltas if we hit a stream error.
-                    no_response_guard = _NoResponseStreamGuard()
-                    self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=cd))
-            # === VIVENTIUM END ===
 
-            completed_at = time.time()
-            if log_latency:
-                logger.info(
-                    "[VoiceLatency] stream_done_ms=%s request_id=%s",
-                    int((completed_at - started_at) * 1000),
-                    self._request_id,
-                )
-
-            # === VIVENTIUM START ===
-            # Flush any buffered deltas now that we have the full response classification.
-            full_response_text = "".join(collected_response)
-            if _should_debug_voice_markup() and full_response_text:
-                logger.info(
-                    "[VoiceMarkup] llm_full tts_text_json=%s display_text_json=%s",
-                    _debug_text_json(full_response_text),
-                    _debug_text_json(strip_voice_control_tags(full_response_text)),
-                )
-            suppressed, pending_emit = no_response_guard.finalize(full_response_text)
-            if not suppressed:
-                for emit_delta in pending_emit:
-                    if not emit_delta:
-                        continue
-                    cd = ChoiceDelta(role="assistant" if first else None, content=emit_delta)
-                    first = False
-                    self._event_ch.send_nowait(ChatChunk(id=self._request_id, delta=cd))
-            # === VIVENTIUM END ===
-
-            # Fire-and-forget insight follow-up. Never block the main response.
-            # === VIVENTIUM START ===
-            # Ensure follow-up polling still schedules when the final event is missing.
-            message_id = ""
-            if final_event:
-                message_id = _extract_final_response_message_id(final_event)
-            if not message_id:
-                message_id = cortex_message_id
-            if message_id and self._llm_impl._followup_handler:
-                try:
-                    self._llm_impl._followup_handler(
-                        message_id,
-                        pending_insights,
-                        "".join(collected_response).strip(),
-                        cortex_expected=saw_cortex_event,
-                        glasshive_expected=saw_glasshive_tool_call,
+                # === VIVENTIUM START ===
+                # Flush any buffered deltas now that we have the full response classification.
+                full_response_text = "".join(collected_response)
+                if _should_debug_voice_markup() and full_response_text:
+                    logger.info(
+                        "[VoiceMarkup] llm_full tts_text_json=%s display_text_json=%s",
+                        _debug_text_json(full_response_text),
+                        _debug_text_json(strip_voice_control_tags(full_response_text)),
                     )
-                except Exception as e:
-                    logger.warning("[LibreChatLLM] follow-up handler failed: %s", e)
-            # === VIVENTIUM END ===
+                suppressed, pending_emit = no_response_guard.finalize(full_response_text)
+                if not suppressed:
+                    for emit_delta in pending_emit:
+                        if not emit_delta:
+                            continue
+                        for buffered_delta in tts_delta_buffer.feed(emit_delta):
+                            send_chat_delta(buffered_delta)
+                    for buffered_delta in tts_delta_buffer.finalize():
+                        send_chat_delta(buffered_delta)
+                # === VIVENTIUM END ===
+
+                # Fire-and-forget insight follow-up. Never block the main response.
+                # === VIVENTIUM START ===
+                # Ensure follow-up polling still schedules when the final event is missing.
+                message_id = ""
+                if final_event:
+                    message_id = _extract_final_response_message_id(final_event)
+                if not message_id:
+                    message_id = cortex_message_id
+                if message_id and self._llm_impl._followup_handler:
+                    try:
+                        if log_latency:
+                            logger.info(
+                                "[VoiceLatency] followup_schedule_ms=%s request_id=%s stream_id=%s message_id=%s cortex_expected=%s pending_insights=%s glasshive_expected=%s",
+                                int((time.time() - started_at) * 1000),
+                                self._request_id,
+                                stream_id,
+                                message_id,
+                                saw_cortex_event,
+                                len(pending_insights),
+                                saw_glasshive_tool_call,
+                            )
+                        self._llm_impl._followup_handler(
+                            message_id,
+                            pending_insights,
+                            "".join(collected_response).strip(),
+                            cortex_expected=saw_cortex_event,
+                            glasshive_expected=saw_glasshive_tool_call,
+                        )
+                    except Exception as e:
+                        logger.warning("[LibreChatLLM] follow-up handler failed: %s", e)
+                # === VIVENTIUM END ===
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+            finally:
+                if stream_id and final_event is None:
+                    reason = "voice_stream_cancelled" if cancelled else "voice_stream_closed_before_final"
+                    await _shielded_abort_librechat_voice_stream(
+                        session=session,
+                        origin=self._origin,
+                        stream_id=stream_id,
+                        headers=headers,
+                        request_id=self._request_id,
+                        started_at=started_at,
+                        reason=reason,
+                        log_latency=log_latency,
+                    )
