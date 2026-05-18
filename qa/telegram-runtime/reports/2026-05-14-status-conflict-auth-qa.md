@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: legacy or audit-style report; supersede with the standard run-report template on next rerun. -->
 # Telegram Runtime QA - 2026-05-14
 
 ## Scope
@@ -10,7 +11,7 @@ evidence handling.
 - `uv run --with pytest --with pyyaml pytest tests/release/test_install_summary.py
   tests/release/test_telegram_codex_runtime_paths.py tests/release/test_stable_dev_runtime_workflows.py
   tests/release/test_cli_upgrade.py -q` passed: 90 tests.
-- `PYTHONPATH=. uv run --with pytest --with pyyaml pytest tests/release/ -q` passed: 532 tests,
+- `PYTHONPATH=. uv run --with pytest --with pyyaml pytest tests/release/ -q` passed: 537 tests,
   1 skipped.
 - `npm run test:api -- --runInBand` in the LibreChat nested repo passed: 172 suites passed, 2
   skipped; 2,978 tests passed, 19 skipped.

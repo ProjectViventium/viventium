@@ -38,6 +38,14 @@ chat message.
 - Stack launcher output from:
   - `bin/viventium start --restart`
 
+## Escaped Cross-Surface Case
+
+Voice QA must include natural current-data prompts, not only simple greeting/latency prompts. If a
+voice or linked chat user asks Viventium to look something up while Web Search appears enabled, the
+run must prove the visible transcript/chat result, persisted `web_search` tool-call parts, provider
+health or failure class, API logs, and generated config state. `MPV-006` and `WEB-004` own this
+cross-surface regression until a full user-path rerun passes.
+
 ## Verification Steps
 
 1. Start the canonical isolated stack with `bin/viventium start --restart`.
@@ -57,6 +65,47 @@ chat message.
     layer before changing code.
 
 ## Execution Evidence
+
+### 2026-05-15 LiveKit Voice Parity and Latency Follow-Up QA
+
+Report: `qa/modern-playground-voice/reports/2026-05-15-livekit-parity-latency-followup-qa.md`
+
+What this run covered:
+- checked-out parent and nested LibreChat worktrees were inventoried; checked-out worktree commits
+  are already ancestors of the active work
+- generated runtime env now includes `VIVENTIUM_VOICE_LOG_LATENCY=1` as compiler-owned output
+- a fresh authenticated modern-playground call opened from LibreChat, connected through LiveKit, and
+  returned a real answer to a synthetic typed-transcript prompt
+- the linked LibreChat conversation persisted and reloaded the same assistant answer
+- Mongo persisted the new voice assistant turn as text-only content with no `type: "think"` part
+- backend and gateway timing records now show a simple-turn first-text path around `5.2s` versus
+  about `1.0s` on raw xAI `grok-4.3` no-reasoning requests
+- official xAI and LiveKit docs were checked for Grok 4.3 reasoning, xAI Web Search, and LiveKit
+  transcription/endpointing behavior
+
+What remains:
+- actual audio waveform capture was not recorded; transcript/TTS text sanitization was verified by
+  browser, DB, and regression tests
+- simple-turn latency is still not natural enough; the next proposed fix is raw provider and
+  gateway audio timing instrumentation, primary tool/MCP init breakdown, and only then a narrow
+  Phase A fast no-activation bypass if the evidence still points there
+
+### 2026-05-14 Voice Latency Fast-Profile Partial QA
+
+Report: `qa/modern-playground-voice/reports/2026-05-14-voice-latency-fast-profile-qa.md`
+
+What this run covered:
+- compiler output for documented voice fast-profile env
+- live experimental Voice Call LLM config shape
+- xAI no-reasoning Chat Completions direct provider timing
+- xAI Responses built-in web-search timing probe
+- targeted unit/regression suites for Phase A async policy, xAI parameter normalization, per-turn
+  stream ids, and compiler env output
+- real-browser modern-playground load and expired-session rejection behavior
+
+What remains:
+- a fresh authenticated LiveKit call for full MPV-004 end-to-end timings, because the old call URL
+  used during the browser pass had expired and correctly returned `Unknown or expired call session`
 
 ### 2026-05-01 Follow-Up NTA Fallback Regression
 

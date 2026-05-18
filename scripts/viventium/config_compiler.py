@@ -2253,6 +2253,13 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
+    # Voice fast-profile defaults are runtime outputs, not hand-maintained App Support edits.
+    # They preserve background-agent parity while keeping simple voice turns from blocking first
+    # audio on the full Phase A detection path.
+    env["VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC"] = "true"
+    env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] = "500"
+    env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "false"
+    env["VIVENTIUM_VOICE_LOG_LATENCY"] = "1"
 
     env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"], env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] = assignments["conscious"]
     env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] = assignments["background_analysis"]

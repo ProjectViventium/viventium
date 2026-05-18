@@ -42,6 +42,11 @@ absolute home-directory paths.
   manual status follow-up, even after the original in-turn poller exits.
 - Web, Telegram, and voice arm the long GlassHive callback polling window only from structured
   GlassHive MCP/tool evidence, not from ordinary non-GlassHive tool calls.
+- `worker_delegate_once` dispatch must not force a canned user-facing status phrase. The tool returns
+  acknowledgement guidance; the assistant writes the short status in its own voice.
+- Delegation must expose a sanitized instruction/goal audit to the model for self-checking, while
+  full submitted instructions and worker/run/project ids remain diagnostics-only unless explicitly
+  requested.
 - Missing host OpenClaw CLI degrades only `@openclaw`; Codex and Claude host workers remain usable.
 
 ## Destructive Confirmation Scope

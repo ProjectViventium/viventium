@@ -856,7 +856,7 @@ def test_build_service_rows_warns_when_status_runs_from_different_checkout(
     assert "review-checkout" in checkout_detail
 
 
-def test_build_service_rows_marks_conversation_recall_starting_when_stack_should_be_live(
+def test_build_service_rows_marks_conversation_recall_action_required_after_startup_window(
     monkeypatch, tmp_path: Path
 ) -> None:
     install_summary = load_install_summary_module()
@@ -888,7 +888,87 @@ def test_build_service_rows_marks_conversation_recall_starting_when_stack_should
     )
     services = {name: (status, detail) for name, status, detail in rows}
 
+    assert services["Conversation Recall"] == ("Action Required", "http://localhost:8110")
+
+
+def test_build_service_rows_marks_conversation_recall_starting_during_cli_operation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "personalization": {"default_conversation_recall": True},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(install_summary, "cli_operation_running", lambda _runtime_dir: True)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {"RAG_API_URL": "http://localhost:8110"},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
     assert services["Conversation Recall"] == ("Starting", "http://localhost:8110")
+
+
+def test_stale_start_supervisor_lock_does_not_keep_services_in_starting_state(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    lock_dir = tmp_path / "state" / "cli-operation.lock"
+    lock_dir.mkdir(parents=True)
+    pid_path = lock_dir / "pid"
+    command_path = lock_dir / "command"
+    pid_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    command_path.write_text("start\n", encoding="utf-8")
+    old_time = 1_700_000_000
+    os.utime(pid_path, (old_time, old_time))
+    os.utime(command_path, (old_time, old_time))
+
+    monkeypatch.setenv("VIVENTIUM_CLI_STARTUP_WINDOW_SECONDS", "60")
+
+    assert install_summary.cli_operation_running(runtime_dir) is False
+
+
+def test_stale_non_start_cli_lock_still_counts_as_running(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    lock_dir = tmp_path / "state" / "cli-operation.lock"
+    lock_dir.mkdir(parents=True)
+    pid_path = lock_dir / "pid"
+    command_path = lock_dir / "command"
+    pid_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    command_path.write_text("upgrade\n", encoding="utf-8")
+    old_time = 1_700_000_000
+    os.utime(pid_path, (old_time, old_time))
+    os.utime(command_path, (old_time, old_time))
+
+    monkeypatch.setenv("VIVENTIUM_CLI_STARTUP_WINDOW_SECONDS", "60")
+
+    assert install_summary.cli_operation_running(runtime_dir) is True
 
 
 def test_build_service_rows_marks_conversation_recall_running_from_health_endpoint(
@@ -1284,3 +1364,151 @@ def test_resolve_summary_heading_reports_ready_once_core_surfaces_are_live() -> 
     assert heading == "Viventium is ready"
     assert "live surfaces" in intro
     assert table_title == "Live Services"
+
+
+def test_resolve_summary_heading_reports_attention_when_enabled_surface_is_broken() -> None:
+    install_summary = load_install_summary_module()
+
+    heading, intro, table_title = install_summary.resolve_summary_heading(
+        True,
+        [
+            ("LibreChat Frontend", "Running", "http://localhost:3190"),
+            ("LibreChat API", "Running", "http://localhost:3180/api"),
+            ("Modern Playground", "Running", "http://localhost:3300"),
+            ("Conversation Recall", "Action Required", "http://localhost:8110"),
+        ],
+        True,
+    )
+
+    assert heading == "Viventium needs attention"
+    assert "not healthy" in intro
+    assert table_title == "Live Services"
+
+
+def test_resolve_summary_heading_reports_attention_for_running_with_issues() -> None:
+    install_summary = load_install_summary_module()
+
+    heading, intro, table_title = install_summary.resolve_summary_heading(
+        True,
+        [
+            ("LibreChat Frontend", "Running", "http://localhost:3190"),
+            ("LibreChat API", "Running", "http://localhost:3180/api"),
+            ("Modern Playground", "Running", "http://localhost:3300"),
+            (
+                "Telegram Bridge",
+                "Running with issues",
+                "Recent Telegram polling conflict detected.",
+            ),
+        ],
+        True,
+    )
+
+    assert heading == "Viventium needs attention"
+    assert "not healthy" in intro
+    assert table_title == "Live Services"
+
+
+def test_build_service_rows_reports_status_bar_helper_not_running(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+    (tmp_path / "helper-config.json").write_text(
+        '{"showInStatusBar": true, "repoRoot": "/path/to/viventium"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary.sys, "platform", "darwin")
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(install_summary, "process_running_by_name", lambda _name: False)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["macOS Status Bar Helper"][0] == "Action Required"
+    assert "not running" in services["macOS Status Bar Helper"][1]
+
+
+def test_macos_helper_status_reports_hidden_when_status_bar_is_disabled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (tmp_path / "helper-config.json").write_text('{"showInStatusBar": false}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary.sys, "platform", "darwin")
+
+    assert install_summary.macos_helper_status(
+        runtime_dir=runtime_dir,
+        probe_live=True,
+        stack_should_be_live=True,
+    ) == (
+        "macOS Status Bar Helper",
+        "Hidden",
+        "Configured to stay out of the macOS status bar",
+    )
+
+
+def test_macos_helper_status_reports_running_when_helper_process_exists(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (tmp_path / "helper-config.json").write_text('{"showInStatusBar": true}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary.sys, "platform", "darwin")
+    monkeypatch.setattr(install_summary, "process_running_by_name", lambda _name: True)
+
+    assert install_summary.macos_helper_status(
+        runtime_dir=runtime_dir,
+        probe_live=True,
+        stack_should_be_live=True,
+    ) == (
+        "macOS Status Bar Helper",
+        "Running",
+        "Status bar menu is active",
+    )
+
+
+def test_macos_helper_status_reports_configured_when_not_live(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (tmp_path / "helper-config.json").write_text('{"showInStatusBar": true}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary.sys, "platform", "darwin")
+    monkeypatch.setattr(install_summary, "process_running_by_name", lambda _name: False)
+
+    assert install_summary.macos_helper_status(
+        runtime_dir=runtime_dir,
+        probe_live=False,
+        stack_should_be_live=True,
+    ) == (
+        "macOS Status Bar Helper",
+        "Configured",
+        "Launch Viventium when you want the status bar menu active",
+    )

@@ -496,6 +496,7 @@ Commands:
   feature-request   Alias for workflows feature-request flow.
   report-bug        Alias for workflows bug-report flow.
   bug-report        Compatibility alias for report-bug.
+  prompt-workbench  Start, stop, open, or inspect the local Prompt Workbench.
   preflight         Detect and optionally install missing system prerequisites.
   reset             Factory-reset the local Viventium install state under App Support.
   start             Start the current Viventium stack using generated runtime env.
@@ -707,6 +708,18 @@ Usage:
 Runs Viventium local work workflows through GlassHive host workers when enabled.
 When GlassHive host workers are unavailable, the command fails loud unless an
 explicit degraded mode is requested.
+USAGE
+      ;;
+    prompt-workbench)
+      cat <<'USAGE'
+Usage:
+  bin/viventium prompt-workbench start [--port <port>] [--json]
+  bin/viventium prompt-workbench open [--port <port>] [--json]
+  bin/viventium prompt-workbench stop [--json]
+  bin/viventium prompt-workbench status [--json]
+
+Manages only the standalone local Prompt Workbench web app. Stop does not stop
+the main Viventium runtime, LibreChat, or native support services.
 USAGE
       ;;
     heal)
@@ -1511,7 +1524,7 @@ maybe_reexec_active_runtime_checkout() {
   shift || true
 
   case "$command_name" in
-    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|workflows|heal|feature-request|report-bug|bug-report)
+    start|launch|stop|install-helper|uninstall-helper|status-bar|memory-harden|workflows|heal|feature-request|report-bug|bug-report|prompt-workbench)
       ;;
     *)
       return 0
@@ -3548,6 +3561,17 @@ case "$COMMAND" in
       exit 0
     fi
     workflows_command "$@"
+    ;;
+  prompt-workbench)
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || $# -lt 1 ]]; then
+      subcommand_usage prompt-workbench
+      exit 0
+    fi
+    ensure_app_support_layout "$APP_SUPPORT_DIR"
+    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/prompt_workbench.py" \
+      --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR" \
+      "$@"
     ;;
   heal)
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then

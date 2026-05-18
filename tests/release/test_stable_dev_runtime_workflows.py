@@ -8,6 +8,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -17,6 +18,10 @@ CONFIG_COMPILER = REPO_ROOT / "scripts" / "viventium" / "config_compiler.py"
 DEV_RUNTIME = REPO_ROOT / "scripts" / "viventium" / "dev_runtime.py"
 WORKFLOWS = REPO_ROOT / "scripts" / "viventium" / "workflows.py"
 UPGRADE_CHECK = REPO_ROOT / "scripts" / "viventium" / "upgrade_check.py"
+HELPER_LIFECYCLE_QA = REPO_ROOT / "scripts" / "viventium" / "qa_helper_lifecycle.py"
+PASSWORD_RESET_LINK_SCRIPT = (
+    REPO_ROOT / "viventium_v0_4" / "LibreChat" / "config" / "issue-password-reset-link.js"
+)
 HELPER_SOURCE = (
     REPO_ROOT
     / "apps"
@@ -180,6 +185,69 @@ def test_workflows_fail_loud_when_glasshive_host_workers_are_disabled(tmp_path: 
     assert "write `03-proposed-fix.md`" in workflow_prompt
     assert "Only after both gates pass" in workflow_prompt
     assert "Do not push" in workflow_prompt
+
+
+@pytest.mark.parametrize(
+    "workflow_args",
+    [
+        ["heal"],
+        ["feature-request", "--request", "Add update progress"],
+        [
+            "bug-report",
+            "--what-happened",
+            "The helper says update succeeded but the app stays stopped",
+        ],
+    ],
+)
+def test_workflows_allow_degraded_mode_is_explicit_and_private(
+    tmp_path: Path, workflow_args: list[str]
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "codex").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "codex").chmod(0o755)
+    app_support = tmp_path / "App Support" / "Viventium"
+    runtime = app_support / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "runtime.env").write_text(
+        "START_GLASSHIVE=false\nGLASSHIVE_HOST_WORKERS_ENABLED=false\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WORKFLOWS),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--app-support-dir",
+            str(app_support),
+            "--runtime-dir",
+            str(runtime),
+            "start",
+            *workflow_args,
+            "--allow-degraded",
+            "--json",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        check=True,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert payload["state"] == "degraded_ready"
+    assert payload["failure_class"] == "glasshive_degraded_mode"
+    assert "glasshive_project_id" not in payload
+    assert "glasshive_worker_id" not in payload
+    run_dir = Path(payload["run_dir"])
+    assert run_dir.exists()
+    assert run_dir.stat().st_mode & 0o777 == 0o700
+    for artifact in run_dir.glob("*.md"):
+        assert artifact.stat().st_mode & 0o777 == 0o600
 
 
 def test_feature_request_workflow_records_pr_prompt_policy(tmp_path: Path) -> None:
@@ -783,6 +851,12 @@ def test_upgrade_check_blocks_on_helper_rebuild_need(tmp_path: Path) -> None:
     assert "helper_rebuild_needed" in payload["blockers"]
 
 
+def test_password_reset_link_script_closes_mongo_connection() -> None:
+    source = PASSWORD_RESET_LINK_SCRIPT.read_text(encoding="utf-8")
+    assert "const mongoose = require('mongoose');" in source
+    assert "await mongoose.disconnect();" in source
+
+
 def test_cli_registers_new_commands_and_reexec_contract() -> None:
     source = BIN_VIVENTIUM.read_text(encoding="utf-8")
     for command in [
@@ -869,6 +943,27 @@ def test_helper_exposes_update_heal_and_feature_request_actions() -> None:
     assert "Feature Intake" in source
     assert "Feature Ready" in source
     assert "Healing (" in source
+
+
+def test_helper_lifecycle_qa_uses_localhost_health_probes() -> None:
+    source = HELPER_LIFECYCLE_QA.read_text(encoding="utf-8")
+    assert '"api": ("http://localhost:3180/api/health", {200})' in source
+    assert '"web": ("http://localhost:3190/", {200})' in source
+    assert '"playground": ("http://localhost:3300/", {200})' in source
+    assert "http://127.0.0.1:3180" not in source
+    assert "http://127.0.0.1:3190" not in source
+    assert "http://127.0.0.1:3300" not in source
+
+
+def test_helper_lifecycle_qa_help_does_not_require_pyobjc_bridge() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(HELPER_LIFECYCLE_QA), "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    assert "Drive the installed ViventiumHelper menu" in proc.stdout
 
 
 def test_helper_keeps_workflow_and_maintenance_actions_under_advanced_menu() -> None:

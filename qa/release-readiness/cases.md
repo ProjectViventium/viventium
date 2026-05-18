@@ -103,3 +103,31 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
   `TEST_OK` turn answered before and after reload, and no stale-history cortex cards attached to
   that latest turn. This is local synthetic evidence; final public release remains gated on
   committed diffs, nested pin agreement, public/private scans, and review-only checks.
+
+## Natural User Use Case Checklist
+
+These rows are the minimum natural-user checklist gate for Release Readiness. Add narrower feature-specific
+rows before claiming a pass when the feature behavior changes.
+
+| Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
+| --- | --- | --- | --- | --- | --- | --- |
+| `REL-UC-001` | On Parent repo, verify that public/private boundary. | owning requirement for `REL-001` / `REL-001` | Parent repo | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REL-001. | No private identifiers, secrets, raw logs, or local paths enter public history | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `REL-UC-002` | On Parent repo plus nested source tree, try project boundary contamination with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `REL-005` / `REL-005` | Parent repo plus nested source tree | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REL-005. | The user sees an honest setup, retry, or degraded-state result for REL-005; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `REL-UC-003` | After nested repo boundary, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `REL-002` / `REL-002` | LibreChat nested repo | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to REL-002. | REL-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+
+## Release Test Traceability
+
+- `tests/release/test_agent_sync_review_contract.py`
+- `tests/release/test_bootstrap_components.py`
+- `tests/release/test_common_sh.py`
+- `tests/release/test_cursor_claude_bridge.py`
+- `tests/release/test_git_helper.py`
+- `tests/release/test_librechat_package_rebuild_contract.py`
+- `tests/release/test_local_web_search_compose.py`
+- `tests/release/test_ms365_launcher_contract.py`
+- `tests/release/test_no_runtime_nlu.py`
+- `tests/release/test_private_repo_resolution_contract.py`
+- `tests/release/test_productivity_activation_live_eval.py`
+- `tests/release/test_productivity_activation_source_of_truth.py`
+- `tests/release/test_project_boundary_contamination.py`
+- `tests/release/test_public_bootstrap_manifests.py`

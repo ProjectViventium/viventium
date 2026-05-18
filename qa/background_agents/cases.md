@@ -57,3 +57,20 @@ For any background-agent Web UI change, QA must prove:
 - [ ] Update `05_coverage_matrix.md`.
 - [ ] Add or update an automated test where deterministic checks are possible.
 - [ ] Run impacted existing ACT cases and save a dated public-safe report.
+
+## Natural User Use Case Checklist
+
+These rows are the minimum natural-user checklist gate for Background Agents. Add narrower feature-specific
+rows before claiming a pass when the feature behavior changes.
+
+| Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
+| --- | --- | --- | --- | --- | --- | --- |
+| `BACKGROUND-UC-001` | Send a synthetic browser chat prompt that should activate background work and inspect the visible answer plus background cards. | `ACT-01`-`ACT-22` / background-card requirements | Real browser chat, expanded background cards, persisted message detail, and backend logs/DB | ACT prompt bank, coverage matrix, visible cards, stored message parts, logs, and dated QA report | The initial answer remains visible, background cards show status/result/error details, and the main answer does not contradict visible runtime cards. | NOT YET RUN for the full bank after catalog repair; required before next background-agent signoff |
+| `BACKGROUND-UC-002` | Send synthetic negative-control prompts, auth/provider-blocked prompts, and latest-message-history prompts. | `ACT-01`-`ACT-22` / activation and blocker requirements | Real browser chat plus logs/DB state | ACT prompt bank, classifier/runtime assertions, visible blocker copy, stored message parts, and logs | Non-activation prompts do not create stale cards; provider/auth blocks are classified as blocked evidence, not feature failures or fake successes. | NOT YET RUN for the full bank after catalog repair; required before next background-agent signoff |
+| `BACKGROUND-UC-003` | Refresh the conversation after completed background work and compare visible cards, answer text, and persisted message content. | `ACT-18`-`ACT-22` / persistence requirements | Browser refresh/reload, expanded cards, stored message state, and backend logs | Stored message content, visible card text, parent assistant message text, logs, and dated QA report | Completed terminal results persist, the parent message keeps visible answer text, and DB/log evidence agrees with the browser state. | NOT YET RUN for the full bank after catalog repair; required before next background-agent signoff |
+
+## Release Test Traceability
+
+- `tests/release/test_background_agent_browser_qa_harness.py`
+- `tests/release/test_background_agent_governance_contract.py`
+- `tests/release/test_scheduling_mcp_supervision.py`

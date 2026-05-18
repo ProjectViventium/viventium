@@ -2492,6 +2492,10 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=900" in runtime_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in runtime_env
+    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in runtime_env
+    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in runtime_env
+    assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in runtime_env
 
 
 def test_config_compiler_rejects_invalid_glasshive_followup_timeout(tmp_path: Path) -> None:

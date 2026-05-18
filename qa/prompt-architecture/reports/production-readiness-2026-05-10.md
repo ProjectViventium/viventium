@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: legacy or audit-style report; supersede with the standard run-report template on next rerun. -->
 # Prompt Architecture Production Readiness - 2026-05-10
 
 ## Scope

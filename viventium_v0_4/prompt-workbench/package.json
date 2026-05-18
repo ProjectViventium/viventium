@@ -1,0 +1,33 @@
+{
+  "name": "@viventium/prompt-workbench",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5179",
+    "dev:api": "PYTHONPATH=backend uv run --with fastapi --with uvicorn --with PyYAML --with pydantic uvicorn --app-dir backend prompt_workbench.app:app --host 127.0.0.1 --port 8781 --reload",
+    "serve": "PYTHONPATH=backend uv run --with fastapi --with uvicorn --with PyYAML --with pydantic uvicorn --app-dir backend prompt_workbench.app:app --host 127.0.0.1 --port 8781",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4179"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@tanstack/react-query": "^5.90.12",
+    "@tanstack/react-table": "^8.21.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "@xyflow/react": "^12.9.3",
+    "flexlayout-react": "^0.9.1",
+    "lucide-react": "^0.555.0",
+    "monaco-editor": "^0.55.1",
+    "react": "^19.2.1",
+    "react-arborist": "^3.6.1",
+    "react-dom": "^19.2.1",
+    "vite": "^7.2.6"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "playwright": "^1.60.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: legacy or audit-style report; supersede with the standard run-report template on next rerun. -->
 # Feature Request Workflow Local QA - 2026-05-14
 
 ## Scope
@@ -16,8 +17,10 @@ policy propagation, GlassHive dispatch/cancel, and helper controls.
   - approved feature implementation creating an isolated `feature/<slug>-<run-id>` git worktree
   - implementation prompt explicitly forbidding remote PR/push unless a later explicit action asks
     for it
+  - explicit degraded mode keeping implementation blocked/degraded when GlassHive is unavailable
   - helper menu entries for Request a Feature and Approve Build or Fix
-- The broader parent release suite passed: 532 tests, 1 skipped.
+- The focused workflow suite passed: 19 tests.
+- The broader parent release suite passed: 537 tests, 1 skipped.
 - A live local GlassHive-backed feature-request run was dispatched with synthetic intake text and
   then cancelled. Viventium returned to idle and the GlassHive run state became `interrupted`.
 - `swift build` passed for the helper.
@@ -25,6 +28,8 @@ policy propagation, GlassHive dispatch/cancel, and helper controls.
   **Advanced > Approve Build or Fix...**.
 - Native Feature Request modal QA opened the intake dialog, verified the feature-request prompt and
   **Continue**/**Cancel** actions, and dismissed with **Cancel** without creating a workflow.
+- Current installed-helper QA reopened **Advanced > Request a Feature...** and verified the
+  **Continue**/**Cancel** controls without creating a workflow.
 
 ## Results
 
@@ -35,6 +40,8 @@ policy propagation, GlassHive dispatch/cancel, and helper controls.
 - FR-003: Partially covered. Runtime config exports the PR policy and artifacts include the required
   user prompt when automatic PR creation is disabled. Actual cloud PR creation was intentionally not
   exercised.
+- FR-004: Passed. The degraded path remains explicit and does not start hidden direct CLI
+  implementation work.
 
 ## Remaining Manual QA
 

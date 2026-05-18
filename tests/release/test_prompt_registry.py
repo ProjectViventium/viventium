@@ -216,6 +216,7 @@ def test_phase_b_follow_up_prompts_render_with_declared_variables() -> None:
         registry,
         variables={
             "surface_rules": "WEB TEXT MODE:",
+            "user_request": "Summarize the finished task.",
             "recent_response": "I am checking.",
             "background_insights": "- worker: The task finished.",
         },

@@ -43,3 +43,25 @@
 - Forbidden Result: code edits in the active user checkout
 - Evidence: dated report under `reports/`
 - Last Run: 2026-05-14 local implementation QA - passed
+
+## SH-005: Degraded Mode Is Explicit And Private
+
+- Requirement: `51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`
+- Surfaces: CLI, App Support workflow state
+- Preconditions: GlassHive host workers are unavailable and operator passes `--allow-degraded`
+- Steps: start heal workflow with `--allow-degraded`
+- Expected Result: workflow reports `degraded_ready`, marks `failure_class=glasshive_degraded_mode`, avoids GlassHive IDs, and writes private artifacts with restrictive permissions
+- Forbidden Result: silent direct CLI fallback, public QA artifacts with raw prompts/logs, or hidden worker execution
+- Evidence: dated report under `reports/`
+- Last Run: 2026-05-14 local implementation QA - passed
+
+## Natural User Use Case Checklist
+
+These rows are the minimum natural-user checklist gate for Self Healing. Add narrower feature-specific
+rows before claiming a pass when the feature behavior changes.
+
+| Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
+| --- | --- | --- | --- | --- | --- | --- |
+| `SELFHEAL-UC-001` | Start a synthetic heal workflow from CLI/helper with GlassHive host workers disabled. | `51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md` / `SH-001`, `SH-003` | CLI and macOS helper status | Command exit/status, helper menu state, sanitized logs, workflow state, and dated QA report | Heal fails loudly or shows active healing truthfully; it never pretends hidden work is running. | 2026-05-14 local implementation QA - passed |
+| `SELFHEAL-UC-002` | Start heal in degraded mode and inspect the private RCA/review/proposed-fix artifacts. | `51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md` / `SH-002`, `SH-005` | CLI workflow state and private App Support artifact summary | Sanitized artifact names/counts, permissions summary, logs/state, and public QA report | Private RCA artifacts are created outside the repo, degraded mode is explicit, and no raw prompts/logs enter public artifacts. | 2026-05-14 local implementation QA - passed |
+| `SELFHEAL-UC-003` | Start apply mode with synthetic input and verify the implementation path uses an isolated worktree. | `51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md` / `SH-004` | CLI, git worktree list, workflow state | Worktree summary, active checkout git status, implementation prompt target, and dated QA report | Apply mode uses a fresh heal worktree and leaves the active user checkout untouched. | 2026-05-14 local implementation QA - passed |

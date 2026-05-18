@@ -11,6 +11,13 @@ pushes deep detail into the existing product docs instead of bloating the always
 bin/viventium
 viventium_v0_4/viventium-librechat-start.sh
 
+# Stable local prod / side-by-side dev runtime
+bin/viventium dev-runtime status
+bin/viventium dev-env create dev
+bin/viventium dev-env status dev
+bin/viventium dev-env run dev start
+bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder
+
 # Release / installer / compiler checks
 python3 -m pytest tests/release/ -q
 python3 -m pytest tests/release/test_config_compiler.py -q
@@ -56,6 +63,10 @@ For install/runtime/release work, also read:
 - `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md`
 - `docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md`
 - `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`
+- `docs/requirements_and_learnings/50_Stable_Dev_Runtime.md`
+- `docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`
+- `docs/requirements_and_learnings/52_Voice_Component_Fork_Modification_Inventory.md` when voice
+  component pins, fork replay, LiveKit/playground routing, or voice release QA are in scope
 - `qa/continuity-ops/README.md` when the work touches snapshots, restore, upgrade continuity, or helper backup UX
 
 ## Quick Doc Map
@@ -64,19 +75,27 @@ For install/runtime/release work, also read:
   `qa/background_agents/README.md`
 - Telegram: `docs/requirements_and_learnings/03_Telegram_Bridge.md`,
   `viventium_v0_4/telegram-codex/docs/`,
-  `qa/telegram_end_to_end.md`
+  `qa/telegram-runtime/README.md`, `qa/telegram-runtime/cases.md`, and relevant `qa/telegram-*`
+  folders
 - Voice and remote calls: `docs/requirements_and_learnings/06_Voice_Calls.md`,
   `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md`,
+  `docs/requirements_and_learnings/52_Voice_Component_Fork_Modification_Inventory.md`,
   `viventium_v0_4/docs/VOICE_CALLS.md`,
-  `qa/voice_playground_and_remote_calls.md`
+  `qa/modern-playground-voice/README.md`, `qa/modern-playground-voice/cases.md`, and relevant
+  `qa/voice-*` folders
 - Auth, MCP, productivity: `docs/requirements_and_learnings/07_MCPs.md`,
-  `docs/requirements_and_learnings/35_OAuth_Subscription_Auth.md`,
-  `qa/mcp_oauth_and_productivity_integrations.md`
+  `docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md`,
+  `qa/mcp-oauth/`
 - GlassHive (workstation sandbox): `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`,
   `viventium_v0_4/GlassHive/docs/`
+- Stable dev runtime and local work workflows:
+  `docs/requirements_and_learnings/50_Stable_Dev_Runtime.md`,
+  `docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`,
+  `qa/stable-dev-runtime/README.md`, `qa/self-healing/README.md`,
+  `qa/feature-request/README.md`, `qa/bug-report/README.md`
 - Installer and publish safety: `docs/05_ENVIRONMENT.md`,
   `docs/06_TROUBLESHOOTING.md`,
-  `qa/launch_readiness.md`,
+  `qa/release-readiness/README.md`, `qa/release-readiness/cases.md`,
   `qa/privacy_publish_audit.md`
 
 ## Investigation Rules
@@ -170,6 +189,40 @@ Before changing code:
 
 ## Testing And QA
 
+- Treat full-view evidence as the completion gate, not a nice-to-have. For every non-trivial feature,
+  bug, runtime, installer, or release claim, connect:
+  `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`.
+- Full-view evidence means reading the real owning code, docs and nested docs, scripts/harnesses,
+  generated or shipped artifacts, logs, DB/state/persistence when applicable, and using the feature
+  like a user through the relevant browser/computer, Telegram, voice, installer, CLI, MCP, scheduler,
+  or GlassHive surface.
+- Start QA from the complete feature inventory and natural user use cases, not from one visible
+  symptom. Use `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`,
+  `qa/feature-user-use-case-checklist.md`, and the owning `qa/<feature>/cases.md` to enumerate happy
+  path, first-run/empty state, missing auth/config, degraded dependency, retry/recovery,
+  interruption/cancel/update, persistence/reload/restart, cross-surface parity, generated/shipped
+  artifact verification, and public/private safety before claiming coverage.
+- Treat those use cases as a checklist. Every applicable item must be run like a user on the real
+  surface and marked `PASS`, `FAIL`, `BLOCKED`, or `PARTIAL` with evidence.
+- If the real user path cannot be executed, say `BLOCKED` or `PARTIAL`, name the missing surface, and
+  do not claim completion from mocks, unit tests, source inspection, logs, DB rows, or model review.
+- Supporting evidence cannot replace required user-path evidence.
+- QA reports must make the evidence trail explicit: what was actually run, what was not run, visible
+  UX/result evidence, supporting backend/log/DB evidence, and any mismatch or residual fix.
+- Logs, DB rows, API responses, source inspection, model completions, and unit tests are supporting
+  evidence, not substitutes for any required visible-UI, detail-state, persistence, or wording step.
+- For evidence-retrieval failures, classify the failure before answering. Successful empty results,
+  provider unavailable, timeout, rate limit, auth/config missing, request rejected, unsupported
+  configuration, and missing local prerequisites such as Docker-backed search services are different
+  outcomes. For named-entity/contact/date/current-fact lookups, one failed web search should trigger
+  provider-health inspection plus browser/computer/local-delegation fallback when available.
+- For GlassHive/local-delegation dispatch, preserve the user's target and success condition, inspect
+  any returned instruction audit, write the acknowledgement in your own voice, and do not quote a
+  canned status template or expose worker/run/project plumbing unless diagnostics were requested.
+- Follow `qa/README.md` as the QA operating contract. For user-visible changes, use the full-view
+  evidence loop there: exercise the feature like a user, inspect visible and expanded/detail states,
+  check refresh or persistence when relevant, compare with code/log/DB/generated-artifact evidence,
+  and verify final user-facing wording before claiming done.
 - Run the smallest relevant automated tests, but run them.
 - Inspect generated outputs for installer/compiler/runtime changes.
 - Verify the real user-visible surface when the change affects UX.
@@ -185,13 +238,13 @@ Before changing code:
 - If a nested repo or shipped artifact changed, verification is incomplete until the parent pin, the
   built artifact, and the installed artifact all match the intended fix.
 - Use the QA docs as the acceptance contract, especially:
-  - `qa/launch_readiness.md`
-  - `qa/result_artifact_standard.md`
-  - `qa/web_app_core_surface.md`
-  - `qa/voice_playground_and_remote_calls.md`
-  - `qa/mcp_oauth_and_productivity_integrations.md`
-  - `qa/telegram_end_to_end.md`
+  - `qa/README.md`
+  - `qa/_templates/run-report.md`
+  - `qa/release-readiness/README.md`
+  - `qa/release-readiness/cases.md`
   - `qa/background_agents/README.md`
+  - `qa/telegram-runtime/README.md`
+  - `qa/modern-playground-voice/README.md`
 
 ## Surface Reminders
 
@@ -203,6 +256,10 @@ Before changing code:
 - Voice must preserve the same agent/runtime truth while being honest about topology, browser
   permissions, and remote-call limits.
 - Connected-account flows must remain honest: supported account routing first, explicit BYOK second.
+- Stable dev runtime work must preserve the local-prod/dev-env boundary: installed helper/runtime is
+  local prod, `bin/viventium dev-env` is optional side-by-side development, heavy singleton services
+  remain shared by default, and promotion uses `bin/viventium dev-runtime activate-current --validate
+  --restart` instead of copying source into install paths.
 
 ## Claude Workflow
 

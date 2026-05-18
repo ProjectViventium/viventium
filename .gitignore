@@ -137,5 +137,7 @@ docs/prompt_design/
 docs/research/
 docs/archive/
 projects/
-qa/results/
+qa/results/*
+!qa/results/
+!qa/results/README.md
 qa/repo_cleanup_audit/

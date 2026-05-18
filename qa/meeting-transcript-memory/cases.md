@@ -148,3 +148,14 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Last run: 2026-05-13, automated regressions passed in
   `api/test/scripts/viventium-memory-hardening.test.js`; live primary QA dry-run completed with 0
   transcript characters fed to the model.
+
+## Natural User Use Case Checklist
+
+These rows are the minimum natural-user checklist gate for Meeting Transcript Memory. Add narrower feature-specific
+rows before claiming a pass when the feature behavior changes.
+
+| Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
+| --- | --- | --- | --- | --- | --- | --- |
+| `MEETING-UC-001` | Ask a browser chat question that should use processed meeting transcript memory, then inspect visible answer sources and backend evidence. | `MTM-001`-`MTM-009` | Browser chat, file/source cards, processed transcript index, and sanitized logs | Model-facing file/source order, stored source order, visible source cards, memory hardening output, and dated QA report | The answer is grounded in processed transcript evidence, not attached raw files or unrelated memory, and sources are visible. | 2026-05-13 transcript recall repair live QA - passed |
+| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock is missing, stale, or degraded. | `MTM-010` and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, and does not fabricate transcript recall. | 2026-05-13 automated stale-lock regression - passed |
+| `MEETING-UC-003` | After ingest/repair, rerun the browser recall question and compare persistence/state across refresh or retry. | `MTM-001`-`MTM-010` | Browser chat, persisted message/source state, transcript index, and logs | Stored source order, visible source cards, memory hardening summary, and dated QA report | Recall remains grounded after retry/refresh and final wording matches persisted evidence. | 2026-05-13 transcript recall repair live QA - passed |

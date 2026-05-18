@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: legacy or audit-style report; supersede with the standard run-report template on next rerun. -->
 # Meeting Transcript Recall Repair Live QA - 2026-05-13
 
 Public-safe report. Private transcript text, local paths, screenshots, emails, reset tokens, and

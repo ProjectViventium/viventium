@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -189,6 +190,13 @@ class _XaiGrokVoiceChunkedStream(ChunkedStream):
         input_text = (self._input_text or "").strip()
         if not input_text:
             return
+        if (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1":
+            logger.info(
+                "[VoiceTTS] provider=xai voice=%s chars=%s text_json=%s",
+                cfg.voice,
+                len(input_text),
+                json.dumps(input_text, ensure_ascii=False),
+            )
 
         request_id = f"xai_{uuid.uuid4().hex[:12]}"
         output_emitter.initialize(
@@ -258,4 +266,3 @@ class _XaiGrokVoiceChunkedStream(ChunkedStream):
             raise
         except Exception as e:
             raise APIError(f"xAI realtime TTS failed: {e}", retryable=True) from e
-

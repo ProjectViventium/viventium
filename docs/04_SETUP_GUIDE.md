@@ -81,10 +81,15 @@ macOS helper note:
 - local Swift helper builds remain a development override, not the default end-user dependency path
 - the helper's Advanced menu exposes user-safe maintenance actions:
   - `Check for Updates...`
+  - `Prompt Workbench > Open`
+  - `Prompt Workbench > Start`
+  - `Prompt Workbench > Stop`
   - `Create Backup Snapshot`
   - `Heal Viventium...`
   - `Report a Bug...`
   - `Request a Feature...`
+- `Prompt Workbench > Stop` stops only the workbench web app and leaves the main Viventium runtime
+  in its current state
 - `Create Backup Snapshot` runs the same supported snapshot flow as `bin/viventium snapshot` and
   reveals the latest snapshot folder when it completes
 

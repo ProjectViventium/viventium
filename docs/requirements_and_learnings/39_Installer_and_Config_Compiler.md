@@ -536,6 +536,26 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     recovered local listener or refreshed token becomes visible without requiring a full page reload.
   - MCP endpoint readiness must treat an HTTP auth challenge from `/mcp` as a live server signal;
     connection-refused is the failure state.
+- On May 15, 2026, restart QA exposed a status-bar helper lifecycle boundary:
+  - loginwindow can launch the Viventium helper successfully and still report an early app death
+    before the delayed helper auto-start callback submits `bin/viventium launch`
+  - the helper must explicitly disable AppKit automatic termination while it owns the status-bar
+    menu and login auto-start responsibility, because a menu-bar app with no normal windows must
+    remain alive long enough to start and monitor the local runtime
+  - the helper bundle must also declare `NSSupportsAutomaticTermination=false` so the lifecycle
+    contract is visible in the shipped app, not only in Swift runtime code
+  - helper startup QA must inspect loginwindow/system logs, the helper process, helper logs, and the
+    live runtime surfaces; the presence of a macOS login item alone is not proof that Viventium will
+    start after reboot
+- The helper's `Advanced > Prompt Workbench` submenu is a separate lifecycle surface:
+  - `Open` must start the workbench if needed and then open the browser
+  - `Start` and `Stop` must call `bin/viventium prompt-workbench ...`, not the main stack start/stop
+    commands
+  - `Stop` must terminate only the managed Prompt Workbench process recorded under App Support
+    prompt-workbench state, leaving LibreChat, native services, and Viventium's current runtime state
+    untouched
+  - clean installs and upgrades must refresh the shipped helper fallback when the helper source
+    changes, or new users will not see the same Advanced submenu
 - On April 5, 2026, a background-cortex failure showed why install/start ownership matters:
   built-in Anthropic agents are re-seeded from source-of-truth on startup, so fixing only live
   Mongo state or only a local runtime leftover would not align fresh installs or later restarts.

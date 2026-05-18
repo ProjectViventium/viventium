@@ -18,6 +18,10 @@ For installer, runtime, release, or publish-boundary work, also read:
 - `docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md`
 - `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`
 - `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md`
+- `docs/requirements_and_learnings/50_Stable_Dev_Runtime.md`
+- `docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`
+- `docs/requirements_and_learnings/52_Voice_Component_Fork_Modification_Inventory.md` when the
+  work touches voice component pins, fork replay, LiveKit/playground routing, or voice release QA
 - `qa/continuity-ops/README.md` when the work touches snapshots, restore, upgrade continuity, or helper backup UX
 - the relevant files under `qa/`, if they already exist for the feature or release surface
 
@@ -69,6 +73,11 @@ For installer, runtime, release, or publish-boundary work, also read:
   test it, QA it, and document the resulting product truth.
 - Trace the real owning path before editing: trigger -> config/compiler -> runtime -> user-visible
   output.
+- For local stable-runtime work, keep the modes distinct:
+  - local prod is the installed user-facing runtime started by the helper
+  - dev envs are optional side-by-side runtimes with separate app-facing ports/state
+  - heavy singleton services stay shared by default: recall/RAG, SearXNG, Firecrawl, Google Workspace MCP, and Microsoft 365 MCP
+  - promoting a local checkout uses `bin/viventium dev-runtime activate-current --validate --restart`; do not copy source into install paths
 - For install/runtime/release fixes, classify the delivery surfaces separately:
   - tracked source
   - parent component pin / manifest
@@ -168,6 +177,27 @@ For installer, runtime, release, or publish-boundary work, also read:
 
 ## Verification
 
+- Full-view evidence is the default completion gate for non-trivial work. Before claiming a feature,
+  bug fix, runtime change, installer change, or release task is done, connect:
+  `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`.
+- Full-view evidence means inspecting the real owning code, docs and nested docs, scripts/harnesses,
+  generated or shipped artifacts, logs, DB/state/persistence when applicable, and the real user path
+  through browser/computer, Telegram, voice, installer, CLI, MCP, scheduler, or GlassHive surfaces.
+- Start QA from the complete feature inventory and natural user use cases. Use
+  `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`,
+  `qa/feature-user-use-case-checklist.md`, and the owning `qa/<feature>/cases.md` to enumerate the
+  obvious user actions first: happy path, first-run/empty state, missing auth/config, degraded
+  dependency, retry/recovery, interruption/cancel/update, persistence/reload/restart, cross-surface
+  parity, generated/shipped artifact verification, and public/private safety.
+- Treat the enumerated use cases as a checklist. Every applicable item must be run like a user on the
+  real surface and marked `PASS`, `FAIL`, `BLOCKED`, or `PARTIAL` with supporting evidence before a
+  completion or release-readiness claim.
+- If a real user path is required and cannot be run in the current environment, mark the result
+  `BLOCKED` or `PARTIAL`, explain the exact missing surface, and do not substitute mocks, unit tests,
+  source inspection, logs, DB rows, or another model's review for that missing user evidence.
+- Supporting evidence cannot replace required user-path evidence.
+- Every user-visible QA report must state what was actually run, what was not run, what evidence
+  proves the visible UX/result, and what fix remains for any mismatch.
 - Run the smallest relevant automated checks, but run them.
 - Do not stop at the tiniest local test when the change can affect broader flows. Professionally
   test all realistically affected paths around what you changed.
@@ -184,6 +214,14 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Every escaped bug or production miss must become a reusable synthetic regression case in the
   relevant `qa/<feature>/cases.md`, with expected outcome, forbidden result, evidence to capture,
   and last-run status.
+- For evidence-retrieval failures, do not hand-wave. Distinguish successful empty results from
+  provider unavailable, timeout, rate limit, auth/config missing, request rejected, unsupported
+  configuration, and missing local prerequisites such as Docker-backed search services. For
+  named-entity/contact/date/current-fact lookups, a failed web search triggers provider-health
+  inspection plus browser/computer/local-delegation fallback when available.
+- For GlassHive/local-delegation dispatch, do not quote canned acknowledgement text. Preserve the
+  user's target and success condition in the delegated instruction, inspect the returned audit when
+  present, then write a short acknowledgement in your own voice and let callbacks carry the result.
 - For non-trivial feature or bug work, run an independent QA pass after implementation. Prefer a
   separate agent or clearly separated QA pass, and save public-safe evidence and findings under
   `qa/<feature>/`.
@@ -211,6 +249,10 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Installer: `./install.sh`
 - Public CLI: `bin/viventium`
 - Full stack launcher: `viventium_v0_4/viventium-librechat-start.sh`
+- Inspect installed local prod checkout: `bin/viventium dev-runtime status`
+- Create side-by-side dev runtime: `bin/viventium dev-env create dev`
+- Run/check side-by-side dev runtime: `bin/viventium dev-env run dev start` and `bin/viventium dev-env run dev status`
+- Promote current checkout to installed local prod: `bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder`
 - Public refresh flow: `bin/viventium upgrade --restart`
 - Release tests: `python3 -m pytest tests/release/ -q`
 - Compiler tests: `python3 -m pytest tests/release/test_config_compiler.py -q`

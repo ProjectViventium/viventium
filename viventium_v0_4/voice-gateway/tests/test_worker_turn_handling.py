@@ -185,7 +185,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(updated.stt_provider, "pywhispercpp")
         self.assertEqual(updated.stt_model, "tiny.en")
         self.assertEqual(updated.voice_turn_detection, "vad")
-        self.assertEqual(updated.voice_min_endpointing_delay_s, 1.4)
+        self.assertEqual(updated.voice_min_endpointing_delay_s, 0.5)
         self.assertEqual(updated.voice_max_endpointing_delay_s, 3.0)
         self.assertEqual(updated.voice_min_interruption_words, 0)
         self.assertEqual(updated.voice_min_consecutive_speech_delay_s, 0.0)
@@ -217,7 +217,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
             env = load_env()
 
         self.assertEqual(env.voice_turn_detection, "vad")
-        self.assertEqual(env.voice_min_endpointing_delay_s, 1.4)
+        self.assertEqual(env.voice_min_endpointing_delay_s, 0.5)
         self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
 
     def test_local_whisper_uncached_fallback_uses_less_eager_vad(self) -> None:
@@ -230,10 +230,10 @@ class TestWorkerTurnHandling(unittest.TestCase):
             env = load_env()
 
         self.assertEqual(env.voice_turn_detection, "vad")
-        self.assertEqual(env.voice_min_endpointing_delay_s, 1.4)
+        self.assertEqual(env.voice_min_endpointing_delay_s, 0.5)
         self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
         self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.35)
-        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 1.0)
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 0.5)
 
     def test_local_whisper_respects_explicit_vad_min_speech_override(self) -> None:
         with (
@@ -294,7 +294,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
 
         self.assertEqual(env.voice_turn_detection, "vad")
         self.assertEqual(_silero_vad_kwargs_for_env(env)["min_speech_duration"], 0.35)
-        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 1.0)
+        self.assertEqual(_silero_vad_kwargs_for_env(env)["min_silence_duration"], 0.5)
         self.assertEqual(updated.voice_turn_detection, "stt")
         self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_speech_duration"], 0.1)
         self.assertEqual(_silero_vad_kwargs_for_env(updated)["min_silence_duration"], 0.5)

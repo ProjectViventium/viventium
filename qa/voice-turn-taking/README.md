@@ -58,7 +58,7 @@ Result:
   - local Whisper fallback coverage when exact assets are cached but the inference runner is not
     registered
   - local Whisper fallback coverage proving `vad` uses the less-eager endpointing profile and
-    `VIVENTIUM_STT_VAD_MIN_SILENCE=1.0` unless explicitly configured
+    `VIVENTIUM_STT_VAD_MIN_SILENCE=0.5` unless explicitly configured
   - current LiveKit tokenizer coverage proving synchronized transcript chunks preserve whitespace
   - exact turn-detector asset cache verification for `onnx/model_q8.onnx`, `languages.json`, and
     the tokenizer/config files LiveKit loads before inference
@@ -68,7 +68,7 @@ Result:
 RCA:
 - A real local call used `pywhispercpp` / local whisper.cpp with `turn_detection=vad`.
 - Logs showed user turns completing with `reason=vad_silence` after the historical local profile
-  (`VIVENTIUM_STT_VAD_MIN_SILENCE=0.5`, `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S=0.9`).
+  (`VIVENTIUM_STT_VAD_MIN_SILENCE=0.5`, `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S=0.5`).
 - The partial utterance was persisted and answered before the rest of the spoken sentence arrived,
   so the continuation landed under a newer assistant parent and bypassed same-parent coalescing.
 - The modern playground transcript concatenation was a separate display path issue: canonical

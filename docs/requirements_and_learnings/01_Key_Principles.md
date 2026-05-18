@@ -130,6 +130,12 @@
 - User-facing error copy is part of product truth. If the underlying failure is rate limit, auth,
   missing key, provider outage, local runtime unavailable, or unsupported configuration, the message
   must say the correct class of problem instead of a generic service failure.
+- Retrieval/tool failures must never be laundered into "nothing exists." For web search and other
+  evidence tools, distinguish successful-empty results from provider unavailable, timeout, rate
+  limit, auth/config missing, request rejected, and unsupported configuration. For named-entity,
+  contact, date, event-detail, or current-fact lookups, one failed search is an escalation trigger:
+  check the configured provider health, including Docker-backed local services when relevant, and
+  use an available browser/computer/local-delegation fallback before stopping.
 - Communication must be efficient and specific: summarize what was changed, how it was verified,
   what was pushed or left local, and what still needs live QA, without dumping raw logs or private
   machine details.
@@ -138,6 +144,28 @@
 - `qa/README.md` is the QA operating contract. Every developer and AI agent must treat it as the
   source of truth for QA folder shape, case metadata, run reports, public-safety rules, and
   user-grade acceptance.
+- Full-view evidence is the hard gate for non-trivial feature, bug, runtime, installer, and release
+  work. The evidence chain must tie:
+  `feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`.
+- Full-view evidence means inspecting the real owning code, logs, DB/state/persistence, generated or
+  shipped artifacts, scripts/harnesses, docs and nested docs/repos, and the real user path through
+  browser/computer, Telegram, voice, installer, CLI, MCP/tool, scheduler, GlassHive, or the relevant
+  surface.
+- Start QA from the feature inventory and natural user use cases, not from the single symptom or
+  code file in front of you. Use `docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`,
+  `qa/feature-user-use-case-checklist.md`, and the owning `qa/<feature>/cases.md` to list the obvious
+  user actions first: happy path, first-run/empty state, missing auth/config, degraded dependency,
+  retry/recovery, interruption/cancel/update, persistence/reload/restart, cross-surface parity,
+  shipped artifact verification, and public/private safety.
+- Treat that use-case list as a checklist. Each applicable item must be exercised like a user through
+  the real product surface and marked `PASS`, `FAIL`, `BLOCKED`, or `PARTIAL` with evidence. If an
+  item was not run, it remains a visible gap.
+- If the real user path cannot be run, the result is `BLOCKED` or `PARTIAL`, not done. Name the
+  missing path, record what supporting evidence was gathered, and do not use mocks, unit tests, logs,
+  DB rows, source inspection, or another model's review as a substitute for required user evidence.
+- Supporting evidence cannot replace required user-path evidence.
+- Completion reports must explicitly say what was run, what was not run, what visible UX/result was
+  observed, what backend/log/DB/state evidence supports it, and what mismatch or residual fix remains.
 - Keep one living QA area per feature or flow:
   - `qa/<feature>/README.md` for scope, owning docs, surfaces, quality bar, and latest status
   - `qa/<feature>/cases.md` for durable case IDs, expected outcomes, forbidden outcomes, automation,
@@ -158,6 +186,10 @@
   evidence, not substitutes for any required visible-UI, detail-state, persistence, or wording step.
   Skipping the visible browser step is not acceptable for browser-visible behavior even when backend
   evidence says the operation succeeded.
+- If an obvious infrastructure prerequisite is part of the feature, such as Docker Desktop for local
+  SearXNG/Firecrawl, local Bot API, code interpreter, or sidecars, the QA checklist must include the
+  prerequisite state. A stopped prerequisite is evidence, not an excuse to collapse the result into a
+  vague product failure.
 - For non-browser surfaces, use the nearest real product loop: Telegram send/receive plus ledger,
   Voice/LiveKit call plus transcript/latency, Scheduler trigger plus delivery ledger, installer/CLI
   command plus installed artifact, and MCP/tool call plus auth/tool-result/failure-copy verification.
@@ -597,6 +629,10 @@ Before making any change, ensure:
 - [ ] Updated the relevant `qa/<feature>/README.md` and `qa/<feature>/cases.md`
 - [ ] Promoted any escaped/user-reported defect into a synthetic regression case
 - [ ] Ran impacted existing QA cases, not only the new happy path
+- [ ] Tied feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap
+- [ ] Inspected full-view evidence: code, docs/nested docs, scripts/harnesses, logs, DB/state or
+      persistence, generated/shipped artifacts, and the real user path for every affected surface
+- [ ] Marked any unrun required real user path as BLOCKED/PARTIAL instead of claiming completion
 - [ ] For user-visible browser behavior, completed the real-browser loop: visible UI, expanded/detail
       state, persistence where relevant, backend/log/DB confirmation, and non-contradictory final wording
 - [ ] Confirmed logs, DB rows, API responses, source inspection, model completions, or unit tests were

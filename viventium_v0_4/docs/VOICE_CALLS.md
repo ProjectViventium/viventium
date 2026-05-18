@@ -120,6 +120,9 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - The `Voice Chat Model` page has its own fallback model. Voice calls use that voice-specific
   fallback first, then inherit the general `Fallback Model` only when the voice fallback is unset or
   unavailable before model initialization.
+- Fallback eligibility is validated during call initialization, but fallback agent/tool/MCP
+  initialization is lazy. It runs only if the primary route fails before producing assistant text.
+  A healthy primary voice turn must not pay fallback MCP startup cost before first audio.
 - Fallback is retry-once and user-configured. Runtime does not silently choose a hidden model from
   machine defaults, account identity, prompt text, or provider labels.
 - Fallback uses the normal provider auth path, including connected accounts. A valid connected
@@ -150,6 +153,12 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` remains available as an opt-in caption QA mode. The
   playground reads LiveKit transcription streams by stream id so adjacent assistant answers cannot
   collapse into one transcript row.
+- The gateway posts a per-turn `streamId` to `/api/viventium/voice/chat`, and the voice route
+  preserves that id for the SSE subscription path. This keeps transport streams one-turn scoped
+  while conversation id and parent message id continue to own persisted history continuity.
+- Sequential spoken turns that arrive while a previous Phase B follow-up window is still open must
+  use distinct stream ids unless they were intentionally coalesced inside the same ingress window.
+  A later turn must not complete, replace, or subscribe to an older turn's stream.
 - AssemblyAI-backed calls now default to provider endpointing plus VAD:
   - `VIVENTIUM_TURN_DETECTION=stt` when the active STT provider supports endpointing
   - Silero VAD remains attached for interruption responsiveness
@@ -180,9 +189,9 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   semantic detection.
 - If explicit `turn_detector` mode is requested but the detector weights are not cached locally or
   the LiveKit inference runner is not registered, runtime falls back cleanly to the provider-owned
-  route (`stt` for AssemblyAI, less-eager `vad` for local Whisper) and logs the concrete downgrade
+  route (`stt` for AssemblyAI, local VAD for local Whisper) and logs the concrete downgrade
   status instead of failing mid-call.
-- On first install or after a cache purge, local Whisper can start on the less-eager VAD fallback if
+- On first install or after a cache purge, local Whisper can start on the local VAD fallback if
   the turn-detector download cannot complete. The launcher retries the exact detector assets on a
   later start, so this is degraded turn-taking, not a broken voice route.
 - Worker logs emit normalized turn-end reasons so real calls can be debugged without guessing:
@@ -192,6 +201,9 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - Durable per-call turn logs also come from the LibreChat voice route:
   - `[VIVENTIUM][voice/chat] user_turn_completed ...`
   - keyed by `callSessionId`, `conversationId`, `parentMessageId`, and `requestId`
+- When LiveKit closes or cancels a voice LLM stream before the LibreChat final event, the voice
+  gateway must post an authenticated abort for that specific `streamId` so barge-in stops backend
+  generation instead of only stopping local audio playback.
 
 ## Voice-Mode Prompt Contract (Provider-Aware)
 Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvider)` in
@@ -306,7 +318,7 @@ Supported providers:
 VAD tuning (shared with v1):
 - `VIVENTIUM_STT_VAD_MIN_SPEECH` (default `0.1`; local Whisper fallback defaults to `0.35`
   unless explicitly configured)
-- `VIVENTIUM_STT_VAD_MIN_SILENCE` (default `0.5`; local Whisper fallback defaults to `1.0`
+- `VIVENTIUM_STT_VAD_MIN_SILENCE` (default `0.5`; local Whisper fallback also defaults to `0.5`
   unless explicitly configured)
 - `VIVENTIUM_STT_VAD_ACTIVATION` (default `0.4`)
 - `VIVENTIUM_STT_VAD_FORCE_CPU` (optional)
@@ -327,9 +339,9 @@ Notes:
   provider/plugin defaults intact instead of hardcoding additional silence thresholds.
 - `whisper_local` / `pywhispercpp` inherits the shared interruption knobs and saved-route contract,
   but it remains a StreamAdapter + Silero VAD path when semantic turn detection is unavailable. It
-  does not get AssemblyAI-native endpointing knobs. Its VAD fallback uses a longer silence budget
-  and a slightly longer minimum speech threshold than remote/STT-owned routes so short reflective
-  pauses, coughs, and one-syllable room noise do not become committed user turns.
+  does not get AssemblyAI-native endpointing knobs. Its VAD fallback uses the shared `0.5s` silence
+  budget plus a slightly longer minimum speech threshold than remote/STT-owned routes so short
+  one-syllable room noise does not become a committed user turn.
 - Local Whisper routes default `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=inf`; CPU load during model
   warm-up is not a reliable overload signal and must not make LiveKit stop dispatching jobs to a
   healthy local worker.

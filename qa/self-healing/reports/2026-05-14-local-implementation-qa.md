@@ -1,3 +1,4 @@
+<!-- qa-evidence-exempt: legacy or audit-style report; supersede with the standard run-report template on next rerun. -->
 # Self-Healing Local QA - 2026-05-14
 
 ## Scope
@@ -16,9 +17,12 @@ controls, private artifacts, cancel behavior, and isolated apply worktree behavi
     `bootstrap_bundle.files[].content`
   - workflow cancel interrupting the GlassHive worker instead of silently clearing only local state
   - explicit heal apply mode creating an isolated `heal/<slug>-<run-id>` git worktree
+  - explicit degraded mode reporting `glasshive_degraded_mode` without GlassHive IDs and keeping
+    local artifacts private
   - helper menu entries for Heal Viventium, Cancel Active Workflow, and Open Work Artifacts
   - helper status strings for `Healing (N mins passed)`
-- The broader parent release suite passed: 532 tests, 1 skipped.
+- The focused workflow suite passed: 19 tests.
+- The broader parent release suite passed: 537 tests, 1 skipped.
 - Local GlassHive health was verified against `/health` and `/v1/metrics/summary`; `/v1/metrics`
   currently returns 404, and the workflow adapter now accepts the healthy endpoints.
 - A live local GlassHive-backed feature-request dispatch was started with synthetic input and then
@@ -28,6 +32,8 @@ controls, private artifacts, cancel behavior, and isolated apply worktree behavi
   **Open Work Artifacts**.
 - Native Heal settings QA opened the modal, verified provider default **Auto (Codex preferred)**,
   thinking default **xHigh**, and dismissed with **Cancel**.
+- Current installed-helper QA reopened **Advanced > Heal Viventium...** and verified the Start/Cancel
+  controls without starting a workflow.
 - A reversible local workflow-status fixture showed the status-bar glyph as `V*` and the disabled
   status row as `Healing (0 mins passed)`, then restored the previous active workflow state.
 
@@ -42,6 +48,8 @@ controls, private artifacts, cancel behavior, and isolated apply worktree behavi
   Work Artifacts.
 - SH-004: Passed. `--mode apply` creates an isolated heal worktree and points implementation prompts
   at that worktree instead of the active checkout.
+- SH-005: Passed. Degraded mode is opt-in, visibly marked as degraded, does not create GlassHive run
+  IDs, and keeps Markdown artifacts private.
 
 ## Remaining Manual QA
 

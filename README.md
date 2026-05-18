@@ -36,7 +36,7 @@ cd viventium
 ```
 
 On macOS, install also adds `Viventium Helper` to the status bar so you can open, start, stop,
-and snapshot the local stack without going back to Terminal.
+snapshot the local stack, and open the local Prompt Workbench without going back to Terminal.
 
 First-run notes:
 
@@ -46,6 +46,8 @@ First-run notes:
   automatically close browser registration for safer exposure
 - the macOS helper now uses the shipped matching helper binary first on clean installs instead of
   depending on opportunistic local Swift builds
+- the helper's `Advanced > Prompt Workbench` submenu can Open, Start, or Stop only the Prompt
+  Workbench web app; it does not stop the main Viventium runtime
 - after you create your local account, open `Settings -> Connected Accounts` and connect at least
   one foundation model account (`OpenAI` or `Anthropic`); if you want Gmail/Drive or Outlook/MS365
   tasks, connect those service accounts there too

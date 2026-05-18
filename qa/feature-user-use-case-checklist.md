@@ -1,0 +1,88 @@
+# Product Feature User-Use-Case Checklist
+
+This is the product-wide checklist that prevents QA from collapsing into the one issue that was
+reported most recently. It complements the traceability map in
+[`docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md`](../docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md)
+and the feature-specific case catalogs under `qa/<feature>/cases.md`.
+
+## Natural User Use Case Checklist
+
+Every feature owner must keep these use-case classes explicit. If a class does not apply, mark it
+`N/A` in the feature report and explain why.
+
+| Use-case class | Natural user action to test | Required evidence |
+| --- | --- | --- |
+| Happy path | The user does the most obvious thing the feature exists for. | Real surface result plus owning code/doc/script evidence. |
+| First run or empty state | The user tries the feature before any saved state, connection, or fixture exists. | Visible empty-state copy plus config/log/state evidence. |
+| Missing auth or config | The user tries the feature when a provider key, OAuth grant, account link, model, or feature toggle is absent. | Honest failure or setup action, generated config, and logs. |
+| Degraded dependency | A required local service, external API, model, worker, tunnel, browser, Docker-backed sidecar, or runtime is down or slow. | Health/status check, prerequisite state, visible user wording, logs, retry/fallback behavior, and no invented result. |
+| Retry, cancel, update, or interruption | The user changes their mind, retries after failure, cancels, updates, interrupts speech, or sends another turn while work is pending. | Visible state transition plus persistence/log/DB confirmation. |
+| Persistence and restart | The user refreshes, changes tabs, restarts helper/runtime, resumes a worker, or reopens the app. | Stored state, reload behavior, logs/DB counts or hashes, and generated artifact checks. |
+| Cross-surface parity | The same feature is used from web, voice, Telegram, scheduler, MCP/tool, CLI, helper, or GlassHive where applicable. | Each surface agrees with the same source of truth and persistence layer. |
+| Shipped artifact path | The feature runs from generated config, compiled output, nested component, prebuilt helper, or installed artifact. | Source, parent pin/manifest, build artifact, installed/running artifact, and status evidence. |
+| Public/private safety | QA evidence, docs, prompts, reports, screenshots, and diffs are prepared for public review. | Sanitized report; no secrets, personal data, local paths, raw logs, raw IDs, or private screenshots. |
+
+## Feature Checklist Map
+
+Use this as the starting checklist before feature signoff. The owning `cases.md` must hold the
+durable case IDs and latest run status.
+
+| Product area | Owning docs | QA owners | Natural user use cases that must be represented |
+| --- | --- | --- | --- |
+| QA operating system and public-release process | [`01_Key_Principles.md`](../docs/requirements_and_learnings/01_Key_Principles.md), [`38_Public_Productization_and_Release.md`](../docs/requirements_and_learnings/38_Public_Productization_and_Release.md), [`40_Public_Private_Boundaries_and_License_Matrix.md`](../docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md), [`45_Runtime_Feature_QA_Map.md`](../docs/requirements_and_learnings/45_Runtime_Feature_QA_Map.md) | `qa/qa-system-audit/`, `qa/documentation-implementation-audit/`, `qa/release-readiness/`, `qa/results/` | Developer starts from a feature map; escaped bug becomes a reusable synthetic case; release tests point to QA owners; public-safe diff is scanned; fresh clone/install readiness is separated from local-only confidence. |
+| Core web chat, agent config, streaming, and model/tool capability state | [`37_LibreChat_v083_Config_Alignment.md`](../docs/requirements_and_learnings/37_LibreChat_v083_Config_Alignment.md), [`49_Prompt_Architecture_and_Token_Efficiency.md`](../docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md), [`09_Agent_Streaming_Usage.md`](../docs/requirements_and_learnings/09_Agent_Streaming_Usage.md) | `qa/config-alignment/`, `qa/agent-config-continuity/`, `qa/prompt-architecture/`, `qa/agent-streaming-usage/` | User opens chat, changes or selects an agent, sees correct model/tool capability state, sends a prompt, sees streaming and usage metadata, refreshes the conversation, and verifies live/source/generated config drift before any sync. |
+| Background agents and Red Team cortex | [`02_Background_Agents.md`](../docs/requirements_and_learnings/02_Background_Agents.md), [`29_Red_Team_Cortex.md`](../docs/requirements_and_learnings/29_Red_Team_Cortex.md) | `qa/background_agents/`, `qa/red-team-cortex/` | User prompt activates the right cortex; no irrelevant cortex activates; cards are visible by name; expanded cards show status/result/error; delayed follow-up is persisted; final answer does not contradict the card state; Red Team correction appears only when justified. |
+| Open web search and citations | [`10_Open_Source_Web_Search.md`](../docs/requirements_and_learnings/10_Open_Source_Web_Search.md), [`08_Citation_Rendering.md`](../docs/requirements_and_learnings/08_Citation_Rendering.md) | `qa/web-search/`, `qa/web-search-telegram/`, `qa/citation-rendering/` | User asks a current-data question in web chat; user asks the same via Telegram; voice call asks the agent to look something up; Web Search capability is enabled; SearXNG/Firecrawl or hosted providers are healthy or honestly degraded; Docker/container state is recorded for local providers; provider unavailable, timeout, rate limit, auth/config missing, request rejected, unsupported configuration, successful-empty, and local prerequisite unavailable are separated; named-entity/contact/date/current-fact failures use browser/computer/local-delegation fallback when available; tool-call parts persist; answer cites only fetched evidence; citation UI expands without leaking raw plumbing. |
+| Voice, LiveKit, modern playground, and voice route selection | [`06_Voice_Calls.md`](../docs/requirements_and_learnings/06_Voice_Calls.md), [`14_Voice_Latency_and_Memory_RCA.md`](../docs/requirements_and_learnings/14_Voice_Latency_and_Memory_RCA.md), [`34_Voice_Chat_LLM_Override.md`](../docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md), [`47_Remote_Access_and_Tunneling.md`](../docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md), [`52_Voice_Component_Fork_Modification_Inventory.md`](../docs/requirements_and_learnings/52_Voice_Component_Fork_Modification_Inventory.md) | `qa/modern-playground-voice/`, `qa/voice-call-hardening/`, `qa/voice-streaming-first/`, `qa/voice-turn-taking/`, `qa/remote-access/`, `qa/release-readiness/` | User starts a call from web chat; LiveKit joins; transcript opens; typed and spoken prompts work; voice + web-search prompt uses search or explains the exact degraded class; user interrupts or sends a second turn; transcript persists without reasoning blocks; latency logs identify stage delays; remote/public origin call routing is proven when in scope; voice component fork changes are inventoried before upstream replay or release pin updates. |
+| Telegram bridge and Telegram media flows | [`03_Telegram_Bridge.md`](../docs/requirements_and_learnings/03_Telegram_Bridge.md), [`25_Scheduling_Telegram_UX_Fixes.md`](../docs/requirements_and_learnings/25_Scheduling_Telegram_UX_Fixes.md) | `qa/telegram-runtime/`, `qa/telegram-local-bot-api/`, `qa/telegram-media-prereqs/`, `qa/telegram-detached-api-stability/`, `qa/telegram-document-attachments/`, `qa/telegram-media-downloads/`, `qa/telegram-settings-latency/`, `qa/telegram-voice-replies/`, `qa/web-search-telegram/` | User sends text, voice, image/media, document, and web-search requests; bot API starts or reports conflict honestly; media downloads/transcribes; document context is available; replies persist to LibreChat; latency/status copy is visible; delivery ledger and stored message parts agree. |
+| Scheduling cortex and reminders | [`11_Scheduling_Cortex.md`](../docs/requirements_and_learnings/11_Scheduling_Cortex.md), [`25_Scheduling_Telegram_UX_Fixes.md`](../docs/requirements_and_learnings/25_Scheduling_Telegram_UX_Fixes.md) | `qa/scheduling-cortex/`, `qa/background_agents/`, `qa/telegram-runtime/` | User creates, updates, cancels, and triggers a schedule; missed schedule catches up correctly; Telegram/web delivery appears; ledger records status; missing OAuth/tool access is reported with an action, not hidden. |
+| Memory, recall, RAG, transcripts, listen-only, and no-response | [`20_Memory_System.md`](../docs/requirements_and_learnings/20_Memory_System.md), [`21_No_Response_Feature.md`](../docs/requirements_and_learnings/21_No_Response_Feature.md), [`32_Conversation_Recall_RAG.md`](../docs/requirements_and_learnings/32_Conversation_Recall_RAG.md) | `qa/memory-continuity/`, `qa/memory-hardening/`, `qa/meeting-transcript-memory/`, `qa/listen-only-mode/`, `qa/config-compiler-memory/`, `qa/conversation-recall-rag/`, `qa/no-response/`, `qa/continuity-ops/` | User saves memory, recalls it later, ingests a transcript, queries recall/RAG, toggles listen-only/no-response behavior, restores or upgrades state, and verifies stale derived recall is rebuilt or blocked rather than trusted. |
+| MCP tooling and OAuth | [`07_MCPs.md`](../docs/requirements_and_learnings/07_MCPs.md), [`40_Public_Private_Boundaries_and_License_Matrix.md`](../docs/requirements_and_learnings/40_Public_Private_Boundaries_and_License_Matrix.md) | `qa/mcp-tooling/`, `qa/mcp-oauth/`, `qa/background_agents/`, `qa/glasshive_host_workers/` | User requests a tool-backed action; OAuth missing/stale grants surface cleanly; model-visible tool schema and result are correct; final answer reflects tool success/failure; retries do not repeat opaque multi-second hot-path failures. |
+| GlassHive workspaces, host workers, watch desktop, steer, self-healing, feature requests, and bug reports | [`18_Power_Agents_Beta.md`](../docs/requirements_and_learnings/18_Power_Agents_Beta.md), [`48_GlassHive_Workstation_Sandbox_Runtime.md`](../docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md), [`51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md`](../docs/requirements_and_learnings/51_GlassHive_Workflows_Self_Healing_and_Feature_Requests.md), [`50_Stable_Dev_Runtime.md`](../docs/requirements_and_learnings/50_Stable_Dev_Runtime.md) | `qa/glasshive_host_workers/`, `qa/glasshive_workspaces/`, `qa/glasshive_watch_desktop/`, `qa/glasshive_steer/`, `qa/self-healing/`, `qa/feature-request/`, `qa/bug-report/`, `qa/stable-dev-runtime/` | User delegates host work, watches/steers desktop/browser, resumes a worker, approves or rejects changes, files a bug/feature request, uses self-healing, receives artifacts, and sees PR/local-change policy respected without leaking private state. |
+| Installer, config compiler, helper, stable dev runtime, and local services | [`39_Installer_and_Config_Compiler.md`](../docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md), [`50_Stable_Dev_Runtime.md`](../docs/requirements_and_learnings/50_Stable_Dev_Runtime.md), [`47_Remote_Access_and_Tunneling.md`](../docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md) | `qa/installer-resilience/`, `qa/installer-piped-bootstrap/`, `qa/installer-wait-taglines/`, `qa/config-compiler-xai-models/`, `qa/config-compiler-memory/`, `qa/stable-dev-runtime/`, `qa/remote-access/` | User installs, configures, starts, stops, upgrades, runs doctor/status, creates side-by-side dev runtime, promotes current checkout, verifies generated env/YAML, confirms helper/prebuilt artifact version, and checks local service health honestly. |
+| Prompt Workbench, prompt registry, evals, no-runtime-NLU guardrails | [`49_Prompt_Architecture_and_Token_Efficiency.md`](../docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md), [`01_Key_Principles.md`](../docs/requirements_and_learnings/01_Key_Principles.md) | `qa/prompt-workbench/`, `qa/prompt-architecture/`, `qa/red-team-cortex/` | User opens Prompt Workbench, edits/evaluates prompts, compares prompt hashes, runs native-surface evals, verifies prompt-only behavior owns activation, and confirms runtime code did not add regex/keyword intent heuristics. |
+| Branding, assets, docs, and project setup | [`16_Branding_and_Assets.md`](../docs/requirements_and_learnings/16_Branding_and_Assets.md), [`38_Public_Productization_and_Release.md`](../docs/requirements_and_learnings/38_Public_Productization_and_Release.md) | `qa/branding-assets/`, `qa/documentation-implementation-audit/`, `qa/release-readiness/` | User opens docs/site/app/helper surfaces and sees correct Viventium branding; favicon/logo/package assets match source and shipped artifacts; docs match code; README/setup guide leads a new developer through the public path. |
+
+## Escaped Failure Rule
+
+When a user-visible failure escapes QA, add at least one synthetic regression case to every affected
+feature owner. The case must preserve the shape of the failure without private content.
+
+Minimum fields:
+
+- natural user action that triggered the miss
+- enabled/disabled capability state
+- expected visible result
+- forbidden visible result
+- logs and DB/state evidence to compare
+- real browser/computer/voice/Telegram/CLI surface to run
+- public-safe report location
+
+The 2026-05-18 voice + web-search miss is the current example: a voice/chat user asked the agent to
+look something up while Web Search appeared enabled. QA must prove the tool call, visible answer,
+local search backend health, hosted search backend status, Docker/container state for local providers, persisted message/tool-call state, user-facing degraded wording, and browser/computer/local-delegation
+fallback behavior when available. A generic "search is not pulling" answer is not enough unless
+supporting evidence proves the configured provider was unavailable and the report records that class
+of failure.
+
+## QA Owner Coverage Index
+
+The following public QA owners are part of the product checklist. Do not create an unowned feature
+area or an unlinked report.
+
+`qa/agent-config-continuity/`, `qa/agent-streaming-usage/`, `qa/background_agents/`,
+`qa/branding-assets/`, `qa/bug-report/`, `qa/citation-rendering/`, `qa/config-alignment/`,
+`qa/config-compiler-memory/`, `qa/config-compiler-xai-models/`, `qa/continuity-ops/`,
+`qa/conversation-recall-rag/`, `qa/documentation-implementation-audit/`, `qa/feature-request/`,
+`qa/glasshive_host_workers/`, `qa/glasshive_steer/`, `qa/glasshive_watch_desktop/`,
+`qa/glasshive_workspaces/`, `qa/installer-piped-bootstrap/`, `qa/installer-resilience/`,
+`qa/installer-wait-taglines/`, `qa/listen-only-mode/`, `qa/mcp-oauth/`, `qa/mcp-tooling/`,
+`qa/meeting-transcript-memory/`, `qa/memory-continuity/`, `qa/memory-hardening/`,
+`qa/modern-playground-voice/`, `qa/no-response/`, `qa/prompt-architecture/`,
+`qa/prompt-workbench/`, `qa/qa-system-audit/`, `qa/red-team-cortex/`, `qa/release-readiness/`,
+`qa/remote-access/`, `qa/results/`, `qa/scheduling-cortex/`, `qa/self-healing/`,
+`qa/stable-dev-runtime/`, `qa/telegram-detached-api-stability/`,
+`qa/telegram-document-attachments/`, `qa/telegram-local-bot-api/`, `qa/telegram-media-downloads/`,
+`qa/telegram-media-prereqs/`, `qa/telegram-runtime/`, `qa/telegram-settings-latency/`,
+`qa/telegram-voice-replies/`, `qa/voice-call-hardening/`, `qa/voice-streaming-first/`,
+`qa/voice-turn-taking/`, `qa/web-search-telegram/`, and `qa/web-search/`.

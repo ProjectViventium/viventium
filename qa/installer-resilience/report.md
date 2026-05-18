@@ -744,3 +744,81 @@ Observed:
 - the QA account's live `GET /api/mcp/connection/status/ms-365` response reports
   `connectionStatus: connected` and `requiresOAuth: true`
 - live helper menu reports `Running` with a `Stop` action while the stack is up
+
+## Status-bar helper login startup RCA and installed-artifact QA
+
+Date: 2026-05-15
+
+Incident driver:
+
+- After a machine restart, the expected local Viventium runtime did not start by itself from the
+  status-bar helper.
+- The active runtime checkout, helper checkout, live stack owner, and command checkout were aligned
+  to the current developer checkout, so this was not a wrong-checkout or stale-install pointer issue.
+- The macOS login item was enabled and allowed.
+- System lifecycle evidence showed loginwindow launched the installed helper at login and recorded
+  early app termination before the helper reached its auto-start decision log.
+- The helper had no crash report and no explicit quit log; manual launch of the same installed app
+  kept the helper alive and submitted the stack auto-start command.
+
+Root cause:
+
+- The helper was vulnerable to AppKit automatic termination during the early login-window launch
+  path. When no visible work had been declared yet, macOS could terminate the helper before its
+  asynchronous auto-start check reached the stack launch decision.
+- The shipped bundle also did not explicitly declare that automatic termination is unsupported.
+
+Product fix:
+
+- The helper disables automatic termination in controller initialization before config loading,
+  runtime-checkout reconciliation, or auto-start scheduling.
+- The helper bundle declares `NSSupportsAutomaticTermination=false`.
+- The shipped prebuilt helper and source hash were regenerated from the fixed source.
+- The helper lifecycle QA harness now probes `localhost` for web/API/playground health so IPv6
+  loopback listeners do not produce false `127.0.0.1` negatives.
+
+Verification:
+
+```bash
+swift build -c release --package-path apps/macos/ViventiumHelper
+python3 -m py_compile scripts/viventium/qa_helper_lifecycle.py
+uv run --with pytest --with PyYAML pytest tests/release/test_macos_helper_install.py tests/release/test_stable_dev_runtime_workflows.py -q
+git diff --check
+```
+
+Results:
+
+- Swift helper build passed.
+- Helper lifecycle QA harness compiled.
+- Focused release tests passed: `32 passed`.
+- The installed helper bundle's `Info.plist` reports `NSSupportsAutomaticTermination=false`.
+- The installed helper executable contains the lifecycle marker and automatic-termination disable
+  call expected by release tests.
+- A local quit/relaunch test proved the installed helper exits, relaunches, logs helper launch,
+  submits detached auto-start, and reaches healthy stack state.
+- The helper lifecycle QA harness drove the installed status-bar app through Stop, Start, Quit, and
+  Relaunch:
+  - Stop completed in 18 seconds and left the helper alive with the menu showing `Start`.
+  - Start completed in 62 seconds and restored healthy API, frontend, playground, singleton, and
+    MCP surfaces.
+  - Quit completed in 23 seconds and stopped the stack before helper exit.
+  - Relaunch restored the helper immediately and auto-started a healthy stack in 41 seconds.
+- Local health probes returned `200` for API, frontend, and modern playground over `localhost`.
+- Synthetic local QA account parity was verified against the source local account without printing
+  token values: the model-provider key names match (`anthropic`, `openAI`), and both accounts have
+  Microsoft 365 MCP OAuth token coverage. The source local account did not have Google OAuth token
+  coverage in local token storage.
+- Browser user QA with the synthetic local QA account produced the exact assistant reply
+  `Browser account parity works.` and local persistence recorded `error=false` and
+  `unfinished=false`.
+- Telegram Desktop QA sent a synthetic prompt through the real bot path and local persistence
+  recorded the exact assistant reply `Telegram account parity works.` with `error=false` and
+  `unfinished=false`.
+- Review-only Claude feedback was applied for the bundle-level automatic-termination declaration
+  and shipped-artifact checks.
+
+Residual risk:
+
+- A full physical reboot was not performed after the final patch in this run. The installed helper
+  relaunch path and lifecycle evidence now exercise the same startup code path, but a post-patch
+  reboot remains the strongest final confirmation before public release signoff.

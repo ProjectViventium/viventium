@@ -1,0 +1,111 @@
+version: 1
+scope: public-safe prompt workbench QA coverage map
+cases:
+  - id: PW-001
+    title: Registry render parity
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-001
+    lastRun: 2026-05-15
+  - id: PW-002
+    title: Sync state classification
+    appliesTo:
+      - main.conscious_agent
+    source: qa/prompt-workbench/cases.md#PW-002
+    lastRun: 2026-05-15
+  - id: PW-003
+    title: Live import draft safety
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-003
+    lastRun: 2026-05-15
+  - id: PW-004
+    title: Source edit creates reviewed draft
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-004
+    lastRun: 2026-05-15
+  - id: PW-005
+    title: Eval visibility and public-safe results
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-005
+    lastRun: 2026-05-15
+  - id: PW-006
+    title: System color scheme
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-006
+    lastRun: 2026-05-15
+  - id: PW-007
+    title: Draft review apply and discard
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-007
+    lastRun: 2026-05-15
+  - id: PW-008
+    title: Dry-run before reviewed live push
+    appliesTo:
+      - main.conscious_agent
+    source: qa/prompt-workbench/cases.md#PW-008
+    lastRun: 2026-05-15
+  - id: PW-009
+    title: Flow graph and lineage
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-009
+    lastRun: 2026-05-15
+  - id: PW-010
+    title: Eval designer and results
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-010
+    lastRun: 2026-05-15
+  - id: PW-011
+    title: Navigation and settings polish
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-011
+    lastRun: 2026-05-15
+  - id: PW-012
+    title: Responsive user QA
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-012
+    lastRun: 2026-05-15
+  - id: PW-013
+    title: Dockable workbench layout
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-013
+    lastRun: 2026-05-15
+  - id: PW-014
+    title: Human-readable prompt atlas
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-014
+    lastRun: 2026-05-15
+  - id: PW-015
+    title: Helper and CLI lifecycle
+    appliesTo:
+      - main.conscious_agent
+    source: qa/prompt-workbench/cases.md#PW-015
+    lastRun: 2026-05-15
+  - id: PW-016
+    title: Prompt history and eval traceability
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-016
+    lastRun: 2026-05-15
+  - id: PW-017
+    title: Eval case draft editing
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-017
+    lastRun: 2026-05-16
+  - id: PW-018
+    title: Pending drafts block eval and push
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-018
+    lastRun: 2026-05-16
+  - id: PW-019
+    title: Draft review guidance
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-019
+    lastRun: 2026-05-16
+  - id: PW-020
+    title: Eval create and performance clarity
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-020
+    lastRun: 2026-05-16
+  - id: PW-021
+    title: Prompt traces meaning
+    appliesTo: all
+    source: qa/prompt-workbench/cases.md#PW-021
+    lastRun: 2026-05-16

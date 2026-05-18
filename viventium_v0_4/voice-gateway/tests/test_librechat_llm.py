@@ -20,6 +20,7 @@ from librechat_llm import (
     _summarize_error_for_log,
     _payload_has_glasshive_tool_call,
     _NoResponseStreamGuard,
+    _VoiceTtsDeltaBuffer,
     is_no_response_only,
     format_insights_for_direct_speech,
 )
@@ -59,6 +60,139 @@ class _FakeListenOnlySession:
     def get(self, *args, **kwargs):
         self.get_calls.append((args, kwargs))
         raise AssertionError("Listen-Only responses must not open an SSE stream")
+
+
+class _FakeJsonResponse:
+    status = 200
+
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return self._payload
+
+    async def text(self):
+        return ""
+
+
+class _FakeClosedSseContent:
+    async def iter_any(self):
+        if False:
+            yield b""
+
+
+class _FakeClosedSseResponse:
+    status = 200
+    content = _FakeClosedSseContent()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self):
+        return ""
+
+
+class _FakeClosedStreamSession:
+    def __init__(self, *args, **kwargs):
+        self.post_calls = []
+        self.get_calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, *args, **kwargs):
+        self.post_calls.append((url, args, kwargs))
+        if str(url).endswith("/abort"):
+            return _FakeJsonResponse({"success": True, "aborted": "stream_voice_1"})
+        return _FakeJsonResponse({"streamId": "stream_voice_1", "conversationId": "conv_1"})
+
+    def get(self, *args, **kwargs):
+        self.get_calls.append((args, kwargs))
+        return _FakeClosedSseResponse()
+
+
+class _FakeBlockingSseContent:
+    def __init__(self, started: asyncio.Event):
+        self.started = started
+
+    async def iter_any(self):
+        self.started.set()
+        await asyncio.sleep(60)
+        if False:
+            yield b""
+
+
+class _FakeBlockingSseResponse:
+    status = 200
+
+    def __init__(self, started: asyncio.Event):
+        self.content = _FakeBlockingSseContent(started)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self):
+        return ""
+
+
+class _FakeSlowAbortResponse:
+    status = 200
+
+    def __init__(self, session: "_FakeBlockingStreamSession"):
+        self.session = session
+
+    async def __aenter__(self):
+        await asyncio.sleep(0.01)
+        self.session.abort_completed = True
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return {"success": True, "aborted": "stream_voice_cancel_1"}
+
+    async def text(self):
+        return ""
+
+
+class _FakeBlockingStreamSession:
+    def __init__(self, *args, **kwargs):
+        self.post_calls = []
+        self.get_calls = []
+        self.sse_started = asyncio.Event()
+        self.abort_completed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, *args, **kwargs):
+        self.post_calls.append((url, args, kwargs))
+        if str(url).endswith("/abort"):
+            return _FakeSlowAbortResponse(self)
+        return _FakeJsonResponse({"streamId": "stream_voice_cancel_1", "conversationId": "conv_1"})
+
+    def get(self, *args, **kwargs):
+        self.get_calls.append((args, kwargs))
+        return _FakeBlockingSseResponse(self.sse_started)
 
 
 class TestExtractLastUserText(unittest.TestCase):
@@ -103,6 +237,82 @@ class TestListenOnlyStream(unittest.TestCase):
 
         self.assertEqual(len(fake_session.post_calls), 1)
         self.assertEqual(fake_session.get_calls, [])
+
+    def test_posts_per_turn_stream_id_to_librechat(self) -> None:
+        fake_session = _FakeListenOnlySession()
+        captured_stream_ids: list[str] = []
+
+        async def run_stream() -> None:
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["ambient transcript"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            stream = llm.chat(chat_ctx=ctx)
+            captured_stream_ids.append(stream._request_id)
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                await stream._run()
+
+        asyncio.run(run_stream())
+
+        self.assertEqual(len(fake_session.post_calls), 1)
+        post_json = fake_session.post_calls[0][1]["json"]
+        self.assertEqual(post_json["streamId"], captured_stream_ids[0])
+        self.assertTrue(post_json["streamId"].startswith("lc_"))
+
+    def test_aborts_librechat_stream_when_sse_closes_without_final_event(self) -> None:
+        fake_session = _FakeClosedStreamSession()
+        os.environ["VIVENTIUM_VOICE_SSE_MAX_RETRIES"] = "0"
+        os.environ["VIVENTIUM_VOICE_SSE_RETRY_DELAY_S"] = "0.01"
+        try:
+            async def run_stream() -> None:
+                ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+                llm = LibreChatLLM(
+                    origin="http://librechat.test",
+                    auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+                )
+                stream = llm.chat(chat_ctx=ctx)
+                with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                    await stream._run()
+
+            asyncio.run(run_stream())
+        finally:
+            os.environ.pop("VIVENTIUM_VOICE_SSE_MAX_RETRIES", None)
+            os.environ.pop("VIVENTIUM_VOICE_SSE_RETRY_DELAY_S", None)
+
+        self.assertGreaterEqual(len(fake_session.get_calls), 1)
+        post_urls = [call[0] for call in fake_session.post_calls]
+        self.assertIn("http://librechat.test/api/viventium/voice/chat", post_urls)
+        self.assertIn(
+            "http://librechat.test/api/viventium/voice/stream/stream_voice_1/abort",
+            post_urls,
+        )
+
+    def test_aborts_librechat_stream_when_livekit_cancels_task(self) -> None:
+        async def run_stream() -> _FakeBlockingStreamSession:
+            fake_session = _FakeBlockingStreamSession()
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            stream = llm.chat(chat_ctx=ctx)
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                task = asyncio.create_task(stream._run())
+                await asyncio.wait_for(fake_session.sse_started.wait(), timeout=1.0)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            return fake_session
+
+        fake_session = asyncio.run(run_stream())
+
+        post_urls = [call[0] for call in fake_session.post_calls]
+        self.assertIn(
+            "http://librechat.test/api/viventium/voice/stream/stream_voice_cancel_1/abort",
+            post_urls,
+        )
+        self.assertTrue(fake_session.abort_completed)
 
 
 class TestFinalEventHelpers(unittest.TestCase):
@@ -294,6 +504,55 @@ class TestNoResponseStreamingGuard(unittest.TestCase):
         suppressed, pending = guard.finalize("{NTA} Useful follow-up")
         self.assertFalse(suppressed)
         self.assertEqual(pending, [])
+
+
+class TestVoiceTtsDeltaBuffer(unittest.TestCase):
+    def test_buffers_tiny_initial_i_until_phrase_boundary(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+
+        emitted: list[str] = []
+        emitted.extend(buffer.feed("I"))
+        emitted.extend(buffer.feed(" hear"))
+        self.assertEqual(emitted, [])
+
+        emitted.extend(buffer.feed(" you."))
+        self.assertEqual(emitted, ["I hear you."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_preserves_spaces_inside_buffered_phrase(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+        emitted: list[str] = []
+        for delta in ["Yeah,", " that", " lands."]:
+            emitted.extend(buffer.feed(delta))
+
+        self.assertEqual(emitted, ["Yeah, that lands."])
+
+    def test_flushes_short_complete_phrase_without_waiting_for_finalize(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+        self.assertEqual(buffer.feed("Okay."), ["Okay."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_repairs_missing_space_after_sentence_boundary(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+        self.assertEqual(
+            buffer.feed("That tracks with the rebound after stopping Strattera."),
+            ["That tracks with the rebound after stopping Strattera."],
+        )
+
+        self.assertEqual(buffer.feed("What's hitting hardest right now?"), [" What's hitting hardest right now?"])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_does_not_insert_spaces_inside_split_word_tokens(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+        self.assertEqual(buffer.feed("Emotion"), [])
+        self.assertEqual(buffer.feed("al"), [])
+        self.assertEqual(buffer.feed(" pain."), ["Emotional pain."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_flushes_remainder_on_finalize(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+        self.assertEqual(buffer.feed("Short"), [])
+        self.assertEqual(buffer.finalize(), ["Short"])
 
 
 if __name__ == "__main__":

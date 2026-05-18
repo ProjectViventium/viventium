@@ -81,7 +81,7 @@ class InstallerUI:
 
     def print_note(self, message: str) -> None:
         if self.console:
-            self.console.print(message, style="dim")
+            self.console.print(message, style="dim", markup=False, highlight=False)
             return
         print(message)
 

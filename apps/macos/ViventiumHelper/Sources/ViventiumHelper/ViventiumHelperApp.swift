@@ -109,6 +109,7 @@ final class HelperController: ObservableObject {
     }
     @Published private(set) var snapshotInProgress: Bool = false
     @Published private(set) var transcriptIngestInProgress: Bool = false
+    @Published private(set) var promptWorkbenchActionInProgress: Bool = false
     @Published private(set) var workflowStatusLabel: String?
     @Published private(set) var workflowActionInProgress: Bool = false
     @Published private(set) var openURLString: String = "http://localhost:3190"
@@ -133,8 +134,10 @@ final class HelperController: ObservableObject {
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
     private var launchAtLoginRefreshTask: Task<Void, Never>?
+    private let automaticTerminationReason = "Viventium status-bar helper keeps the local runtime available after login."
 
     init() {
+        ProcessInfo.processInfo.disableAutomaticTermination(self.automaticTerminationReason)
         self.config = Self.loadConfig()
         self.helperLogURL = Self.makeHelperLogURL(appSupportDir: self.config?.appSupportDir)
         self.launchAtLoginEnabled = Self.launchAtLoginFastPathEnabled()
@@ -184,6 +187,14 @@ final class HelperController: ObservableObject {
 
     var transcriptIngestActionDisabled: Bool {
         self.transcriptIngestInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
+    }
+
+    var promptWorkbenchActionDisabled: Bool {
+        self.promptWorkbenchActionInProgress || self.config == nil || self.configUsesProtectedRepoRoot
+    }
+
+    var promptWorkbenchMenuTitle: String {
+        self.promptWorkbenchActionInProgress ? "Prompt Workbench (Working...)" : "Prompt Workbench"
     }
 
     var workflowActionDisabled: Bool {
@@ -581,6 +592,30 @@ final class HelperController: ObservableObject {
         )
     }
 
+    func openPromptWorkbench() {
+        self.runPromptWorkbenchAction(
+            action: "open",
+            successTitle: nil,
+            successFallbackMessage: "Prompt Workbench opened in your browser."
+        )
+    }
+
+    func startPromptWorkbench() {
+        self.runPromptWorkbenchAction(
+            action: "start",
+            successTitle: "Prompt Workbench started",
+            successFallbackMessage: "The local Prompt Workbench web app is running."
+        )
+    }
+
+    func stopPromptWorkbench() {
+        self.runPromptWorkbenchAction(
+            action: "stop",
+            successTitle: "Prompt Workbench stopped",
+            successFallbackMessage: "Only the Prompt Workbench web app was stopped. Viventium keeps its current running state."
+        )
+    }
+
     func approveFeatureWorkflow() {
         self.runWorkflowControlAction(
             title: "Approve Build or Fix?",
@@ -597,6 +632,56 @@ final class HelperController: ObservableObject {
             arguments: ["workflows", "cancel"],
             logFileName: "helper-workflows.log"
         )
+    }
+
+    private func runPromptWorkbenchAction(action: String, successTitle: String?, successFallbackMessage: String) {
+        guard let config else {
+            self.presentMissingConfigAlert()
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "\(action) Prompt Workbench")
+            return
+        }
+        guard !self.promptWorkbenchActionInProgress else {
+            return
+        }
+        self.promptWorkbenchActionInProgress = true
+        self.log("Prompt Workbench \(action) requested")
+        Task.detached(priority: .userInitiated) {
+            let result = Self.runCLICaptured(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["prompt-workbench", action, "--json"],
+                logFileName: "helper-prompt-workbench.log"
+            )
+            let resultURL = Self.parseJSONObject(result.stdout)?["url"] as? String
+            await MainActor.run {
+                self.promptWorkbenchActionInProgress = false
+                if result.exitStatus == 0 {
+                    self.log("Prompt Workbench \(action) completed")
+                    guard let successTitle else {
+                        return
+                    }
+                    let message = resultURL.map { "\($0)\n\n\(successFallbackMessage)" } ?? successFallbackMessage
+                    let alert = NSAlert()
+                    alert.messageText = successTitle
+                    alert.informativeText = message
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                    return
+                }
+
+                self.log("Prompt Workbench \(action) failed with status \(result.exitStatus)")
+                let alert = NSAlert()
+                alert.messageText = "Prompt Workbench action failed"
+                alert.informativeText = "Check helper-prompt-workbench.log, then try again."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
     }
 
     private func runWorkflowControlAction(title: String, message: String, arguments: [String], logFileName: String) {
@@ -2359,8 +2444,7 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
 
     private nonisolated static func updateCheckSummary(stdout: String) -> UpdateCheckSummary {
         guard
-            let data = stdout.data(using: .utf8),
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let root = self.parseJSONObject(stdout)
         else {
             return UpdateCheckSummary(
                 title: "Could not read update check",
@@ -2394,6 +2478,16 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
             updateAvailable: false,
             blockers: []
         )
+    }
+
+    private nonisolated static func parseJSONObject(_ stdout: String) -> [String: Any]? {
+        guard
+            let data = stdout.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return root
     }
 
     private nonisolated static func workflowStatusLabel(appSupportDir: String) -> String? {
@@ -2937,6 +3031,24 @@ struct ViventiumHelperApp: App {
                 }
                 .help("Look for Viventium updates, show blockers, and ask before installing anything.")
                 .disabled(self.controller.workflowActionDisabled)
+                Menu(self.controller.promptWorkbenchMenuTitle) {
+                    Button("Open") {
+                        self.controller.openPromptWorkbench()
+                    }
+                    .help("Start Prompt Workbench if needed, then open it in your browser.")
+                    .disabled(self.controller.promptWorkbenchActionDisabled)
+                    Button("Start") {
+                        self.controller.startPromptWorkbench()
+                    }
+                    .help("Start only the local Prompt Workbench web app.")
+                    .disabled(self.controller.promptWorkbenchActionDisabled)
+                    Button("Stop") {
+                        self.controller.stopPromptWorkbench()
+                    }
+                    .help("Stop only the Prompt Workbench web app; the Viventium runtime keeps its current state.")
+                    .disabled(self.controller.promptWorkbenchActionDisabled)
+                }
+                .disabled(self.controller.promptWorkbenchActionDisabled)
                 Button(self.controller.backupActionLabel) {
                     self.controller.createBackupSnapshot()
                 }

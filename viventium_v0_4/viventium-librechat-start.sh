@@ -3121,10 +3121,10 @@ default_voice_stt_vad_min_silence() {
   local provider="${1:-${VIVENTIUM_STT_PROVIDER:-whisper_local}}"
   provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
   if [[ "$provider" == "whisper_local" || "$provider" == "pywhispercpp" ]]; then
-    # Local whisper has no provider-native semantic endpointing when the optional
-    # turn detector is unavailable, so its VAD fallback needs a less-eager pause
-    # budget than remote/STT-owned routes.
-    printf '%s\n' "1.0"
+    # Local whisper is final-only, so the VAD silence gate is the main visible
+    # transcript delay before inference. Keep it responsive; min-speech remains
+    # the guardrail against one-syllable noise.
+    printf '%s\n' "0.5"
     return 0
   fi
 
