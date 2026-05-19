@@ -193,6 +193,38 @@ Requirements:
 - Activation awareness injected into the main-agent turn must tell the main agent which background
   agents activated, why they activated, what scope they own, and which activated scopes the main
   agent can cover through connected direct tools.
+- Phase A notice mode is configurable. The shipped default is
+  `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice`: voice calls may release Phase A
+  as soon as the first activated background detector returns `should_activate=true`, while web,
+  Telegram, scheduler, and other text surfaces still wait for the complete configured detection
+  budget:
+  - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=all_within_budget` waits for the full configured
+    activation set to resolve or time out inside the budget before injecting activation awareness.
+  - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated` may release Phase A as soon as the first
+    activation classifier returns `should_activate=true` after structured direct-action ownership
+    gates are applied. Provider-unavailable and timeout terminal cards must not trigger early
+    release.
+  - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice` is the default and applies that
+    early-release behavior only to the voice-call surface; web, Telegram, scheduler, and other text
+    surfaces keep `all_within_budget`.
+- The shipped voice default keeps `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false` so the
+  main voice LLM waits only for the first true activation notice or the tight voice Phase A wait
+  budget. Fully async voice detection is an explicit opt-in and must be documented as a different
+  tradeoff because it lets the main model start without Phase A activation awareness.
+- When fully async voice detection is explicitly enabled, detection should run in the background with
+  `all_within_budget` semantics so Phase B receives the complete activated set. The early
+  `any_activated_on_voice` notice optimization applies to the shipped sync Phase A path, not to the
+  fully async opt-in path where the main model has already started.
+- When Phase A releases early from first activation, the main-agent instruction must be generic:
+  it may say background processing is already brewing and the full activated scope is still being
+  determined, but it must not present the first activation as the complete list and must not quote a
+  first activation reason as if all other detectors were final. The full activation detection must
+  continue, and Phase B must execute the final activated set once after that final detection result
+  resolves.
+- Early Phase A notice must fail closed to `all_within_budget` when any configured tool-hold cortex
+  has an unowned direct-action scope on the current request, even if voice async Phase A was not
+  requested. Fast notice is a latency optimization, not permission to speak ahead of direct-action
+  ownership checks.
 - If an activated background scope is also covered by a connected main-agent direct-action surface,
   Phase A must run the main agent first. The main agent should use its own verified tool results for
   the directly owned portion while Phase B continues as supplemental evidence.
@@ -372,7 +404,10 @@ Use this order so the fix stays surgical:
   changing activation semantics.
 - Late background activation recovery is opt-in only. By default, if activation was not known before
   the main answer starts, runtime must not later surface new activation cards that the main model
-  never saw in its Phase A context.
+  never saw in its Phase A context. The explicit `any_activated` / `any_activated_on_voice` notice
+  modes are the narrow exception: Phase A has already been told generically that background
+  detection is still active, and late activation cards must be marked as not seen by Phase A while
+  Phase B waits for and executes the final activated set.
 - On May 10, 2026, local QA reproduced a Groq outage while the operator's VPN was enabled. That is
   an environment/provider-reachability failure, not evidence to change Viventium's default
   activation model family. The supported baseline remains

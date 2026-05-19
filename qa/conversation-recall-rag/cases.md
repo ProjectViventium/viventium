@@ -8,8 +8,8 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `RAG-001` | Recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, RAG API, embeddings preflight, logs | `tests/release/test_rag_api_override_contract.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `RAG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `RAG-001` | Recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, RAG API, embeddings preflight, logs | `tests/release/test_rag_api_override_contract.py` plus user-grade QA when visible | PARTIAL 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)); RAG/vector path passed, authenticated browser chat not run to avoid private session/cloud use |
+| `RAG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)) |
 
 ## `RAG-001` - Core User Flow
 
@@ -24,7 +24,7 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_rag_api_override_contract.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: PARTIAL 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)); RAG/vector path passed, authenticated browser chat not run to avoid private session/cloud use.
 
 ## `RAG-002` - Public-Safe Evidence Record
 
@@ -39,7 +39,7 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)).
 
 ## Natural User Use Case Checklist
 
@@ -48,9 +48,9 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `RAG-UC-001` | On browser chat, RAG API, embeddings preflight, logs, verify that recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | owning requirement for `RAG-001` / `RAG-001` | browser chat, RAG API, embeddings preflight, logs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `RAG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | The user sees an honest setup, retry, or degraded-state result for RAG-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `RAG-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | RAG-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `RAG-UC-001` | On browser chat, RAG API, embeddings preflight, logs, verify that recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | owning requirement for `RAG-001` / `RAG-001` | browser chat, RAG API, embeddings preflight, logs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-001. | User-visible behavior matches source, docs, persisted state, and logs | PARTIAL 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)); RAG/vector path passed, authenticated browser chat not run |
+| `RAG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | The user sees an honest setup, retry, or degraded-state result for RAG-002; no fake success is accepted. | PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)) |
+| `RAG-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | RAG-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)) |
 
 ## Release Test Traceability
 

@@ -553,6 +553,32 @@ A private local benchmark pass over a real local corpus refined the local-first 
   - doctor reports whether the configured model is already ready or will be pulled on first start
   - the launcher pulls the configured model before RAG startup if it is missing
   - untagged configured names must still match host-reported `:latest` variants
+- The local RAG Docker sidecars are bounded local services, not unbounded background daemons:
+  - RAG API binds only to loopback, defaults to a 1536 MiB memory limit, 1 CPU, PID cap, and
+    rotated Docker logs
+  - PGVector binds only to loopback, defaults to a 512 MiB memory limit, fractional CPU cap, PID
+    cap, and rotated Docker logs
+  - the launcher keeps PGVector data on the configured host state path, so applying these runtime
+    guardrails must not delete conversation-recall vector state
+  - if a very large local corpus exceeds the default caps, the supported recovery is to raise the
+    `VIVENTIUM_RAG_*` resource override and restart the local RAG sidecars; until then the existing
+    health gate must fail closed rather than pretending vector recall is current
+  - local Ollama embedding model residency defaults to `VIVENTIUM_RAG_OLLAMA_KEEP_ALIVE_SECONDS=300`
+    in the RAG sidecar, matching Ollama's performance-oriented 5-minute default so active chat
+    recall avoids repeated cold loads while making the local residency window explicit
+  - negative keep-alive values are rejected by the RAG override because they would keep local models
+    resident indefinitely; large local rebuilds should raise the positive seconds value instead
+- Environment policy for local Ollama embedding residency:
+  - laptop / single-user local prod default: keep the 300-second residency window; this balances
+    battery/RAM/GPU pressure against warm Recall during normal back-and-forth chat
+  - low-resource or battery-sensitive local profile: lower
+    `VIVENTIUM_RAG_OLLAMA_KEEP_ALIVE_SECONDS` with the known tradeoff that Recall may cold-load more
+    often
+  - workstation, appliance, or server-style cognitive runtime: raise
+    `VIVENTIUM_RAG_OLLAMA_KEEP_ALIVE_SECONDS` to a large positive value so the embedding model stays
+    hot for speed, with explicit resource monitoring and caps sized for that environment
+  - this lever is performance/resource policy only; it must not change recall eligibility,
+    health/freshness gates, corpus semantics, or any prompt/tool behavior
 - The current startup contract still treats the RAG sidecar as conversation-recall-owned:
   - enabling file search alone does not yet independently force RAG startup
   - that broader split-ownership/startup decision remains future architecture work

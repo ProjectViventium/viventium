@@ -1,6 +1,7 @@
 import inspect
 import os
 import sys
+import tempfile
 import types
 import unittest
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from worker import (
     _apply_requested_voice_route,
+    _attach_room_diagnostics,
     _build_assemblyai_stt_kwargs,
     _build_voice_capability_catalog,
     _ensure_turn_detector_runner_registered,
@@ -20,6 +22,9 @@ from worker import (
     _turn_detector_model_is_cached,
     _turn_detector_runner_registered,
     _vad_kwargs_cache_key,
+    _active_voice_job_markers,
+    _clear_active_voice_job_marker,
+    _mark_active_voice_job,
     _voice_sync_transcription_enabled,
     build_stt_selection,
     load_env,
@@ -29,6 +34,98 @@ from worker import (
 
 
 class TestWorkerTurnHandling(unittest.TestCase):
+    def test_active_voice_job_markers_are_process_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "TMPDIR": tmp_dir,
+                    "VIVENTIUM_VOICE_WORKER_RUN_ID": "test-run",
+                },
+                clear=False,
+            ):
+                marker = _mark_active_voice_job("job-1")
+                self.assertIn(marker, _active_voice_job_markers())
+                _clear_active_voice_job_marker(marker)
+                self.assertEqual(_active_voice_job_markers(), [])
+
+    def test_room_participant_disconnect_does_not_clear_active_marker(self) -> None:
+        class FakeRoom:
+            name = "room"
+
+            def __init__(self) -> None:
+                self.handlers = {}
+                self.remote_participants = {"owner": object()}
+
+            def on(self, event_name):
+                def _register(handler):
+                    self.handlers[event_name] = handler
+                    return handler
+
+                return _register
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "TMPDIR": tmp_dir,
+                    "VIVENTIUM_VOICE_WORKER_RUN_ID": "test-run",
+                },
+                clear=False,
+            ):
+                marker = _mark_active_voice_job("job-1")
+                room = FakeRoom()
+                ctx = SimpleNamespace(room=room)
+                participant = SimpleNamespace(identity="observer")
+
+                _attach_room_diagnostics(
+                    ctx,
+                    call_session_id="test-call",
+                    active_job_marker=marker,
+                )
+                room.handlers["participant_disconnected"](participant)
+
+                self.assertIn(marker, _active_voice_job_markers())
+                _clear_active_voice_job_marker(marker)
+
+    def test_room_empty_participant_disconnect_clears_active_marker(self) -> None:
+        class FakeRoom:
+            name = "room"
+
+            def __init__(self) -> None:
+                self.handlers = {}
+                self.remote_participants = {}
+
+            def on(self, event_name):
+                def _register(handler):
+                    self.handlers[event_name] = handler
+                    return handler
+
+                return _register
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "TMPDIR": tmp_dir,
+                    "VIVENTIUM_VOICE_WORKER_RUN_ID": "test-run",
+                },
+                clear=False,
+            ):
+                marker = _mark_active_voice_job("job-1")
+                room = FakeRoom()
+                ctx = SimpleNamespace(room=room)
+                participant = SimpleNamespace(identity="owner")
+
+                _attach_room_diagnostics(
+                    ctx,
+                    call_session_id="test-call",
+                    active_job_marker=marker,
+                )
+                room.handlers["participant_disconnected"](participant)
+
+                self.assertNotIn(marker, _active_voice_job_markers())
+
     def test_optional_module_available_handles_missing_parent_package(self) -> None:
         with patch(
             "worker.importlib.util.find_spec",
@@ -311,8 +408,61 @@ class TestWorkerTurnHandling(unittest.TestCase):
         ):
             env = load_env()
 
-        self.assertEqual(env.voice_job_memory_warn_mb, 1400.0)
+        self.assertEqual(env.voice_job_memory_warn_mb, 2200.0)
         self.assertEqual(env.voice_job_memory_limit_mb, 0.0)
+
+    def test_load_env_keeps_chatterbox_only_memory_warning_threshold(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_PROVIDER": "assemblyai",
+                "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_job_memory_warn_mb, 1400.0)
+
+    def test_load_env_keeps_hosted_voice_memory_warning_threshold(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_PROVIDER": "assemblyai",
+                "VIVENTIUM_TTS_PROVIDER": "openai",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_job_memory_warn_mb, 500.0)
+
+    def test_local_whisper_defaults_tts_prewarm_off_to_protect_stt_latency(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertFalse(env.voice_prewarm_local_tts)
+
+    def test_local_whisper_respects_explicit_tts_prewarm_override(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                "VIVENTIUM_TTS_PROVIDER": "local_chatterbox_turbo_mlx_8bit",
+                "VIVENTIUM_VOICE_PREWARM_LOCAL_TTS": "true",
+            },
+            clear=True,
+        ):
+            env = load_env()
+
+        self.assertTrue(env.voice_prewarm_local_tts)
 
     def test_load_env_respects_memory_warning_overrides(self) -> None:
         with patch.dict(

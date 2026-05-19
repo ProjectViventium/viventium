@@ -104,6 +104,17 @@ parameter bag for that spoken follow-up path.
   primary model bag.
 - **Voice override cleared after prior tuning**: Clear resets provider/model and stores an empty
   voice parameter bag so stale voice-only settings do not silently persist.
+- **Same provider/model with voice-only parameters**: If the Voice Call LLM selects the same
+  provider/model as the primary model but carries a non-empty `voice_llm_model_parameters` bag,
+  runtime must still apply the voice parameter bag. Same-route voice params are an intentional
+  override, not a no-op. This is required for primary Anthropic Opus text chat with
+  `thinking: true` while voice uses the same Opus model with `thinking: false`.
+- **Anthropic voice `thinking: false`**: For Anthropic, persisted `thinking: false` means "consume
+  this UI/DB flag and omit Anthropic thinking from the runtime request." It must not be passed into
+  the Agents graph/client options as a literal `false`, because downstream Anthropic/LangGraph
+  plumbing can treat a non-null `thinking` key as an active thinking configuration. Runtime must
+  remove `thinking`, `thinkingBudget`, `thinkingLevel`, `effort`, and OpenAI/xAI-style
+  `reasoning_effort` before constructing the Anthropic voice run.
 - **xAI Grok 4.3 no-reasoning voice route**: For xAI Chat Completions, low-latency voice must use
   `reasoning_effort: "none"` in the provider request. In LibreChat's LangChain ChatOpenAI wrapper,
   the xAI Chat Completions route must carry that field through `modelKwargs.reasoning_effort`; a

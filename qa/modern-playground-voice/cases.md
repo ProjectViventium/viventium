@@ -4,10 +4,14 @@
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MPV-UC-001` | Start a call from an authenticated LibreChat conversation and send a simple typed or spoken prompt. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-001` | LibreChat browser plus Modern Playground | Voice gateway logs, LiveKit state, persisted chat message, generated voice config | Call connects, agent joins, transcript shows a real assistant answer. | See latest dated reports in `reports/` |
+| `MPV-UC-001` | Start a call from an authenticated LibreChat conversation and send a simple typed or spoken prompt. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-001` | LibreChat browser plus Modern Playground | Voice gateway logs, LiveKit state, persisted chat message, generated voice config | Call connects, agent joins, transcript shows a real assistant answer. | 2026-05-18 PARTIAL PASS for synthetic microphone/worker dispatch; authenticated answer still required |
 | `MPV-UC-002` | Interrupt or send a second turn while prior work or follow-up timing is still active. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-003` | Modern Playground call | Transcript, stream ids, Mongo message chain, voice gateway timing logs | Turns stay distinct, no stale follow-up is spoken as current conversation state. | 2026-05-15 PARTIAL |
 | `MPV-UC-003` | Ask the voice agent to look something up when Web Search appears enabled. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `MPV-006` | Modern Playground and linked LibreChat browser conversation | Visible transcript/chat, persisted `web_search` tool-call parts, local search backend health, hosted search backend status, request logs, Docker/container state for local providers, browser/local-delegation fallback when available | Voice/search either returns grounded evidence or says the exact degraded provider class without inventing facts; named-entity/current-fact failures use fallback before stopping. | FAIL (escaped 2026-05-18; fix run pending) |
 | `MPV-UC-004` | Reload linked chat after a voice turn that used model/tooling. | `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-005` | LibreChat browser conversation | DB message content parts, logs, transcript, generated no-reasoning config | Visible chat persists audible answer only; no reasoning blocks or raw private transcript leak. | 2026-05-15 PASS for simple turn |
+| `MPV-UC-005` | Open a modern-playground call page while voice settings are cold, slow, or temporarily unavailable. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-007` | Modern Playground browser page plus launcher/runtime logs | Browser network timing, visible CTA state, retry copy, Next.js route compile logs, call-session DB counts | Start chat remains available, settings loading is bounded/retryable, and cold-route compile is prewarmed on launcher startup. | 2026-05-18 PASS for pre-call gate and bounded settings load; full microphone join not rerun |
+| `MPV-UC-006` | Speak a thought, pause for `0.7s` to `1.5s`, then continue speaking in the same LiveKit call. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-008` | Modern Playground browser with fake microphone WAV, LiveKit, voice worker, Mongo | Voice gateway timing logs, Listen-Only ingress record, Mongo transcript message count, synthetic fixture manifest | Both endpointed STT segments are persisted as one continued transcript turn/message inside the continuation window. | 2026-05-18 PASS with synthetic TTS/fake-mic QA |
+| `MPV-UC-007` | Click Start chat once and wait for the call to connect. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-009` | Modern Playground browser page, LiveKit, voice gateway logs | Button state, browser console/network, LiveKit microphone publish, `JT_PUBLISHER` assignment, call-session DB state | One click starts the call, duplicate clicks are disabled, and the microphone turns on after room connect. | 2026-05-18 PASS for one-click visible UI and duplicate-request prevention; full fresh spoken-turn remains under broader call cases |
+| `MPV-UC-008` | Install or bootstrap with the default voice-capable configuration. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-010` | Installer/bootstrap component selection and launcher help | `bootstrap_components.select_components`, compiled runtime env, launcher flags | Default selection includes `agent-starter-react` and excludes `agents-playground`; classic UI appears only after explicit classic selection. | 2026-05-19 automated release case added |
 
 ## MPV-001 Authenticated Call Launch
 
@@ -26,7 +30,9 @@
 - Expected Result: LiveKit connects, the voice worker receives the job, and the assistant returns a
   real answer. Forbidden result: `Session ended / Agent left the room unexpectedly`.
 - Evidence: `qa/modern-playground-voice/README.md`
-- Last Run: see latest dated execution evidence in `README.md`.
+- Last Run: 2026-05-18 partial pass for synthetic microphone/worker dispatch in
+  `reports/2026-05-18-whispercpp-turn-taking-endpointing.md`; authenticated answer acceptance still
+  required.
 
 ## MPV-002 Local Whisper Exact-Model Self-Heal
 
@@ -116,8 +122,10 @@
   missing per-turn stream id; voice-only prompt/context truncation that breaks parity; hidden model
   remap; raw private transcript or call-session identifiers copied into public QA artifacts.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-15-livekit-parity-latency-followup-qa.md`
-- Last Run: 2026-05-15 fresh authenticated LiveKit typed-transcript run completed for a simple
-  non-tool turn. Current-data/tool-call timing and actual audio first-sound capture remain open.
+- Last Run: 2026-05-19 in `reports/2026-05-19-livekit-tts-misalignment-fixes.md` applied the
+  LiveKit API, latency logging, package-pin, and xAI first-audio optimization fixes while preserving
+  async transcript output. Browser first audible-frame capture and current-data/tool-call timing
+  remain open.
 
 ## MPV-005 Voice Transcript Must Not Persist Reasoning Blocks
 
@@ -185,6 +193,152 @@
   API log failure class or returned-source count, generated config state, and privacy review.
 - Last Run: FAIL (escaped 2026-05-18 from live local browser evidence; regression case added, product
   fix and full rerun pending).
+
+## MPV-007 Voice Settings Loading Must Not Block Start Chat
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
+- User Outcome: Opening a call deep link should not feel stuck just because optional voice-settings
+  display data is still loading. The user can start the call while settings finish loading or retry.
+- Surfaces: Modern Playground browser page, playground API proxy, LibreChat call-session voice
+  settings route, launcher startup logs, Mongo call-session collection.
+- Preconditions: local stack running; synthetic active call-session deep link available; no private
+  prompt, call id, or user identifier copied into evidence.
+- Steps:
+  1. Open a synthetic modern-playground call deep link in a real browser.
+  2. Simulate or observe a slow `/api/call-session-voice-settings` response.
+  3. Confirm the primary button is enabled as `Start chat` while the settings panel still shows a
+     loading or retry state.
+  4. Let the settings request time out or recover and verify the visible text is Viventium-specific
+     recovery copy, not a raw browser fetch exception.
+  5. Inspect launcher/runtime logs for cold compile or prewarm evidence for
+     `call-session-voice-settings`, `call-session-state`, and `connection-details`.
+  6. Inspect call-session DB counts and indexes only as supporting evidence; DB hygiene cannot
+     replace the browser-visible gate check.
+- Expected Result: `Start chat` remains available during settings loading. Slow settings fetches are
+  timeout-bounded with a retry path. Launcher-managed startup prewarms the voice startup routes so a
+  first real call page is not the route compiler's first hit.
+- Forbidden Result: the page stays indefinitely at `Loading your voice settings...`; the primary
+  call action is disabled only because voice settings are still loading; raw `Failed to fetch` or
+  stack text is shown to users; public QA artifacts contain real call-session ids, local usernames,
+  or secret-bearing URLs.
+- Evidence: `qa/modern-playground-voice/reports/2026-05-18-voice-settings-startup-loading.md`
+- Last Run: 2026-05-18 PASS for the pre-call browser gate and timeout wording; full microphone join
+  was not rerun because this case targets the pre-call loading gate.
+
+## MPV-008 Synthetic Audio Pause Continuation
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
+- User Outcome: Local Whisper can use a responsive `0.5s` silence target without forcing a human
+  resumed thought into multiple persisted transcript turns.
+- Surfaces: Modern Playground, LiveKit, Voice Gateway, LibreChat voice route, Mongo transcript
+  persistence.
+- Preconditions: local runtime running from the current checkout; local Whisper.cpp route available;
+  synthetic non-personal TTS WAV fixtures generated under `output/qa/`.
+- Steps:
+  1. Generate synthetic speech fixtures for short speech, long speech, a `0.7s` pause, and a `1.5s`
+     pause.
+  2. Launch the modern playground with Chromium fake microphone audio.
+  3. Start the call, enable the microphone if the UI requests it, and wait for real LiveKit STT
+     persistence.
+  4. Assert the pause fixtures match expected text and produce at most one Listen-Only transcript
+     row inside the continuation window.
+  5. Inspect voice logs for VAD/transcription timing and DB cleanup counts for synthetic records.
+- Expected Result: Pause fixtures with `0.7s` and `1.5s` silence persist as one transcript message
+  with both clauses. Short and long fixtures still persist complete expected text. Explicit LiveKit
+  dispatch is created for the claim winner, and the worker job is assigned.
+- Forbidden Result: `Session ended / Agent did not join the room`; two transcript rows for a resumed
+  thought inside the continuation window; schema/mocks disagree about fields required for
+  continuation; public QA artifacts contain raw call IDs or local absolute paths.
+- Evidence: `qa/modern-playground-voice/reports/2026-05-18-synthetic-audio-livekit-continuation.md`
+- Last Run: 2026-05-18 PASS for short, long, `0.7s` pause, and `1.5s` pause with synthetic
+  TTS/fake-microphone LiveKit QA. The visible playground transcript panel was not proven in this
+  harness; persistence/log evidence is the accepted backend proof for this case.
+
+## MPV-008B Local Whisper Large-Turbo Latency Budget
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
+- User Outcome: Local `large-v3-turbo` Whisper.cpp transcripts appear promptly after completed
+  speech without changing the selected model or weakening pause-continuation behavior.
+- Surfaces: Modern Playground, LiveKit, Voice Gateway, pywhispercpp, Mongo transcript persistence,
+  voice latency logs.
+- Preconditions: canonical local runtime running from the current checkout; `whisper_local` /
+  `pywhispercpp` selected with `large-v3-turbo`; synthetic non-personal TTS WAV fixtures include
+  short, long, and pause-continuation speech plus leading silence for fake-microphone readiness.
+- Steps:
+  1. Run direct pywhispercpp benchmarks for current and optimized transcribe parameters.
+  2. Promote/restart the local runtime and verify worker prewarm performs a real inference warmup.
+  3. Run fake-microphone LiveKit QA for short speech, a `0.7s` pause continuation, and longer
+     speech.
+  4. Capture per-stage voice logs for VAD silence, PCM conversion/resample, whisper.cpp inference,
+     LiveKit `transcription_delay`, Listen-Only persistence, and DB cleanup.
+  5. For long fixtures above the reduced-context duration gate, assert transcript text equality or a
+     tight WER bound so the latency optimization cannot silently truncate tail audio.
+- Expected Result: Short and long fixtures persist one complete transcript row; the `0.7s` pause
+  persists as one continued row; local Whisper conversion stages are sub-250ms; visible delay is
+  dominated by the intentional `0.5s` VAD silence and measured whisper.cpp inference. Reduced
+  `audio_ctx=768` applies only to short chunks unless explicitly configured.
+- Forbidden Result: silently switching away from `large-v3-turbo`; raw transcript text in latency
+  logs; temp-file STT roundtrips; default reduced audio context on long chunks; local TTS prewarm
+  competing with active local Whisper STT; claiming UI delay without LiveKit/backend timing evidence.
+- Evidence: `qa/modern-playground-voice/reports/2026-05-19-whispercpp-large-v3-turbo-local-optimization.md`
+- Last Run: 2026-05-19 PASS for direct benchmarks plus real browser/fake-microphone LiveKit QA.
+
+## MPV-009 Start Chat Is One Click And Mic Auto-Enables
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
+- User Outcome: The user clicks Start chat once, sees startup progress, and arrives in a call with
+  the microphone on unless browser permission is denied.
+- Surfaces: Modern Playground browser page, LiveKit server, voice gateway, call-session DB.
+- Preconditions: local stack running; active synthetic call-session deep link available; browser can
+  grant microphone access or the permission-denied state is explicitly recorded.
+- Steps:
+  1. Open a modern-playground call deep link in a real browser.
+  2. Click `Start chat` exactly once.
+  3. Confirm the primary button changes to startup progress and is disabled while connection is in
+     flight.
+  4. Confirm the room connects and the microphone publishes automatically after room connect.
+  5. Inspect LiveKit logs for user microphone track publish and `JT_PUBLISHER` worker assignment.
+  6. Inspect call-session DB state for active job/worker evidence when a full live call is run.
+- Expected Result: The first click owns the whole startup. The UI never requires a second Start chat
+  click. The temporary pre-connect muted state is not presented as the call default; after connect,
+  the microphone is enabled automatically or a clear microphone permission error is shown.
+- Forbidden Result: a second Start chat click is needed; duplicate `/api/connection-details`
+  requests race each other; the call lands connected but muted without a permission error; public QA
+  artifacts contain real call-session ids, participant ids, local usernames, or secret-bearing URLs.
+- Evidence: `qa/modern-playground-voice/reports/2026-05-18-start-chat-single-click-mic-auto-on.md`
+- Last Run: 2026-05-18 PASS for real-browser one-click UI state and duplicate-request prevention;
+  supporting local runtime logs show the mic-publish path, and fresh full spoken-turn QA remains
+  covered by `MPV-001`, `MPV-004`, and `MPV-008`.
+
+## MPV-010 Modern Playground Is Default And Classic Is Opt-In
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`,
+  `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md`
+- User Outcome: A new or upgrading public install receives the modern LiveKit playground by default
+  and does not clone, install, start, or pin the old `agents-playground` UI unless classic mode is
+  explicitly selected.
+- Surfaces: `bootstrap_components.py`, config compiler output, `bin/viventium start`, full-stack
+  launcher help/flags.
+- Preconditions: public checkout with `components.lock.json`; default or minimal public config.
+- Steps:
+  1. Run the component-selection release tests for no-config, voice-enabled modern, explicit
+     classic, and voice-disabled configs.
+  2. Compile a default runtime config and inspect `PLAYGROUND_VARIANT` /
+     `VIVENTIUM_PLAYGROUND_VARIANT`.
+  3. Inspect launcher flag handling to confirm no supplied playground flag resolves to modern and
+     `--classic-playground` is the only old-UI opt-in.
+  4. During release review, confirm `components.lock.json` pins only the nested repos intentionally
+     shipped in the default runtime path.
+- Expected Result: Default and no-config component selection includes `agent-starter-react` and
+  excludes `agents-playground`. Voice-disabled selection excludes both playground repos. Explicit
+  classic selection includes `agents-playground` and excludes `agent-starter-react`.
+- Forbidden Result: old `agents-playground` is selected by default, cloned because config is absent,
+  started by the launcher without an explicit classic flag, or pinned into a default release solely
+  because a local fallback branch exists.
+- Evidence: `tests/release/test_bootstrap_components.py`,
+  `tests/release/test_config_compiler.py`,
+  `tests/release/test_voice_playground_dispatch_contract.py`
+- Last Run: 2026-05-19 automated release case added; targeted run required before release merge.
 
 ## Release Test Traceability
 

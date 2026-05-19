@@ -26,6 +26,7 @@
     "language": "en",
     "livekit_codec": "pcm",
     "livekit_sample_rate": 24000,
+    "optimize_streaming_latency": 1,
     "telegram_codec": "mp3",
     "telegram_sample_rate": 24000,
     "telegram_bit_rate": 128000
@@ -141,6 +142,7 @@
     "xAI TTS speech tags are provider-specific; they are not SSML and should not be mixed with Cartesia tags.",
     "xAI TTS has no Cartesia-style emotion parameter. Tone and emotion are controlled by natural wording plus documented xAI speech tags.",
     "Wrapping tags must include closing tags and should be used sparingly on short phrases.",
+    "LiveKit voice calls request optimize_streaming_latency=1 on the xAI websocket by default; set VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=0 to disable that runtime query parameter.",
     "Only the LLM may author voice-control markup; runtime preserves, validates, routes, or strips it for display/fallback."
   ]
 }

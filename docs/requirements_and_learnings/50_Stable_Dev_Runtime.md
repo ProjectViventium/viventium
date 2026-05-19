@@ -13,9 +13,12 @@ confusing upstream component boundaries.
 - Dev envs separate app-facing surfaces by default:
   - LibreChat API
   - LibreChat frontend
-  - Modern Playground
+  - Modern LiveKit Playground (`agent-starter-react`)
   - voice health port when needed
+- The classic `agents-playground` UI is not part of local prod or dev-env defaults. It remains an
+  explicit classic-playground opt-in only, so default starts do not spend resources on the old UI.
 - Heavy local services are shared singleton services by default:
+  - Meilisearch conversation search
   - recall/RAG
   - SearXNG
   - Firecrawl
@@ -23,6 +26,10 @@ confusing upstream component boundaries.
   - Microsoft 365 MCP
 - Shared singleton services must not be duplicated merely because a developer starts a dev env.
 - Full isolation is an explicit advanced future mode, not the default.
+- Launcher-managed modern-playground runtimes should prewarm the voice startup API routes before
+  starting the voice worker so local users and developers do not pay the first-hit Next.js dev
+  compile cost on the call page. These prewarm requests are bounded and warn-only so a stuck dev
+  compile does not delay the rest of runtime startup for minutes.
 
 ## Mental Model For Contributors
 
@@ -40,8 +47,9 @@ boundary:
 | --- | --- | --- |
 | LibreChat API | canonical installed port | offset port |
 | LibreChat frontend | canonical installed port | offset port |
-| Modern Playground | canonical installed port | offset port |
+| Modern LiveKit Playground | canonical installed port | offset port |
 | voice health port | canonical installed port | offset port when needed |
+| Meilisearch conversation search | shared singleton | use local prod singleton |
 | recall/RAG | shared singleton | use local prod singleton |
 | SearXNG | shared singleton | use local prod singleton |
 | Firecrawl | shared singleton | use local prod singleton |
@@ -80,7 +88,7 @@ With the default offset, test the two local runtimes at different user-facing UR
 
 Use local prod for normal installed/runtime QA and Telegram checks. Use the dev env for local code
 experiments that should not steal the installed runtime's app-facing ports or state. If the dev env
-needs recall, search, Firecrawl, Google Workspace MCP, or Microsoft 365 MCP behavior, keep the
+needs conversation search, recall, search, Firecrawl, Google Workspace MCP, or Microsoft 365 MCP behavior, keep the
 shared singleton service owner running; those services are intentionally not duplicated by default.
 
 Use this flow when a local development checkout is ready to become the installed local runtime:
@@ -123,6 +131,10 @@ the installed Viventium runtime or any shared singleton service.
 - Do use `prompt-workbench open/start/stop/status` for the standalone prompt QA app.
 - Do keep heavy singleton services shared unless the user explicitly asks for full isolation and QA
   proves the isolation.
+- Do keep Viventium-owned Docker singleton services bounded with source-owned memory, CPU, PID, and
+  log-rotation defaults; live-only container edits are not a durable product fix.
+- Do treat Meilisearch indexes/tasks as derived conversation-search state and rebuild from Mongo
+  only through the supported readiness/sync path.
 - Do keep generated runtime state under App Support out of git.
 - Do not edit generated App Support files and call that a product fix.
 - Do not create a second active-checkout pointer; use the existing runtime-checkout state.

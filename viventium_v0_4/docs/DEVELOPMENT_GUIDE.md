@@ -79,7 +79,8 @@ Added: 2026-01-11
 === VIVENTIUM END === -->
 Common flags:
 - `--restart` (clean + restart services; safe for LiveKit)
-- `--modern-playground` (agent-starter-react UI from `agent-starter-react`)
+- `--modern-playground` (agent-starter-react UI from `agent-starter-react`; default)
+- `--classic-playground` (old `agents-playground` UI; explicit opt-in only)
 - `--skip-voice-gateway`, `--skip-ms365-mcp`, `--skip-google-mcp`, `--skip-code-interpreter`
 
 ### LibreChat Only (Text UI)

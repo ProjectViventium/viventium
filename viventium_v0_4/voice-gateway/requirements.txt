@@ -5,16 +5,16 @@
 
 aiohttp==3.13.5
 openai==2.32.0
-livekit-agents==1.5.5
-livekit-plugins-openai==1.5.5
-livekit-plugins-xai==1.5.5
-livekit-plugins-silero==1.5.5; python_version < "3.13"
-livekit-plugins-elevenlabs==1.5.5
-livekit-plugins-turn-detector==1.5.5
+livekit-agents==1.5.10
+livekit-plugins-openai==1.5.10
+livekit-plugins-xai==1.5.10
+livekit-plugins-silero==1.5.10; python_version < "3.13"
+livekit-plugins-elevenlabs==1.5.10
+livekit-plugins-turn-detector==1.5.10
 ## === VIVENTIUM START ===
 ## Feature: STT providers (AssemblyAI + local whisper.cpp)
 ## Added: 2026-01-11
 ## === VIVENTIUM END ===
-livekit-plugins-assemblyai==1.5.5
+livekit-plugins-assemblyai==1.5.10
 numpy==2.4.4
 pywhispercpp==1.4.1

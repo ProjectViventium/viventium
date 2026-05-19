@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # === VIVENTIUM START ===
-# Unified dev launcher: LibreChat + LiveKit + Agents Playground + Voice Gateway + MCPs + Telegram
+# Unified dev launcher: LibreChat + LiveKit + LiveKit Playground + Voice Gateway + MCPs + Telegram
 # Added: 2026-01-08
 #
 # Goals:
@@ -15,8 +15,9 @@
 # Options:
 #   --skip-livekit        Don't start LiveKit server
 #   --skip-librechat      Don't start LibreChat
-#   --skip-playground     Don't start Agents Playground
-#   --modern-playground   Use the agent-starter-react playground UI
+#   --skip-playground     Don't start the LiveKit playground
+#   --modern-playground   Use the agent-starter-react playground UI (default)
+#   --classic-playground  Use the old agents-playground UI (explicit opt-in)
 #   --skip-voice-gateway  Don't start Voice Gateway worker
 #   --skip-google-mcp     Don't start Google Workspace MCP
 #   --skip-ms365-mcp      Don't start MS365 MCP
@@ -504,7 +505,15 @@ MONGO_VOLUME_NAME="${VIVENTIUM_LOCAL_MONGO_VOLUME:-viventium-mongodb-data}"
 MONGO_IMAGE="${MONGO_IMAGE:-mongo:8.0.17}"
 MEILI_CONTAINER_NAME="${VIVENTIUM_LOCAL_MEILI_CONTAINER:-viventium-meilisearch}"
 MEILI_VOLUME_NAME="${VIVENTIUM_LOCAL_MEILI_VOLUME:-viventium-meilisearch-data}"
-MEILI_IMAGE="${MEILI_IMAGE:-getmeili/meilisearch:v1.12.3}"
+MEILI_IMAGE="${MEILI_IMAGE:-getmeili/meilisearch:v1.43.0}"
+MEILI_DOCKER_MEMORY_LIMIT="${VIVENTIUM_LOCAL_MEILI_DOCKER_MEMORY_LIMIT:-768m}"
+MEILI_DOCKER_CPUS="${VIVENTIUM_LOCAL_MEILI_DOCKER_CPUS:-1.0}"
+MEILI_DOCKER_PIDS_LIMIT="${VIVENTIUM_LOCAL_MEILI_DOCKER_PIDS_LIMIT:-128}"
+MEILI_DOCKER_LOG_MAX_SIZE="${VIVENTIUM_LOCAL_MEILI_DOCKER_LOG_MAX_SIZE:-5m}"
+MEILI_DOCKER_LOG_MAX_FILE="${VIVENTIUM_LOCAL_MEILI_DOCKER_LOG_MAX_FILE:-3}"
+MEILI_ENV="${VIVENTIUM_LOCAL_MEILI_ENV:-production}"
+MEILI_MAX_INDEXING_MEMORY="${MEILI_MAX_INDEXING_MEMORY:-512MiB}"
+MEILI_MAX_INDEXING_THREADS="${MEILI_MAX_INDEXING_THREADS:-1}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DOCKER_BIN="$(command -v docker || true)"
 
@@ -1734,9 +1743,9 @@ while [[ $# -gt 0 ]]; do
       echo "Starts the full Viventium LibreChat voice call stack:"
       echo "  - LiveKit Server (Docker/native, profile port)"
       echo "  - LibreChat Backend (profile port) + Frontend (profile port)"
-      echo "  - Agents Playground (port from VIVENTIUM_PLAYGROUND_URL; profile default)"
-      echo "    - Modern playground is the default UI"
-      echo "    - Use --classic-playground to force the legacy agents-playground UI"
+      echo "  - LiveKit Playground (port from VIVENTIUM_PLAYGROUND_URL; profile default)"
+      echo "    - Modern agent-starter-react playground is the default UI"
+      echo "    - Use --classic-playground to opt into the legacy agents-playground UI"
       echo "  - Voice Gateway Worker (Python)"
       echo "  - Google Workspace MCP (profile port)"
       echo "  - MS365 MCP (port 6274)"
@@ -1766,6 +1775,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+PLAYGROUND_VARIANT="$(normalize_cli_arg "$PLAYGROUND_VARIANT" | tr '[:upper:]' '[:lower:]')"
+if [[ "$PLAYGROUND_VARIANT" != "classic" ]]; then
+  PLAYGROUND_VARIANT="modern"
+fi
 
 PLAYGROUND_APP_DIR="$PLAYGROUND_DIR"
 PLAYGROUND_LABEL="Agents Playground"
@@ -4702,6 +4716,85 @@ meili_http_auth_ping() {
     "${host_url%/}/indexes?limit=1" >/dev/null 2>&1
 }
 
+meili_recent_failed_task_health() {
+  local host_url="${1:-${MEILI_HOST:-}}"
+  if [[ -z "$host_url" || -z "${MEILI_MASTER_KEY:-}" ]]; then
+    return 1
+  fi
+
+  local lookback="${VIVENTIUM_MEILI_FAILED_TASK_LOOKBACK:-25}"
+  if ! [[ "$lookback" =~ ^[0-9]+$ ]] || [[ "$lookback" -lt 1 ]]; then
+    lookback=25
+  fi
+
+  local tasks_json=""
+  tasks_json="$(curl -fsS --max-time 5 \
+    -H "Authorization: Bearer ${MEILI_MASTER_KEY}" \
+    -H "X-Meili-API-Key: ${MEILI_MASTER_KEY}" \
+    "${host_url%/}/tasks?statuses=failed&limit=${lookback}" 2>/dev/null || true)"
+
+  if [[ -z "$tasks_json" ]]; then
+    log_warn "Meilisearch authenticated, but recent failed task health could not be inspected"
+    return 1
+  fi
+
+  VIVENTIUM_MEILI_TASKS_JSON="$tasks_json" "$PYTHON_BIN" - <<'PY'
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(os.environ.get("VIVENTIUM_MEILI_TASKS_JSON", "{}"))
+except json.JSONDecodeError as exc:
+    sys.stderr.write(f"[viventium] Could not parse Meilisearch task health response: {exc}\n")
+    raise SystemExit(1)
+
+results = payload.get("results") or []
+offenders = []
+for task in results:
+    error = task.get("error") or {}
+    message = str(error.get("message") or "")
+    code = str(error.get("code") or "")
+    if (
+        (" is in version " in message and "Meilisearch is in version" in message)
+        or "incompatible with the current Meilisearch" in message
+        or "incompatible with your current engine version" in message
+    ):
+        offenders.append(
+            {
+                "uid": task.get("uid"),
+                "type": task.get("type"),
+                "indexUid": task.get("indexUid"),
+                "code": code,
+                "message": message,
+            }
+        )
+
+if offenders:
+    sys.stderr.write(
+        "[viventium] Meilisearch recent task health shows incompatible failed tasks; "
+        "refusing to enqueue more local search work.\n"
+    )
+    for offender in offenders[:3]:
+        sys.stderr.write(
+            "[viventium]   task {uid} {type} index={indexUid} code={code}: {message}\n".format(
+                **offender
+            )
+        )
+    raise SystemExit(2)
+
+raise SystemExit(0)
+PY
+}
+
+meili_http_functional_ready() {
+  local host_url="${1:-${MEILI_HOST:-}}"
+  if ! meili_http_auth_ping "$host_url"; then
+    return 1
+  fi
+  meili_recent_failed_task_health "$host_url"
+}
+
 restart_viventium_owned_meilisearch_listener() {
   local restarted=false
   local existing=""
@@ -4779,10 +4872,19 @@ start_local_meilisearch_container() {
     --name "$MEILI_CONTAINER_NAME" \
     --label "viventium.stack=viventium_v0_4" \
     --label "viventium.service=meilisearch" \
+    --memory "$MEILI_DOCKER_MEMORY_LIMIT" \
+    --cpus "$MEILI_DOCKER_CPUS" \
+    --pids-limit "$MEILI_DOCKER_PIDS_LIMIT" \
+    --log-driver json-file \
+    --log-opt "max-size=${MEILI_DOCKER_LOG_MAX_SIZE}" \
+    --log-opt "max-file=${MEILI_DOCKER_LOG_MAX_FILE}" \
     -p "$publish_arg" \
     -v "$meili_mount" \
     -e "MEILI_MASTER_KEY=${MEILI_MASTER_KEY}" \
     -e "MEILI_NO_ANALYTICS=${MEILI_NO_ANALYTICS}" \
+    -e "MEILI_ENV=${MEILI_ENV}" \
+    -e "MEILI_MAX_INDEXING_MEMORY=${MEILI_MAX_INDEXING_MEMORY}" \
+    -e "MEILI_MAX_INDEXING_THREADS=${MEILI_MAX_INDEXING_THREADS}" \
     "$MEILI_IMAGE" >/dev/null; then
     log_error "Failed to create Meilisearch container ($MEILI_CONTAINER_NAME)"
     return 1
@@ -4796,9 +4898,13 @@ start_local_meilisearch_native() {
     return 1
   fi
 
-  if meili_http_auth_ping "$MEILI_HOST"; then
+  if meili_http_functional_ready "$MEILI_HOST"; then
     log_success "Meilisearch already listening at ${MEILI_BIND_HOST}:${MEILI_PORT}"
     return 0
+  fi
+  if meili_http_auth_ping "$MEILI_HOST"; then
+    log_error "Meilisearch accepts the configured Viventium key, but recent failed tasks show the local search index is not usable"
+    return 1
   fi
   if meili_http_ping "$MEILI_HOST"; then
     log_warn "Meilisearch is already listening at ${MEILI_BIND_HOST}:${MEILI_PORT} but does not accept the configured Viventium key"
@@ -4819,7 +4925,10 @@ start_local_meilisearch_native() {
 
   log_warn "Docker Meilisearch startup failed; trying native meilisearch fallback on ${MEILI_BIND_HOST}:${MEILI_PORT}"
   : > "$MEILI_NATIVE_LOG_FILE"
-  nohup meilisearch "${meili_args[@]}" >"$MEILI_NATIVE_LOG_FILE" 2>&1 < /dev/null &
+  MEILI_MAX_INDEXING_MEMORY="$MEILI_MAX_INDEXING_MEMORY" \
+    MEILI_MAX_INDEXING_THREADS="$MEILI_MAX_INDEXING_THREADS" \
+    MEILI_ENV="$MEILI_ENV" \
+    nohup meilisearch "${meili_args[@]}" >"$MEILI_NATIVE_LOG_FILE" 2>&1 < /dev/null &
   local meili_native_pid=$!
   echo "$meili_native_pid" > "$MEILI_NATIVE_PID_FILE"
 
@@ -4839,9 +4948,14 @@ ensure_meilisearch_ready() {
 
   resolve_meili_connection
 
-  if meili_http_auth_ping "$MEILI_HOST"; then
+  if meili_http_functional_ready "$MEILI_HOST"; then
     log_success "Meilisearch ready at ${MEILI_BIND_HOST}:${MEILI_PORT}"
     return 0
+  fi
+  if meili_http_auth_ping "$MEILI_HOST"; then
+    log_error "Meilisearch is reachable and authenticated, but recent failed tasks show the local search index is not usable"
+    log_error "Repair the derived Meilisearch data before starting another local search backfill; Mongo conversations/config are not modified by this check"
+    return 1
   fi
 
   if meili_http_ping "$MEILI_HOST"; then
@@ -4873,7 +4987,7 @@ ensure_meilisearch_ready() {
 
   local retries=45
   for _ in $(seq 1 "$retries"); do
-    if meili_http_auth_ping "$MEILI_HOST"; then
+    if meili_http_functional_ready "$MEILI_HOST"; then
       log_success "Meilisearch ready at ${MEILI_BIND_HOST}:${MEILI_PORT}"
       return 0
     fi
@@ -5709,6 +5823,53 @@ wait_for_http() {
   done
   log_warn "$label did not respond in time"
   return 1
+}
+
+prewarm_modern_playground_routes() {
+  local port="${1:-}"
+  if [[ "$PLAYGROUND_VARIANT" != "modern" || "${VIVENTIUM_PLAYGROUND_PREWARM:-true}" != "true" ]]; then
+    return 0
+  fi
+  if [[ -z "$port" ]]; then
+    port="$(get_playground_port)"
+  fi
+  if [[ -z "$port" ]]; then
+    return 0
+  fi
+
+  local base_url="http://localhost:${port}"
+  local request_timeout="${VIVENTIUM_PLAYGROUND_PREWARM_REQUEST_TIMEOUT_SECONDS:-20}"
+  if ! [[ "$request_timeout" =~ ^[0-9]+$ ]] || [[ "$request_timeout" -lt 1 ]]; then
+    request_timeout=20
+  fi
+
+  log_info "Prewarming ${PLAYGROUND_LABEL} voice startup routes"
+
+  local code=""
+  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time "$request_timeout" \
+    "${base_url}/api/call-session-voice-settings?callSessionId=viventium-prewarm" || true)"
+  if [[ "$code" == "000" ]]; then
+    log_warn "${PLAYGROUND_LABEL} voice-settings route did not prewarm before timeout"
+  else
+    log_info "${PLAYGROUND_LABEL} voice-settings route prewarmed (HTTP ${code})"
+  fi
+
+  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time "$request_timeout" \
+    "${base_url}/api/call-session-state?callSessionId=viventium-prewarm" || true)"
+  if [[ "$code" == "000" ]]; then
+    log_warn "${PLAYGROUND_LABEL} call-state route did not prewarm before timeout"
+  else
+    log_info "${PLAYGROUND_LABEL} call-state route prewarmed (HTTP ${code})"
+  fi
+
+  # GET intentionally exercises the Next.js route module compile without issuing a token.
+  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time "$request_timeout" \
+    "${base_url}/api/connection-details" || true)"
+  if [[ "$code" == "000" ]]; then
+    log_warn "${PLAYGROUND_LABEL} connection-details route did not prewarm before timeout"
+  else
+    log_info "${PLAYGROUND_LABEL} connection-details route prewarmed (HTTP ${code})"
+  fi
 }
 
 librechat_api_healthy() {
@@ -8900,6 +9061,7 @@ PY
     VIVENTIUM_XAI_VOICE
     VIVENTIUM_XAI_LANGUAGE
     VIVENTIUM_XAI_SAMPLE_RATE
+    VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY
     VIVENTIUM_XAI_TTS_CODEC
     VIVENTIUM_XAI_TTS_SAMPLE_RATE
     VIVENTIUM_XAI_TTS_BIT_RATE
@@ -9964,9 +10126,9 @@ if [[ "$SKIP_VOICE_GATEWAY" != "true" ]]; then
       if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
         voice_playground_port=""
         voice_playground_port="$(get_playground_port)"
-        if port_has_listener "$voice_playground_port"; then
-          log_success "${PLAYGROUND_LABEL} port is listening before Voice Gateway start"
-        elif ! wait_for_http "http://localhost:${voice_playground_port}" "${PLAYGROUND_LABEL} before Voice Gateway start" "${VOICE_GATEWAY_START_PLAYGROUND_RETRIES:-120}"; then
+        if wait_for_http "http://localhost:${voice_playground_port}" "${PLAYGROUND_LABEL} before Voice Gateway start" "${VOICE_GATEWAY_START_PLAYGROUND_RETRIES:-120}"; then
+          prewarm_modern_playground_routes "$voice_playground_port"
+        else
           log_warn "${PLAYGROUND_LABEL} was not ready before Voice Gateway launch; continuing anyway"
         fi
       fi
@@ -10203,6 +10365,7 @@ PY
         export VIVENTIUM_XAI_VOICE="${VIVENTIUM_XAI_VOICE:-Sal}"
         export VIVENTIUM_XAI_WSS_URL="${VIVENTIUM_XAI_WSS_URL:-wss://api.x.ai/v1/realtime}"
         export VIVENTIUM_XAI_SAMPLE_RATE="${VIVENTIUM_XAI_SAMPLE_RATE:-24000}"
+        export VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY="${VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY:-1}"
         export VIVENTIUM_XAI_INSTRUCTIONS="${VIVENTIUM_XAI_INSTRUCTIONS:-}"
         # Cartesia Sonic-3 configuration
         export CARTESIA_API_KEY="${CARTESIA_API_KEY:-}"

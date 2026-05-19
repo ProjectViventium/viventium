@@ -16,13 +16,57 @@ bootstrap_components = importlib.util.module_from_spec(BOOTSTRAP_COMPONENTS_SPEC
 BOOTSTRAP_COMPONENTS_SPEC.loader.exec_module(bootstrap_components)
 
 
-def make_component(path: str) -> dict[str, str]:
+def make_component(path: str, name: str = "LibreChat") -> dict[str, str]:
     return {
-        "name": "LibreChat",
-        "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
+        "name": name,
+        "origin": f"https://github.com/ProjectViventium/{name}.git",
         "ref": "main",
         "path": path,
     }
+
+
+def default_voice_components() -> list[dict[str, str]]:
+    return [
+        make_component("viventium_v0_4/LibreChat", "LibreChat"),
+        make_component("viventium_v0_4/agents-playground", "agents-playground"),
+        make_component("viventium_v0_4/agent-starter-react", "agent-starter-react"),
+        make_component("viventium_v0_4/google_workspace_mcp", "google_workspace_mcp"),
+    ]
+
+
+def selected_component_names(config: dict) -> set[str]:
+    return {
+        component["name"]
+        for component in bootstrap_components.select_components(default_voice_components(), config)
+    }
+
+
+def test_select_components_without_config_uses_public_modern_playground_default() -> None:
+    names = selected_component_names({})
+
+    assert names == {"LibreChat", "agent-starter-react"}
+
+
+def test_select_components_defaults_to_modern_playground_for_voice_enabled_runtime() -> None:
+    names = selected_component_names({"voice": {"mode": "local"}, "runtime": {}})
+
+    assert names == {"LibreChat", "agent-starter-react"}
+
+
+def test_select_components_keeps_classic_playground_opt_in_only() -> None:
+    names = selected_component_names(
+        {"voice": {"mode": "local"}, "runtime": {"playground_variant": "classic"}}
+    )
+
+    assert names == {"LibreChat", "agents-playground"}
+
+
+def test_select_components_skips_playgrounds_when_voice_is_disabled() -> None:
+    names = selected_component_names(
+        {"voice": {"mode": "disabled"}, "runtime": {"playground_variant": "classic"}}
+    )
+
+    assert names == {"LibreChat"}
 
 
 def test_clone_or_update_component_accepts_bootable_vendored_checkout(tmp_path: Path) -> None:

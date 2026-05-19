@@ -690,7 +690,7 @@ def validate_component(
 
 def select_components(components: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
     if not config:
-        return components
+        config = {"voice": {"mode": "local"}, "runtime": {"playground_variant": "modern"}}
 
     selected_names = {"LibreChat"}
     voice_mode = str(config.get("voice", {}).get("mode", "disabled")).strip().lower()
@@ -698,9 +698,11 @@ def select_components(components: list[dict[str, Any]], config: dict[str, Any]) 
         config.get("runtime", {}).get("playground_variant", "modern")
     ).strip().lower()
 
-    if playground_variant == "classic":
+    if voice_mode == "disabled":
+        pass
+    elif playground_variant == "classic":
         selected_names.add("agents-playground")
-    elif voice_mode != "disabled":
+    else:
         selected_names.add("agent-starter-react")
 
     integrations = config.get("integrations", {}) or {}

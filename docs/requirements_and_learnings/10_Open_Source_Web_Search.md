@@ -31,6 +31,7 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
   - `--skip-firecrawl` disables it for a run.
   - SearXNG readiness must probe the local root page, not a live search query, because cold search requests can be slow enough to create false installer/startup failures on clean Macs.
   - Firecrawl readiness in the launcher, install wait loop, and status must share the same local-health contract (`/health`, API banner, or the expected local API container) so first-run startup does not strand on a stricter probe than the runtime itself.
+  - Firecrawl and SearXNG Docker services must carry source-owned memory, CPU, PID, and log-rotation limits so local installs do not depend on one operator's live Docker edits.
 
 ## Notes
 - Installer UX contract:
@@ -87,6 +88,8 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
     (`FIRECRAWL_API_MEM_LIMIT`, default `1536m`) so local scraping stays reliable
   - keep the Playwright helper on a lower bounded budget
     (`FIRECRAWL_PLAYWRIGHT_MEM_LIMIT`, default `768m`)
+  - keep Firecrawl Redis/RabbitMQ/Postgres, SearXNG, and Valkey on explicit local caps as well;
+    unbounded support containers are still part of the user's laptop resource budget
   - tune Firecrawl worker/concurrency knobs for a single-user laptop profile instead of shipping
     upstream multi-worker defaults
   - default Firecrawl logging should be `warn`, not `info`, for local installs

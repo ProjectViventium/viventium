@@ -80,6 +80,21 @@ This is the shared troubleshooting index. For stack-specific detail, see:
 - Current status: if web search is enabled, first-run readiness should no longer fail just because
   upstream search engines are still warming.
 
+### Meilisearch starts but local search is blocked after upgrade
+- Root cause: Viventium treats Meilisearch indexes as derived local search state. A Meilisearch
+  version upgrade or incompatible index task can leave the local search index unusable even though
+  Mongo conversations and chat history are still intact.
+- Symptom: startup reports that Meilisearch is reachable and authenticated, but recent failed tasks
+  show the local search index is not usable.
+- Fix:
+  - do not edit Mongo or chat history to repair this
+  - archive or recreate the local Meilisearch-derived data, then let Viventium rebuild search from
+    Mongo-backed conversations
+  - rerun `bin/viventium start` or `bin/viventium upgrade --restart` after the derived index is
+    clear
+- Current status: startup now fails closed on incompatible recent Meilisearch tasks so local search
+  backfill does not enqueue more broken work.
+
 ### Skyvern starts with unhealthy postgres and keeps restarting
 - Root cause: local Skyvern dependency instability on some machines/platform combinations.
 - Fix: launcher now cleans up Skyvern containers immediately on failed startup instead of leaving restart loops.

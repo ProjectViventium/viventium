@@ -7,6 +7,9 @@ services:
     image: docker.io/valkey/valkey:8-alpine
     command: valkey-server --save 30 1 --loglevel warning
     restart: unless-stopped
+    mem_limit: ${SEARXNG_VALKEY_MEM_LIMIT:-128m}
+    cpus: ${SEARXNG_VALKEY_CPUS:-0.20}
+    pids_limit: ${SEARXNG_VALKEY_PIDS_LIMIT:-64}
     networks:
       - searxng
     volumes:
@@ -21,6 +24,9 @@ services:
     container_name: viventium_searxng
     image: docker.io/searxng/searxng:latest
     restart: unless-stopped
+    mem_limit: ${SEARXNG_MEM_LIMIT:-384m}
+    cpus: ${SEARXNG_CPUS:-0.50}
+    pids_limit: ${SEARXNG_PIDS_LIMIT:-128}
     networks:
       - searxng
     ports:

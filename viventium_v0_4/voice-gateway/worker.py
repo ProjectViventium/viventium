@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import importlib.util
 import json
 import logging
@@ -23,12 +24,15 @@ import threading
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dataclasses import dataclass, replace
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 import aiohttp
 
 from livekit.agents import (
+    APIConnectionError,
     Agent,
     AgentSession,
     AutoSubscribe,
@@ -177,6 +181,16 @@ DEFAULT_XAI_TTS_VOICE = str(XAI_TTS_DEFAULTS.get("voice_id") or "Sal").strip() o
 DEFAULT_XAI_TTS_LANGUAGE = str(XAI_TTS_DEFAULTS.get("language") or "en").strip() or "en"
 DEFAULT_XAI_TTS_WS_URL = str(XAI_TTS_ENDPOINTS.get("websocket") or "wss://api.x.ai/v1/tts").strip() or "wss://api.x.ai/v1/tts"
 DEFAULT_XAI_TTS_SAMPLE_RATE = int(float(XAI_TTS_DEFAULTS.get("livekit_sample_rate") or 24000))
+_DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY_RAW = XAI_TTS_DEFAULTS.get(
+    "optimize_streaming_latency"
+)
+DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY = int(
+    float(
+        _DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY_RAW
+        if _DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY_RAW not in (None, "")
+        else 1
+    )
+)
 
 _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
     "run.completed",
@@ -291,6 +305,7 @@ class Env:
     xai_voice: str
     xai_language: str
     xai_tts_ws_url: str
+    xai_tts_optimize_streaming_latency: int
     xai_wss_url: str
     xai_sample_rate: int
     xai_instructions: str
@@ -470,6 +485,94 @@ def _voice_latency_log_enabled() -> bool:
     return _parse_bool_env("VIVENTIUM_VOICE_LOG_LATENCY", False)
 
 
+def _voice_worker_run_id() -> str:
+    return (os.getenv("VIVENTIUM_VOICE_WORKER_RUN_ID", "") or "default").strip()
+
+
+def _voice_coordination_dir() -> Path:
+    run_id = _voice_worker_run_id()
+    safe_run_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in run_id)
+    return Path(os.getenv("TMPDIR", "/tmp")) / "viventium-voice-gateway" / safe_run_id
+
+
+def _voice_active_jobs_dir() -> Path:
+    path = _voice_coordination_dir() / "active-jobs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _mark_active_voice_job(job_id: str) -> Path:
+    safe_job_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in job_id)
+    marker = _voice_active_jobs_dir() / f"{os.getpid()}-{safe_job_id or 'job'}.active"
+    try:
+        marker.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        logger.debug("[voice-gateway] Unable to write active voice job marker", exc_info=True)
+    return marker
+
+
+def _clear_active_voice_job_marker(marker: Path) -> None:
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("[voice-gateway] Unable to remove active voice job marker", exc_info=True)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _active_voice_job_markers() -> list[Path]:
+    active_dir = _voice_active_jobs_dir()
+    stale_after_s = _parse_float_env("VIVENTIUM_VOICE_ACTIVE_JOB_MARKER_TTL_S", 3600.0)
+    now = time.time()
+    active: list[Path] = []
+    for marker in active_dir.glob("*.active"):
+        try:
+            pid = int(marker.name.split("-", 1)[0])
+        except (ValueError, IndexError):
+            marker.unlink(missing_ok=True)
+            continue
+        age_s = now - marker.stat().st_mtime
+        if age_s > stale_after_s or not _pid_is_alive(pid):
+            marker.unlink(missing_ok=True)
+            continue
+        active.append(marker)
+    return active
+
+
+def _wait_for_active_voice_jobs_before_prewarm() -> None:
+    max_wait_s = _parse_float_env(
+        "VIVENTIUM_VOICE_REPLACEMENT_PREWARM_MAX_WAIT_S",
+        20.0,
+    )
+    if max_wait_s <= 0:
+        return
+
+    started = time.monotonic()
+    logged = False
+    while _active_voice_job_markers():
+        elapsed = time.monotonic() - started
+        if elapsed >= max_wait_s:
+            logger.info(
+                "[voice-gateway] Replacement prewarm waited %.1fs for active calls; continuing so the worker keeps a spare process.",
+                elapsed,
+            )
+            return
+        if not logged:
+            logger.info(
+                "[voice-gateway] Delaying replacement local-model prewarm while an active voice call is running."
+            )
+            logged = True
+        time.sleep(0.25)
+
+
 def _normalize_turn_detection(mode: str) -> str:
     normalized = (mode or "").strip().lower()
     if normalized in {"turn_detector", "semantic", "semantic_turn_detector", "multilingual"}:
@@ -618,7 +721,9 @@ def _default_max_endpointing_delay(turn_detection: str) -> float:
 def _default_job_memory_warn_mb(stt_provider: str, tts_provider: str) -> float:
     normalized_stt = _normalize_stt_provider(stt_provider)
     normalized_tts = _normalize_voice_provider(tts_provider)
-    if normalized_stt in {"pywhispercpp", "whisper_local"} or normalized_tts == "local_chatterbox_turbo_mlx_8bit":
+    if normalized_stt in {"pywhispercpp", "whisper_local"}:
+        return 2200.0
+    if normalized_tts == "local_chatterbox_turbo_mlx_8bit":
         return 1400.0
     return 500.0
 
@@ -1093,6 +1198,80 @@ def _configure_xai_standalone_tts_plugin(*, ws_url: str, sample_rate: int) -> No
     setattr(tts_module, "SAMPLE_RATE", int(sample_rate))
 
 
+def _apply_xai_tts_streaming_latency_options(
+    tts_impl: Any,
+    *,
+    ws_url: str,
+    sample_rate: int,
+    optimize_streaming_latency: int,
+) -> None:
+    """Attach Viventium's xAI streaming query parameters until the plugin exposes them."""
+    if optimize_streaming_latency <= 0:
+        return
+    if not hasattr(tts_impl, "_opts") or not hasattr(tts_impl, "_ensure_session"):
+        logger.warning(
+            "xAI TTS streaming latency optimization requested, but the plugin instance does not expose endpoint controls."
+        )
+        return
+    existing_connect_ws = getattr(tts_impl, "_connect_ws", None)
+    if not callable(existing_connect_ws):
+        try:
+            plugin_version = importlib_metadata.version("livekit-plugins-xai")
+        except importlib_metadata.PackageNotFoundError:
+            plugin_version = "unknown"
+        logger.warning(
+            "xAI TTS streaming latency optimization requested, but livekit-plugins-xai version=%s does not expose the expected _connect_ws hook; continuing without optimize_streaming_latency.",
+            plugin_version,
+        )
+        return
+    try:
+        inspect.signature(existing_connect_ws).bind(1.0)
+    except (TypeError, ValueError) as exc:
+        try:
+            plugin_version = importlib_metadata.version("livekit-plugins-xai")
+        except importlib_metadata.PackageNotFoundError:
+            plugin_version = "unknown"
+        logger.warning(
+            "xAI TTS streaming latency optimization requested, but livekit-plugins-xai version=%s exposes an incompatible _connect_ws hook (%s); continuing without optimize_streaming_latency.",
+            plugin_version,
+            exc,
+        )
+        return
+
+    async def _connect_ws(timeout: float) -> aiohttp.ClientWebSocketResponse:
+        opts = getattr(tts_impl, "_opts", None)
+        api_key = getattr(tts_impl, "_api_key", "")
+        params = {
+            "voice": getattr(opts, "voice", DEFAULT_XAI_TTS_VOICE),
+            "language": getattr(opts, "language", DEFAULT_XAI_TTS_LANGUAGE),
+            "codec": "pcm",
+            "sample_rate": int(sample_rate),
+            "optimize_streaming_latency": int(optimize_streaming_latency),
+        }
+        url = f"{ws_url}?{urlencode(params)}"
+        try:
+            return await asyncio.wait_for(
+                tts_impl._ensure_session().ws_connect(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                ),
+                timeout,
+            )
+        except (
+            aiohttp.ClientConnectorError,
+            aiohttp.ClientConnectionResetError,
+            asyncio.TimeoutError,
+        ) as exc:
+            raise APIConnectionError("failed to connect to xAI") from exc
+
+    setattr(tts_impl, "_connect_ws", _connect_ws)
+    setattr(
+        tts_impl,
+        "_viventium_xai_tts_optimize_streaming_latency",
+        int(optimize_streaming_latency),
+    )
+
+
 def _apply_requested_voice_route(
     env: Env,
     requested_voice_route: Any,
@@ -1434,6 +1613,13 @@ def load_env() -> Env:
         default_load_threshold = math.inf
     else:
         default_load_threshold = 0.7
+    # Local Whisper and local Chatterbox both use accelerator-heavy runtimes. Keeping a warm STT
+    # job process protects call startup, but prewarming Chatterbox in the replacement idle process
+    # can contend with the active Whisper turn and make final transcripts visibly late.
+    default_prewarm_local_tts = normalized_stt_provider not in {
+        "pywhispercpp",
+        "whisper_local",
+    }
     configured_min_interruption_words = _parse_optional_int_env(
         "VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS",
     )
@@ -1483,6 +1669,16 @@ def load_env() -> Env:
         xai_tts_ws_url=(
             os.getenv("VIVENTIUM_XAI_TTS_WS_URL", DEFAULT_XAI_TTS_WS_URL).strip()
             or DEFAULT_XAI_TTS_WS_URL
+        ),
+        xai_tts_optimize_streaming_latency=max(
+            0,
+            min(
+                1,
+                _parse_int_env(
+                    "VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY",
+                    DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY,
+                ),
+            ),
         ),
         xai_wss_url=(
             os.getenv(
@@ -1579,7 +1775,7 @@ def load_env() -> Env:
         ),
         voice_prewarm_local_tts=_parse_bool_env(
             "VIVENTIUM_VOICE_PREWARM_LOCAL_TTS",
-            True,
+            default_prewarm_local_tts,
         ),
         voice_requested_turn_detection=requested_turn_detection,
         voice_turn_detection=str(turn_handling_profile["voice_turn_detection"]),
@@ -1757,7 +1953,22 @@ def _track_source_label(publication: Any) -> str:
     return str(source).split(".")[-1].lower()
 
 
-def _attach_room_diagnostics(ctx: JobContext, *, call_session_id: str) -> None:
+def _remote_participant_count(room: Any) -> int:
+    participants = getattr(room, "remote_participants", None)
+    if participants is None:
+        return 0
+    try:
+        return len(participants)
+    except TypeError:
+        return 0
+
+
+def _attach_room_diagnostics(
+    ctx: JobContext,
+    *,
+    call_session_id: str,
+    active_job_marker: Path | None = None,
+) -> None:
     room = ctx.room
     room_name = getattr(room, "name", "") or "<unknown>"
 
@@ -1778,6 +1989,15 @@ def _attach_room_diagnostics(ctx: JobContext, *, call_session_id: str) -> None:
             call_session_id,
             getattr(participant, "identity", "<unknown>"),
         )
+        if active_job_marker is not None:
+            def _clear_marker_if_room_empty() -> None:
+                if _remote_participant_count(room) == 0:
+                    _clear_active_voice_job_marker(active_job_marker)
+
+            try:
+                asyncio.get_running_loop().call_later(0.25, _clear_marker_if_room_empty)
+            except RuntimeError:
+                _clear_marker_if_room_empty()
 
     @room.on("track_muted")
     def _on_track_muted(participant: Any, publication: Any) -> None:
@@ -1938,6 +2158,7 @@ def prewarm_process(proc: JobProcess) -> None:
     if provider in {"pywhispercpp", "whisper_local"}:
         from pywhispercpp_provider import prewarm_model
 
+        _wait_for_active_voice_jobs_before_prewarm()
         logger.info(
             "[voice-gateway] Prewarming local whisper.cpp STT model (%s)",
             env.stt_model,
@@ -2020,6 +2241,34 @@ def _turn_end_reason_label(turn_detection: Any) -> str:
 
 def _voice_sync_transcription_enabled() -> bool:
     return _parse_bool_env("VIVENTIUM_VOICE_SYNC_TRANSCRIPTION", False)
+
+
+def _build_room_options(*, sync_transcription: bool) -> Any:
+    return room_io.RoomOptions(
+        text_output=room_io.TextOutputOptions(sync_transcription=sync_transcription)
+    )
+
+
+def _metric_value(metrics: Any, key: str) -> Optional[float]:
+    if metrics is None:
+        return None
+    raw = metrics.get(key) if isinstance(metrics, dict) else getattr(metrics, key, None)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metric_ms(metrics: Any, key: str) -> str:
+    value = _metric_value(metrics, key)
+    return "n/a" if value is None else f"{value * 1000.0:.3f}"
+
+
+def _metric_seconds(metrics: Any, key: str) -> float:
+    value = _metric_value(metrics, key)
+    return 0.0 if value is None else value
 
 
 # === VIVENTIUM START ===
@@ -2530,6 +2779,12 @@ class CortexFollowupScheduler:
 
 async def entrypoint(ctx: JobContext) -> None:
     env = ctx.proc.userdata.get("voice_env") or load_env()
+    active_job_marker = _mark_active_voice_job(getattr(ctx.job, "id", "") or "")
+
+    async def _clear_active_job_marker(*_args: Any) -> None:
+        _clear_active_voice_job_marker(active_job_marker)
+
+    ctx.add_shutdown_callback(_clear_active_job_marker)
 
     if not env.call_session_secret:
         raise RuntimeError("VIVENTIUM_CALL_SESSION_SECRET is required for the voice gateway worker")
@@ -2609,7 +2864,11 @@ async def entrypoint(ctx: JobContext) -> None:
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
-    _attach_room_diagnostics(ctx, call_session_id=call_session_id)
+    _attach_room_diagnostics(
+        ctx,
+        call_session_id=call_session_id,
+        active_job_marker=active_job_marker,
+    )
     # === VIVENTIUM END ===
 
     capabilities = _build_voice_capability_catalog(env)
@@ -2778,24 +3037,29 @@ async def entrypoint(ctx: JobContext) -> None:
                 return (_build_openai_tts(), actual_voice_provider)
 
             _log_selection(
-                "Using xAI standalone TTS (voice=%s, language=%s, sample_rate=%s, ws=%s)",
+                "Using xAI standalone TTS (voice=%s, language=%s, sample_rate=%s, ws=%s, optimize_streaming_latency=%s)",
                 env.xai_voice,
                 env.xai_language,
                 env.xai_sample_rate,
                 env.xai_tts_ws_url,
+                env.xai_tts_optimize_streaming_latency,
             )
             _configure_xai_standalone_tts_plugin(
                 ws_url=env.xai_tts_ws_url,
                 sample_rate=env.xai_sample_rate,
             )
-            return (
-                xai_plugin.TTS(
-                    api_key=xai_api_key,
-                    voice=env.xai_voice,
-                    language=env.xai_language,
-                ),
-                actual_voice_provider,
+            tts_instance = xai_plugin.TTS(
+                api_key=xai_api_key,
+                voice=env.xai_voice,
+                language=env.xai_language,
             )
+            _apply_xai_tts_streaming_latency_options(
+                tts_instance,
+                ws_url=env.xai_tts_ws_url,
+                sample_rate=env.xai_sample_rate,
+                optimize_streaming_latency=env.xai_tts_optimize_streaming_latency,
+            )
+            return (tts_instance, actual_voice_provider)
 
         if provider == "cartesia":
             cartesia_api_key = (os.getenv("CARTESIA_API_KEY", "") or "").strip()
@@ -3027,6 +3291,46 @@ async def entrypoint(ctx: JobContext) -> None:
             return
         loop.create_task(_publish_voice_route_metadata(provider, tts_impl))
 
+    attached_tts_metric_sources: set[int] = set()
+
+    def _attach_tts_latency_logger(provider: str, tts_impl: Any) -> None:
+        source_id = id(tts_impl)
+        if source_id in attached_tts_metric_sources:
+            return
+        on_event = getattr(tts_impl, "on", None)
+        if not callable(on_event):
+            return
+
+        def _on_tts_metrics(metrics: Any) -> None:
+            if getattr(metrics, "type", "") != "tts_metrics":
+                return
+            logger.info(
+                "[VoiceLatency] tts_provider_metrics callSessionId=%s provider=%s label=%s request_id=%s ttfb_ms=%s duration_ms=%s audio_duration_ms=%s streamed=%s cancelled=%s characters=%s",
+                call_session_id,
+                provider,
+                getattr(metrics, "label", ""),
+                getattr(metrics, "request_id", ""),
+                _metric_ms(metrics, "ttfb"),
+                _metric_ms(metrics, "duration"),
+                _metric_ms(metrics, "audio_duration"),
+                bool(getattr(metrics, "streamed", False)),
+                bool(getattr(metrics, "cancelled", False)),
+                getattr(metrics, "characters_count", 0),
+            )
+
+        try:
+            on_event("metrics_collected", _on_tts_metrics)
+            attached_tts_metric_sources.add(source_id)
+        except Exception:
+            logger.debug(
+                "[voice-gateway] Unable to attach TTS metrics logger for provider=%s",
+                provider,
+                exc_info=True,
+            )
+
+    for attempt in attempts:
+        _attach_tts_latency_logger(attempt.label, attempt.tts)
+
     if len(attempts) > 1:
         tts_impl = FallbackTTS(
             attempts=attempts,
@@ -3083,19 +3387,53 @@ async def entrypoint(ctx: JobContext) -> None:
         env.voice_min_consecutive_speech_delay_s,
     )
 
-    @session.on("metrics_collected")
-    def _on_metrics_collected(event: Any) -> None:
-        metrics = getattr(event, "metrics", None)
-        if getattr(metrics, "type", "") != "eou_metrics":
-            return
-        logger.info(
-            "[voice-gateway] user_turn_completed source=livekit_metrics callSessionId=%s reason=%s detection=%s eou_delay=%ss transcription_delay=%ss",
-            call_session_id,
-            turn_end_reason,
-            _turn_detection_label(turn_detection),
-            round(float(getattr(metrics, "end_of_utterance_delay", 0.0)), 3),
-            round(float(getattr(metrics, "transcription_delay", 0.0)), 3),
+    @session.on("conversation_item_added")
+    def _on_conversation_item_added(event: Any) -> None:
+        item = getattr(event, "item", None)
+        role = getattr(item, "role", "")
+        metrics = getattr(item, "metrics", None) or {}
+        created_at = float(getattr(event, "created_at", 0.0) or 0.0)
+        event_lag_ms = (
+            max((time.time() - created_at) * 1000.0, 0.0)
+            if created_at > 0
+            else 0.0
         )
+        if role == "user":
+            eou_delay = _metric_seconds(metrics, "end_of_turn_delay")
+            transcription_delay = _metric_seconds(metrics, "transcription_delay")
+            on_turn_completed_delay = _metric_seconds(
+                metrics,
+                "on_user_turn_completed_delay",
+            )
+            logger.info(
+                "[voice-gateway] user_turn_completed source=conversation_item_metrics callSessionId=%s reason=%s detection=%s eou_delay=%.6fs transcription_delay=%.6fs",
+                call_session_id,
+                turn_end_reason,
+                _turn_detection_label(turn_detection),
+                eou_delay,
+                transcription_delay,
+            )
+            logger.info(
+                "[VoiceLatencyDetail] conversation_item_user_metrics callSessionId=%s reason=%s detection=%s eou_delay_s=%.6f transcription_delay_s=%.6f on_user_turn_completed_delay_s=%.6f event_lag_ms=%.3f",
+                call_session_id,
+                turn_end_reason,
+                _turn_detection_label(turn_detection),
+                eou_delay,
+                transcription_delay,
+                on_turn_completed_delay,
+                event_lag_ms,
+            )
+            return
+        if role == "assistant":
+            logger.info(
+                "[VoiceLatency] assistant_turn_metrics callSessionId=%s provider=%s llm_node_ttft_ms=%s tts_node_ttfb_ms=%s e2e_latency_ms=%s event_lag_ms=%.3f",
+                call_session_id,
+                current_tts_provider,
+                _metric_ms(metrics, "llm_node_ttft"),
+                _metric_ms(metrics, "tts_node_ttfb"),
+                _metric_ms(metrics, "e2e_latency"),
+                event_lag_ms,
+            )
 
     @session.on("agent_false_interruption")
     def _on_agent_false_interruption(event: Any) -> None:
@@ -3138,14 +3476,14 @@ async def entrypoint(ctx: JobContext) -> None:
     # with VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1 for provider-specific QA.
     sync_transcription = _voice_sync_transcription_enabled()
     logger.info(
-        "[voice-gateway] RoomOutputOptions callSessionId=%s sync_transcription=%s",
+        "[voice-gateway] RoomOptions callSessionId=%s text_output.sync_transcription=%s",
         call_session_id,
         sync_transcription,
     )
     await session.start(
         agent=agent,
         room=ctx.room,
-        room_output_options=room_io.RoomOutputOptions(sync_transcription=sync_transcription),
+        room_options=_build_room_options(sync_transcription=sync_transcription),
     )
     await _publish_voice_route_metadata(current_tts_provider, current_tts_impl)
     # === VIVENTIUM END ===
@@ -3153,6 +3491,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
 def run() -> None:
     start_health_server()
+    os.environ["VIVENTIUM_VOICE_WORKER_RUN_ID"] = f"{os.getpid()}-{int(time.time() * 1000)}"
     env = load_env()
     stt_provider = getattr(env, "stt_provider", "")
     if (

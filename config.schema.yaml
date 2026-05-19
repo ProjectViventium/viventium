@@ -25,6 +25,7 @@ properties:
         type: string
       playground_variant:
         type: string
+        description: Modern LiveKit playground is the default; classic agents-playground is explicit opt-in only.
         enum: [modern, classic]
       call_session_secret:
         type: object
