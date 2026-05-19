@@ -6,6 +6,7 @@
 # - Verify WAV duration preflight enforces upstream >=5s expectation.
 # === VIVENTIUM END ===
 
+import asyncio
 import os
 import sys
 import tempfile
@@ -21,7 +22,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from livekit.agents.worker import WorkerType
 
 from worker import (
+    _apply_xai_tts_streaming_latency_options,
     _apply_requested_voice_route,
+    _build_room_options,
     _build_voice_capability_catalog,
     _build_configured_voice_route_metadata,
     _build_voice_route_metadata,
@@ -98,6 +101,7 @@ class TestRefAudioValidation(unittest.TestCase):
             {
                 "VIVENTIUM_XAI_TTS_WS_URL": "wss://xai-tts.example.test/v1/tts",
                 "VIVENTIUM_XAI_SAMPLE_RATE": "44100",
+                "VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY": "0",
             },
             clear=True,
         ):
@@ -105,6 +109,23 @@ class TestRefAudioValidation(unittest.TestCase):
 
         self.assertEqual(env.xai_tts_ws_url, "wss://xai-tts.example.test/v1/tts")
         self.assertEqual(env.xai_sample_rate, 44100)
+        self.assertEqual(env.xai_tts_optimize_streaming_latency, 0)
+
+    def test_load_env_defaults_xai_tts_streaming_latency_optimization_on(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            env = load_env()
+
+        self.assertEqual(env.xai_tts_optimize_streaming_latency, 1)
+
+    def test_build_room_options_keeps_async_transcription_default(self) -> None:
+        options = _build_room_options(sync_transcription=False)
+
+        self.assertFalse(options.text_output.sync_transcription)
+
+    def test_build_room_options_can_still_opt_into_sync_transcription(self) -> None:
+        options = _build_room_options(sync_transcription=True)
+
+        self.assertTrue(options.text_output.sync_transcription)
 
     def test_configure_xai_standalone_tts_plugin_applies_runtime_endpoint(self) -> None:
         fake_tts_module = SimpleNamespace(
@@ -128,6 +149,71 @@ class TestRefAudioValidation(unittest.TestCase):
                     ws_url="wss://xai-tts.example.test/v1/tts",
                     sample_rate=44100,
                 )
+
+    def test_apply_xai_tts_streaming_latency_options_adds_query_param(self) -> None:
+        class FakeSession:
+            def __init__(self) -> None:
+                self.url = ""
+                self.headers = {}
+
+            async def ws_connect(self, url: str, headers: dict[str, str]) -> str:
+                self.url = url
+                self.headers = headers
+                return "connected"
+
+        fake_session = FakeSession()
+
+        class FakeTTS:
+            _opts = SimpleNamespace(voice="Eve", language="en")
+            _api_key = "synthetic_xai_key"
+
+            def _ensure_session(self) -> FakeSession:
+                return fake_session
+
+            async def _connect_ws(self, timeout: float) -> str:
+                return "unpatched"
+
+        fake_tts = FakeTTS()
+        _apply_xai_tts_streaming_latency_options(
+            fake_tts,
+            ws_url="wss://xai-tts.example.test/v1/tts",
+            sample_rate=44100,
+            optimize_streaming_latency=1,
+        )
+
+        result = asyncio.run(fake_tts._connect_ws(1.0))
+
+        self.assertEqual(result, "connected")
+        self.assertTrue(fake_session.url.startswith("wss://xai-tts.example.test/v1/tts?"))
+        self.assertIn("voice=Eve", fake_session.url)
+        self.assertIn("language=en", fake_session.url)
+        self.assertIn("sample_rate=44100", fake_session.url)
+        self.assertIn("optimize_streaming_latency=1", fake_session.url)
+        self.assertEqual(fake_session.headers["Authorization"], "Bearer synthetic_xai_key")
+
+    def test_apply_xai_tts_streaming_latency_options_warns_when_hook_missing(self) -> None:
+        class FakeSession:
+            async def ws_connect(self, url: str, headers: dict[str, str]) -> str:
+                return "connected"
+
+        class FakeTTS:
+            _opts = SimpleNamespace(voice="Eve", language="en")
+            _api_key = "synthetic_xai_key"
+
+            def _ensure_session(self) -> FakeSession:
+                return FakeSession()
+
+        fake_tts = FakeTTS()
+        with self.assertLogs("voice-gateway", level="WARNING") as logs:
+            _apply_xai_tts_streaming_latency_options(
+                fake_tts,
+                ws_url="wss://xai-tts.example.test/v1/tts",
+                sample_rate=44100,
+                optimize_streaming_latency=1,
+            )
+
+        self.assertFalse(hasattr(fake_tts, "_viventium_xai_tts_optimize_streaming_latency"))
+        self.assertIn("_connect_ws hook", "\n".join(logs.output))
 
     def test_load_env_uses_cold_start_timeout_for_local_whisper(self) -> None:
         with (
@@ -210,7 +296,7 @@ class TestRefAudioValidation(unittest.TestCase):
                     voice_initialize_process_timeout_s=45.0,
                     voice_idle_processes=1,
                     voice_worker_load_threshold=0.995,
-                    voice_job_memory_warn_mb=1400.0,
+                    voice_job_memory_warn_mb=2200.0,
                     voice_job_memory_limit_mb=2200.0,
                 ),
             ),
@@ -221,7 +307,7 @@ class TestRefAudioValidation(unittest.TestCase):
         self.assertIn("opts", captured)
         self.assertEqual(captured["opts"].agent_name, "librechat-voice-gateway")
         self.assertEqual(captured["opts"].worker_type, WorkerType.PUBLISHER)
-        self.assertEqual(captured["opts"].job_memory_warn_mb, 1400.0)
+        self.assertEqual(captured["opts"].job_memory_warn_mb, 2200.0)
         self.assertEqual(captured["opts"].job_memory_limit_mb, 2200.0)
 
     def test_prewarm_process_prewarms_local_chatterbox_at_startup(self) -> None:

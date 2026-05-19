@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import audioop
+import asyncio
 import hashlib
 import importlib.metadata
 import logging
@@ -16,11 +17,11 @@ import platform
 import socket
 import subprocess
 import sys
-import tempfile
+import time
 import urllib.request
-import wave
+from collections.abc import AsyncIterable
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 _SHARED_PATH = Path(__file__).resolve().parent.parent / "shared"
 if str(_SHARED_PATH) not in sys.path:
@@ -34,14 +35,26 @@ from whisper_cpp_models import (
 
 import numpy as np
 from livekit.agents.stt import (
+    RecognizeStream,
     STT,
     STTCapabilities,
     SpeechData,
     SpeechEvent,
     SpeechEventType,
 )
-from livekit.agents.stt.stream_adapter import StreamAdapter
+from livekit.agents.stt.stream_adapter import (
+    DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS,
+    StreamAdapter,
+)
+from livekit.agents.types import (
+    DEFAULT_API_CONNECT_OPTIONS,
+    APIConnectOptions,
+    NOT_GIVEN,
+    NotGivenOr,
+)
+from livekit.agents import utils as lk_utils
 from livekit.agents.utils import AudioBuffer
+from livekit.agents.vad import VAD as VADBase, VADEventType
 from livekit.rtc.audio_frame import AudioFrame
 from silero_vad_config import get_silero_vad_kwargs
 
@@ -57,6 +70,7 @@ _logger = logging.getLogger(__name__)
 _MODEL_CACHE: dict[str, Model] = {}
 _LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
 _LOCAL_WHISPER_VAD_MIN_SILENCE_S = "0.5"
+_MODEL_WARMUP_DONE: set[str] = set()
 
 # Common hallucination phrases Whisper outputs on silence/noise
 # Based on research: https://github.com/ggml-org/whisper.cpp/issues/1724
@@ -85,6 +99,91 @@ def _local_whisper_vad_env() -> dict[str, str]:
     if not (source.get("VIVENTIUM_STT_VAD_MIN_SILENCE") or "").strip():
         source["VIVENTIUM_STT_VAD_MIN_SILENCE"] = _LOCAL_WHISPER_VAD_MIN_SILENCE_S
     return source
+
+
+def _bool_env(name: str, fallback: bool = False) -> bool:
+    raw = (os.getenv(name, "") or "").strip().lower()
+    if not raw:
+        return fallback
+    return raw in {"1", "true", "yes", "y", "on"}
+
+
+def _latency_logging_enabled() -> bool:
+    return _bool_env("VIVENTIUM_VOICE_LOG_LATENCY", False)
+
+
+def _ms_since(start_ns: int, end_ns: Optional[int] = None) -> float:
+    return ((end_ns or time.perf_counter_ns()) - start_ns) / 1_000_000.0
+
+
+def _float_env(name: str, fallback: float) -> float:
+    raw = (os.getenv(name, "") or "").strip()
+    if not raw:
+        return fallback
+    try:
+        return float(raw)
+    except ValueError:
+        return fallback
+
+
+def _int_env(name: str, fallback: int) -> int:
+    raw = (os.getenv(name, "") or "").strip()
+    if not raw:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        return fallback
+
+
+def _audio_ctx_for_transcribe(
+    model_name: str,
+    *,
+    audio_duration_s: Optional[float] = None,
+) -> int:
+    configured = (os.getenv("VIVENTIUM_STT_AUDIO_CTX", "") or "").strip()
+    if configured:
+        try:
+            return max(0, int(configured))
+        except ValueError:
+            return 0
+
+    if model_name != "large-v3-turbo":
+        return 0
+
+    reduced_ctx_max_audio_s = max(
+        0.0,
+        _float_env("VIVENTIUM_STT_REDUCED_AUDIO_CTX_MAX_AUDIO_S", 12.0),
+    )
+    if audio_duration_s is not None and audio_duration_s > reduced_ctx_max_audio_s:
+        return 0
+    return 768
+
+
+def _transcribe_kwargs(
+    language: str,
+    *,
+    model_name: Optional[str] = None,
+    audio_duration_s: Optional[float] = None,
+) -> dict[str, object]:
+    resolved_model = _default_model_name(model_name)
+    audio_ctx = _audio_ctx_for_transcribe(
+        resolved_model,
+        audio_duration_s=audio_duration_s,
+    )
+    params: dict[str, object] = {
+        "language": language,
+        "no_speech_thold": 0.7,
+        "logprob_thold": -0.8,
+        "suppress_blank": True,
+        "temperature": 0.0,
+        "entropy_thold": 2.2,
+        "no_context": _bool_env("VIVENTIUM_STT_NO_CONTEXT", True),
+        "single_segment": _bool_env("VIVENTIUM_STT_SINGLE_SEGMENT", True),
+    }
+    if audio_ctx > 0:
+        params["audio_ctx"] = audio_ctx
+    return params
 
 
 def _default_model_name(configured_model: Optional[str] = None) -> str:
@@ -343,13 +442,47 @@ def _get_model(model_name_override: Optional[str] = None) -> Model:
         cached_model = Model(str(model_path), n_threads=n_threads, print_realtime=False, print_progress=False)
         _MODEL_CACHE[model_name] = cached_model
         _logger.info("PyWhisperCpp model loaded successfully with %s threads", n_threads)
+        try:
+            _logger.info("PyWhisperCpp system_info: %s", cached_model.system_info())
+        except Exception as exc:
+            _logger.debug("Unable to read PyWhisperCpp system_info: %s", exc)
 
     return cached_model
 
 
 def prewarm_model(model_name: Optional[str] = None) -> None:
-    """Ensure the local whisper.cpp model is downloaded and loaded in-process."""
-    _get_model(model_name)
+    """Ensure the local whisper.cpp model is downloaded, loaded, and first-inference warmed."""
+    resolved_model = _default_model_name(model_name)
+    model = _get_model(resolved_model)
+    if resolved_model in _MODEL_WARMUP_DONE:
+        return
+    if not _bool_env("VIVENTIUM_STT_WARMUP_INFERENCE", True):
+        return
+
+    warmup_audio_s = max(
+        0.1,
+        min(3.0, _float_env("VIVENTIUM_STT_WARMUP_AUDIO_S", 1.0)),
+    )
+    warmup_samples = max(1, int(16000 * warmup_audio_s))
+    warmup_audio = np.zeros(warmup_samples, dtype=np.float32)
+    start = time.perf_counter()
+    model.transcribe(
+        warmup_audio,
+        **_transcribe_kwargs(
+            os.getenv("VIVENTIUM_STT_LANGUAGE", "en"),
+            model_name=resolved_model,
+            audio_duration_s=warmup_audio_s,
+        ),
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    _MODEL_WARMUP_DONE.add(resolved_model)
+    if _latency_logging_enabled():
+        _logger.info(
+            "[VoiceLatency] pywhispercpp_warmup model=%s audio_s=%.3f total_ms=%.1f",
+            resolved_model,
+            warmup_audio_s,
+            elapsed_ms,
+        )
 
 
 def _run_cli() -> None:
@@ -397,6 +530,14 @@ class PyWhisperCppSTT(STT):
         language: str | None = None,
         conn_options: object = None,
     ) -> SpeechEvent:
+        total_start = time.perf_counter()
+        timings: dict[str, float] = {}
+
+        def mark(name: str, start: float) -> float:
+            now = time.perf_counter()
+            timings[name] = (now - start) * 1000.0
+            return now
+
         # Handle AudioBuffer which can be a frame or list of frames
         frames: List[AudioFrame] = []
         if isinstance(buffer, list):
@@ -411,8 +552,10 @@ class PyWhisperCppSTT(STT):
             )
 
         # Combine all audio frames into a single PCM buffer
+        stage_start = time.perf_counter()
         sample_rate = frames[0].sample_rate
         num_channels = frames[0].num_channels
+        input_channels = num_channels
         pcm_chunks: List[bytes] = []
 
         for frame in frames:
@@ -421,11 +564,18 @@ class PyWhisperCppSTT(STT):
             pcm_chunks.append(frame.data.tobytes())
 
         pcm_bytes = b"".join(pcm_chunks)
+        input_audio_duration_s = (
+            len(pcm_bytes) / (sample_rate * num_channels * 2)
+            if sample_rate > 0 and num_channels > 0
+            else 0.0
+        )
+        stage_start = mark("combine_ms", stage_start)
 
         # Convert to mono if needed
         if num_channels > 1:
             pcm_bytes = audioop.tomono(pcm_bytes, 2, 0.5, 0.5)
             num_channels = 1
+        stage_start = mark("mono_ms", stage_start)
 
         # Resample to 16kHz if needed
         if sample_rate != self._sample_rate:
@@ -437,45 +587,224 @@ class PyWhisperCppSTT(STT):
                 self._sample_rate,
                 None,
             )
+        stage_start = mark("resample_ms", stage_start)
 
-        # Convert to int16 numpy array (PyWhisperCpp expects int16)
-        audio_data = np.frombuffer(pcm_bytes, dtype=np.int16)
+        # pywhispercpp accepts raw 16 kHz mono float32 PCM, so avoid a temp WAV roundtrip.
+        audio_data = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+        audio_data /= 32768.0
+        audio_data = np.ascontiguousarray(audio_data)
+        output_audio_duration_s = (
+            audio_data.size / self._sample_rate if self._sample_rate > 0 else 0.0
+        )
+        stage_start = mark("float32_ms", stage_start)
 
-        # Use memory-mapped temp file for faster I/O
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-            tmp_path = tmp_wav.name
-            # Write WAV header and data directly
-            with wave.open(tmp_path, "wb") as wav_file:
-                wav_file.setnchannels(1)  # Mono
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(self._sample_rate)
-                wav_file.writeframes(audio_data.tobytes())
+        lang = language or self._language
+        transcribe_params = _transcribe_kwargs(
+            lang,
+            model_name=self._model_name,
+            audio_duration_s=output_audio_duration_s,
+        )
+        transcribe_start_ns = time.perf_counter_ns()
+        segments = self._model.transcribe(
+            audio_data,
+            **transcribe_params,
+        )
+        transcribe_end_ns = time.perf_counter_ns()
+        stage_start = mark("transcribe_ms", stage_start)
 
-        try:
-            lang = language or self._language
-            segments = self._model.transcribe(
-                tmp_path,
-                language=lang,
-                no_speech_thold=0.7,
-                logprob_thold=-0.8,
-                suppress_blank=True,
-                temperature=0.0,
-                entropy_thold=2.2,
+        text = " ".join([segment.text for segment in segments]) if segments else ""
+
+        text_clean = text.strip().lower()
+        if text_clean in HALLUCINATION_PHRASES:
+            _logger.debug("Filtered hallucination: '%s'", text)
+            text = ""
+        mark("filter_ms", stage_start)
+
+        if _latency_logging_enabled():
+            total_ms = (time.perf_counter() - total_start) * 1000.0
+            _logger.info(
+                "[VoiceLatency] pywhispercpp_recognize model=%s frames=%s input_audio_s=%.3f output_audio_s=%.3f input_rate=%s output_rate=%s input_channels=%s text_chars=%s total_ms=%.3f combine_ms=%.3f mono_ms=%.3f resample_ms=%.3f float32_ms=%.3f transcribe_ms=%.3f filter_ms=%.3f",
+                self._model_name,
+                len(frames),
+                input_audio_duration_s,
+                output_audio_duration_s,
+                sample_rate,
+                self._sample_rate,
+                input_channels,
+                len(text),
+                total_ms,
+                timings.get("combine_ms", 0.0),
+                timings.get("mono_ms", 0.0),
+                timings.get("resample_ms", 0.0),
+                timings.get("float32_ms", 0.0),
+                timings.get("transcribe_ms", 0.0),
+                timings.get("filter_ms", 0.0),
             )
-
-            text = " ".join([segment.text for segment in segments]) if segments else ""
-
-            text_clean = text.strip().lower()
-            if text_clean in HALLUCINATION_PHRASES:
-                _logger.debug("Filtered hallucination: '%s'", text)
-                text = ""
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            _logger.info(
+                "[VoiceLatencyDetail] pywhispercpp_transcribe model=%s audio_s=%.6f audio_ctx=%s no_context=%s single_segment=%s transcribe_perf_ns_start=%s transcribe_perf_ns_end=%s transcribe_wall_ms=%.3f",
+                self._model_name,
+                output_audio_duration_s,
+                transcribe_params.get("audio_ctx", "default"),
+                transcribe_params.get("no_context"),
+                transcribe_params.get("single_segment"),
+                transcribe_start_ns,
+                transcribe_end_ns,
+                _ms_since(transcribe_start_ns, transcribe_end_ns),
+            )
 
         return SpeechEvent(
             type=SpeechEventType.FINAL_TRANSCRIPT,
             alternatives=[SpeechData(text=text, language=lang)]
+        )
+
+
+class ViventiumInstrumentedStreamAdapterWrapper(RecognizeStream):
+    """StreamAdapter wrapper with high-resolution local STT stage timing."""
+
+    def __init__(
+        self,
+        stt: STT,
+        *,
+        vad: VADBase,
+        wrapped_stt: STT,
+        language: NotGivenOr[str],
+        conn_options: APIConnectOptions,
+    ) -> None:
+        super().__init__(
+            stt=stt,
+            conn_options=DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS,
+        )
+        self._vad = vad
+        self._wrapped_stt = wrapped_stt
+        self._wrapped_stt_conn_options = conn_options
+        self._language = language
+
+    async def _metrics_monitor_task(self, event_aiter: AsyncIterable[SpeechEvent]) -> None:
+        async for _ in event_aiter:
+            pass
+
+    async def _run(self) -> None:
+        vad_stream = self._vad.stream()
+
+        async def _forward_input() -> None:
+            async for input in self._input_ch:
+                if isinstance(input, self._FlushSentinel):
+                    vad_stream.flush()
+                    continue
+                vad_stream.push_frame(input)
+
+            vad_stream.end_input()
+
+        async def _recognize() -> None:
+            async for event in vad_stream:
+                if event.type == VADEventType.START_OF_SPEECH:
+                    if _latency_logging_enabled():
+                        _logger.info(
+                            "[VoiceLatencyDetail] stream_adapter_vad event=start_of_speech perf_ns=%s vad_timestamp_s=%.6f speech_s=%.6f silence_s=%.6f raw_speech_s=%.6f raw_silence_s=%.6f frames=%s",
+                            time.perf_counter_ns(),
+                            event.timestamp,
+                            event.speech_duration,
+                            event.silence_duration,
+                            event.raw_accumulated_speech,
+                            event.raw_accumulated_silence,
+                            len(event.frames),
+                        )
+                    self._event_ch.send_nowait(SpeechEvent(SpeechEventType.START_OF_SPEECH))
+                elif event.type == VADEventType.END_OF_SPEECH:
+                    vad_end_ns = time.perf_counter_ns()
+                    self._event_ch.send_nowait(
+                        SpeechEvent(
+                            type=SpeechEventType.END_OF_SPEECH,
+                        )
+                    )
+
+                    merge_start_ns = time.perf_counter_ns()
+                    merged_frames = lk_utils.merge_frames(event.frames)
+                    merge_end_ns = time.perf_counter_ns()
+
+                    sample_rate = int(getattr(merged_frames, "sample_rate", 0) or 0)
+                    num_channels = int(getattr(merged_frames, "num_channels", 0) or 0)
+                    audio_data = getattr(merged_frames, "data", b"") or b""
+                    audio_bytes = int(
+                        getattr(audio_data, "nbytes", len(audio_data))
+                    )
+                    audio_s = (
+                        audio_bytes / (sample_rate * num_channels * 2)
+                        if sample_rate > 0 and num_channels > 0
+                        else 0.0
+                    )
+
+                    recognize_start_ns = time.perf_counter_ns()
+                    t_event = await self._wrapped_stt.recognize(
+                        buffer=merged_frames,
+                        language=self._language,
+                        conn_options=self._wrapped_stt_conn_options,
+                    )
+                    recognize_end_ns = time.perf_counter_ns()
+
+                    text_chars = (
+                        len(t_event.alternatives[0].text)
+                        if len(t_event.alternatives) > 0
+                        else 0
+                    )
+                    sent_final = False
+                    final_send_ms = 0.0
+                    if len(t_event.alternatives) > 0 and t_event.alternatives[0].text:
+                        final_send_start_ns = time.perf_counter_ns()
+                        self._event_ch.send_nowait(
+                            SpeechEvent(
+                                type=SpeechEventType.FINAL_TRANSCRIPT,
+                                alternatives=[t_event.alternatives[0]],
+                            )
+                        )
+                        final_send_ms = _ms_since(final_send_start_ns)
+                        sent_final = True
+
+                    if _latency_logging_enabled():
+                        _logger.info(
+                            "[VoiceLatencyDetail] stream_adapter_final model=%s provider=%s sent_final=%s text_chars=%s vad_end_perf_ns=%s vad_timestamp_s=%.6f speech_s=%.6f silence_s=%.6f raw_speech_s=%.6f raw_silence_s=%.6f frames=%s audio_s=%.6f merge_ms=%.3f recognize_wait_ms=%.3f final_send_ms=%.3f total_after_vad_end_ms=%.3f",
+                            self._wrapped_stt.model,
+                            self._wrapped_stt.provider,
+                            sent_final,
+                            text_chars,
+                            vad_end_ns,
+                            event.timestamp,
+                            event.speech_duration,
+                            event.silence_duration,
+                            event.raw_accumulated_speech,
+                            event.raw_accumulated_silence,
+                            len(event.frames),
+                            audio_s,
+                            _ms_since(merge_start_ns, merge_end_ns),
+                            _ms_since(recognize_start_ns, recognize_end_ns),
+                            final_send_ms,
+                            _ms_since(vad_end_ns),
+                        )
+
+        tasks = [
+            asyncio.create_task(_forward_input(), name="forward_input"),
+            asyncio.create_task(_recognize(), name="recognize"),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            await lk_utils.aio.cancel_and_wait(*tasks)
+            await vad_stream.aclose()
+
+
+class ViventiumInstrumentedStreamAdapter(StreamAdapter):
+    def stream(
+        self,
+        *,
+        language: NotGivenOr[str] = NOT_GIVEN,
+        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    ) -> RecognizeStream:
+        return ViventiumInstrumentedStreamAdapterWrapper(
+            self,
+            vad=self._vad,
+            wrapped_stt=self._stt,
+            language=language,
+            conn_options=conn_options,
         )
 
 
@@ -502,7 +831,7 @@ def get_stt(*, model_name: Optional[str] = None, language: Optional[str] = None)
     )
     vad = VAD.load(**vad_kwargs)
 
-    return StreamAdapter(stt=stt, vad=vad)
+    return ViventiumInstrumentedStreamAdapter(stt=stt, vad=vad)
 
 
 __all__ = [

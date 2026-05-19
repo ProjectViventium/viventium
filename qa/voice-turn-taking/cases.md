@@ -10,7 +10,8 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
 | --- | --- | --- | --- | --- | --- |
 | `VCTURN-001` | Interruptions, silence, and end-of-turn detection produce natural call turns and no stale follow-up speech. | User-visible behavior matches source, docs, persisted state, and logs | LiveKit/playground call, VAD/EOT logs, transcript | `tests/release/test_voice_playground_dispatch_contract.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `VCTURN-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `VCTURN-003` | Local Whisper turn ending uses a fast local endpointing profile and cancelled voice streams stop backend generation. | User pauses feel responsive, barge-in cancels the assistant stream, and partial assistant DB state is not left stale | Modern Playground, Voice Gateway, LibreChat voice stream route, Mongo messages, voice logs | Voice gateway unit tests, LibreChat route tests, real pywhispercpp benchmark, Playwright reachability, runtime log/DB inspection | 2026-05-18 PARTIAL; source/test pass, live runtime promotion and full microphone barge-in QA still required |
+| `VCTURN-003` | Local Whisper turn ending uses a fast local endpointing profile and cancelled voice streams stop backend generation. | User pauses feel responsive, barge-in cancels the assistant stream, and partial assistant DB state is not left stale | Modern Playground, Voice Gateway, LibreChat voice stream route, Mongo messages, voice logs | Voice gateway unit tests, LibreChat route tests, real pywhispercpp benchmark, Playwright microphone run, runtime log/DB inspection | 2026-05-18 PASS for local Whisper endpointing, publisher dispatch, and Listen-Only pause continuation; live full-agent barge-in edit remains separate |
+| `VCTURN-004` | Synthetic speech with natural pauses is injected through the real LiveKit microphone path. | A fast endpointing profile does not split a resumed thought into multiple persisted turns | Modern Playground fake microphone, LiveKit, Whisper.cpp, LibreChat voice route, Mongo | Synthetic TTS fixture generator, fake-microphone QA harness, voice route tests, DB/log inspection | 2026-05-18 PASS |
 
 ## `VCTURN-001` - Core User Flow
 
@@ -73,7 +74,36 @@ Use stable `VCTURN-NNN` IDs for voice turn taking cases.
   residual gaps.
 - Automation: `voice-gateway/tests/test_*turn*`, `voice-gateway/tests/test_librechat_llm.py`,
   LibreChat `routes/viventium/__tests__/voice.spec.js`, and public-safe QA report.
-- Last run: 2026-05-18 PARTIAL in `qa/modern-playground-voice/reports/2026-05-18-whispercpp-turn-taking-endpointing.md`.
+- Last run: 2026-05-18 PASS for local Whisper endpointing and Listen-Only pause continuation in
+  `qa/modern-playground-voice/reports/2026-05-18-synthetic-audio-livekit-continuation.md`. Live
+  full-agent barge-in/edit remains outside this Listen-Only acceptance case.
+
+## `VCTURN-004` - Synthetic Speech Pause Continuation
+
+- Requirement: synthetic speech with natural pauses should exercise the real LiveKit/Whisper path,
+  not only route mocks.
+- Risk covered: a `0.5s` silence endpoint can correctly submit quickly but still split a resumed
+  human thought into multiple persisted turns.
+- Preconditions: local runtime running; synthetic public-safe WAV fixtures available; local
+  Whisper.cpp route selected.
+- Steps:
+  1. Generate short, long, `0.7s` pause, and `1.5s` pause fixtures with local TTS or a platform
+     fallback.
+  2. Open the modern playground in Chromium with the WAV file as fake microphone input.
+  3. Start the call, enable the microphone if prompted, and wait for the voice worker to persist
+     Listen-Only transcripts.
+  4. Assert pause fixtures produce one transcript message containing both clauses.
+  5. Verify logs, ingress records, DB cleanup counts, and public-safe report evidence.
+- Expected result: short and long speech persist complete synthetic text; `0.7s` and `1.5s` pauses
+  persist as one continued transcript message inside the continuation window.
+- Forbidden result: worker dispatch relies only on token room config on local LiveKit; real Mongo
+  drops continuation fields missing from mocks; a resumed pause creates two transcript rows.
+- Evidence to capture: fixture manifest, browser/fake-mic result JSON, screenshot summary, voice
+  timing logs, DB row counts, cleanup counts, and public-safety scan.
+- Automation: `qa/modern-playground-voice/scripts/generate_synthetic_speech_fixtures.py` and
+  `qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js`.
+- Last run: 2026-05-18 PASS in
+  `qa/modern-playground-voice/reports/2026-05-18-synthetic-audio-livekit-continuation.md`.
 
 ## Natural User Use Case Checklist
 

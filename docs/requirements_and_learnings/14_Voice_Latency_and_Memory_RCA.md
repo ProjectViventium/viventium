@@ -212,10 +212,13 @@ The 5s delay is **most consistent** with:
 ---
 
 ## Local Fast Profile Addendum (2026-03-05)
-Local env was updated to align with the cloud Phase A/background values that reduce voice-call startup delay:
+Local env was updated to align with the Phase A/background values that reduce voice-call startup
+delay without letting the main voice LLM start before Phase A knows whether background processing is
+active:
 
 ```env
-VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true
+VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice
+VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false
 VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500
 VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false
 ```
@@ -364,10 +367,17 @@ into the low-risk latency fix.
 
 ### Applied low-risk fixes
 
-- The config compiler now emits the documented voice fast-profile env:
-  `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true`,
+- The config compiler now emits the documented voice Phase A env:
+  `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice`,
+  `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false`,
   `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500`, and
   `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false`.
+- Fully async voice background detection remains an explicit operator opt-in, because the shipped
+  default must let Phase A know that background processing has kicked off before the main voice LLM
+  starts.
+- Fully async opt-in detection explicitly keeps `all_within_budget` detection semantics in the
+  background so Phase B receives the complete activated set. The `any_activated_on_voice`
+  early-notice behavior belongs to the shipped sync Phase A path.
 - The config compiler also emits `VIVENTIUM_VOICE_LOG_LATENCY=1` so the real local runtime captures
   sub-second route, init, Phase A, provider, stream, and TTS timing without hand-editing generated
   App Support files.
@@ -390,6 +400,71 @@ into the low-risk latency fix.
 - Live local DB for the experimental main agent was set to `xai / grok-4.3` with
   `voice_llm_model_parameters.reasoning_effort: "none"`. Tracked source YAML was intentionally not
   changed because the live DB is the active experiment surface for this incident.
+
+### Microtiming addendum (2026-05-19)
+
+The `~0.35-0.40s` voice route ready delay was not basic byte transfer. A code trace found an
+intentional live voice ingress coalescing wait: `VIVENTIUM_VOICE_TURN_COALESCE_WINDOW_MS` had a
+350ms default. That wait was useful for merging fragmented same-parent ingress, but it sits before
+the route returns the stream id, so it directly delays every normal spoken response.
+
+Applied behavior:
+
+- Normal live voice now defaults to `VIVENTIUM_VOICE_LIVE_TURN_COALESCE_WINDOW_MS=0`.
+- The legacy `VIVENTIUM_VOICE_TURN_COALESCE_WINDOW_MS` still overrides the shared behavior when
+  explicitly set.
+- Listen-Only keeps a separate ambient transcript merge default:
+  `VIVENTIUM_VOICE_LISTEN_ONLY_TURN_COALESCE_WINDOW_MS=350` when the shared value is unset.
+- Route latency logs now include `coalesce_window_ms`, so a future trace can distinguish deliberate
+  buffering from auth, conversation lookup, or job setup.
+
+Auth/session and parent-resolution hot-path work was also tightened:
+
+- Voice chat auth now performs the successful call-session existence check and worker lease claim in
+  one atomic `findOneAndUpdate`. The extra session lookup is kept only on the error path to return
+  the right 401/403 reason.
+- Voice route logs split auth into `voice_auth_session_claim_done` and `voice_auth_user_done`.
+- Parent resolution now projects only fields needed to validate the conversation and find the latest
+  leaf (`conversationId`, `endpoint`, `agent_id`, ids, parent ids, timestamps, and listen-only
+  metadata), instead of loading full message text/content before stream readiness.
+- For voice requests whose server-side conversation resolution already proved the exact
+  user-owned conversation, the later generic `validateConvoAccess` middleware is skipped and logged
+  as `status=skipped_verified_voice`. If the earlier lookup failed, reset the conversation to
+  `new`, or otherwise did not prove ownership, the generic validation still runs.
+
+Local DB micro-benchmark against the current development MongoDB after the code changes:
+
+| Hot-path operation | Median |
+| --- | ---: |
+| Combined session claim `findOneAndUpdate` | 0.309ms |
+| User fetch projection | 0.255ms |
+| Conversation validate projection | 0.210ms |
+| Parent messages projected | 0.240ms |
+| Voice ingress create+find with no sleep | 0.450ms |
+
+For the sampled conversation, projected parent-message payload was 944 bytes versus 6572 bytes for
+the old full-message shape. The important conclusion is practical: local DB/auth is not the
+multi-hundred-millisecond wall in the measured route-ready delay; the default live coalescing sleep
+was. The DB work should still stay measured and narrow because large conversations can make full
+message reads expensive.
+
+Phase A notice has an explicit latency mode now:
+
+- Default is `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice`: voice calls can
+  release Phase A after the first true activation, while web, Telegram, scheduler, and other
+  text surfaces continue to use `all_within_budget`.
+- `any_activated` releases Phase A after the first true activation while final detection continues.
+- `all_within_budget` remains available when a deployment needs every surface to wait for the full
+  activation detection budget before Phase A.
+- Early release injects a generic "background is brewing and full detection is still pending"
+  instruction, not a first-agent result summary. Phase B waits for final detection and executes the
+  final activated set.
+- If any configured tool-hold cortex has an unowned direct-action scope on the current request, the
+  effective notice mode falls back to `all_within_budget`.
+
+The high-resolution latency log format now includes both rounded milliseconds and fractional
+milliseconds (`*_ms_f`) for sub-0.01s analysis of route, controller, Phase A, tool/MCP, provider,
+and stream stages.
 
 ### Remaining live validation
 

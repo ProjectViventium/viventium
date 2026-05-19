@@ -61,10 +61,12 @@ DEFAULT_XAI_TTS_WS_URL = "wss://api.x.ai/v1/tts"
 DEFAULT_XAI_TTS_VOICE = "Sal"
 DEFAULT_XAI_TTS_LANGUAGE = "en"
 DEFAULT_XAI_TTS_SAMPLE_RATE = "24000"
+DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY = "1"
 DEFAULT_XAI_TTS_CODEC = "mp3"
 DEFAULT_XAI_TTS_BIT_RATE = "128000"
 DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
 DEFAULT_GLASSHIVE_FOLLOWUP_TIMEOUT_S = "600"
+DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD = "0.01"
@@ -2253,10 +2255,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
-    # Voice fast-profile defaults are runtime outputs, not hand-maintained App Support edits.
-    # They preserve background-agent parity while keeping simple voice turns from blocking first
-    # audio on the full Phase A detection path.
-    env["VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC"] = "true"
+    # Voice Phase A defaults are runtime outputs, not hand-maintained App Support edits. The default
+    # keeps Phase A activation awareness in the main-response path, but releases early on the first
+    # true voice activation instead of waiting for every detector.
+    env["VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE"] = DEFAULT_CORTEX_PHASE_A_NOTICE_MODE
+    env["VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC"] = "false"
     env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] = "500"
     env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "false"
     env["VIVENTIUM_VOICE_LOG_LATENCY"] = "1"
@@ -2455,6 +2458,38 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         ).strip()
         configured_api_url = str(xai_config.get("api_url", "") or "").strip()
         configured_ws_url = str(xai_config.get("ws_url", "") or "").strip()
+        configured_optimize_streaming_latency_raw = xai_config.get(
+            "optimize_streaming_latency"
+        )
+        if configured_optimize_streaming_latency_raw in (None, ""):
+            configured_optimize_streaming_latency_raw = xai_config.get(
+                "streaming_latency_optimization"
+            )
+        if configured_optimize_streaming_latency_raw in (None, ""):
+            configured_optimize_streaming_latency = (
+                DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY
+            )
+        else:
+            if isinstance(configured_optimize_streaming_latency_raw, bool):
+                configured_optimize_streaming_latency_int = (
+                    1 if configured_optimize_streaming_latency_raw else 0
+                )
+            else:
+                try:
+                    configured_optimize_streaming_latency_int = int(
+                        float(str(configured_optimize_streaming_latency_raw).strip())
+                    )
+                except ValueError as exc:
+                    raise SystemExit(
+                        "xAI voice calls support optimize_streaming_latency values 0 or 1"
+                    ) from exc
+            if configured_optimize_streaming_latency_int not in {0, 1}:
+                raise SystemExit(
+                    "xAI voice calls support optimize_streaming_latency values 0 or 1"
+                )
+            configured_optimize_streaming_latency = str(
+                configured_optimize_streaming_latency_int
+            )
         env["VIVENTIUM_XAI_TTS_API"] = configured_tts_api or DEFAULT_XAI_TTS_API
         env["VIVENTIUM_XAI_TTS_API_URL"] = configured_api_url or DEFAULT_XAI_TTS_API_URL
         env["VIVENTIUM_XAI_TTS_WS_URL"] = configured_ws_url or DEFAULT_XAI_TTS_WS_URL
@@ -2462,6 +2497,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["VIVENTIUM_XAI_LANGUAGE"] = configured_language or DEFAULT_XAI_TTS_LANGUAGE
         env["VIVENTIUM_XAI_SAMPLE_RATE"] = (
             configured_sample_rate or DEFAULT_XAI_TTS_SAMPLE_RATE
+        )
+        env["VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY"] = (
+            configured_optimize_streaming_latency
         )
         env["VIVENTIUM_XAI_TTS_CODEC"] = configured_tts_codec or DEFAULT_XAI_TTS_CODEC
         env["VIVENTIUM_XAI_TTS_SAMPLE_RATE"] = (
@@ -2962,6 +3000,11 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE",
         "VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER",
         "VIVENTIUM_FC_CONSCIOUS_LLM_MODEL",
+        "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE",
+        "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC",
+        "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS",
+        "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD",
+        "VIVENTIUM_VOICE_LOG_LATENCY",
     ]
     telegram_keys = [
         "BOT_TOKEN",
@@ -2987,6 +3030,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_XAI_VOICE",
         "VIVENTIUM_XAI_LANGUAGE",
         "VIVENTIUM_XAI_SAMPLE_RATE",
+        "VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY",
         "VIVENTIUM_XAI_TTS_CODEC",
         "VIVENTIUM_XAI_TTS_SAMPLE_RATE",
         "VIVENTIUM_XAI_TTS_BIT_RATE",

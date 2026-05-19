@@ -43,9 +43,9 @@ This index lists the Viventium-specific changes and where they live.
 - SSE parsing + insight formatting: `voice-gateway/sse.py`
 - Cartesia emotion segmentation + laughter normalization: `voice-gateway/cartesia_tts.py`
 - Local whisper.cpp provider: `voice-gateway/pywhispercpp_provider.py`
-- Playground deep-link token source: `agents-playground/src/pages/index.tsx`
-- Playground token API: `agents-playground/src/pages/api/token.ts`
-- Modern playground (agent-starter-react UI): `agent-starter-react`
+- Modern playground default UI and deep-link handling: `agent-starter-react`
+- Classic playground opt-in token source: `agents-playground/src/pages/index.tsx`
+- Classic playground opt-in token API: `agents-playground/src/pages/api/token.ts`
 
 ## Tooling
 - Full-stack launcher: `viventium-librechat-start.sh`

@@ -110,6 +110,45 @@ def test_source_prompt_refs_allow_plain_values_when_registry_is_missing() -> Non
     }
 
 
+def test_runtime_env_defaults_to_modern_playground_and_keeps_classic_opt_in() -> None:
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+
+    assert env["PLAYGROUND_VARIANT"] == "modern"
+    assert env["VIVENTIUM_PLAYGROUND_VARIANT"] == "modern"
+
+    classic_config = copy.deepcopy(config)
+    classic_config["runtime"]["playground_variant"] = "classic"
+    classic_env = config_compiler.render_runtime_env(
+        classic_config,
+        config_compiler.build_agent_assignments(classic_config),
+    )
+
+    assert classic_env["PLAYGROUND_VARIANT"] == "classic"
+    assert classic_env["VIVENTIUM_PLAYGROUND_VARIANT"] == "classic"
+
+    invalid_config = copy.deepcopy(config)
+    invalid_config["runtime"]["playground_variant"] = "old-playground"
+    invalid_env = config_compiler.render_runtime_env(
+        invalid_config,
+        config_compiler.build_agent_assignments(invalid_config),
+    )
+
+    assert invalid_env["PLAYGROUND_VARIANT"] == "modern"
+    assert invalid_env["VIVENTIUM_PLAYGROUND_VARIANT"] == "modern"
+
+
+def test_launcher_treats_classic_playground_as_explicit_opt_in_only() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'PLAYGROUND_VARIANT="${PLAYGROUND_VARIANT:-modern}"' in script
+    assert 'PLAYGROUND_VARIANT="$(normalize_cli_arg "$PLAYGROUND_VARIANT" | tr' in script
+    assert 'if [[ "$PLAYGROUND_VARIANT" != "classic" ]]; then' in script
+    assert 'PLAYGROUND_VARIANT="modern"' in script
+    assert '--classic-playground) PLAYGROUND_VARIANT="classic"; shift ;;' in script
+
+
 def test_direct_launcher_regenerates_canonical_runtime_before_loading_env() -> None:
     script = START_SCRIPT.read_text(encoding="utf-8")
 
@@ -510,6 +549,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "GROQ_API_KEY=groq-test" in runtime_env
     assert "OPENAI_API_KEY=openai-test" in runtime_env
     assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
+    assert "PLAYGROUND_VARIANT=modern" in runtime_env
+    assert "VIVENTIUM_PLAYGROUND_VARIANT=modern" in runtime_env
     assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-session-test" in runtime_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-session-test" in runtime_env
@@ -519,6 +560,12 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=600" in runtime_env
     assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=600" in runtime_env
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=600" in runtime_env
+    assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in runtime_env
+    assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in librechat_env
+    assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
@@ -991,6 +1038,7 @@ def test_config_compiler_ignores_legacy_fast_voice_llm_provider(tmp_path: Path) 
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_TTS_PROVIDER=openai" in runtime_env
     assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
@@ -2485,6 +2533,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     )
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
 
     assert "VIVENTIUM_CORTEX_FOLLOWUP_GRACE_S=45" in runtime_env
     assert "VIVENTIUM_VOICE_FOLLOWUP_GRACE_S=45" in runtime_env
@@ -2492,10 +2541,16 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=900" in runtime_env
-    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in runtime_env
+    assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in runtime_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in runtime_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in runtime_env
+    assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in librechat_env
+    assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
 
 
 def test_config_compiler_rejects_invalid_glasshive_followup_timeout(tmp_path: Path) -> None:
@@ -3333,6 +3388,7 @@ def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_pat
                 "voice_id": "Eve",
                 "language": "en",
                 "xai": {
+                    "optimize_streaming_latency": 1,
                     "output_format": {
                         "codec": "mp3",
                         "sample_rate": 44100,
@@ -3368,6 +3424,7 @@ def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_pat
     assert "VIVENTIUM_XAI_TTS_WS_URL=wss://api.x.ai/v1/tts" in runtime_env
     assert "VIVENTIUM_XAI_VOICE=Eve" in runtime_env
     assert "VIVENTIUM_XAI_LANGUAGE=en" in runtime_env
+    assert "VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=1" in runtime_env
     assert "VIVENTIUM_XAI_TTS_API_KEY=synthetic_xai_tts" in runtime_env
     assert "XAI_API_KEY=synthetic_xai_llm" in runtime_env
     assert "VIVENTIUM_XAI_TTS_API_KEY=synthetic_xai_tts" in telegram_env
@@ -3376,6 +3433,7 @@ def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_pat
     assert "VIVENTIUM_XAI_VOICE=Eve" in telegram_env
     assert "VIVENTIUM_XAI_LANGUAGE=en" in telegram_env
     assert "VIVENTIUM_XAI_SAMPLE_RATE=24000" in telegram_env
+    assert "VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=1" in telegram_env
     assert "VIVENTIUM_XAI_TTS_CODEC=mp3" in telegram_env
     assert "VIVENTIUM_XAI_TTS_SAMPLE_RATE=44100" in telegram_env
     assert "VIVENTIUM_XAI_TTS_BIT_RATE=128000" in telegram_env

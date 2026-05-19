@@ -109,6 +109,10 @@ background-cortex behavior.
   permission to spend cortex tokens or surface delayed follow-ups; only direct, explicit user
   engagement should route through the normal assistant/cortex path after Wing Mode is no longer the
   active surface for that turn.
+- Default playground policy: the modern LiveKit playground (`agent-starter-react`) is the default
+  enabled browser voice UI for voice-capable installs and launcher starts. The old/classic
+  `agents-playground` UI is default-off and must not be cloned, installed, started, or pinned into
+  the default runtime path unless the operator explicitly selects the classic playground variant.
 
 ### Listen-Only Mode
 - Product name: **Listen-Only Mode**.
@@ -130,8 +134,14 @@ background-cortex behavior.
 - The voice route may still use the existing turn coalescing boundary so one spoken thought becomes
   one saved transcript entry. Coalescing must only return an already saved Listen-Only result inside
   the short duplicate-return window when the incoming text is already captured by the saved text; a
-  later or different ambient turn with the same call/live-parent key must save as a new transcript
+  resumed ambient segment inside the configured continuation window must update the same saved
+  transcript row; a later or different ambient turn after that window must save as a new transcript
   row.
+- Listen-Only continuation is keyed by call session, not by the latest transcript parent id. This is
+  intentional: the first endpointed segment may materialize the conversation and become the parent
+  before the user continues speaking, but a resumed phrase inside the continuation window still
+  belongs to the same ambient transcript entry. The ingress audit schema must persist `messageId`
+  and `saved` so runtime continuation behavior matches unit-test mocks.
 - If a Listen-Only call starts from `conversationId="new"`, the first concrete conversation id must
   be claimed atomically at the call-session layer so concurrent transcript saves cannot split one
   listening session across multiple LibreChat conversations.
@@ -162,18 +172,44 @@ background-cortex behavior.
   and Listen-Only Mode.
 - Voice gateway requests must carry the shared call-session secret and session identity.
 - Agent dispatch metadata for modern-playground calls must be hydrated from the authoritative
-  call-session voice settings server-side before dispatch creation; do not rely on the browser's
-  async voice-settings fetch completing first.
-- A persisted `dispatchConfirmedAt` is not proof that LiveKit still has a live dispatch. Local
-  restarts can clear LiveKit's in-memory dispatch state while Mongo still remembers the prior
-  confirmation. `/api/connection-details` must verify the LiveKit dispatch list and, if the session
-  is confirmed but LiveKit has no matching dispatch, atomically reclaim the server-side dispatch
-  lease before creating and confirming a replacement.
+  call-session voice settings server-side before issuing the dispatch-bearing participant token; do
+  not rely on the browser's async voice-settings fetch completing first.
+- The browser's pre-call voice-settings display fetch is advisory and must never block the primary
+  Start Chat action. If the settings request is still loading or times out, the page should keep the
+  call start available and let `/api/connection-details` perform authoritative server-side
+  hydration when the user starts the call.
+- Browser and proxy voice-settings startup fetches must be timeout-bounded. A slow LibreChat
+  runtime, restart, or Next.js dev cold compile should produce Viventium-specific recovery text and
+  a retry path, not an indefinite `Loading your voice settings...` state.
+- Launcher-managed local runtimes should prewarm the modern-playground voice startup routes after
+  the playground answers HTTP and before starting the voice worker. The prewarm covers
+  `call-session-voice-settings`, `call-session-state`, and `connection-details` so the first real
+  call page does not pay the Next.js dev route compile cost. Prewarm requests are bounded and
+  warn-only; they should not hold the voice worker behind a long compile hang.
+- A persisted `dispatchConfirmedAt` is not proof that LiveKit has already started a worker. For
+  publisher-dispatch browser calls, `/api/connection-details` defaults to explicit LiveKit
+  dispatch only and prepares that dispatch before issuing the token. Token-room-config dispatch is
+  an opt-in compatibility mode, not the default restart-recovery path, because token-embedded agent
+  config has been unreliable across local LiveKit/server-SDK version combinations. The
+  authoritative runtime proof remains the later `JT_PUBLISHER` job receipt plus persisted
+  `activeJobId`/`activeWorkerId`.
+- The request that wins the Viventium dispatch claim must create explicit LiveKit dispatch even if
+  `ListDispatch` reports a token-room-config agent entry. On local LiveKit server versions that do
+  not reliably assign workers from token room config alone, treating that listing as an already-live
+  explicit dispatch causes the browser to connect and then time out with no agent worker.
 - Explicit-dispatch modern-playground calls must connect the LiveKit room before enabling the
-  microphone track. The `/api/connection-details` route can legitimately spend time claiming and
-  confirming dispatch, and browser-side pre-connect microphone publication must not race that work
-  into LiveKit's signal-engine timeout. This means explicit-dispatch calls intentionally do not
-  buffer microphone audio before the room is connected.
+  microphone track. The `/api/connection-details` route can legitimately spend time preparing the
+  token and dispatch metadata, and browser-side pre-connect microphone publication must not race
+  that work into LiveKit's signal-engine timeout. This means explicit-dispatch calls intentionally
+  do not buffer microphone audio before the room is connected.
+- The Start Chat gesture must be single-flight. The first click owns connection, dispatch
+  preparation, room join, and post-connect microphone enablement; the UI must disable duplicate
+  start clicks and show startup/microphone progress instead of requiring a second click.
+- The microphone may be technically disabled during the pre-connect phase only to avoid LiveKit's
+  pre-connect publish timeout. After the room is connected, Viventium must automatically publish the
+  user's microphone as part of the same start gesture unless the browser denies microphone access.
+  A connected call must not look muted by default because the user did not press a second control;
+  browser permission and missing-device failures must surface as explicit microphone errors.
 - Browser-visible voice startup errors must not expose raw fetch exceptions such as
   `Failed to fetch`. Transient runtime fetch failures during startup/restart should retry briefly,
   then surface a Viventium-specific recovery message if the runtime is still unavailable.
@@ -193,6 +229,12 @@ background-cortex behavior.
   non-streaming sentence-buffered path.
 - Rapid same-parent voice ingress requests must coalesce onto one launched stream in ingress order
   when they land inside the configured turn-coalescing window.
+- Normal interactive voice should not pay a hidden coalescing wait by default after final STT text
+  is available. The live voice default is a zero-millisecond coalescing window; operators may raise
+  `VIVENTIUM_VOICE_LIVE_TURN_COALESCE_WINDOW_MS` or the shared
+  `VIVENTIUM_VOICE_TURN_COALESCE_WINDOW_MS` only when they intentionally prefer merge latency over
+  first-token latency. Listen-Only may keep its own short ambient transcript merge window through
+  `VIVENTIUM_VOICE_LISTEN_ONLY_TURN_COALESCE_WINDOW_MS`.
 - Voice persistence may keep provider markup in the live synthesis path, but the canonical saved
   assistant text/content used for history and reloads must not retain raw voice-control tags.
 - When Cartesia is the call-mode TTS provider, the model-facing voice prompt may instruct the LLM
@@ -209,8 +251,10 @@ background-cortex behavior.
   async LiveKit transcript output (`VIVENTIUM_VOICE_SYNC_TRANSCRIPTION` unset/false) so the browser
   shows each assistant answer as soon as the LLM completes it instead of pacing words with TTS
   playout. `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` is an opt-in caption QA mode, not the shipped
-  default. The playground transcript reader must key boundaries by LiveKit text-stream id, not by
-  segment text or provider names.
+  default. The gateway must implement this with current LiveKit
+  `RoomOptions(text_output=TextOutputOptions(sync_transcription=...))`, not deprecated
+  `RoomOutputOptions`. The playground transcript reader must key boundaries by LiveKit text-stream
+  id, not by segment text or provider names.
 - Voice gateway -> LibreChat streaming must use a per-turn stream id, not a conversation id or other
   long-lived call identifier, as the SSE stream key. The gateway should send its own turn request id
   as `streamId` when posting to `/api/viventium/voice/chat`, and the LibreChat voice route must
@@ -223,7 +267,9 @@ background-cortex behavior.
 - Latency instrumentation must be correlatable per user turn. LiveKit's current observability
   guidance recommends correlating end-of-utterance, LLM TTFT, and TTS TTFB by a per-turn speech id;
   Viventium's equivalent public-safe correlation key is the voice request/stream id, with
-  call-session and conversation identifiers kept out of public QA artifacts.
+  call-session and conversation identifiers kept out of public QA artifacts. Runtime logs must use
+  non-deprecated LiveKit surfaces for `llm_node_ttft`, `tts_node_ttfb`, and `e2e_latency`, plus
+  provider `tts_metrics` first-audio timing when the TTS implementation emits it.
 - The Cartesia public request contract is Sonic-3-only: `Cartesia-Version=2026-03-01`
   and `model_id=sonic-3`. Voice selection is by named persona in the UI, backed by Cartesia
   voice IDs: Megan (`e8e5fffb-252c-436d-b842-8879b84445b6`) and Lyra
@@ -332,6 +378,19 @@ background-cortex behavior.
 	  - voice gateway prewarm is part of readiness for local Whisper routes; if exact-model prewarm
 	    fails after self-heal, the worker must refuse to register instead of advertising a broken local
 	    STT route
+	  - local Whisper prewarm must include a small in-process inference warmup, not only model load,
+	    because whisper.cpp/Metal can otherwise charge the first user transcript for graph/setup work
+	  - local Whisper recognition should feed pywhispercpp in-memory 16 kHz mono float32 PCM instead
+	    of writing temporary WAV files; stage timing logs must stay sanitized and must not include raw
+	    transcript text
+  - `large-v3-turbo` uses `single_segment` and `no_context` by default for independent LiveKit final
+    chunks, and uses a configurable reduced audio context (`VIVENTIUM_STT_AUDIO_CTX`, default
+    `768`). The default reduced-context path must be duration-gated
+    (`VIVENTIUM_STT_REDUCED_AUDIO_CTX_MAX_AUDIO_S`, default `12.0`) so long monologues restore
+    the upstream/default context instead of silently losing tail audio. The model selection itself
+    must remain unchanged and operators may set `VIVENTIUM_STT_AUDIO_CTX=0` to restore the
+    upstream/default context for every chunk. Operators can independently disable `single_segment`
+    or `no_context` with their specific env flags when testing long-form transcription behavior.
 	  - diagnostic escape hatches that weaken the safety net, such as disabling isolated local
 	    Whisper load validation, disabling launcher preflight, or pointing at an explicit unmanaged
 	    model path, must log a visible warning
@@ -375,11 +434,54 @@ background-cortex behavior.
     expected during model warm-up and must not make the worker disappear from dispatch
   - local Whisper routes default to a longer initialization timeout so cold-start model loading does
     not kill the idle process before the worker can accept calls
+  - local Whisper routes default to a higher job memory warning threshold than hosted routes because
+    `large-v3-turbo` normally resides above the generic worker warning budget after prewarm
+  - `VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB` is a configurable LiveKit worker warning threshold, not a
+    whisper.cpp model-size setting. It controls when LiveKit warns that a job process is large; it
+    does not reduce or allocate model memory. Local Whisper defaults this warning budget higher so
+    expected `large-v3-turbo` residency is not treated as abnormal pressure.
+  - `VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB` is the configurable LiveKit worker hard memory limit;
+    `0` keeps the limit disabled. Do not enable a hard limit for local Whisper until the limit has
+    been validated against cold start, warm calls, replacement idle workers, and concurrent local
+    TTS/STT paths.
   - local Whisper VAD fallback defaults to the shared `0.5s` silence budget, and explicit
     `VIVENTIUM_STT_VAD_MIN_SILENCE` still overrides that default
   - local Whisper VAD fallback defaults to a slightly longer minimum speech threshold than
     remote/STT-owned routes, and explicit `VIVENTIUM_STT_VAD_MIN_SPEECH` still overrides that
     default
+  - local Whisper must keep a warm idle worker on Apple Silicon; setting idle processes to zero can
+    lose early fake-microphone/user audio while the job process cold-loads
+  - replacement idle-process prewarm must wait while active voice calls are running and must not
+    prewarm local Chatterbox TTS by default on the local Whisper route; this avoids local model
+    warmup competing with active whisper.cpp transcription on the same machine
+  - local Whisper latency logs must decompose the final transcript path at sub-10ms resolution:
+    VAD end, frame merge, pywhispercpp recognition, final transcript send, and LiveKit EOU metric
+    event lag. LiveKit `transcription_delay` must be interpreted as user-stopped-speaking to final
+    transcript availability, so it includes the configured silence budget.
+  - In the local Whisper path, LiveKit `transcription_delay` answers: "after LiveKit last believed
+    the user was still speaking, how long until a final transcript existed?" It is not browser
+    render latency, DB persistence latency, or the final post-Whisper publish handoff. A high value
+    should be broken down into silence confirmation, final-only pywhispercpp recognition, final send,
+    and metric-event lag before changing UX behavior.
+  - LiveKit `end_of_utterance_delay` is a different metric: it measures from the same stopped-
+    speaking point until LiveKit commits the user turn. On local Whisper, it can look almost
+    identical to `transcription_delay` when final recognition already consumes the configured
+    endpointing wait.
+  - The `transcription_delay` metric is required because it tells which owner actually needs work:
+    VAD/endpointing if the silence gate dominates, local STT runtime if recognition dominates, or
+    LiveKit/browser publish only if final-send and event-lag timings are large.
+  - The local Whisper latency stage ballparks are not an SLA, but they are the expected local
+    development guide for `large-v3-turbo` on the current Apple Silicon class of machine:
+    - VAD silence should be near the configured budget (`~500-525ms` with the shipped `0.5s`
+      local Whisper default)
+    - adapter frame merge, final transcript send, and LiveKit metric event lag should usually be
+      sub-10ms; sustained values above `50ms` require investigation outside whisper.cpp inference
+    - warm short-turn pywhispercpp recognition should commonly be about `650-1000ms` after prewarm;
+      first-call, post-idle, long-chunk, or contention tails around `1.8-2.6s` are known warning
+      territory, not the target
+    - healthy warm short-turn `transcription_delay` should usually land around `1.1-1.6s`; `2-3s`
+      means the stage breakdown should identify whether recognition, prewarm/resource contention,
+      or an unexpected non-STT wait dominated
   - runtime logs must state why a user turn completed, using normalized reason labels such as
     `vad_silence`, `stt_end_of_turn`, or `semantic_turn_detector`
 - Per-call requested voice-route overrides must recompute the effective turn-taking defaults from the
@@ -410,6 +512,9 @@ background-cortex behavior.
 - Default xAI voice calls use standalone TTS:
   - REST full-text endpoint: `https://api.x.ai/v1/tts`
   - LiveKit streaming endpoint, via `livekit-plugins-xai`: `wss://api.x.ai/v1/tts`
+  - the LiveKit websocket includes `optimize_streaming_latency=1` by default; operators may set
+    `VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=0` to disable the query parameter for provider
+    compatibility testing
   - legacy Grok Voice Agent routing is allowed only when explicitly configured with
     `VIVENTIUM_XAI_TTS_API=voice_agent`
 - xAI TTS capabilities live in `viventium_v0_4/shared/voice/xai_tts_capabilities.json`.

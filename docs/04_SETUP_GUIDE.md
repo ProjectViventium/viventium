@@ -19,7 +19,9 @@ Recommended mode today for the most reliable first run:
 
 - `native`
 - `isolated` profile
-- modern playground default
+- modern LiveKit playground default (`agent-starter-react`)
+- classic `agents-playground` default-off; install/start it only with an explicit classic playground
+  selection
 - keep remote access optional on first run unless you actively need it
 
 Headless configuration flow:
@@ -107,6 +109,13 @@ bin/viventium upgrade --restart
 
 Upgrade now captures pre/post continuity audits. If the post-upgrade audit reports an `error`,
 automatic restart is blocked until the operator reviews the drift.
+
+If upgrade/start reports that local Meilisearch is reachable but recent failed tasks make the
+derived search index unusable, treat it as a derived-index repair, not a Mongo/chat-history repair.
+Use `bin/viventium status` for the exact service message, then rebuild or recreate the local
+Meilisearch-derived index from Mongo-backed conversations before restarting local search work. This
+can be an expected one-time repair after a Meilisearch image/version upgrade; do not delete or edit
+Mongo conversation data for it.
 
 Important:
 

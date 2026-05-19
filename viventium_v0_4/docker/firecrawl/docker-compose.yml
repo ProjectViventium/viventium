@@ -1,12 +1,21 @@
 # VIVENTIUM START
 # Purpose: Self-hosted Firecrawl stack for LibreChat v0.4.
 # VIVENTIUM END
+x-viventium-logging: &viventium-logging
+  driver: "json-file"
+  options:
+    max-size: "${FIRECRAWL_LOG_MAX_SIZE:-5m}"
+    max-file: "${FIRECRAWL_LOG_MAX_FILE:-3}"
+
 services:
   firecrawl-api:
     image: ghcr.io/firecrawl/firecrawl:latest
     container_name: viventium_firecrawl_api
     restart: unless-stopped
     mem_limit: ${FIRECRAWL_API_MEM_LIMIT:-1536m}
+    cpus: ${FIRECRAWL_API_CPUS:-0.80}
+    pids_limit: ${FIRECRAWL_API_PIDS_LIMIT:-256}
+    logging: *viventium-logging
     networks:
       - firecrawl
     ports:
@@ -46,6 +55,9 @@ services:
     container_name: viventium_firecrawl_playwright
     restart: unless-stopped
     mem_limit: ${FIRECRAWL_PLAYWRIGHT_MEM_LIMIT:-768m}
+    cpus: ${FIRECRAWL_PLAYWRIGHT_CPUS:-0.65}
+    pids_limit: ${FIRECRAWL_PLAYWRIGHT_PIDS_LIMIT:-192}
+    logging: *viventium-logging
     networks:
       - firecrawl
     environment:
@@ -57,6 +69,9 @@ services:
     container_name: viventium_firecrawl_redis
     restart: unless-stopped
     mem_limit: 128m
+    cpus: ${FIRECRAWL_REDIS_CPUS:-0.15}
+    pids_limit: ${FIRECRAWL_REDIS_PIDS_LIMIT:-64}
+    logging: *viventium-logging
     networks:
       - firecrawl
     volumes:
@@ -67,6 +82,9 @@ services:
     container_name: viventium_firecrawl_rabbitmq
     restart: unless-stopped
     mem_limit: 256m
+    cpus: ${FIRECRAWL_RABBITMQ_CPUS:-0.20}
+    pids_limit: ${FIRECRAWL_RABBITMQ_PIDS_LIMIT:-96}
+    logging: *viventium-logging
     networks:
       - firecrawl
     environment:
@@ -80,6 +98,9 @@ services:
     container_name: viventium_firecrawl_postgres
     restart: unless-stopped
     mem_limit: 256m
+    cpus: ${FIRECRAWL_POSTGRES_CPUS:-0.20}
+    pids_limit: ${FIRECRAWL_POSTGRES_PIDS_LIMIT:-96}
+    logging: *viventium-logging
     networks:
       - firecrawl
     environment:

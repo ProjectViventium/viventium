@@ -232,6 +232,12 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     bundle defaults, and runtime normalization must all agree with that matrix
   - for nested managed components, fresh installs follow the pinned component ref in
     `components.lock.json`; a newer local nested checkout does not change what end users receive
+  - component selection defaults to the modern LiveKit playground (`agent-starter-react`) for
+    voice-capable installs and must not include the old `agents-playground` unless
+    `runtime.playground_variant: classic` is explicitly selected with voice enabled
+  - running component bootstrap without `--config` uses the same public modern-playground default;
+    an existing classic checkout may remain on disk, but it is not refreshed or selected unless the
+    install explicitly opts into the classic playground
   - do not rely on Mongo hand-edits or App Support leftovers to make built-ins behave correctly
   - browser connected-account OAuth unlocks auth for the configured foundation-provider mix; it
     does not currently recompute the built-in background-agent roster by itself
@@ -352,6 +358,16 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     - `VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB`
     - `VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB`
     - `VIVENTIUM_VOICE_PREWARM_LOCAL_TTS`
+  - the compiler owns the default Phase A background notice mode:
+    - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice`
+    - this value, plus the voice Phase A knobs below, must be emitted into both `runtime.env` and
+      `service-env/librechat.env` so the installed LibreChat service uses the same default as source
+    - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false` keeps fully async voice detection as
+      an opt-in; the default path waits only until the first true activation or the 500ms voice
+      Phase A budget
+    - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500`
+    - `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false`
+    - `VIVENTIUM_VOICE_LOG_LATENCY=1`
   - generated runtime must not rely on one machine's shell exports or App Support hand edits to
     change end-of-turn behavior
   - when the optional semantic turn-detector plugin is installed, launcher startup owns the model
@@ -666,6 +682,12 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - local Meilisearch readiness must require the configured API key, not only unauthenticated
     `/health`, because stale listeners with the wrong key create a false green and then break local
     search sync
+  - local Meilisearch readiness must also inspect recent failed tasks and fail closed on
+    index-version or incompatible-engine failures; otherwise `/health` can stay green while
+    settings/document tasks churn forever
+  - Viventium-owned local Meilisearch must run with source-owned resource/log caps and a pinned
+    stable image; derived indexes may be archived and rebuilt from Mongo, but Mongo conversation,
+    user, and config collections are protected state
   - a healthy LibreChat API on `:3180` must not suppress starting a missing frontend on `:3190`;
     partial-stack startup must repair the missing surface
   - local conversation-search sync failures may degrade recall freshness, but they must not abort

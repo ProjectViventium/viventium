@@ -32,7 +32,8 @@ Added: 2026-01-11
 - Voice STT defaults to local whisper.cpp (`VIVENTIUM_STT_PROVIDER=whisper_local`) with Silero VAD for streaming.
 - Voice calls bypass LibreChat concurrency limits by default (`VIVENTIUM_VOICE_BYPASS_CONCURRENCY=true`).
 - LiveKit startup is idempotent; the launcher reuses a running container on port 7880.
-- `--modern-playground` uses the agent-starter-react UI under `agent-starter-react`.
+- The modern LiveKit playground (`agent-starter-react`) is the default enabled voice UI; the classic
+  `agents-playground` UI is default-off and requires an explicit classic playground selection.
 - Code Interpreter runs via Docker on port 8001 (`LIBRECHAT_CODE_BASEURL`).
 
 ## Read in Order (High-Level to Deep)

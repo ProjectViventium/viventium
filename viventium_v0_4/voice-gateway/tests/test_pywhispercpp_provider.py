@@ -2,10 +2,14 @@ import hashlib
 import os
 import tempfile
 import unittest
+import asyncio
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pywhispercpp_provider
+from livekit.rtc.audio_frame import AudioFrame
 
 
 class TestPyWhisperCppModelSelfHeal(unittest.TestCase):
@@ -153,6 +157,164 @@ class TestPyWhisperCppModelSelfHeal(unittest.TestCase):
 
             self.assertEqual(resolved, model_path.resolve())
             validate.assert_called_once()
+
+
+class TestPyWhisperCppRecognition(unittest.TestCase):
+    def tearDown(self) -> None:
+        pywhispercpp_provider._MODEL_WARMUP_DONE.clear()
+
+    def test_prewarm_runs_one_silent_inference_by_default(self) -> None:
+        fake_model = SimpleNamespace()
+        calls = []
+
+        def fake_transcribe(media, **kwargs):
+            calls.append((media, kwargs))
+            return []
+
+        fake_model.transcribe = fake_transcribe
+
+        with (
+            patch.object(pywhispercpp_provider, "_get_model", return_value=fake_model),
+            patch.dict(os.environ, {"VIVENTIUM_STT_LANGUAGE": "en"}, clear=True),
+        ):
+            pywhispercpp_provider.prewarm_model("large-v3-turbo")
+            pywhispercpp_provider.prewarm_model("large-v3-turbo")
+
+        self.assertEqual(len(calls), 1)
+        media, kwargs = calls[0]
+        self.assertIsInstance(media, np.ndarray)
+        self.assertEqual(media.dtype, np.float32)
+        self.assertTrue(media.flags["C_CONTIGUOUS"])
+        self.assertEqual(media.size, 16000)
+        self.assertEqual(kwargs["language"], "en")
+        self.assertEqual(kwargs["temperature"], 0.0)
+        self.assertEqual(kwargs["audio_ctx"], 768)
+        self.assertEqual(kwargs["no_context"], True)
+        self.assertEqual(kwargs["single_segment"], True)
+
+    def test_prewarm_inference_can_be_disabled(self) -> None:
+        fake_model = SimpleNamespace(transcribe=lambda _media, **_kwargs: [])
+
+        with (
+            patch.object(pywhispercpp_provider, "_get_model", return_value=fake_model),
+            patch.dict(
+                os.environ,
+                {"VIVENTIUM_STT_WARMUP_INFERENCE": "false"},
+                clear=True,
+            ),
+            patch.object(fake_model, "transcribe", wraps=fake_model.transcribe) as transcribe,
+        ):
+            pywhispercpp_provider.prewarm_model("large-v3-turbo")
+
+        transcribe.assert_not_called()
+
+    def test_recognize_passes_float32_pcm_directly_to_pywhispercpp(self) -> None:
+        samples = np.array([0, 16384, -16384, 32767], dtype=np.int16)
+        fake_model = SimpleNamespace()
+
+        def fake_transcribe(media, **kwargs):
+            fake_model.media = media
+            fake_model.kwargs = kwargs
+            return [SimpleNamespace(text="Hello there")]
+
+        fake_model.transcribe = fake_transcribe
+
+        with patch.object(pywhispercpp_provider, "_get_model", return_value=fake_model):
+            stt = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+
+        frame = AudioFrame(
+            data=samples.tobytes(),
+            sample_rate=16000,
+            num_channels=1,
+            samples_per_channel=len(samples),
+        )
+        event = asyncio.run(stt._recognize_impl(frame))
+
+        self.assertEqual(event.alternatives[0].text, "Hello there")
+        self.assertIsInstance(fake_model.media, np.ndarray)
+        self.assertEqual(fake_model.media.dtype, np.float32)
+        self.assertTrue(fake_model.media.flags["C_CONTIGUOUS"])
+        np.testing.assert_allclose(
+            fake_model.media,
+            samples.astype(np.float32) / 32768.0,
+            rtol=0,
+            atol=1e-6,
+        )
+        self.assertEqual(fake_model.kwargs["language"], "en")
+        self.assertEqual(fake_model.kwargs["temperature"], 0.0)
+        self.assertEqual(fake_model.kwargs["audio_ctx"], 768)
+        self.assertEqual(fake_model.kwargs["no_context"], True)
+        self.assertEqual(fake_model.kwargs["single_segment"], True)
+
+    def test_large_turbo_audio_ctx_can_be_overridden(self) -> None:
+        with patch.dict(os.environ, {"VIVENTIUM_STT_AUDIO_CTX": "0"}, clear=True):
+            kwargs = pywhispercpp_provider._transcribe_kwargs(
+                "en",
+                model_name="large-v3-turbo",
+            )
+
+        self.assertNotIn("audio_ctx", kwargs)
+
+    def test_large_turbo_reduced_audio_ctx_is_only_default_for_short_audio(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            short_kwargs = pywhispercpp_provider._transcribe_kwargs(
+                "en",
+                model_name="large-v3-turbo",
+                audio_duration_s=8.0,
+            )
+            long_kwargs = pywhispercpp_provider._transcribe_kwargs(
+                "en",
+                model_name="large-v3-turbo",
+                audio_duration_s=20.0,
+            )
+
+        self.assertEqual(short_kwargs["audio_ctx"], 768)
+        self.assertNotIn("audio_ctx", long_kwargs)
+
+    def test_large_turbo_explicit_audio_ctx_applies_to_long_audio(self) -> None:
+        with patch.dict(os.environ, {"VIVENTIUM_STT_AUDIO_CTX": "512"}, clear=True):
+            kwargs = pywhispercpp_provider._transcribe_kwargs(
+                "en",
+                model_name="large-v3-turbo",
+                audio_duration_s=20.0,
+            )
+
+        self.assertEqual(kwargs["audio_ctx"], 512)
+
+    def test_smaller_models_do_not_default_to_reduced_audio_ctx(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            kwargs = pywhispercpp_provider._transcribe_kwargs(
+                "en",
+                model_name="small",
+            )
+
+        self.assertNotIn("audio_ctx", kwargs)
+
+    def test_latency_log_reports_sanitized_stage_timings(self) -> None:
+        samples = np.array([0, 8192, -8192, 0], dtype=np.int16)
+        fake_model = SimpleNamespace(
+            transcribe=lambda _media, **_kwargs: [SimpleNamespace(text="Secret words")]
+        )
+
+        with (
+            patch.object(pywhispercpp_provider, "_get_model", return_value=fake_model),
+            patch.dict(os.environ, {"VIVENTIUM_VOICE_LOG_LATENCY": "1"}, clear=True),
+        ):
+            stt = pywhispercpp_provider.PyWhisperCppSTT(language="en")
+            frame = AudioFrame(
+                data=samples.tobytes(),
+                sample_rate=16000,
+                num_channels=1,
+                samples_per_channel=len(samples),
+            )
+            with self.assertLogs("pywhispercpp_provider", level="INFO") as logs:
+                asyncio.run(stt._recognize_impl(frame))
+
+        joined = "\n".join(logs.output)
+        self.assertIn("pywhispercpp_recognize", joined)
+        self.assertIn("transcribe_ms=", joined)
+        self.assertIn("text_chars=12", joined)
+        self.assertNotIn("Secret words", joined)
 
 
 if __name__ == "__main__":

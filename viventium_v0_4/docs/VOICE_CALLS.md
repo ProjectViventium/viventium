@@ -37,18 +37,40 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - Call-session deep links use LiveKit publisher dispatch: the voice gateway joins only after the
   browser publishes the user's microphone track.
 - The playground must not ask LiveKit to publish the microphone while `/api/connection-details` is
-  still performing call-session dispatch claim/list/create work. That route may take several
-  seconds under load; pre-connect microphone publication can otherwise hit LiveKit's signal-engine
-  timeout before the room is connected. For explicit-dispatch calls, audio spoken before the room
-  connects is not buffered.
+  still preparing the call-session token and dispatch metadata. That route may take several seconds
+  under load; pre-connect microphone publication can otherwise hit LiveKit's signal-engine timeout
+  before the room is connected. For explicit-dispatch calls, audio spoken before the room connects
+  is not buffered.
+- The browser's voice-settings display fetch is advisory. Slow or unavailable settings must not
+  disable the Start chat gate because `/api/connection-details` rehydrates authoritative
+  call-session voice settings server-side when the user starts the call.
+- Voice-settings startup fetches in the browser, the playground proxy, and token hydration path are
+  bounded by timeouts and must surface Viventium-specific recovery text rather than leaving the page
+  in an indefinite loading state.
+- Launcher-managed local runtimes prewarm the modern-playground startup routes
+  `call-session-voice-settings`, `call-session-state`, and `connection-details` after the playground
+  is reachable and before the voice worker starts. Prewarm failures are logged as startup evidence
+  and should not prevent the rest of the runtime from starting; each prewarm request is bounded so
+  route compilation cannot hold startup behind a long hang.
 - The stable sequence is:
-  1. fetch connection details and connect the room with microphone disabled
+  1. fetch connection details with explicit call-session dispatch prepared, then connect the room
+     with microphone disabled
   2. enable the microphone after the room is connected
   3. let LiveKit assign the `JT_PUBLISHER` job to `librechat-voice-gateway`
   4. persist the active job/worker ids on the call session
-- `dispatchConfirmedAt` is durable call-session state, not durable LiveKit state. After a local
-  restart, `/api/connection-details` must list LiveKit dispatches for the room and recreate the
-  dispatch only after atomically reclaiming the confirmed session in Mongo.
+- The Start chat gesture is single-flight. Once the user clicks it, the page should show connection
+  and microphone progress, disable duplicate starts, and automatically enable the microphone after
+  the room connects. The pre-connect muted state is an internal timeout-avoidance phase, not a user
+  default. Browser permission and missing-device failures should be shown as explicit microphone
+  errors, not as a connected muted call.
+- `dispatchConfirmedAt` is durable call-session state that dispatch was prepared and the participant
+  token was issued, not durable proof that LiveKit has already started a worker. The default path
+  verifies or creates explicit LiveKit dispatch for call sessions; token-room-config dispatch is an
+  opt-in compatibility mode. The authoritative runtime proof is the later `JT_PUBLISHER` job
+  receipt plus persisted `activeJobId`/`activeWorkerId`.
+- The connection-details request that wins the Viventium dispatch claim force-creates explicit
+  LiveKit dispatch. A `ListDispatch` entry from token room config is not enough evidence that a
+  local LiveKit worker will be assigned.
 - The playground retries transient `/api/connection-details`, call-state, and voice-settings fetch
   failures once during startup and never shows raw browser errors such as `Failed to fetch` as the
   user-facing recovery text.
@@ -56,6 +78,10 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   sleep return, not after the user explicitly disconnects.
 
 ## Localhost vs Public Voice Origins
+- The modern LiveKit playground (`agent-starter-react`) is the default enabled playground for
+  voice-capable Viventium installs and launcher starts.
+- The classic `agents-playground` UI is default-off and should only be installed or started for an
+  explicit classic playground selection.
 - Localhost remains the canonical default:
   - LibreChat launches the playground on `localhost`
   - the modern playground must keep `ws://localhost:7888` for localhost callers
@@ -91,6 +117,16 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - This preserves the Phase A / Phase B contract:
   - Phase A: immediate main-agent response is heard right away
   - Phase B: only a true main-agent follow-up conclusion is heard later
+- The installed default `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice` lets voice
+  Phase A start after the first true background activation with a generic "background is brewing"
+  instruction. Final activation detection continues for Phase B, and text surfaces keep waiting for
+  the full detection budget.
+- `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false` is the shipped default so the main voice
+  LLM does not start before Phase A has either seen the first true activation or reached the voice
+  Phase A wait budget. Fully async detection remains available only as an explicit opt-in.
+- Fully async opt-in detection uses `all_within_budget` semantics in the background so Phase B gets
+  the complete activated set; the early `any_activated_on_voice` release applies to the shipped sync
+  Phase A path.
 - Internal `cortex_insight` content remains available in LibreChat's background-insight UI, but it
   must not be voiced directly into the modern playground transcript/TTS path.
 - Voice follow-up requests set `suppressBackgroundCortices=true` to prevent recursion.
@@ -100,8 +136,13 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - It uses the current STT route. Local `pywhispercpp` / WhisperCPP is the intended low-cost route,
   but runtime must not silently remap the user's selected listening provider.
 - `/api/viventium/voice/chat` still authenticates the voice worker, resolves the conversation, and
-  coalesces rapid same-parent speech. When `listenOnlyModeEnabled` is true, it saves a
-  `listen_only_transcript` message with `tokenCount=0` and returns no stream id.
+  coalesces rapid or resumed speech. When `listenOnlyModeEnabled` is true, it saves a
+  `listen_only_transcript` message with `tokenCount=0` and returns no stream id. Continuation is
+  keyed by call session so speech resumed after a short pause updates the same saved transcript row
+  even if the first segment already materialized a conversation parent.
+- The Listen-Only ingress audit schema must persist `messageId` and `saved`; otherwise real Mongo
+  drops the fields needed to update the same transcript row even though unit-test mocks appear to
+  pass.
 - The Listen-Only save path intentionally returns before `validateConvoAccess` and endpoint-option
   construction because the request is already bound to the server-side call session and no
   browser-supplied conversation target is trusted.
@@ -151,6 +192,7 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - Modern playground transcripts default to async LiveKit transcript output so the browser shows each
   assistant answer as soon as the LLM completes it instead of pacing words with TTS playout.
   `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION=1` remains available as an opt-in caption QA mode. The
+  gateway uses LiveKit `RoomOptions(text_output=TextOutputOptions(...))` for that setting. The
   playground reads LiveKit transcription streams by stream id so adjacent assistant answers cannot
   collapse into one transcript row.
 - The gateway posts a per-turn `streamId` to `/api/viventium/voice/chat`, and the voice route
@@ -342,11 +384,41 @@ Notes:
   does not get AssemblyAI-native endpointing knobs. Its VAD fallback uses the shared `0.5s` silence
   budget plus a slightly longer minimum speech threshold than remote/STT-owned routes so short
   one-syllable room noise does not become a committed user turn.
+- Local Whisper recognition feeds pywhispercpp in-memory 16 kHz mono float32 PCM and logs sanitized
+  per-stage timings when voice latency logging is enabled. It does not write transcript text to the
+  timing log.
+- `large-v3-turbo` defaults to `VIVENTIUM_STT_AUDIO_CTX=768`, `VIVENTIUM_STT_SINGLE_SEGMENT=true`,
+  and `VIVENTIUM_STT_NO_CONTEXT=true` only for short local LiveKit final chunks. The reduced context
+  is duration-gated by `VIVENTIUM_STT_REDUCED_AUDIO_CTX_MAX_AUDIO_S` (default `12.0`) so longer
+  chunks use pywhispercpp/whisper.cpp's default audio context. Set `VIVENTIUM_STT_AUDIO_CTX=0` to
+  restore the default audio context for every chunk.
 - Local Whisper routes default `VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=inf`; CPU load during model
   warm-up is not a reliable overload signal and must not make LiveKit stop dispatching jobs to a
   healthy local worker.
 - Local Whisper routes default `VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S=120` so cold-start
   model loading can complete before the idle process is considered failed.
+- `VIVENTIUM_VOICE_JOB_MEMORY_WARN_MB` and `VIVENTIUM_VOICE_JOB_MEMORY_LIMIT_MB` pass through to
+  LiveKit `WorkerOptions`. The warning value controls when LiveKit logs a large job process; it
+  does not change whisper.cpp model memory. The limit value is a hard process limit, and the default
+  `0` keeps that limit disabled.
+- Local Whisper keeps one warm idle worker on Apple Silicon and prewarms whisper.cpp with a tiny
+  inference, not just model load. Replacement prewarm waits for active calls and local Chatterbox TTS
+  prewarm is opt-in on this route to avoid competing with active STT.
+- LiveKit `transcription_delay` is the elapsed time from LiveKit's last evidence that the user was
+  speaking to final transcript availability. For `whisper_local`, it normally includes the local VAD
+  silence window plus final-only pywhispercpp recognition. It is not browser render time, DB
+  persistence time, or post-recognition publish time.
+- `transcription_delay` is useful because it points to the owning delay bucket: endpointing/VAD,
+  local STT recognition, or final publish/UI. With `VIVENTIUM_VOICE_LOG_LATENCY=1`, compare it with
+  `VoiceLatencyDetail` fields such as VAD silence, merge, recognition, final send, and metric lag.
+- Local `large-v3-turbo` timing ballparks from current QA:
+  - VAD silence: `~500-525ms` with the shipped `0.5s` local Whisper default.
+  - Frame merge, final transcript send, and LiveKit metric event lag: normally sub-10ms; sustained
+    values above `50ms` point outside whisper.cpp inference.
+  - Warm short-turn pywhispercpp recognition: commonly `650-1000ms` after prewarm. First-call,
+    post-idle, long-chunk, or contention tails around `1.8-2.6s` are known warning territory.
+  - Warm short-turn LiveKit `transcription_delay`: usually `1.1-1.6s`. A `2-3s` value should be
+    decomposed before blaming the browser or LiveKit publish path.
 
 <!-- === VIVENTIUM START ===
 Section: Voice concurrency bypass + LiveKit idempotency
@@ -365,11 +437,16 @@ Section: Modern playground
 Added: 2026-01-11
 === VIVENTIUM END === -->
 ## Modern Playground Variant
-- `--modern-playground` launches the agent-starter-react UI from `agent-starter-react`.
+- `--modern-playground` launches the agent-starter-react UI from `agent-starter-react`; this is the
+  default when no playground flag is supplied.
+- `--classic-playground` is an explicit opt-in for the old `agents-playground` UI and is not part of
+  the default runtime path.
 - The deep-link contract is identical (roomName, callSessionId, agentName, autoConnect).
 
 ## Optional Voice Knobs
 - `VIVENTIUM_VOICE_MODE_PROMPT` (override voice-mode instructions)
+- `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE` (default `any_activated_on_voice`)
+- `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC` (default `false`; fully async opt-in)
 - `VIVENTIUM_VOICE_CORTEX_DETECT_TIMEOUT_MS` (0 = disable for voice)
 - `VIVENTIUM_VOICE_FOLLOWUP_TIMEOUT_S`
 - `VIVENTIUM_VOICE_FOLLOWUP_INTERVAL_S`
@@ -385,6 +462,7 @@ Added: 2026-01-11
 - `VIVENTIUM_XAI_VOICE` (default `Sal`; supported xAI TTS voices are `Ara`, `Eve`, `Leo`, `Rex`, `Sal`)
 - `VIVENTIUM_XAI_LANGUAGE` (default `en`)
 - `VIVENTIUM_XAI_TTS_WS_URL` (standalone TTS WebSocket endpoint)
+- `VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY` (default `1`; set `0` to omit xAI websocket latency optimization)
 - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S`
 - `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS`
 - `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S`
@@ -405,6 +483,8 @@ Added: 2026-01-11
 - `VIVENTIUM_VOICE_PREWARM_LOCAL_TTS`
 - `VIVENTIUM_VOICE_TURN_COALESCE_ENABLED`
 - `VIVENTIUM_VOICE_TURN_COALESCE_WINDOW_MS`
+- `VIVENTIUM_VOICE_LIVE_TURN_COALESCE_WINDOW_MS`
+- `VIVENTIUM_VOICE_LISTEN_ONLY_TURN_COALESCE_WINDOW_MS`
 - `VIVENTIUM_VOICE_TURN_COALESCE_WAIT_MS`
 - `VIVENTIUM_VOICE_TURN_COALESCE_POLL_MS`
 - `VIVENTIUM_VOICE_TURN_COALESCE_RETURN_WINDOW_MS`
@@ -422,6 +502,11 @@ Added: 2026-01-11
 - The user-facing hosted provider label is `xAI`; the underlying transport uses standalone xAI TTS
   by default through `livekit-plugins-xai`; the older
   Grok Voice Agent adapter is retained only behind `VIVENTIUM_XAI_TTS_API=voice_agent`.
+- Standalone xAI LiveKit calls request `optimize_streaming_latency=1` on the websocket by default
+  and can disable it with `VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=0`.
+- With `VIVENTIUM_VOICE_LOG_LATENCY=1`, inspect `assistant_turn_metrics` for LiveKit
+  `llm_node_ttft`, `tts_node_ttfb`, and `e2e_latency`; inspect `tts_provider_metrics` for
+  provider-level TTS first-byte/audio-duration timing.
 - Recommended Speaking order is Local Chatterbox first when available, then xAI Voice as the
   preferred hosted general-purpose route. As of 2026-05-07, the official xAI TTS pricing page lists
   $4.20 per 1M TTS characters, materially below the effective public Cartesia bundled-character

@@ -237,9 +237,24 @@ def test_meilisearch_readiness_requires_authenticated_probe_and_reclaims_stale_l
     )
 
     assert 'meili_http_auth_ping() {' in launcher_text
+    assert 'meili_recent_failed_task_health() {' in launcher_text
+    assert 'meili_http_functional_ready() {' in launcher_text
     assert 'restart_viventium_owned_meilisearch_listener() {' in launcher_text
     assert 'Configured Meilisearch key does not match the Viventium-owned local listener' in launcher_text
+    assert '/tasks?statuses=failed&limit=${lookback}' in launcher_text
+    assert 'refusing to enqueue more local search work' in launcher_text
+    assert 'MEILI_MAX_INDEXING_MEMORY="${MEILI_MAX_INDEXING_MEMORY:-512MiB}"' in launcher_text
+    assert 'MEILI_MAX_INDEXING_THREADS="${MEILI_MAX_INDEXING_THREADS:-1}"' in launcher_text
+    assert 'MEILI_ENV="${VIVENTIUM_LOCAL_MEILI_ENV:-production}"' in launcher_text
+    assert 'MEILI_IMAGE="${MEILI_IMAGE:-getmeili/meilisearch:v1.43.0}"' in launcher_text
+    assert '--memory "$MEILI_DOCKER_MEMORY_LIMIT"' in launcher_text
+    assert '--cpus "$MEILI_DOCKER_CPUS"' in launcher_text
+    assert '--pids-limit "$MEILI_DOCKER_PIDS_LIMIT"' in launcher_text
+    assert '--log-opt "max-size=${MEILI_DOCKER_LOG_MAX_SIZE}"' in launcher_text
+    assert '-e "MEILI_ENV=${MEILI_ENV}"' in launcher_text
+    assert 'MEILI_ENV="$MEILI_ENV" \\' in launcher_text
     assert 'if meili_http_auth_ping "$MEILI_HOST"; then' in launcher_text
+    assert 'if meili_http_functional_ready "$MEILI_HOST"; then' in launcher_text
     assert 'if meili_http_ping "$MEILI_HOST"; then' in launcher_text
 
 

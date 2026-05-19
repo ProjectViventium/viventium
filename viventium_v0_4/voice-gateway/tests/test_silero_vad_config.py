@@ -98,7 +98,7 @@ class TestPyWhisperCppProviderVadWiring(unittest.TestCase):
             ) as vad_load,
             mock.patch.object(
                 pywhispercpp_provider,
-                "StreamAdapter",
+                "ViventiumInstrumentedStreamAdapter",
                 return_value="fake-adapter",
             ) as adapter_cls,
         ):

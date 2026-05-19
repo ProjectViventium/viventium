@@ -158,6 +158,12 @@ This service is the **voice bridge** between:
 - **Latency logging (optional)**
   - `VIVENTIUM_VOICE_LOG_LATENCY=1`
     - Enables voice latency logs in both the Voice Gateway and LibreChat voice routes.
+    - For local Whisper, this also emits `VoiceLatencyDetail` records for VAD start/end, frame
+      merge, pywhispercpp recognition, final transcript send, and LiveKit EOU metric event lag.
+    - Current local `large-v3-turbo` QA ballparks: VAD silence `~500-525ms`, merge/final-send/
+      metric-lag usually sub-10ms, warm short-turn recognition commonly `650-1000ms`, and warm
+      short-turn LiveKit `transcription_delay` usually `1.1-1.6s`. Treat `2-3s` transcript delay
+      as a breakdown trigger, not as proof of browser/UI delay.
   - `VIVENTIUM_VOICE_DEBUG_TTS=1`
     - Logs LLM raw/voice/display deltas and Cartesia request transcripts without API keys.
 
