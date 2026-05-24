@@ -15,9 +15,12 @@ Steps:
 2. Open the workbench and select `main.conscious_agent`.
 
 Expected Result: Rendered preview matches registry output. Human-facing scan surfaces use readable
-labels; hashes stay in private/source metadata and tests, not in the Atlas or flow overview.
+labels; hashes stay in private/source metadata and tests, not in the Atlas or flow overview. The
+Prompt `Rendered` view defaults to a readable semantic `Read` mode while preserving a `Raw` mode
+with the exact assembled registry output used for hashes, diffs, sync, and evals.
 
-Forbidden Result: A second prompt parser, prompt database, or divergent render output.
+Forbidden Result: A second prompt parser, prompt database, divergent render output, or a readable
+view that changes, executes, strips, or hides runtime placeholders and literal prompt markers.
 
 Last Run: 2026-05-15, initial local implementation QA.
 
@@ -178,30 +181,126 @@ Forbidden Result: Reviewed push enabled before dry run, backend reviewed push by
 or pending-draft guards, stale review tokens blessing changed source, or any non-dry-run push
 during smoke QA.
 
-Last Run: 2026-05-15, Playwright desktop dry-run guard check.
+Last Run: 2026-05-21, local-only guarded sync check. `Push dry-run` returned a review token and
+the reviewed push endpoint refused to mutate because live/source drift was still classified as
+conflict.
 
-## PW-009 Flow Graph And Lineage
+## PW-009 Flow Source Map And Lineage
 
-Requirement: Prompt Flow Dashboard should visualize real source/include/dependent relationships.
+Requirement: Prompt Flow Dashboard should provide a real Workbench source-map projection over
+prompt registry, include/dependent lineage, target metadata, eval `promptRefs`, and local runtime
+artifacts.
 
-User Outcome: Selecting a prompt updates a visual path from source prompt to rendered preview, live
-agent, eval bank, and eval results, with included/dependent prompts visible.
+User Outcome: Selecting a prompt shows where that prompt sits in the larger Viventium prompt,
+feature, runtime, and eval map. The selected path is highlighted, unrelated flows remain visible
+but muted, and double-clicking a prompt node opens the Prompt tab for that prompt.
 
 Surfaces: Web UI, API
 
 Steps:
 
 1. Select `main.identity`.
-2. Inspect Prompt Flow Dashboard.
-3. Inspect Prompt Detail.
+2. Inspect Prompt Flow Dashboard and confirm the stage bands, selected prompt, lineage, linked
+   evals, and local artifacts are visible.
+3. Search/select `memory.hardener_consolidation`.
+4. Confirm the highlighted path moves to memory/recall context and unrelated prompts/evals are
+   muted rather than removed.
+5. Double-click the selected prompt node.
+6. Inspect Prompt Detail.
 
-Expected Result: Flow nodes include Source, Rendered Prompt, Live Agent, Eval Bank, Eval Results,
-and real include/dependent nodes from the backend flow graph. Prompt Detail shows frontmatter,
-variables, includes, dependents, and git history.
+Expected Result: Flow nodes are data-bound to real prompt rows, backend include/dependent edges,
+eval-bank prompt references, and documented Workbench artifact nodes. Stage bands are documented UI
+categories, not runtime-routing authorities. Prompt Detail opens for the double-clicked prompt and
+shows frontmatter, variables, includes, dependents, and git history.
 
-Forbidden Result: Static decorative graph unrelated to backend prompt lineage.
+Forbidden Result: Static decorative graph unrelated to backend prompt lineage, a map that implies
+undocumented runtime routing authority, or a double-click that only changes the graph while leaving
+the user stranded away from the prompt.
 
-Last Run: 2026-05-15, Playwright desktop dark-mode user flow.
+Last Run: 2026-05-22, Playwright source-map and double-click navigation pass.
+
+## PW-029 Scheduled GlassHive Prompts
+
+Requirement: Prompt Workbench scheduled prompts must be editable, previewable, triggerable, and
+durably executed by Scheduling Cortex through GlassHive without hardcoding a user, prompt, or
+database credential.
+
+User Outcome: An admin can create or edit a private scheduled prompt, preview live-linked
+variables, enable/disable it, change its time, run it manually, and inspect run history/results
+from Workbench while the recurrence engine remains Scheduling Cortex.
+
+Surfaces: Web UI, API, Scheduling Cortex SQLite, GlassHive runtime
+
+Steps:
+
+1. Verify unauthenticated scheduled-prompt and variable endpoints return `401`.
+2. Open Workbench with a helper launch token, authenticated admin session, or direct same-machine
+   loopback visit that resolves the single local admin account.
+3. Inspect the Prompt Flow atlas and confirm Scheduled Prompts appear near the top as prompt
+   objects with an inline on/off switch. Confirm both Workbench-private scheduled prompts and
+   existing user-level Scheduling Cortex tasks for the admin user appear in the same group.
+4. Select a scheduled prompt object from the Prompt Flow atlas and confirm the Schedules detail tab
+   opens for that object.
+5. Open the Drafts tab for that same scheduled prompt object and confirm it shows the private
+   scheduled prompt body, a rendered-variable view, and variable snapshot details without treating
+   the private prompt as a public source-file draft.
+6. Inspect the Schedules execution panel and confirm Workbench-private schedules show the direct
+   GlassHive host route, `codex-cli` profile, host mode, workspace root, and private `my_folder`.
+7. Resize the Prompt Flow pane and confirm the header, object count, and add button stay visible
+   while the tree scrolls.
+8. Inspect variable chips for user, memories, memory agent prompt, governed database context,
+   GlassHive `my_folder`, and the background-agent list function.
+9. Create a synthetic scheduled prompt with a daily `03:00` schedule and memory write mode `off`
+   or `propose`.
+10. Preview rendered variables and confirm wrappers such as `<memory_agent.system_prompt>` and
+   `<user.memories>` are visible; if the resolved admin has memory rows, `user.memories` must not
+   render as an empty array.
+11. Toggle enabled/disabled from the Prompt Flow atlas switch, change the time, save, refresh, and
+   confirm persistence.
+12. Trigger a manual run and confirm a `glasshive_host` / `workbench` run row is recorded. Rapidly
+   repeat the manual-run request and confirm the second request coalesces onto the existing
+   in-flight run instead of creating a duplicate worker run.
+13. Open a preexisting user-level schedule row and confirm the detail pane identifies it as a
+    user-level schedule with `viventium_agent` executor/channel metadata rather than converting it
+    into a Workbench-private GlassHive definition.
+    In Drafts and Schedules, confirm user-level rows show stored prompt text and regular scheduler
+    route only; Workbench variable chips/rendered snapshots and memory write-mode controls must be
+    hidden or marked not applicable.
+    Save a title-only or active-state-only edit on a user-level schedule and confirm custom
+    `schedule` JSON is preserved unless the schedule controls were explicitly changed.
+14. Inspect the topbar sync actions and confirm Pull Live and Push Dry-run are green when current
+   and orange when live/source work, conflicts, or blocking drafts need attention.
+15. Change a synthetic Workbench-private schedule between `GlassHive host` and `Viventium agent`.
+   Confirm GlassHive schedules expose `same worker` / `new worker each run`, while Viventium
+   schedules expose `new conversation` / `same conversation`.
+16. Create a synthetic structured `memory-proposals-*.json` file under a private `my_folder` and
+   confirm the proposal review panel lists actions, hashes, dry-run, and `Apply governed` controls.
+   Apply only against synthetic QA data; for real user data, run dry-run and verify duplicate-key
+   merge handling without applying.
+17. Inspect private result pointer existence and public-safe DB/log evidence without copying raw
+   rendered prompt text into public QA.
+
+Expected Result: The scheduled task uses `executor="glasshive_host"` and `channel="workbench"`;
+GlassHive dispatch branches before LibreChat generation; run history records status, hashes,
+GlassHive ids when available, private detail pointer, and signed callback updates; variable
+rendering never exposes raw Mongo credentials; memory writeback is governed or proposal-only.
+Existing user-level `scheduled_tasks` rows remain owned by Scheduling Cortex, appear in the same
+Prompt Flow/Schedules UI, and can be toggled/edited/run/deleted without duplicate Workbench
+definition rows. The built-in Workbench schedule appears as `Subconscious Deep Thought`; docs and
+template metadata preserve `Nightly subconscious thought formation` as the nightly template alias.
+`apply_governed` routes through the LibreChat/Viventium memory policy helper and memory methods,
+duplicate live memory keys touched by the proposal are deduped or policy-blocked before apply,
+unrelated duplicate memory categories are not rewritten, manual runs are idempotent, and persisted
+run history/callback rows contain sanitized summaries/error classes while raw payloads live only in
+private detail files.
+
+Forbidden Result: Workbench asking the main Viventium agent to use GlassHive, direct host-worker
+Mongo credentials, direct `memoryentries` writes or prompt text that instructs direct DB edits,
+unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
+rendered prompt/result text in public QA reports.
+
+Last Run: 2026-05-22, PASS. See
+`qa/prompt-workbench/reports/2026-05-22-scheduled-glasshive-prompts-qa.md`.
 
 ## PW-010 Eval Designer And Results
 
@@ -216,16 +315,20 @@ Steps:
 
 1. Switch to Evals mode.
 2. Use the family/surface/max-case controls.
-3. Click `Run selected`.
-4. Inspect recent run history.
+3. Click several visible eval table rows across linked families.
+4. Confirm the selected-row highlight and editor title/body change to the clicked case.
+5. Click `Run selected`.
+6. Inspect recent run history.
 
 Expected Result: `POST /api/evals/run` records a public-safe preview when live mode is off; recent
-runs show run id, mode, selected prompt id, case count, and status.
+runs show run id, mode, selected prompt id, case count, and status. Row selection responds within a
+normal click cycle and keeps the editor tied to the selected row's family and case id.
 
 Forbidden Result: Inert eval controls, raw private prompt/eval output in public UI, or a run with no
-prompt/case traceability.
+prompt/case traceability. Clicking a non-selected eval row must not hang the browser main thread,
+trigger a Page Unresponsive dialog, or relabel a case under the wrong family.
 
-Last Run: 2026-05-15, Playwright desktop dark-mode user flow.
+Last Run: 2026-05-21, Playwright production-bundle eval row-selection regression script.
 
 ## PW-011 Workbench Navigation And Settings Polish
 
@@ -270,15 +373,19 @@ Steps:
 
 1. Load desktop dark mode and run the main inspect/edit/eval/draft flow.
 2. Load desktop light mode and inspect header, atlas, flow, editor, and inspector.
-3. Load a mobile dark viewport.
+3. Load a medium desktop viewport and verify Evals table rows remain clickable.
+4. Load a mobile dark viewport.
 
 Expected Result: No console errors, no failed API requests, no header title/subtitle overlap, no
-document-level horizontal overflow, and flow canvas remains constrained to the viewport.
+document-level horizontal overflow, and flow canvas remains constrained to the viewport. When an
+inner workbench panel needs more width than the available dock space, that panel scrolls internally
+instead of allowing neighboring eval panes to overlap.
 
 Forbidden Result: System-dark showing unreadable light-only controls, medium desktop header
-overlap, or mobile panels escaping the viewport.
+overlap, eval editor/results panes intercepting table row clicks, or mobile panels escaping the
+viewport.
 
-Last Run: 2026-05-16, headed Chrome production-bundle responsive QA after embedded-browser freeze fix.
+Last Run: 2026-05-21, Playwright production-bundle eval layout regression at 1024, medium, and wide desktop viewports.
 
 ## PW-019 Embedded Browser Responsiveness
 
@@ -452,6 +559,41 @@ prompt-specific, or public API responses expose private paths/raw draft text.
 
 Last Run: 2026-05-15, Playwright focused History view plus API privacy check.
 
+## PW-030 Prompt Diff Wrapping And Working-Tree Source Visibility
+
+Requirement: Prompt Workbench diff inspection in
+`docs/requirements_and_learnings/49_Prompt_Architecture_and_Token_Efficiency.md`.
+
+User Outcome: A user can see prompt source changes made by another local agent and read long
+side-by-side diff lines without one pane overflowing while the other wraps.
+
+Surfaces: Web UI, API
+
+Steps:
+
+1. Make or preserve a synthetic uncommitted source change to a tracked prompt file, and cover a
+   synthetic untracked prompt file through regression coverage.
+2. Open that prompt in Prompt Workbench.
+3. Open Prompt `Diff` with no editor-buffer change.
+4. Inspect that the original pane is the committed `HEAD` text and the modified pane is the current
+   source file.
+5. Confirm both original and modified Monaco diff panes wrap long lines.
+6. Open Prompt `History`, click the `working-tree` Git History entry, and inspect the patch preview.
+7. Refresh the page and re-open the same prompt to confirm the working-tree entry and wrapped diff
+   state persist while the source file remains uncommitted.
+
+Expected Result: Prompt `Diff` shows uncommitted source changes when the editor buffer is clean,
+falls back to editor-buffer diff when the user edits the prompt, wraps both diff panes consistently,
+and History includes a first public-safe `working-tree` entry with patch stats and no local absolute
+paths. For untracked prompt files, the diff treats the committed baseline as an intentional empty
+string rather than hiding the source delta.
+
+Forbidden Result: One diff pane horizontally overflows while the other wraps, uncommitted prompt
+changes disappear from the diff/history surfaces, or viewing the diff creates drafts, pushes live,
+or mutates cloud/runtime state.
+
+Last Run: 2026-05-22, local build, release regression, Claude review, and in-app browser QA.
+
 ## PW-017 Eval Case Draft Editing
 
 Requirement: Eval edits must be reviewable source drafts tied to the eval bank, not direct writes
@@ -571,8 +713,8 @@ Forbidden Result: Hidden linked cases because a default filter is active, whole-
 format churn, a create action that writes directly to public eval source, or preview runs presented
 as model-quality performance.
 
-Last Run: 2026-05-16, backend regression plus real Chrome eval create/discard, no-live preview, and
-results visibility QA. Live exact-model performance was not run in this local-only pass.
+Last Run: 2026-05-21, live exact-model local runtime pass. The harness ran 3 selected web cases and
+failed closed: 2 completed, 1 empty visible response, and 1 duplicate non-silent response hash group.
 
 ## PW-023 Prompt Traces Meaning
 
@@ -629,6 +771,178 @@ state, or inaccessible metadata collapse controls.
 Last Run: 2026-05-17, headed Chromium production-bundle QA with storage get/set/remove failures
 simulated before and after load, including Drafts tab navigation and Cmd+B sidebar toggle.
 
+## PW-025 Operational Memory Prompt Coverage
+
+Requirement: Transcript-ingest and nightly saved-memory hardening prompts must be visible and
+evaluable in Prompt Workbench with the same source/draft/history/eval discipline as other prompts.
+
+User Outcome: A user can search `transcript` or `hardener`, select the operational memory prompts,
+inspect their rendered templates, see linked evals/QA, and run a no-live eval preview without
+touching cloud or live agent state.
+
+Surfaces: Web UI, API, Built Bundle
+
+Steps:
+
+1. Build and start the production Prompt Workbench bundle.
+2. Search `transcript` in the atlas and select `memory.transcript_summarizer`.
+3. Inspect Prompt detail and History.
+4. Open Evals and confirm `meeting_transcript_ingest` cases are linked.
+5. Search/select `memory.hardener_consolidation`.
+6. Confirm `memory_hardening_consolidation` cases are linked.
+7. Run a no-live preview for one linked operational-memory case.
+8. Refresh and confirm the prompts and eval run remain visible without console errors or private
+   transcript content.
+
+Expected Result: Operational memory prompts appear under the memory prompt family with readable
+targets; strict runtime variables render as placeholder markers for inspection; linked evals and QA
+chips appear in History/Evals; preview records sanitized selection evidence only. Runtime prompt
+bundle drift is visible as a public-safe status badge instead of pretending a source-only prompt is
+already compiled into the installed bundle.
+
+Forbidden Result: Transcript/hardener prompts hidden in hardcoded scripts only, selecting the prompt
+throws a strict-variable render error, evals are absent from Workbench, preview writes live/cloud
+state, or public QA/UI exposes raw transcript text, local paths, account identifiers, or secrets.
+
+Last Run: 2026-05-21, Playwright CLI plus API/log QA passed for transcript summarizer and nightly
+hardener prompt coverage; local runtime bundle drift correctly showed the three new prompts as
+source-only and needing rebuild.
+
+## PW-026 Rendered Read/Raw Prompt View
+
+Requirement: The Prompt tab should show a readable rendered prompt without losing exact raw
+registry output or corrupting runtime prompt markers.
+
+User Outcome: A user can read assembled prompts as a formatted document, then switch to the exact
+raw rendered text when they need copy/paste, hash, diff, sync, or eval parity.
+
+Surfaces: Web UI, Built Bundle
+
+Steps:
+
+1. Build and start the production Prompt Workbench bundle.
+2. Select `main.conscious_agent`.
+3. Open Prompt `Rendered` and confirm `Read` mode shows headings/lists/paragraphs as readable
+   document structure instead of raw markdown punctuation.
+4. Switch to `Raw` and confirm the exact assembled text remains visible.
+5. Search/select `memory.transcript_summarizer`.
+6. Confirm `Read` mode preserves strict variables, literal XML-like transcript tags, and envelope
+   separator lines as visible text.
+7. Switch to `Raw` and confirm those same markers are present in the exact raw output.
+
+Expected Result: `Read` mode is readable and safe; `Raw` mode remains exact. Runtime placeholders,
+strict variables, literal prompt tags, and separator lines are neither executed as HTML nor removed
+from the operator view.
+
+Forbidden Result: Only raw markdown punctuation, HTML injection from prompt text, stripped
+variables/tags, or no exact raw rendered view after the readable view is introduced.
+
+Last Run: 2026-05-22, Playwright rendered Read/Raw prompt QA.
+
+## PW-027 Scheduling Cortex Prompt And Config Coverage
+
+Requirement: Scheduling Cortex prompt files, source config, evals, QA coverage, and history must be
+visible together in Prompt Workbench without exposing private schedule runtime state.
+
+User Outcome: A user can search `scheduling`, select the main scheduling continuity prompt or the
+Scheduling Cortex MCP prompt, and see the prompt, linked evals, related source YAML config, and
+history in one organized place.
+
+Surfaces: Web UI, API, Built Bundle
+
+Steps:
+
+1. Build and start the production Prompt Workbench bundle.
+2. Search `scheduling` in the atlas.
+3. Select `main.scheduling_self_continuity` and open Prompt `History`.
+4. Confirm linked scheduling evals and QA chips are visible.
+5. Confirm Related Config shows scheduling direct-action ownership, main-agent scheduling tools,
+   and `mcpServers.scheduling-cortex`.
+6. Select `mcp.scheduling_cortex.server` and repeat the History inspection.
+7. Confirm related config history uses public-safe commit summaries and does not show App Support
+   state, raw schedule rows, private schedule prompts, or local absolute paths.
+
+Expected Result: Scheduling prompt history is not a lonely prompt file. The Workbench ties it to
+the source YAML config that exposes the MCP, the direct-action owner contract, linked evals, QA,
+and git history.
+
+Forbidden Result: Scheduling config discoverable only by manually opening source YAML, linked evals
+missing from scheduling prompts, raw runtime schedule state in public UI, or source config history
+leaking local absolute paths.
+
+Last Run: 2026-05-22, API and Playwright scheduling config coverage QA.
+
+## PW-028 LibreChat Account Menu Workbench Entry
+
+Requirement: Local LibreChat admin/operator users must be able to open Prompt Workbench from the
+Viventium account dropdown under the Connected Accounts menu item without hardcoded browser ports or
+cloud-side changes.
+
+User Outcome: A user opens the account dropdown, sees Prompt Workbench directly below Connected
+Accounts, selects it, and lands in the managed local Prompt Workbench instance.
+
+Surfaces: LibreChat Web UI, Viventium API, Prompt Workbench lifecycle CLI
+
+Steps:
+
+1. Start the local LibreChat frontend/API and the Prompt Workbench lifecycle surface.
+2. Open LibreChat on the same host in a real browser and authenticate as an admin/operator.
+3. Open the user/account dropdown and find `Prompt Workbench` directly below `Connected Accounts`.
+4. Select `Prompt Workbench`.
+5. Confirm a new tab opens to the URL returned by the local API and the Prompt Workbench renders.
+6. Confirm the local API reused or started the managed workbench through the supported CLI path.
+7. Confirm no cloud URL, external OAuth flow, or remote mutation was involved.
+8. Confirm a non-admin authenticated user cannot call the local launcher route.
+
+Expected Result: The account dropdown has a clear Prompt Workbench entry under Connected Accounts.
+The menu item calls the local Viventium API, which uses `bin/viventium prompt-workbench start --json`
+and returns a loopback URL that opens the Workbench. Non-admin users do not receive the Workbench
+launcher.
+
+Forbidden Result: A hardcoded stale workbench port in the browser bundle, no admin entry in
+the account dropdown, non-admin access to the launcher, opening a cloud URL, changing
+connected-account provider state, or starting/stopping the main Viventium runtime.
+
+Last Run: 2026-05-22, LibreChat account-menu Workbench entry QA.
+
+## PW-031 Diff Baseline And Sidecar Persistence
+
+Requirement: Prompt Workbench must keep user layout choices stable, make prompt diffs explicit, and
+optionally stay running with the local Viventium runtime when enabled.
+
+User Outcome: A user closes the right sync sidebar once and it stays closed after reloads. In the
+Prompt Diff tab, the user can choose the exact baseline: applied source, Git HEAD before local
+working-tree edits, or a prompt-specific git history entry. If `runtime.prompt_workbench.enabled`
+is true, the local stack starts and watches Workbench without leaking the launch token into logs.
+
+Surfaces: Web UI, API, Config compiler, Stack launcher, Built bundle
+
+Steps:
+
+1. Build and start the production Prompt Workbench bundle.
+2. Close the right sync sidebar, reload the browser, and confirm the sidebar remains closed.
+3. Select a prompt with git history and open Prompt `Diff`.
+4. Use `Compare from` to switch between the applied source and at least one git history revision.
+5. Confirm the backend revision endpoint returns the selected prompt file text at that revision.
+6. Compile config with `runtime.prompt_workbench.enabled: true` and confirm
+   `START_PROMPT_WORKBENCH=true`.
+7. Run the launcher in a local smoke mode with the prompt sidecar enabled and confirm Workbench is
+   running, the watchdog pid file exists, and logs do not contain the authenticated Workbench URL.
+8. Stop Workbench through the CLI/helper path while the watchdog is alive and confirm the local
+   user-stopped marker prevents immediate restart until Workbench is explicitly started again.
+
+Expected Result: Sidebar state survives reload through the safe storage wrapper. The diff header
+names the selected baseline and target; selecting history works for any prompt registry file with
+git history. The sidecar is opt-in, local only, uses the existing `bin/viventium prompt-workbench`
+path, keeps the auth token out of logs, and respects explicit user stop.
+
+Forbidden Result: Right sidebar reopens after a reload, implicit/vague diff baseline, prompt-id or
+prompt-text special casing, a cloud mutation, a leaked `workbench_token` in stack logs, or stopping
+the main runtime when only Workbench is stopped. Workbench must also not immediately restart after a
+user-visible Stop action while the stack watchdog is alive.
+
+Last Run: 2026-05-22, sidebar persistence, diff history baseline, and sidecar watchdog QA.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Prompt Workbench. Add narrower feature-specific
@@ -636,10 +950,16 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `PW-UC-001` | Open the production Prompt Workbench, search the prompt atlas, select a prompt, and inspect Flow, Prompt, Live Drift, Drafts, Evals, and Prompt Traces. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-001`, `PW-002`, `PW-009`, `PW-014` | Real browser against the built local workbench plus `/api/prompts`, `/api/sync/status`, `/api/drafts`, `/api/evals/runs`, and prompt detail APIs | Source prompt files, workbench API responses, browser console/network, built bundle, release tests, and public-safe QA reports | The atlas is human-readable, prompt detail matches registry output, drift is explicit, no raw private state is exposed, and every network request succeeds or reports a clear blocked state. | 2026-05-18 publish browser QA - passed |
-| `PW-UC-002` | Use no-live eval controls and blocked sync controls before any reviewed live push. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-005`, `PW-008`, `PW-010`, `PW-018`, `PW-022` | Real browser Evals and Live Drift panels plus `/api/evals/run` and sync status APIs | Eval bank, private run summary counts/hashes only, pending-draft state, sync state, browser console/network | Preview clearly says no model call/no score, records a sanitized local run summary, and reviewed push stays blocked until the guarded dry-run/review path is satisfied. | 2026-05-18 publish browser QA - passed for no-live preview and blocked state; live push intentionally not run |
+| `PW-UC-001` | Open the production Prompt Workbench, search the prompt atlas, select a prompt, and inspect Flow, Prompt, Live Drift, Drafts, Evals, and Prompt Traces. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-001`, `PW-002`, `PW-009`, `PW-014`, `PW-026` | Real browser against the built local workbench plus `/api/prompts`, `/api/sync/status`, `/api/drafts`, `/api/evals/runs`, and prompt detail APIs | Source prompt files, workbench API responses, browser console/network, built bundle, release tests, and public-safe QA reports | The atlas is human-readable, prompt detail matches registry output, Rendered has safe Read/Raw modes, Flow is a source-map view with selected-path highlighting and double-click prompt navigation, drift is explicit, no raw private state is exposed, and every network request succeeds or reports a clear blocked state. | 2026-05-22 rendered view and source-map browser QA - passed |
+| `PW-UC-002` | Use no-live eval controls, click through linked eval rows, run live exact-model eval when explicitly approved, and inspect blocked sync controls before any reviewed live push. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-005`, `PW-008`, `PW-010`, `PW-018`, `PW-022` | Real browser Evals and Live Drift panels plus `/api/evals/run` and sync status APIs | Eval bank, private run summary counts/hashes only, pending-draft state, sync state, browser console/network | Eval row selection stays responsive, preview clearly says no model call/no score, live exact-model failures are visible as failures, and reviewed push stays blocked until the guarded dry-run/review path is satisfied. | 2026-05-21 eval row-selection regression passed; live exact-model local run failed closed; local dry-run passed; reviewed push was blocked by conflict drift and not applied |
 | `PW-UC-003` | Refresh/reopen the workbench after an eval preview and confirm the selected prompt, run summary, and API-backed state still agree. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-010`, `PW-012`, `PW-015`, `PW-016` | Real browser reload/reopen plus backend health/build-version APIs | `/api/health`, `/api/build-version`, `/api/evals/runs`, browser requests, static index/cache headers, built artifact hash | The workbench reloads without console errors, the selected prompt can be found again, run history persists through private workbench state, and public API/build metadata omits local absolute paths. | 2026-05-18 publish browser QA - passed |
+| `PW-UC-004` | Search for transcript-ingest and nightly memory hardening prompts, inspect them, and run a no-live linked eval preview. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-025` | Real browser against built local workbench plus prompt/eval/context APIs | Source prompt files, eval bank promptRefs, strict-variable rendered preview, browser console/network, private run summary counts only | `memory.transcript_summarizer`, `memory.transcript_caveat`, and `memory.hardener_consolidation` are visible, editable through drafts, linked to evals/QA, show runtime bundle drift, and are safe to preview locally without live/cloud changes. | 2026-05-21 operational memory prompt coverage QA - passed; runtime bundle drift visible as source-only |
+| `PW-UC-005` | Use the Flow source map to understand the selected prompt's place in Viventium and jump to the prompt from the map. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-009`, `PW-025`, `PW-026` | Real browser against built local workbench plus prompt/eval APIs | Prompt registry rows, backend flow graph, eval-bank promptRefs, browser DOM/screenshot evidence, and release tests | Stage bands stay readable, selected memory/main paths are highlighted, unrelated prompts/evals are muted, and double-clicking a prompt node selects it and opens Prompt detail. | 2026-05-22 Playwright source-map QA - passed |
+| `PW-UC-006` | Search scheduling prompts and inspect prompt, config, evals, QA, and history together. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-016`, `PW-027` | Real browser against built local workbench plus prompt context API | Prompt registry rows, source YAML config summaries, eval-bank promptRefs, git metadata, browser DOM/screenshot evidence, and release tests | Scheduling continuity and MCP prompts show related direct-action owner config, main-agent tool exposure, MCP server config, linked evals, QA chips, and public-safe history. | 2026-05-22 scheduling config coverage QA - passed |
+| `PW-UC-007` | Open Prompt Workbench from the LibreChat account dropdown as an admin/operator. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-028` | Real browser against same-host local LibreChat plus `/api/viventium/prompt-workbench/start` and the managed workbench tab | Browser DOM/screenshot evidence, local API response, CLI status JSON, server logs, and route tests | The account dropdown shows Prompt Workbench directly below Connected Accounts for admins, selecting it opens the local managed workbench URL in a new tab, non-admin route access is blocked, and no cloud/provider account state changes. | 2026-05-22 LibreChat entry QA - passed |
+| `PW-UC-008` | Close the sync sidebar, reload, select diff baselines, and verify opt-in Workbench sidecar startup. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-031` | Real browser against built local Workbench plus `/api/prompts/:id/revisions/:revision`, compiler output, launcher smoke logs, and CLI status | Browser storage/DOM/screenshot evidence, prompt revision API, release tests, launcher pid/log state | Sidebar stays closed after reload, `Compare from` changes the actual diff baseline, the revision API is prompt-path/git based, and the local sidecar starts only when enabled without token leakage. | 2026-05-22 sidebar/diff/sidecar QA - passed |
 
 ## Release Test Traceability
 
 - `tests/release/test_prompt_workbench.py`
+- `tests/release/test_scheduled_glasshive_prompts.py`

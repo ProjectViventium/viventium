@@ -213,9 +213,9 @@ This is the shared troubleshooting index. For stack-specific detail, see:
   Tailscale, Ollama models, router mappings, or service listeners are ready.
 
 ### Modern LiveKit says `I'm having trouble reaching the service right now. Please try again.`
-- Root cause: the voice call was reaching LibreChat, but a hidden machine-level fast-voice LLM route
-  could still rewrite the run onto a different provider than the agent-visible selection. That
-  produced downstream provider credential failures even though the main agent model was healthy.
+- Root cause: the voice call reached LibreChat, but the model run failed before assistant text was
+  available. Recent observed causes include stale explicit Voice Chat Model provider credentials and
+  provider overload after a tool result expanded the second model pass.
 - Symptom: STT/TTS may work, but the voice reply falls back to the generic service-trouble message.
 - Fix:
   - the agent primary model/provider and optional explicit Voice Call LLM are the only LLM selectors
@@ -225,8 +225,13 @@ This is the shared troubleshooting index. For stack-specific detail, see:
     must not rewrite call LLM selection
   - if an explicit Voice Call LLM lacks a required server credential, log the skip clearly and keep
     the agent primary model/provider
+  - provider overload signals such as `server_is_overloaded`, 503, or 529 must be classified as a
+    recoverable provider outage so the configured voice fallback can retry before the user hears the
+    generic service-trouble message
 - Current status: live call LLM selection now ignores the legacy machine fast-voice route, so old
-  config values no longer override the agent-visible Voice Call LLM behavior.
+  config values no longer override the agent-visible Voice Call LLM behavior. The shipped voice
+  route is owned by the agent-visible Voice Chat Model fields and source-of-truth docs; runtime must
+  not silently remap it to a different model.
 - Migration note: if an older install intentionally used `voice.fast_llm_provider`, move that choice
   into the agent `Voice Chat Model` / `voice_llm_provider` + `voice_llm_model` fields instead.
 

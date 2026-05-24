@@ -7,11 +7,16 @@
 | `MPV-UC-001` | Start a call from an authenticated LibreChat conversation and send a simple typed or spoken prompt. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-001` | LibreChat browser plus Modern Playground | Voice gateway logs, LiveKit state, persisted chat message, generated voice config | Call connects, agent joins, transcript shows a real assistant answer. | 2026-05-18 PARTIAL PASS for synthetic microphone/worker dispatch; authenticated answer still required |
 | `MPV-UC-002` | Interrupt or send a second turn while prior work or follow-up timing is still active. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-003` | Modern Playground call | Transcript, stream ids, Mongo message chain, voice gateway timing logs | Turns stay distinct, no stale follow-up is spoken as current conversation state. | 2026-05-15 PARTIAL |
 | `MPV-UC-003` | Ask the voice agent to look something up when Web Search appears enabled. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/10_Open_Source_Web_Search.md` / `MPV-006` | Modern Playground and linked LibreChat browser conversation | Visible transcript/chat, persisted `web_search` tool-call parts, local search backend health, hosted search backend status, request logs, Docker/container state for local providers, browser/local-delegation fallback when available | Voice/search either returns grounded evidence or says the exact degraded provider class without inventing facts; named-entity/current-fact failures use fallback before stopping. | FAIL (escaped 2026-05-18; fix run pending) |
-| `MPV-UC-004` | Reload linked chat after a voice turn that used model/tooling. | `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-005` | LibreChat browser conversation | DB message content parts, logs, transcript, generated no-reasoning config | Visible chat persists audible answer only; no reasoning blocks or raw private transcript leak. | 2026-05-15 PASS for simple turn |
+| `MPV-UC-004` | Reload linked chat after a voice turn that used model/tooling. | `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-005` | LibreChat browser conversation | DB message content parts, logs, transcript, generated no-reasoning config | Visible chat persists audible answer only; no reasoning blocks or raw private transcript leak. | 2026-05-21 PASS for recovered provider-error cleanup and route restoration; full spoken audio not rerun |
 | `MPV-UC-005` | Open a modern-playground call page while voice settings are cold, slow, or temporarily unavailable. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-007` | Modern Playground browser page plus launcher/runtime logs | Browser network timing, visible CTA state, retry copy, Next.js route compile logs, call-session DB counts | Start chat remains available, settings loading is bounded/retryable, and cold-route compile is prewarmed on launcher startup. | 2026-05-18 PASS for pre-call gate and bounded settings load; full microphone join not rerun |
 | `MPV-UC-006` | Speak a thought, pause for `0.7s` to `1.5s`, then continue speaking in the same LiveKit call. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-008` | Modern Playground browser with fake microphone WAV, LiveKit, voice worker, Mongo | Voice gateway timing logs, Listen-Only ingress record, Mongo transcript message count, synthetic fixture manifest | Both endpointed STT segments are persisted as one continued transcript turn/message inside the continuation window. | 2026-05-18 PASS with synthetic TTS/fake-mic QA |
 | `MPV-UC-007` | Click Start chat once and wait for the call to connect. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-009` | Modern Playground browser page, LiveKit, voice gateway logs | Button state, browser console/network, LiveKit microphone publish, `JT_PUBLISHER` assignment, call-session DB state | One click starts the call, duplicate clicks are disabled, and the microphone turns on after room connect. | 2026-05-18 PASS for one-click visible UI and duplicate-request prevention; full fresh spoken-turn remains under broader call cases |
 | `MPV-UC-008` | Install or bootstrap with the default voice-capable configuration. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-010` | Installer/bootstrap component selection and launcher help | `bootstrap_components.select_components`, compiled runtime env, launcher flags | Default selection includes `agent-starter-react` and excludes `agents-playground`; classic UI appears only after explicit classic selection. | 2026-05-19 automated release case added |
+| `MPV-UC-011` | Reload a linked chat after provider overload was recovered by visible assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-011` | LibreChat browser conversation | DB content parts, recovered error-class metadata, renderer tests, runtime logs | Recovered answer is visible, stale provider error card is not visible, refresh keeps the clean state. | 2026-05-21 PASS in `reports/2026-05-21-recovered-provider-error-card-cleanup.md` |
+| `MPV-UC-012` | Hear a streamed voice answer whose model deltas split punctuation from the phrase. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-012` | Modern Playground call with xAI/Cartesia/fallback TTS as available | Voice gateway exact TTS debug logs, transcript, provider metrics, buffer unit tests | The assistant speaks naturally and never says a standalone period as "dot"; transcript remains readable. | 2026-05-21 PASS; see dated TTS orphan punctuation QA report |
+| `MPV-UC-013` | Hear a streamed voice answer when model text contains links, emails, references, markdown, or provider markup. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-013` | Modern Playground call with current TTS route and fallback route | Voice gateway `llm_delta`, `tts_emit`, provider request logs when available, sanitizer/unit tests | TTS receives speech-safe phrase chunks; plain providers do not receive raw tags; provider-supported controls are preserved only on capable routes. | 2026-05-21 PASS; live browser QA plus provider metrics |
+| `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | 2026-05-22 PASS for local Whisper barge-in runtime/browser/log proof |
+| `MPV-UC-015` | Interrupt a local Whisper assistant reply while it is speaking. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-015` | Modern Playground call with local `pywhispercpp` STT | Visible transcript, audible behavior, voice gateway interruption policy/state logs, generated runtime config, DB call-session route | A sustained one-word or short-phrase barge-in pauses/interrupts the agent without waiting for final local Whisper text; AssemblyAI word-guard defaults remain unchanged. | 2026-05-22 PASS in `reports/2026-05-22-local-whisper-bargein-qa.md` |
 
 ## MPV-001 Authenticated Call Launch
 
@@ -339,6 +344,200 @@
   `tests/release/test_config_compiler.py`,
   `tests/release/test_voice_playground_dispatch_contract.py`
 - Last Run: 2026-05-19 automated release case added; targeted run required before release merge.
+
+## MPV-011 Recovered Provider Error Cards Stay Hidden
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`,
+  `docs/requirements_and_learnings/01_Key_Principles.md`
+- User Outcome: If the primary model provider fails but Viventium later recovers useful visible
+  assistant text for the same turn, the linked chat does not keep showing a fatal provider error
+  card beside the recovered answer.
+- Surfaces: LibreChat browser conversation, Agents stream manager, background-cortex follow-up
+  promotion, Mongo message persistence, chat content renderer.
+- Preconditions: local runtime running; authenticated QA account; synthetic public-safe conversation
+  fixture or real recovered turn with visible answer text plus structured provider error metadata.
+- Steps:
+  1. Create or locate a recovered assistant message with visible text and a structured recoverable
+     provider error class such as `provider_temporarily_unavailable`.
+  2. Open the conversation in a real browser through LibreChat.
+  3. Confirm the recovered assistant answer is visible.
+  4. Confirm no `Something went wrong` provider-error card is visible in the same assistant message.
+  5. Refresh the browser and confirm the clean visible state persists.
+  6. Inspect DB content parts and recovered error-class metadata.
+- Expected Result: The assistant answer remains visible; stale provider error parts are stripped or
+  renderer-suppressed; recovered error class remains available in metadata/log evidence.
+- Forbidden Result: visible recovered answer and `Something went wrong` provider error card are both
+  shown for the same assistant message; cleanup drops the recovered answer; unstructured tool/MCP
+  failures are hidden as if they were provider recovery.
+- Evidence: `qa/modern-playground-voice/reports/2026-05-21-recovered-provider-error-card-cleanup.md`
+- Last Run: 2026-05-21 PASS with local Viventium QA account browser refresh, DB inspection, and
+  targeted API/client/voice-gateway tests.
+
+## MPV-012 Streaming TTS Must Not Speak Orphan Punctuation
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
+- User Outcome: A live voice answer sounds conversational even when provider/model streaming splits
+  punctuation into separate deltas.
+- Surfaces: Modern Playground, Voice Gateway `LibreChatLLM`, LiveKit TTS stream, xAI/Cartesia/OpenAI
+  or ElevenLabs TTS routes, transcript display.
+- Preconditions: canonical local runtime running from the current checkout; exact TTS debug logging
+  enabled only for the private local run; synthetic non-personal prompt that yields short sentences.
+- Steps:
+  1. Start an authenticated modern-playground call.
+  2. Send a synthetic prompt that asks for two short plain sentences.
+  3. Listen to the spoken answer and verify it does not say "dot", "period", or other literal
+     punctuation names for sentence-ending punctuation.
+  4. Inspect sanitized voice gateway logs for exact JSON-escaped TTS deltas and final text.
+  5. Verify no TTS-bound chunk is punctuation-only after speech has started.
+  6. Repeat or simulate the delta sequence with the unit regression for `[" Good", " to", " hear",
+     " you", "."]`, standalone `"."`, and numeric `3` + `.14`.
+- Expected Result: TTS receives speakable phrase fragments; orphan punctuation is not pushed as an
+  isolated synthesis input; decimal splits remain intact; transcript text remains readable.
+- Forbidden Result: the voice says `dot` or `period` for a sentence-ending punctuation chunk; the
+  runtime fixes the issue by changing the agent's selected model/provider; public QA artifacts
+  include raw private transcripts, call-session ids, or account identifiers.
+- Evidence: dated report under `qa/modern-playground-voice/reports/`, targeted
+  `tests.test_librechat_llm.TestVoiceTtsDeltaBuffer`, fallback provider-bound logging tests, and
+  sanitized voice gateway `[VoiceTTSInput]` lines.
+- Last Run: 2026-05-21 PASS. Local Modern Playground call connected through the live voice worker,
+  accepted a synthetic text turn, and emitted phrase-sized TTS chunks only; unit and full
+  voice-gateway discovery tests passed. 2026-05-22 follow-up PASS for automated provider-input
+  boundary tests: no standalone `"."` reaches the fake streaming provider; decimal splits remain
+  intact; wired `_LibreChatLLMStream._run` regression proves a standalone period after a flushed
+  phrase is not emitted as its own TTS chunk; live stack restarted from the fixed checkout.
+  2026-05-22 follow-up added exact provider-bound `[VoiceTTSInput]` instrumentation and automated
+  assertions that forwarded and dropped chunks are logged with JSON-escaped text; second-opinion
+  edge cases for standalone decimal points and split clause punctuation now pass.
+
+## MPV-013 Streaming TTS Must Not Speak Raw Artifacts
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
+- User Outcome: A live voice answer does not read raw links, emails, source/reference labels,
+  markdown/code scaffolding, detached internal citation ids such as `turn0search4`, unknown tags,
+  or unsupported provider markup as literal spoken text.
+- Surfaces: Modern Playground, Voice Gateway `LibreChatLLM`, LiveKit TTS stream, selected TTS route
+  and configured fallback route, transcript display.
+- Preconditions: canonical local runtime running from the current checkout; exact TTS debug logging
+  enabled only for local QA; synthetic non-personal prompts/fixtures.
+- Steps:
+  1. Start an authenticated modern-playground call.
+  2. Send a synthetic prompt that causes or simulates links, email addresses, source/reference
+     labels, markdown links, code fences, split citation markers, detached `turn<N><kind><N>` ids,
+     and voice-control tags in streamed model deltas.
+  3. Inspect `llm_delta` debug lines to confirm the raw model/debug side may contain artifacts.
+  4. Inspect `tts_emit` debug lines and provider request logs when available.
+  5. Verify plain-provider/fallback routes strip voice-control tags, while provider-capable routes
+     preserve only supported voice controls and still remove generic non-speech scaffolding.
+  6. Verify the transcript display remains free of provider markup and the selected model/provider
+     was not silently changed to make the test pass.
+- Expected Result: TTS-bound chunks contain natural speech or deterministic placeholders such as
+  `link available` / `email available`; no punctuation-only chunk, raw URL/domain/email, source
+  label, markdown syntax, code fence, detached internal citation id, unknown angle tag, or
+  unsupported provider tag reaches TTS.
+- Forbidden Result: TTS says raw `dot`, URL/domain fragments, email addresses, `Sources:`, markdown
+  syntax, code fence markers, detached `turn0search4`-style ids, or raw tags on a provider that
+  does not support them; the fix changes the user's configured provider/model; QA artifacts expose
+  private transcript content.
+- Evidence: dated report under `qa/modern-playground-voice/reports/`, targeted
+  `tests.test_sse.TestSSEParser`, `tests.test_librechat_llm.TestVoiceTtsDeltaBuffer`, affected
+  voice-gateway suite, sanitized voice gateway debug scan, and browser QA when live runtime is
+  restarted.
+- Last Run: 2026-05-21 PASS. Local Modern Playground QA created a call, clicked Start chat, opened
+  transcript/chat, sent a synthetic artifact-heavy prompt, observed a visible response, and confirmed
+  the aggregate raw stream contained a URL, email address, source label, markdown link, and split
+  punctuation while aggregate `tts_emit` and provider-completed TTS input contained zero forbidden
+  TTS artifacts. Sanitizer/buffer/fallback/provider route unit coverage also passed. 2026-05-21
+  follow-up for detached `turn0search4` artifacts passed automated sanitizer, full voice-gateway,
+  TypeScript, and build checks; live browser run reached transcript/provider metrics but exact
+  `tts_emit` chunk evidence was partial because opt-in debug chunk logging did not propagate.
+  2026-05-22 follow-up PASS for automated missing-space provider-boundary regressions, including a
+  wired `_LibreChatLLMStream._run` SSE regression reproducing `clearedis`, `what'syour`,
+  `thisthem`, `tryingto`, and `somethingbefore`-style splits without emitting those joins; browser
+  QA provider metrics completed but exact debug chunks are still blocked by the same instrumentation
+  gap.
+
+## MPV-014 Voice Fixes Need Post-Change User-Grade Proof
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`,
+  `qa/README.md#user-grade-qa-bar`, and `AGENTS.md`.
+- User Outcome: A user does not receive a claimed voice/TTS fix that was only instrumented or
+  inspected. The tested call proves the current running voice runtime actually carries the fix and
+  produces the intended audible behavior, or the intended delivered transcript behavior for
+  STT/transcription-only fixes.
+- Surfaces: Modern Playground, active voice gateway runtime, LiveKit, selected TTS route and
+  fallback route when relevant, Mongo or call-session DB/state, generated runtime config, owning
+  source code.
+- Preconditions: canonical local runtime running from the checkout under test; any debug logging is
+  enabled only for local QA; synthetic non-personal prompt/fixture; public QA artifacts redact raw
+  call ids, account identifiers, private transcript text, local absolute paths, and secrets.
+- Steps:
+  1. Prove the active runtime artifact carries the change before the call counts: inspect the source
+     checkout, generated config, built artifact when present, and the installed/running process or
+     startup log.
+  2. Start an authenticated Modern Playground call through a real browser path.
+  3. Send or play a synthetic prompt that exercises the changed voice/TTS behavior.
+  4. Listen to or otherwise verify the delivered audio outcome. For STT/transcription-only fixes,
+     verify the delivered transcript path instead. Record public-safe timestamped evidence of what
+     was heard or delivered.
+  5. Inspect the visible transcript using synthetic or sanitized text only.
+  6. Correlate the turn with exact TTS/provider-input logs, latency/log visibility, DB/state
+     persistence, generated config, and owning code.
+  7. When interruption/cancel behavior is in scope, interrupt mid-speech and verify the actual
+     delivered behavior plus logs/state.
+  8. If the audible or delivered path cannot be run, mark the result `BLOCKED` or `PARTIAL` and name
+     the missing prerequisite.
+- Expected Result: The post-change call proves the intended behavior on the real surface and the
+  supporting logs/DB/config/code agree with the visible, audible, or delivered transcript outcome.
+- Forbidden Result: accepting "the next call should show it", "instrumentation is ready", source
+  inspection, unit tests, logs, DB rows, or a model/Claude review as completion without a
+  post-change real user-grade voice/browser run; publishing raw private transcript, call-session id,
+  account identifier, local path, or secret-bearing evidence.
+- Evidence: dated public-safe report under `qa/modern-playground-voice/reports/` with runtime
+  artifact proof, user-path observation, sanitized transcript/audio-delivery note, supporting
+  log/DB/config/code correlation, automated checks, and second-opinion summary when available.
+- Last Run: 2026-05-22 PASS for local Whisper interruption fix. The run proved the active runtime
+  policy, Modern Playground browser path, fake-mic barge-in behavior, voice gateway state logs, and
+  cleanup/DB evidence; see `reports/2026-05-22-local-whisper-bargein-qa.md`.
+
+## MPV-015 Local Whisper Mid-Speech Barge-In
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
+- User Outcome: During a Modern Playground call using local Whisper STT, the user can interrupt the
+  assistant while it is speaking without waiting for Whisper to produce a final transcript.
+- Surfaces: Modern Playground, local voice gateway worker, LiveKit turn handling, generated runtime
+  config, call-session DB/state.
+- Preconditions: canonical local runtime running from the checkout under test; active STT route is
+  `whisper_local` or `pywhispercpp`; synthetic non-personal prompt that produces a long spoken
+  assistant reply.
+- Steps:
+  1. Prove the active worker runtime is from the checkout under test and logs
+     `min_interrupt_words=0` for the local Whisper call.
+  2. Start a Modern Playground call in a real browser.
+  3. Prompt the assistant to speak for long enough to interrupt naturally.
+  4. During the first reply, attempt one early barge-in shortly after the first second of audible
+     speech to prove the local Whisper AEC default is not a multi-second block.
+  5. During a later long reply, say a sustained short phrase such as `stop` or `wait` while the
+     assistant is audibly speaking.
+  6. Confirm the assistant pauses or stops promptly and the new user turn is captured.
+  7. Inspect logs for the effective policy, user/agent state transitions, false-interruption or
+     overlap evidence when emitted, and sanitized call-session route metadata.
+  8. Verify an AssemblyAI/default route test or unit assertion still keeps provider STT
+     `min_interrupt_words=1`.
+- Expected Result: Local Whisper barge-in works from sustained audio activity; the gateway does not
+  require an interim transcript word before interrupting; normal response start latency is not
+  increased; effective local policy logs `min_interrupt_words=0` and `aec_warmup_duration=1.0`;
+  `sync_transcription` remains unchanged.
+- Forbidden Result: the assistant keeps speaking until local Whisper finalizes the user audio; the
+  fix changes the selected STT/TTS/model route; endpointing delays are increased to hide the issue;
+  public QA artifacts include raw private transcripts, call ids, account identifiers, local paths,
+  or secrets.
+- Evidence: dated public-safe report under `qa/modern-playground-voice/reports/`, targeted
+  turn-handling tests, generated config proof, runtime logs, browser/user-path observation, and DB
+  route metadata.
+- Last Run: 2026-05-22 PASS. Real Modern Playground browser QA with a synthetic fake microphone WAV
+  observed effective local policy `min_interrupt_words=0` and `aec_warmup_duration=1.0`, then saw
+  `agent_speaking`, `user_speaking`, and `agent_paused` in the voice gateway state sequence with no
+  browser console errors; see `reports/2026-05-22-local-whisper-bargein-qa.md`.
 
 ## Release Test Traceability
 

@@ -4,9 +4,11 @@ import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Columns3, FileDiff, FlaskConical, GitCommitHorizontal, History, PanelLeftClose, PanelLeftOpen, Play, Save, ShieldCheck, Trash2 } from 'lucide-react';
-import { createDraft, getPromptWorkbenchContext } from '../api';
+import { createDraft, getPromptRevision, getPromptWorkbenchContext } from '../api';
+import { choosePromptDiffText } from '../promptDiff';
 import { readLocalStorage, writeLocalStorage } from '../storage';
-import type { DraftRecord, EvalFamily, GitHistoryRow, PromptDetail } from '../types';
+import type { DraftRecord, EvalFamily, GitHistoryRow, PromptDetail, PromptWorkbenchContext } from '../types';
+import { RenderedPrompt } from './RenderedPrompt';
 
 type MonacoWorkerHost = typeof globalThis & {
   MonacoEnvironment?: {
@@ -38,6 +40,7 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
   const [activeTab, setActiveTab] = useState<'edit' | 'rendered' | 'diff' | 'history'>('edit');
   const [metadataDraft, setMetadataDraft] = useState<Record<string, unknown>>({});
   const [selectedPatch, setSelectedPatch] = useState<{ title: string; patch: string } | null>(null);
+  const [diffBaseRevision, setDiffBaseRevision] = useState('current');
   const [metaOpen, setMetaOpen] = useState(() => {
     return readLocalStorage('viventium.promptWorkbench.promptMetaOpen') !== 'false';
   });
@@ -50,6 +53,13 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
     enabled: Boolean(prompt?.id),
     refetchInterval: 15_000,
   });
+  const selectedHistoryRevision = Boolean(prompt?.id && diffBaseRevision !== 'current' && diffBaseRevision !== 'working-tree-base');
+  const revisionQuery = useQuery({
+    queryKey: ['promptRevision', prompt?.id, diffBaseRevision],
+    queryFn: () => getPromptRevision(prompt!.id, diffBaseRevision),
+    enabled: selectedHistoryRevision,
+    retry: false,
+  });
 
   useEffect(() => {
     writeLocalStorage('viventium.promptWorkbench.promptMetaOpen', String(metaOpen));
@@ -60,7 +70,8 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
     setMetadataDraft(prompt?.metadata ?? {});
     setActiveTab(prompt?.body?.trim() ? 'edit' : 'rendered');
     setSelectedPatch(null);
-  }, [prompt?.id, prompt?.body, prompt?.metadata]);
+    setDiffBaseRevision(prompt?.workingTreeChanged ? 'working-tree-base' : 'current');
+  }, [prompt?.id, prompt?.body, prompt?.metadata, prompt?.workingTreeChanged]);
 
   const metadataChanged = Boolean(prompt && JSON.stringify(metadataDraft) !== JSON.stringify(prompt.metadata));
   const changed = Boolean(prompt && (body !== prompt.body || metadataChanged));
@@ -85,13 +96,50 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
   const context = contextQuery.data;
   const pendingDrafts = context?.drafts.filter((draft) => draft.status === 'draft') ?? [];
   const latestEval = context?.evalRuns[0];
+  const runtimeBundle = context?.runtimePromptBundle;
   const showMetaPanel = metaOpen && activeTab !== 'history';
+  const hasWorkingTreeSourceChange = Boolean(prompt?.workingTreeChanged);
+  const currentPromptText = prompt?.text ?? '';
+  const diffBaseOptions = useMemo(() => {
+    const options = [
+      { value: 'current', label: 'Applied source file' },
+      ...(hasWorkingTreeSourceChange ? [{ value: 'working-tree-base', label: 'Git HEAD before local edits' }] : []),
+      ...((prompt?.gitHistory ?? [])
+        .filter((row) => !row.workingTree)
+        .map((row) => ({ value: row.commit, label: `${row.commit} · ${row.date} · ${row.subject}` }))),
+    ];
+    return options;
+  }, [prompt?.gitHistory, hasWorkingTreeSourceChange]);
+  useEffect(() => {
+    if (!diffBaseOptions.some((option) => option.value === diffBaseRevision)) {
+      setDiffBaseRevision('current');
+    }
+  }, [diffBaseOptions, diffBaseRevision]);
+  const diffBaseLabel = diffBaseOptions.find((option) => option.value === diffBaseRevision)?.label ?? 'Applied source file';
+  const selectedDiffBaseText = diffBaseRevision === 'current'
+    ? currentPromptText
+    : diffBaseRevision === 'working-tree-base'
+      ? prompt?.workingTreeBaseText ?? ''
+      : revisionQuery.data?.text ?? '';
+  const diffTargetLabel = changed ? 'editor buffer' : 'applied source file';
+  const { original: diffOriginal, modified: diffModified } = choosePromptDiffText({
+    changed,
+    currentPromptText,
+    nextText,
+    workingTreeChanged: hasWorkingTreeSourceChange,
+    workingTreeBaseText: prompt?.workingTreeBaseText,
+    selectedBaseText: selectedDiffBaseText,
+  });
   const sourceStateLabel = changed && pendingDrafts.length
     ? 'unsaved edits + draft waiting'
+    : changed && hasWorkingTreeSourceChange
+      ? 'unsaved edits + source changed'
     : pendingDrafts.length
       ? 'draft waiting'
-      : changed
-        ? 'unsaved edits'
+    : changed
+      ? 'unsaved edits'
+      : hasWorkingTreeSourceChange
+        ? 'source changed in working tree'
         : 'source clean';
   const evalBlockedReason = changed
     ? 'Save this edit as a draft, then apply or discard it before running evals.'
@@ -130,7 +178,7 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
           <p>{prompt.id}</p>
         </div>
         <div className="prompt-meta-row">
-          <span className={pendingDrafts.length ? 'attention' : changed ? 'dirty' : ''}>{sourceStateLabel}</span>
+          <span className={pendingDrafts.length ? 'attention' : changed || hasWorkingTreeSourceChange ? 'dirty' : ''}>{sourceStateLabel}</span>
           <span>{pendingDrafts.length} draft{pendingDrafts.length === 1 ? '' : 's'}</span>
           <span>{context?.linkedEvals.caseCount ?? 0} eval cases</span>
         </div>
@@ -167,8 +215,10 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
       </div>
       <div className="prompt-review-strip">
         <span><ShieldCheck size={14} /> {changed ? 'Unsaved edit in the editor buffer.' : pendingDrafts.length ? 'Source file is unchanged until draft is applied.' : 'Source file is applied.'}</span>
-        <span><FileDiff size={14} /> {pendingDrafts.length ? `${pendingDrafts.length} draft waiting for review` : 'No pending drafts for this prompt'}</span>
+        <span><FileDiff size={14} /> Diff compares {diffBaseLabel} to {diffTargetLabel}</span>
+        {hasWorkingTreeSourceChange && <span><FileDiff size={14} /> Diff shows working-tree source changes</span>}
         <span><FlaskConical size={14} /> {latestEval ? `Last eval used applied source: ${latestEval.returnCode === 0 ? 'ok' : `code ${latestEval.returnCode}`}` : 'No eval run recorded for this prompt'}</span>
+        <span title={runtimeBundleTitle(runtimeBundle)}><GitCommitHorizontal size={14} /> {runtimeBundleLabel(runtimeBundle)}</span>
         {pendingDrafts.length > 0 && (
           <button className="workflow-inline-action" onClick={reviewFirstDraft}>
             Review draft
@@ -230,27 +280,47 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
               onChange={(value) => setBody(value ?? '')}
             />
           )}
-          {activeTab === 'rendered' && <pre className="rendered-preview">{prompt.rendered}</pre>}
+          {activeTab === 'rendered' && <RenderedPrompt markdown={prompt.rendered} />}
           {activeTab === 'diff' && (
-            <DiffEditor
-              height="100%"
-              language="markdown"
-              theme={editorTheme}
-              original={prompt.text}
-              modified={nextText}
-              keepCurrentOriginalModel
-              keepCurrentModifiedModel
-              options={{
-                automaticLayout: true,
-                readOnly: true,
-                renderSideBySide: true,
-                minimap: { enabled: false },
-                wordWrap: 'on',
-                fontSize: 13,
-                lineHeight: 21,
-                scrollBeyondLastLine: false,
-              }}
-            />
+            <div className="diff-panel">
+              <div className="diff-toolbar">
+                <label className="diff-select-label">
+                  <span>Compare from</span>
+                  <select value={diffBaseRevision} onChange={(event) => setDiffBaseRevision(event.target.value)}>
+                    {diffBaseOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <span className="diff-target-label">to {diffTargetLabel}</span>
+                {revisionQuery.isFetching && <span className="diff-status">Loading revision...</span>}
+                {revisionQuery.isError && <span className="diff-status error">Revision unavailable</span>}
+              </div>
+              <div className="diff-editor-shell">
+                <DiffEditor
+                  height="100%"
+                  language="markdown"
+                  theme={editorTheme}
+                  original={diffOriginal}
+                  modified={diffModified}
+                  keepCurrentOriginalModel
+                  keepCurrentModifiedModel
+                  options={{
+                    automaticLayout: true,
+                    readOnly: true,
+                    renderSideBySide: true,
+                    diffWordWrap: 'on',
+                    wordWrapOverride1: 'on',
+                    wordWrapOverride2: 'on',
+                    minimap: { enabled: false },
+                    wordWrap: 'on',
+                    fontSize: 13,
+                    lineHeight: 21,
+                    scrollBeyondLastLine: false,
+                  }}
+                />
+              </div>
+            </div>
           )}
           {activeTab === 'history' && (
             <PromptHistoryView
@@ -259,6 +329,7 @@ export function PromptEditor({ prompt, loading, themeMode, onDirtyChange, onSave
               evalFamilies={context?.linkedEvals.families ?? []}
               evalRuns={context?.evalRuns ?? []}
               qaCoverage={context?.qaCoverage ?? []}
+              relatedConfig={context?.relatedConfig ?? []}
               selectedPatch={selectedPatch}
               onSelectPatch={setSelectedPatch}
               onApplyDraft={onApplyDraft}
@@ -279,6 +350,7 @@ function PromptHistoryView({
   evalFamilies,
   evalRuns,
   qaCoverage,
+  relatedConfig,
   selectedPatch,
   onSelectPatch,
   onApplyDraft,
@@ -291,6 +363,7 @@ function PromptHistoryView({
   evalFamilies: EvalFamily[];
   evalRuns: Array<{ id: string; returnCode: number; family?: string; surface?: string; resultCount?: number; artifactName?: string; promptHash?: string }>;
   qaCoverage: Array<{ id: string; title: string; source: string; lastRun?: string }>;
+  relatedConfig: NonNullable<PromptWorkbenchContext['relatedConfig']>;
   selectedPatch: { title: string; patch: string } | null;
   onSelectPatch: (patch: { title: string; patch: string } | null) => void;
   onApplyDraft: (draft: DraftRecord) => void;
@@ -328,7 +401,7 @@ function PromptHistoryView({
       <section className="history-section">
         <div className="history-section-head">
           <h3>Git History</h3>
-          <span>{gitHistory.length} commits</span>
+          <span>{gitHistory.length} entries</span>
         </div>
         {gitHistory.map((row) => (
           <button className="git-row" key={`${row.commit}-${row.date}`} onClick={() => onSelectPatch({ title: `${row.commit} ${row.subject}`, patch: row.patch || '' })}>
@@ -337,6 +410,33 @@ function PromptHistoryView({
             <small>{row.changeSummary?.label ?? row.date}</small>
           </button>
         ))}
+      </section>
+
+      <section className="history-section config-section">
+        <div className="history-section-head">
+          <h3>Related Config</h3>
+          <span>{relatedConfig.length} files</span>
+        </div>
+        {!relatedConfig.length && <p className="small-copy">No linked config surfaces for this prompt.</p>}
+        <div className="related-config-grid">
+          {relatedConfig.map((config) => (
+            <article className="related-config-card" key={config.id}>
+              <div className="related-config-title">
+                <strong>{config.title}</strong>
+                <small>{friendlyPath(config.path)} · {config.selector}</small>
+              </div>
+              <p>{config.summary}</p>
+              <ul>
+                {config.items.slice(0, 7).map((item) => <li key={item}>{item}</li>)}
+              </ul>
+              <div className="config-history-row">
+                {config.gitHistory.slice(0, 3).map((row) => (
+                  <span key={`${config.id}-${row.commit}`}>{row.commit} · {row.subject}</span>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="history-section wide">
@@ -479,4 +579,36 @@ function formatYamlScalar(value: unknown) {
 function humanPromptName(id: string) {
   const label = id.split('.').slice(1).join(' ') || id;
   return label.replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function runtimeBundleLabel(bundle?: PromptWorkbenchContext['runtimePromptBundle']) {
+  if (!bundle) return 'Runtime bundle: checking';
+  switch (bundle.promptState) {
+    case 'synced':
+      return 'Runtime bundle: live';
+    case 'source-only':
+    case 'drift':
+      return 'Runtime bundle: needs rebuild';
+    case 'bundle-unavailable':
+      return 'Runtime bundle: not found';
+    case 'other-drift':
+      return 'Runtime bundle: other drift';
+    default:
+      return 'Runtime bundle: unknown';
+  }
+}
+
+function runtimeBundleTitle(bundle?: PromptWorkbenchContext['runtimePromptBundle']) {
+  if (!bundle) return 'Checking compiled prompt bundle status.';
+  const count = bundle.driftCount ?? 0;
+  if (bundle.promptAffected) {
+    return `This prompt differs from the compiled runtime prompt bundle. Drift count: ${count}.`;
+  }
+  if (bundle.promptState === 'other-drift') {
+    return `This prompt matches the compiled bundle, but other prompts differ. Drift count: ${count}.`;
+  }
+  if (bundle.promptState === 'bundle-unavailable') {
+    return 'No compiled runtime prompt bundle was found for drift comparison.';
+  }
+  return `Prompt bundle status: ${bundle.status}.`;
 }

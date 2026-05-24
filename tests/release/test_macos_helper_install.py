@@ -41,7 +41,13 @@ BIN_VIVENTIUM = REPO_ROOT / "bin" / "viventium"
 def _make_fake_executable(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "#!/bin/sh\n# ingest-transcripts\n# --ignore-idle-gate\n# prompt-workbench\nexit 0\n",
+        "#!/bin/sh\n"
+        "# ingest-transcripts\n"
+        "# --ignore-idle-gate\n"
+        "# --until-caught-up\n"
+        "# Choose Transcripts Folder\n"
+        "# prompt-workbench\n"
+        "exit 0\n",
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -511,7 +517,9 @@ def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_p
     assert "helper-prompt-workbench.log" in helper_strings
     assert "prompt-workbench" in helper_strings
     assert "Ingest Meeting Transcripts" in helper_strings
+    assert "Choose Transcripts Folder" in helper_strings
     assert "helper-transcript-ingest.log" in helper_strings
+    assert "helper-transcript-source.log" in helper_strings
     assert "--ignore-idle-gate" in helper_strings
     assert "Viventium status-bar helper keeps the local runtime available after login." in helper_strings
     assert "disableAutomaticTermination" in helper_strings
@@ -661,10 +669,19 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'alert.messageText = "Backup snapshot failed"' in source
     assert 'private nonisolated static func latestSnapshotPath(appSupportDir: String) -> String?' in source
     assert '@Published private(set) var transcriptIngestInProgress: Bool = false' in source
+    assert '@Published private(set) var transcriptSourceConfigInProgress: Bool = false' in source
+    assert "private static let transcriptPartialExitStatus: Int32 = 2" in source
     assert "private struct CommandCaptureResult" in source
     assert "var transcriptIngestActionLabel: String {" in source
     assert 'self.transcriptIngestInProgress ? "Ingesting Transcripts..." : "Ingest Meeting Transcripts"' in source
+    assert "var transcriptSourceActionLabel: String {" in source
+    assert 'self.transcriptSourceConfigInProgress ? "Choosing Transcripts Folder..." : "Choose Transcripts Folder..."' in source
     assert "func ingestMeetingTranscripts() {" in source
+    assert "func chooseTranscriptsFolder() {" in source
+    assert "let panel = NSOpenPanel()" in source
+    assert 'panel.canChooseDirectories = true' in source
+    assert 'arguments: ["transcripts", "source", "set", selectedPath, "--json"]' in source
+    assert 'logFileName: "helper-transcript-source.log"' in source
     assert "private enum TranscriptIngestSourceStatus: Equatable" in source
     assert "private static func transcriptIngestSourceStatus(config: HelperConfig) -> TranscriptIngestSourceStatus" in source
     assert "private static func transcriptIngestScopeDescription(config: HelperConfig) -> String" in source
@@ -679,7 +696,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'logFileName: "helper-transcript-ingest.log"' in source
     assert '"Manual transcript ingest requested; scope: \\(ingestScope)"' in source
     assert "let runResult = Self.runMemoryHardeningCaptured(" in source
-    assert 'arguments: ["ingest-transcripts", "--apply", "--ignore-idle-gate", "--json"]' in source
+    assert 'arguments: ["ingest-transcripts", "--apply", "--until-caught-up", "--ignore-idle-gate", "--json"]' in source
     assert "let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)" in source
     assert "private nonisolated static func runMemoryHardeningStatusOnly(" in source
     assert "private nonisolated static func runMemoryHardeningCaptured(" in source
@@ -696,10 +713,13 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "FileManager.default.removeItem(at: stdoutURL)" in source
     assert "let stdoutPipe = Pipe()" not in captured_section
     assert "private struct TranscriptIngestSummary" in source
+    assert "let incomplete: Bool" in source
     assert "private nonisolated static func transcriptIngestRunSummary(stdout: String) -> TranscriptIngestSummary?" in source
+    assert 'aggregateStatus == "partial" || aggregateSkippedByCap > 0 || filesDeferredByCap > 0' in source
     assert '"No transcript scan ran: \\(uniqueReasons)"' in source
     assert 'alert.messageText = runSummary?.skipped == true ? "Transcript ingest skipped" : "Transcript ingest completed"' in source
     assert '"Manual transcript ingest skipped; scope: \\(ingestScope)\\(logSummary)"' in source
+    assert '"Manual transcript ingest incomplete with status \\(exitStatus); scope: \\(ingestScope)\\(logSummary)"' in source
     assert '"0 files deferred by caps"' in source
     assert 'files deferred by caps; run ingest again or let the 3am job continue' in source
     assert "private nonisolated static func runCLIStatusOnly(" in source
@@ -707,10 +727,15 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "process.standardError = FileHandle.nullDevice" in source
     assert '"Viventium did not scan the configured transcript source for \\(ingestScope)."' in source
     assert '"Viventium processed the configured transcript source for \\(ingestScope)."' in source
+    assert 'alert.messageText = "Transcript ingest incomplete"' in source
+    assert 'Viventium processed a bounded transcript batch for \\(ingestScope), but catch-up is not fully complete.' in source
+    assert 'alert.addButton(withTitle: "Run Again")' in source
     assert 'alert.messageText = "Transcript ingest failed"' in source
     assert 'Menu("Advanced")' in source
     assert 'Button(self.controller.transcriptIngestActionLabel) {' in source
     assert "self.controller.ingestMeetingTranscripts()" in source
+    assert 'Button(self.controller.transcriptSourceActionLabel) {' in source
+    assert "self.controller.chooseTranscriptsFolder()" in source
     assert "func readRuntimeValues(appSupportDir: String) -> [String: String]" in source
     assert '@Published private(set) var showInStatusBarEnabled: Bool = true' in source
     assert "private var config: HelperConfig?" in source
@@ -976,6 +1001,8 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'cmp -s "$BUILT_EXECUTABLE" "$installed_executable"' in install_script
     assert 'strings "$installed_executable" | grep -F -- "ingest-transcripts" >/dev/null' in install_script
     assert 'strings "$installed_executable" | grep -F -- "--ignore-idle-gate" >/dev/null' in install_script
+    assert 'strings "$installed_executable" | grep -F -- "--until-caught-up" >/dev/null' in install_script
+    assert 'strings "$installed_executable" | grep -F -- "Choose Transcripts Folder" >/dev/null' in install_script
     assert 'verify_installed_bundle' in install_script
     assert "sign_installed_bundle() {" in install_script
     assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_APP_BUNDLE"' in install_script
@@ -1023,9 +1050,10 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'subcommand_usage install' in cli_source
     assert 'export VIVENTIUM_CLI_LOCK_HELD=0' in cli_source
     assert 'unset VIVENTIUM_CLI_LOCK_DIR' in cli_source
-    assert 'if [[ "${VIVENTIUM_DETACHED_START:-false}" == "1" || "${VIVENTIUM_DETACHED_START:-false}" == "true" ]]; then' in cli_source
-    assert 'Detached helper/app launches hand control off to the background runtime.' in cli_source
-    assert 'cleanup_cli_lock' in cli_source.split('if [[ "${VIVENTIUM_DETACHED_START:-false}" == "1" || "${VIVENTIUM_DETACHED_START:-false}" == "true" ]]; then', 1)[1]
+    command_dispatch = cli_source.split('case "$COMMAND" in', 1)[1]
+    start_section = command_dispatch.split('  start)', 1)[1].split('  stop)', 1)[0]
+    assert 'The CLI lock protects start preparation, config compilation, and runtime' in start_section
+    assert 'cleanup_cli_lock\n    "${START_CMD[@]}"' in start_section
     assert 'VIVENTIUM_HELPER_SKIP_LOGIN_ITEM=1 run_macos_helper_installer install "$@"' in cli_source
     assert 'run_macos_helper_installer install' in cli_source
     assert 'if ! run_macos_helper_install_command 1 "${helper_args[@]}"; then' in cli_source

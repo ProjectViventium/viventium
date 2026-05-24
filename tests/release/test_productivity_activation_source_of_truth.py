@@ -179,6 +179,44 @@ def test_productivity_activation_configs_define_provider_fallback_chain() -> Non
         assert all(isinstance(entry.get("model"), str) and entry["model"] for entry in fallbacks)
 
 
+def test_productivity_execution_agents_ship_owned_mcp_tools() -> None:
+    agents_by_id = _load_background_agents_by_id()
+
+    ms365_tools = set(agents_by_id["agent_viventium_online_tool_use_95aeb3"]["tools"])
+    google_tools = set(agents_by_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["tools"])
+
+    assert {
+        "sys__server__sys_mcp_ms-365",
+        "list-mail-messages_mcp_ms-365",
+        "get-mail-message_mcp_ms-365",
+        "list-mail-folder-messages_mcp_ms-365",
+        "list-calendar-events_mcp_ms-365",
+        "get-calendar-event_mcp_ms-365",
+        "list-folder-files_mcp_ms-365",
+        "download-onedrive-file-content_mcp_ms-365",
+        "get-excel-range_mcp_ms-365",
+        "search-query_mcp_ms-365",
+    } <= ms365_tools
+    assert {
+        "sys__server__sys_mcp_google_workspace",
+        "search_gmail_messages_mcp_google_workspace",
+        "get_gmail_message_content_mcp_google_workspace",
+        "get_gmail_messages_content_batch_mcp_google_workspace",
+        "get_gmail_thread_content_mcp_google_workspace",
+        "list_calendars_mcp_google_workspace",
+        "get_events_mcp_google_workspace",
+        "search_drive_files_mcp_google_workspace",
+        "get_drive_file_content_mcp_google_workspace",
+        "search_docs_mcp_google_workspace",
+        "get_doc_content_mcp_google_workspace",
+        "read_sheet_values_mcp_google_workspace",
+    } <= google_tools
+    assert not any("_mcp_google_workspace" in tool for tool in ms365_tools)
+    assert not any("_mcp_ms-365" in tool for tool in google_tools)
+    assert "file_search" not in ms365_tools
+    assert "file_search" not in google_tools
+
+
 def test_productivity_activation_prompts_keep_parallel_provider_rule() -> None:
     activation_by_agent_id = _load_activation_by_agent_id()
 

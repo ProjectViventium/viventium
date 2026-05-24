@@ -166,6 +166,13 @@ This service is the **voice bridge** between:
       as a breakdown trigger, not as proof of browser/UI delay.
   - `VIVENTIUM_VOICE_DEBUG_TTS=1`
     - Logs LLM raw/voice/display deltas and Cartesia request transcripts without API keys.
+    - The `tts_emit` lines show the exact phrase-buffered, speech-sanitized chunks forwarded
+      toward LiveKit TTS. They are the primary debug surface for catching raw punctuation, URLs,
+      markdown/reference scaffolding, or unsupported provider markup before it reaches synthesis.
+  - `VIVENTIUM_VOICE_LOG_TTS_INPUTS=1`
+    - Logs `[VoiceTTSInput]` at the final TTS provider boundary without requiring broader LLM delta
+      logging. These lines preserve leading/trailing spaces in `text_json` and mark whether a chunk
+      was forwarded, dropped, suppressed, or a provider control message.
 
 ### Run
 

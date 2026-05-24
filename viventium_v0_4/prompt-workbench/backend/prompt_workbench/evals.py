@@ -62,8 +62,17 @@ def run_exact_model_eval(
         for family_row in bank.get("families") or []:
             if family and family_row.get("id") != family:
                 continue
+            family_prompt_refs = {str(item) for item in (family_row.get("promptRefs") or family_row.get("prompt_refs") or [])}
             for case in family_row.get("cases") or []:
                 if surface and case.get("surface") != surface:
+                    continue
+                case_prompt_refs = {str(item) for item in (case.get("promptRefs") or case.get("prompt_refs") or [])}
+                if (
+                    prompt_id
+                    and prompt_id != "main.conscious_agent"
+                    and prompt_id not in family_prompt_refs
+                    and prompt_id not in case_prompt_refs
+                ):
                     continue
                 filtered_cases.append(
                     {"family": family_row.get("id"), "case": case.get("id"), "surface": case.get("surface")}
@@ -101,6 +110,12 @@ def run_exact_model_eval(
         f"--max-cases={max_cases}",
         "--run-live" if live else "--no-live",
     ]
+    if family:
+        cmd.append(f"--family={family}")
+    if surface:
+        cmd.append(f"--surface={surface}")
+    if prompt_id:
+        cmd.append(f"--prompt-id={prompt_id}")
     result = subprocess.run(
         cmd,
         cwd=REPO_ROOT,
@@ -388,7 +403,16 @@ def _prompt_hash(prompt_id: str | None) -> str | None:
     try:
         from . import prompt_service
 
-        return str(prompt_service.render_prompt_payload(prompt_id).get("renderedHash") or "")
+        rendered_hash = prompt_service.render_prompt_payload(prompt_id).get("renderedHash")
+        if rendered_hash:
+            return str(rendered_hash)
+    except Exception:
+        pass
+    try:
+        from . import prompt_service
+
+        detail = prompt_service.get_prompt(prompt_id)
+        return str(detail.get("contentHash") or detail.get("bodyHash") or "")
     except Exception:
         return None
 

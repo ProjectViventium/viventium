@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import socket
+import secrets
 import subprocess
 import sys
 import time
@@ -17,7 +18,7 @@ from typing import Any
 
 
 DEFAULT_PORT = 8781
-DEPENDENCIES = ["fastapi", "uvicorn", "PyYAML", "pydantic"]
+DEPENDENCIES = ["fastapi", "uvicorn", "PyYAML", "pydantic", "croniter"]
 
 
 def utc_now() -> str:
@@ -36,6 +37,10 @@ def state_path(app_support_dir: Path) -> Path:
     return state_dir(app_support_dir) / "state.json"
 
 
+def user_stopped_marker_path(app_support_dir: Path) -> Path:
+    return state_dir(app_support_dir) / "user-stopped.marker"
+
+
 def workbench_root(repo_root: Path) -> Path:
     return repo_root / "viventium_v0_4" / "prompt-workbench"
 
@@ -46,6 +51,77 @@ def health_url(port: int) -> str:
 
 def app_url(port: int) -> str:
     return f"http://127.0.0.1:{port}"
+
+
+def token_url(port: int, token: str | None) -> str:
+    url = app_url(port)
+    if not token:
+        return url
+    return f"{url}?workbench_token={token}"
+
+
+def load_runtime_env(app_support_dir: Path, env: dict[str, str]) -> None:
+    runtime_dir = app_support_dir / "runtime"
+    for path in (runtime_dir / "runtime.env", runtime_dir / "runtime.local.env"):
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            text = line.strip()
+            if not text or text.startswith("#") or "=" not in text:
+                continue
+            if text.startswith("export "):
+                text = text.removeprefix("export ").strip()
+            key, value = text.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in env:
+                env[key] = value
+
+
+def resolve_launch_admin(env: dict[str, str]) -> dict[str, str]:
+    configured_user_id = (env.get("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID") or "").strip()
+    configured_email = (env.get("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL") or "").strip()
+    if configured_user_id:
+        return {"userId": configured_user_id, "email": configured_email}
+
+    email = (
+        configured_email
+        or (env.get("VIVENTIUM_MEMORY_HARDENING_USER_EMAIL") or "").strip()
+        or (env.get("LIBRECHAT_ADMIN_EMAIL") or "").strip()
+    )
+    mongo_port = (env.get("VIVENTIUM_LOCAL_MONGO_PORT") or "27117").strip()
+    mongo_db = (env.get("VIVENTIUM_LOCAL_MONGO_DB") or "LibreChatViventium").strip()
+    script = (
+        "const email = " + json.dumps(email) + ";"
+        "const role = {$in:['ADMIN','admin']};"
+        "const query = email ? {email, role} : {role};"
+        "const u = db.users.findOne(query, {_id:1,email:1,role:1});"
+        "if (u) print(JSON.stringify({_id:String(u._id),email:u.email||''}));"
+    )
+    try:
+        completed = subprocess.run(
+            ["mongosh", "--quiet", f"mongodb://127.0.0.1:{mongo_port}/{mongo_db}", "--eval", script],
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"userId": "local-admin", "email": configured_email}
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return {"userId": "local-admin", "email": configured_email}
+    try:
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        return {"userId": "local-admin", "email": configured_email}
+    user_id = str(payload.get("_id") or "").strip()
+    if not user_id:
+        return {"userId": "local-admin", "email": configured_email}
+    return {"userId": user_id, "email": str(payload.get("email") or configured_email)}
 
 
 def read_state(app_support_dir: Path) -> dict[str, Any]:
@@ -69,6 +145,19 @@ def write_state(app_support_dir: Path, payload: dict[str, Any]) -> None:
 def clear_state(app_support_dir: Path) -> None:
     try:
         state_path(app_support_dir).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def mark_user_stopped(app_support_dir: Path) -> None:
+    directory = state_dir(app_support_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    user_stopped_marker_path(app_support_dir).write_text(utc_now() + "\n", encoding="utf-8")
+
+
+def clear_user_stopped_marker(app_support_dir: Path) -> None:
+    try:
+        user_stopped_marker_path(app_support_dir).unlink()
     except FileNotFoundError:
         pass
 
@@ -137,12 +226,17 @@ def status_payload(repo_root: Path, app_support_dir: Path) -> dict[str, Any]:
     running = pid_running(pid) and process_matches_workbench(pid, root) and http_healthy(port)
     if not running and pid > 0 and not pid_running(pid):
         clear_state(app_support_dir)
-    return {
+    result = {
         "status": "running" if running else "stopped",
         "pid": pid if running else None,
         "port": port if running else None,
         "url": app_url(port) if running else None,
     }
+    if running and payload.get("authUrl"):
+        result["authUrl"] = payload.get("authUrl")
+    if running:
+        result["managedByStack"] = bool(payload.get("managedByStack"))
+    return result
 
 
 def ensure_workbench_exists(root: Path) -> None:
@@ -234,6 +328,7 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
 
     current = status_payload(repo_root, app_support_dir)
     if current["status"] == "running":
+        clear_user_stopped_marker(app_support_dir)
         return {**current, "started": False}
 
     preferred_port = int(args.port or os.environ.get("VIVENTIUM_PROMPT_WORKBENCH_PORT") or DEFAULT_PORT)
@@ -242,8 +337,14 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
     ensure_assets_built(root, log_file, skip_build=args.no_build)
 
     env = os.environ.copy()
+    load_runtime_env(app_support_dir, env)
+    launch_admin = resolve_launch_admin(env)
+    launch_token = secrets.token_urlsafe(32)
     env["PYTHONPATH"] = f"{root / 'backend'}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
     env["VIVENTIUM_APP_SUPPORT_DIR"] = str(app_support_dir)
+    env["VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN"] = launch_token
+    env["VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID"] = launch_admin["userId"]
+    env["VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL"] = launch_admin["email"]
 
     command = [
         "uv",
@@ -257,6 +358,7 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
         "127.0.0.1",
         "--port",
         str(port),
+        "--no-access-log",
     ]
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -279,10 +381,14 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
             "pid": process.pid,
             "port": port,
             "url": app_url(port),
+            "authUrl": token_url(port, launch_token),
             "repoRoot": str(repo_root),
             "startedAt": utc_now(),
+            "managedByStack": (os.environ.get("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK") or "").strip().lower()
+            in {"1", "true", "yes", "on"},
         },
     )
+    clear_user_stopped_marker(app_support_dir)
 
     if not wait_for_health(port, timeout_seconds=args.timeout_seconds):
         raise RuntimeError(f"Prompt Workbench did not become healthy on {app_url(port)}. Check the local workbench log.")
@@ -293,6 +399,7 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
         "pid": process.pid,
         "port": port,
         "url": app_url(port),
+        "authUrl": token_url(port, launch_token),
     }
 
 
@@ -326,6 +433,7 @@ def stop_server(args: argparse.Namespace) -> dict[str, Any]:
     if pid > 0 and pid_running(pid):
         if not process_matches_workbench(pid, root):
             clear_state(app_support_dir)
+            mark_user_stopped(app_support_dir)
             return {
                 "status": "blocked",
                 "stopped": False,
@@ -333,6 +441,7 @@ def stop_server(args: argparse.Namespace) -> dict[str, Any]:
             }
         stopped = stop_pid(pid)
     clear_state(app_support_dir)
+    mark_user_stopped(app_support_dir)
     return {"status": "stopped", "stopped": stopped}
 
 
@@ -358,7 +467,7 @@ def print_payload(payload: dict[str, Any], *, json_output: bool) -> None:
         print(json.dumps(payload, sort_keys=True))
         return
     status = payload.get("status")
-    url = payload.get("url")
+    url = payload.get("authUrl") or payload.get("url")
     if status == "running" and url:
         print(f"Prompt Workbench running: {url}")
     elif status == "blocked":
@@ -387,8 +496,8 @@ def main(argv: list[str] | None = None) -> int:
             payload = start_server(args)
         elif args.action == "open":
             payload = start_server(args)
-            if payload.get("url"):
-                open_browser(str(payload["url"]))
+            if payload.get("authUrl") or payload.get("url"):
+                open_browser(str(payload.get("authUrl") or payload["url"]))
                 payload["opened"] = True
         elif args.action == "stop":
             payload = stop_server(args)

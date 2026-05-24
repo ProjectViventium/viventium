@@ -33,6 +33,18 @@ them:
 - Short vector-indexing lag or vector-runtime outage must degrade to honest lexical recall rather
   than stale or misleading vector evidence.
 - Scheduler/task tooling must not leak stale generated prose into normal continuity surfaces.
+- Chat-time saved-memory reads must stay bounded by `memory.readProfile`, dedupe duplicate keys,
+  and avoid writer initialization/maintenance before the main answer starts.
+- Memory writer work must run after the main response and must not be awaited during finalization.
+- On installs with OpenAI auth available, the visible main/conscious chat route and the memory writer
+  must both use the OpenAI-first compiler/source-of-truth policy; otherwise a stale Anthropic main
+  agent can fail before the memory writer path is exercised.
+- Provider auth failures in the memory writer must surface as a degraded/reconnect state and be
+  health-gated instead of retried on every chat.
+- Local retrieval tail timeouts and post-stream finalization failures that happen after meaningful
+  assistant text must not append a red provider-error card to the same completed message;
+  unrelated generic errors before stream completion must still surface instead of being silently
+  swallowed.
 
 ## Environments
 
@@ -46,6 +58,8 @@ them:
 
 1. Compiler/runtime contract
    - generated `librechat.yaml` emits a valid `memory.agent.provider` and runtime accepts it
+   - generated `viventium.consciousAgent` and the live built-in main agent use the expected
+     OpenAI-first provider/model when OpenAI auth is available
    - after local restart, helper logs no longer show the prior unsupported-provider init failure
 2. Durable memory writer behavior
    - memory policy and memory agent tests pass for additive updates, overwrite handling, and noise
@@ -82,6 +96,12 @@ them:
      - cross-conversation recovery
      - recall-runtime health
      - compiled-bundle alignment for the owning Codex normalization path
+9. Use memory latency / writer detach
+   - source config contains `memory.readProfile`
+   - read path test proves bounded, deduped memory context without writer maintenance
+   - agent-client test proves writer initialization is lazy and detached
+   - real browser QA compares visible response timing with deep timing log phases
+   - `bin/viventium memory-dedupe --dry-run --json` reports counts without private identifiers
 
 ## Expected Results
 
@@ -98,6 +118,10 @@ them:
   - remaining broader landing/release-gate work
 - Bounded older-user-context coverage proves long-conversation corrections are not lost purely
   because they fell outside the current chat window.
+- Bounded read-profile coverage proves normal memory-enabled chat does not inject the full saved
+  memory store or wait on writer work before returning the main answer.
+- Dedupe/index coverage proves duplicate saved-memory/provider-key rows can be inspected safely
+  before unique indexes are applied.
 - The built runtime bundle used by the supported install/upgrade path must match the reviewed
   Codex memory normalization source path.
 - If unrelated legacy test failures exist elsewhere, the report must call them out explicitly

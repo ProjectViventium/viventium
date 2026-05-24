@@ -53,16 +53,37 @@ _CITATION_STANDALONE_RE = re.compile(
     r"(?:\\ue202|ue202|\ue202)turn\d+[A-Za-z]+\d+",
     re.IGNORECASE,
 )
+_CITATION_BARE_TURN_ID_RE = re.compile(
+    "(?<![A-Za-z])(?:\u3010\\s*)?turn\\d+[A-Za-z]+\\d+(?:\\s*\u2020[^\u3011\\s]*)?(?:\\s*\u3011)?",
+    re.IGNORECASE,
+)
+_CITATION_ORPHAN_TAIL_RE = re.compile(
+    "(?<!\\S)\u2020[^\u3011\\s]{0,80}\u3011(?=\\s|$)"
+)
+_CITATION_ORPHAN_BRACKET_RE = re.compile("(?<!\\S)[\u3010\u3011](?!\\S)")
 _CITATION_CLEANUP_RE = re.compile(
     r"(?:\\ue2(?:00|01|02|03|04|06)|ue2(?:00|01|02|03|04|06)|[\ue200-\ue206])",
     re.IGNORECASE,
 )
-_BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|$)")
+_BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|[.,;:!?)]|$)")
 # === VIVENTIUM START ===
 # Feature: Voice follow-up sanitization for speech (URLs, emails, lists, markdown).
 _URL_RE = re.compile(r"\bhttps?://\S+|\bwww\.\S+")
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_BARE_DOMAIN_RE = re.compile(
+    r"\b(?:[A-Za-z0-9-]+\.)+(?:com|org|net|edu|gov|info|biz)"
+    r"(?:/[^\s]*)?",
+    re.IGNORECASE,
+)
+_SOURCE_REFERENCE_LINK_LINE_RE = re.compile(
+    r"(?im)^\s*(?:sources?|references?|citations?)\s*:.*"
+    r"(?:https?://|www\.|\[[^\]]+\]\(|\[[0-9]{1,3}\]).*(?:\n|$)"
+)
+_SOURCE_REFERENCE_LABEL_RE = re.compile(r"(?im)^\s*(?:sources?|references?|citations?)\s*:\s*")
+_REFERENCE_DEF_RE = re.compile(r"(?m)^\s*\[[^\]]+\]:\s*\S+.*(?:\n|$)")
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((?:https?://|www\.)[^)]+\)")
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
+_GENERIC_ANGLE_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?/?>")
 _CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 _HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
 _LIST_PREFIX_RE = re.compile(r"(?m)^\s*(?:[-*+]|\d+[.)]|\u2022)\s+")
@@ -92,6 +113,9 @@ def sanitize_voice_text(text: str) -> str:
     # Preserve leading spaces across streaming chunks; trim later on full assembly.
     cleaned = _CITATION_COMPOSITE_RE.sub(" ", text)
     cleaned = _CITATION_STANDALONE_RE.sub(" ", cleaned)
+    cleaned = _CITATION_BARE_TURN_ID_RE.sub(" ", cleaned)
+    cleaned = _CITATION_ORPHAN_TAIL_RE.sub(" ", cleaned)
+    cleaned = _CITATION_ORPHAN_BRACKET_RE.sub(" ", cleaned)
     cleaned = _CITATION_CLEANUP_RE.sub(" ", cleaned)
     cleaned = _BRACKET_CITATION_RE.sub(" ", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
@@ -108,31 +132,14 @@ def sanitize_voice_text(text: str) -> str:
 def sanitize_voice_followup_text(text: str, *, preserve_leading_space: bool = False) -> str:
     if not text:
         return ""
-    # Preserve leading whitespace for streamed deltas so words don't concatenate.
     leading_space = preserve_leading_space and text[:1].isspace()
-    # Strip voice control tags before other sanitization — follow-up speech should
-    # not contain raw <emotion/>, <break/>, [laughter], etc.
-    cleaned = strip_voice_control_tags(text)
-    cleaned = strip_inline_nta(cleaned)
-    cleaned = sanitize_voice_text(cleaned)
+    cleaned = sanitize_voice_tts_text(
+        text,
+        preserve_leading_space=preserve_leading_space,
+        allow_voice_controls=False,
+    )
     if not cleaned:
         return ""
-    cleaned = cleaned.replace("\\n", "\n").replace("\\r", "\r")
-    cleaned = _CODE_BLOCK_RE.sub(" ", cleaned)
-    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
-    cleaned = _URL_RE.sub(" link available ", cleaned)
-    cleaned = _EMAIL_RE.sub(" email available ", cleaned)
-    cleaned = cleaned.replace("`", "")
-    cleaned = _HEADING_RE.sub("", cleaned)
-    cleaned = _PLAN_PREFIX_RE.sub("", cleaned)
-    cleaned = _LIST_PREFIX_RE.sub("", cleaned)
-    cleaned = _TABLE_ROW_RE.sub(" ", cleaned)
-    cleaned = re.sub(r"\(\s*\)", "", cleaned)
-    cleaned = re.sub(r"\s*[\r\n]+\s*", " ", cleaned)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    # Ensure space after sentence-ending punctuation when followed by uppercase letter.
-    # This handles cases where LLM output lacks proper spacing (e.g., "sentence1.Sentence2").
-    cleaned = re.sub(r"([.!?])([A-Z])", r"\1 \2", cleaned)
     sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(cleaned) if s.strip()]
     if sentences:
         filtered: list[str] = []
@@ -443,6 +450,80 @@ class VoiceControlDisplayFilter:
         cleaned = "".join(output)
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
         return cleaned
+# === VIVENTIUM END ===
+
+
+# === VIVENTIUM START ===
+# Feature: Streaming TTS speech-boundary sanitization.
+#
+# Purpose:
+# - The live LLM stream can contain reference scaffolding, markdown, URLs, emails, code fences,
+#   unknown angle tags, and provider-control markup.
+# - Display and persistence have their own sanitizers; this helper owns the text that is actually
+#   forwarded to TTS after phrase buffering.
+# - Provider-supported voice controls may be preserved only when the selected TTS route explicitly
+#   accepts inline voice controls. Generic non-speech artifacts are always converted or stripped.
+def _strip_unknown_angle_tags(text: str, *, allow_voice_controls: bool) -> str:
+    if not text:
+        return ""
+
+    def _replace(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        if allow_voice_controls and _is_voice_control_tag(tag):
+            return tag
+        return ""
+
+    return _GENERIC_ANGLE_TAG_RE.sub(_replace, text)
+
+
+def sanitize_voice_tts_text(
+    text: str,
+    *,
+    preserve_leading_space: bool = False,
+    preserve_trailing_space: bool = False,
+    allow_voice_controls: bool = False,
+) -> str:
+    if not text:
+        return ""
+
+    leading_space = preserve_leading_space and text[:1].isspace()
+    trailing_space = preserve_trailing_space and text[-1:].isspace()
+    cleaned = text
+    cleaned = strip_inline_nta(cleaned)
+    cleaned = sanitize_voice_text(cleaned)
+    if not cleaned:
+        return ""
+
+    cleaned = cleaned.replace("\\n", "\n").replace("\\r", "\r")
+    cleaned = _CODE_BLOCK_RE.sub(" ", cleaned)
+    cleaned = _SOURCE_REFERENCE_LINK_LINE_RE.sub(" ", cleaned)
+    cleaned = _SOURCE_REFERENCE_LABEL_RE.sub("", cleaned)
+    cleaned = _REFERENCE_DEF_RE.sub(" ", cleaned)
+    cleaned = _MARKDOWN_IMAGE_RE.sub(lambda m: (m.group(1) or "image available"), cleaned)
+    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
+    if not allow_voice_controls:
+        cleaned = strip_voice_control_tags(cleaned)
+    cleaned = _EMAIL_RE.sub(" email available ", cleaned)
+    cleaned = _URL_RE.sub(" link available ", cleaned)
+    cleaned = _BARE_DOMAIN_RE.sub(" link available ", cleaned)
+    cleaned = cleaned.replace("`", "")
+    cleaned = _strip_unknown_angle_tags(cleaned, allow_voice_controls=allow_voice_controls)
+    cleaned = _HEADING_RE.sub("", cleaned)
+    cleaned = _PLAN_PREFIX_RE.sub("", cleaned)
+    cleaned = _LIST_PREFIX_RE.sub("", cleaned)
+    cleaned = _TABLE_ROW_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = re.sub(r"\s*[\r\n]+\s*", " ", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", cleaned)
+    # Ensure space after sentence-ending punctuation when followed by uppercase letter.
+    cleaned = re.sub(r"([.!?])([A-Z])", r"\1 \2", cleaned)
+    cleaned = cleaned.strip()
+    if preserve_leading_space and leading_space and cleaned:
+        cleaned = " " + cleaned
+    if preserve_trailing_space and trailing_space and cleaned:
+        cleaned = cleaned.rstrip() + " "
+    return cleaned
 # === VIVENTIUM END ===
 
 

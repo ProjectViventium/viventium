@@ -17,6 +17,33 @@ from utils.stt_env import resolve_api_whisper_config
 
 logger = logging.getLogger(__name__)
 
+_SHARED_PATH = Path(__file__).resolve().parents[3] / "shared"
+if str(_SHARED_PATH) not in sys.path:
+    sys.path.insert(0, str(_SHARED_PATH))
+
+try:
+    from no_response import strip_inline_nta
+except Exception:
+    def strip_inline_nta(text: Optional[str], *, preserve_outer_whitespace: bool = False) -> str:
+        if not isinstance(text, str):
+            return text or ""
+        leading_whitespace = preserve_outer_whitespace and text[:1].isspace()
+        trailing_whitespace = preserve_outer_whitespace and text[-1:].isspace()
+        cleaned = re.sub(r"\{\s*NTA\s*\}", " ", text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\s+\n", "\n", cleaned)
+        cleaned = re.sub(r"\n\s+", "\n", cleaned)
+        if preserve_outer_whitespace:
+            cleaned = cleaned.strip()
+            if not cleaned:
+                return ""
+            if leading_whitespace:
+                cleaned = " " + cleaned.lstrip()
+            if trailing_whitespace:
+                cleaned = cleaned.rstrip() + " "
+            return cleaned
+        return cleaned.strip()
+
 _DEFAULT_LOCAL_CHATTERBOX_MODEL_ID = "mlx-community/chatterbox-turbo-8bit"
 _SUPPORTED_TTS_PROVIDERS = {
     "openai",
@@ -190,17 +217,42 @@ _CITATION_STANDALONE_RE = re.compile(
     r"(?:\\ue202|ue202|\ue202)turn\d+[A-Za-z]+\d+",
     re.IGNORECASE,
 )
+_CITATION_BARE_TURN_ID_RE = re.compile(
+    "(?<![A-Za-z])(?:\u3010\\s*)?turn\\d+[A-Za-z]+\\d+(?:\\s*\u2020[^\u3011\\s]*)?(?:\\s*\u3011)?",
+    re.IGNORECASE,
+)
+_CITATION_ORPHAN_TAIL_RE = re.compile(
+    "(?<!\\S)\u2020[^\u3011\\s]{0,80}\u3011(?=\\s|$)"
+)
+_CITATION_ORPHAN_BRACKET_RE = re.compile("(?<!\\S)[\u3010\u3011](?!\\S)")
 _CITATION_CLEANUP_RE = re.compile(
     r"(?:\\ue2(?:00|01|02|03|04|06)|ue2(?:00|01|02|03|04|06)|[\ue200-\ue206])",
     re.IGNORECASE,
 )
-_BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|$)")
+_BRACKET_CITATION_RE = re.compile(r"\[(\d{1,3})\](?=\s|[.,;:!?)]|$)")
 # === VIVENTIUM START ===
 # Feature: Voice-safe cleanup (URLs, emails, plans, tool directives).
 _URL_RE = re.compile(r"\bhttps?://\S+|\bwww\.\S+")
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_BARE_DOMAIN_RE = re.compile(
+    r"\b(?:[A-Za-z0-9-]+\.)+(?:com|org|net|edu|gov|info|biz)"
+    r"(?:/[^\s]*)?",
+    re.IGNORECASE,
+)
+_SOURCE_REFERENCE_LINK_LINE_RE = re.compile(
+    r"(?im)^\s*(?:sources?|references?|citations?)\s*:.*"
+    r"(?:https?://|www\.|\[[^\]]+\]\(|\[[0-9]{1,3}\]).*(?:\n|$)"
+)
+_SOURCE_REFERENCE_LABEL_RE = re.compile(r"(?im)^\s*(?:sources?|references?|citations?)\s*:\s*")
+_REFERENCE_DEF_RE = re.compile(r"(?m)^\s*\[[^\]]+\]:\s*\S+.*(?:\n|$)")
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((?:https?://|www\.)[^)]+\)")
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
+_GENERIC_ANGLE_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?/?>")
+_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
+_HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
 _PLAN_PREFIX_RE = re.compile(r"(?im)^\s*(?:structured\s+)?(?:plan|steps?)\s*:\s*")
 _LIST_PREFIX_RE = re.compile(r"(?m)^\s*(?:[-*+]|\d+[.)]|\u2022)\s+")
+_TABLE_ROW_RE = re.compile(r"(?m)^\s*[|:\\-\\s]+$")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _TOOL_DIRECTIVE_PREFIX_RE = re.compile(
     r"(?i)^(use|list|fetch|pull|query|find|locate|get|retrieve|search|open|check|"
@@ -210,7 +262,7 @@ _TOOL_DIRECTIVE_KEYWORDS_RE = re.compile(
     r"(?i)\b("
     r"ms365|microsoft 365|folder id|receiveddatetime|body preview|bodypreview|"
     r"subject|from|message id|messageid|conversation id|conversationid|"
-    r"calendar|inbox|email|messages?|events?"
+    r"calendar view|start of day|end of day|inbox|calendar|email|messages?|events?"
     r")\b"
 )
 # === VIVENTIUM END ===
@@ -250,6 +302,10 @@ _VCT_BRACKET_RE = re.compile(
     r"\]",
     re.IGNORECASE,
 )
+_VCT_STAGE_DIRECTION_MIN_ALPHA = 3
+_VCT_STAGE_DIRECTION_MAX_ALPHA = 24
+_VCT_STAGE_DIRECTION_MAX_WORDS = 3
+_CHATTERBOX_MARKERS = frozenset({"laugh", "sigh", "gasp"})
 _CARTESIA_EMOTION_EVENT_RE = re.compile(
     r'<emotion\s+value=["\']?(?P<wvalue>[^"\'>]+)["\']?\s*>(?P<wtext>[\s\S]*?)</emotion>'
     r"|"
@@ -276,11 +332,83 @@ class WavMergeError(ValueError):
     pass
 
 
-def _strip_voice_control_tags(text: str) -> str:
-    """Remove Cartesia SSML and bracket nonverbal markers from text."""
+def _is_stage_direction_boundary(ch: str) -> bool:
+    return not ch or ch.isspace() or ch in ".,!?;:(){}<>\"'"
+
+
+def _is_bracket_stage_direction(content: str) -> bool:
+    candidate = (content or "").strip()
+    if not candidate or candidate != candidate.lower():
+        return False
+    if any(ch.isdigit() for ch in candidate):
+        return False
+    if any(ch not in "abcdefghijklmnopqrstuvwxyz -'" for ch in candidate):
+        return False
+
+    alpha_count = sum(1 for ch in candidate if "a" <= ch <= "z")
+    if alpha_count < _VCT_STAGE_DIRECTION_MIN_ALPHA or alpha_count > _VCT_STAGE_DIRECTION_MAX_ALPHA:
+        return False
+
+    words = [word for word in candidate.replace("-", " ").split() if word]
+    if not words or len(words) > _VCT_STAGE_DIRECTION_MAX_WORDS:
+        return False
+    return all(word.isalpha() for word in words)
+
+
+def _is_xai_bracket_control_tag(content: str) -> bool:
+    candidate = (content or "").strip().lower()
+    if candidate.startswith("/"):
+        candidate = candidate[1:].lstrip()
+    return candidate in _XAI_TTS_WRAPPING_TAGS
+
+
+def _strip_bracket_stage_directions(
+    text: str,
+    *,
+    preserve_markers: frozenset[str] = frozenset(),
+) -> str:
     if not text:
         return ""
-    cleaned = _VCT_SPEAK_RE.sub("", text)
+
+    out: list[str] = []
+    index = 0
+    text_len = len(text)
+    while index < text_len:
+        if text[index] != "[":
+            out.append(text[index])
+            index += 1
+            continue
+
+        closing = text.find("]", index + 1)
+        if closing < 0:
+            out.append(text[index])
+            index += 1
+            continue
+
+        content = text[index + 1 : closing]
+        normalized = re.sub(r"\s+", " ", content.strip().lower())
+        left = text[index - 1] if index > 0 else ""
+        right = text[closing + 1] if closing + 1 < text_len else ""
+        if normalized in preserve_markers:
+            out.append(text[index : closing + 1])
+            index = closing + 1
+            continue
+        if (
+            (_is_xai_bracket_control_tag(content) or _is_bracket_stage_direction(content))
+            and _is_stage_direction_boundary(left)
+            and _is_stage_direction_boundary(right)
+        ):
+            index = closing + 1
+            continue
+
+        out.append(text[index : closing + 1])
+        index = closing + 1
+
+    return "".join(out)
+
+
+def _strip_angle_voice_controls(text: str) -> str:
+    cleaned = _VCT_SPEAK_RE.sub("", text or "")
     cleaned = _VCT_EMOTION_SC_RE.sub("", cleaned)
     cleaned = _VCT_EMOTION_WRAP_RE.sub(r"\1", cleaned)
     cleaned = _VCT_BREAK_RE.sub("", cleaned)
@@ -294,8 +422,28 @@ def _strip_voice_control_tags(text: str) -> str:
         cleaned = updated
     cleaned = _VCT_XAI_ANGLE_TAG_RE.sub("", cleaned)
     cleaned = _VCT_XAI_BRACKET_TAG_RE.sub("", cleaned)
-    cleaned = _VCT_BRACKET_RE.sub("", cleaned)
+    return cleaned
+
+
+def _strip_voice_control_tags(text: str) -> str:
+    """Remove provider voice controls for plain TTS providers."""
+    if not text:
+        return ""
+    cleaned = _strip_angle_voice_controls(text)
+    cleaned = _strip_bracket_stage_directions(cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _prepare_chatterbox_text(text: str) -> str:
+    """Keep only local Chatterbox-supported nonverbal markers."""
+    if not text:
+        return ""
+    cleaned = _strip_angle_voice_controls(text)
+    cleaned = _strip_bracket_stage_directions(cleaned, preserve_markers=_CHATTERBOX_MARKERS)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", cleaned)
     return cleaned.strip()
 
 
@@ -315,6 +463,7 @@ def _strip_cartesia_markup_for_xai(text: str) -> str:
     cleaned = _VCT_XAI_BRACKET_TAG_RE.sub("", cleaned)
     cleaned = _strip_orphan_xai_angle_tags_preserving_wrappers(cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", cleaned)
     return cleaned.strip()
 
 
@@ -339,12 +488,48 @@ def _strip_non_xai_bracket_controls_for_xai(text: str) -> str:
             return match.group(0)
         if token.lstrip("/").lstrip() in _XAI_TTS_WRAPPING_TAGS:
             return ""
-        if _VCT_BRACKET_RE.fullmatch(match.group(0)):
+        if _is_bracket_stage_direction(token):
             return ""
         return match.group(0)
 
     return _CARTESIA_BRACKET_TOKEN_RE.sub(_replace, text or "")
 # === VIVENTIUM END ===
+
+
+_VOICE_CONTROL_TAG_NAMES = frozenset(
+    {"emotion", "break", "speed", "volume", "spell", "speak", *_XAI_TTS_WRAPPING_TAGS}
+)
+
+
+def _voice_control_tag_name(tag: str) -> str:
+    candidate = (tag or "").strip()
+    if not candidate.startswith("<") or not candidate.endswith(">"):
+        return ""
+    inner = candidate[1:-1].strip()
+    if inner.startswith("/"):
+        inner = inner[1:].lstrip()
+    if inner.endswith("/"):
+        inner = inner[:-1].rstrip()
+    name = []
+    for ch in inner:
+        if ch.isalpha() or ch == "-":
+            name.append(ch.lower())
+            continue
+        break
+    return "".join(name)
+
+
+def _strip_unknown_angle_tags_for_tts(text: str) -> str:
+    if not text:
+        return ""
+
+    def _replace(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        if _voice_control_tag_name(tag) in _VOICE_CONTROL_TAG_NAMES:
+            return tag
+        return ""
+
+    return _GENERIC_ANGLE_TAG_RE.sub(_replace, text)
 
 
 def _normalize_cartesia_nonverbal_tokens(text: str) -> str:
@@ -503,25 +688,42 @@ def prepare_tts_text(text: str) -> str:
     if not text:
         return ""
 
-    cleaned = text
+    cleaned = strip_inline_nta(text)
+    if not cleaned:
+        return ""
     # === VIVENTIUM START ===
     # Remove citations early so TTS never speaks them.
     cleaned = _CITATION_COMPOSITE_RE.sub(" ", cleaned)
     cleaned = _CITATION_STANDALONE_RE.sub(" ", cleaned)
+    cleaned = _CITATION_BARE_TURN_ID_RE.sub(" ", cleaned)
+    cleaned = _CITATION_ORPHAN_TAIL_RE.sub(" ", cleaned)
+    cleaned = _CITATION_ORPHAN_BRACKET_RE.sub(" ", cleaned)
     cleaned = _CITATION_CLEANUP_RE.sub(" ", cleaned)
     cleaned = _BRACKET_CITATION_RE.sub(" ", cleaned)
     # === VIVENTIUM END ===
     cleaned = cleaned.replace("\\n", "\n").replace("\\r", "\r")
-    cleaned = re.sub(r"```[\s\S]*?```", " ", cleaned)
+    cleaned = _CODE_BLOCK_RE.sub(" ", cleaned)
+    cleaned = _SOURCE_REFERENCE_LINK_LINE_RE.sub(" ", cleaned)
+    cleaned = _SOURCE_REFERENCE_LABEL_RE.sub("", cleaned)
+    cleaned = _REFERENCE_DEF_RE.sub(" ", cleaned)
+    cleaned = _MARKDOWN_IMAGE_RE.sub(lambda m: (m.group(1) or "image available"), cleaned)
+    cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
     cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
-    cleaned = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", cleaned)
-    cleaned = _URL_RE.sub(" link available ", cleaned)
+    cleaned = cleaned.replace("`", "")
     cleaned = _EMAIL_RE.sub(" email available ", cleaned)
+    cleaned = _URL_RE.sub(" link available ", cleaned)
+    cleaned = _BARE_DOMAIN_RE.sub(" link available ", cleaned)
+    cleaned = _strip_unknown_angle_tags_for_tts(cleaned)
+    cleaned = _HEADING_RE.sub("", cleaned)
     cleaned = re.sub(r"[\*_~]+", "", cleaned)
     cleaned = _PLAN_PREFIX_RE.sub("", cleaned)
     cleaned = _LIST_PREFIX_RE.sub("", cleaned)
+    cleaned = _TABLE_ROW_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
     cleaned = re.sub(r"\s*[\r\n]+\s*", " ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r"([.!?])([A-Z])", r"\1 \2", cleaned)
     sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(cleaned) if s.strip()]
     if sentences:
         filtered: list[str] = []
@@ -697,6 +899,11 @@ async def synthesize_speech(
 ) -> Optional[bytes]:
     if not text:
         return None
+    # Apply the common speech-safety pass here as well as in bot.py. Proactive
+    # callbacks call synthesize_speech directly with raw assistant text.
+    text = prepare_tts_text(text)
+    if not text:
+        return None
 
     api_key = None
     api_url = None
@@ -770,6 +977,11 @@ async def synthesize_speech(
             synth_text = _strip_cartesia_markup_for_xai(text)
             if not synth_text:
                 logger.warning("Skipping xAI TTS: text empty after Cartesia tag stripping")
+                return None
+        elif "chatterbox" in provider:
+            synth_text = _prepare_chatterbox_text(text)
+            if not synth_text:
+                logger.warning("Skipping local Chatterbox TTS: text empty after voice tag stripping")
                 return None
         elif provider != "cartesia" and "chatterbox" not in provider:
             synth_text = _strip_voice_control_tags(text)

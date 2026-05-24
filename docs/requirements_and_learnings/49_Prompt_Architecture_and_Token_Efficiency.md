@@ -91,6 +91,31 @@ stores only PID/port/url metadata under App Support prompt-workbench state. The 
 the Viventium stack: stopping Prompt Workbench must not stop LibreChat, Mongo, native services,
 voice, or the running user-facing runtime.
 
+If the canonical runtime config sets `runtime.prompt_workbench.enabled: true`, the Viventium stack
+also treats Prompt Workbench as an optional local sidecar. The compiled runtime env must set
+`START_PROMPT_WORKBENCH=true`; the stack launcher starts the same CLI-managed loopback server,
+records that it is stack-managed, and runs a small watchdog that restarts only that Workbench
+process. Stack logs must not include the launch token or authenticated URL. This is an opt-in
+operator convenience, not a cloud feature and not a replacement for the standalone helper/CLI
+lifecycle controls. If an operator explicitly runs `bin/viventium prompt-workbench stop` while the
+stack watchdog is alive, the stop command records a local user-stopped marker and the watchdog must
+not restart Workbench until the user explicitly starts/opens Workbench again or the next stack start
+clears the marker.
+
+Prompt Detail diff views must always name the selected comparison baseline. The Diff tab provides a
+`Compare from` selector with the current applied source, the Git HEAD baseline for uncommitted
+working-tree changes, and prompt-specific git history entries. Selecting a history entry fetches
+that prompt file at the selected revision and compares it to the current source or editor buffer;
+this is path/git based and must not special-case prompt ids or prompt text.
+
+LibreChat's local Viventium account dropdown exposes Prompt Workbench directly below the Connected
+Accounts item as an operator entry point. That menu action must call a Viventium-owned authenticated
+local API which reuses `bin/viventium prompt-workbench start --json` and opens the returned loopback
+URL; the browser bundle must not hardcode the workbench port or mutate cloud/runtime state. The
+route is admin-gated because Prompt Workbench exposes prompt source, eval, and live push/pull
+controls. The returned loopback URL is a same-host local developer/operator path; remote/LAN/tunnel
+browsers must not be told that `127.0.0.1` will open the host machine's Workbench.
+
 ### 2026-05-16 Prompt Workbench Usability And Eval Clarification
 
 The Prompt Workbench must make the safe next action obvious when source/eval drafts are waiting.
@@ -118,6 +143,238 @@ The former `Frames` tab is now `Prompt Traces`. A prompt trace is local metadata
 surface, model/provider, assembled layers, token estimates, and routing/decision metadata. The
 public-safe UI must explain that concept plainly and must not expose raw private prompt text or
 transcripts.
+
+Scheduling Cortex prompt work must show the prompt files and the config surfaces that make them
+real. Selecting `main.scheduling_self_continuity` or `mcp.scheduling_cortex.server` in Prompt
+Workbench should show, in one organized prompt History view:
+
+- the source prompt file and its git history
+- linked scheduling eval families/cases and recent runs
+- Prompt Workbench QA coverage
+- related source config for the scheduling direct-action owner, main-agent scheduling tools, and
+  `mcpServers.scheduling-cortex`
+- public-safe config history summaries without raw private runtime state
+
+This keeps scheduling editable and inspectable through the same source/draft/eval/history discipline
+as other prompts while preserving the owner split: prompt text lives in prompt files, MCP
+connectivity and tool exposure live in source YAML, and live schedules/runtime state stay outside the
+public repo. Related config links are declared in the prompt registry metadata rather than inferred
+from prompt text or runtime schedule rows.
+
+### 2026-05-21 Operational Memory Prompts In Workbench
+
+The Prompt Workbench must include operational memory prompts that materially affect memory quality,
+not only the main chat agent prompt. Transcript ingestion and nightly saved-memory consolidation now
+have registry-owned prompt files under `source_of_truth/prompts/memory/`:
+
+- `memory.transcript_summarizer`: local meeting-transcript summarization before transcript RAG and
+  saved-memory hardening consume transcript evidence.
+- `memory.transcript_caveat`: the shared soft-evidence caveat attached to transcript workpacks.
+- `memory.hardener_consolidation`: the batch/nightly saved-memory hardener wrapper that adapts live
+  Memory Archivist rules to multi-conversation consolidation.
+
+These prompts are inspectable and editable through the same Workbench prompt detail, history, draft,
+git, and linked-eval surfaces as other source-of-truth prompts. The memory-hardening runtime loads
+them from the compiled prompt bundle when available and keeps inline fallbacks for older or
+partially compiled local installs. The transcript summarizer's prompt `version` remains the
+processed-index reprocessing gate, so behavior-changing summarizer edits must bump the prompt
+version intentionally.
+
+Because these prompts are runtime-owned rather than managed LibreChat Agent Builder records, the
+agent push/pull board is not their live-state source of truth. Prompt Workbench must instead show a
+runtime prompt-bundle status for each prompt: source-only/drift means the local compiled bundle needs
+rebuild or reinstall before the installed runtime carries the new registry prompt, while the inline
+fallback path keeps older local runtimes behavior-compatible. Tests must pin fallback prompt bodies
+and the transcript prompt version to the registry source so source and fallback do not silently
+diverge.
+
+The canonical eval bank now maps memory-hardening and transcript-ingest families to those prompt
+ids. Native fixture suites under `qa/meeting-transcript-memory/` and `qa/memory-hardening/` remain
+the executable ground truth for scanner/vector/database behavior; the Workbench bank keeps the
+prompt surfaces visible, draftable, and tied to prompt hashes.
+
+### 2026-05-22 Prompt Workbench Read View And Source Map
+
+The Prompt tab's `Rendered` view is a human reading surface over the canonical rendered prompt, not
+a second prompt renderer. The Workbench must keep two modes available:
+
+- `Read`: a safe semantic view for headings, paragraphs, lists, quotes, code fences, and inline
+  emphasis so operators do not have to read raw markdown punctuation.
+- `Raw`: the exact assembled `prompt.rendered` text used by hashes, diffs, evals, and source/live
+  parity checks.
+
+The `Read` view must not execute or inject prompt text as HTML. Runtime placeholders, strict
+variables, literal XML-like tags, and prompt separator lines remain visible as text; changing the
+reader must never change the raw rendered prompt used by the registry, eval harness, sync hashes, or
+runtime bundle.
+
+The Flow tab is a Workbench source-map projection over existing source-of-truth data:
+
+- prompt registry rows and families
+- backend include/dependent edges
+- source/runtime targets carried by prompt metadata
+- eval-bank `promptRefs`
+- known Workbench artifacts such as rendered registry output, local runtime bundle status, eval
+  bank, eval results, and prompt traces
+
+The source map is not a new runtime routing source and does not authorize prompt behavior. Its stage
+bands are documented Workbench UI categories for operator navigation:
+
+| Stage band | UI meaning |
+| --- | --- |
+| Interaction Surfaces | Prompt files and targets that shape surface ingress such as web, voice, transcript, or scheduling entry points. |
+| Conscious Agent | Main conscious agent instruction layers and directly included conscious-policy prompts. |
+| Memory and Recall | Memory, recall, transcript-ingest, and saved-memory hardening prompts or targets. |
+| Background Cortex and Tools | Background cortex, follow-up, MCP, tool, scheduler, and auxiliary prompt/control surfaces. |
+| Delivery and Evaluation | Rendered registry output, local runtime bundle status, prompt traces, eval bank links, and recent eval results. |
+
+Selecting a prompt highlights the selected prompt, recursive include/dependent lineage, same-family
+or target-adjacent context, linked eval families/cases, and delivery artifacts. Prompts and eval
+groups outside that context stay visible but muted so the user can see the larger Viventium map
+without mistaking unrelated flows for the active path. Single-click selects a prompt in place;
+double-clicking a prompt node opens that prompt in the Prompt tab. Eval and artifact nodes open the
+relevant Workbench panels when a direct panel exists.
+
+Prompt diff inspection has two source-safe modes. When the operator is editing the selected prompt,
+the Diff tab compares the applied source file against the unsaved editor buffer. When the editor
+buffer is clean but the source file has uncommitted working-tree changes, the Diff tab compares the
+last committed file from `HEAD` against the current source file so prompt changes made by another
+local agent are not visually hidden. The side-by-side Monaco diff must wrap both original and
+modified panes consistently, and Git History must include a first `working-tree` entry for
+uncommitted source changes with a public-safe patch preview. For untracked new prompt files, the
+committed baseline is an intentional empty string rather than a missing baseline. This is source
+inspection only; it does not create drafts, push live, or mutate cloud/runtime state.
+
+### 2026-05-22 Prompt Workbench Scheduled GlassHive Prompts
+
+Prompt Workbench now owns an admin-gated scheduling surface for arbitrary private prompts while
+Scheduling Cortex remains the always-on recurrence engine. Scheduled prompt definitions, versions,
+variable snapshots, and run history live in private Scheduling Cortex SQLite tables and App Support
+private detail files. Public source prompt registry files remain the source of truth for product
+prompts; arbitrary user-authored scheduled prompt bodies are private runtime state.
+
+Scheduled prompts are treated as prompt objects in the Workbench, not as a detached mini-app. The
+Prompt Flow atlas is the single object picker for public registry prompts, Workbench-private
+scheduled prompt definitions, and existing user-level Scheduling Cortex tasks for the authenticated
+admin. Selecting a scheduled prompt object opens its Schedules detail view with the same
+object-context tabs nearby: Prompt, Live Drift, Drafts, Evals, Schedules, and Prompt Traces. The
+atlas row carries the always-visible on/off switch plus an explicit open target; the Schedules
+detail view carries add, edit, delete, manual run, variable preview, source/executor/channel
+metadata, and run-history controls.
+
+Scheduled prompt objects must keep their prompt affordances outside the Schedules tab. The Drafts
+tab shows the selected scheduled prompt body plus rendered variable expansion and variable snapshot
+details so users can inspect it like a prompt object without pretending private schedule text is a
+public source prompt file. The Schedules tab remains the edit/save/run surface.
+For existing user-level `viventium_agent` schedules, Drafts shows the stored scheduler prompt text
+but does not claim Workbench `{{...}}` variables are rendered into the runtime prompt, because those
+schedules continue through the regular scheduler path rather than the Workbench GlassHive renderer.
+
+The topbar sync actions are glanceable: Pull Live is green only when live/source are current and
+orange when either live-side pull/merge work or source-side push work is pending; Push Dry-run is
+green when source/live are current and orange when source-side work, conflicts, or blocking drafts
+need attention. The buttons still perform
+their existing actions; the color is state signaling, not a second workflow.
+
+The Prompt Flow pane is a real work surface: its header and add button stay fixed while the tree
+scrolls, the left pane is resizable on desktop, and the Scheduled Prompts group is visually near the
+top of the atlas so private prompt schedules are not hidden below registry prompt families. The UI
+must not use vague explanatory footer copy in place of the actual scheduled prompt objects.
+
+The owner split is:
+
+| Concern | Owner |
+| --- | --- |
+| Authoring, variable preview, enable/disable, manual trigger, run history | Prompt Workbench |
+| Recurrence, misfire/retry policy, durable run ledger, callback receiver | Scheduling Cortex |
+| Direct execution | GlassHive host worker with `profile="codex-cli"` and `execution_mode="host"` |
+| Memory writeback | Governed LibreChat/Viventium memory methods or proposals, never direct Mongo writes |
+
+Scheduling Cortex scheduled tasks now carry `executor`. Existing reminders keep
+`executor="viventium_agent"` and continue through LibreChat generation/fan-out. Workbench scheduled
+prompts use `executor="glasshive_host"` and `channel="workbench"`; dispatch branches before
+LibreChat generation and queues GlassHive directly through the HTTP project / worker find-or-resume
+/ assign path. GlassHive receives rendered prompt snapshots, private workspace files, callback
+metadata, and a `FINAL REPORT:` contract. It does not receive Mongo credentials or direct parent DB
+access.
+
+The Schedules detail UI must display the execution route as an explicit configuration panel. A
+Workbench-private scheduled prompt shows `GlassHive host`, profile `codex-cli`, mode `host`, the
+configured workspace root, and the private `my_folder`. A preexisting user-level schedule shows the
+regular `viventium_agent` route and its channel instead. This avoids making users infer from raw
+executor strings whether a run goes to GlassHive or to the normal Viventium scheduler.
+
+GlassHive completion callbacks must target the live Scheduling Cortex HTTP service, not a baked-in
+development port. The callback URL is derived from `SCHEDULING_MCP_URL`, then
+`VIVENTIUM_SCHEDULING_MCP_PORT` / `SCHEDULING_MCP_PORT` / `SCHEDULER_PORT`, with an explicit
+`SCHEDULING_GLASSHIVE_CALLBACK_URL` override for deployments that need one. Prompt Workbench loads
+the canonical local runtime env before dispatch so standalone launches use the same Scheduling
+Cortex port as the installed runtime.
+
+Workbench must also surface user-level schedules that were created through Viventium or Scheduling
+Cortex before this UI existed. Those rows are exposed as `sourceKind="user_schedule"` prompt
+objects, not copied into the private Workbench prompt-definition table. Editing the title stores a
+Workbench display title in task metadata; editing schedule, active state, prompt text, delete, and
+manual run operate on the existing `scheduled_tasks` row for that admin user. Manual runs for these
+user-level schedules require an explicit route-aware confirmation because they can deliver through
+their existing Viventium channels. Existing Workbench definition tasks are de-duplicated by `task_id`,
+so the atlas does not show two objects for the same recurrence. The Workbench UI must preserve
+user-level schedule JSON unless the user explicitly edits schedule controls; a title, prompt, or
+active-state save must not rewrite cron/custom weekly schedule metadata into a simplified Workbench
+schedule shape.
+
+Supported scheduled-prompt variables are explicit, listed in the UI, autocompletable as chips, and
+rendered server-side with wrappers such as `<memory_agent.system_prompt>...</memory_agent.system_prompt>`.
+The first allowlisted function placeholder is
+`{{viventium.background_agents.get_list(agent_name, system_prompt)}}`, which resolves to background
+agent names plus resolved execution prompts from source-of-truth YAML/prompt refs. The
+`{{local.viventium.database}}` placeholder is a governed context locator and policy summary, not a
+secret-bearing connection URI. `{{user.memories}}` resolves from LibreChat's saved-memory schema
+using `memoryentries.userId` with ObjectId/string fallback; returning an empty list is only valid
+when the resolved user truly has no memory rows or the resolver marks the snapshot as unavailable.
+
+Privileged Workbench APIs require Workbench admin authentication through either LibreChat
+`GET /api/admin/verify`, a helper-issued short-lived launch token, or a loopback-only local admin
+resolver that binds direct same-machine Workbench visits to the single verified local `ADMIN` user
+from the runtime DB/env. Unauthenticated non-loopback or ambiguous-local-admin requests return
+`401`; non-admin LibreChat sessions return `403`. The local helper starts Workbench with a launch
+token URL bound to a verified local `ADMIN` user when the local Mongo runtime is available, then
+falls back to the existing LibreChat admin verification path if a browser session supplies cookies.
+The helper starts Uvicorn without access logging so the launch token is not echoed in request logs.
+Variable rendering is scoped to the authenticated admin context; client-supplied user IDs or emails
+are not trusted for profile or memory rendering.
+
+The built-in schedule is named **Subconscious Deep Thought** in the product UI, with
+**Nightly subconscious thought formation** documented as the template/legacy alias. It preserves
+the user's requested intent while removing direct database write language: memory changes are framed
+as governed proposals or `apply_governed` memory-method calls, never direct Mongo/table edits by the
+GlassHive worker. Workbench startup seeds this built-in template for the verified local admin as
+private state, disabled by default unless the local installation has already enabled it or
+explicitly opts into active seeding.
+
+Scheduled-prompt hardening added after live QA:
+
+- `apply_governed` is a code-enforced mode. GlassHive writes structured memory proposal JSON under
+  the private `my_folder`; Scheduling Cortex and Workbench apply those proposals through the
+  LibreChat/Viventium memory policy helpers and memory data methods, not through direct
+  `memoryentries` writes.
+- Duplicate live memory keys touched by a proposal are deduped through a governed merge plan before
+  proposal apply. The helper dry-runs by default, emits only hashes/statuses, blocks apply if
+  policy rejects the merged value, and does not rewrite unrelated duplicate memory categories as a
+  side effect of applying one proposal.
+- Manual Workbench runs have a per-user/per-schedule in-flight guard and recent-run debounce so
+  rapid clicks coalesce instead of queuing duplicate GlassHive or Viventium runs.
+- Run history stores public-safe summaries and sanitized error classes only. Raw rendered prompts,
+  callbacks, local paths/URLs, and legacy raw callback payloads live only in private detail files;
+  legacy run rows are sanitized on storage initialization.
+- The Schedules UI exposes executor choice (`GlassHive host` or `Viventium agent`) and execution
+  continuity choice (`same worker`, `new worker each run`, or Viventium conversation policy).
+- Browser/scratchpad artifacts must be UTF-8 clean. GlassHive bootstrap files include an explicit
+  UTF-8 static server for browser-checking generated markdown, text, and JSON artifacts.
+- The background-agent resolver must be proven against source-of-truth prompt refs: the live
+  `{{viventium.background_agents.get_list(agent_name, system_prompt)}}` output count and hash must
+  match resolved `backgroundAgents` YAML and each row must contain both `agent_name` and
+  `system_prompt`.
 
 ### 2026-05-14 Voice Latency Prompt-Budget Learning
 

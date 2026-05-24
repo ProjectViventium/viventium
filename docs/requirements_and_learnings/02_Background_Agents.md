@@ -20,6 +20,11 @@ For the manager-readable handbook, start with:
 - Activation is fast, accurate, and low-noise.
 - Execution is non-blocking and does not delay the main response.
 - Background agents retain full capabilities: tools, MCPs, code interpreter, web search.
+- Productivity cortices must ship with their provider-owned MCP tools attached:
+  - `MS365` owns the Microsoft 365 MCP Outlook/calendar/file tool array.
+  - `Google` owns the Google Workspace MCP Gmail/calendar/Drive/docs/sheets tool array.
+  - A productivity cortex that activates with an empty or generic-only tool list is degraded; it
+    must not substitute memory, recall, or file search for live inbox/workspace evidence.
 - Deep Research is a shipped web-research cortex:
   - its built-in source-of-truth contract must include `web_search`
   - when its execution family is `openAI / gpt-5.4`, its shipped `model_parameters` must use
@@ -30,6 +35,10 @@ For the manager-readable handbook, start with:
   mode, but raw insight text must remain background-only.
 - Follow-up realizations should still surface shortly after the original request within a
   configurable background follow-up window.
+- Phase B follow-up generation must preserve the live main-agent provider/model route that produced
+  the parent turn. Compiled/source runtime defaults may fill missing agent fields, but must not
+  override an explicit user-managed live route and accidentally send follow-ups to a different
+  provider.
 - If the user and assistant have already exchanged newer visible messages before Phase B completes,
   the follow-up adjudicator must see that newer exchange and decide whether the background result is
   still useful now or should resolve to `{NTA}`.

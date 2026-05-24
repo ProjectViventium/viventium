@@ -8,6 +8,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 from livekit.agents import APIError
 from livekit.agents.tts import AudioEmitter, ChunkedStream, SynthesizeStream, TTS, TTSCapabilities
@@ -297,6 +298,130 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(frames), 0)
         self.assertEqual(selected, ["fallback"])
         self.assertEqual(fallback.last_stream_chunks, ["hello ", "world"])
+
+    async def test_streaming_provider_input_drops_orphan_period_chunk(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("Good to hear you")
+        stream.push_text(".")
+        stream.push_text(" Next thought.")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(tts.last_stream_chunks, ["Good to hear you", " Next thought."])
+        self.assertNotIn(".", tts.last_stream_chunks)
+
+    async def test_streaming_provider_input_logs_forwarded_and_dropped_chunks(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("Good to hear you")
+        stream.push_text(".")
+        stream.push_text(" Next thought.")
+        stream.end_input()
+
+        with patch.dict(os.environ, {"VIVENTIUM_VOICE_LOG_TTS_INPUTS": "1"}, clear=False):
+            with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+                async with stream:
+                    async for _ in stream:
+                        pass
+
+        joined = "\n".join(captured.output)
+        self.assertIn("[VoiceTTSInput]", joined)
+        self.assertIn("action=dropped", joined)
+        self.assertIn("punctuation_only=True", joined)
+        self.assertIn('text_json="."', joined)
+        self.assertIn("action=forwarded", joined)
+        self.assertIn('text_json=" Next thought."', joined)
+        self.assertEqual(tts.last_stream_chunks, ["Good to hear you", " Next thought."])
+
+    async def test_chunked_provider_input_logs_full_synthesize_text(self) -> None:
+        tts = FakeTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="openai", tts=tts)])
+
+        with patch.dict(os.environ, {"VIVENTIUM_VOICE_LOG_TTS_INPUTS": "1"}, clear=False):
+            with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+                frame = await wrapper.synthesize("Full response.").collect()
+
+        self.assertGreater(len(frame.data), 0)
+        joined = "\n".join(captured.output)
+        self.assertIn("[VoiceTTSInput]", joined)
+        self.assertIn("mode=synthesize", joined)
+        self.assertIn("stage=synthesize", joined)
+        self.assertIn("action=forwarded", joined)
+        self.assertIn('text_json="Full response."', joined)
+
+    async def test_streaming_provider_input_preserves_trailing_word_boundary(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("Nice, invoice cleared ")
+        stream.push_text("is a real milestone.")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(
+            "".join(tts.last_stream_chunks),
+            "Nice, invoice cleared is a real milestone.",
+        )
+        self.assertEqual(tts.last_stream_chunks[0], "Nice, invoice cleared ")
+
+    async def test_streaming_provider_input_keeps_decimal_split(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("3")
+        stream.push_text(".14 is pi.")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(tts.last_stream_chunks, ["3", ".14 is pi."])
+
+    async def test_streaming_provider_input_keeps_standalone_decimal_point(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("3")
+        stream.push_text(".")
+        stream.push_text("14 is pi.")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(tts.last_stream_chunks, ["3", ".14 is pi."])
+
+    async def test_streaming_provider_input_preserves_clause_punctuation(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("I get it")
+        stream.push_text(",")
+        stream.push_text(" however, timing matters.")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(tts.last_stream_chunks, ["I get it", ", however, timing matters."])
 
     async def test_streaming_fallback_strips_control_tags_for_openai(self) -> None:
         selected: list[str] = []

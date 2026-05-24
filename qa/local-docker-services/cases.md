@@ -35,7 +35,7 @@
 - Evidence to capture: sanitized counts, timestamps, failure class, source lines, and report link.
 - Full-view evidence minimum: API probe, logs, source readiness path, generated runtime mode, and
   automated release checks.
-- Automation: release tests plus service probes.
+- Automation: `tests/release/test_meilisearch_resource_guardrails.py` plus service probes.
 - Last run: 2026-05-19 `PASS`.
 
 ## `LDS-002` - Docker ownership and port conflict

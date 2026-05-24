@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import plistlib
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +15,7 @@ from pathlib import Path
 DEFAULT_SCHEDULE = "0 3 * * *"
 DEFAULT_TIMEZONE = "America/Toronto"
 LAUNCH_AGENT_LABEL = "ai.viventium.memory-harden"
+PARTIAL_BACKFILL_EXIT = 2
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -101,31 +101,33 @@ def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> d
             "/sbin",
         ]
     )
-    clean_env = " ".join(
-        [
-            f"HOME={shlex.quote(str(Path.home()))}",
-            f"USER={shlex.quote(os.environ.get('USER', ''))}",
-            f"LOGNAME={shlex.quote(os.environ.get('LOGNAME', os.environ.get('USER', '')))}",
-            "SHELL=/bin/zsh",
-            f"PATH={shlex.quote(launch_path)}",
-            "LANG=en_US.UTF-8",
-            "LC_ALL=en_US.UTF-8",
-        ]
-    )
-    command = (
-        f"/usr/bin/env -i {clean_env} "
-        f"python3 {shlex.quote(str(args.repo_root / 'scripts' / 'viventium' / 'memory_harden.py'))} "
-        f"--repo-root {shlex.quote(str(args.repo_root))} "
-        f"--app-support-dir {shlex.quote(str(args.app_support_dir))} "
-        f"--runtime-dir {shlex.quote(str(args.runtime_dir))} "
-        "apply --scheduled"
-    )
+    program_arguments = [
+        "/usr/bin/env",
+        "-i",
+        f"HOME={str(Path.home())}",
+        f"USER={os.environ.get('USER', '')}",
+        f"LOGNAME={os.environ.get('LOGNAME', os.environ.get('USER', ''))}",
+        "SHELL=/bin/zsh",
+        f"PATH={launch_path}",
+        "LANG=en_US.UTF-8",
+        "LC_ALL=en_US.UTF-8",
+        "python3",
+        str(args.repo_root / "scripts" / "viventium" / "memory_harden.py"),
+        "--repo-root",
+        str(args.repo_root),
+        "--app-support-dir",
+        str(args.app_support_dir),
+        "--runtime-dir",
+        str(args.runtime_dir),
+        "apply",
+        "--scheduled",
+    ]
     operator_user_email = args.user_email or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_USER_EMAIL")
     if operator_user_email:
-        command += f" --user-email {shlex.quote(operator_user_email)}"
+        program_arguments.extend(["--user-email", operator_user_email])
     payload = {
         "Label": LAUNCH_AGENT_LABEL,
-        "ProgramArguments": ["/bin/bash", "-lc", command],
+        "ProgramArguments": program_arguments,
         "StartCalendarInterval": {"Hour": hour, "Minute": minute},
         "StandardOutPath": str(logs_dir / "memory-hardening.log"),
         "StandardErrorPath": str(logs_dir / "memory-hardening.err.log"),
@@ -219,6 +221,8 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
         command.extend(["--min-user-idle-minutes", str(args.min_user_idle_minutes)])
     if args.max_changes_per_user is not None:
         command.extend(["--max-changes-per-user", str(args.max_changes_per_user)])
+    elif args.command == "ingest-transcripts":
+        command.extend(["--max-changes-per-user", "0"])
     if args.max_input_chars is not None:
         command.extend(["--max-input-chars", str(args.max_input_chars)])
     provider = args.provider or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER")
@@ -241,6 +245,20 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
         command.extend(["--transcript-max-chars-per-file", str(args.transcript_max_chars_per_file)])
     if getattr(args, "transcript_summary_max_chars", None) is not None:
         command.extend(["--transcript-summary-max-chars", str(args.transcript_summary_max_chars)])
+    if getattr(args, "transcript_reference_memory_max_chars", None) is not None:
+        command.extend(
+            [
+                "--transcript-reference-memory-max-chars",
+                str(args.transcript_reference_memory_max_chars),
+            ]
+        )
+    if getattr(args, "transcript_reference_messages_max_chars", None) is not None:
+        command.extend(
+            [
+                "--transcript-reference-messages-max-chars",
+                str(args.transcript_reference_messages_max_chars),
+            ]
+        )
     transcript_rag_mode = getattr(args, "transcript_rag_mode", None) or runtime_env.get(
         "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE"
     )
@@ -257,6 +275,93 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
     if args.json:
         command.append("--json")
     return command
+
+
+def transcript_backfill_skipped_by_cap(summary: dict[str, object]) -> int:
+    skipped = 0
+    for user in summary.get("users", []) if isinstance(summary.get("users"), list) else []:
+        if not isinstance(user, dict):
+            continue
+        ingest = user.get("transcript_ingest") or {}
+        if not isinstance(ingest, dict):
+            continue
+        skipped += int(ingest.get("files_skipped_by_cap") or 0)
+    return skipped
+
+
+def run_node_once(args: argparse.Namespace, runtime_env: dict[str, str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        node_command(args, runtime_env),
+        cwd=args.repo_root / "viventium_v0_4" / "LibreChat",
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+
+def run_transcript_backfill_until_caught_up(
+    args: argparse.Namespace, runtime_env: dict[str, str], env: dict[str, str]
+) -> int:
+    if not getattr(args, "apply", False):
+        raise SystemExit("--until-caught-up requires --apply because dry-runs do not advance transcript state")
+    max_batches = int(getattr(args, "max_batches", None) or 25)
+    if max_batches <= 0:
+        raise SystemExit("--max-batches must be greater than 0")
+    final_status = 0
+    summaries: list[dict[str, object]] = []
+    previous_skipped: int | None = None
+    json_output = bool(getattr(args, "json", False))
+
+    def emit_aggregate(status: str, reason: str | None = None) -> None:
+        if not json_output and status == "complete":
+            return
+        latest = summaries[-1] if summaries else {}
+        latest_skipped = transcript_backfill_skipped_by_cap(latest) if isinstance(latest, dict) else 0
+        aggregate = {
+            "schemaVersion": 1,
+            "status": status,
+            "reason": reason,
+            "batches_run": len(summaries),
+            "latest_run": latest.get("run_id") if isinstance(latest, dict) else None,
+            "files_skipped_by_cap": latest_skipped,
+            "batch_run_ids": [
+                summary.get("run_id")
+                for summary in summaries
+                if isinstance(summary, dict) and summary.get("run_id")
+            ],
+            "users": latest.get("users", []) if isinstance(latest, dict) else [],
+            "apply_results": latest.get("apply_results", []) if isinstance(latest, dict) else [],
+        }
+        print(json.dumps(aggregate, indent=2))
+
+    for _ in range(max_batches):
+        result = run_node_once(args, runtime_env, env)
+        if result.stdout and not json_output:
+            sys.stdout.write(result.stdout)
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        final_status = int(result.returncode)
+        if final_status != 0:
+            if json_output and result.stdout:
+                sys.stdout.write(result.stdout)
+            return final_status
+        try:
+            summary = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            if json_output and result.stdout:
+                sys.stdout.write(result.stdout)
+            return final_status
+        summaries.append(summary)
+        skipped = transcript_backfill_skipped_by_cap(summary)
+        if skipped <= 0:
+            emit_aggregate("complete")
+            return final_status
+        if previous_skipped is not None and skipped >= previous_skipped:
+            emit_aggregate("partial", "no_batch_progress")
+            return PARTIAL_BACKFILL_EXIT
+        previous_skipped = skipped
+    emit_aggregate("partial", "max_batches_reached")
+    return PARTIAL_BACKFILL_EXIT
 
 
 def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
@@ -295,6 +400,8 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.write_text("completed\n", encoding="utf-8")
             return int(result.returncode)
+    if args.command == "ingest-transcripts" and getattr(args, "until_caught_up", False):
+        return run_transcript_backfill_until_caught_up(args, runtime_env, env)
     command = node_command(args, runtime_env)
     process = subprocess.run(
         command,
@@ -329,6 +436,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--transcript-max-files-per-run", type=int)
         sub.add_argument("--transcript-max-chars-per-file", type=int)
         sub.add_argument("--transcript-summary-max-chars", type=int)
+        sub.add_argument("--transcript-reference-memory-max-chars", type=int)
+        sub.add_argument("--transcript-reference-messages-max-chars", type=int)
         sub.add_argument("--transcript-rag-mode")
         sub.add_argument("--allow-delete", action="store_true")
         sub.add_argument("--ignore-idle-gate", action="store_true")
@@ -354,7 +463,11 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--transcript-max-files-per-run", type=int)
     ingest.add_argument("--transcript-max-chars-per-file", type=int)
     ingest.add_argument("--transcript-summary-max-chars", type=int)
+    ingest.add_argument("--transcript-reference-memory-max-chars", type=int)
+    ingest.add_argument("--transcript-reference-messages-max-chars", type=int)
     ingest.add_argument("--transcript-rag-mode")
+    ingest.add_argument("--until-caught-up", action="store_true")
+    ingest.add_argument("--max-batches", type=int)
     ingest.add_argument("--allow-delete", action="store_true")
     ingest.add_argument("--ignore-idle-gate", action="store_true")
     ingest.add_argument("--skip-model-probe", action="store_true")

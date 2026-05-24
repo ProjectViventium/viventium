@@ -139,6 +139,76 @@ def test_runtime_env_defaults_to_modern_playground_and_keeps_classic_opt_in() ->
     assert invalid_env["VIVENTIUM_PLAYGROUND_VARIANT"] == "modern"
 
 
+def test_prompt_workbench_sidecar_compiles_as_explicit_runtime_opt_in() -> None:
+    config = minimal_compile_config()
+    disabled_env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert disabled_env["VIVENTIUM_PROMPT_WORKBENCH_ENABLED"] == "false"
+    assert disabled_env["START_PROMPT_WORKBENCH"] == "false"
+
+    config["runtime"]["prompt_workbench"] = {"enabled": True}
+    enabled_env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_ENABLED"] == "true"
+    assert enabled_env["START_PROMPT_WORKBENCH"] == "true"
+
+
+def test_livrechat_openid_auth_compiles_env_yaml_and_service_env(tmp_path: Path) -> None:
+    config = minimal_compile_config()
+    config["runtime"]["auth"] = {
+        "allow_email_login": False,
+        "allow_registration": False,
+        "openid": {
+            "enabled": True,
+            "client_id": "entra-client-id",
+            "client_secret": {"secret_value": "entra-client-secret"},
+            "issuer": "https://login.microsoftonline.com/tenant/v2.0/",
+            "session_secret": {"secret_value": "openid-session-secret"},
+            "scope": "openid profile email",
+            "callback_url": "/oauth/openid/callback",
+            "button_label": "Continue with Example Entra ID",
+            "use_pkce": True,
+            "email_claim": "preferred_username",
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert env["ALLOW_SOCIAL_LOGIN"] == "true"
+    assert env["ALLOW_EMAIL_LOGIN"] == "false"
+    assert env["OPENID_CLIENT_ID"] == "entra-client-id"
+    assert env["OPENID_CLIENT_SECRET"] == "entra-client-secret"
+    assert env["OPENID_ISSUER"] == "https://login.microsoftonline.com/tenant/v2.0"
+    assert env["OPENID_SESSION_SECRET"] == "openid-session-secret"
+    assert env["OPENID_USE_PKCE"] == "true"
+    assert env["OPENID_EMAIL_CLAIM"] == "preferred_username"
+    assert librechat_yaml["registration"]["socialLogins"] == ["openid"]
+
+    config_compiler.render_service_envs(tmp_path, env)
+    service_env = (tmp_path / "service-env" / "librechat.env").read_text(encoding="utf-8")
+    assert "OPENID_CLIENT_ID=entra-client-id" in service_env
+    assert "OPENID_CLIENT_SECRET=entra-client-secret" in service_env
+    assert "OPENID_SESSION_SECRET=openid-session-secret" in service_env
+    assert "ALLOW_EMAIL_LOGIN=false" in service_env
+
+
+def test_livrechat_openid_auth_fails_closed_when_enabled_without_secret() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["auth"] = {
+        "openid": {
+            "enabled": True,
+            "client_id": "entra-client-id",
+            "issuer": "https://login.microsoftonline.com/tenant/v2.0",
+            "session_secret": {"secret_value": "openid-session-secret"},
+        },
+    }
+
+    with pytest.raises(SystemExit, match="runtime.auth.openid.enabled requires"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
 def test_launcher_treats_classic_playground_as_explicit_opt_in_only() -> None:
     script = START_SCRIPT.read_text(encoding="utf-8")
 
@@ -147,6 +217,21 @@ def test_launcher_treats_classic_playground_as_explicit_opt_in_only() -> None:
     assert 'if [[ "$PLAYGROUND_VARIANT" != "classic" ]]; then' in script
     assert 'PLAYGROUND_VARIANT="modern"' in script
     assert '--classic-playground) PLAYGROUND_VARIANT="classic"; shift ;;' in script
+
+
+def test_launcher_starts_prompt_workbench_only_when_enabled_and_without_token_logs() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+
+    assert "--skip-prompt-workbench" in script
+    assert 'START_PROMPT_WORKBENCH="${START_PROMPT_WORKBENCH:-${VIVENTIUM_PROMPT_WORKBENCH_ENABLED:-false}}"' in script
+    assert "start_prompt_workbench_sidecar" in script
+    assert "start_prompt_workbench_watchdog" in script
+    assert "stop_prompt_workbench_if_managed" in script
+    assert "prompt_workbench_user_stopped" in script
+    assert "VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK=1" in script
+    assert '"$VIVENTIUM_CORE_DIR/bin/viventium" prompt-workbench start' in script
+    assert ">/dev/null 2>>\"$PROMPT_WORKBENCH_WATCHDOG_LOG_FILE\"" in script
+    assert "bin/viventium prompt-workbench open" in script
 
 
 def test_direct_launcher_regenerates_canonical_runtime_before_loading_env() -> None:
@@ -159,6 +244,19 @@ def test_direct_launcher_regenerates_canonical_runtime_before_loading_env() -> N
     assert '"$PYTHON_BIN" "$compiler" --config "$canonical_config_file" --output-dir "$canonical_runtime_dir"' in script
     assert script.index("regenerate_canonical_runtime_env_if_needed\n# === VIVENTIUM END ===") < script.index(
         "# Load .env first, then .env.local"
+    )
+
+
+def test_launcher_keeps_glasshive_state_under_runtime_state_root() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+    start_index = script.index("start_glasshive() {")
+    function_body = script[start_index : script.index("start_ms365_mcp() {", start_index)]
+
+    assert 'local glasshive_state_dir="${GLASSHIVE_STATE_DIR:-$VIVENTIUM_STATE_ROOT/glasshive}"' in function_body
+    assert 'export GLASSHIVE_STATE_DIR="$glasshive_state_dir"' in function_body
+    assert 'export WPR_DB_PATH="${WPR_DB_PATH:-$glasshive_state_dir/runtime_phase1.db}"' in function_body
+    assert function_body.index('export WPR_DB_PATH="${WPR_DB_PATH:-$glasshive_state_dir/runtime_phase1.db}"') < function_body.index(
+        "uv run uvicorn workers_projects_runtime.api:app"
     )
 
 
@@ -818,6 +916,327 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert glasshive_headers["X-Viventium-Tool-Resources"] == "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}"
 
 
+def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"public_api_origin": "https://api.enterprise.example.com"},
+            "personalization": {"default_conversation_recall": False},
+            "extra_env": {
+                "OPENAI_BASE_URL": "https://api.openai.example/v1",
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.example",
+                "PORTKEY_API_KEY": {"secret_value": "portkey-test"},
+                "PORTKEY_BASE_URL": "https://api.portkey.ai/v1",
+                "PORTKEY_VIRTUAL_KEY": {"secret_value": "portkey-vk-test"},
+            },
+        },
+        "llm": {
+            "activation": {"provider": "groq", "auth_mode": "api_key", "secret_value": "groq-test"},
+            "primary": {"provider": "openai", "auth_mode": "api_key", "secret_value": "openai-test"},
+            "secondary": {"provider": "anthropic", "auth_mode": "api_key", "secret_value": "anthropic-test"},
+            "extra_provider_keys": {"openai": "older-openai-test"},
+            "model_overrides": {"openai": {"default": "gpt-5.2-chat"}},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+            "glasshive": {
+                "enabled": True,
+                "deployment_mode": "azure_enterprise_vm_docker",
+                "mcp_url": "https://glasshive.enterprise.example.com/mcp",
+                "operator_base_url": "https://glasshive-ui.enterprise.example.com",
+                "enterprise": {
+                    "artifact_base_url": "https://glasshive-api.enterprise.example.com",
+                    "tenant_id": "tenant-alpha",
+                    "uploads_root": "/mnt/librechat/uploads",
+                    "bootstrap_source_roots": ["/mnt/librechat/uploads"],
+                    "auth": {
+                        "mode": "first_party_assertion",
+                        "service_token": {"secret_value": "service-token-test"},
+                    },
+                    "idle": {"terminate_after_seconds": 900, "reaper_interval_seconds": 30},
+                    "quotas": {
+                        "max_active_workers_per_user": 2,
+                        "max_active_workers_per_tenant": 8,
+                        "max_workspaces_per_user": 15,
+                        "max_workspaces_per_tenant": 60,
+                    },
+                    "provider_env": {"allowlist": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "PORTKEY_API_KEY"]},
+                    "artifact_download_max_bytes": 1048576,
+                    "oauth": {
+                        "enabled": True,
+                        "authorization_url": "https://login.example.com/authorize",
+                        "token_url": "https://login.example.com/token",
+                        "client_id": "${GLASSHIVE_OAUTH_CLIENT_ID}",
+                        "client_secret": "${GLASSHIVE_OAUTH_CLIENT_SECRET}",
+                    },
+                },
+            },
+        },
+        "agents": {},
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+
+    assert env["GLASSHIVE_MCP_URL"] == "https://glasshive.enterprise.example.com/mcp"
+    assert env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive-ui.enterprise.example.com"
+    assert env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive-api.enterprise.example.com"
+    assert env["GLASSHIVE_ENTERPRISE_MODE"] == "true"
+    assert env["GLASSHIVE_AUTH_MODE"] == "first_party_assertion"
+    assert env["GLASSHIVE_ENTERPRISE_TENANT_ID"] == "tenant-alpha"
+    assert env["GLASSHIVE_SIGNED_LINK_SECRET"] == config_compiler.scoped_secret(
+        "call-session-test",
+        "glasshive-signed-link:tenant-alpha",
+    )
+    assert env["GLASSHIVE_SIGNED_LINK_SECRET"] != env["WPR_API_TOKEN"]
+    assert env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "false"
+    assert env["WPR_DEFAULT_EXECUTION_MODE"] == "docker"
+    assert env["WPR_API_TOKEN"] == "service-token-test"
+    assert env["GLASSHIVE_MCP_SERVICE_TOKEN"] == "service-token-test"
+    assert env["OPENAI_API_KEY"] == "openai-test"
+    assert env["OPENAI_BASE_URL"] == "https://api.openai.example/v1"
+    assert env["OPENAI_REVERSE_PROXY"] == "https://api.openai.example/v1"
+    assert env["OPENAI_MODELS"] == "gpt-5.2-chat"
+    assert env["WPR_MODEL_CODEX_CLI"] == "gpt-5.2-chat"
+    assert env["WPR_MODEL_OPENCLAW_CODEX"] == "gpt-5.2-chat"
+    assert env["WPR_OPENCLAW_USE_CUSTOM_PROVIDER"] == "1"
+    assert env["WPR_OPENCLAW_WIRE_API"] == "openai-completions"
+    assert env["ANTHROPIC_API_KEY"] == "anthropic-test"
+    assert env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.example"
+    assert env["ANTHROPIC_REVERSE_PROXY"] == "https://api.anthropic.example"
+    assert env["WPR_CLAUDE_CODE_USE_API_KEY"] == "1"
+    assert env["PORTKEY_API_KEY"] == "portkey-test"
+    assert env["PORTKEY_BASE_URL"] == "https://api.portkey.ai/v1"
+    assert env["PORTKEY_VIRTUAL_KEY"] == "portkey-vk-test"
+    assert env["VIVENTIUM_OPENAI_AUTH_MODE"] == "api_key"
+    assert env["VIVENTIUM_ANTHROPIC_AUTH_MODE"] == "api_key"
+    assert env["VIVENTIUM_ALLOW_RUNTIME_MODEL_OVERRIDES"] == "true"
+    assert assignments["deep_research"] == ("openai", "gpt-5.2-chat")
+    assert env["WPR_LIBRECHAT_UPLOADS_ROOT"] == "/mnt/librechat/uploads"
+    assert env["WPR_BOOTSTRAP_SOURCE_ROOTS"] == "/mnt/librechat/uploads"
+    assert env["GLASSHIVE_IDLE_TERMINATE_AFTER_S"] == "900"
+    assert env["GLASSHIVE_IDLE_REAPER_INTERVAL_S"] == "30"
+    assert env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER"] == "2"
+    assert env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT"] == "8"
+    assert env["GLASSHIVE_MAX_WORKSPACES_PER_USER"] == "15"
+    assert env["GLASSHIVE_MAX_WORKSPACES_PER_TENANT"] == "60"
+    assert env["GLASSHIVE_ARTIFACT_DOWNLOAD_MAX_BYTES"] == "1048576"
+    assert env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] == "https://api.enterprise.example.com/api/viventium/glasshive/callback"
+
+    servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")
+    glasshive = servers["glasshive-workers-projects"]
+    assert glasshive["url"] == "${GLASSHIVE_MCP_URL}"
+    assert "X-WPR-Token" not in glasshive["headers"]
+    assert glasshive["headers"]["X-Viventium-Tenant-Id"] == "tenant-alpha"
+    assert glasshive["headers"]["X-Viventium-User-Id"] == "{{LIBRECHAT_USER_ID}}"
+    assert glasshive["headers"]["X-Viventium-User-Email"] == "{{LIBRECHAT_USER_EMAIL}}"
+    assert glasshive["headers"]["X-Viventium-User-Role"] == "{{LIBRECHAT_USER_ROLE}}"
+    assert glasshive["requiresOAuth"] is True
+    assert glasshive["oauth"]["authorization_url"] == "https://login.example.com/authorize"
+    assert glasshive["oauth"]["redirect_uri"] == (
+        "https://api.enterprise.example.com/api/mcp/glasshive-workers-projects/oauth/callback"
+    )
+    librechat_yaml = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+    assert "glasshive.enterprise.example.com" in librechat_yaml["mcpSettings"]["allowedDomains"]
+    assert "glasshive-ui.enterprise.example.com" in librechat_yaml["mcpSettings"]["allowedDomains"]
+    assert "glasshive-api.enterprise.example.com" in librechat_yaml["mcpSettings"]["allowedDomains"]
+
+
+def test_glasshive_azure_enterprise_local_simulation_compiles_matching_ports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "http://glasshive.localtest.me:8877/mcp",
+        "operator_base_url": "http://glasshive.localtest.me:8875",
+        "enterprise": {
+            "tenant_id": "tenant-local-sim",
+            "auth": {
+                "mode": "first_party_assertion",
+                "service_token": {"secret_value": "service-token-test"},
+            },
+        },
+    }
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["GLASSHIVE_MCP_URL"] == "http://glasshive.localtest.me:8877/mcp"
+    assert env["GLASSHIVE_OPERATOR_BASE_URL"] == "http://glasshive.localtest.me:8875"
+    assert env["GLASSHIVE_MCP_PORT"] == "8877"
+    assert env["GLASSHIVE_UI_PORT"] == "8875"
+    assert env["GLASSHIVE_SIGNED_LINK_SECRET"] == config_compiler.scoped_secret(
+        "call-session-test",
+        "glasshive-signed-link:tenant-local-sim",
+    )
+    assert env["GLASSHIVE_SIGNED_LINK_SECRET"] != env["WPR_API_TOKEN"]
+
+
+def test_glasshive_azure_enterprise_rejects_signed_link_secret_equal_to_service_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.enterprise.example.com/mcp",
+        "operator_base_url": "https://glasshive.enterprise.example.com",
+        "enterprise": {
+            "tenant_id": "tenant-alpha",
+            "signed_link_secret": {"secret_value": "same-secret"},
+            "auth": {
+                "mode": "first_party_assertion",
+                "service_token": {"secret_value": "same-secret"},
+            },
+        },
+    }
+
+    with pytest.raises(SystemExit, match="signed_link_secret must differ from the service token"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
+def test_glasshive_azure_enterprise_client_header_token_delivery_is_explicit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    config = minimal_compile_config()
+    config["runtime"]["network"] = {"public_api_origin": "https://api.enterprise.example.com"}
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "deployment_mode": "azure_enterprise_vm_docker",
+        "mcp_url": "https://glasshive.enterprise.example.com/mcp",
+        "operator_base_url": "https://glasshive.enterprise.example.com",
+        "enterprise": {
+            "tenant_id": "tenant-alpha",
+            "auth": {
+                "mode": "first_party_assertion",
+                "service_token_delivery": "client_header",
+                "service_token": {"secret_value": "service-token-test"},
+            },
+        },
+    }
+
+    servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")
+
+    assert servers["glasshive-workers-projects"]["headers"]["X-WPR-Token"] == "${GLASSHIVE_MCP_SERVICE_TOKEN}"
+
+
+def test_glasshive_azure_enterprise_rejects_localhost_cloud_urls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {"profile": "isolated", "call_session_secret": {"secret_value": "call-session-test"}},
+        "llm": {
+            "activation": {"provider": "groq", "auth_mode": "api_key", "secret_value": "groq-test"},
+            "primary": {"provider": "openai", "auth_mode": "api_key", "secret_value": "openai-test"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+            "glasshive": {
+                "enabled": True,
+                "deployment_mode": "azure_enterprise_vm_docker",
+                "mcp_url": "http://127.0.0.1:8767/mcp",
+                "operator_base_url": "https://glasshive.enterprise.example.com",
+            },
+        },
+        "agents": {},
+    }
+
+    with pytest.raises(SystemExit, match="non-localhost"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+
+def test_glasshive_azure_enterprise_rejects_localhost_oauth_redirect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "call-session-test"},
+            "network": {"public_api_origin": "https://api.enterprise.example.com"},
+        },
+        "llm": {
+            "activation": {"provider": "groq", "auth_mode": "api_key", "secret_value": "groq-test"},
+            "primary": {"provider": "openai", "auth_mode": "api_key", "secret_value": "openai-test"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "telegram": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+            "glasshive": {
+                "enabled": True,
+                "deployment_mode": "azure_enterprise_vm_docker",
+                "mcp_url": "https://glasshive.enterprise.example.com/mcp",
+                "operator_base_url": "https://glasshive.enterprise.example.com",
+                "enterprise": {
+                    "tenant_id": "tenant-alpha",
+                    "auth": {"service_token": {"secret_value": "service-token-test"}},
+                    "oauth": {
+                        "enabled": True,
+                        "authorization_url": "https://login.example.com/authorize",
+                        "token_url": "https://login.example.com/token",
+                        "redirect_uri": "http://localhost:3080/api/mcp/glasshive-workers-projects/oauth/callback",
+                    },
+                },
+            },
+        },
+        "agents": {},
+    }
+
+    with pytest.raises(SystemExit, match="enterprise.oauth.redirect_uri"):
+        config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")
+
+
 def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime_phase1"
     runtime_dir.mkdir(parents=True)
@@ -903,6 +1322,39 @@ def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -
         assert "prevent duplicates" in instructions
         assert "do not fabricate" in instructions
         assert "do not branch on prompt text" in instructions
+
+
+def test_source_of_truth_exposes_glasshive_native_scheduler_tools() -> None:
+    expected_tools = {
+        "workspace_schedule_mcp_glasshive-workers-projects",
+        "worker_schedule_mcp_glasshive-workers-projects",
+        "worker_schedules_mcp_glasshive-workers-projects",
+    }
+
+    agents_bundle = load_source_of_truth_agents_bundle()
+    main_agent = agents_bundle["mainAgent"]
+    assert expected_tools.issubset(set(main_agent["tools"]))
+    assert "Use GlassHive MCP scheduling tools" in main_agent["instructions"]
+    assert "Never claim a GlassHive schedule exists unless" in main_agent["instructions"]
+
+    glasshive_policy = next(
+        server
+        for server in agents_bundle["config"]["viventium"]["background_cortices"]["activation_policy"][
+            "direct_action_mcp_servers"
+        ]
+        if server["server"] == "glasshive-workers-projects"
+    )
+    assert expected_tools.issubset(set(glasshive_policy["tool_names"]))
+
+    librechat_source = load_source_of_truth_librechat_yaml()
+    glasshive_lc_policy = next(
+        server
+        for server in librechat_source["viventium"]["background_cortices"]["activation_policy"][
+            "direct_action_mcp_servers"
+        ]
+        if server["server"] == "glasshive-workers-projects"
+    )
+    assert expected_tools.issubset(set(glasshive_lc_policy["tool_names"]))
 
 
 def test_config_compiler_compile_phase_ignores_stale_generated_source_override(tmp_path: Path) -> None:
@@ -1418,6 +1870,7 @@ def test_build_agent_assignments_use_current_generation_models() -> None:
     assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-7")
     assert assignments["support"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
+
 
 def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> None:
     config = {
@@ -2262,6 +2715,7 @@ def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path)
                 "false_interruption_timeout_s": 1.8,
                 "resume_false_interruption": True,
                 "min_consecutive_speech_delay_s": 0.25,
+                "aec_warmup_duration_s": 0.75,
             },
             "worker": {
                 "initialize_process_timeout_s": 55,
@@ -2307,6 +2761,7 @@ def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path)
     assert "VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S=1.8" in runtime_env
     assert "VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION=true" in runtime_env
     assert "VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S=0.25" in runtime_env
+    assert "VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S=0.75" in runtime_env
     assert "VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S=55" in runtime_env
     assert "VIVENTIUM_VOICE_IDLE_PROCESSES=2" in runtime_env
     assert "VIVENTIUM_VOICE_WORKER_LOAD_THRESHOLD=0.82" in runtime_env
@@ -3513,6 +3968,8 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
                     "max_files_per_run": 12,
                     "max_chars_per_file": 200000,
                     "summary_max_chars": 28000,
+                    "reference_memory_max_chars": 18000,
+                    "reference_messages_max_chars": 22000,
                     "stable_evidence_max_age_days": 45,
                     "rag_mode": "detailed_summary_only",
                 }
@@ -3570,6 +4027,8 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_REFERENCE_MEMORY_MAX_CHARS=18000" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_REFERENCE_MESSAGES_MAX_CHARS=22000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE=detailed_summary_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in librechat_env
@@ -3707,6 +4166,7 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
+    assert "OPENAI_MODELS=" not in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=anthropic" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MODEL=claude-opus-4-7" in runtime_env

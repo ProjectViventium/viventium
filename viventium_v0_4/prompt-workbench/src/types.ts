@@ -37,6 +37,8 @@ export interface PromptDetail {
   id: string;
   path: string;
   text: string;
+  workingTreeBaseText?: string | null;
+  workingTreeChanged?: boolean;
   metadata: Record<string, unknown>;
   body: string;
   rendered: string;
@@ -46,6 +48,13 @@ export interface PromptDetail {
   includes: string[];
   dependents: string[];
   gitHistory: Array<GitHistoryRow>;
+}
+
+export interface PromptRevision {
+  promptId: string;
+  revision: string;
+  path: string;
+  text: string;
 }
 
 export interface ChangeSummary {
@@ -60,6 +69,7 @@ export interface GitHistoryRow {
   subject: string;
   patch?: string;
   changeSummary?: ChangeSummary;
+  workingTree?: boolean;
 }
 
 export interface SyncAgent {
@@ -162,7 +172,29 @@ export interface PromptWorkbenchContext {
   };
   evalRuns: EvalRun[];
   qaCoverage: Array<{ id: string; title: string; source: string; lastRun?: string }>;
+  relatedConfig?: Array<{
+    id: string;
+    title: string;
+    path: string;
+    selector: string;
+    summary: string;
+    status: string;
+    items: string[];
+    gitHistory: GitHistoryRow[];
+  }>;
   sync?: SyncAgent;
+  runtimePromptBundle?: {
+    status: string;
+    reason: string;
+    promptState: string;
+    promptAffected: boolean;
+    liveBundleAvailable: boolean;
+    driftCount?: number | null;
+    candidateCount?: number | null;
+    sourcePromptCount?: number | null;
+    livePromptCount?: number | null;
+    compareReviewed?: boolean;
+  };
 }
 
 export interface FrameLog {
@@ -174,4 +206,118 @@ export interface FrameLog {
   layer_hashes: Record<string, string>;
   layer_tokens: Record<string, number>;
   decision: Record<string, unknown>;
+}
+
+export interface AuthStatus {
+  authenticated: boolean;
+  admin: boolean;
+  method: string;
+  userId?: string | null;
+  email?: string | null;
+  reason?: string | null;
+}
+
+export interface VariableRegistry {
+  variables: Array<{ name: string; kind: string; wrapper: string; description: string }>;
+  functions: Array<{ name: string; kind: string; wrapper: string; description: string; arguments?: string[] }>;
+}
+
+export interface VariableRenderResult {
+  rendered: string;
+  renderedHash: string;
+  variableSnapshot: {
+    resolvedAt: string;
+    userId: string;
+    items: Array<{
+      placeholder: string;
+      wrapper: string;
+      kind: string;
+      hash: string;
+      value: unknown;
+      rendered: string;
+    }>;
+  };
+  variableSnapshotJson: string;
+  variableSnapshotHash: string;
+}
+
+export interface ScheduledPromptRun {
+  runId: string;
+  taskId?: string;
+  definitionId?: string;
+  versionId?: string;
+  dueAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  status: string;
+  executor: string;
+  renderedHash?: string;
+  variableSnapshotHash?: string;
+  glasshiveProjectId?: string;
+  glasshiveWorkerId?: string;
+  glasshiveRunId?: string;
+  resultSummary?: string;
+  errorClass?: string;
+  privateDetailPointer?: string;
+  updatedAt?: string;
+}
+
+export interface ScheduledPrompt {
+  id: string;
+  taskId?: string;
+  userId?: string;
+  title: string;
+  sourcePromptId?: string;
+  templateId?: string;
+  promptText: string;
+  schedule: Record<string, unknown>;
+  timezone?: string;
+  active: boolean;
+  channel?: string | string[];
+  executor?: string;
+  conversationPolicy?: 'new' | 'same';
+  memoryWriteMode: string;
+  myFolder?: string;
+  workspaceRoot?: string | null;
+  workspaceAlias?: string | null;
+  executionProfile?: string | null;
+  executionMode?: string | null;
+  glasshiveWorkerStrategy?: 'same_worker' | 'new_worker_each_run' | null;
+  nextRunAt?: string;
+  lastStatus?: string;
+  latestVersion?: {
+    id: string;
+    versionNumber: number;
+    renderedHash: string;
+    variableSnapshotHash: string;
+    createdAt: string;
+  };
+  recentRuns: ScheduledPromptRun[];
+  sourceKind?: 'workbench_definition' | 'user_schedule';
+  sourceLabel?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduledPromptTemplate {
+  id: string;
+  title: string;
+  promptText: string;
+  schedule: Record<string, unknown>;
+  active: boolean;
+  memoryWriteMode: string;
+}
+
+export interface ScheduledPromptMemoryProposal {
+  proposalId: string;
+  fileName: string;
+  updatedAt?: string;
+  actionCount: number;
+  actions: Array<{
+    action: 'set' | 'delete';
+    key: string;
+    valueHash?: string | null;
+    valuePreview?: string;
+    reason?: string;
+  }>;
 }

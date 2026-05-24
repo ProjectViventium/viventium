@@ -238,3 +238,37 @@ shipped background-agent roster.
     environment error, the report must mark `Result: BLOCKED` with a public-safe reason.
   - Blocked provider/auth evidence must not be counted as an activation-model failure or success.
   - A blocked browser run cannot satisfy ACT-18 through ACT-21 outcome signoff.
+
+### ACT-23 Deferred tool-cortex hold must not render as a connection error
+
+- User prompt:
+  - "Check my synthetic inbox sources and give me a short status update. Exclude the synthetic low-priority project."
+- Expected primary activations:
+  - `MS365`
+  - `Google`
+- Outcome assertions:
+  - The initial parent assistant message may show deterministic runtime hold text while the tool
+    cortices finish, but it must not include a visible generic provider, connection, or completion
+    error card.
+  - A successful Phase B follow-up attached to that parent must render visibly and persist after
+    refresh.
+  - Stored parent `messages.content` may include runtime hold text and completed cortex insight
+    parts, but must not keep a stale `completion_error` or `late_stream_termination` part once a
+    successful cortex follow-up exists.
+  - Missing connected-account/tool results must be stated as degraded evidence inside the follow-up
+    or cortex result, not as a browser "Connection error. Please retry." failure.
+
+### ACT-24 Productivity cortices must have live provider tools
+
+- User prompt:
+  - "Check both synthetic Outlook and Gmail inboxes and summarize the important action items. Exclude the synthetic low-priority vendor thread."
+- Expected primary activations:
+  - `MS365`
+  - `Google`
+- Outcome assertions:
+  - The MS365 cortex must initialize with the owned Microsoft 365 MCP mail/calendar/file tools, not an empty tool list.
+  - The Google cortex must initialize with the owned Google Workspace MCP Gmail/calendar/Drive tools, not file search or generic reasoning-only tools.
+  - If connected-account auth is present, the runtime must show `connected_account_runtime` for those cortices and complete current-run provider tool calls before synthesis.
+  - The final visible result must distinguish verified current-run inbox evidence from degraded or missing auth; it must not substitute conversation recall when provider tools are unavailable.
+  - The Phase B follow-up must preserve the live main-agent provider/model route and must not switch
+    to a compiled/source default provider after the parent response has already run.

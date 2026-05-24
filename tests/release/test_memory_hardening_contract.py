@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import plistlib
 import re
 import subprocess
@@ -26,6 +27,55 @@ memory_harden = importlib.util.module_from_spec(MEMORY_HARDEN_SPEC)
 MEMORY_HARDEN_SPEC.loader.exec_module(memory_harden)
 
 
+def _prompt_body(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    match = re.match(r"\A---\n.*?\n---\n(?P<body>.*)\Z", text, re.DOTALL)
+    assert match, f"Prompt file missing frontmatter: {path}"
+    return match.group("body").strip()
+
+
+def _frontmatter_version(path: Path) -> int:
+    text = path.read_text(encoding="utf-8")
+    match = re.match(r"\A---\n(?P<meta>.*?)\n---\n", text, re.DOTALL)
+    assert match, f"Prompt file missing frontmatter: {path}"
+    version = re.search(r"^version:\s*(\d+)\s*$", match.group("meta"), re.MULTILINE)
+    assert version, f"Prompt file missing version: {path}"
+    return int(version.group(1))
+
+
+def _fallback_template(script: str, function_name: str) -> str:
+    match = re.search(
+        rf"function {function_name}\b[\s\S]*?\n  const fallback = `(?P<body>[\s\S]*?)`;\n\n  return getPromptText",
+        script,
+    )
+    assert match, f"Missing fallback template in {function_name}"
+    return (
+        match.group("body")
+        .replace("${maxChanges}", "{{max_changes}}")
+        .replace("${liveMemoryInstructions}", "{{live_memory_instructions}}")
+        .replace("${localWorkpackJson}", "{{local_workpack_json}}")
+        .replace("${createdAt}", "{{created_at}}")
+        .replace("${maxChars}", "{{max_chars}}")
+        .replace("${transcriptEnvelopeJson}", "{{transcript_envelope_json}}")
+        .strip()
+    )
+
+
+def _fallback_transcript_caveat(script: str) -> str:
+    match = re.search(
+        r"const FALLBACK_TRANSCRIPT_CAVEAT_PROMPT =\n  (?P<literal>\"(?:[^\"\\]|\\.)*\");",
+        script,
+    )
+    assert match, "Missing fallback transcript caveat prompt"
+    return json.loads(match.group("literal"))
+
+
+def _transcript_prompt_version_constant(script: str) -> int:
+    match = re.search(r"const TRANSCRIPT_PROMPT_VERSION = (\d+);", script)
+    assert match, "Missing transcript prompt version constant"
+    return int(match.group(1))
+
+
 def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     settings = config_compiler.resolve_memory_hardening_settings({})
 
@@ -42,6 +92,175 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["anthropic_effort"] == "xhigh"
     assert settings["openai_reasoning_effort"] == "xhigh"
     assert settings["transcripts"]["rag_mode"] == "detailed_summary_only"
+    assert settings["transcripts"]["reference_memory_max_chars"] == 24000
+    assert settings["transcripts"]["reference_messages_max_chars"] == 36000
+
+
+def test_memory_hardening_default_fallbacks_respect_provider_boundary() -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+process.env.VIVENTIUM_PRIMARY_PROVIDER = 'anthropic';
+process.env.VIVENTIUM_SECONDARY_PROVIDER = '';
+process.env.VIVENTIUM_MEMORY_HARDENING_PROVIDER = 'anthropic';
+process.env.VIVENTIUM_MEMORY_HARDENING_MODEL = '';
+process.env.VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS = '';
+const defaultCandidates = hardener.resolveProvider({}).candidates;
+process.env.VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS = 'anthropic:opus:xhigh,openai:gpt-5.5:high';
+const explicitCandidates = hardener.resolveProvider({}).candidates;
+process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert {candidate["provider"] for candidate in payload["defaultCandidates"]} == {"anthropic"}
+    assert any(candidate["model"] == "claude-opus-4-7" for candidate in payload["defaultCandidates"])
+    assert any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
+    assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
+
+
+def test_memory_hardening_vector_presence_failures_are_not_model_failures() -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const timeout = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+const unavailable = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+process.stdout.write(JSON.stringify({
+  modelTimeout: hardener.classifyModelCallFailure(timeout),
+  vectorTimeout: hardener.classifyVectorPresenceFailure(timeout),
+  vectorUnavailable: hardener.classifyVectorPresenceFailure(unavailable)
+}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["modelTimeout"] == "model_call_timeout"
+    assert payload["vectorTimeout"] == "vector_presence_timeout"
+    assert payload["vectorUnavailable"] == "vector_presence_unavailable"
+
+
+def test_memory_hardening_runtime_uses_registry_prompts_when_available(tmp_path: Path) -> None:
+    bundle_path = tmp_path / "prompt-bundle.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "prompt_count": 3,
+                "prompts": {
+                    "memory.transcript_summarizer": {
+                        "metadata": {"version": 9, "strict_variables": True},
+                        "body": "REGISTRY TRANSCRIPT {{created_at}} {{max_chars}} {{transcript_envelope_json}}",
+                    },
+                    "memory.hardener_consolidation": {
+                        "metadata": {"version": 4, "strict_variables": True},
+                        "body": "REGISTRY HARDENER {{max_changes}} {{live_memory_instructions}} {{local_workpack_json}}",
+                    },
+                    "memory.transcript_caveat": {
+                        "metadata": {"version": 1},
+                        "body": "REGISTRY CAVEAT",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = """
+process.env.VIVENTIUM_PROMPT_BUNDLE_PATH = process.argv[1];
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const { resetPromptRegistryForTests } = require('./viventium_v0_4/LibreChat/api/server/services/viventium/promptRegistry');
+resetPromptRegistryForTests();
+const transcript = {
+  artifactId: 'meeting_transcript:synthetic',
+  filename: 'synthetic.txt',
+  file_mtime: '2026-05-21T10:00:00.000Z',
+  today_date: '2026-05-21',
+  source_status: 'new_or_changed',
+  user_identity: { display_names: ['QA User'] },
+  calendar_match: null,
+  transcript_caveat_prompt: hardener.transcriptCaveatPrompt(),
+  raw_char_count: 18,
+  raw_byte_count: 18,
+  supplied_char_count: 18,
+  input_complete: true,
+  file_content: '<transcript>synthetic</transcript>'
+};
+const prompt = hardener.buildTranscriptSummaryPrompt({
+  transcript,
+  now: new Date('2026-05-21T12:00:00.000Z'),
+  maxChars: 123
+});
+const hardenerPrompt = hardener.buildHardenerPrompt({
+  user: { _id: '507f1f77bcf86cd799439011' },
+  memoryConfig: {
+    validKeys: ['context'],
+    keyLimits: { context: 1200 },
+    tokenLimit: 8000,
+    instructions: 'live instructions'
+  },
+  memories: [],
+  messages: [],
+  meetingTranscripts: [],
+  now: new Date('2026-05-21T12:00:00.000Z'),
+  lookbackDays: 7,
+  maxChanges: 2
+});
+process.stdout.write(JSON.stringify({
+  prompt,
+  hardenerPrompt,
+  caveat: hardener.transcriptCaveatPrompt(),
+  transcriptPromptVersion: hardener.transcriptPromptVersion()
+}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(bundle_path)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["prompt"].startswith("REGISTRY TRANSCRIPT 2026-05-21T12:00:00.000Z 123")
+    assert '"artifactId":"meeting_transcript:synthetic"' in payload["prompt"]
+    assert payload["hardenerPrompt"].startswith("REGISTRY HARDENER 2 live instructions")
+    assert payload["caveat"] == "REGISTRY CAVEAT"
+    assert payload["transcriptPromptVersion"] == 9
+
+
+def test_memory_hardening_inline_fallbacks_match_registry_prompt_sources() -> None:
+    script = (ROOT / "viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js").read_text(encoding="utf-8")
+
+    expected = {
+        "memory.hardener_consolidation": _prompt_body(
+            ROOT / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/memory/hardener_consolidation.md"
+        ),
+        "memory.transcript_summarizer": _prompt_body(
+            ROOT / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/memory/transcript_summarizer.md"
+        ),
+        "memory.transcript_caveat": _prompt_body(
+            ROOT / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/memory/transcript_caveat.md"
+        ),
+    }
+
+    assert _fallback_template(script, "buildHardenerPrompt") == expected["memory.hardener_consolidation"]
+    assert _fallback_template(script, "buildTranscriptSummaryPrompt") == expected["memory.transcript_summarizer"]
+    assert _fallback_transcript_caveat(script) == expected["memory.transcript_caveat"]
+    assert _frontmatter_version(
+        ROOT / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/memory/transcript_summarizer.md"
+    ) == _transcript_prompt_version_constant(script)
 
 
 def test_memory_hardening_wrapper_passes_compiled_model_tuple() -> None:
@@ -272,6 +491,218 @@ def test_memory_hardening_cli_user_email_overrides_compiled_operator_scope() -> 
     assert command[command.index("--user-email") + 1] == "explicit@example.com"
 
 
+def test_ingest_transcripts_defaults_to_zero_saved_memory_changes() -> None:
+    class Args:
+        repo_root = ROOT
+        app_support_dir = ROOT / ".tmp-app-support"
+        runtime_dir = ROOT / ".tmp-runtime"
+        command = "ingest-transcripts"
+        apply = True
+        mongo_uri = None
+        config_path = None
+        run_id = None
+        user_email = None
+        user_id = None
+        lookback_days = None
+        min_user_idle_minutes = None
+        max_changes_per_user = None
+        max_input_chars = None
+        provider = None
+        model = None
+        proposal_file = None
+        transcripts_dir = None
+        transcript_max_files_per_run = None
+        transcript_max_chars_per_file = None
+        transcript_summary_max_chars = None
+        transcript_reference_memory_max_chars = None
+        transcript_reference_messages_max_chars = None
+        transcript_rag_mode = None
+        allow_delete = False
+        ignore_idle_gate = False
+        skip_model_probe = False
+        allow_partial_lookback = False
+        scheduled = False
+        json = False
+
+    command = memory_harden.node_command(
+        Args(),
+        {
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+        },
+    )
+
+    assert "--transcripts-only" in command
+    assert command[command.index("--max-changes-per-user") + 1] == "0"
+
+
+def test_ingest_transcripts_until_caught_up_requires_apply() -> None:
+    class Args:
+        apply = False
+        max_batches = 2
+
+    try:
+        memory_harden.run_transcript_backfill_until_caught_up(Args(), {}, {})
+    except SystemExit as exc:
+        assert "--until-caught-up requires --apply" in str(exc)
+    else:
+        raise AssertionError("expected --until-caught-up dry-run to fail closed")
+
+
+def test_ingest_transcripts_until_caught_up_stops_when_batches_drain(monkeypatch) -> None:
+    class Args:
+        repo_root = ROOT
+        apply = True
+        max_batches = 3
+
+    class Completed:
+        def __init__(self, skipped: int):
+            self.returncode = 0
+            self.stderr = ""
+            self.stdout = json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "run_id": f"run-{skipped}",
+                    "users": [
+                        {
+                            "transcript_ingest": {
+                                "files_skipped_by_cap": skipped,
+                            }
+                        }
+                    ],
+                }
+            )
+
+    calls: list[int] = []
+
+    def fake_run_once(args, runtime_env, env):
+        skipped = [2, 0][len(calls)]
+        calls.append(skipped)
+        return Completed(skipped)
+
+    monkeypatch.setattr(memory_harden, "run_node_once", fake_run_once)
+
+    assert memory_harden.run_transcript_backfill_until_caught_up(Args(), {}, {}) == 0
+    assert calls == [2, 0]
+
+
+def test_ingest_transcripts_until_caught_up_json_outputs_final_aggregate(monkeypatch, capsys) -> None:
+    class Args:
+        repo_root = ROOT
+        apply = True
+        max_batches = 3
+        json = True
+
+    class Completed:
+        def __init__(self, skipped: int):
+            self.returncode = 0
+            self.stderr = ""
+            self.stdout = json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "run_id": f"run-{skipped}",
+                    "users": [
+                        {
+                            "status": "proposed",
+                            "transcript_ingest": {
+                                "files_seen": 2,
+                                "files_skipped_by_cap": skipped,
+                            },
+                        }
+                    ],
+                    "apply_results": [{"transcript_vectors": {"uploaded": 1}}],
+                }
+            )
+
+    calls: list[int] = []
+
+    def fake_run_once(args, runtime_env, env):
+        skipped = [2, 0][len(calls)]
+        calls.append(skipped)
+        return Completed(skipped)
+
+    monkeypatch.setattr(memory_harden, "run_node_once", fake_run_once)
+
+    assert memory_harden.run_transcript_backfill_until_caught_up(Args(), {}, {}) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "complete"
+    assert payload["batches_run"] == 2
+    assert payload["batch_run_ids"] == ["run-2", "run-0"]
+    assert payload["users"][0]["transcript_ingest"]["files_skipped_by_cap"] == 0
+    assert payload["apply_results"][0]["transcript_vectors"]["uploaded"] == 1
+
+
+def test_ingest_transcripts_until_caught_up_stops_on_no_progress(monkeypatch, capsys) -> None:
+    class Args:
+        repo_root = ROOT
+        apply = True
+        max_batches = 4
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps(
+            {
+                "schemaVersion": 1,
+                "run_id": "same",
+                "users": [{"transcript_ingest": {"files_skipped_by_cap": 3}}],
+            }
+        )
+
+    calls = 0
+
+    def fake_run_once(args, runtime_env, env):
+        nonlocal calls
+        calls += 1
+        return Completed()
+
+    monkeypatch.setattr(memory_harden, "run_node_once", fake_run_once)
+
+    assert (
+        memory_harden.run_transcript_backfill_until_caught_up(Args(), {}, {})
+        == memory_harden.PARTIAL_BACKFILL_EXIT
+    )
+    assert calls == 2
+    assert "no_batch_progress" in capsys.readouterr().out
+
+
+def test_ingest_transcripts_until_caught_up_exits_partial_on_max_batches(monkeypatch, capsys) -> None:
+    class Args:
+        repo_root = ROOT
+        apply = True
+        max_batches = 2
+
+    class Completed:
+        def __init__(self, skipped: int):
+            self.stdout = json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "run_id": f"still-pending-{skipped}",
+                    "users": [{"transcript_ingest": {"files_skipped_by_cap": skipped}}],
+                }
+            )
+
+        returncode = 0
+        stderr = ""
+
+    calls = 0
+
+    def fake_run_once(args, runtime_env, env):
+        nonlocal calls
+        skipped = [3, 2][calls]
+        calls += 1
+        return Completed(skipped)
+
+    monkeypatch.setattr(memory_harden, "run_node_once", fake_run_once)
+
+    assert (
+        memory_harden.run_transcript_backfill_until_caught_up(Args(), {}, {})
+        == memory_harden.PARTIAL_BACKFILL_EXIT
+    )
+    assert calls == 2
+    assert "max_batches_reached" in capsys.readouterr().out
+
+
 def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_path, monkeypatch) -> None:
     plist_path = tmp_path / "ai.viventium.memory-harden.plist"
     app_support_dir = tmp_path / "app-support"
@@ -310,21 +741,25 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
         },
     )
     payload = plistlib.loads(plist_path.read_bytes())
-    scheduled_command = payload["ProgramArguments"][-1]
+    program_arguments = payload["ProgramArguments"]
 
     assert result["schedule"] == "0 3 * * *"
     assert payload["StartCalendarInterval"] == {"Hour": 3, "Minute": 0}
     assert payload["WorkingDirectory"] == str(app_support_dir)
-    assert not scheduled_command.startswith("cd ")
-    assert "/usr/bin/env -i" in scheduled_command
-    assert f"PATH={Path.home()}/.local/bin:{Path.home()}/.codex/bin:" in scheduled_command
-    assert "/Applications/Codex.app/Contents/Resources" in scheduled_command
-    assert "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" in scheduled_command
-    assert "bin/viventium" not in scheduled_command
-    assert "scripts/viventium/memory_harden.py" in scheduled_command
-    assert "--runtime-dir" in scheduled_command
-    assert "--user-email qa@example.com" in scheduled_command
-    assert "apply --scheduled" in scheduled_command
+    assert program_arguments[0:2] == ["/usr/bin/env", "-i"]
+    assert "/bin/bash" not in program_arguments
+    assert "-lc" not in program_arguments
+    assert any(
+        f"PATH={Path.home()}/.local/bin:{Path.home()}/.codex/bin:" in item
+        for item in program_arguments
+    )
+    assert any(item == "/Applications/Codex.app/Contents/Resources" or "/Applications/Codex.app/Contents/Resources" in item for item in program_arguments)
+    assert any("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" in item for item in program_arguments)
+    assert "bin/viventium" not in " ".join(program_arguments)
+    assert str(ROOT / "scripts" / "viventium" / "memory_harden.py") in program_arguments
+    assert "--runtime-dir" in program_arguments
+    assert program_arguments[program_arguments.index("--user-email") + 1] == "qa@example.com"
+    assert program_arguments[-4:] == ["apply", "--scheduled", "--user-email", "qa@example.com"]
     assert launchctl_calls[-1][0:2] == ["launchctl", "bootstrap"]
 
 
@@ -343,6 +778,7 @@ def test_memory_hardening_cli_reexecs_active_runtime_checkout() -> None:
         "uninstall-helper",
         "status-bar",
         "memory-harden",
+        "transcripts",
     ]:
         assert command in reexec_section
 
@@ -422,8 +858,35 @@ def test_memory_hardening_treats_listen_only_as_soft_transcript_evidence() -> No
 
     assert "type === 'listen_only_transcript'" in text
     assert "role \"ambient_transcript\"" in text
-    assert "stable_memory_requires_corroborated_listen_only_evidence" in text
+    assert "listen_only_memory_requires_user_conversation_corroboration" in text
+    assert "stable_memory_requires_user_conversation_corroboration" in text
+    assert "identity_memory_requires_conversation_corroboration" in text
     assert "listenOnlyConversationSourceIds" in text
+
+
+def test_transcript_identity_memory_requires_chat_corroboration() -> None:
+    script = ROOT / "viventium_v0_4" / "LibreChat" / "scripts" / "viventium-memory-hardening.js"
+    source = script.read_text(encoding="utf-8")
+    memory_doc = (ROOT / "docs/requirements_and_learnings/20_Memory_System.md").read_text(encoding="utf-8")
+    cases = (ROOT / "qa/meeting-transcript-memory/cases.md").read_text(encoding="utf-8")
+    hardener_prompt = (
+        ROOT / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/memory/hardener_consolidation.md"
+    ).read_text(encoding="utf-8")
+    summarizer_prompt = (
+        ROOT / "viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/memory/transcript_summarizer.md"
+    ).read_text(encoding="utf-8")
+
+    assert "const TRANSCRIPT_IDENTITY_MEMORY_KEYS = new Set(['core', 'me']);" in source
+    assert "identity_memory_requires_conversation_corroboration" in source
+    assert "stable_memory_requires_user_conversation_corroboration" in source
+    assert "validUserConversationMessageIds" in source
+    assert "assistant restatements do not count as corroboration" in hardener_prompt
+    assert "not enough for durable memory" in hardener_prompt
+    assert "speaker attribution is unreliable" in summarizer_prompt
+    assert "Stable durable keys (`core`, `me`, `preferences`," in memory_doc
+    assert "user-authored chat/conversation corroboration" in memory_doc
+    assert "Other stable keys such as `preferences`, `world`, and `signals` may use two recent" not in memory_doc
+    assert "MTM-015" in cases
 
 
 def test_memory_hardening_docs_keep_private_artifacts_out_of_public_qa() -> None:

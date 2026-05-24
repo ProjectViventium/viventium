@@ -17,6 +17,7 @@ from sse import (
     sanitize_voice_delta_text,
     sanitize_voice_text,
     sanitize_voice_followup_text,
+    sanitize_voice_tts_text,
     strip_voice_control_tags,
 )
 # === VIVENTIUM END ===
@@ -97,6 +98,74 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("ue202", cleaned.lower())
         self.assertNotIn("turn9custom7", cleaned)
         self.assertEqual(cleaned, "Hello world")
+
+    def test_sanitize_voice_text_preserves_turn_substrings_in_words(self) -> None:
+        for text in [
+            "Saturn5rocket2 launches today",
+            "The return0value1 was set",
+            "An overturn3case4 ruling",
+            "A nocturne is playing",
+            "Take turn 4 now",
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(sanitize_voice_text(text), text)
+
+    def test_sanitize_voice_text_strips_split_bare_turn_id(self) -> None:
+        text = "Persian. turn0search4 If you mean coolest"
+        cleaned = sanitize_voice_text(text)
+        self.assertNotIn("turn0search4", cleaned)
+        self.assertEqual(cleaned, "Persian. If you mean coolest")
+
+    def test_sanitize_voice_text_strips_bracketed_turn_source_shell(self) -> None:
+        text = "Answer \u3010turn0search4\u2020source\u3011 continues"
+        cleaned = sanitize_voice_text(text)
+        self.assertNotIn("turn0search4", cleaned)
+        self.assertNotIn("\u2020source", cleaned)
+        self.assertEqual(cleaned, "Answer continues")
+
+    def test_sanitize_voice_text_strips_concatenated_split_turn_ids(self) -> None:
+        text = "Answer turn0search1turn0news2turn0file3 done"
+        cleaned = sanitize_voice_text(text)
+        self.assertNotIn("turn0search1", cleaned)
+        self.assertNotIn("turn0news2", cleaned)
+        self.assertNotIn("turn0file3", cleaned)
+        self.assertEqual(cleaned, "Answer done")
+
+    def test_sanitize_voice_text_strips_numeric_citation_before_punctuation(self) -> None:
+        text = "Answer [1]. Next [23], done"
+        cleaned = sanitize_voice_text(text)
+        self.assertNotIn("[1]", cleaned)
+        self.assertNotIn("[23]", cleaned)
+        self.assertIn("Answer", cleaned)
+        self.assertIn("Next", cleaned)
+
+    def test_sanitize_voice_delta_text_strips_split_bare_turn_id(self) -> None:
+        cleaned = sanitize_voice_delta_text(" turn0search4 If you mean coolest")
+        self.assertNotIn("turn0search4", cleaned)
+        self.assertEqual(cleaned, " If you mean coolest")
+
+    def test_sanitize_voice_delta_text_strips_split_citation_tail(self) -> None:
+        cleaned = "".join(
+            sanitize_voice_delta_text(chunk)
+            for chunk in ["Answer turn0search4", "\u2020source\u3011 continues"]
+        )
+        self.assertNotIn("turn0search4", cleaned)
+        self.assertNotIn("\u2020source", cleaned)
+        self.assertNotIn("\u3011", cleaned)
+        self.assertEqual(" ".join(cleaned.split()), "Answer continues")
+
+    def test_sanitize_voice_delta_text_strips_split_citation_brackets(self) -> None:
+        cases = [
+            ["Answer \u3010turn0search4", "\u3011 next"],
+            ["Answer \u3010", "turn0search4 next"],
+        ]
+        for chunks in cases:
+            with self.subTest(chunks=chunks):
+                cleaned = "".join(sanitize_voice_delta_text(chunk) for chunk in chunks)
+                self.assertNotIn("turn0search4", cleaned)
+                self.assertNotIn("\u3010", cleaned)
+                self.assertNotIn("\u3011", cleaned)
+                self.assertEqual(" ".join(cleaned.split()), "Answer next")
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
@@ -153,6 +222,65 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         text4 = "Dr.smith went home"
         cleaned4 = sanitize_voice_followup_text(text4)
         self.assertIn("Dr.s", cleaned4)
+
+    def test_sanitize_voice_tts_text_strips_reference_markdown_links_and_code(self) -> None:
+        text = (
+            "Sources: https://example.com/report\n"
+            "Read [the brief](https://example.com/brief). "
+            "```json\n{\"ok\": true}\n```"
+        )
+        cleaned = sanitize_voice_tts_text(text)
+        self.assertNotIn("Sources:", cleaned)
+        self.assertNotIn("https://", cleaned)
+        self.assertNotIn("[the brief]", cleaned)
+        self.assertNotIn("```", cleaned)
+        self.assertIn("the brief.", cleaned)
+
+    def test_sanitize_voice_tts_text_normalizes_urls_domains_and_email(self) -> None:
+        text = "Go to example.com or www.example.org, then email qa@example.com."
+        cleaned = sanitize_voice_tts_text(text)
+        self.assertNotIn("example.com", cleaned)
+        self.assertNotIn("www.example.org", cleaned)
+        self.assertNotIn("qa@example.com", cleaned)
+        self.assertIn("link available", cleaned)
+        self.assertIn("email available", cleaned)
+
+    def test_sanitize_voice_tts_text_does_not_convert_common_filename_domains(self) -> None:
+        text = "Open read.me, index.co, node.app, and thing.dev in the project."
+        cleaned = sanitize_voice_tts_text(text)
+        self.assertIn("read.me", cleaned)
+        self.assertIn("index.co", cleaned)
+        self.assertIn("node.app", cleaned)
+        self.assertIn("thing.dev", cleaned)
+        self.assertNotIn("link available", cleaned)
+
+    def test_sanitize_voice_tts_text_keeps_reference_label_content_without_link(self) -> None:
+        cleaned = sanitize_voice_tts_text("References: I have a few good ones.")
+        self.assertEqual(cleaned, "I have a few good ones.")
+
+    def test_sanitize_voice_tts_text_strips_voice_controls_for_plain_tts(self) -> None:
+        text = '<emotion value="calm"/>Hello <break time="500ms"/>there [laughter].'
+        cleaned = sanitize_voice_tts_text(text, allow_voice_controls=False)
+        self.assertEqual(cleaned, "Hello there.")
+
+    def test_sanitize_voice_tts_text_preserves_supported_voice_controls_when_allowed(self) -> None:
+        text = '<emotion value="calm"/>Hello <break time="500ms"/>there [laughter].'
+        cleaned = sanitize_voice_tts_text(text, allow_voice_controls=True)
+        self.assertIn('<emotion value="calm"/>', cleaned)
+        self.assertIn('<break time="500ms"/>', cleaned)
+        self.assertIn("[laughter]", cleaned)
+        self.assertIn("Hello", cleaned)
+
+    def test_sanitize_voice_tts_text_strips_unknown_angle_tags(self) -> None:
+        text = "Hello <custom data='x'>there</custom> <soft>quiet</soft>."
+        cleaned = sanitize_voice_tts_text(text, allow_voice_controls=True)
+        self.assertNotIn("<custom", cleaned)
+        self.assertNotIn("</custom>", cleaned)
+        self.assertIn("<soft>quiet</soft>", cleaned)
+
+    def test_sanitize_voice_tts_text_can_preserve_trailing_space(self) -> None:
+        cleaned = sanitize_voice_tts_text("invoice cleared ", preserve_trailing_space=True)
+        self.assertEqual(cleaned, "invoice cleared ")
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===

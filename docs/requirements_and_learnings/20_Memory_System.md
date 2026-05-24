@@ -65,10 +65,28 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - Each new or changed transcript is first summarized as its own unit by the configured high-effort
   memory-hardening model. The summarizer receives the raw transcript envelope plus deterministic
   metadata: filename, file mtime, current date, configured/user-derived display names, optional
-  calendar match when available, and the transcript caveat prompt.
+  calendar match when available, the transcript caveat prompt, and a bounded `reference_context`
+  derived from the user's current saved memory plus recent LibreChat conversation messages.
+- Transcript `reference_context` exists only to help the model disambiguate names, recurring
+  projects, jargon, transcript mistakes, and private/separate story boundaries. The summarizer must
+  not import facts from reference context into the meeting summary unless the transcript itself
+  supports them; conflicts remain explicit uncertainty/caveats.
+- The summarizer/model route is configurable and fallback-aware. The default operator candidate
+  order is Claude Code `claude-opus-4-7` at `xhigh`, Claude Code `opus` alias at `xhigh`, then
+  Codex/OpenAI `gpt-5.5` at `high`, then Codex/OpenAI `gpt-5.4` at `high`;
+  `VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS` can override that order with
+  `provider:model:effort` entries. Failed candidate attempts must be logged as redacted
+  reason/status/timeout metadata, not as raw prompts or transcript text.
+- The model probe is an observability check, not a default hard gate. It uses a short configurable
+  timeout and may reorder the run to a candidate that probes healthy; only
+  `VIVENTIUM_MEMORY_HARDENING_REQUIRE_MODEL_PROBE=true` makes probe failure block the run. The real
+  summary/hardener calls still use the same fallback candidate list.
 - The saved-memory hardener receives the generated detailed summary plus provenance/evidence
   metadata, not the raw transcript body. This keeps raw transcript token load out of the hardener
   while preserving the transcript as soft meeting evidence.
+- The hardener also receives current saved memory and recent conversations in the local workpack.
+  Those surfaces should be used by prompt judgment to notice corrections, private boundaries, and
+  likely transcript mistakes, not by runtime string matching.
 - The runtime does no semantic parsing, column detection, participant extraction, or filename
   interpretation. CSV, TXT, MD, JSON, VTT, SRT, and similar text files are all data for the model.
 - The configured transcript folder is expected to contain transcript artifacts. Downloader state or
@@ -79,8 +97,15 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   Hidden files, temp/download partials, state directories, and `.log` files are ignored by default
   as source-folder sidecars.
 - Transcript evidence is softer than chat evidence. A single transcript can support
-  meeting-scoped `moments` or `context`; stable beliefs, identity, direction, or durable preferences
-  require either two recent meeting transcripts or transcript plus chat evidence.
+  meeting-scoped `moments` or `context`. Stable durable keys (`core`, `me`, `preferences`,
+  `world`, `signals`) require user-authored chat/conversation corroboration whenever transcript or
+  Listen-Only evidence is involved. Multiple transcript/ambient sources alone are not enough for
+  durable preferences, durable direction, employer, role, identity, durable relationships, or "who
+  does what" claims.
+- Transcript summaries must preserve diarization uncertainty. If a CSV/export collapses multiple
+  people under one speaker label or otherwise makes speaker attribution unreliable, the summary
+  should say that explicitly and avoid turning ambiguous first-person phrases into durable identity
+  facts.
 - Stable-memory transcript recency is validated against deterministic file metadata from the
   scanned workpack, not model-supplied timestamps.
 - Any non-noop hardener operation must carry valid evidence. Empty evidence is never enough for
@@ -88,9 +113,23 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - Prompt-injection protection comes from explicit untrusted-data sentinels and deterministic output
   validators, not from string-matching transcript content.
 - Content-hash state prevents unchanged files and rename-only changes from being reprocessed.
+- On-demand `ingest-transcripts` is a transcript RAG backfill path by default: it uses
+  `--transcripts-only` and zero saved-memory changes unless the operator explicitly asks for
+  hardener writes. This lets the status-bar/menu action repair summary/inventory vectors without
+  mutating durable memory.
+- User-facing manual ingest should use the same resumable bounded backfill path as the CLI
+  (`--until-caught-up`) when the user explicitly asks the status-bar helper to ingest transcripts.
+  If a run stops partially because caps or max-batch limits remain, the UI must show that as
+  incomplete instead of implying all transcripts are current.
+- Historical prompt-version backfills must be resumable and bounded. A single giant all-history
+  model/process call is not an acceptance path; repeated capped batches must advance processed
+  content state until no source file is skipped by the per-run cap.
 - Processed state is only valid when the expected vector artifact still exists. Apply runs must
   requeue indexed transcript content when Mongo bookkeeping says `embedded=true` but the local
   vector store no longer has the corresponding summary/raw document.
+- If vector presence checks themselves fail, the run records redacted `vector_presence_error`
+  telemetry and avoids destructive repair assumptions. Inconclusive vector checks must not cause
+  mass reprocessing, stale deletes, or a false "no transcripts available" conclusion.
 - User/source-scoped derived transcript artifacts that are no longer represented in the current
   processed-content index are stale and must not remain attached as live recall evidence.
 - Files deferred by deterministic transcript caps are not considered processed; later scheduled or
@@ -122,6 +161,10 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - The inventory vector text itself must not prepend the generic transcript artifact header; lifecycle
   identifiers stay in Mongo/vector metadata, while the model-visible inventory remains a compact
   list for who/when/context recall.
+- The inventory must also show compact source-folder completeness counts when scan state exists:
+  processed, pending, deferred, and skipped non-text. A broad recall answer should be able to
+  distinguish "all processed summaries are listed" from "some source files are pending/deferred"
+  without seeing raw transcript text.
 - Broad transcript questions, including "list my recent conversations based on transcripts
   chronologically and give me a 5 line summary based on the actual context", must use that inventory
   surface to see the processed transcript set before composing the answer. The inventory exists so
@@ -144,6 +187,12 @@ The v0_4 product has four different continuity surfaces that must not be conflat
 - Memory-hardening locks are concurrency guards, not durable state. A lock with a live recorded PID
   must fail closed, but a stale lock whose PID no longer exists must be cleared before the next
   manual or scheduled run so recovery does not require hand-editing local state.
+- The transcript summarizer, transcript caveat, and nightly batch hardener wrapper are registry-owned
+  prompts under `source_of_truth/prompts/memory/` and must be visible in Prompt Workbench with linked
+  eval families. Runtime may keep inline fallbacks for older local installs, but source edits should
+  flow through the prompt registry and Workbench draft/eval path. Prompt Workbench must also expose
+  whether the selected runtime prompt is compiled into the local prompt bundle or is still
+  source-only/drifted, without exposing local runtime paths.
 
 ### Listen-Only call transcript evidence
 
@@ -163,12 +212,12 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   shape rule only; memory and recall keep using the `listen_only_transcript` metadata boundary.
 - The memory hardener receives these entries as `ambient_transcript` evidence. It must treat them
   like transcript evidence: softer than chat, untrusted as instructions, and insufficient by itself
-  for stable identity, durable preferences, long-term direction, or beliefs unless corroborated.
-- Stable-memory corroboration must count distinct ambient sources, not adjacent rows. Two rows from
-  the same Listen-Only call session are one ambient source for stable-memory gating; a stable write
-  needs either normal conversation evidence plus recent ambient evidence, or multiple distinct
-  ambient source ids. Transcript-scoped keys such as `context` and `moments` can use single-session
-  ambient context.
+  for stable durable memory unless corroborated by user-authored chat.
+- Stable-memory corroboration must count user-authored conversation evidence plus recent ambient
+  evidence, not adjacent rows. Two rows from the same Listen-Only call session are one ambient
+  source for run telemetry, but multiple ambient source ids alone are not enough for stable durable
+  memory. Transcript-scoped keys such as `context` and `moments` can use single-session ambient
+  context.
 - Conversation recall excludes Listen-Only transcript entries at the corpus query boundary and in
   fallback filters so overheard room text does not masquerade as user-authored chat history or
   starve normal messages from the recall window.
@@ -372,7 +421,8 @@ both code and QA:
 - The owned product fix is:
   - treat Anthropic default thinking as active when sanitizing memory-writer config
   - remove `temperature` whenever Anthropic thinking is active by default or explicitly
-  - for adaptive-era Anthropic models currently used by Viventium memory (`claude-sonnet-4-5`),
+- for adaptive-era Anthropic models used by the fallback Viventium memory route
+  (`claude-sonnet-4-5`),
     omit explicit `temperature` entirely from the shipped memory-writer config so fresh installs do
     not rely on runtime stripping to stay valid
   - if the memory run is also forcing tool use, remove `thinking` entirely instead of setting it to
@@ -607,21 +657,63 @@ Product contract:
   local account; empty means all local users are eligible
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
   auth, preferring Claude Code `claude-opus-4-7` at `xhigh` when Anthropic is available and falling
-  back to Codex/OpenAI `gpt-5.5` at `xhigh` when OpenAI is the available foundation route
-- the OpenAI/Codex hardening path must pass a structured output schema and `xhigh` reasoning effort
-  to the Codex CLI, matching the compiler-emitted tuple instead of relying on stale internal
-  hardener fallbacks
+  back through the Claude Code `opus` alias before Codex/OpenAI `gpt-5.5` at `high` and then
+  `gpt-5.4` at `high` when OpenAI is the available foundation route
+- the OpenAI/Codex hardening path must pass a structured output schema and the configured reasoning
+  effort to the Codex CLI, matching the compiler-emitted tuple and configurable fallback list
+  instead of relying on stale internal hardener fallbacks
+- the generated macOS LaunchAgent must use direct `ProgramArguments` through `/usr/bin/env -i`
+  rather than `/bin/bash -lc`; the job receives the minimal deterministic environment and invokes
+  `scripts/viventium/memory_harden.py` directly at the daily 3am wall-clock schedule
 - the macOS status-bar helper may expose an Advanced action for manual transcript ingest; that
   action must call the memory-hardening wrapper directly, surface the active user scope before and
   after the run, surface redacted count telemetry such as files checked, summaries uploaded, and
   files deferred by caps, bypass the idle gate because it is an explicit user action, and log only
   status/scope/counts, never transcript text
+- the macOS status-bar helper should also expose `Advanced > Choose Transcripts Folder...` next to
+  manual ingest. The picker writes only the canonical config key
+  `runtime.memory_hardening.transcripts.source_dir` through the public CLI/config patcher, stores a
+  local backup, recompiles generated runtime files, and must not hardcode a user email, machine
+  path, or generated env override in source.
 - public docs and QA artifacts must contain only hashed user ids, counts, key names, and policy
   outcomes
 
 The job may use host-authenticated Claude Code or Codex CLI sessions. That is a privacy and billing
 boundary different from the live user-connected memory writer, so semantic hardening must remain
 explicitly enabled by the operator and covered by the public/private boundary doc.
+
+### 2.11 Chat-time saved-memory latency contract
+
+The May 20, 2026 "Use memory" delay investigation split saved-memory behavior into two runtime
+lanes:
+
+- the main chat critical path reads only a bounded, deduped memory read profile
+- the memory writer initializes and runs after the main response is produced
+
+Product rules:
+
+- `memory.readProfile` in `librechat.yaml` owns the chat-time memory read budget, key priority
+  order, per-key read caps, and short cache TTL.
+- The chat-time read path must call `getAllUserMemories` and format the bounded profile directly.
+  It must not initialize the writer agent or run deterministic maintenance before the main model
+  starts.
+- Deterministic saved-memory maintenance remains valid, but it belongs to writer/hardening paths,
+  not the per-chat read profile.
+- Deep timing must keep the phases separate: memory read timing belongs under build-message/TTFT
+  timing, while `memory_writer_*` timing belongs to the detached post-response writer lane.
+- Provider selection must be tested at both the user-visible main agent and memory-writer surfaces.
+  A healthy memory writer does not pass the end-to-end case if the live main agent fails before the
+  user receives an answer.
+- Provider auth failures in the writer are a degraded/reconnect state. Repeated 401s must be
+  health-gated for a bounded interval instead of retrying the same failed writer on every chat.
+- If the main assistant has already produced meaningful text, known local retrieval tail timeouts
+  and post-stream finalization failures must be logged and degraded without appending a red
+  provider-error content part to the completed assistant message. Unclassified generic exceptions
+  before the provider stream resolves and specific pre-answer provider failures still need visible
+  error reporting.
+- Duplicate saved-memory keys and duplicate connected-provider key rows are repaired with the
+  dry-run-first `bin/viventium memory-dedupe` workflow. Unique indexes are created only after an
+  apply run proves no duplicates remain.
 
 ### What to check
 
@@ -640,6 +732,11 @@ explicitly enabled by the operator and covered by the public/private boundary do
 - long-conversation corrections do not disappear purely because they fell outside a tiny memory
   writer window
 - older-user-context limits remain bounded and token-efficient
+- chat-time memory reads stay bounded by `memory.readProfile` and do not run writer initialization
+  or deterministic maintenance
+- detached memory writer failures surface as degraded/reconnect state and do not repeat the same
+  provider-auth failure on every chat
+- memory/provider-key dedupe is run as a dry-run/apply migration before unique indexes are enabled
 
 ### What not to publish
 

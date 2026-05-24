@@ -38,8 +38,11 @@ const columns = [
 
 export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedReason, onRun, onSaveCase }: Props) {
   const rows = useMemo(() => flattenEvalRows(evalBank?.families ?? []), [evalBank]);
-  const families = Array.from(new Set(rows.map((row) => row.family)));
-  const linkedRows = rows.filter((row) => row.promptRefs.includes(selectedPromptId) || selectedPromptId === 'main.conscious_agent');
+  const families = useMemo(() => Array.from(new Set(rows.map((row) => row.family))), [rows]);
+  const linkedRows = useMemo(
+    () => rows.filter((row) => row.promptRefs.includes(selectedPromptId) || selectedPromptId === 'main.conscious_agent'),
+    [rows, selectedPromptId],
+  );
   const [family, setFamily] = useState('');
   const [surface, setSurface] = useState('');
   const [maxCases, setMaxCases] = useState(1);
@@ -47,11 +50,14 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
   const [linkedOnly, setLinkedOnly] = useState(true);
   const [selectedCaseKey, setSelectedCaseKey] = useState('');
   const [creatingCase, setCreatingCase] = useState(false);
-  const sourceRows = linkedOnly ? linkedRows : rows;
-  const sourceFamilies = Array.from(new Set(sourceRows.map((row) => row.family)));
+  const sourceRows = useMemo(() => linkedOnly ? linkedRows : rows, [linkedOnly, linkedRows, rows]);
+  const sourceFamilies = useMemo(() => Array.from(new Set(sourceRows.map((row) => row.family))), [sourceRows]);
   const selectedFamily = family;
   const targetFamily = selectedFamily || sourceFamilies[0] || families[0] || '';
-  const visibleRows = sourceRows.filter((row) => (!selectedFamily || row.family === selectedFamily) && (!surface || row.surface === surface));
+  const visibleRows = useMemo(
+    () => sourceRows.filter((row) => (!selectedFamily || row.family === selectedFamily) && (!surface || row.surface === surface)),
+    [sourceRows, selectedFamily, surface],
+  );
   const selectedCase = creatingCase
     ? undefined
     : visibleRows.find((row) => `${row.family}/${row.caseId}` === selectedCaseKey) ?? visibleRows[0];
@@ -70,14 +76,33 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
 
   useEffect(() => {
     if (creatingCase) return;
-    if (!selectedCase) return;
-    setSelectedCaseKey(`${selectedCase.family}/${selectedCase.caseId}`);
+    if (!visibleRows.length) {
+      if (selectedCaseKey) setSelectedCaseKey('');
+      return;
+    }
+    const selectedKeyStillVisible = visibleRows.some((row) => `${row.family}/${row.caseId}` === selectedCaseKey);
+    if (!selectedKeyStillVisible) {
+      const firstRow = visibleRows[0];
+      setSelectedCaseKey(`${firstRow.family}/${firstRow.caseId}`);
+    }
+  }, [creatingCase, selectedCaseKey, visibleRows]);
+
+  useEffect(() => {
+    if (creatingCase || !selectedCase) return;
     setCaseIdDraft(selectedCase.caseId);
     setCaseSurface(selectedCase.surface || 'web');
     setCasePrompt(selectedCase.prompt);
     setCaseExpected(selectedCase.expectedDecision ?? selectedCase.expectedSurface ?? '');
     setCaseRubric(selectedCase.rubricItems.join('\n'));
-  }, [creatingCase, selectedCase?.family, selectedCase?.caseId]);
+  }, [
+    creatingCase,
+    selectedCase?.caseId,
+    selectedCase?.expectedDecision,
+    selectedCase?.expectedSurface,
+    selectedCase?.prompt,
+    selectedCase?.rubricItems,
+    selectedCase?.surface,
+  ]);
 
   const beginNewCase = () => {
     const suffix = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -138,6 +163,9 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
               <option>telegram</option>
               <option>scheduler</option>
               <option>wing</option>
+              <option>listen_only</option>
+              <option>memory_hardening</option>
+              <option>transcript_ingest</option>
             </select>
           </label>
           <label>
@@ -202,7 +230,7 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
           </div>
           {selectedCase || creatingCase ? (
             <>
-              <strong>{targetFamily}/{creatingCase ? caseIdDraft : selectedCase?.caseId}</strong>
+              <strong>{creatingCase ? targetFamily : selectedCase?.family}/{creatingCase ? caseIdDraft : selectedCase?.caseId}</strong>
               <label>
                 Case ID
                 {creatingCase ? (
@@ -221,6 +249,8 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
                     <option>scheduler</option>
                     <option>wing</option>
                     <option>listen_only</option>
+                    <option>memory_hardening</option>
+                    <option>transcript_ingest</option>
                   </select>
                 ) : (
                   <select key="edit-case-surface" value={caseSurface} onChange={(event) => setCaseSurface(event.target.value)}>
@@ -230,6 +260,8 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
                     <option>scheduler</option>
                     <option>wing</option>
                     <option>listen_only</option>
+                    <option>memory_hardening</option>
+                    <option>transcript_ingest</option>
                   </select>
                 )}
               </label>

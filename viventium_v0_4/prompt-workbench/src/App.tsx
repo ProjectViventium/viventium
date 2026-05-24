@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowDownToLine,
   BadgeCheck,
   Cable,
+  Clock3,
   Circle,
   GitBranch,
   Monitor,
@@ -30,12 +31,14 @@ import {
   getFrames,
   getPrompts,
   getPrompt,
+  getScheduledPrompts,
   getSyncStatus,
   importLiveDraft,
   pullLive,
   pushDryRun,
   pushReviewed,
   runEval,
+  updateScheduledPrompt,
 } from './api';
 import { PromptAtlas } from './components/PromptAtlas';
 import { WorkbenchDock } from './components/WorkbenchDock';
@@ -47,14 +50,16 @@ export default function App() {
   const [selectedPromptId, setSelectedPromptId] = useState('main.conscious_agent');
   const [search, setSearch] = useState('');
   const [atlasOpen, setAtlasOpen] = useStoredBoolean('viventium.promptWorkbench.atlasOpen', true);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [atlasWidth, setAtlasWidth] = useStoredNumber('viventium.promptWorkbench.atlasWidth', 340);
+  const [inspectorOpen, setInspectorOpen] = useStoredBoolean('viventium.promptWorkbench.syncSidebarOpen', true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showStatusbar, setShowStatusbar] = useStoredBoolean('viventium.promptWorkbench.showStatusbar', false);
   const { themePreference, setThemePreference, resolvedTheme } = useThemePreference();
   const [commandLog, setCommandLog] = useState<string>('Ready.');
   const [reviewToken, setReviewToken] = useState('');
   const [selectedPromptDirty, setSelectedPromptDirty] = useState(false);
-  const [dockFocusRequest, setDockFocusRequest] = useState<{ tab: 'prompt' | 'drafts' | 'evals' | 'live'; promptMode?: 'history'; nonce: number }>();
+  const [dockFocusRequest, setDockFocusRequest] = useState<{ tab: 'prompt' | 'drafts' | 'evals' | 'live' | 'schedules' | 'frames'; promptMode?: 'history'; nonce: number }>();
+  const [scheduleNewRequestNonce, setScheduleNewRequestNonce] = useState(0);
   const settingsRef = useRef<HTMLDivElement>(null);
   const [, startTransition] = useTransition();
 
@@ -62,10 +67,12 @@ export default function App() {
   const syncQuery = useQuery({ queryKey: ['sync'], queryFn: getSyncStatus, refetchInterval: 15_000 });
   const draftsQuery = useQuery({ queryKey: ['drafts'], queryFn: getDrafts, refetchInterval: 20_000 });
   const evalRunsQuery = useQuery({ queryKey: ['evalRuns'], queryFn: getEvalRuns, refetchInterval: 20_000 });
+  const scheduledPromptsQuery = useQuery({ queryKey: ['scheduledPrompts'], queryFn: getScheduledPrompts, refetchInterval: 20_000, retry: false });
+  const selectedScheduledPromptId = parseScheduledPromptSelection(selectedPromptId);
   const promptQuery = useQuery({
     queryKey: ['prompt', selectedPromptId],
     queryFn: () => getPrompt(selectedPromptId),
-    enabled: Boolean(selectedPromptId),
+    enabled: Boolean(selectedPromptId && !selectedScheduledPromptId),
   });
   const framesQuery = useQuery({ queryKey: ['frames'], queryFn: getFrames });
 
@@ -104,6 +111,15 @@ export default function App() {
       setCommandLog(`Eval draft ${draft.id} created. Review it before applying to the eval bank.`);
       queryClient.invalidateQueries({ queryKey: ['drafts'] });
       queryClient.invalidateQueries({ queryKey: ['promptWorkbenchContext'] });
+    },
+    onError: (error) => setCommandLog(String(error)),
+  });
+
+  const toggleScheduledPromptMutation = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => updateScheduledPrompt(id, { active }),
+    onSuccess: (item) => {
+      setCommandLog(`${item.title} is now ${item.active ? 'enabled' : 'disabled'}.`);
+      queryClient.invalidateQueries({ queryKey: ['scheduledPrompts'] });
     },
     onError: (error) => setCommandLog(String(error)),
   });
@@ -160,18 +176,26 @@ export default function App() {
   });
 
   const prompts = promptsQuery.data?.prompts ?? [];
+  const scheduledPrompts = scheduledPromptsQuery.data?.scheduledPrompts ?? [];
+  const selectedScheduledPrompt = selectedScheduledPromptId
+    ? scheduledPrompts.find((prompt) => prompt.id === selectedScheduledPromptId)
+    : undefined;
   const syncStatus = syncQuery.data;
   const activeDrafts = (draftsQuery.data?.drafts ?? []).filter((draft) => draft.status === 'draft');
   const activeBlockingDrafts = activeDrafts.filter(isWorkflowBlockingDraft);
-  const selectedPromptBlockingDrafts = activeBlockingDrafts.filter((draft) =>
-    draft.kind === 'eval-edit'
-    || selectedPromptId === 'main.conscious_agent'
-    || !draft.promptId
-    || draft.promptId === selectedPromptId,
-  );
+  const selectedPromptBlockingDrafts = selectedScheduledPromptId
+    ? []
+    : activeBlockingDrafts.filter((draft) =>
+      draft.kind === 'eval-edit'
+      || selectedPromptId === 'main.conscious_agent'
+      || !draft.promptId
+      || draft.promptId === selectedPromptId,
+    );
   const selectedEvalDraftCount = selectedPromptBlockingDrafts.filter((draft) => draft.kind === 'eval-edit').length;
   const selectedPromptDraftCount = selectedPromptBlockingDrafts.length - selectedEvalDraftCount;
-  const activeRow = syncStatus?.agents.find((agent) => agent.sourcePromptId === selectedPromptId)
+  const activeRow = selectedScheduledPrompt
+    ? undefined
+    : syncStatus?.agents.find((agent) => agent.sourcePromptId === selectedPromptId)
     ?? syncStatus?.agents.find((agent) => agent.sourcePromptId === 'main.conscious_agent')
     ?? syncStatus?.agents[0];
   const liveDriftBlocksPush = Boolean(syncStatus?.agents.some((agent) => agent.state === 'live-ahead' || agent.state === 'conflict'));
@@ -191,12 +215,51 @@ export default function App() {
       : '';
   const reviewedPushBlocked = liveDriftBlocksPush || Boolean(pushBlockReason);
   const reviewedPushState = pushBlockReason || liveDriftBlocksPush ? 'blocked' : reviewToken ? 'ready' : 'locked';
-  const selectedPromptLabel = humanPromptName(selectedPromptId);
+  const selectedPromptLabel = selectedScheduledPrompt?.title ?? humanPromptName(selectedPromptId);
+  const liveWorkCount = (syncStatus?.counts?.['live-ahead'] ?? 0) + (syncStatus?.counts?.conflict ?? 0);
+  const sourceWorkCount = (syncStatus?.counts?.['source-ahead'] ?? 0) + (syncStatus?.counts?.conflict ?? 0);
+  const pullLiveState = liveWorkCount > 0 || sourceWorkCount > 0 ? 'needs-action' : syncStatus ? 'done' : 'neutral';
+  const pushLiveState = pushBlockReason || liveWorkCount > 0 || sourceWorkCount > 0 ? 'needs-action' : syncStatus ? 'done' : 'neutral';
+  const pushSyncTitle = sourceWorkCount > 0
+    ? `${sourceWorkCount} source change${sourceWorkCount === 1 ? '' : 's'} need Push dry-run/review.`
+    : liveWorkCount > 0
+      ? `${liveWorkCount} live change${liveWorkCount === 1 ? '' : 's'} need pull or merge before Push dry-run.`
+      : 'Source and live are current.';
+  const clampedAtlasWidth = clampNumber(atlasWidth, 300, 560);
   const selectPrompt = (promptId: string) => {
     setSelectedPromptDirty(false);
     startTransition(() => setSelectedPromptId(promptId));
   };
+  const handleAtlasResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = clampedAtlasWidth;
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setAtlasWidth(clampNumber(startWidth + moveEvent.clientX - startX, 300, 560));
+    };
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+  };
+
+  useEffect(() => {
+    if (selectedScheduledPromptId) {
+      setDockFocusRequest({ tab: 'schedules', nonce: Date.now() });
+    }
+  }, [selectedScheduledPromptId]);
+  const openPromptFromMap = (promptId: string) => {
+    selectPrompt(promptId);
+    setDockFocusRequest({ tab: 'prompt', nonce: Date.now() });
+  };
   const runSelectedEval = () => {
+    if (selectedScheduledPromptId) {
+      setDockFocusRequest({ tab: 'schedules', nonce: Date.now() });
+      setCommandLog('Scheduled prompt objects run from the Schedules detail view.');
+      return;
+    }
     if (evalBlockReason) {
       focusBlockingDrafts();
       setCommandLog(evalBlockReason);
@@ -251,6 +314,7 @@ export default function App() {
     <div
       className={`app-shell ${atlasOpen ? '' : 'atlas-collapsed'} ${inspectorOpen ? '' : 'inspector-collapsed'} ${showStatusbar ? '' : 'statusbar-hidden'}`}
       data-theme={resolvedTheme}
+      style={{ '--atlas-width': `${clampedAtlasWidth}px` } as CSSProperties}
     >
       <header className="topbar">
         <div className="topbar-brand-group">
@@ -299,7 +363,16 @@ export default function App() {
           </label>
         </div>
         <div className="topbar-action-group">
-          <button className="toolbar-button topbar-action secondary-action-button" onClick={() => pullMutation.mutate()} disabled={pullMutation.isPending}>
+          <button
+            className={`toolbar-button topbar-action sync-action-button sync-action-${pullLiveState}`}
+            onClick={() => pullMutation.mutate()}
+            disabled={pullMutation.isPending}
+            title={liveWorkCount > 0
+              ? `${liveWorkCount} live change${liveWorkCount === 1 ? '' : 's'} need pull or merge.`
+              : sourceWorkCount > 0
+                ? `${sourceWorkCount} source change${sourceWorkCount === 1 ? '' : 's'} need Push dry-run/review.`
+                : 'Live and source are current.'}
+          >
             <ArrowDownToLine size={16} />
             Pull live
           </button>
@@ -307,16 +380,26 @@ export default function App() {
             className={`toolbar-button topbar-action primary ${evalBlockReason ? 'attention-action' : ''}`}
             onClick={runSelectedEval}
             disabled={evalMutation.isPending}
-            title={evalBlockReason ? `${evalBlockReason} Click to open the needed review.` : 'Run a no-live eval preview against applied source'}
+            title={selectedScheduledPromptId ? 'Open the selected scheduled prompt controls' : evalBlockReason ? `${evalBlockReason} Click to open the needed review.` : 'Run a no-live eval preview against applied source'}
           >
             <Play size={16} />
-            {evalBlockReason ? 'Review draft' : 'Run preview'}
+            {selectedScheduledPromptId ? 'Open schedule' : evalBlockReason ? 'Review draft' : 'Run preview'}
           </button>
           <button
-            className={`toolbar-button topbar-action ${pushBlockReason ? 'attention-action' : ''}`}
+            className="toolbar-button topbar-action secondary-action-button"
+            onClick={() => {
+              setScheduleNewRequestNonce(Date.now());
+              setDockFocusRequest({ tab: 'schedules', nonce: Date.now() });
+            }}
+          >
+            <Clock3 size={16} />
+            New schedule
+          </button>
+          <button
+            className={`toolbar-button topbar-action sync-action-button sync-action-${pushLiveState} ${pushBlockReason ? 'attention-action' : ''}`}
             onClick={runPushDryRun}
             disabled={dryRunMutation.isPending}
-            title={pushBlockReason ? `${pushBlockReason} Click to open drafts.` : 'Run guarded prompts-only dry-run'}
+            title={pushBlockReason ? `${pushBlockReason} Click to open drafts.` : pushSyncTitle}
           >
             <UploadCloud size={16} />
             {pushBlockReason ? 'Open drafts' : 'Push dry-run'}
@@ -341,11 +424,24 @@ export default function App() {
       <aside className={`atlas-pane ${atlasOpen ? '' : 'collapsed'}`}>
         <PromptAtlas
           prompts={prompts}
+          scheduledPrompts={scheduledPrompts}
           flow={promptsQuery.data?.flow}
           searchTerm={search}
           selectedPromptId={selectedPromptId}
           onSelect={selectPrompt}
+          onNewScheduledPrompt={() => {
+            setScheduleNewRequestNonce(Date.now());
+            setDockFocusRequest({ tab: 'schedules', nonce: Date.now() });
+          }}
+          onToggleScheduledPrompt={(id, active) => toggleScheduledPromptMutation.mutate({ id, active })}
           syncStatus={syncStatus}
+        />
+        <div
+          className="atlas-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize Prompt Flow sidebar"
+          onPointerDown={handleAtlasResizePointerDown}
         />
       </aside>
 
@@ -354,6 +450,7 @@ export default function App() {
           prompts={prompts}
           flow={promptsQuery.data?.flow}
           selectedPromptId={selectedPromptId}
+          selectedScheduledPromptId={selectedScheduledPromptId}
           selectedPrompt={promptQuery.data}
           promptLoading={promptQuery.isLoading}
           syncStatus={syncStatus}
@@ -363,12 +460,17 @@ export default function App() {
           evalRuns={evalRunsQuery.data?.runs ?? []}
           evalRunning={evalMutation.isPending}
           frames={framesQuery.data?.frames ?? []}
+          scheduledPrompts={scheduledPrompts}
+          scheduleNewRequestNonce={scheduleNewRequestNonce}
           themeMode={resolvedTheme}
           selectedPromptDirty={selectedPromptDirty}
           evalBlockReason={evalBlockReason}
           pushBlockReason={pushBlockReason}
           focusRequest={dockFocusRequest}
           onSelectPrompt={selectPrompt}
+          onSelectScheduledPrompt={(id) => selectPrompt(id ? scheduledPromptSelectionId(id) : 'main.conscious_agent')}
+          onOpenPrompt={openPromptFromMap}
+          onOpenTab={(tab) => setDockFocusRequest({ tab, nonce: Date.now() })}
           onPromptDirtyChange={setSelectedPromptDirty}
           onPromptSaved={() => {
             queryClient.invalidateQueries({ queryKey: ['prompt', selectedPromptId] });
@@ -551,6 +653,23 @@ function useStoredBoolean(key: string, fallback: boolean) {
   return [value, setValue] as const;
 }
 
+function useStoredNumber(key: string, fallback: number) {
+  const [value, setValue] = useState(() => {
+    const stored = Number(readLocalStorage(key));
+    return Number.isFinite(stored) ? stored : fallback;
+  });
+
+  useEffect(() => {
+    writeLocalStorage(key, String(value));
+  }, [key, value]);
+
+  return [value, setValue] as const;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function useThemePreference() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
     const stored = readLocalStorage('viventium.promptWorkbench.themePreference');
@@ -634,4 +753,12 @@ function evalDraftBlockReason({
 function humanPromptName(id: string) {
   const label = id.split('.').slice(1).join(' ') || id;
   return label.replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function scheduledPromptSelectionId(id: string) {
+  return `scheduled-prompt:${id}`;
+}
+
+function parseScheduledPromptSelection(id: string) {
+  return id.startsWith('scheduled-prompt:') ? id.slice('scheduled-prompt:'.length) : '';
 }

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -16,16 +19,25 @@ WORKBENCH_BACKEND = REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "backend
 if str(WORKBENCH_BACKEND) not in sys.path:
     sys.path.insert(0, str(WORKBENCH_BACKEND))
 
-from prompt_workbench import drafts, import_mapper, prompt_service, promptfoo_adapter, sync_engine  # noqa: E402
+from prompt_workbench import drafts, import_mapper, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
 from prompt_workbench import evals  # noqa: E402
 from prompt_workbench.paths import resolve_repo_path  # noqa: E402
+from prompt_workbench.runtime_env import load_viventium_runtime_env  # noqa: E402
 
 
 PROMPT_ROOT = (
     REPO_ROOT / "viventium_v0_4" / "LibreChat" / "viventium" / "source_of_truth" / "prompts"
 )
 WORKBENCH_DIST = REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "dist"
+WORKBENCH_ROOT = REPO_ROOT / "viventium_v0_4" / "prompt-workbench"
 WORKBENCH_SRC = REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "src"
+PROMPT_WORKBENCH_SCRIPT_SPEC = importlib.util.spec_from_file_location(
+    "viventium_prompt_workbench_cli",
+    REPO_ROOT / "scripts" / "viventium" / "prompt_workbench.py",
+)
+assert PROMPT_WORKBENCH_SCRIPT_SPEC and PROMPT_WORKBENCH_SCRIPT_SPEC.loader
+prompt_workbench_cli = importlib.util.module_from_spec(PROMPT_WORKBENCH_SCRIPT_SPEC)
+PROMPT_WORKBENCH_SCRIPT_SPEC.loader.exec_module(prompt_workbench_cli)
 
 
 def write_prompt(root: Path, rel: str, prompt_id: str, body: str, **metadata: object) -> Path:
@@ -57,6 +69,66 @@ def test_workbench_render_matches_existing_prompt_registry() -> None:
 
     assert actual == expected
     assert "# Identity" in actual
+
+
+def test_workbench_loads_canonical_runtime_env_without_overwriting_existing_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            [
+                "SCHEDULING_MCP_URL=http://localhost:7110/mcp",
+                "VIVENTIUM_SCHEDULING_MCP_PORT=7110",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("SCHEDULING_MCP_URL", raising=False)
+    monkeypatch.delenv("VIVENTIUM_SCHEDULING_MCP_PORT", raising=False)
+
+    load_viventium_runtime_env(runtime_env)
+
+    assert os.environ["SCHEDULING_MCP_URL"] == "http://localhost:7110/mcp"
+    assert os.environ["VIVENTIUM_SCHEDULING_MCP_PORT"] == "7110"
+
+    monkeypatch.setenv("SCHEDULING_MCP_URL", "http://example.invalid/mcp")
+    load_viventium_runtime_env(runtime_env)
+    assert os.environ["SCHEDULING_MCP_URL"] == "http://example.invalid/mcp"
+
+
+def test_workbench_previews_memory_hardening_runtime_templates() -> None:
+    prompt = prompt_service.get_prompt("memory.transcript_summarizer")
+    context = prompt_service.workbench_context("memory.hardener_consolidation")
+
+    assert prompt["metadata"]["target"] == "memory_hardening.meeting_transcript_summarizer.prompt"
+    assert "{{transcript_envelope_json}}" in prompt["rendered"]
+    assert "transcript_envelope_json" in prompt["variables"]
+    assert context["linkedEvals"]["caseCount"] >= 2
+    assert any(family["id"] == "memory_hardening_consolidation" for family in context["linkedEvals"]["families"])
+
+
+def test_scheduling_workbench_context_links_prompts_config_evals_and_history() -> None:
+    context = prompt_service.workbench_context("mcp.scheduling_cortex.server")
+    related_config = context["relatedConfig"]
+    encoded = json.dumps(related_config)
+
+    assert context["linkedEvals"]["caseCount"] >= 2
+    assert any(family["id"] == "scheduling_self_continuity" for family in context["linkedEvals"]["families"])
+    assert {row["id"] for row in related_config} == {
+        "scheduling-direct-action-owner",
+        "scheduling-main-agent-tools",
+        "scheduling-mcp-server",
+    }
+    assert all(row["gitHistory"] for row in related_config)
+    assert all("patch" not in history for row in related_config for history in row["gitHistory"])
+    assert "schedule_create_mcp_scheduling-cortex" in encoded
+    assert "mcpServers.scheduling-cortex" in encoded
+    assert "/Users" not in encoded
+    assert str(Path.home()) not in encoded
+    assert prompt_service.workbench_context("main.identity")["relatedConfig"] == []
 
 
 def test_workbench_static_index_is_fresh_and_assets_are_immutable() -> None:
@@ -125,6 +197,800 @@ def test_workbench_cors_is_limited_to_served_loopback_origins() -> None:
     assert "access-control-allow-origin" not in blocked.headers
 
 
+def test_workbench_rejects_non_loopback_host_header() -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+
+    assert client.get("/api/health", headers={"host": "127.0.0.1:8783"}).status_code == 200
+    assert client.get("/api/health", headers={"host": "evil.example"}).status_code == 400
+
+
+def test_scheduled_prompt_admin_auth_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", raising=False)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+
+    assert client.get("/api/scheduled-prompts").status_code == 401
+    assert client.get("/api/variables").status_code == 401
+    assert client.post("/api/prompts/render", json={"promptId": "main.conscious_agent", "variables": {}}).status_code == 401
+    assert client.post("/api/sync/push-live-dry-run", json={"env": "local"}).status_code == 401
+
+    from prompt_workbench import auth
+
+    monkeypatch.setattr(auth, "_librechat_admin_auth", lambda request: auth.AuthContext(True, False, method="librechat"))
+    assert client.get("/api/scheduled-prompts", headers={"authorization": "Bearer non-admin"}).status_code == 403
+
+
+def test_scheduled_prompt_admin_verify_carries_user_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", raising=False)
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    class FakeAdminVerifyResponse:
+        status = 200
+
+        def read(self) -> bytes:
+            return json.dumps({"user": {"id": "admin-user-1", "email": "admin@example.test"}}).encode("utf-8")
+
+        def __enter__(self) -> "FakeAdminVerifyResponse":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr(auth.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeAdminVerifyResponse())
+
+    status = TestClient(app).get("/api/auth/status", headers={"authorization": "Bearer admin"})
+
+    assert status.status_code == 200
+    assert status.json()["admin"] is True
+    assert status.json()["userId"] == "admin-user-1"
+    assert status.json()["email"] == "admin@example.test"
+
+
+def test_direct_loopback_workbench_resolves_single_local_admin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", raising=False)
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda request: True)
+    monkeypatch.setattr(
+        auth,
+        "_query_local_admin_users",
+        lambda: [{"_id": "admin-user-1", "email": "admin@example.test", "role": "ADMIN"}],
+    )
+
+    client = TestClient(app)
+    status = client.get("/api/auth/status")
+
+    assert status.status_code == 200
+    assert status.json()["admin"] is True
+    assert status.json()["method"] == "local_loopback_admin"
+    assert status.json()["userId"] == "admin-user-1"
+    assert client.get("/api/scheduled-prompts").status_code == 200
+
+
+def test_direct_loopback_workbench_resolves_admin_with_unique_schedule_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_LAUNCH_TOKEN", raising=False)
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench import auth
+    from prompt_workbench.app import app
+
+    now = "2026-05-22T10:00:00Z"
+    scheduled_prompts.storage().create_task(
+        {
+            "id": "task-owned-by-admin-b",
+            "user_id": "admin-b",
+            "agent_id": "agent-1",
+            "prompt": "Owned scheduled prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "channel": "telegram",
+            "executor": "viventium_agent",
+            "conversation_policy": "same",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:agent-1",
+            "created_source": "user",
+            "created_at": now,
+            "updated_at": now,
+            "updated_by": "agent:agent-1",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-05-23T03:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": None,
+        }
+    )
+    monkeypatch.setattr(auth, "_is_loopback_request", lambda request: True)
+    monkeypatch.setattr(
+        auth,
+        "_query_local_admin_users",
+        lambda: [
+            {"_id": "admin-a", "email": "admin-a@example.test", "role": "ADMIN"},
+            {"_id": "admin-b", "email": "admin-b@example.test", "role": "ADMIN"},
+        ],
+    )
+
+    status = TestClient(app).get("/api/auth/status")
+
+    assert status.status_code == 200
+    assert status.json()["method"] == "local_loopback_admin"
+    assert status.json()["userId"] == "admin-b"
+
+
+def test_scheduled_prompt_variables_render_wrapped_and_governed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    rendered = scheduled_prompts.render_variables(
+        "{{user}}\n{{local.viventium.database}}\n{{memory_agent.system_prompt}}\n{{viventium.background_agents.get_list(agent_name, system_prompt)}}",
+        user_id="test-admin",
+    )
+
+    assert "<user>" in rendered["rendered"]
+    assert "<local.viventium.database>" in rendered["rendered"]
+    assert "<memory_agent.system_prompt>" in rendered["rendered"]
+    assert "<viventium.background_agents.get_list>" in rendered["rendered"]
+    assert "server-side snapshots only" in rendered["rendered"]
+    assert "mongodb://127.0.0.1" not in rendered["rendered"]
+    assert rendered["variableSnapshotHash"]
+    assert "resolutionStatus" in rendered["rendered"]
+    assert "directly in the database" not in scheduled_prompts.NIGHTLY_PROMPT_TEMPLATE
+    frontend_panel = (
+        REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "src" / "components" / "ScheduledPromptsPanel.tsx"
+    ).read_text(encoding="utf-8")
+    assert "directly in the database" not in frontend_panel
+    assert "const defaultPrompt =" not in frontend_panel
+    assert "getNightlyScheduledPromptTemplate" in frontend_panel
+
+
+def test_background_agents_function_resolves_names_and_system_prompts_from_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts_root = tmp_path / "prompts"
+    prompts_root.mkdir()
+    (prompts_root / "registry.yaml").write_text("schema_version: 1\n", encoding="utf-8")
+    (prompts_root / "agent-one.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "id: qa.agent_one",
+                "owner_layer: qa",
+                "target: qa",
+                "version: 1",
+                "status: active",
+                "safety_class: public_product",
+                "output_contract: text",
+                "---",
+                "Resolved prompt for {{current_user}}.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    agents_yaml = tmp_path / "agents.yaml"
+    agents_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "backgroundAgents": [
+                    {"name": "QA Agent One", "instructions": {"promptRef": "qa.agent_one", "promptVars": {"current_user": "Synthetic User"}}},
+                    {"id": "qa-agent-two", "instructions": "Inline background prompt"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scheduled_prompts, "AGENTS_SOURCE_PATH", agents_yaml)
+    monkeypatch.setattr(scheduled_prompts, "PROMPTS_ROOT", prompts_root)
+
+    rendered = scheduled_prompts.render_variables(
+        "{{viventium.background_agents.get_list(agent_name, system_prompt)}}",
+        user_id="test-admin",
+    )
+    item = rendered["variableSnapshot"]["items"][0]
+
+    assert item["placeholder"] == "viventium.background_agents.get_list(agent_name, system_prompt)"
+    assert item["wrapper"] == "viventium.background_agents.get_list"
+    assert item["value"] == [
+        {"agent_name": "QA Agent One", "system_prompt": "Resolved prompt for Synthetic User."},
+        {"agent_name": "qa-agent-two", "system_prompt": "Inline background prompt"},
+    ]
+    assert "<viventium.background_agents.get_list>" in rendered["rendered"]
+    assert "Resolved prompt for Synthetic User." in rendered["rendered"]
+
+
+def test_scheduled_prompt_memories_resolve_librechat_user_id_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def fake_query(script: str):
+        calls.append(script)
+        if "db.users.findOne" in script:
+            return {"_id": "507f1f77bcf86cd799439011", "email": "qa@example.test", "role": "ADMIN"}
+        if "db.memoryentries.find" in script:
+            assert "userId:objectId" in script
+            assert "userId:userId" in script
+            return [{"key": "core", "value": "saved memory value", "updatedAt": "2026-05-22T10:00:00Z"}]
+        return None
+
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", fake_query)
+
+    rendered = scheduled_prompts.render_variables("{{user.memories}}", user_id="507f1f77bcf86cd799439011")
+
+    assert "<user.memories>" in rendered["rendered"]
+    assert "saved memory value" in rendered["rendered"]
+    assert any("db.memoryentries.find" in script for script in calls)
+
+
+def test_scheduled_prompt_memories_distinguish_empty_from_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def empty_query(script: str):
+        if "db.users.findOne" in script:
+            return {"_id": "507f1f77bcf86cd799439011", "email": "qa@example.test", "role": "ADMIN"}
+        if "db.memoryentries.find" in script:
+            return []
+        return None
+
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", empty_query)
+    empty_rendered = scheduled_prompts.render_variables("{{user.memories}}", user_id="507f1f77bcf86cd799439011")
+    assert "<user.memories>\n[]\n</user.memories>" in empty_rendered["rendered"]
+    assert "mongo_unavailable" not in empty_rendered["rendered"]
+
+    def unavailable_query(script: str):
+        if "db.users.findOne" in script:
+            return {"_id": "507f1f77bcf86cd799439011", "email": "qa@example.test", "role": "ADMIN"}
+        if "db.memoryentries.find" in script:
+            return None
+        return None
+
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", unavailable_query)
+    unavailable_rendered = scheduled_prompts.render_variables("{{user.memories}}", user_id="507f1f77bcf86cd799439011")
+    assert "mongo_unavailable" in unavailable_rendered["rendered"]
+    assert "Memory lookup unavailable" in unavailable_rendered["rendered"]
+
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    user_unavailable = scheduled_prompts.render_variables("{{user.memories}}", user_id="507f1f77bcf86cd799439011")
+    assert "mongo_unavailable" in user_unavailable["rendered"]
+    assert "User memory lookup unavailable" in user_unavailable["rendered"]
+
+
+def test_variable_render_endpoint_uses_authenticated_admin_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "auth-user")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL", "auth@example.test")
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_render_variables(prompt_text: str, *, user_id: str, email: str | None = None):
+        calls.append((user_id, email))
+        return {"rendered": prompt_text, "variableSnapshot": {"items": []}, "variableSnapshotHash": "hash"}
+
+    monkeypatch.setattr(scheduled_prompts, "render_variables", fake_render_variables)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    response = TestClient(app).post(
+        "/api/variables/render",
+        json={"promptText": "{{user.memories}}", "userId": "foreign-user", "email": "foreign@example.test"},
+    )
+
+    assert response.status_code == 200
+    assert calls == [("auth-user", "")]
+
+
+def test_scheduled_prompt_object_has_drafts_preview_and_execution_config_ui() -> None:
+    draft_source = (WORKBENCH_SRC / "components" / "DraftPanel.tsx").read_text(encoding="utf-8")
+    schedule_source = (WORKBENCH_SRC / "components" / "ScheduledPromptsPanel.tsx").read_text(encoding="utf-8")
+    dock_source = (WORKBENCH_SRC / "components" / "WorkbenchDock.tsx").read_text(encoding="utf-8")
+    api_source = (WORKBENCH_SRC / "api.ts").read_text(encoding="utf-8")
+
+    assert "selectedScheduledPrompt" in draft_source
+    assert "Scheduled prompt draft view" in draft_source
+    assert "<RenderedPrompt markdown={scheduledPreviewQuery.data?.rendered" in draft_source
+    assert "renderVariables(selectedScheduledPrompt?.promptText" in draft_source
+    assert "sourceKind !== 'user_schedule'" in draft_source
+    assert "Workbench variable rendering is not applied" in draft_source
+    assert "selectedScheduledPrompt={selectedScheduledPrompt}" in dock_source
+    assert "includeSchedule: !isUserLevelSchedule || scheduleTouched" in schedule_source
+    assert "includeMemoryWriteMode: !isUserLevelSchedule" in schedule_source
+    assert "setScheduleTouched(true)" in schedule_source
+    assert "schedule-execution-card" in schedule_source
+    assert "GlassHive host" in schedule_source
+    assert "Viventium agent" in schedule_source
+    assert "This user-level schedule does not use Workbench variable rendering" in schedule_source
+    assert "User-level scheduler policy" in schedule_source
+    assert "confirmUserLevelDelivery" in api_source
+    assert "Manual Viventium schedule run started" in schedule_source
+    assert "Run Viventium" in schedule_source
+    assert "workspaceRoot" in schedule_source
+    assert "executionProfile" in schedule_source
+    assert "getScheduledPromptMemoryProposals" in schedule_source
+    assert "Apply governed" in schedule_source
+    assert "same_worker" in schedule_source
+    assert "new_worker_each_run" in schedule_source
+
+
+def test_topbar_sync_actions_signal_pending_and_done_states() -> None:
+    app_source = (WORKBENCH_SRC / "App.tsx").read_text(encoding="utf-8")
+    css_source = (WORKBENCH_SRC / "styles.css").read_text(encoding="utf-8")
+
+    assert "liveWorkCount" in app_source
+    assert "sourceWorkCount" in app_source
+    assert "sync-action-${pullLiveState}" in app_source
+    assert "sync-action-${pushLiveState}" in app_source
+    assert "liveWorkCount > 0 || sourceWorkCount > 0" in app_source
+    assert "need pull or merge before Push dry-run" in app_source
+    assert ".toolbar-button.sync-action-done" in css_source
+    assert ".toolbar-button.sync-action-needs-action" in css_source
+
+
+def test_scheduled_prompt_template_endpoint_and_user_scoping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "user-a")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    template = client.get("/api/scheduled-prompts/templates/nightly-subconscious")
+    assert template.status_code == 200
+    assert template.json()["id"] == scheduled_prompts.NIGHTLY_TEMPLATE_ID
+    assert "directly in the database" not in template.json()["promptText"]
+
+    own = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Owned prompt",
+            "promptText": "Use {{local.viventium.database}}",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "off",
+        },
+    )
+    assert own.status_code == 200
+    other = scheduled_prompts.create_scheduled_prompt(
+        {
+            "title": "Other user prompt",
+            "promptText": "Use {{local.viventium.database}}",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "off",
+        },
+        user_id="user-b",
+    )
+
+    listed = client.get("/api/scheduled-prompts")
+    titles = {item["title"] for item in listed.json()["scheduledPrompts"]}
+    assert titles == {"Owned prompt"}
+    assert client.patch(f"/api/scheduled-prompts/{other['id']}", json={"active": True}).status_code == 403
+
+
+def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    db_path = tmp_path / "schedules.db"
+    private_root = tmp_path / "private"
+    my_folder_root = tmp_path / "glasshive"
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(my_folder_root))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("SCHEDULER_GLASSHIVE_DISABLE_DISPATCH", "1")
+    monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "QA scheduled prompt",
+            "promptText": "Write to {{local.viventium.my_folder}} using {{local.viventium.database}}",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "off",
+            "executor": "glasshive_host",
+            "glasshiveWorkerStrategy": "new_worker_each_run",
+        },
+    )
+    assert created.status_code == 200
+    prompt_id = created.json()["id"]
+    assert created.json()["active"] is False
+
+    patched = client.patch(f"/api/scheduled-prompts/{prompt_id}", json={"active": True})
+    assert patched.status_code == 200
+    assert patched.json()["active"] is True
+
+    invalid_mode = client.patch(f"/api/scheduled-prompts/{prompt_id}", json={"memoryWriteMode": "direct_mongo"})
+    assert invalid_mode.status_code == 400
+
+    manual = client.post(f"/api/scheduled-prompts/{prompt_id}/manual-runs")
+    assert manual.status_code == 200
+    assert manual.json()["run"]["status"] == "queued"
+    assert manual.json()["run"]["privateDetailPointer"].startswith("private://scheduled-prompt-run/")
+    assert str(tmp_path) not in json.dumps(manual.json())
+    duplicate = client.post(f"/api/scheduled-prompts/{prompt_id}/manual-runs")
+    assert duplicate.status_code == 200
+    assert duplicate.json()["coalesced"] is True
+    assert duplicate.json()["run"]["status"] == "queued"
+
+    store = scheduled_prompts.storage()
+    definition = store.get_scheduled_prompt_definition(prompt_id)
+    task = store.get_task(definition["user_id"], definition["task_id"])
+    runs = store.list_scheduled_prompt_runs(definition_id=prompt_id)
+
+    assert task["executor"] == "glasshive_host"
+    assert task["channel"] == "workbench"
+    assert task["metadata"]["workbench_scheduled_prompt"]["glasshive_worker_strategy"] == "new_worker_each_run"
+    assert runs and Path(runs[0]["private_detail_path"]).exists()
+    assert "mongodb://" not in Path(runs[0]["private_detail_path"]).read_text(encoding="utf-8")
+
+
+def test_workbench_scheduled_prompt_can_use_viventium_executor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Viventium route prompt",
+            "promptText": "Review {{user}}",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "off",
+            "executor": "viventium_agent",
+            "channel": "librechat",
+            "conversationPolicy": "same",
+        },
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert body["executor"] == "viventium_agent"
+    assert body["channel"] == "librechat"
+    assert body["conversationPolicy"] == "same"
+    task = scheduled_prompts.storage().get_task(body["userId"], body["taskId"])
+    assert task["executor"] == "viventium_agent"
+    assert task["channel"] == "librechat"
+    assert task["conversation_policy"] == "same"
+
+    calls = []
+
+    def fake_dispatch(task_for_dispatch):
+        calls.append(task_for_dispatch["id"])
+        return {"delivery": {"outcome": "sent", "reason": "manual_run", "generated_text": "private"}}
+
+    monkeypatch.setattr(scheduled_prompts, "dispatch_task", fake_dispatch)
+    manual = client.post(f"/api/scheduled-prompts/{body['id']}/manual-runs")
+    assert manual.status_code == 200
+    assert manual.json()["run"]["executor"] == "viventium_agent"
+    assert manual.json()["run"]["status"] == "completed"
+    assert manual.json()["run"]["resultSummary"] == "sent: manual_run"
+    duplicate = client.post(f"/api/scheduled-prompts/{body['id']}/manual-runs")
+    assert duplicate.status_code == 200
+    assert duplicate.json()["coalesced"] is True
+    assert duplicate.json()["run"]["executor"] == "viventium_agent"
+    assert calls == [body["taskId"]]
+
+
+def test_scheduled_prompt_memory_proposal_review_and_governed_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "proposal-user")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Proposal prompt",
+            "promptText": "Write proposal",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "propose",
+        },
+    ).json()
+    my_folder = Path(created["myFolder"])
+    proposal_file = my_folder / "memory-proposals-202605220300.json"
+    proposal_file.write_text(
+        json.dumps({"actions": [{"action": "set", "key": "context", "value": "Synthetic context", "reason": "QA"}]}),
+        encoding="utf-8",
+    )
+
+    proposals = client.get(f"/api/scheduled-prompts/{created['id']}/memory-proposals")
+    assert proposals.status_code == 200
+    [proposal] = proposals.json()["proposals"]
+    assert proposal["actionCount"] == 1
+    assert proposal["actions"][0]["key"] == "context"
+    assert proposal["actions"][0]["valueHash"]
+
+    def fake_run(cmd, cwd, text, capture_output, timeout, check):
+        assert "viventium-memory-proposal-apply.js" in cmd[1]
+        assert "--apply" in cmd
+        assert "--user-id" in cmd
+        assert cmd[cmd.index("--user-id") + 1] == "proposal-user"
+
+        class Completed:
+            returncode = 0
+            stdout = json.dumps({"ok": True, "mode": "apply", "reason": "ok", "actionCount": 1, "appliedCount": 1})
+            stderr = ""
+
+        return Completed()
+
+    monkeypatch.setattr(scheduled_prompts.subprocess, "run", fake_run)
+    applied = client.post(
+        f"/api/scheduled-prompts/{created['id']}/memory-proposals/{proposal['proposalId']}/apply",
+        json={"apply": True},
+    )
+    assert applied.status_code == 200
+    assert applied.json()["applied"] is True
+
+
+def test_scheduled_prompt_manual_run_uses_workbench_storage_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.delenv("SCHEDULING_DB_PATH", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("SCHEDULER_GLASSHIVE_DISABLE_DISPATCH", "1")
+    monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Default storage prompt",
+            "promptText": "Write to {{local.viventium.my_folder}}",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "off",
+        },
+    )
+    assert created.status_code == 200
+    prompt_id = created.json()["id"]
+
+    manual = client.post(f"/api/scheduled-prompts/{prompt_id}/manual-runs")
+    assert manual.status_code == 200
+    assert manual.json()["run"]["status"] == "queued"
+    assert os.environ["SCHEDULING_DB_PATH"].endswith(
+        "Library/Application Support/Viventium/state/runtime/isolated/scheduling/schedules.db"
+    )
+    listed = client.get("/api/scheduled-prompts")
+    [row] = [item for item in listed.json()["scheduledPrompts"] if item["id"] == prompt_id]
+    assert [run["status"] for run in row["recentRuns"]] == ["queued"]
+
+
+def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "user-a")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    now = "2026-05-22T10:00:00Z"
+    scheduled_prompts.storage().create_task(
+        {
+            "id": "task-user-level",
+            "user_id": "user-a",
+            "agent_id": "agent-1",
+            "prompt": "Existing user-level scheduled prompt",
+            "schedule": {"type": "cron", "cron": "17 4 * * 2", "timezone": "UTC", "custom": "preserve"},
+            "channel": "telegram",
+            "executor": "viventium_agent",
+            "conversation_policy": "same",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:agent-1",
+            "created_source": "user",
+            "created_at": now,
+            "updated_at": now,
+            "updated_by": "agent:agent-1",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-05-23T03:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": None,
+        }
+    )
+
+    client = TestClient(app)
+    listed = client.get("/api/scheduled-prompts")
+    assert listed.status_code == 200
+    [user_schedule] = [
+        item for item in listed.json()["scheduledPrompts"] if item["sourceKind"] == "user_schedule"
+    ]
+    assert user_schedule["id"] == "user_schedule:task-user-level"
+    assert user_schedule["title"] == "Existing user-level scheduled prompt"
+    assert user_schedule["executor"] == "viventium_agent"
+    assert user_schedule["channel"] == "telegram"
+
+    title_only = client.patch(
+        f"/api/scheduled-prompts/{user_schedule['id']}",
+        json={"title": "Renamed without schedule rewrite", "active": False},
+    )
+    assert title_only.status_code == 200
+    task_after_title_only = scheduled_prompts.storage().get_task("user-a", "task-user-level")
+    assert task_after_title_only["active"] == 0
+    assert task_after_title_only["schedule"] == {"type": "cron", "cron": "17 4 * * 2", "timezone": "UTC", "custom": "preserve"}
+    assert task_after_title_only["metadata"]["workbench_title"] == "Renamed without schedule rewrite"
+
+    patched = client.patch(
+        f"/api/scheduled-prompts/{user_schedule['id']}",
+        json={
+            "title": "Renamed user schedule",
+            "active": True,
+            "schedule": {"type": "daily", "time": "06:15", "timezone": "UTC"},
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.json()["title"] == "Renamed user schedule"
+    assert patched.json()["active"] is True
+    task = scheduled_prompts.storage().get_task("user-a", "task-user-level")
+    assert task["active"] == 1
+    assert task["schedule"]["time"] == "06:15"
+    assert task["metadata"]["workbench_title"] == "Renamed user schedule"
+
+    monkeypatch.setattr(
+        scheduled_prompts,
+        "dispatch_task",
+        lambda task: {"delivery": {"outcome": "sent", "reason": "manual_run", "generated_text": "private result"}},
+    )
+    manual_without_confirmation = client.post(f"/api/scheduled-prompts/{user_schedule['id']}/manual-runs")
+    assert manual_without_confirmation.status_code == 400
+    assert "explicit delivery confirmation" in manual_without_confirmation.json()["detail"]
+
+    manual = client.post(
+        f"/api/scheduled-prompts/{user_schedule['id']}/manual-runs",
+        json={"confirmUserLevelDelivery": True},
+    )
+    assert manual.status_code == 200
+    assert manual.json()["run"]["status"] == "success"
+    assert manual.json()["run"]["resultSummary"] == "sent: manual_run"
+    runs = client.get(f"/api/scheduled-prompts/{user_schedule['id']}/runs")
+    assert runs.status_code == 200
+    assert runs.json()["runs"][0]["status"] == "success"
+
+    scheduled_prompts.storage().update_task(
+        "user-a",
+        "task-user-level",
+        {
+            "last_status": "failed",
+            "last_error": "failure at /Users/private/path with mongodb://127.0.0.1:27017/db and http://192.168.1.10:8783/log",
+            "updated_at": now,
+        },
+    )
+    failed_runs = client.get(f"/api/scheduled-prompts/{user_schedule['id']}/runs")
+    assert failed_runs.status_code == 200
+    failed_run = failed_runs.json()["runs"][0]
+    assert failed_run["status"] == "failed"
+    assert "/Users/" not in failed_run["errorClass"]
+    assert "mongodb://" not in failed_run["errorClass"]
+    assert "192.168.1.10" not in failed_run["errorClass"]
+
+    deleted = client.delete(f"/api/scheduled-prompts/{user_schedule['id']}")
+    assert deleted.status_code == 200
+    assert scheduled_prompts.storage().get_task("user-a", "task-user-level") is None
+
+
+def test_workbench_startup_seeds_builtin_nightly_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "startup-admin")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL", "startup-admin@example.test")
+    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE", raising=False)
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    with TestClient(app):
+        pass
+
+    rows = scheduled_prompts.storage().list_scheduled_prompt_definitions(user_id="startup-admin")
+    seeded = [row for row in rows if row.get("template_id") == scheduled_prompts.NIGHTLY_TEMPLATE_ID]
+    assert len(seeded) == 1
+    assert not seeded[0]["active"]
+    task = scheduled_prompts.storage().get_task("startup-admin", seeded[0]["task_id"])
+    assert task["executor"] == "glasshive_host"
+    assert task["channel"] == "workbench"
+
+
+def test_prompt_workbench_stop_sets_user_stopped_marker(tmp_path: Path) -> None:
+    args = SimpleNamespace(repo_root=str(REPO_ROOT), app_support_dir=str(tmp_path))
+
+    result = prompt_workbench_cli.stop_server(args)
+
+    assert result["status"] == "stopped"
+    marker = prompt_workbench_cli.user_stopped_marker_path(tmp_path)
+    assert marker.exists()
+    prompt_workbench_cli.clear_user_stopped_marker(tmp_path)
+    assert not marker.exists()
+
+
 def test_workbench_local_storage_access_goes_through_safe_wrapper() -> None:
     offenders: list[str] = []
     for path in WORKBENCH_SRC.rglob("*"):
@@ -135,6 +1001,225 @@ def test_workbench_local_storage_access_goes_through_safe_wrapper() -> None:
             offenders.append(str(path.relative_to(WORKBENCH_SRC)))
 
     assert offenders == []
+    assert "viventium.promptWorkbench.syncSidebarOpen" in (WORKBENCH_SRC / "App.tsx").read_text(encoding="utf-8")
+
+
+def test_prompt_rendered_tab_uses_safe_html_reader() -> None:
+    editor_source = (WORKBENCH_SRC / "components" / "PromptEditor.tsx").read_text(encoding="utf-8")
+    rendered_source = (WORKBENCH_SRC / "components" / "RenderedPrompt.tsx").read_text(encoding="utf-8")
+
+    assert "<RenderedPrompt markdown={prompt.rendered}" in editor_source
+    assert '<pre className="rendered-preview"' not in editor_source
+    assert "dangerouslySetInnerHTML" not in rendered_source
+    assert "kind: 'heading'" in rendered_source
+    assert "kind: 'list'" in rendered_source
+    assert "rendered-raw-text" in rendered_source
+    assert "setMode('raw')" in rendered_source
+
+
+def test_prompt_flow_map_uses_source_graph_eval_refs_and_double_click_navigation() -> None:
+    flow_source = (WORKBENCH_SRC / "components" / "PromptFlow.tsx").read_text(encoding="utf-8")
+    dock_source = (WORKBENCH_SRC / "components" / "WorkbenchDock.tsx").read_text(encoding="utf-8")
+    app_source = (WORKBENCH_SRC / "App.tsx").read_text(encoding="utf-8")
+
+    for label in [
+        "Interaction Surfaces",
+        "Conscious Agent",
+        "Memory and Recall",
+        "Background Cortex and Tools",
+        "Delivery and Evaluation",
+    ]:
+        assert label in flow_source
+    assert "onNodeDoubleClick" in flow_source
+    assert "promptRefsForFamily" in flow_source
+    assert "evalBank={tabState.evalBank}" in dock_source
+    assert "onOpenPrompt={openPromptFromMap}" in app_source
+
+
+def test_prompt_diff_wraps_both_panes_and_uses_working_tree_baseline() -> None:
+    editor_source = (WORKBENCH_SRC / "components" / "PromptEditor.tsx").read_text(encoding="utf-8")
+    diff_helper_source = (WORKBENCH_SRC / "promptDiff.ts").read_text(encoding="utf-8")
+    api_source = (WORKBENCH_SRC / "api.ts").read_text(encoding="utf-8")
+    types_source = (WORKBENCH_SRC / "types.ts").read_text(encoding="utf-8")
+    css_source = (WORKBENCH_SRC / "styles.css").read_text(encoding="utf-8")
+    app_source = (WORKBENCH_BACKEND / "prompt_workbench" / "app.py").read_text(encoding="utf-8")
+
+    assert "diffWordWrap: 'on'" in editor_source
+    assert "wordWrapOverride1: 'on'" in editor_source
+    assert "wordWrapOverride2: 'on'" in editor_source
+    assert "choosePromptDiffText" in editor_source
+    assert "export function choosePromptDiffText" in diff_helper_source
+    assert "workingTreeBaseText !== undefined" in diff_helper_source
+    assert "workingTreeBaseText !== null" in diff_helper_source
+    assert "prompt?.workingTreeBaseText && hasWorkingTreeSourceChange" not in editor_source
+    assert "workingTreeBaseText" in diff_helper_source
+    assert "Compare from" in editor_source
+    assert "diffBaseOptions" in editor_source
+    assert "getPromptRevision" in editor_source
+    assert "selectedBaseText" in diff_helper_source
+    assert "/api/prompts/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revision)}" in api_source
+    assert "interface PromptRevision" in types_source
+    assert "@app.get(\"/api/prompts/{prompt_id}/revisions/{revision}\")" in app_source
+    assert "workingTreeBaseText?: string | null" in types_source
+    assert "workingTreeChanged?: boolean" in types_source
+    assert ".diff-toolbar" in css_source
+    assert ".diff-editor-shell" in css_source
+    assert ".patch-preview pre" in css_source
+    assert "white-space: pre-wrap" in css_source
+    assert "overflow-wrap: anywhere" in css_source
+
+
+def test_prompt_diff_text_helper_handles_working_tree_empty_baseline() -> None:
+    if not (WORKBENCH_ROOT / "node_modules" / "typescript").exists():
+        pytest.skip("Prompt Workbench TypeScript dependencies are not installed")
+    helper_path = WORKBENCH_SRC / "promptDiff.ts"
+    script = r"""
+const fs = require('fs');
+const vm = require('vm');
+const ts = require('typescript');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const compiled = ts.transpileModule(source, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+});
+const module = { exports: {} };
+vm.runInNewContext(compiled.outputText, { module, exports: module.exports, require });
+const choosePromptDiffText = module.exports.choosePromptDiffText;
+const cases = [
+  {
+    name: 'clean working-tree untracked baseline',
+    input: { changed: false, currentPromptText: 'current', nextText: 'next', workingTreeChanged: true, workingTreeBaseText: '' },
+    expected: { original: '', modified: 'current' },
+  },
+  {
+    name: 'clean working-tree tracked baseline',
+    input: { changed: false, currentPromptText: 'current', nextText: 'next', workingTreeChanged: true, workingTreeBaseText: 'head' },
+    expected: { original: 'head', modified: 'current' },
+  },
+  {
+    name: 'clean unchanged source',
+    input: { changed: false, currentPromptText: 'current', nextText: 'next', workingTreeChanged: false, workingTreeBaseText: 'head' },
+    expected: { original: 'current', modified: 'current' },
+  },
+  {
+    name: 'dirty editor takes precedence',
+    input: { changed: true, currentPromptText: 'current', nextText: 'editor', workingTreeChanged: true, workingTreeBaseText: 'head' },
+    expected: { original: 'current', modified: 'editor' },
+  },
+  {
+    name: 'selected history revision is explicit baseline',
+    input: { changed: true, currentPromptText: 'current', nextText: 'editor', workingTreeChanged: true, workingTreeBaseText: 'head', selectedBaseText: 'old commit' },
+    expected: { original: 'old commit', modified: 'editor' },
+  },
+  {
+    name: 'selected current source overrides implicit working tree baseline',
+    input: { changed: false, currentPromptText: 'current', nextText: 'next', workingTreeChanged: true, workingTreeBaseText: 'head', selectedBaseText: 'current' },
+    expected: { original: 'current', modified: 'current' },
+  },
+  {
+    name: 'null baseline falls back to current source',
+    input: { changed: false, currentPromptText: 'current', nextText: 'next', workingTreeChanged: true, workingTreeBaseText: null },
+    expected: { original: 'current', modified: 'current' },
+  },
+];
+for (const testCase of cases) {
+  const actual = choosePromptDiffText(testCase.input);
+  if (JSON.stringify(actual) !== JSON.stringify(testCase.expected)) {
+    throw new Error(`${testCase.name}: expected ${JSON.stringify(testCase.expected)} got ${JSON.stringify(actual)}`);
+  }
+}
+"""
+    subprocess.run(
+        ["node", "-e", script, str(helper_path)],
+        cwd=WORKBENCH_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_prompt_revision_text_comes_from_selected_git_revision(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "prompt.md"
+
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "qa@example.test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "QA"], cwd=repo, check=True)
+    target.write_text("first version\n", encoding="utf-8")
+    subprocess.run(["git", "add", "prompt.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "first"], cwd=repo, check=True, capture_output=True, text=True)
+    first_commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=repo, text=True).strip()
+    target.write_text("second version\n", encoding="utf-8")
+    subprocess.run(["git", "add", "prompt.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "second"], cwd=repo, check=True, capture_output=True, text=True)
+
+    assert prompt_service.normalize_prompt_revision(first_commit) == first_commit
+    assert prompt_service.git_text_at_revision(target, first_commit, cwd=repo, git_path="prompt.md") == "first version\n"
+    with pytest.raises(ValueError):
+        prompt_service.normalize_prompt_revision(first_commit[:4])
+    with pytest.raises(ValueError):
+        prompt_service.normalize_prompt_revision("HEAD;rm -rf /")
+
+
+@pytest.mark.parametrize("stage_change", [False, True])
+def test_prompt_history_surfaces_uncommitted_working_tree_changes(tmp_path: Path, stage_change: bool) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "prompt.md"
+    target.write_text("first applied line\n", encoding="utf-8")
+
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "prompt.md"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-c", "user.name=QA", "-c", "user.email=qa@example.test", "commit", "-m", "initial prompt"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    target.write_text("first applied line\nsecond uncommitted line\n", encoding="utf-8")
+    if stage_change:
+        subprocess.run(["git", "add", "prompt.md"], cwd=repo, check=True, capture_output=True, text=True)
+
+    rows = prompt_service.git_history(target, limit=1)
+    head_text = prompt_service.git_text_at_head(target)
+
+    assert rows[0]["commit"] == "working-tree"
+    assert rows[0]["workingTree"] is True
+    assert rows[0]["subject"] == "Uncommitted source changes"
+    assert rows[0]["changeSummary"]["additions"] == 1
+    assert "+second uncommitted line" in rows[0]["patch"]
+    assert str(tmp_path) not in rows[0]["patch"]
+    assert head_text == "first applied line\n"
+
+
+def test_prompt_history_surfaces_untracked_prompt_files(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    readme = repo / "README.md"
+    readme.write_text("initial repo\n", encoding="utf-8")
+    target = repo / "new_prompt.md"
+
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-c", "user.name=QA", "-c", "user.email=qa@example.test", "commit", "-m", "initial repo"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    target.write_text("---\nid: qa.new_prompt\n---\nnew body\n", encoding="utf-8")
+
+    rows = prompt_service.git_history(target, limit=1)
+
+    assert rows[0]["commit"] == "working-tree"
+    assert rows[0]["workingTree"] is True
+    assert rows[0]["changeSummary"]["additions"] == 4
+    assert "new file mode" in rows[0]["patch"]
+    assert "+new body" in rows[0]["patch"]
+    assert str(tmp_path) not in rows[0]["patch"]
+    assert prompt_service.git_text_at_head(target) is None
 
 
 @pytest.mark.parametrize(
@@ -402,6 +1487,7 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
     assert captured
     assert f"--prompt-bank={prompt_bank}" in captured[0]
     assert "--prompt-bank" not in captured[0]
+    assert "--prompt-id=main.voice_style" in captured[0]
 
 
 def test_eval_preview_blocks_pending_eval_bank_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -591,8 +1677,16 @@ def test_repo_relative_prompt_paths_resolve_for_draft_api() -> None:
 def test_eval_preview_filters_family_and_surface(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bank = {
         "families": [
-            {"id": "family_a", "cases": [{"id": "a_web", "surface": "web"}, {"id": "a_voice", "surface": "voice"}]},
-            {"id": "family_b", "cases": [{"id": "b_web", "surface": "web"}]},
+            {
+                "id": "family_a",
+                "promptRefs": ["main.identity"],
+                "cases": [{"id": "a_web", "surface": "web"}, {"id": "a_voice", "surface": "voice"}],
+            },
+            {
+                "id": "family_b",
+                "promptRefs": ["memory.transcript_summarizer"],
+                "cases": [{"id": "b_web", "surface": "web"}],
+            },
         ]
     }
     monkeypatch.setattr(evals, "workbench_private_root", lambda: tmp_path / "private")
@@ -607,6 +1701,15 @@ def test_eval_preview_filters_family_and_surface(tmp_path: Path, monkeypatch: py
     assert "outputDir" not in result
     assert result["privateOutputAvailable"] is True
     assert result["artifactName"] == result["id"]
+
+    prompt_filtered = evals.run_exact_model_eval(
+        max_cases=5,
+        live=False,
+        prompt_id="memory.transcript_summarizer",
+    )
+
+    assert prompt_filtered["cases"] == [{"family": "family_b", "case": "b_web", "surface": "web"}]
+    assert prompt_filtered["promptHash"]
 
 
 def test_eval_case_edit_creates_reviewed_eval_bank_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -728,6 +1831,44 @@ def test_workbench_context_links_prompt_history_evals_and_qa(tmp_path: Path, mon
     assert str(Path.home()) not in encoded
 
 
+def test_runtime_prompt_bundle_status_is_prompt_specific_and_public_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    import scripts.viventium.config_compiler as config_compiler_module
+
+    monkeypatch.setattr(
+        config_compiler_module,
+        "check_prompt_bundle_drift",
+        lambda: {
+            "status": "blocked",
+            "reason": "prompt_bundle_drift",
+            "compare_reviewed": False,
+            "live_path": "/private/local/runtime/prompt-bundle.json",
+            "candidate_count": 3,
+            "source": {"prompt_count": 66, "bundle_hash": "source"},
+            "live": {"prompt_count": 63, "bundle_hash": "live"},
+            "diff": {
+                "added": ["memory.hardener_consolidation"],
+                "removed": ["legacy.prompt"],
+                "changed": ["main.identity"],
+            },
+            "drift_count": 3,
+        },
+    )
+
+    affected = prompt_service.runtime_prompt_bundle_status("memory.hardener_consolidation")
+    unaffected = prompt_service.runtime_prompt_bundle_status("memory.transcript_summarizer")
+    encoded = json.dumps(affected)
+
+    assert affected["promptState"] == "source-only"
+    assert affected["promptAffected"] is True
+    assert affected["driftCount"] == 3
+    assert affected["sourcePromptCount"] == 66
+    assert affected["livePromptCount"] == 63
+    assert unaffected["promptState"] == "other-drift"
+    assert unaffected["promptAffected"] is False
+    assert "live_path" not in encoded
+    assert "/private/local" not in encoded
+
+
 def test_workbench_context_surfaces_eval_edit_drafts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     prompt_root = tmp_path / "prompts"
     eval_root = tmp_path / "evals"
@@ -822,6 +1963,7 @@ def test_prompt_workbench_lifecycle_script_scopes_process_ownership() -> None:
     assert "state/prompt-workbench" not in script
     assert '"state" / "prompt-workbench"' in script
     assert "prompt_workbench.app:app" in script
+    assert '"--no-access-log"' in script
     assert "Recorded PID did not belong to this Prompt Workbench." in script
     assert "Cleared stale workbench state; retry the action." in script
     assert "clear_state(app_support_dir)" in script

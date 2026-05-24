@@ -263,7 +263,10 @@ class CartesiaTTS(TTS):
 # === VIVENTIUM START ===
 # Feature: Cartesia text normalization helpers
 def _should_debug() -> bool:
-    return (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+    return (
+        (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+        or (os.getenv("VIVENTIUM_VOICE_LOG_TTS_INPUTS", "") or "").strip() == "1"
+    )
 
 
 def _default_ws_url(api_url: str) -> str:
@@ -360,6 +363,46 @@ def _debug_text(text: str, *, max_len: int = 500) -> str:
 
 def _debug_text_json(text: str) -> str:
     return json.dumps(text or "", ensure_ascii=False)
+
+
+def _is_punctuation_only(text: str) -> bool:
+    stripped = (text or "").strip()
+    return bool(stripped) and all(ch in ".,!?;:…" for ch in stripped)
+
+
+def _log_tts_input(
+    *,
+    transport: str,
+    stage: str,
+    action: str,
+    text: str,
+    cfg: CartesiaConfig,
+    reason: str = "",
+    continue_generation: Optional[bool] = None,
+    emotion: Optional[str] = None,
+) -> None:
+    if not _should_debug():
+        return
+
+    value = text or ""
+    logger.info(
+        "[VoiceTTSInput] action=%s provider=cartesia transport=%s stage=%s model=%s voice=%s version=%s chars=%s stripped_chars=%s punctuation_only=%s leading_space=%s trailing_space=%s continue_generation=%s emotion=%s reason=%s text_json=%s",
+        action,
+        transport,
+        stage,
+        cfg.model_id,
+        cfg.voice_id,
+        cfg.api_version,
+        len(value),
+        len(value.strip()),
+        _is_punctuation_only(value),
+        bool(value[:1].isspace()),
+        bool(value[-1:].isspace()),
+        continue_generation,
+        emotion or "",
+        reason,
+        _debug_text_json(value),
+    )
 
 
 def _with_emotion_ssml(text: str, emotion: Optional[str]) -> str:
@@ -770,6 +813,14 @@ class _CartesiaChunkedStream(ChunkedStream):
                             _debug_text_json(cartesia_transcript),
                         )
 
+                    _log_tts_input(
+                        transport="bytes",
+                        stage=f"segment:{idx + 1}",
+                        action="forwarded",
+                        text=cartesia_transcript,
+                        cfg=cfg,
+                        emotion=emotion,
+                    )
                     async with session.post(cfg.api_url, headers=headers, data=json.dumps(payload)) as resp:
                         if resp.status != 200:
                             body = await resp.text()
@@ -866,6 +917,15 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
                             _debug_text_json("".join(sent_transcripts)),
                         )
 
+                    _log_tts_input(
+                        transport="ws",
+                        stage=f"input:{sent_input_count}",
+                        action="forwarded",
+                        text=cartesia_transcript,
+                        cfg=cfg,
+                        continue_generation=True,
+                        emotion=emotion,
+                    )
                     await ws.send_str(
                         json.dumps(
                             _build_ws_generation_request(
@@ -917,6 +977,15 @@ class _CartesiaSynthesizeStream(SynthesizeStream):
                             _debug_text_json("".join(sent_transcripts)),
                         )
 
+                    _log_tts_input(
+                        transport="ws",
+                        stage="finalize",
+                        action="control",
+                        text="",
+                        cfg=cfg,
+                        continue_generation=False,
+                        reason="end_generation",
+                    )
                     await ws.send_str(
                         json.dumps(
                             _build_ws_generation_request(

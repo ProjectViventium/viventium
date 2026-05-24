@@ -48,6 +48,8 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_memory_hardening_contract.py:
     qa_owner: qa/memory-hardening/cases.md
+  tests/release/test_meilisearch_resource_guardrails.py:
+    qa_owner: qa/local-docker-services/cases.md
   tests/release/test_ms365_launcher_contract.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_native_stack_helpers.py:
@@ -78,8 +80,12 @@ release_tests:
     qa_owner: qa/qa-system-audit/cases.md
   tests/release/test_rag_api_override_contract.py:
     qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_rag_compose_resource_guardrails.py:
+    qa_owner: qa/conversation-recall-rag/cases.md
   tests/release/test_remote_call_tunnel.py:
     qa_owner: qa/remote-access/cases.md
+  tests/release/test_scheduled_glasshive_prompts.py:
+    qa_owner: qa/prompt-workbench/cases.md
   tests/release/test_scheduling_mcp_supervision.py:
     qa_owner: qa/background_agents/cases.md
   tests/release/test_shell_init.py:

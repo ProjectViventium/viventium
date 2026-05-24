@@ -24,6 +24,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence, Union
@@ -61,7 +63,7 @@ class ProviderAttempt:
 
 def _safe_json(value: object, *, max_len: int = 500) -> str:
     try:
-        serialized = json.dumps(value, ensure_ascii=True, default=str)
+        serialized = json.dumps(value, ensure_ascii=False, default=str)
     except Exception:
         serialized = str(value)
     if len(serialized) > max_len:
@@ -163,6 +165,146 @@ class _BufferedVoiceMarkupSanitizer:
         safe_text = self._buffer[:safe_end]
         self._buffer = self._buffer[safe_end:]
         return strip_voice_control_tags(safe_text)
+
+
+class _ProviderTextBoundaryNormalizer:
+    """
+    Final guard for text chunks forwarded to streaming TTS providers.
+
+    LiveKit/provider adapters can receive text in smaller pieces than the LLM-facing buffer emitted.
+    Never forward punctuation-only chunks like "." to a provider, because some TTS APIs speak them
+    literally as "dot". Keep decimal splits intact.
+    """
+
+    def __init__(self) -> None:
+        self._last_sent_text = ""
+        self._pending_punctuation = ""
+        self.last_decision = ""
+
+    @staticmethod
+    def _is_orphan_punctuation(text: str) -> bool:
+        stripped = (text or "").strip()
+        return bool(stripped) and all(ch in ".,!?;:…" for ch in stripped)
+
+    def push_text(self, text: str) -> str:
+        self.last_decision = ""
+        if not text:
+            return ""
+
+        if self._is_orphan_punctuation(text):
+            self._pending_punctuation += text.strip()
+            self.last_decision = "pending_punctuation_not_forwarded"
+            return ""
+
+        text = self._apply_pending_punctuation(text)
+        cleaned = self._drop_leading_orphan_punctuation(text)
+        if not cleaned or self._is_orphan_punctuation(cleaned):
+            self.last_decision = self.last_decision or "orphan_punctuation_not_forwarded"
+            return ""
+
+        self._last_sent_text += cleaned
+        return cleaned
+
+    def _apply_pending_punctuation(self, text: str) -> str:
+        if not self._pending_punctuation:
+            return text
+
+        pending = self._pending_punctuation
+        self._pending_punctuation = ""
+        previous = self._last_sent_text.rstrip()
+        next_non_space = text.lstrip()[:1]
+
+        if (
+            previous[-1:].isdigit()
+            and pending == "."
+            and text[:1].isdigit()
+        ):
+            self.last_decision = "preserved_pending_decimal_point"
+            return f"{pending}{text}"
+
+        if pending and all(ch in ",;:" for ch in pending):
+            self.last_decision = "preserved_pending_clause_punctuation"
+            if text[:1].isspace():
+                return f"{pending}{text}"
+            return f"{pending} {text}" if previous and not previous[-1:].isspace() else f"{pending}{text}"
+
+        self.last_decision = "dropped_pending_terminal_punctuation"
+        if previous and not previous[-1:].isspace() and next_non_space and not text[:1].isspace():
+            return f" {text}"
+        return text
+
+    def _drop_leading_orphan_punctuation(self, text: str) -> str:
+        if not text or not self._last_sent_text:
+            return text
+
+        match = re.match(r"^(\s*)([.,!?;:…]+)(\s*)", text)
+        if not match:
+            return text
+
+        if not any(ch in ".!?…" for ch in match.group(2)):
+            return text
+
+        remaining = text[match.end() :]
+        if not remaining:
+            return ""
+
+        previous = self._last_sent_text.rstrip()
+        if (
+            previous[-1:].isdigit()
+            and remaining[:1].isdigit()
+            and "." in match.group(2)
+        ):
+            return text
+
+        if not self._last_sent_text[-1:].isspace() and not remaining[:1].isspace():
+            self.last_decision = self.last_decision or "dropped_leading_terminal_punctuation"
+            return f" {remaining}"
+        self.last_decision = self.last_decision or "dropped_leading_terminal_punctuation"
+        return remaining
+
+
+def _tts_payload_logging_enabled() -> bool:
+    return (
+        (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+        or (os.getenv("VIVENTIUM_VOICE_LOG_TTS_INPUTS", "") or "").strip() == "1"
+    )
+
+
+def _tts_class_name(tts_impl: TTS) -> str:
+    cls = tts_impl.__class__
+    return f"{cls.__module__}.{cls.__name__}"
+
+
+def _log_tts_input(
+    attempt: ProviderAttempt,
+    *,
+    mode: str,
+    stage: str,
+    action: str,
+    text: str,
+    reason: str = "",
+    tts_impl: Optional[TTS] = None,
+) -> None:
+    if not _tts_payload_logging_enabled():
+        return
+
+    value = text or ""
+    stripped = value.strip()
+    logger.info(
+        "[VoiceTTSInput] action=%s mode=%s stage=%s provider=%s tts_class=%s chars=%s stripped_chars=%s punctuation_only=%s leading_space=%s trailing_space=%s reason=%s text_json=%s",
+        action,
+        mode,
+        stage,
+        attempt.label,
+        _tts_class_name(tts_impl or attempt.tts),
+        len(value),
+        len(stripped),
+        _ProviderTextBoundaryNormalizer._is_orphan_punctuation(value),
+        bool(value[:1].isspace()),
+        bool(value[-1:].isspace()),
+        reason,
+        _safe_json(value, max_len=2000),
+    )
 
 
 def _build_streaming_tts(tts_impl: TTS) -> TTS:
@@ -308,6 +450,14 @@ class _FallbackChunkedStream(ChunkedStream):
         if attempt.sanitize_voice_markup:
             synth_text = strip_voice_control_tags(synth_text)
 
+        _log_tts_input(
+            attempt,
+            mode="synthesize",
+            stage="synthesize",
+            action="forwarded",
+            text=synth_text,
+            tts_impl=tts_impl,
+        )
         stream = tts_impl.synthesize(synth_text, conn_options=conn_options)
         frames: list[rtc.AudioFrame] = []
         async with stream:
@@ -367,27 +517,108 @@ class _FallbackSynthesizeStream(SynthesizeStream):
         stream_tts = _build_streaming_tts(attempt.tts)
         stream = stream_tts.stream(conn_options=conn_options)
         text_transform = _BufferedVoiceMarkupSanitizer() if attempt.sanitize_voice_markup else None
+        text_boundary = _ProviderTextBoundaryNormalizer()
 
         async def _forward_input_task() -> None:
             try:
                 async for data in input_ch:
                     if isinstance(data, str):
-                        text = data
+                        raw_text = data
+                        text = raw_text
                         if text_transform is not None:
                             text = text_transform.push_text(text)
+                            if raw_text and not text:
+                                _log_tts_input(
+                                    attempt,
+                                    mode="stream",
+                                    stage="markup",
+                                    action="suppressed",
+                                    text=raw_text,
+                                    reason="voice_markup_pending_or_stripped",
+                                    tts_impl=stream_tts,
+                                )
+                        boundary_input = text
+                        text = text_boundary.push_text(boundary_input)
+                        boundary_reason = text_boundary.last_decision
                         if text:
+                            _log_tts_input(
+                                attempt,
+                                mode="stream",
+                                stage="push_text",
+                                action="forwarded",
+                                text=text,
+                                reason=boundary_reason,
+                                tts_impl=stream_tts,
+                            )
                             stream.push_text(text)
+                        elif boundary_input:
+                            _log_tts_input(
+                                attempt,
+                                mode="stream",
+                                stage="push_text",
+                                action="dropped",
+                                text=boundary_input,
+                                reason=boundary_reason
+                                or "orphan_punctuation_or_empty_after_boundary_normalization",
+                                tts_impl=stream_tts,
+                            )
                     elif isinstance(data, self._FlushSentinel):
                         if text_transform is not None:
                             flushed = text_transform.flush()
+                            boundary_input = flushed
+                            flushed = text_boundary.push_text(boundary_input)
+                            boundary_reason = text_boundary.last_decision
                             if flushed:
+                                _log_tts_input(
+                                    attempt,
+                                    mode="stream",
+                                    stage="flush",
+                                    action="forwarded",
+                                    text=flushed,
+                                    reason=boundary_reason,
+                                    tts_impl=stream_tts,
+                                )
                                 stream.push_text(flushed)
+                            elif boundary_input:
+                                _log_tts_input(
+                                    attempt,
+                                    mode="stream",
+                                    stage="flush",
+                                    action="dropped",
+                                    text=boundary_input,
+                                    reason=boundary_reason
+                                    or "orphan_punctuation_or_empty_after_boundary_normalization",
+                                    tts_impl=stream_tts,
+                                )
                         stream.flush()
             finally:
                 if text_transform is not None:
                     tail = text_transform.end()
+                    boundary_input = tail
+                    tail = text_boundary.push_text(boundary_input)
+                    boundary_reason = text_boundary.last_decision
                     if tail:
+                        _log_tts_input(
+                            attempt,
+                            mode="stream",
+                            stage="tail",
+                            action="forwarded",
+                            text=tail,
+                            reason=boundary_reason,
+                            tts_impl=stream_tts,
+                        )
                         stream.push_text(tail)
+                    elif boundary_input:
+                        _log_tts_input(
+                            attempt,
+                            mode="stream",
+                            stage="tail",
+                            action="dropped",
+                            text=boundary_input,
+                            reason=boundary_reason
+                            or "orphan_punctuation_or_empty_after_boundary_normalization",
+                            tts_impl=stream_tts,
+                        )
                 stream.end_input()
 
         input_task = asyncio.create_task(_forward_input_task(), name="fallback_tts_forward_input")

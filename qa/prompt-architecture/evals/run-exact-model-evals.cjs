@@ -59,6 +59,9 @@ function parseArgs(argv) {
     judgeRoute: DEFAULT_JUDGE_ROUTE,
     judgeEndpoint: process.env.VIVENTIUM_EVAL_JUDGE_ENDPOINT || 'openAI',
     judgeAgentId: process.env.VIVENTIUM_EVAL_JUDGE_AGENT_ID || process.env.VIVENTIUM_EVAL_AGENT_ID || MAIN_AGENT_ID,
+    family: '',
+    surface: '',
+    promptId: '',
   };
 
   for (const arg of argv) {
@@ -115,6 +118,12 @@ function parseArgs(argv) {
       args.judgeEndpoint = arg.slice('--judge-endpoint='.length).trim() || args.judgeEndpoint;
     } else if (arg.startsWith('--judge-agent-id=')) {
       args.judgeAgentId = arg.slice('--judge-agent-id='.length).trim() || args.judgeAgentId;
+    } else if (arg.startsWith('--family=')) {
+      args.family = arg.slice('--family='.length).trim();
+    } else if (arg.startsWith('--surface=')) {
+      args.surface = arg.slice('--surface='.length).trim();
+    } else if (arg.startsWith('--prompt-id=')) {
+      args.promptId = arg.slice('--prompt-id='.length).trim();
     }
   }
 
@@ -575,12 +584,35 @@ function flattenPromptCases(promptBank) {
       familyId: family.id,
       familyGoal: family.goal,
       ...testCase,
+      promptRefs: [
+        ...new Set([
+          ...((family.promptRefs || family.prompt_refs || []).map((item) => String(item))),
+          ...((testCase.promptRefs || testCase.prompt_refs || []).map((item) => String(item))),
+        ]),
+      ],
     })),
   );
 }
 
-function runnablePromptCases(promptBank) {
-  return flattenPromptCases(promptBank);
+function runnablePromptCases(promptBank, filters = {}) {
+  return flattenPromptCases(promptBank).filter((testCase) => caseMatchesFilters(testCase, filters));
+}
+
+function caseMatchesFilters(testCase, filters = {}) {
+  if (filters.family && testCase.familyId !== filters.family) {
+    return false;
+  }
+  if (filters.surface && (testCase.surface || 'web') !== filters.surface) {
+    return false;
+  }
+  if (
+    filters.promptId &&
+    filters.promptId !== 'main.conscious_agent' &&
+    !(testCase.promptRefs || []).includes(filters.promptId)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function buildCaseText(testCase, { includeSetup = true } = {}) {
@@ -1781,7 +1813,7 @@ function summarizePostCaseEvidenceForJudge(postCaseEvidence) {
 }
 
 async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
-  const runnableCases = runnablePromptCases(promptBank).slice(0, args.maxCases);
+  const runnableCases = runnablePromptCases(promptBank, args).slice(0, args.maxCases);
   const results = [];
   const env = loadLocalEnv();
 
@@ -2014,7 +2046,7 @@ function writeReports({
   ensureDir(path.dirname(args.publicReport));
 
   const allCases = flattenPromptCases(promptBank);
-  const runnableCases = runnablePromptCases(promptBank);
+  const runnableCases = runnablePromptCases(promptBank, args);
   const selectedCaseCount = Math.min(args.maxCases, runnableCases.length);
   const selectedCaseLimitLabel =
     args.maxCases >= runnableCases.length ? `all (${runnableCases.length})` : String(args.maxCases);
@@ -2076,6 +2108,11 @@ function writeReports({
     promptFamilies: (promptBank.families || []).length,
     promptCases: allCases.length,
     runnablePromptCases: runnableCases.length,
+    filters: {
+      family: args.family || null,
+      surface: args.surface || null,
+      promptId: args.promptId || null,
+    },
     selectedCaseLimit: selectedCaseLimitLabel,
     selectedCaseCount,
     surfacesInBank: [...new Set(allCases.map((testCase) => testCase.surface || 'web'))].sort(),
@@ -2113,6 +2150,9 @@ function writeReports({
           promptBank: args.promptBank,
           qaEmailHash: hashValue(args.qaEmail),
           agentIdHash: hashValue(args.agentId),
+          family: args.family || null,
+          surface: args.surface || null,
+          promptId: args.promptId || null,
           localJwtFallback: args.localJwtFallback,
           maxCases: args.maxCases,
           timeoutMs: args.timeoutMs,
