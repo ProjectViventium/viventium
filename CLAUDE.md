@@ -211,6 +211,14 @@ Before changing code:
   UX/result evidence, supporting backend/log/DB evidence, and any mismatch or residual fix.
 - Logs, DB rows, API responses, source inspection, model completions, and unit tests are supporting
   evidence, not substitutes for any required visible-UI, detail-state, persistence, or wording step.
+- For voice, LiveKit, Telegram voice, browser-audio, or TTS/STT changes, follow `qa/README.md`:
+  first prove the changed code/config is present in the active runtime artifact being tested: source
+  checkout, generated config, built artifact, and installed/running process as applicable. Then run
+  the actual playground/call/bot path with synthetic public-safe content. Verify the audible or
+  delivered voice outcome, synthetic or sanitized transcript evidence, interruption/cancel behavior
+  when relevant, latency/log visibility, DB/state persistence, runtime config alignment, and owning
+  code. Instrumentation-only confidence, source inspection, logs, DB rows, unit tests, model review,
+  Claude review, or "the next call should show it" is `PARTIAL`, not acceptance.
 - For evidence-retrieval failures, classify the failure before answering. Successful empty results,
   provider unavailable, timeout, rate limit, auth/config missing, request rejected, unsupported
   configuration, and missing local prerequisites such as Docker-backed search services are different

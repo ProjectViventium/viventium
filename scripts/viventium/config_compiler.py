@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -147,8 +148,20 @@ LEGACY_CANONICAL_ENV_IMPORT_KEYS = (
     "MS365_MCP_CLIENT_ID",
     "MS365_MCP_CLIENT_SECRET",
     "MS365_MCP_SCOPE",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_MODELS",
+    "ANTHROPIC_REVERSE_PROXY",
+    "OPENAI_API_BASE",
+    "OPENAI_BASE_URL",
+    "OPENAI_MODELS",
+    "OPENAI_REVERSE_PROXY",
     "OPENROUTER_API_KEY",
     "PERPLEXITY_API_KEY",
+    "PORTKEY_API_KEY",
+    "PORTKEY_BASE_URL",
+    "PORTKEY_CONFIG",
+    "PORTKEY_PROVIDER",
+    "PORTKEY_VIRTUAL_KEY",
     "SERPER_API_KEY",
     "VIVENTIUM_ANTHROPIC_MODE",
     "VIVENTIUM_FOUNDRY_ANTHROPIC_MODELS",
@@ -175,6 +188,8 @@ KEYCHAIN_SERVICE_ENV_FALLBACKS = {
     "viventium/openai_api_key": ("OPENAI_API_KEY",),
     "viventium/openrouter_api_key": ("OPENROUTER_API_KEY",),
     "viventium/perplexity_api_key": ("PERPLEXITY_API_KEY",),
+    "viventium/portkey_api_key": ("PORTKEY_API_KEY",),
+    "viventium/portkey_virtual_key": ("PORTKEY_VIRTUAL_KEY",),
     "viventium/skyvern_api_key": ("SKYVERN_API_KEY",),
     "viventium/telegram_bot_token": ("BOT_TOKEN",),
     "viventium/telegram_codex_bot_token": ("TELEGRAM_CODEX_BOT_TOKEN",),
@@ -186,6 +201,149 @@ def glasshive_enabled(config: dict[str, Any]) -> bool:
     integrations = config.get("integrations", {}) or {}
     configured = resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False)
     return configured and GLASSHIVE_RUNTIME_DIR.is_dir()
+
+
+def glasshive_deployment_mode(config: dict[str, Any]) -> str:
+    integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive") or {}
+    mode = str(glasshive.get("deployment_mode") or glasshive.get("mode") or "local").strip().lower()
+    return mode or "local"
+
+
+def glasshive_azure_enterprise_enabled(config: dict[str, Any]) -> bool:
+    return glasshive_deployment_mode(config) == "azure_enterprise_vm_docker"
+
+
+def _reject_localhost_cloud_url(label: str, value: str) -> None:
+    lowered = value.strip().lower()
+    if any(token in lowered for token in ("localhost", "127.0.0.1", "0.0.0.0", "::1")):
+        raise SystemExit(f"{label} must be a non-localhost URL for azure_enterprise_vm_docker")
+
+
+def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, Any]:
+    integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive") or {}
+    enterprise = glasshive.get("enterprise") or {}
+    if not isinstance(enterprise, dict):
+        enterprise = {}
+    enabled = glasshive_azure_enterprise_enabled(config)
+    auth = enterprise.get("auth") or {}
+    if not isinstance(auth, dict):
+        auth = {}
+    idle = enterprise.get("idle") or {}
+    if not isinstance(idle, dict):
+        idle = {}
+    quotas = enterprise.get("quotas") or {}
+    if not isinstance(quotas, dict):
+        quotas = {}
+    provider_env = enterprise.get("provider_env") or {}
+    if not isinstance(provider_env, dict):
+        provider_env = {}
+    oauth = enterprise.get("oauth") or {}
+    if not isinstance(oauth, dict):
+        oauth = {}
+    oauth_enabled = resolve_bool(oauth.get("enabled"), False)
+    if enabled and oauth_enabled:
+        for key in ("authorization_url", "token_url", "redirect_uri"):
+            value = str(oauth.get(key) or "").strip()
+            if value and not value.startswith("${"):
+                _reject_localhost_cloud_url(f"integrations.glasshive.enterprise.oauth.{key}", value)
+    mcp_url = str(glasshive.get("mcp_url") or enterprise.get("mcp_url") or "http://127.0.0.1:8767/mcp").strip()
+    operator_base_url = str(
+        glasshive.get("operator_base_url") or enterprise.get("operator_base_url") or "http://127.0.0.1:8780"
+    ).strip().rstrip("/")
+    artifact_base_url = str(
+        glasshive.get("artifact_base_url")
+        or enterprise.get("artifact_base_url")
+        or glasshive.get("runtime_public_base_url")
+        or enterprise.get("runtime_public_base_url")
+        or operator_base_url
+    ).strip().rstrip("/")
+    if enabled:
+        _reject_localhost_cloud_url("integrations.glasshive.mcp_url", mcp_url)
+        _reject_localhost_cloud_url("integrations.glasshive.operator_base_url", operator_base_url)
+        _reject_localhost_cloud_url("integrations.glasshive.enterprise.artifact_base_url", artifact_base_url)
+    tenant_id = str(enterprise.get("tenant_id") or auth.get("tenant_id") or "default").strip() or "default"
+    auth_mode = str(auth.get("mode") or enterprise.get("auth_mode") or "first_party_assertion").strip().lower()
+    service_token_env = str(auth.get("service_token_env") or "GLASSHIVE_MCP_SERVICE_TOKEN").strip() or "GLASSHIVE_MCP_SERVICE_TOKEN"
+    service_token_delivery = str(
+        auth.get("service_token_delivery")
+        or enterprise.get("service_token_delivery")
+        or "reverse_proxy"
+    ).strip().lower()
+    if service_token_delivery not in {"reverse_proxy", "client_header"}:
+        raise SystemExit(
+            "integrations.glasshive.enterprise.auth.service_token_delivery must be reverse_proxy or client_header"
+        )
+    service_token = optional_nested_secret(auth, "service_token") or optional_nested_secret(enterprise, "service_token")
+    signed_link_secret = optional_nested_secret(enterprise, "signed_link_secret")
+    upload_root = str(enterprise.get("uploads_root") or glasshive.get("uploads_root") or LIBRECHAT_UPLOADS_DIR).strip()
+    source_roots = enterprise.get("bootstrap_source_roots")
+    if isinstance(source_roots, list):
+        source_root_value = os.pathsep.join(str(item).strip() for item in source_roots if str(item).strip())
+    else:
+        source_root_value = str(source_roots or upload_root).strip()
+    worker_env_allowlist = provider_env.get("allowlist")
+    if isinstance(worker_env_allowlist, list):
+        worker_env_allowlist_value = ",".join(str(item).strip() for item in worker_env_allowlist if str(item).strip())
+    else:
+        worker_env_allowlist_value = str(worker_env_allowlist or "").strip()
+    return {
+        "enabled": enabled,
+        "mcp_url": mcp_url,
+        "operator_base_url": operator_base_url,
+        "artifact_base_url": artifact_base_url,
+        "tenant_id": tenant_id,
+        "auth_mode": auth_mode,
+        "service_token": service_token,
+        "service_token_env": service_token_env,
+        "service_token_delivery": service_token_delivery,
+        "signed_link_secret": signed_link_secret,
+        "upload_root": upload_root,
+        "source_roots": source_root_value,
+        "idle_terminate_after_s": positive_int_or_default(idle.get("terminate_after_seconds"), 1800, "integrations.glasshive.enterprise.idle.terminate_after_seconds"),
+        "idle_reaper_interval_s": positive_int_or_default(idle.get("reaper_interval_seconds"), 60, "integrations.glasshive.enterprise.idle.reaper_interval_seconds"),
+        "max_active_workers_per_user": positive_int_or_default(
+            quotas.get("max_active_workers_per_user"),
+            3,
+            "integrations.glasshive.enterprise.quotas.max_active_workers_per_user",
+        ),
+        "max_active_workers_per_tenant": positive_int_or_default(
+            quotas.get("max_active_workers_per_tenant"),
+            12,
+            "integrations.glasshive.enterprise.quotas.max_active_workers_per_tenant",
+        ),
+        "max_workspaces_per_user": positive_int_or_default(
+            quotas.get("max_workspaces_per_user"),
+            20,
+            "integrations.glasshive.enterprise.quotas.max_workspaces_per_user",
+        ),
+        "max_workspaces_per_tenant": positive_int_or_default(
+            quotas.get("max_workspaces_per_tenant"),
+            100,
+            "integrations.glasshive.enterprise.quotas.max_workspaces_per_tenant",
+        ),
+        "artifact_download_max_bytes": positive_int_or_default(
+            enterprise.get("artifact_download_max_bytes"),
+            100 * 1024 * 1024,
+            "integrations.glasshive.enterprise.artifact_download_max_bytes",
+        ),
+        "worker_env_allowlist": worker_env_allowlist_value,
+        "oauth_enabled": oauth_enabled,
+        "oauth": oauth,
+    }
+
+
+def explicit_url_port(value: str) -> str:
+    """Return the explicit port from an HTTP(S) URL, if one was configured."""
+    try:
+        parsed = urlparse(str(value or "").strip())
+        port = parsed.port
+    except ValueError:
+        return ""
+    if port is None:
+        return ""
+    return str(port)
 
 
 def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -202,6 +360,9 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     if default_execution_mode not in {"host", "docker"}:
         default_execution_mode = "host"
     if not enabled:
+        default_execution_mode = "docker"
+    if glasshive_azure_enterprise_enabled(config):
+        enabled = False
         default_execution_mode = "docker"
     return {
         "enabled": enabled,
@@ -272,6 +433,20 @@ MODEL_MAP = {
         "memory": "grok-4.3",
     },
 }
+AGENT_ASSIGNMENT_ROLES = {
+    "conscious",
+    "background_analysis",
+    "confirmation_bias",
+    "red_team",
+    "deep_research",
+    "productivity",
+    "parietal",
+    "pattern_recognition",
+    "emotional_resonance",
+    "strategic_planning",
+    "support",
+    "memory",
+}
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
     "anthropic": {"claude-opus-4-7"},
@@ -299,6 +474,8 @@ DEFAULT_MEMORY_HARDENING = {
         "max_files_per_run": 20,
         "max_chars_per_file": 500000,
         "summary_max_chars": 32000,
+        "reference_memory_max_chars": 24000,
+        "reference_messages_max_chars": 36000,
         "stable_evidence_max_age_days": 90,
         "rag_mode": "detailed_summary_only",
     },
@@ -1058,7 +1235,10 @@ def build_legacy_env_imports(config: dict[str, Any]) -> dict[str, str]:
     for key, value in extra_env.items():
         if value in (None, ""):
             continue
-        resolved_value = resolve_secret(value)
+        if isinstance(value, dict):
+            resolved_value = resolve_secret(value.get("secret_ref") or value.get("secret_value") or "")
+        else:
+            resolved_value = resolve_secret(value)
         if resolved_value:
             resolved[str(key)] = resolved_value
 
@@ -1409,6 +1589,85 @@ def choose_provider(available: list[str], preferred: list[str], fallback: str) -
     return fallback
 
 
+def model_override_for(config: dict[str, Any], provider: str, role: str) -> str:
+    overrides = (config.get("llm", {}) or {}).get("model_overrides") or {}
+    provider_overrides = overrides.get(provider) or {}
+    if isinstance(provider_overrides, str):
+        return provider_overrides.strip()
+    if not isinstance(provider_overrides, dict):
+        return ""
+    role_value = provider_overrides.get(role)
+    if role_value is not None:
+        return str(role_value).strip()
+    default_value = provider_overrides.get("default")
+    return str(default_value).strip() if default_value is not None else ""
+
+
+def assignment_model(config: dict[str, Any], provider: str, role: str) -> str:
+    override = model_override_for(config, provider, role)
+    return override or MODEL_MAP[provider][role]
+
+
+def has_model_overrides(config: dict[str, Any]) -> bool:
+    overrides = (config.get("llm", {}) or {}).get("model_overrides") or {}
+    if not isinstance(overrides, dict):
+        return False
+    for provider_overrides in overrides.values():
+        if isinstance(provider_overrides, str) and provider_overrides.strip():
+            return True
+        if not isinstance(provider_overrides, dict):
+            continue
+        for role, value in provider_overrides.items():
+            if role != "default" and role not in AGENT_ASSIGNMENT_ROLES:
+                continue
+            if str(value or "").strip():
+                return True
+    return False
+
+
+def runtime_model_lists(
+    config: dict[str, Any],
+    assignments: dict[str, tuple[str, str]],
+) -> dict[str, list[str]]:
+    provider_env_keys = {
+        "openai": "OPENAI_MODELS",
+        "anthropic": "ANTHROPIC_MODELS",
+    }
+    model_lists: dict[str, list[str]] = {}
+    for role, (provider, model) in assignments.items():
+        env_key = provider_env_keys.get(provider)
+        if not env_key or not model:
+            continue
+        if not model_override_for(config, provider, role):
+            continue
+        models = model_lists.setdefault(env_key, [])
+        if model not in models:
+            models.append(model)
+    return model_lists
+
+
+def worker_runtime_model_env(config: dict[str, Any]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    openai_model = model_override_for(config, "openai", "glasshive_codex") or model_override_for(config, "openai", "default")
+    if openai_model:
+        values["WPR_MODEL_CODEX_CLI"] = openai_model
+        values["WPR_MODEL_OPENCLAW_CODEX"] = openai_model
+    anthropic_model = model_override_for(config, "anthropic", "glasshive_claude") or model_override_for(config, "anthropic", "default")
+    if anthropic_model:
+        values["WPR_MODEL_CLAUDE_CODE"] = anthropic_model
+        values["WPR_MODEL_OPENCLAW_CLAUDE"] = anthropic_model
+    return values
+
+
+def apply_provider_endpoint_env_aliases(env: dict[str, str]) -> None:
+    if env.get("OPENAI_BASE_URL"):
+        env.setdefault("OPENAI_REVERSE_PROXY", env["OPENAI_BASE_URL"])
+    elif env.get("OPENAI_API_BASE"):
+        env.setdefault("OPENAI_REVERSE_PROXY", env["OPENAI_API_BASE"])
+    if env.get("ANTHROPIC_BASE_URL"):
+        env.setdefault("ANTHROPIC_REVERSE_PROXY", env["ANTHROPIC_BASE_URL"])
+
+
 def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]]:
     primary = config["llm"]["primary"]
     secondary = config["llm"].get("secondary", {})
@@ -1439,36 +1698,36 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
     memory_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
 
     return {
-        "conscious": (conscious_provider, MODEL_MAP[conscious_provider]["conscious"]),
+        "conscious": (conscious_provider, assignment_model(config, conscious_provider, "conscious")),
         "background_analysis": (
             reflective_provider,
-            MODEL_MAP[reflective_provider]["background_analysis"],
+            assignment_model(config, reflective_provider, "background_analysis"),
         ),
         "confirmation_bias": (
             reflective_provider,
-            MODEL_MAP[reflective_provider]["confirmation_bias"],
+            assignment_model(config, reflective_provider, "confirmation_bias"),
         ),
-        "red_team": (analytical_provider, MODEL_MAP[analytical_provider]["red_team"]),
+        "red_team": (analytical_provider, assignment_model(config, analytical_provider, "red_team")),
         "deep_research": (
             analytical_provider,
-            MODEL_MAP[analytical_provider]["deep_research"],
+            assignment_model(config, analytical_provider, "deep_research"),
         ),
-        "productivity": (analytical_provider, MODEL_MAP[analytical_provider]["productivity"]),
-        "parietal": (analytical_provider, MODEL_MAP[analytical_provider]["parietal"]),
+        "productivity": (analytical_provider, assignment_model(config, analytical_provider, "productivity")),
+        "parietal": (analytical_provider, assignment_model(config, analytical_provider, "parietal")),
         "pattern_recognition": (
             reflective_provider,
-            MODEL_MAP[reflective_provider]["pattern_recognition"],
+            assignment_model(config, reflective_provider, "pattern_recognition"),
         ),
         "emotional_resonance": (
             emotional_provider,
-            MODEL_MAP[emotional_provider]["emotional_resonance"],
+            assignment_model(config, emotional_provider, "emotional_resonance"),
         ),
         "strategic_planning": (
             emotional_provider,
-            MODEL_MAP[emotional_provider]["strategic_planning"],
+            assignment_model(config, emotional_provider, "strategic_planning"),
         ),
-        "support": (support_provider, MODEL_MAP[support_provider]["support"]),
-        "memory": (memory_provider, MODEL_MAP[memory_provider]["memory"]),
+        "support": (support_provider, assignment_model(config, support_provider, "support")),
+        "memory": (memory_provider, assignment_model(config, memory_provider, "memory")),
     }
 
 
@@ -1741,6 +2000,14 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
         transcripts.get("summary_max_chars"),
         "runtime.memory_hardening.transcripts.summary_max_chars",
     )
+    transcripts["reference_memory_max_chars"] = positive_int(
+        transcripts.get("reference_memory_max_chars"),
+        "runtime.memory_hardening.transcripts.reference_memory_max_chars",
+    )
+    transcripts["reference_messages_max_chars"] = positive_int(
+        transcripts.get("reference_messages_max_chars"),
+        "runtime.memory_hardening.transcripts.reference_messages_max_chars",
+    )
     transcripts["stable_evidence_max_age_days"] = positive_int(
         transcripts.get("stable_evidence_max_age_days"),
         "runtime.memory_hardening.transcripts.stable_evidence_max_age_days",
@@ -1800,7 +2067,14 @@ def resolve_memory_hardening_model_tuple(
 def resolve_auth_settings(config: dict[str, Any]) -> dict[str, Any]:
     runtime = config.get("runtime", {}) or {}
     auth = runtime.get("auth", {}) or {}
+    openid = auth.get("openid") or {}
+    if not isinstance(openid, dict):
+        openid = {}
+    openid_enabled = resolve_bool(openid.get("enabled"), False)
+    openid_client_secret = optional_nested_secret(openid, "client_secret") if openid_enabled else ""
+    openid_session_secret = optional_nested_secret(openid, "session_secret") if openid_enabled else ""
     return {
+        "allow_email_login": resolve_bool(auth.get("allow_email_login"), True),
         "allow_registration": resolve_bool(auth.get("allow_registration"), True),
         "bootstrap_registration_once": resolve_bool(
             auth.get("bootstrap_registration_once"), False
@@ -1811,6 +2085,29 @@ def resolve_auth_settings(config: dict[str, Any]) -> dict[str, Any]:
         )
         .strip()
         .rstrip("/"),
+        "openid": {
+            "enabled": openid_enabled,
+            "client_id": str(openid.get("client_id") or "").strip(),
+            "client_secret": openid_client_secret,
+            "issuer": str(openid.get("issuer") or "").strip().rstrip("/"),
+            "session_secret": openid_session_secret,
+            "scope": str(openid.get("scope") or "openid profile email").strip(),
+            "callback_url": str(openid.get("callback_url") or "/oauth/openid/callback").strip(),
+            "button_label": str(openid.get("button_label") or "Continue with OpenID").strip(),
+            "image_url": str(openid.get("image_url") or "").strip(),
+            "auto_redirect": resolve_bool(openid.get("auto_redirect"), False),
+            "use_pkce": resolve_bool(openid.get("use_pkce"), True),
+            "reuse_tokens": resolve_bool(openid.get("reuse_tokens"), False),
+            "email_claim": str(openid.get("email_claim") or "").strip(),
+            "username_claim": str(openid.get("username_claim") or "").strip(),
+            "name_claim": str(openid.get("name_claim") or "").strip(),
+            "required_role": str(openid.get("required_role") or "").strip(),
+            "required_role_parameter_path": str(openid.get("required_role_parameter_path") or "").strip(),
+            "required_role_token_kind": str(openid.get("required_role_token_kind") or "").strip(),
+            "admin_role": str(openid.get("admin_role") or "").strip(),
+            "admin_role_parameter_path": str(openid.get("admin_role_parameter_path") or "").strip(),
+            "admin_role_token_kind": str(openid.get("admin_role_token_kind") or "").strip(),
+        },
     }
 
 
@@ -1842,6 +2139,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     integrations = config.get("integrations", {})
     runtime = config.get("runtime", {})
     network = runtime.get("network", {}) or {}
+    prompt_workbench = runtime.get("prompt_workbench", config.get("prompt_workbench", {}) or {}) or {}
     agents = config.get("agents", {}) or {}
     resolved_voice = resolve_voice_settings(config)
     call_session_secret = nested_secret(runtime, "call_session_secret")
@@ -1858,6 +2156,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     memory_hardening_model = resolve_memory_hardening_model_tuple(config, memory_hardening)
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
+    openid_settings = auth_settings["openid"]
     transcripts_source_dir = memory_hardening["transcripts"]["source_dir"]
     dev_env = runtime_dev_env_settings(config)
     shared_services = dev_env["shared_singleton_services"]
@@ -1887,11 +2186,13 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     telegram_is_enabled = telegram_enabled(config)
     glasshive_is_enabled = glasshive_enabled(config)
     glasshive_host_worker = resolve_glasshive_host_worker_settings(config)
+    glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
     feature_request_pr = config.get("feature_requests", {}).get("pr", {}) or {}
     feature_request_pr_after_approval = resolve_bool(
         feature_request_pr.get("create_after_user_approval"),
         True,
     )
+    prompt_workbench_enabled = resolve_bool(prompt_workbench.get("enabled"), False)
 
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
@@ -1913,6 +2214,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_RAG_API_PORT": str(profile["rag_api_port"]),
         "VIVENTIUM_DEV_ENV_ENABLED": "true" if dev_env["enabled"] else "false",
         "VIVENTIUM_DEV_ENV_NAME": str(dev_env["name"]),
+        "VIVENTIUM_PROMPT_WORKBENCH_ENABLED": "true"
+        if prompt_workbench_enabled
+        else "false",
+        "START_PROMPT_WORKBENCH": "true" if prompt_workbench_enabled else "false",
         "VIVENTIUM_SHARED_SINGLETON_SERVICES": ",".join(sorted(shared_services)),
         "VIVENTIUM_WORK_REQUEST_CREATE_PR_AFTER_USER_APPROVAL": "true"
         if feature_request_pr_after_approval
@@ -1942,6 +2247,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_PRIMARY_AUTH_MODE": llm["primary"]["auth_mode"],
         "VIVENTIUM_SECONDARY_PROVIDER": llm.get("secondary", {}).get("provider", "none"),
         "VIVENTIUM_SECONDARY_AUTH_MODE": llm.get("secondary", {}).get("auth_mode", "disabled"),
+        "VIVENTIUM_ALLOW_RUNTIME_MODEL_OVERRIDES": "true"
+        if has_model_overrides(config)
+        else "false",
         "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
         "VIVENTIUM_DEFAULT_CONVERSATION_RECALL": "true"
         if default_conversation_recall
@@ -1989,6 +2297,12 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS": str(
             memory_hardening["transcripts"]["summary_max_chars"]
         ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_REFERENCE_MEMORY_MAX_CHARS": str(
+            memory_hardening["transcripts"]["reference_memory_max_chars"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_REFERENCE_MESSAGES_MAX_CHARS": str(
+            memory_hardening["transcripts"]["reference_messages_max_chars"]
+        ),
         "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS": str(
             memory_hardening["transcripts"]["stable_evidence_max_age_days"]
         ),
@@ -2015,7 +2329,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "START_FIRECRAWL": "true" if start_firecrawl else "false",
         "VIVENTIUM_WEB_SEARCH_ENABLED": "true" if web_search_is_enabled else "false",
         "VIVENTIUM_OPENCLAW_ENABLED": "true" if integrations.get("openclaw", {}).get("enabled") else "false",
-        "ALLOW_EMAIL_LOGIN": "true",
+        "ALLOW_EMAIL_LOGIN": "true" if auth_settings["allow_email_login"] else "false",
         "ALLOW_REGISTRATION": "true" if auth_settings["allow_registration"] else "false",
         "VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE": "true"
         if auth_settings["bootstrap_registration_once"]
@@ -2025,7 +2339,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             "connected_accounts_return_origin"
         ],
         "VIVENTIUM_PROMPT_FRAME_FILE_LOG": "0",
-        "ALLOW_SOCIAL_LOGIN": "false",
+        "ALLOW_SOCIAL_LOGIN": "true" if openid_settings["enabled"] else "false",
         "ALLOW_SOCIAL_REGISTRATION": "false",
         "ALLOW_UNVERIFIED_EMAIL_LOGIN": "true",
         "VIVENTIUM_REGISTRATION_APPROVAL": "false",
@@ -2050,6 +2364,47 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
     }
 
+    if openid_settings["enabled"]:
+        required_openid = {
+            "runtime.auth.openid.client_id": openid_settings["client_id"],
+            "runtime.auth.openid.client_secret": openid_settings["client_secret"],
+            "runtime.auth.openid.issuer": openid_settings["issuer"],
+            "runtime.auth.openid.session_secret": openid_settings["session_secret"],
+        }
+        missing_openid = [label for label, value in required_openid.items() if not str(value or "").strip()]
+        if missing_openid:
+            raise SystemExit(
+                "runtime.auth.openid.enabled requires "
+                + ", ".join(missing_openid)
+            )
+        env.update(
+            {
+                "OPENID_CLIENT_ID": openid_settings["client_id"],
+                "OPENID_CLIENT_SECRET": openid_settings["client_secret"],
+                "OPENID_ISSUER": openid_settings["issuer"],
+                "OPENID_SESSION_SECRET": openid_settings["session_secret"],
+                "OPENID_SCOPE": openid_settings["scope"],
+                "OPENID_CALLBACK_URL": openid_settings["callback_url"],
+                "OPENID_BUTTON_LABEL": openid_settings["button_label"],
+                "OPENID_IMAGE_URL": openid_settings["image_url"],
+                "OPENID_AUTO_REDIRECT": "true" if openid_settings["auto_redirect"] else "false",
+                "OPENID_USE_PKCE": "true" if openid_settings["use_pkce"] else "false",
+                "OPENID_REUSE_TOKENS": "true" if openid_settings["reuse_tokens"] else "false",
+            }
+        )
+        optional_openid_env = {
+            "OPENID_EMAIL_CLAIM": openid_settings["email_claim"],
+            "OPENID_USERNAME_CLAIM": openid_settings["username_claim"],
+            "OPENID_NAME_CLAIM": openid_settings["name_claim"],
+            "OPENID_REQUIRED_ROLE": openid_settings["required_role"],
+            "OPENID_REQUIRED_ROLE_PARAMETER_PATH": openid_settings["required_role_parameter_path"],
+            "OPENID_REQUIRED_ROLE_TOKEN_KIND": openid_settings["required_role_token_kind"],
+            "OPENID_ADMIN_ROLE": openid_settings["admin_role"],
+            "OPENID_ADMIN_ROLE_PARAMETER_PATH": openid_settings["admin_role_parameter_path"],
+            "OPENID_ADMIN_ROLE_TOKEN_KIND": openid_settings["admin_role_token_kind"],
+        }
+        env.update({key: value for key, value in optional_openid_env.items() if value})
+
     activation_node = llm["activation"]
     activation_provider = normalize_provider_name(activation_node.get("provider"))
     activation_secret = current_background_activation_secret(config)
@@ -2063,8 +2418,18 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
 
     if glasshive_is_enabled:
         glasshive_operator_base_url = str(
-            integrations.get("glasshive", {}).get("operator_base_url") or "http://127.0.0.1:8780"
+            glasshive_enterprise["operator_base_url"]
+            if glasshive_enterprise["enabled"]
+            else integrations.get("glasshive", {}).get("operator_base_url") or "http://127.0.0.1:8780"
         ).rstrip("/")
+        if glasshive_enterprise["enabled"]:
+            env["GLASSHIVE_MCP_URL"] = str(glasshive_enterprise["mcp_url"])
+            mcp_port = explicit_url_port(str(glasshive_enterprise["mcp_url"]))
+            if mcp_port:
+                env["GLASSHIVE_MCP_PORT"] = mcp_port
+            ui_port = explicit_url_port(glasshive_operator_base_url)
+            if ui_port:
+                env["GLASSHIVE_UI_PORT"] = ui_port
         env["GLASSHIVE_OPERATOR_BASE_URL"] = glasshive_operator_base_url
         env["GLASSHIVE_DEFAULT_LAUNCH_SURFACE"] = "desktop"
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
@@ -2086,6 +2451,44 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(LIBRECHAT_UPLOADS_DIR)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
         env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
+        if glasshive_enterprise["enabled"]:
+            enterprise_public_api_origin = str(network.get("public_api_origin", "") or "").strip()
+            env["GLASSHIVE_ENTERPRISE_MODE"] = "true"
+            env["GLASSHIVE_AUTH_MODE"] = str(glasshive_enterprise["auth_mode"])
+            env["GLASSHIVE_ENTERPRISE_TENANT_ID"] = str(glasshive_enterprise["tenant_id"])
+            env["GLASSHIVE_ARTIFACT_BASE_URL"] = str(glasshive_enterprise["artifact_base_url"])
+            signed_link_secret = str(glasshive_enterprise["signed_link_secret"] or "").strip() or scoped_secret(
+                call_session_secret,
+                f"glasshive-signed-link:{glasshive_enterprise['tenant_id']}",
+            )
+            if glasshive_enterprise["service_token"] and signed_link_secret == glasshive_enterprise["service_token"]:
+                raise SystemExit(
+                    "integrations.glasshive.enterprise.signed_link_secret must differ from the service token"
+                )
+            env["GLASSHIVE_SIGNED_LINK_SECRET"] = signed_link_secret
+            env["GLASSHIVE_PROJECT_PROVIDER_ENV"] = "true"
+            env["GLASSHIVE_IDLE_TERMINATE_AFTER_S"] = str(glasshive_enterprise["idle_terminate_after_s"])
+            env["GLASSHIVE_IDLE_REAPER_INTERVAL_S"] = str(glasshive_enterprise["idle_reaper_interval_s"])
+            env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER"] = str(glasshive_enterprise["max_active_workers_per_user"])
+            env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT"] = str(glasshive_enterprise["max_active_workers_per_tenant"])
+            env["GLASSHIVE_MAX_WORKSPACES_PER_USER"] = str(glasshive_enterprise["max_workspaces_per_user"])
+            env["GLASSHIVE_MAX_WORKSPACES_PER_TENANT"] = str(glasshive_enterprise["max_workspaces_per_tenant"])
+            env["GLASSHIVE_ARTIFACT_DOWNLOAD_MAX_BYTES"] = str(glasshive_enterprise["artifact_download_max_bytes"])
+            if env.get("OPENAI_BASE_URL"):
+                env.setdefault("WPR_OPENCLAW_USE_CUSTOM_PROVIDER", "1")
+                env.setdefault("WPR_OPENCLAW_WIRE_API", "openai-completions")
+            env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(glasshive_enterprise["upload_root"])
+            env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(glasshive_enterprise["source_roots"])
+            env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = (
+                f"{enterprise_public_api_origin.rstrip('/')}/api/viventium/glasshive/callback"
+                if enterprise_public_api_origin
+                else ""
+            )
+            if glasshive_enterprise["worker_env_allowlist"]:
+                env["GLASSHIVE_WORKER_ENV_ALLOWLIST"] = str(glasshive_enterprise["worker_env_allowlist"])
+            if glasshive_enterprise["service_token"]:
+                env[str(glasshive_enterprise["service_token_env"])] = str(glasshive_enterprise["service_token"])
+                env["WPR_API_TOKEN"] = str(glasshive_enterprise["service_token"])
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -2337,6 +2740,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S"] = str(
             turn_handling.get("min_consecutive_speech_delay_s")
         ).strip()
+    if turn_handling.get("aec_warmup_duration_s") not in (None, ""):
+        env["VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S"] = str(
+            turn_handling.get("aec_warmup_duration_s")
+        ).strip()
     if voice_worker.get("initialize_process_timeout_s") not in (None, ""):
         env["VIVENTIUM_VOICE_INITIALIZE_PROCESS_TIMEOUT_S"] = str(
             voice_worker.get("initialize_process_timeout_s")
@@ -2563,9 +2970,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if not resolved:
             continue
         if provider_name == "openai":
-            env["OPENAI_API_KEY"] = resolved
+            env.setdefault("OPENAI_API_KEY", resolved)
         elif provider_name == "anthropic":
-            env["ANTHROPIC_API_KEY"] = resolved
+            env.setdefault("ANTHROPIC_API_KEY", resolved)
         elif provider_name in {"x_ai", "xai"}:
             env.setdefault("XAI_API_KEY", resolved)
         elif provider_name == "openrouter":
@@ -2581,6 +2988,17 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
 
     for key, value in build_legacy_env_imports(config).items():
         env.setdefault(key, value)
+    apply_provider_endpoint_env_aliases(env)
+    if glasshive_enterprise["enabled"] and env.get("OPENAI_BASE_URL"):
+        env.setdefault("WPR_OPENCLAW_USE_CUSTOM_PROVIDER", "1")
+        env.setdefault("WPR_OPENCLAW_WIRE_API", "openai-completions")
+    if glasshive_enterprise["enabled"] and env.get("ANTHROPIC_API_KEY"):
+        env.setdefault("WPR_CLAUDE_CODE_USE_API_KEY", "1")
+    if has_model_overrides(config):
+        for key, models in runtime_model_lists(config, assignments).items():
+            env.setdefault(key, ",".join(models))
+        for key, value in worker_runtime_model_env(config).items():
+            env.setdefault(key, value)
 
     if xai_voice_key:
         env.setdefault("XAI_API_KEY", xai_voice_key)
@@ -2738,35 +3156,61 @@ def build_mcp_servers(
     }
 
     if glasshive_enabled(config):
-        servers["glasshive-workers-projects"] = {
+        glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
+        glasshive_headers = {
+            "X-Viventium-User-Id": "{{LIBRECHAT_USER_ID}}",
+            "X-Viventium-Agent-Id": default_main_agent_id,
+            "X-Viventium-Conversation-Id": "{{LIBRECHAT_BODY_CONVERSATIONID}}",
+            "X-Viventium-Parent-Message-Id": "{{LIBRECHAT_BODY_PARENTMESSAGEID}}",
+            "X-Viventium-Message-Id": "{{LIBRECHAT_BODY_MESSAGEID}}",
+            "X-Viventium-Surface": "{{LIBRECHAT_BODY_VIVENTIUMSURFACE}}",
+            "X-Viventium-Input-Mode": "{{LIBRECHAT_BODY_VIVENTIUMINPUTMODE}}",
+            "X-Viventium-Stream-Id": "{{LIBRECHAT_BODY_VIVENTIUMSTREAMID}}",
+            "X-Viventium-Voice-Call-Session-Id": "{{LIBRECHAT_BODY_VIVENTIUMVOICECALLSESSIONID}}",
+            "X-Viventium-Voice-Request-Id": "{{LIBRECHAT_BODY_VIVENTIUMVOICEREQUESTID}}",
+            "X-Viventium-Telegram-Chat-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMCHATID}}",
+            "X-Viventium-Telegram-User-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMUSERID}}",
+            "X-Viventium-Telegram-Message-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}",
+            "X-Viventium-Request-Files": "{{LIBRECHAT_BODY_FILES_JSON_B64}}",
+            "X-Viventium-Request-Attachments": "{{LIBRECHAT_BODY_ATTACHMENTS_JSON_B64}}",
+            "X-Viventium-Tool-Resources": "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}",
+            "X-Viventium-File-Ids": "{{LIBRECHAT_BODY_FILE_IDS_JSON_B64}}",
+        }
+        if glasshive_enterprise["enabled"]:
+            glasshive_headers["X-Viventium-Tenant-Id"] = str(glasshive_enterprise["tenant_id"])
+            glasshive_headers["X-Viventium-User-Email"] = "{{LIBRECHAT_USER_EMAIL}}"
+            glasshive_headers["X-Viventium-User-Role"] = "{{LIBRECHAT_USER_ROLE}}"
+            if glasshive_enterprise["service_token_delivery"] == "client_header":
+                glasshive_headers["X-WPR-Token"] = "${" + str(glasshive_enterprise["service_token_env"]) + "}"
+        glasshive_server = {
             "type": "streamable-http",
             "url": "${GLASSHIVE_MCP_URL}",
             "viventiumRequestContext": True,
-            "headers": {
-                "X-Viventium-User-Id": "{{LIBRECHAT_USER_ID}}",
-                "X-Viventium-Agent-Id": default_main_agent_id,
-                "X-Viventium-Conversation-Id": "{{LIBRECHAT_BODY_CONVERSATIONID}}",
-                "X-Viventium-Parent-Message-Id": "{{LIBRECHAT_BODY_PARENTMESSAGEID}}",
-                "X-Viventium-Message-Id": "{{LIBRECHAT_BODY_MESSAGEID}}",
-                "X-Viventium-Surface": "{{LIBRECHAT_BODY_VIVENTIUMSURFACE}}",
-                "X-Viventium-Input-Mode": "{{LIBRECHAT_BODY_VIVENTIUMINPUTMODE}}",
-                "X-Viventium-Stream-Id": "{{LIBRECHAT_BODY_VIVENTIUMSTREAMID}}",
-                "X-Viventium-Voice-Call-Session-Id": "{{LIBRECHAT_BODY_VIVENTIUMVOICECALLSESSIONID}}",
-                "X-Viventium-Voice-Request-Id": "{{LIBRECHAT_BODY_VIVENTIUMVOICEREQUESTID}}",
-                "X-Viventium-Telegram-Chat-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMCHATID}}",
-                "X-Viventium-Telegram-User-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMUSERID}}",
-                "X-Viventium-Telegram-Message-Id": "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}",
-                "X-Viventium-Request-Files": "{{LIBRECHAT_BODY_FILES_JSON_B64}}",
-                "X-Viventium-Request-Attachments": "{{LIBRECHAT_BODY_ATTACHMENTS_JSON_B64}}",
-                "X-Viventium-Tool-Resources": "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}",
-                "X-Viventium-File-Ids": "{{LIBRECHAT_BODY_FILE_IDS_JSON_B64}}",
-            },
+            "headers": glasshive_headers,
             "startup": False,
             "chatMenu": True,
             "timeout": 120000,
             "serverInstructions": True,
             "viventiumTrustedServerInstructions": True,
         }
+        if glasshive_enterprise["enabled"] and glasshive_enterprise["oauth_enabled"]:
+            oauth = glasshive_enterprise["oauth"]
+            public_api_origin = str(((config.get("runtime") or {}).get("network") or {}).get("public_api_origin") or "").rstrip("/")
+            default_redirect_uri = (
+                f"{public_api_origin}/api/mcp/glasshive-workers-projects/oauth/callback"
+                if public_api_origin
+                else "${VIVENTIUM_PUBLIC_SERVER_URL}/api/mcp/glasshive-workers-projects/oauth/callback"
+            )
+            glasshive_server["requiresOAuth"] = True
+            glasshive_server["oauth"] = {
+                "authorization_url": str(oauth.get("authorization_url") or "${GLASSHIVE_OAUTH_AUTHORIZATION_URL}"),
+                "token_url": str(oauth.get("token_url") or "${GLASSHIVE_OAUTH_TOKEN_URL}"),
+                "redirect_uri": str(oauth.get("redirect_uri") or default_redirect_uri),
+                "client_id": str(oauth.get("client_id") or "${GLASSHIVE_OAUTH_CLIENT_ID}"),
+                "client_secret": str(oauth.get("client_secret") or "${GLASSHIVE_OAUTH_CLIENT_SECRET}"),
+                "scope": str(oauth.get("scope") or "openid profile email offline_access"),
+            }
+        servers["glasshive-workers-projects"] = glasshive_server
 
     if integrations.get("ms365", {}).get("enabled"):
         servers["ms-365"] = {
@@ -2857,6 +3301,26 @@ def build_mcp_servers(
     return servers
 
 
+def build_mcp_allowed_domains(config: dict[str, Any]) -> list[str]:
+    allowed: list[str] = list(LOCAL_MCP_ALLOWED_DOMAINS)
+
+    def add_url_host(value: object) -> None:
+        text = str(value or "").strip()
+        if not text or text.startswith("${"):
+            return
+        parsed = urlparse(text)
+        host = parsed.hostname or ""
+        if host and host not in allowed:
+            allowed.append(host)
+
+    if glasshive_enabled(config):
+        glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
+        add_url_host(glasshive_enterprise["mcp_url"])
+        add_url_host(glasshive_enterprise["operator_base_url"])
+        add_url_host(glasshive_enterprise["artifact_base_url"])
+    return allowed
+
+
 def render_librechat_yaml(
     config: dict[str, Any],
     assignments: dict[str, tuple[str, str]],
@@ -2871,10 +3335,12 @@ def render_librechat_yaml(
     code_interpreter_is_enabled = code_interpreter_enabled(config)
     web_search_settings = resolve_web_search_settings(config)
     web_search_is_enabled = web_search_settings["enabled"] == "true"
+    auth_settings = resolve_auth_settings(config)
+    social_logins = ["openid"] if auth_settings["openid"]["enabled"] else []
     generated = {
         "version": LIBRECHAT_YAML_VERSION,
         "cache": True,
-        "registration": {"socialLogins": []},
+        "registration": {"socialLogins": social_logins},
         "interface": build_interface_config(
             default_main_agent_id,
             code_interpreter_is_enabled,
@@ -2891,7 +3357,7 @@ def render_librechat_yaml(
             },
         },
         "mcpSettings": {
-            "allowedDomains": LOCAL_MCP_ALLOWED_DOMAINS,
+            "allowedDomains": build_mcp_allowed_domains(config),
         },
         "mcpServers": build_mcp_servers(config, profile, default_main_agent_id),
         "endpoints": {
@@ -2989,6 +3455,9 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "XAI_API_KEY",
         "GROQ_API_KEY",
         "MONGO_URI",
+        "ALLOW_EMAIL_LOGIN",
+        "ALLOW_REGISTRATION",
+        "ALLOW_SOCIAL_LOGIN",
         "RAG_API_URL",
         "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR",
@@ -3005,6 +3474,26 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS",
         "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD",
         "VIVENTIUM_VOICE_LOG_LATENCY",
+        "OPENID_CLIENT_ID",
+        "OPENID_CLIENT_SECRET",
+        "OPENID_ISSUER",
+        "OPENID_SESSION_SECRET",
+        "OPENID_SCOPE",
+        "OPENID_CALLBACK_URL",
+        "OPENID_REQUIRED_ROLE",
+        "OPENID_REQUIRED_ROLE_TOKEN_KIND",
+        "OPENID_REQUIRED_ROLE_PARAMETER_PATH",
+        "OPENID_ADMIN_ROLE",
+        "OPENID_ADMIN_ROLE_PARAMETER_PATH",
+        "OPENID_ADMIN_ROLE_TOKEN_KIND",
+        "OPENID_USERNAME_CLAIM",
+        "OPENID_NAME_CLAIM",
+        "OPENID_EMAIL_CLAIM",
+        "OPENID_BUTTON_LABEL",
+        "OPENID_IMAGE_URL",
+        "OPENID_AUTO_REDIRECT",
+        "OPENID_USE_PKCE",
+        "OPENID_REUSE_TOKENS",
     ]
     telegram_keys = [
         "BOT_TOKEN",

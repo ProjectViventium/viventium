@@ -200,10 +200,85 @@ const checks = {
     assert(result.accepted.length === 0, 'single transcript must not promote stable identity');
     assert(
       result.rejected.some(
-        (item) => item.reason === 'stable_memory_requires_corroborated_transcript_evidence',
+        (item) => item.reason === 'identity_memory_requires_conversation_corroboration',
       ),
-      'prompt-injection fixture should be rejected by stable-memory transcript gate',
+      'prompt-injection fixture should be rejected by identity corroboration gate',
     );
+  },
+
+  'transcript-identity-misattribution': () => {
+    const transcriptA = {
+      source: 'meeting_transcript',
+      artifactId: 'meeting_transcript:ambiguous-a',
+      createdAt: '2026-05-05T10:00:00Z',
+    };
+    const transcriptB = {
+      source: 'meeting_transcript',
+      artifactId: 'meeting_transcript:ambiguous-b',
+      createdAt: '2026-05-04T10:00:00Z',
+    };
+    const chatCorrection = {
+      source: 'conversation',
+      messageId: 'chat-correction',
+      createdAt: '2026-05-05T11:00:00Z',
+    };
+    const result = hardener.validateProposal({
+      proposal: {
+        operations: [
+          {
+            key: 'core',
+            action: 'set',
+            value: 'The user has a durable employer/person-role identity inferred from transcripts.',
+            rationale: 'Bad: transcript-only identity promotion from ambiguous meeting summaries.',
+            evidence: [transcriptA, transcriptB],
+          },
+          {
+            key: 'core',
+            action: 'set',
+            value: 'The user explicitly corrected the transcript-derived person-role attribution in chat.',
+            rationale: 'Good: identity/person-role correction uses normal chat evidence.',
+            evidence: [transcriptA, chatCorrection],
+          },
+          {
+            key: 'world',
+            action: 'set',
+            value: 'Two recent transcript summaries alone cannot support stable durable context.',
+            rationale: 'Bad: stable durable memory needs user-authored chat corroboration.',
+            evidence: [transcriptA, transcriptB],
+          },
+          {
+            key: 'world',
+            action: 'set',
+            value: 'The user explicitly corroborated this stable durable context in chat.',
+            rationale: 'Good: stable durable memory has recent transcript plus user-authored chat.',
+            evidence: [transcriptA, chatCorrection],
+          },
+        ],
+      },
+      memories: [],
+      memoryConfig,
+      options: {
+        maxChangesPerUser: 5,
+        allowDelete: false,
+        now: new Date('2026-05-05T12:00:00Z'),
+        transcriptStableEvidenceMaxAgeDays: 90,
+        validUserConversationMessageIds: ['chat-correction'],
+      },
+    });
+    assert(
+      result.rejected.some(
+        (item) => item.reason === 'identity_memory_requires_conversation_corroboration',
+      ),
+      'two transcript artifacts alone must not promote core/me identity',
+    );
+    assert(result.accepted.some((item) => item.key === 'core'), 'chat-corroborated identity correction should pass');
+    assert(
+      result.rejected.some(
+        (item) => item.key === 'world' && item.reason === 'stable_memory_requires_user_conversation_corroboration',
+      ),
+      'stable durable context should not pass with transcript-only evidence',
+    );
+    assert(result.accepted.some((item) => item.key === 'world'), 'user-corroborated stable durable context should pass');
   },
 
   'format-pass-through': () => {

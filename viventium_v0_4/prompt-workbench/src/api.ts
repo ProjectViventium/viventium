@@ -1,8 +1,45 @@
-import type { DraftRecord, EvalBank, EvalRun, FlowGraph, FrameLog, PromptDetail, PromptRow, PromptWorkbenchContext, SyncStatus } from './types';
+import type {
+  AuthStatus,
+  DraftRecord,
+  EvalBank,
+  EvalRun,
+  FlowGraph,
+  FrameLog,
+  PromptDetail,
+  PromptRevision,
+  PromptRow,
+  PromptWorkbenchContext,
+  ScheduledPrompt,
+  ScheduledPromptMemoryProposal,
+  ScheduledPromptTemplate,
+  ScheduledPromptRun,
+  SyncStatus,
+  VariableRegistry,
+  VariableRenderResult,
+} from './types';
+import { readLocalStorage, writeLocalStorage } from './storage';
+
+function workbenchToken() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('workbench_token');
+  if (token) {
+    writeLocalStorage('viventium.promptWorkbench.launchToken', token);
+    params.delete('workbench_token');
+    const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', next);
+    return token;
+  }
+  return readLocalStorage('viventium.promptWorkbench.launchToken') || '';
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = workbenchToken();
   const response = await fetch(path, {
-    headers: { 'content-type': 'application/json', ...(init?.headers || {}) },
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { 'x-viventium-workbench-token': token } : {}),
+      ...(init?.headers || {}),
+    },
     ...init,
   });
   if (!response.ok) {
@@ -31,8 +68,80 @@ export function getPrompts() {
   return api<{ prompts: PromptRow[]; flow: FlowGraph; evalBank: EvalBank }>('/api/prompts');
 }
 
+export function getAuthStatus() {
+  return api<AuthStatus>('/api/auth/status');
+}
+
+export function getVariables() {
+  return api<VariableRegistry>('/api/variables');
+}
+
+export function getNightlyScheduledPromptTemplate() {
+  return api<ScheduledPromptTemplate>('/api/scheduled-prompts/templates/nightly-subconscious');
+}
+
+export function renderVariables(promptText: string) {
+  return api<VariableRenderResult>('/api/variables/render', {
+    method: 'POST',
+    body: JSON.stringify({ promptText }),
+  });
+}
+
+export function getScheduledPrompts() {
+  return api<{ scheduledPrompts: ScheduledPrompt[] }>('/api/scheduled-prompts');
+}
+
+export function createScheduledPrompt(payload: Partial<ScheduledPrompt> & { title: string; promptText: string }) {
+  return api<ScheduledPrompt>('/api/scheduled-prompts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateScheduledPrompt(id: string, payload: Partial<ScheduledPrompt>) {
+  return api<ScheduledPrompt>(`/api/scheduled-prompts/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteScheduledPrompt(id: string) {
+  return api<{ success: boolean }>(`/api/scheduled-prompts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function manualRunScheduledPrompt(id: string, confirmUserLevelDelivery = false) {
+  return api<{ run?: ScheduledPromptRun; dispatch?: unknown }>(`/api/scheduled-prompts/${encodeURIComponent(id)}/manual-runs`, {
+    method: 'POST',
+    body: JSON.stringify({ confirmUserLevelDelivery }),
+  });
+}
+
+export function getScheduledPromptRuns(id: string) {
+  return api<{ runs: ScheduledPromptRun[] }>(`/api/scheduled-prompts/${encodeURIComponent(id)}/runs`);
+}
+
+export function getScheduledPromptMemoryProposals(id: string) {
+  return api<{ proposals: ScheduledPromptMemoryProposal[]; contract: string }>(
+    `/api/scheduled-prompts/${encodeURIComponent(id)}/memory-proposals`,
+  );
+}
+
+export function applyScheduledPromptMemoryProposal(id: string, proposalId: string, apply = false) {
+  return api<{ proposalId: string; applied: boolean; result: unknown }>(
+    `/api/scheduled-prompts/${encodeURIComponent(id)}/memory-proposals/${encodeURIComponent(proposalId)}/apply`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ apply }),
+    },
+  );
+}
+
 export function getPrompt(id: string) {
   return api<PromptDetail>(`/api/prompts/${encodeURIComponent(id)}`);
+}
+
+export function getPromptRevision(id: string, revision: string) {
+  return api<PromptRevision>(`/api/prompts/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revision)}`);
 }
 
 export function getPromptWorkbenchContext(id: string) {

@@ -1,5 +1,6 @@
 from pathlib import Path
 from io import BytesIO
+import importlib.util
 import json
 import sys
 import types
@@ -15,6 +16,20 @@ if str(TELEGRAM_ROOT) not in sys.path:
     sys.path.insert(0, str(TELEGRAM_ROOT))
 
 from TelegramVivBot.utils import tts as tts_module
+
+
+def _load_voice_gateway_sse_module():
+    module_name = "viventium_voice_gateway_sse_for_telegram_tts_tests"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+    path = ROOT.parent / "voice-gateway" / "sse.py"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _test_wav_bytes(frame_value: bytes = b"\x00\x00", *, framerate: int = 44100) -> bytes:
@@ -77,6 +92,105 @@ def _fake_config(**overrides):
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
+
+
+def test_prepare_tts_text_strips_shared_artifacts_without_breaking_word_boundaries():
+    cleaned = tts_module.prepare_tts_text(
+        "Sources: https://example.com/report\n"
+        "Persian. turn0search4 If you mean coolest, read [brief](https://example.com/brief). "
+        "Email qa@example.com, visit example.com, and say Good to hear you . Next."
+    )
+
+    assert "Sources:" not in cleaned
+    assert "turn0search4" not in cleaned
+    assert "https://" not in cleaned
+    assert "qa@example.com" not in cleaned
+    assert "example.com" not in cleaned
+    assert "Good to hear you. Next." in cleaned
+    assert "Persian. If you mean coolest, read brief." in cleaned
+    assert "email available" in cleaned
+    assert "link available" in cleaned
+
+
+def test_prepare_tts_text_matches_livekit_common_artifact_cleanup():
+    sse = _load_voice_gateway_sse_module()
+    raw = (
+        "Sources: https://example.com/report\n"
+        "Persian. { NTA } turn0search4 If you mean coolest, read [brief](https://example.com/brief). "
+        "Email qa@example.com, visit example.com, and say Good to hear you . Next."
+    )
+
+    assert tts_module.prepare_tts_text(raw) == sse.sanitize_voice_tts_text(
+        raw,
+        allow_voice_controls=True,
+    )
+
+
+def test_prepare_tts_text_strips_unknown_tags_but_preserves_provider_voice_controls():
+    raw = (
+        '<emotion value="excited"/>Hello <custom data="x">there</custom>. '
+        '<whisper>secret</whisper> <break time="500ms"/><spell>ABC</spell> [laughter]'
+    )
+
+    cleaned = tts_module.prepare_tts_text(raw)
+
+    assert '<emotion value="excited"/>' in cleaned
+    assert "<whisper>secret</whisper>" in cleaned
+    assert '<break time="500ms"/>' in cleaned
+    assert "<spell>ABC</spell>" in cleaned
+    assert "[laughter]" in cleaned
+    assert "<custom" not in cleaned
+    assert "</custom>" not in cleaned
+    assert "Hello there." in cleaned
+
+
+def test_prepare_tts_text_strips_bare_turn_citation_shells():
+    assert (
+        tts_module.prepare_tts_text("Answer \u3010turn0search4\u2020source\u3011 continues")
+        == "Answer continues"
+    )
+    assert (
+        tts_module.prepare_tts_text("Answer turn0search1turn0news2turn0file3 done")
+        == "Answer done"
+    )
+
+
+def test_prepare_tts_text_is_idempotent_for_shared_artifact_cleanup():
+    raw = (
+        "Sources: https://example.com/report\n"
+        '<emotion value="excited"/>Hello <custom>there</custom> turn0search4 .'
+    )
+    once = tts_module.prepare_tts_text(raw)
+    twice = tts_module.prepare_tts_text(once)
+
+    assert twice == once
+
+
+def test_prepare_tts_text_strips_livekit_matching_tool_directives_and_backticks():
+    cleaned = tts_module.prepare_tts_text(
+        "Use calendar view to check the start of day. "
+        "Fetch inbox messages. "
+        "Here is `paired` and stray` backtick."
+    )
+
+    assert "calendar view" not in cleaned
+    assert "Fetch inbox messages" not in cleaned
+    assert "`" not in cleaned
+    assert "Here is paired and stray backtick." in cleaned
+
+
+def test_prepare_tts_text_strips_inline_nta_like_livekit():
+    assert tts_module.prepare_tts_text("{NTA}") == ""
+    assert tts_module.prepare_tts_text("Useful context { NTA } keep going.") == (
+        "Useful context keep going."
+    )
+
+
+def test_plain_fallback_stage_direction_cleanup_matches_livekit():
+    sse = _load_voice_gateway_sse_module()
+    raw = '<emotion value="excited"/>Hi [clears throat] <whisper>low</whisper> [Section 3].'
+
+    assert tts_module._strip_voice_control_tags(raw) == sse.strip_voice_control_tags(raw)
 
 
 def test_resolve_tts_selection_prefers_supported_saved_chatterbox(monkeypatch):
@@ -288,6 +402,110 @@ async def test_synthesize_speech_uses_local_chatterbox_branch_and_preserves_mark
     assert voice_bytes == b"wav-bytes"
     assert seen["text"] == "Hello [laugh]"
     assert seen["model_id"] == "mlx-community/chatterbox-turbo-8bit"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_chatterbox_strips_unsupported_voice_controls(monkeypatch):
+    seen = {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+        ),
+    )
+    monkeypatch.setattr(
+        tts_module,
+        "_is_local_chatterbox_supported",
+        lambda: (True, None),
+    )
+
+    def _fake_synthesize_wav_bytes(text, *, config):
+        _ = config
+        seen["text"] = text
+        return b"wav-bytes"
+
+    monkeypatch.setattr(
+        tts_module,
+        "_build_local_chatterbox_config",
+        lambda model_id_override=None: (
+            types.SimpleNamespace(model_id=model_id_override or "mlx-community/chatterbox-turbo-8bit"),
+            _fake_synthesize_wav_bytes,
+        ),
+    )
+
+    voice_bytes = await tts_module.synthesize_speech(
+        '<emotion value="excited"/>Hi [laughter] [laugh] [sigh] [gasp] [clears throat] '
+        '<whisper>secret</whisper> <break time="500ms"/>',
+        "conv-1",
+        voice_route={
+            "tts": {
+                "provider": "local_chatterbox_turbo_mlx_8bit",
+                "variant": "mlx-community/chatterbox-turbo-8bit",
+            }
+        },
+    )
+
+    assert voice_bytes == b"wav-bytes"
+    assert seen["text"] == "Hi [laugh] [sigh] [gasp] secret"
+    assert "[laughter]" not in seen["text"]
+    assert "[clears throat]" not in seen["text"]
+    assert "<emotion" not in seen["text"]
+    assert "<break" not in seen["text"]
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_openai_direct_path_applies_common_speech_safety(monkeypatch):
+    seen = {}
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            API_KEY="openai-key",
+            BASE_URL="https://api.openai.com/v1",
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+        ),
+    )
+
+    class _Response:
+        content = b"mp3-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, headers=None, json=None, **_kwargs):
+            seen["url"] = url
+            seen["headers"] = headers or {}
+            seen["payload"] = json
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech(
+        "Sources: https://example.com/report\n"
+        "Nice, invoice cleared is a real milestone. turn0search4 Good to hear you .",
+        "conv-1",
+    )
+
+    assert voice_bytes == b"mp3-bytes"
+    assert seen["payload"]["input"] == (
+        "Nice, invoice cleared is a real milestone. Good to hear you."
+    )
+    assert "turn0search4" not in seen["payload"]["input"]
+    assert "Sources:" not in seen["payload"]["input"]
 
 
 @pytest.mark.asyncio
@@ -873,6 +1091,16 @@ def test_strip_voice_control_tags_removes_malformed_xai_wrappers_for_fallback():
     )
 
 
+def test_strip_voice_control_tags_uses_structural_stage_direction_parser():
+    cleaned = tts_module._strip_voice_control_tags(
+        "Hi [clears throat] there [grumbles]. Keep [Section 3]."
+    )
+
+    assert cleaned == "Hi there. Keep [Section 3]."
+    assert "[clears throat]" not in cleaned
+    assert "[grumbles]" not in cleaned
+
+
 def test_strip_cartesia_markup_for_xai_preserves_documented_xai_tags():
     inline = " ".join(f"[{tag}]" for tag in tts_module._XAI_TTS_INLINE_TAGS)
     wrapping = " ".join(
@@ -891,13 +1119,14 @@ def test_strip_cartesia_markup_for_xai_preserves_documented_xai_tags():
 
 def test_strip_cartesia_markup_for_xai_strips_cartesia_only_bracket_aliases():
     cleaned = tts_module._strip_cartesia_markup_for_xai(
-        "Hi [soft laugh] [gentle sigh] [breath out] [laugh] [sigh] [Section 3]."
+        "Hi [soft laugh] [gentle sigh] [breath out] [clears throat] [laugh] [sigh] [Section 3]."
     )
 
     assert cleaned == "Hi [laugh] [sigh] [Section 3]."
     assert "[soft laugh]" not in cleaned
     assert "[gentle sigh]" not in cleaned
     assert "[breath out]" not in cleaned
+    assert "[clears throat]" not in cleaned
 
 
 def test_strip_cartesia_markup_for_xai_strips_every_malformed_wrapping_tag():

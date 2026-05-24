@@ -64,6 +64,17 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `WPR_BOOTSTRAP_SOURCE_ROOTS`
   - `VIVENTIUM_GLASSHIVE_CALLBACK_URL`
   - `VIVENTIUM_GLASSHIVE_CALLBACK_SECRET`
+  - `GLASSHIVE_ENTERPRISE_MODE`
+  - `GLASSHIVE_AUTH_MODE`
+  - `GLASSHIVE_ENTERPRISE_TENANT_ID`
+  - `GLASSHIVE_IDLE_TERMINATE_AFTER_S`
+  - `GLASSHIVE_IDLE_REAPER_INTERVAL_S`
+  - `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER`
+  - `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT`
+  - `GLASSHIVE_MAX_WORKSPACES_PER_USER`
+  - `GLASSHIVE_MAX_WORKSPACES_PER_TENANT`
+  - `GLASSHIVE_ARTIFACT_DOWNLOAD_MAX_BYTES`
+  - `GLASSHIVE_WORKER_ENV_ALLOWLIST`
   - do not rely on manual App Support edits or one laptop's shell exports to make GlassHive launch/watch UX correct
 - Stable developer runtimes are part of the compiler boundary:
   - `runtime.dev_env.enabled` marks a side-by-side developer runtime config
@@ -170,7 +181,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     commas
   - transcript caps are deterministic cost controls, not content judgment:
     `max_files_per_run` default 20, `max_chars_per_file` default 500,000,
-    `summary_max_chars` default 32,000, and stable-evidence decay default 90 days
+    `summary_max_chars` default 32,000, reference saved-memory context default 24,000 chars,
+    reference recent-conversation context default 36,000 chars, and stable-evidence decay default
+    90 days
   - transcript files deferred by a per-run cap are not terminal; the next scheduled/helper run must
     retry them even when mtime, size, and content hash are unchanged
   - transcript RAG mode defaults to `detailed_summary_only`, which means raw transcripts are first
@@ -184,7 +197,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     vector-backed file_search resources
   - the macOS helper's manual `Advanced > Ingest Meeting Transcripts` action uses the same wrapper
     path, shows the active operator scope before and after the run, bypasses the idle gate because
-    it is user-triggered, and writes only status/scope/count helper logs
+    it is user-triggered, defaults to zero durable saved-memory changes, and writes only
+    status/scope/count helper logs. Durable memory reflection remains the normal scheduled hardener
+    responsibility unless the operator explicitly overrides the change cap.
   - introducing a future newer model family requires updating model governance and release contract
     tests first
 - Endpoint helper config must not hide unavailable provider dependencies:
@@ -241,6 +256,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - do not rely on Mongo hand-edits or App Support leftovers to make built-ins behave correctly
   - browser connected-account OAuth unlocks auth for the configured foundation-provider mix; it
     does not currently recompute the built-in background-agent roster by itself
+  - when the compiler policy changes a model family, the source-of-truth bundle and live built-in
+    agent sync must be updated together; otherwise existing installs can keep failing on stale
+    model config even though generated runtime config is healthy
   - shipped Anthropic agents that intentionally use `temperature` must set `thinking: false`
     explicitly when Anthropic runtime defaults would otherwise enable thinking
   - install summary, browser reminders, and setup docs must distinguish foundation-model auth
@@ -258,6 +276,35 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - when `integrations.glasshive.host_worker.enabled=false`, the compiler must emit
     `GLASSHIVE_HOST_WORKERS_ENABLED=false`, force the generated default execution mode to `docker`,
     and generate MCP instructions that do not tell agents to create host-native workers
+  - when `integrations.glasshive.deployment_mode=azure_enterprise_vm_docker`, the compiler must:
+    - reject localhost GlassHive MCP/operator URLs
+    - force `GLASSHIVE_HOST_WORKERS_ENABLED=false` and `WPR_DEFAULT_EXECUTION_MODE=docker`
+    - emit `GLASSHIVE_ENTERPRISE_MODE=true`, the configured auth mode, tenant id, idle reaper
+      policy, quota caps, artifact cap, upload root, bootstrap source roots, and provider env
+      allowlist
+    - emit `GLASSHIVE_SIGNED_LINK_SECRET` for enterprise mode. If no dedicated
+      `integrations.glasshive.enterprise.signed_link_secret` is configured, compile a tenant-scoped
+      derivative from the call-session secret; explicitly reject values that equal the service token
+    - when local enterprise simulation URLs include explicit ports, emit matching
+      `GLASSHIVE_MCP_PORT` and `GLASSHIVE_UI_PORT` so the launcher binds the same ports that
+      LibreChat is configured to call
+    - default service-token delivery to a trusted reverse proxy and therefore omit `X-WPR-Token`
+      from LibreChat YAML unless `service_token_delivery=client_header` is explicitly configured
+    - add `X-Viventium-Tenant-Id` and LibreChat user/request/upload headers to the generated
+      GlassHive MCP server
+    - support server-side `api_key` provider auth for enterprise mode, including explicit
+      `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, and `PORTKEY_*` env projection through
+      `runtime.extra_env` or the canonical env import list; connected-account auth remains
+      supported for local/personal modes but is not the default enterprise path
+    - compile optional MCP OAuth only when explicitly enabled; OAuth is a separate MCP consent path
+      and must not be documented as silent reuse of LibreChat's login token. The runtime remains
+      `first_party_assertion` unless a real external token validator is installed; OAuth/OIDC auth
+      modes fail closed by default.
+    - keep enterprise worker bootstrap clean-room with respect to the VM account's local Codex,
+      Claude, and git auth/identity files; provider access must come from explicit allowlisted env
+      vars or a broker
+    - emit the env needed for short-lived opaque artifact/watch links, and keep local/personal
+      callback URLs compatible when no enterprise signing secret is configured
   - host worker doctor/preflight must report local `codex`, `claude`, and `openclaw` CLI
     availability separately; missing OpenClaw degrades only the `@openclaw` host worker, not Codex
     or Claude workers
@@ -468,6 +515,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     install-owned startup is still warming
   - if the recorded detached launch process group is still alive, `bin/viventium launch` must
     return `already starting` instead of tearing the stack down and restarting it mid-boot
+- The CLI operation lock protects startup preparation, not the lifetime of the foreground stack:
+  - `bin/viventium start` must release `state/cli-operation.lock` after config compilation,
+    schedule sync, and runtime handoff setup, before entering the long-running stack supervisor
+  - otherwise status-bar actions such as Stop/Quit, prompt workbench launch, manual memory
+    hardening, and meeting-transcript ingest are blocked while the app is already healthy
+  - long-running runtime ownership belongs in stack/process state, not in the short operator
+    command lock
 - Detached LibreChat API watchdog budgeting must match real clean-machine build time:
   - first-run API readiness on slower Intel Macs can take well beyond the short historical
     watchdog budget
@@ -572,6 +626,17 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     untouched
   - clean installs and upgrades must refresh the shipped helper fallback when the helper source
     changes, or new users will not see the same Advanced submenu
+- The config compiler owns the opt-in Workbench sidecar flag:
+  - `runtime.prompt_workbench.enabled: true` compiles to `VIVENTIUM_PROMPT_WORKBENCH_ENABLED=true`
+    and `START_PROMPT_WORKBENCH=true`
+  - the main launcher may start and watchdog Prompt Workbench only when that compiled/env flag is
+    enabled, or when an equivalent explicit env override is provided
+  - stack-managed starts must suppress stdout from `bin/viventium prompt-workbench start` so the
+    launch token/authenticated URL is not copied into helper or stack logs
+  - helper/CLI `prompt-workbench stop` must leave a local user-stopped marker that the sidecar
+    watchdog respects, so the Workbench does not immediately reopen after the user stops it
+  - `bin/viventium prompt-workbench stop` remains scoped to Workbench and must not stop the main
+    runtime
 - On April 5, 2026, a background-cortex failure showed why install/start ownership matters:
   built-in Anthropic agents are re-seeded from source-of-truth on startup, so fixing only live
   Mongo state or only a local runtime leftover would not align fresh installs or later restarts.

@@ -153,6 +153,18 @@ def is_response_done(event: dict[str, Any]) -> bool:
     return t in {"response.done", "response.output_audio.done"}
 
 
+def _should_log_tts_inputs() -> bool:
+    return (
+        (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+        or (os.getenv("VIVENTIUM_VOICE_LOG_TTS_INPUTS", "") or "").strip() == "1"
+    )
+
+
+def _is_punctuation_only(text: str) -> bool:
+    stripped = (text or "").strip()
+    return bool(stripped) and all(ch in ".,!?;:…" for ch in stripped)
+
+
 class XaiGrokVoiceTTS(TTS):
     """
     xAI Grok Voice Agent API-backed TTS for LiveKit Agents.
@@ -190,11 +202,15 @@ class _XaiGrokVoiceChunkedStream(ChunkedStream):
         input_text = (self._input_text or "").strip()
         if not input_text:
             return
-        if (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1":
+        if _should_log_tts_inputs():
             logger.info(
-                "[VoiceTTS] provider=xai voice=%s chars=%s text_json=%s",
+                "[VoiceTTSInput] action=forwarded provider=xai transport=realtime_ws stage=conversation.item.create voice=%s chars=%s stripped_chars=%s punctuation_only=%s leading_space=%s trailing_space=%s text_json=%s",
                 cfg.voice,
                 len(input_text),
+                len(input_text.strip()),
+                _is_punctuation_only(input_text),
+                bool(input_text[:1].isspace()),
+                bool(input_text[-1:].isspace()),
                 json.dumps(input_text, ensure_ascii=False),
             )
 

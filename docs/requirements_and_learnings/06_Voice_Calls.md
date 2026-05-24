@@ -31,6 +31,10 @@ background-cortex behavior.
   explicitly requires provider-owned markup. Smart punctuation such as long dashes can survive into
   TTS text in ways that sound unnatural, so the voice surface prompt should prefer commas, periods,
   and short spoken phrasing.
+- Streaming TTS chunking must not send punctuation-only deltas such as a standalone period as their
+  own synthesis input after speech has already started. Runtime should buffer phrase-sized chunks
+  and treat orphan punctuation as a speech-normalization artifact, while preserving meaningful
+  numeric punctuation such as decimal splits.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
@@ -65,6 +69,9 @@ background-cortex behavior.
 - The fallback route is a secondary provider/model for recoverable primary-route failures before
   any assistant text is produced, including provider rate limits, credential failures, and temporary
   provider outages.
+- Provider overload signals such as `server_is_overloaded`, 503, and 529 are recoverable
+  provider outages. They must classify into a fallback-eligible error class instead of the generic
+  completion-error bucket.
 - If the provider stream terminates after visible assistant text already exists, the saved web/chat
   history must keep the partial text and log the termination without rendering a second fatal error
   card in the same assistant message. Runtime must not switch to fallback mid-answer.
@@ -237,6 +244,17 @@ background-cortex behavior.
   `VIVENTIUM_VOICE_LISTEN_ONLY_TURN_COALESCE_WINDOW_MS`.
 - Voice persistence may keep provider markup in the live synthesis path, but the canonical saved
   assistant text/content used for history and reloads must not retain raw voice-control tags.
+- The live TTS boundary must receive speech-safe phrase chunks, not raw model scaffolding. After
+  phrase buffering and before forwarding text to LiveKit TTS, the gateway must deterministically
+  strip or convert non-speech artifacts such as source/reference labels, citation remnants,
+  Markdown links/images, raw URLs, bare domains, email addresses, code fences, headings, list/table
+  scaffolding, unknown angle tags, and stray spaces before punctuation. This cleanup must preserve
+  leading whitespace needed for provider continuation and must not silently change the selected
+  model or provider.
+- Provider voice controls are capability-scoped at the TTS boundary. Routes whose capability
+  metadata declares inline voice-control support may keep known provider controls for synthesis;
+  routes without that capability, including OpenAI/ElevenLabs plain TTS and fallbacks, must strip
+  voice-control tags/stage directions before synthesis while preserving spoken inner text.
 - When Cartesia is the call-mode TTS provider, the model-facing voice prompt may instruct the LLM
   to emit Sonic-3 SSML-like tags. Runtime must not invent emotion tags from heuristics; it may only
   preserve, segment, sanitize-for-display, and route LLM-selected provider markup.
@@ -304,6 +322,11 @@ background-cortex behavior.
   modern playground. The resolved route must survive the handoff from LibreChat generation to
   Telegram audio delivery across both the per-user conversation key and the raw Telegram chat id;
   a cache miss must not silently drift TTS back to process defaults.
+- Telegram full-text TTS must apply the same speech-safe artifact cleanup as the modern LiveKit
+  path before any provider request, including direct proactive callback synthesis that bypasses the
+  main bot final-response helper. Cleanup must remove internal citation ids, source/reference
+  scaffolding, raw links/domains/emails, unknown tags, and punctuation spacing artifacts while
+  preserving only provider-supported voice controls for the selected TTS route.
 - Modern playground transcript display must use a stateful structural filter for provider markup.
   Incomplete streaming fragments such as `<em` or `[laugh` must be buffered until they can be
   classified, then stripped from user-visible text while the original LLM text continues to feed
@@ -312,6 +335,13 @@ background-cortex behavior.
   `VIVENTIUM_VOICE_DEBUG_TTS=1`, logs should show LLM raw text, TTS text, display-sanitized text,
   and Cartesia request transcripts without API keys. Cartesia transcript logs must use a
   JSON-escaped representation so leading/trailing spaces and joined continuation text are visible.
+- Exact provider-bound TTS payload logging must also be available with
+  `VIVENTIUM_VOICE_LOG_TTS_INPUTS=1` for incident diagnosis. These logs use the stable
+  `[VoiceTTSInput]` marker at the final LiveKit/provider handoff and include action
+  (`forwarded`, `dropped`, `suppressed`, or `control`), provider label, provider class/transport,
+  character counts, punctuation-only status, leading/trailing-space flags, and JSON-escaped text.
+  This marker is the authoritative evidence for whether a standalone period or other artifact was
+  actually sent to TTS.
 - Non-secret structural marker counts should be logged for Telegram voice turns and Cartesia
   segments even when full transcript debug is disabled. At minimum, logs should expose counts for
   `[laughter]`, emotion tags, break tags, speed tags, volume tags, and spell tags so incidents can
@@ -396,10 +426,14 @@ background-cortex behavior.
 	    model path, must log a visible warning
 	  - if exact-model self-heal still fails, voice startup must fail honestly with the local
 	    Whisper.cpp class of failure instead of silently switching to another model or hosted STT route
-  - when the optional multilingual semantic turn detector is installed, the exact cached assets are
-    present, and the LiveKit inference runner is registered before worker construction, local Whisper
-    may use `turn_detector` so end-of-turn is decided by the gateway's semantic turn-taking layer
-    instead of by a short silence timer
+	  - when the optional multilingual semantic turn detector is installed, the exact cached assets are
+	    present, and the LiveKit inference runner is registered before worker construction, local Whisper
+	    may use `turn_detector` so end-of-turn is decided by the gateway's semantic turn-taking layer
+	    instead of by a short silence timer
+  - local Whisper defaults `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS` to `0`, including the
+    semantic `turn_detector` path, because the StreamAdapter path can make transcript words
+    available only after local VAD/final recognition. Provider STT routes such as AssemblyAI keep
+    their default word guard unless explicitly configured otherwise.
   - when the semantic detector is unavailable, uncached, or lacks a registered local inference
     runner, local Whisper must fall back to the local VAD profile: `0.35s` minimum speech, `0.5s`
     VAD silence, and `0.5s` local endpointing by default, with explicit env/config overrides still
@@ -419,6 +453,11 @@ background-cortex behavior.
   packages.
 - Turn-ending behavior must be config-owned and observable:
   - LiveKit interruption knobs compile from canonical config
+    - `VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S` compiles from
+      `voice.turn_handling.aec_warmup_duration_s` and is logged with the effective session policy.
+      The default stays at LiveKit's `3.0s` for provider/STT-owned routes, while local Whisper uses
+      a shorter `1.0s` default so first-reply barge-in is not blocked for most of a short answer;
+      `off`/`none` disables LiveKit's AEC warmup gate for local experiments.
   - AssemblyAI endpointing knobs compile from canonical config
     - when unset, the shipped compiler now emits the documented Universal Streaming baseline rather
       than relying on implicit plugin/API defaults

@@ -182,6 +182,22 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - If a provider does not support native incremental input streaming, the gateway may adapt it to a
   streaming surface, but wrapper layers must not downgrade a native-streaming provider back to
   sentence-buffered fallback behavior.
+- Incremental text chunks sent toward TTS must be speakable phrase fragments. After audio has
+  started, a punctuation-only delta such as `.` must not be pushed as an isolated synthesis input,
+  because some providers speak it as a literal word. The gateway buffers phrase boundaries and
+  drops orphan punctuation that arrives after its owning phrase was already emitted, while keeping
+  numeric decimal splits intact.
+- The final text emitted to TTS after phrase buffering must be speech-safe. The gateway strips or
+  converts source/reference labels, citation remnants, markdown links/images, raw URLs, bare
+  domains, emails, code fences, headings, list/table scaffolding, unknown angle tags, and stray
+  spaces before punctuation before the chunk is forwarded to LiveKit TTS.
+- For incident diagnosis, `VIVENTIUM_VOICE_LOG_TTS_INPUTS=1` emits `[VoiceTTSInput]` at the final
+  provider boundary. Those lines show forwarded/dropped/control actions, provider class/transport,
+  punctuation-only status, leading/trailing-space flags, and JSON-escaped text, so a spoken `dot`
+  report can be traced to the exact chunk that did or did not reach TTS.
+- Provider voice controls are preserved only when the active TTS route capability declares inline
+  voice-control support. Plain providers and fallbacks such as OpenAI or ElevenLabs receive the
+  same speech-safe text with provider markup stripped, without changing the selected model/provider.
 
 ## Turn Stability and Endpointing
 - Voice ingress requests that resolve to the same `(callSessionId, conversationId, parentMessageId)`
@@ -218,10 +234,17 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   - `VIVENTIUM_VOICE_MIN_INTERRUPTION_DURATION_S=0.5`
   - `VIVENTIUM_VOICE_MIN_ENDPOINTING_DELAY_S=0.0` for `stt`
   - `VIVENTIUM_VOICE_MAX_ENDPOINTING_DELAY_S=1.8` for `stt`
-  - `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS=1` for `stt` / `turn_detector`
+  - `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS=1` for provider/STT-owned routes such as AssemblyAI
+  - `VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS=0` for local `whisper_local` / `pywhispercpp`,
+    including semantic `turn_detector`, because local StreamAdapter transcripts can arrive only
+    after VAD/final recognition
   - `VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S=2.0`
   - `VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION=true`
   - `VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S=0.2` for `stt` / `turn_detector`
+  - `VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S=3.0` for provider/STT-owned routes, matching LiveKit's
+    AEC warmup protection
+  - `VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S=1.0` for local `whisper_local` / `pywhispercpp`; set it
+    to `off`/`none` only for explicit local echo/barge-in experiments
 - Pure `vad` mode remains available when explicitly configured or when the active STT path does not
   expose endpointing support.
 - Semantic turn detection is available through explicit config/env (`turn_detector`), and local
@@ -274,6 +297,8 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 - Non-Cartesia HTML tags are stripped; Cartesia SSML tags are preserved through synthesis.
 - With `VIVENTIUM_VOICE_DEBUG_TTS=1`, Cartesia request logs include JSON-escaped transcript chunks
   and joined continuation text so leading/trailing spaces can be inspected without logging API keys.
+- `VIVENTIUM_VOICE_LOG_TTS_INPUTS=1` enables the same `[VoiceTTSInput]` provider-bound payload logs
+  without requiring broader LLM/display delta logging.
 
 ### xAI
 - xAI is the user-facing provider label for standalone xAI TTS. The older Grok Voice Agent adapter
@@ -383,7 +408,9 @@ Notes:
   but it remains a StreamAdapter + Silero VAD path when semantic turn detection is unavailable. It
   does not get AssemblyAI-native endpointing knobs. Its VAD fallback uses the shared `0.5s` silence
   budget plus a slightly longer minimum speech threshold than remote/STT-owned routes so short
-  one-syllable room noise does not become a committed user turn.
+  one-syllable room noise does not become a committed user turn. Local Whisper defaults the
+  interruption word guard to `0` so barge-in can be driven by sustained audio activity instead of
+  waiting for final local Whisper text.
 - Local Whisper recognition feeds pywhispercpp in-memory 16 kHz mono float32 PCM and logs sanitized
   per-stage timings when voice latency logging is enabled. It does not write transcript text to the
   timing log.
@@ -490,8 +517,10 @@ Added: 2026-01-11
 - `VIVENTIUM_VOICE_TURN_COALESCE_RETURN_WINDOW_MS`
 - `VIVENTIUM_VOICE_TURN_COALESCE_TTL_S`
 - `VIVENTIUM_VOICE_SYNC_TRANSCRIPTION`
+- `VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S`
 - `VIVENTIUM_VOICE_LOG_LATENCY=1`
 - `VIVENTIUM_VOICE_DEBUG_TTS=1`
+- `VIVENTIUM_VOICE_LOG_TTS_INPUTS=1`
 
 ## Operational Notes
 - Use `./viventium-librechat-start.sh` to keep LibreChat + voice gateway secrets aligned.

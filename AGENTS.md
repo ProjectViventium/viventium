@@ -229,6 +229,25 @@ For installer, runtime, release, or publish-boundary work, also read:
   acceptance loop is: real browser prompt/action -> visible UI outcome -> expanded/detail state ->
   refresh or persistence check when relevant -> backend/log/DB confirmation -> final wording does
   not contradict the visible state.
+- For voice, LiveKit, Telegram voice, browser-audio, or TTS/STT changes, the completion gate is a
+  real user-grade surface run after the changed code/config is proven present in the active runtime
+  artifact being tested: source checkout, generated config, built artifact, and installed/running
+  process as applicable. Run the actual playground/call/bot path with synthetic public-safe content,
+  capture timestamped evidence of what was heard or delivered, and correlate it with logs, DB/state,
+  generated config, and owning code.
+  Do not claim the fix is done with wording like "the next call should show..." or "instrumentation
+  is ready"; that is `PARTIAL` until a post-change user-path run proves the behavior.
+  Use `qa/modern-playground-voice/cases.md` `MPV-014` as the reusable acceptance case for affected
+  voice fixes.
+- Browser-facing work must be tested through Playwright CLI or an equivalent real browser. Voice and
+  audio-facing browser work must also verify the audible or delivered voice outcome, synthetic or
+  sanitized transcript evidence, interruption/cancel behavior when relevant, latency/log visibility,
+  DB/state persistence, and runtime config alignment. If the audible or delivered voice path cannot
+  be run, mark the result `BLOCKED` or `PARTIAL` and name the exact missing prerequisite.
+- For non-trivial forensic or architecture work, obtain the Claude review-only second opinion when
+  available after your own evidence-backed RCA/proposal and before final acceptance. Claude review is
+  supporting evidence; it does not replace the real browser/voice/user path, logs, DB/state, code
+  trace, or tests.
 - Logs, DB rows, API responses, source inspection, model completions, and unit tests are supporting
   evidence, not substitutes for any required visible-UI, detail-state, persistence, or wording step.
 - Do not rely on mocked-only tests to justify end-to-end claims. Use synthetic non-personal test

@@ -26,6 +26,7 @@
 #   --skip-skyvern        Don't start Skyvern Browser Agent
 #   --skip-code-interpreter  Don't start LibreCodeInterpreter API
 #   --skip-firecrawl      Don't start Firecrawl scraper
+#   --skip-prompt-workbench  Don't start the Prompt Workbench sidecar
 #   --skip-telegram       Don't start Telegram bridge
 #   --skip-v1-agent       Don't start V1 LiveKit agent
 #   --skip-docker         Don't stop/restart Docker services (LiveKit/MS365/Code Interpreter)
@@ -1101,6 +1102,8 @@ MONGO_NATIVE_PID_FILE="$LOG_ROOT/mongodb-native.pid"
 MONGO_NATIVE_LOG_FILE="$LOG_DIR/mongodb-native.log"
 MEILI_NATIVE_PID_FILE="$LOG_ROOT/meilisearch-native.pid"
 MEILI_NATIVE_LOG_FILE="$LOG_DIR/meilisearch-native.log"
+PROMPT_WORKBENCH_WATCHDOG_PID_FILE="$LOG_ROOT/prompt-workbench-watchdog.pid"
+PROMPT_WORKBENCH_WATCHDOG_LOG_FILE="$LOG_DIR/prompt-workbench-watchdog.log"
 mkdir -p "$LOG_DIR" "$(dirname "$SCHEDULING_DB_PATH")"
 
 LC_API_PORT="$VIVENTIUM_LC_API_PORT"
@@ -1644,6 +1647,7 @@ SKIP_RAG_API=false
 SKIP_SKYVERN=false
 SKIP_CODE_INTERPRETER=false
 SKIP_FIRECRAWL=false
+SKIP_PROMPT_WORKBENCH=false
 SKIP_TELEGRAM=false
 SKIP_V1_AGENT=false
 SKIP_DOCKER=false
@@ -1706,6 +1710,7 @@ while [[ $# -gt 0 ]]; do
     --skip-skyvern) SKIP_SKYVERN=true; shift ;;
     --skip-code-interpreter) SKIP_CODE_INTERPRETER=true; shift ;;
     --skip-firecrawl) SKIP_FIRECRAWL=true; shift ;;
+    --skip-prompt-workbench) SKIP_PROMPT_WORKBENCH=true; shift ;;
     --skip-telegram) SKIP_TELEGRAM=true; shift ;;
     --skip-v1-agent) SKIP_V1_AGENT=true; shift ;;
     --skip-docker) SKIP_DOCKER=true; shift ;;
@@ -1738,7 +1743,7 @@ while [[ $# -gt 0 ]]; do
       # === VIVENTIUM START ===
       # Cleanup: remove stale VM runtime flag from help (feature no longer wired in this launcher).
       # === VIVENTIUM END ===
-      echo "Usage: $0 [--start] [--skip-livekit] [--skip-librechat] [--skip-playground] [--modern-playground] [--classic-playground] [--skip-voice-gateway] [--skip-google-mcp] [--skip-ms365-mcp] [--skip-scheduling-mcp] [--skip-glasshive] [--skip-rag-api] [--skip-skyvern] [--skip-code-interpreter] [--skip-firecrawl] [--skip-telegram] [--skip-v1-agent] [--skip-docker] [--skip-health-checks] [--skip-v1-sync] [--skip-voice-deps] [--skip-mcp-verify] [--no-bootstrap] [--private-overlay] [--profile=<isolated|compat>] [--fast] [--restart] [--stop]"
+      echo "Usage: $0 [--start] [--skip-livekit] [--skip-librechat] [--skip-playground] [--modern-playground] [--classic-playground] [--skip-voice-gateway] [--skip-google-mcp] [--skip-ms365-mcp] [--skip-scheduling-mcp] [--skip-glasshive] [--skip-rag-api] [--skip-skyvern] [--skip-code-interpreter] [--skip-firecrawl] [--skip-prompt-workbench] [--skip-telegram] [--skip-v1-agent] [--skip-docker] [--skip-health-checks] [--skip-v1-sync] [--skip-voice-deps] [--skip-mcp-verify] [--no-bootstrap] [--private-overlay] [--profile=<isolated|compat>] [--fast] [--restart] [--stop]"
       echo ""
       echo "Starts the full Viventium LibreChat voice call stack:"
       echo "  - LiveKit Server (Docker/native, profile port)"
@@ -1755,6 +1760,7 @@ while [[ $# -gt 0 ]]; do
       echo "  - LibreCodeInterpreter API (profile port)"
       echo "  - Firecrawl (Docker, port 3003)"
       echo "  - SearxNG Search (Docker, port 8082)"
+      echo "  - Prompt Workbench sidecar when runtime.prompt_workbench.enabled is true"
       echo "  - Telegram bridge (LibreChat default, LiveKit legacy)"
       echo "  - --restart stops any running services before starting"
       echo "  - --skip-docker leaves Docker services running (reuse on restart/exit)"
@@ -1810,6 +1816,12 @@ TELEGRAM_BACKEND="${VIVENTIUM_TELEGRAM_BACKEND:-librechat}"
 START_CODE_INTERPRETER="${START_CODE_INTERPRETER:-true}"
 START_SEARXNG="${START_SEARXNG:-true}"
 START_FIRECRAWL="${START_FIRECRAWL:-true}"
+START_PROMPT_WORKBENCH="${START_PROMPT_WORKBENCH:-${VIVENTIUM_PROMPT_WORKBENCH_ENABLED:-false}}"
+if truthy_env_value "$START_PROMPT_WORKBENCH"; then
+  START_PROMPT_WORKBENCH=true
+else
+  START_PROMPT_WORKBENCH=false
+fi
 if [[ -z "${START_V1_AGENT:-}" ]]; then
   if [[ "$START_TELEGRAM" == "true" && "$TELEGRAM_BACKEND" == "livekit" ]]; then
     START_V1_AGENT=true
@@ -1830,6 +1842,7 @@ fi
 [[ "$SKIP_SKYVERN" == "true" ]] && START_SKYVERN=false
 [[ "$SKIP_CODE_INTERPRETER" == "true" ]] && START_CODE_INTERPRETER=false
 [[ "$SKIP_FIRECRAWL" == "true" ]] && START_FIRECRAWL=false
+[[ "$SKIP_PROMPT_WORKBENCH" == "true" ]] && START_PROMPT_WORKBENCH=false
 [[ "$SKIP_TELEGRAM" == "true" ]] && START_TELEGRAM=false
 [[ "$SKIP_V1_AGENT" == "true" ]] && START_V1_AGENT=false
 
@@ -1876,6 +1889,7 @@ V1_AGENT_STARTED_BY_SCRIPT=false
 CODE_INTERPRETER_STARTED_BY_SCRIPT=false
 SEARXNG_STARTED_BY_SCRIPT=false
 FIRECRAWL_STARTED_BY_SCRIPT=false
+PROMPT_WORKBENCH_STARTED_BY_SCRIPT=false
 SKYVERN_STARTED_BY_SCRIPT=false
 MONGO_STARTED_BY_SCRIPT=false
 MONGO_NATIVE_STARTED_BY_SCRIPT=false
@@ -2820,6 +2834,10 @@ stop_scheduling_mcp_watchdog() {
 
 stop_telegram_bot_watchdog() {
   stop_pid_file_scoped "$TELEGRAM_BOT_WATCHDOG_PID_FILE" "$VIVENTIUM_CORE_DIR"
+}
+
+stop_prompt_workbench_watchdog() {
+  stop_pid_file_scoped "$PROMPT_WORKBENCH_WATCHDOG_PID_FILE" "$VIVENTIUM_CORE_DIR"
 }
 
 cleanup_code_interpreter_exec_containers() {
@@ -5437,12 +5455,88 @@ stop_telegram_local_bot_api() {
   TELEGRAM_LOCAL_BOT_API_PID=""
 }
 
+prompt_workbench_running() {
+  local payload=""
+  payload="$("$VIVENTIUM_CORE_DIR/bin/viventium" prompt-workbench status --json 2>/dev/null || true)"
+  [[ "$payload" == *'"status": "running"'* ]]
+}
+
+prompt_workbench_managed_by_stack() {
+  local state_file="$VIVENTIUM_APP_SUPPORT_ROOT/state/prompt-workbench/state.json"
+  [[ -f "$state_file" ]] || return 1
+  "$PYTHON_BIN" - "$state_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if payload.get("managedByStack") is True else 1)
+PY
+}
+
+prompt_workbench_user_stopped() {
+  [[ -f "$VIVENTIUM_APP_SUPPORT_ROOT/state/prompt-workbench/user-stopped.marker" ]]
+}
+
+start_prompt_workbench_sidecar() {
+  if [[ "$START_PROMPT_WORKBENCH" != "true" ]]; then
+    return 0
+  fi
+  if [[ ! -x "$VIVENTIUM_CORE_DIR/bin/viventium" ]]; then
+    log_warn "Prompt Workbench sidecar enabled, but bin/viventium is unavailable"
+    return 1
+  fi
+  if [[ ! -d "$VIVENTIUM_CORE_DIR/viventium_v0_4/prompt-workbench" ]]; then
+    log_warn "Prompt Workbench sidecar enabled, but prompt-workbench source is unavailable"
+    return 1
+  fi
+
+  local already_running=false
+  if prompt_workbench_running; then
+    already_running=true
+  fi
+
+  mkdir -p "$LOG_DIR"
+  log_info "Ensuring Prompt Workbench sidecar is running"
+  if ! VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK=1 \
+    "$VIVENTIUM_CORE_DIR/bin/viventium" prompt-workbench start \
+      >/dev/null 2>>"$PROMPT_WORKBENCH_WATCHDOG_LOG_FILE"; then
+    log_warn "Prompt Workbench sidecar failed to start; see $PROMPT_WORKBENCH_WATCHDOG_LOG_FILE"
+    return 1
+  fi
+
+  if prompt_workbench_running; then
+    if [[ "$already_running" != "true" ]]; then
+      PROMPT_WORKBENCH_STARTED_BY_SCRIPT=true
+    fi
+    log_success "Prompt Workbench sidecar running"
+    return 0
+  fi
+
+  log_warn "Prompt Workbench sidecar start returned without a healthy workbench"
+  return 1
+}
+
+stop_prompt_workbench_if_managed() {
+  if ! prompt_workbench_managed_by_stack; then
+    return 0
+  fi
+  log_warn "Stopping Prompt Workbench sidecar managed by this runtime"
+  "$VIVENTIUM_CORE_DIR/bin/viventium" prompt-workbench stop >/dev/null 2>&1 || true
+  PROMPT_WORKBENCH_STARTED_BY_SCRIPT=false
+}
+
 stop_running_services() {
   local reason="${1:-Restart requested - stopping running services}"
   local done_msg="${2:-Restart cleanup complete}"
   local stop_excluded_pids=("$$" "${BASHPID:-}" "$PPID")
   log_warn "$reason"
   stop_detached_librechat_api_watchdog
+  stop_prompt_workbench_watchdog
+  stop_prompt_workbench_if_managed
 
   # LibreChat backend/frontend
   if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
@@ -6247,6 +6341,55 @@ start_telegram_bot_watchdog() {
   printf '%s\n' "$watchdog_pid" >"$TELEGRAM_BOT_WATCHDOG_PID_FILE"
   disown "$watchdog_pid" 2>/dev/null || true
   log_info "Started Telegram bot watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
+}
+
+start_prompt_workbench_watchdog() {
+  if [[ "$START_PROMPT_WORKBENCH" != "true" ]]; then
+    return 0
+  fi
+
+  stop_prompt_workbench_watchdog
+
+  local interval_s="${VIVENTIUM_PROMPT_WORKBENCH_WATCHDOG_INTERVAL_S:-10}"
+  local failure_threshold="${VIVENTIUM_PROMPT_WORKBENCH_WATCHDOG_FAILURE_THRESHOLD:-2}"
+
+  (
+    trap - EXIT
+    trap 'exit 0' INT TERM HUP
+    local consecutive_failures=0
+
+    while true; do
+      sleep "$interval_s"
+      if prompt_workbench_running; then
+        consecutive_failures=0
+        continue
+      fi
+      if prompt_workbench_user_stopped; then
+        consecutive_failures=0
+        continue
+      fi
+
+      consecutive_failures=$((consecutive_failures + 1))
+      if [[ "$consecutive_failures" -lt "$failure_threshold" ]]; then
+        continue
+      fi
+
+      log_warn "Prompt Workbench watchdog detected ${consecutive_failures} failed liveness checks"
+      if start_prompt_workbench_sidecar; then
+        consecutive_failures=0
+      else
+        log_warn "Prompt Workbench watchdog restart failed"
+        consecutive_failures="$failure_threshold"
+      fi
+    done
+  ) >>"$PROMPT_WORKBENCH_WATCHDOG_LOG_FILE" 2>&1 &
+
+  local watchdog_pid=$!
+  printf '%s\n' "$watchdog_pid" >"$PROMPT_WORKBENCH_WATCHDOG_PID_FILE"
+  if detached_start_requested; then
+    disown "$watchdog_pid" 2>/dev/null || true
+  fi
+  log_info "Started Prompt Workbench watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
 }
 
 start_native_livekit_fallback() {
@@ -7121,6 +7264,7 @@ cleanup() {
   echo ""
   echo -e "${YELLOW}[viventium]${NC} Shutting down..."
   stop_detached_librechat_api_watchdog
+  stop_prompt_workbench_watchdog
   stop_scheduling_mcp_watchdog
   stop_telegram_bot_watchdog
   stop_telegram_local_bot_api
@@ -7139,6 +7283,9 @@ cleanup() {
   fi
   [[ "$V1_AGENT_STARTED_BY_SCRIPT" == "true" && -n "${V1_AGENT_PID:-}" ]] && kill "${V1_AGENT_PID}" 2>/dev/null || true
   [[ "$TELEGRAM_STARTED_BY_SCRIPT" == "true" && -n "${TELEGRAM_BOT_PID:-}" ]] && kill "${TELEGRAM_BOT_PID}" 2>/dev/null || true
+  if [[ "$PROMPT_WORKBENCH_STARTED_BY_SCRIPT" == "true" || "$START_PROMPT_WORKBENCH" == "true" ]]; then
+    stop_prompt_workbench_if_managed
+  fi
   local cleanup_telegram_deferred_pid=""
   cleanup_telegram_deferred_pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
   if [[ -n "$cleanup_telegram_deferred_pid" ]]; then
@@ -7679,6 +7826,11 @@ start_glasshive() {
   fi
 
   log_info "Starting GlassHive runtime stack..."
+  local glasshive_state_dir="${GLASSHIVE_STATE_DIR:-$VIVENTIUM_STATE_ROOT/glasshive}"
+  mkdir -p "$glasshive_state_dir"
+  export GLASSHIVE_STATE_DIR="$glasshive_state_dir"
+  export WPR_DB_PATH="${WPR_DB_PATH:-$glasshive_state_dir/runtime_phase1.db}"
+
   pushd "$GLASSHIVE_RUNTIME_DIR" >/dev/null
   if ! uv sync --frozen >"$LOG_DIR/glasshive_runtime_install.log" 2>&1; then
     log_error "GlassHive runtime dependency sync failed"
@@ -10429,6 +10581,10 @@ fi
 if [[ "$START_TELEGRAM" == "true" ]]; then
   start_telegram_bot_watchdog
 fi
+if [[ "$START_PROMPT_WORKBENCH" == "true" ]]; then
+  start_prompt_workbench_sidecar || true
+  start_prompt_workbench_watchdog
+fi
 start_optional_docker_recovery_worker
 sleep 3
 
@@ -10469,6 +10625,13 @@ if is_truthy "${SEARCH:-false}"; then
 fi
 if [[ "$START_RAG_API" == "true" && -n "${RAG_API_URL:-}" ]]; then
   echo -e "  ${CYAN}Conversation Recall:${NC} ${RAG_API_URL}"
+fi
+if [[ "$START_PROMPT_WORKBENCH" == "true" ]]; then
+  if prompt_workbench_running; then
+    echo -e "  ${CYAN}Prompt Workbench:${NC}   running (open with bin/viventium prompt-workbench open)"
+  else
+    echo -e "  ${CYAN}Prompt Workbench:${NC}   enabled (check $PROMPT_WORKBENCH_WATCHDOG_LOG_FILE)"
+  fi
 fi
 echo -e "  ${CYAN}${PLAYGROUND_LABEL}:${NC}   $VIVENTIUM_PLAYGROUND_URL"
 echo -e "  ${CYAN}LiveKit WS:${NC}          $LIVEKIT_URL"

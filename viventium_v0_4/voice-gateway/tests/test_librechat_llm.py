@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 import asyncio
+import json
 from unittest.mock import patch
 
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
@@ -24,6 +25,7 @@ from librechat_llm import (
     is_no_response_only,
     format_insights_for_direct_speech,
 )
+from sse import sanitize_voice_tts_text
 
 
 class _FakeListenOnlyResponse:
@@ -121,6 +123,53 @@ class _FakeClosedStreamSession:
     def get(self, *args, **kwargs):
         self.get_calls.append((args, kwargs))
         return _FakeClosedSseResponse()
+
+
+class _FakeSseContent:
+    def __init__(self, events: list[dict]):
+        self._events = events
+
+    async def iter_any(self):
+        for event in self._events:
+            payload = json.dumps(event)
+            yield f"event: message\ndata: {payload}\n\n".encode("utf-8")
+
+
+class _FakeStreamingSseResponse:
+    status = 200
+
+    def __init__(self, events: list[dict]):
+        self.content = _FakeSseContent(events)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self):
+        return ""
+
+
+class _FakeStreamingSseSession:
+    def __init__(self, events: list[dict], *args, **kwargs):
+        self._events = events
+        self.post_calls = []
+        self.get_calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, *args, **kwargs):
+        self.post_calls.append((url, args, kwargs))
+        return _FakeJsonResponse({"streamId": "stream_voice_1", "conversationId": "conv_1"})
+
+    def get(self, url, *args, **kwargs):
+        self.get_calls.append((url, args, kwargs))
+        return _FakeStreamingSseResponse(self._events)
 
 
 class _FakeBlockingSseContent:
@@ -315,6 +364,95 @@ class TestListenOnlyStream(unittest.TestCase):
         self.assertTrue(fake_session.abort_completed)
 
 
+class TestLibreChatStreamingRun(unittest.TestCase):
+    def test_streamed_sse_deltas_preserve_reported_word_boundaries(self) -> None:
+        expected = (
+            "Nice, invoice cleared is a real milestone. "
+            "On JT and Lisa, what's your read, is this them getting protective, "
+            "or trying to formalize something before it gets bigger?"
+        )
+        events = [
+            {"text": "Nice, invoice cleared "},
+            {"text": "is a real milestone. "},
+            {"text": "On JT and Lisa, what's "},
+            {"text": "your read, is this "},
+            {"text": "them getting protective, or trying "},
+            {"text": "to formalize something "},
+            {"text": "before it gets bigger?"},
+            {
+                "final": True,
+                "responseMessage": {
+                    "content": [{"type": "text", "text": expected}],
+                },
+            },
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeStreamingSseSession(events)
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            chunks: list[str] = []
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        chunks = asyncio.run(run_stream())
+        spoken_text = "".join(chunks)
+
+        self.assertEqual(spoken_text, expected)
+        for bad_join in [
+            "clearedis",
+            "what'syour",
+            "thisthem",
+            "tryingto",
+            "somethingbefore",
+        ]:
+            self.assertNotIn(bad_join, spoken_text)
+
+    def test_streamed_sse_deltas_drop_orphan_period_after_flushed_phrase(self) -> None:
+        first = "This phrase is long enough to cross the streaming TTS length threshold"
+        expected = f"{first} Next thought."
+        events = [
+            {"text": first},
+            {"text": "."},
+            {"text": " Next thought."},
+            {
+                "final": True,
+                "responseMessage": {
+                    "content": [{"type": "text", "text": f"{first}. Next thought."}],
+                },
+            },
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeStreamingSseSession(events)
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            chunks: list[str] = []
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        chunks = asyncio.run(run_stream())
+
+        self.assertEqual("".join(chunks), expected)
+        self.assertNotIn(".", chunks)
+
+
 class TestFinalEventHelpers(unittest.TestCase):
     def test_extracts_final_response_message_id(self) -> None:
         final_event = {"final": True, "responseMessage": {"messageId": "msg_123"}}
@@ -427,6 +565,12 @@ class TestStreamErrorHelpers(unittest.TestCase):
             )
             self.assertEqual(
                 _select_stream_error_message("status 429 rate_limit_error"),
+                "Rate limited.",
+            )
+            self.assertEqual(
+                _select_stream_error_message(
+                    "server_is_overloaded: servers are currently overloaded"
+                ),
                 "Rate limited.",
             )
             self.assertEqual(_select_stream_error_message("other error"), "Stream down.")
@@ -549,10 +693,118 @@ class TestVoiceTtsDeltaBuffer(unittest.TestCase):
         self.assertEqual(buffer.feed(" pain."), ["Emotional pain."])
         self.assertEqual(buffer.finalize(), [])
 
+    def test_buffers_later_phrase_until_punctuation_boundary(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+        self.assertEqual(buffer.feed("Hey there."), ["Hey there."])
+
+        emitted: list[str] = []
+        for delta in [" Good", " to", " hear", " you", "."]:
+            emitted.extend(buffer.feed(delta))
+
+        self.assertEqual(emitted, [" Good to hear you."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_drops_standalone_period_after_prior_speech(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(max_chars=12)
+        self.assertEqual(buffer.feed("This phrase is long enough"), ["This phrase is long enough"])
+        self.assertEqual(buffer.feed("."), [])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_drops_orphan_period_before_next_phrase(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(max_chars=12)
+        self.assertEqual(buffer.feed("This phrase is long enough"), ["This phrase is long enough"])
+        self.assertEqual(buffer.feed("."), [])
+        self.assertEqual(buffer.feed(" Next thought."), [" Next thought."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_preserves_decimal_split_after_prior_speech(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(min_first_chars=1, max_chars=1)
+        self.assertEqual(buffer.feed("3"), ["3"])
+        self.assertEqual(buffer.feed(".14 is pi."), [".14 is pi."])
+        self.assertEqual(buffer.finalize(), [])
+
     def test_flushes_remainder_on_finalize(self) -> None:
         buffer = _VoiceTtsDeltaBuffer()
         self.assertEqual(buffer.feed("Short"), [])
         self.assertEqual(buffer.finalize(), ["Short"])
+
+    def test_sanitizes_tts_chunk_before_emit(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+        emitted: list[str] = []
+        for delta in [" See", " [brief](https://example.com)", " and email qa@example.com."]:
+            emitted.extend(buffer.feed(delta))
+
+        self.assertEqual(emitted, [" See brief and email email available."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_waits_for_url_tail_before_sanitizing(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            max_chars=18,
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            ),
+        )
+        self.assertEqual(buffer.feed("Visit https://example."), [])
+        self.assertEqual(buffer.feed("com now."), ["Visit link available now."])
+
+    def test_strips_plain_tts_voice_controls_after_buffering(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+        emitted: list[str] = []
+        for delta in ['<emotion value="calm"/>', "Hello ", '<break time="500ms"/>', "there."]:
+            emitted.extend(buffer.feed(delta))
+
+        self.assertEqual(emitted, ["Hello there."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_preserves_supported_tts_voice_controls_when_allowed(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=True,
+            )
+        )
+        emitted: list[str] = []
+        for delta in ['<emotion value="calm"/>', "Hello ", '<break time="500ms"/>', "there."]:
+            emitted.extend(buffer.feed(delta))
+
+        self.assertEqual(emitted, ['<emotion value="calm"/>Hello <break time="500ms"/>there.'])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_preserves_trailing_space_across_sanitized_length_flush(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            max_chars=18,
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            ),
+        )
+        emitted: list[str] = []
+        emitted.extend(buffer.feed("Nice, invoice cleared "))
+        emitted.extend(buffer.feed("is a real milestone."))
+
+        self.assertEqual("".join(emitted), "Nice, invoice cleared is a real milestone.")
+        self.assertEqual(buffer.finalize(), [])
 
 
 if __name__ == "__main__":

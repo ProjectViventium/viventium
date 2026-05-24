@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import os
 import re
@@ -77,6 +78,43 @@ _MODEL_LOCK = threading.Lock()
 
 def _should_log_latency() -> bool:
     return (os.getenv("VIVENTIUM_VOICE_LOG_LATENCY", "") or "").strip() == "1"
+
+
+def _should_log_tts_inputs() -> bool:
+    return (
+        (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+        or (os.getenv("VIVENTIUM_VOICE_LOG_TTS_INPUTS", "") or "").strip() == "1"
+    )
+
+
+def _debug_text_json(text: str) -> str:
+    return json.dumps(text or "", ensure_ascii=False)
+
+
+def _is_punctuation_only(text: str) -> bool:
+    stripped = (text or "").strip()
+    return bool(stripped) and all(ch in ".,!?;:…" for ch in stripped)
+
+
+def _log_tts_input(*, surface: str, text: str, config: MlxChatterboxConfig) -> None:
+    if not _should_log_tts_inputs():
+        return
+
+    value = text or ""
+    logger.info(
+        "[VoiceTTSInput] action=forwarded provider=mlx_chatterbox surface=%s stage=model_generate model=%s chars=%s stripped_chars=%s punctuation_only=%s leading_space=%s trailing_space=%s stream=%s interval_s=%s has_ref_audio=%s text_json=%s",
+        surface,
+        config.model_id,
+        len(value),
+        len(value.strip()),
+        _is_punctuation_only(value),
+        bool(value[:1].isspace()),
+        bool(value[-1:].isspace()),
+        bool(config.stream),
+        float(config.streaming_interval_s),
+        bool(config.ref_audio),
+        _debug_text_json(value),
+    )
 
 
 def _strip_cartesia_emotion_tags(text: str) -> str:
@@ -194,6 +232,7 @@ def synthesize_wav_bytes(text: str, *, config: MlxChatterboxConfig) -> bytes:
     if not input_text:
         return b""
 
+    _log_tts_input(surface="wav_bytes", text=input_text, config=config)
     model = _load_mlx_model(config.model_id)
     effective_sample_rate = int(config.sample_rate)
     chunks: list[bytes] = []
@@ -248,6 +287,7 @@ class _MlxChatterboxChunkedStream(ChunkedStream):
             )
             return
 
+        _log_tts_input(surface="livekit_chunked", text=input_text, config=cfg)
         total_timeout_s = max(120.0, float(self._conn_options.timeout))
         deadline = time.monotonic() + total_timeout_s
 

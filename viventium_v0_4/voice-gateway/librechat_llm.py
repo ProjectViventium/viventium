@@ -39,6 +39,7 @@ from sse import (
     iter_sse_json_events,
     sanitize_voice_delta_text,
     sanitize_voice_followup_text,
+    sanitize_voice_tts_text,
     strip_voice_control_tags,
     VoiceControlDisplayFilter,
 )
@@ -96,7 +97,6 @@ _NO_RESPONSE_TAIL_WORDS = {
     "thank",
     "you",
 }
-
 
 def _normalize_no_response_word(word: str) -> str:
     # Keep it ASCII-only; words in no-response variants are English.
@@ -257,23 +257,59 @@ class _NoResponseStreamGuard:
 # Feature: Voice TTS chunk boundary guard.
 #
 # Purpose:
-# - Non-streaming TTS providers may synthesize the first tiny LLM delta as its own utterance.
-# - A single-character first delta like "I" can sound like "EEE", and stripped follow-up chunks can
-#   sound concatenated. Buffer only tiny phrase starts; flush on punctuation or a bounded phrase.
+# - TTS providers may synthesize tiny streamed deltas as their own utterances.
+# - A single-character first delta like "I" can sound like "EEE"; a later standalone "." can sound
+#   like "dot". Buffer phrase-sized chunks and drop orphan punctuation that arrives after the
+#   phrase it was meant to punctuate has already been sent to TTS.
 class _VoiceTtsDeltaBuffer:
-    def __init__(self, *, min_first_chars: int = 10, max_chars: int = 48) -> None:
+    def __init__(
+        self,
+        *,
+        min_first_chars: int = 10,
+        max_chars: int = 48,
+        sanitize_chunk: Optional[Callable[[str], str]] = None,
+    ) -> None:
         self._buffer = ""
         self._has_emitted = False
         self._last_emitted_text = ""
         self._min_first_chars = max(1, min_first_chars)
         self._max_chars = max(self._min_first_chars, max_chars)
+        self._sanitize_chunk = sanitize_chunk
+
+    @staticmethod
+    def _is_orphan_punctuation(text: str) -> bool:
+        stripped = (text or "").strip()
+        return bool(stripped) and all(ch in ".,!?;:…" for ch in stripped)
+
+    @staticmethod
+    def _ends_inside_non_speech_artifact(text: str) -> bool:
+        if not text or text[-1:].isspace():
+            return False
+        tail = text.rsplit(maxsplit=1)[-1]
+        lowered_tail = tail.lower()
+        if lowered_tail.startswith(("http://", "https://", "www.")):
+            return not bool(re.search(r"\.[A-Za-z]{2,}(?:/[^\s]*)?[.!?,;:]?$", tail))
+        if "@" in tail and re.search(r"[\w.+-]+@[\w.-]*$", tail):
+            return not bool(re.search(r"@[\w.-]+\.[A-Za-z]{2,}[.!?,;:]?$", tail))
+        if re.search(r"\[[^\]\n]*\]\([^)\s]*$", text):
+            return True
+        if text.count("```") % 2:
+            return True
+        if re.search(r"`[^`\n]*$", text):
+            return True
+        if re.search(r"<[A-Za-z][^>\n]*$", text):
+            return True
+        return False
 
     def _should_flush(self, text: str) -> bool:
-        stripped = text.strip()
+        speech_text = strip_voice_control_tags(text)
+        stripped = speech_text.strip()
         if not stripped:
             return False
-        if self._has_emitted:
-            return True
+        if self._has_emitted and self._is_orphan_punctuation(stripped):
+            return False
+        if self._ends_inside_non_speech_artifact(text):
+            return False
         if len(stripped) >= self._max_chars:
             return True
         if len(stripped) >= 4 and stripped[-1] in ".!?;:":
@@ -282,8 +318,34 @@ class _VoiceTtsDeltaBuffer:
             return True
         return False
 
+    def _drop_leading_orphan_punctuation(self, text: str) -> str:
+        if not text or not self._last_emitted_text:
+            return text
+
+        match = re.match(r"^(\s*)([.,!?;:…]+)(\s*)", text)
+        if not match:
+            return text
+
+        remaining = text[match.end() :]
+        if not remaining:
+            return ""
+
+        previous = self._last_emitted_text.rstrip()
+        if (
+            previous[-1:].isdigit()
+            and remaining[:1].isdigit()
+            and "." in match.group(2)
+        ):
+            return text
+
+        if not self._last_emitted_text[-1:].isspace() and not remaining[:1].isspace():
+            return f" {remaining}"
+        return remaining
+
     def _repair_boundary(self, text: str) -> str:
         if not text or not self._last_emitted_text:
+            return text
+        if self._last_emitted_text[-1:].isspace():
             return text
         if text[:1].isspace():
             return text
@@ -301,6 +363,15 @@ class _VoiceTtsDeltaBuffer:
         self._last_emitted_text += repaired
         return repaired
 
+    def _prepare_output(self, text: str) -> str:
+        out = self._drop_leading_orphan_punctuation(text)
+        if self._sanitize_chunk is not None and out:
+            out = self._sanitize_chunk(out)
+            out = self._drop_leading_orphan_punctuation(out)
+        if not out or self._is_orphan_punctuation(out):
+            return ""
+        return out
+
     def feed(self, delta: str) -> list[str]:
         if not delta:
             return []
@@ -309,6 +380,9 @@ class _VoiceTtsDeltaBuffer:
             return []
         out = self._buffer
         self._buffer = ""
+        out = self._prepare_output(out)
+        if not out:
+            return []
         self._has_emitted = True
         return [self._mark_emitted(out)]
 
@@ -317,6 +391,9 @@ class _VoiceTtsDeltaBuffer:
             return []
         out = self._buffer
         self._buffer = ""
+        out = self._prepare_output(out)
+        if not out:
+            return []
         self._has_emitted = True
         return [self._mark_emitted(out)]
 # === VIVENTIUM END ===
@@ -517,7 +594,13 @@ def _select_stream_error_message(error: Optional[str]) -> str:
             "rate_limit" in lowered
             or "rate limit" in lowered
             or "too many requests" in lowered
+            or "temporarily overloaded" in lowered
+            or "temporarily unavailable" in lowered
+            or "server_is_overloaded" in lowered
+            or "servers are currently overloaded" in lowered
             or " 429 " in f" {lowered} "
+            or " 503 " in f" {lowered} "
+            or " 529 " in f" {lowered} "
         ):
             return rate_limit_message
         if (
@@ -672,6 +755,7 @@ class LibreChatLLM(llm.LLM):
         timeout_s: float = 120.0,
         voice_mode: bool = True,
         voice_provider: str = "cartesia",
+        voice_accepts_inline_controls: bool = False,
         followup_handler: Optional[Callable[..., None]] = None,
     ) -> None:
         super().__init__()
@@ -680,6 +764,7 @@ class LibreChatLLM(llm.LLM):
         self._timeout_s = float(timeout_s)
         self._voice_mode = bool(voice_mode)
         self._voice_provider = voice_provider or "cartesia"
+        self._voice_accepts_inline_controls = bool(voice_accepts_inline_controls)
         self._followup_handler = followup_handler
 
     @property
@@ -697,10 +782,17 @@ class LibreChatLLM(llm.LLM):
 
     # === VIVENTIUM START ===
     # Feature: allow worker to override voice provider after TTS fallbacks.
-    def set_voice_provider(self, provider: str) -> None:
+    def set_voice_provider(
+        self,
+        provider: str,
+        *,
+        accepts_inline_voice_controls: Optional[bool] = None,
+    ) -> None:
         value = (provider or "").strip()
         if value:
             self._voice_provider = value
+        if accepts_inline_voice_controls is not None:
+            self._voice_accepts_inline_controls = bool(accepts_inline_voice_controls)
     # === VIVENTIUM END ===
 
     def chat(
@@ -845,7 +937,14 @@ class _LibreChatLLMStream(llm.LLMStream):
                 # === VIVENTIUM START ===
                 # Guard against `{NTA}` flashing during streaming.
                 no_response_guard = _NoResponseStreamGuard()
-                tts_delta_buffer = _VoiceTtsDeltaBuffer()
+                tts_delta_buffer = _VoiceTtsDeltaBuffer(
+                    sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                        text,
+                        preserve_leading_space=text[:1].isspace(),
+                        preserve_trailing_space=text[-1:].isspace(),
+                        allow_voice_controls=self._llm_impl._voice_accepts_inline_controls,
+                    )
+                )
                 debug_display_filter = VoiceControlDisplayFilter()
                 # === VIVENTIUM END ===
                 # === VIVENTIUM START ===
@@ -857,6 +956,11 @@ class _LibreChatLLMStream(llm.LLMStream):
                     nonlocal first
                     if not content:
                         return
+                    if _should_debug_voice_markup():
+                        logger.info(
+                            "[VoiceMarkup] tts_emit chunk_json=%s",
+                            _debug_text_json(content),
+                        )
                     cd = ChoiceDelta(
                         role="assistant" if first else None,
                         content=content,
@@ -1013,7 +1117,14 @@ class _LibreChatLLMStream(llm.LLMStream):
                         collected_response.append(fallback)
                         # Drop any buffered `{NTA}` deltas if we hit a stream error.
                         no_response_guard = _NoResponseStreamGuard()
-                        tts_delta_buffer = _VoiceTtsDeltaBuffer()
+                        tts_delta_buffer = _VoiceTtsDeltaBuffer(
+                            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                                text,
+                                preserve_leading_space=text[:1].isspace(),
+                                preserve_trailing_space=text[-1:].isspace(),
+                                allow_voice_controls=self._llm_impl._voice_accepts_inline_controls,
+                            )
+                        )
                         send_chat_delta(fallback)
                 # === VIVENTIUM END ===
 

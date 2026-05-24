@@ -8,8 +8,8 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `GHWS-001` | Workspace/project lifecycle is resumable and maps tasks to the correct worker context. | User-visible behavior matches source, docs, persisted state, and logs | GlassHive projects, runs, workspaces, callbacks | `tests/release/test_stable_dev_runtime_workflows.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `GHWS-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `GHWS-001` | Workspace/project lifecycle is resumable and maps tasks to the correct worker context. | User-visible behavior matches source, docs, persisted state, and logs | GlassHive projects, runs, workspaces, callbacks | `tests/release/test_stable_dev_runtime_workflows.py` plus user-grade QA when visible | PASS 2026-05-23 for local enterprise launcher/project workspace flow; see `qa/glasshive_azure_enterprise/reports/2026-05-23-launcher-watch-enterprise-qa.md`. |
+| `GHWS-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-23 for sanitized report; see `qa/glasshive_azure_enterprise/reports/2026-05-23-launcher-watch-enterprise-qa.md`. |
 
 ## `GHWS-001` - Core User Flow
 
@@ -24,7 +24,9 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_stable_dev_runtime_workflows.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: PASS 2026-05-23 for the local enterprise launcher/project workspace path. Playwright
+  created a synthetic task, verified async completion, reopened Project workspace, restarted the
+  runtime process, and verified retained workspace result state after reload.
 
 ## `GHWS-002` - Public-Safe Evidence Record
 
@@ -39,7 +41,7 @@ Use stable `GHWS-NNN` IDs for glasshive workspaces cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: PASS 2026-05-23. Public report is synthetic and sanitized.
 
 ## Natural User Use Case Checklist
 
@@ -48,6 +50,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GHWS-UC-001` | On GlassHive projects, runs, workspaces, callbacks, verify that workspace/project lifecycle is resumable and maps tasks to the correct worker context. | owning requirement for `GHWS-001` / `GHWS-001` | GlassHive projects, runs, workspaces, callbacks | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `GHWS-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | The user sees an honest setup, retry, or degraded-state result for GHWS-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `GHWS-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | GHWS-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `GHWS-UC-001` | On GlassHive projects, runs, workspaces, callbacks, verify that workspace/project lifecycle is resumable and maps tasks to the correct worker context. | owning requirement for `GHWS-001` / `GHWS-001` | GlassHive projects, runs, workspaces, callbacks | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS 2026-05-23 local enterprise project/workspace flow. |
+| `GHWS-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | The user sees an honest setup, retry, or degraded-state result for GHWS-002; no fake success is accepted. | PASS 2026-05-23 sanitized report. |
+| `GHWS-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `GHWS-002` / `GHWS-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to GHWS-002. | GHWS-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-05-23 after runtime reload and report update. |

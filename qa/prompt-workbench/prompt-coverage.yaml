@@ -5,7 +5,7 @@ cases:
     title: Registry render parity
     appliesTo: all
     source: qa/prompt-workbench/cases.md#PW-001
-    lastRun: 2026-05-15
+    lastRun: 2026-05-22
   - id: PW-002
     title: Sync state classification
     appliesTo:
@@ -44,10 +44,10 @@ cases:
     source: qa/prompt-workbench/cases.md#PW-008
     lastRun: 2026-05-15
   - id: PW-009
-    title: Flow graph and lineage
+    title: Flow source map and lineage
     appliesTo: all
     source: qa/prompt-workbench/cases.md#PW-009
-    lastRun: 2026-05-15
+    lastRun: 2026-05-22
   - id: PW-010
     title: Eval designer and results
     appliesTo: all
@@ -109,3 +109,28 @@ cases:
     appliesTo: all
     source: qa/prompt-workbench/cases.md#PW-021
     lastRun: 2026-05-16
+  - id: PW-025
+    title: Operational memory prompt coverage
+    appliesTo:
+      - memory.transcript_summarizer
+      - memory.transcript_caveat
+      - memory.hardener_consolidation
+      - memory.archivist
+      - main.memory_policy
+      - main.conversation_recall
+    source: qa/prompt-workbench/cases.md#PW-025
+    lastRun: 2026-05-21
+  - id: PW-026
+    title: Rendered Read and Raw prompt view
+    appliesTo:
+      - main.conscious_agent
+      - memory.transcript_summarizer
+    source: qa/prompt-workbench/cases.md#PW-026
+    lastRun: 2026-05-22
+  - id: PW-027
+    title: Scheduling Cortex prompt and config coverage
+    appliesTo:
+      - main.scheduling_self_continuity
+      - mcp.scheduling_cortex.server
+    source: qa/prompt-workbench/cases.md#PW-027
+    lastRun: 2026-05-22

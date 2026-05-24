@@ -147,6 +147,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_false_interruption_timeout_s, 2.0)
         self.assertTrue(env.voice_resume_false_interruption)
         self.assertEqual(env.voice_min_consecutive_speech_delay_s, 0.2)
+        self.assertEqual(env.voice_aec_warmup_duration_s, 3.0)
         self.assertIsNone(env.assemblyai_min_end_of_turn_silence_when_confident_ms)
         self.assertIsNone(env.assemblyai_max_turn_silence_ms)
 
@@ -180,6 +181,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_turn_detection, "turn_detector")
         self.assertEqual(env.voice_min_endpointing_delay_s, 0.35)
         self.assertEqual(env.voice_max_endpointing_delay_s, 1.8)
+        self.assertEqual(env.voice_min_interruption_words, 1)
 
     def test_explicit_turn_detector_falls_back_to_aligned_profile_when_uncached(self) -> None:
         with (
@@ -211,6 +213,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
                 "VIVENTIUM_VOICE_FALSE_INTERRUPTION_TIMEOUT_S": "off",
                 "VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION": "false",
                 "VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S": "0.45",
+                "VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S": "0.75",
                 "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD": "0.33",
                 "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS": "220",
                 "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS": "1500",
@@ -225,6 +228,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertIsNone(env.voice_false_interruption_timeout_s)
         self.assertFalse(env.voice_resume_false_interruption)
         self.assertEqual(env.voice_min_consecutive_speech_delay_s, 0.45)
+        self.assertEqual(env.voice_aec_warmup_duration_s, 0.75)
         self.assertEqual(env.assemblyai_end_of_turn_confidence_threshold, 0.33)
         self.assertEqual(env.assemblyai_min_end_of_turn_silence_when_confident_ms, 220)
         self.assertEqual(env.assemblyai_max_turn_silence_ms, 1500)
@@ -301,8 +305,28 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_turn_detection, "turn_detector")
         self.assertEqual(env.voice_min_endpointing_delay_s, 0.35)
         self.assertEqual(env.voice_max_endpointing_delay_s, 1.8)
-        self.assertEqual(env.voice_min_interruption_words, 1)
+        self.assertEqual(env.voice_min_interruption_words, 0)
         self.assertEqual(env.voice_min_consecutive_speech_delay_s, 0.2)
+        self.assertEqual(env.voice_aec_warmup_duration_s, 1.0)
+
+    def test_local_whisper_semantic_turn_detector_respects_explicit_min_words_override(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIVENTIUM_STT_PROVIDER": "whisper_local",
+                    "VIVENTIUM_VOICE_MIN_INTERRUPTION_WORDS": "2",
+                },
+                clear=True,
+            ),
+            patch("worker.HAS_TURN_DETECTOR", True),
+            patch("worker._turn_detector_model_is_cached", return_value=True),
+            patch("worker._ensure_turn_detector_runner_registered", return_value=True),
+        ):
+            env = load_env()
+
+        self.assertEqual(env.voice_turn_detection, "turn_detector")
+        self.assertEqual(env.voice_min_interruption_words, 2)
 
     def test_local_whisper_falls_back_to_vad_when_runner_is_not_registered(self) -> None:
         with (
@@ -316,6 +340,8 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_turn_detection, "vad")
         self.assertEqual(env.voice_min_endpointing_delay_s, 0.5)
         self.assertEqual(env.voice_max_endpointing_delay_s, 3.0)
+        self.assertEqual(env.voice_min_interruption_words, 0)
+        self.assertEqual(env.voice_aec_warmup_duration_s, 1.0)
 
     def test_local_whisper_uncached_fallback_uses_less_eager_vad(self) -> None:
         with (
@@ -665,6 +691,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
             "false_interruption_timeout",
             "resume_false_interruption",
             "min_consecutive_speech_delay",
+            "aec_warmup_duration",
         ):
             self.assertIn(name, params)
 

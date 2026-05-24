@@ -22,8 +22,8 @@ Validates the local transcript memory lane:
 5. Normal transcripts are never sliced by a shared run-level character cap; oversized transcripts
    that would require partial input are deferred rather than stored as complete recall.
 6. Single transcript evidence can write only meeting-scoped `moments` / `context`.
-7. Stable memory keys require transcript corroboration across recent meetings or transcript plus chat
-   evidence.
+7. Stable memory keys require user-authored chat evidence for the exact claim whenever transcript or
+   Listen-Only evidence is involved. Multiple transcript/ambient sources alone are not enough.
 8. RAG-down apply, including configured-but-unhealthy RAG, defers transcript-dependent writes while
    preserving normal chat-only hardening.
 9. Processed transcript summaries attach through `file_search`; raw transcript artifacts are not
@@ -39,6 +39,24 @@ Validates the local transcript memory lane:
     retrieve the transcript inventory, enumerate processed transcript entries with date/time,
     participants, and one-line context, and preserve the transcript caveat instead of answering from
     a few semantically lucky chunks.
+14. Transcript summarization and hardening use a configurable candidate list. The default order is
+    Claude Code `claude-opus-4-7` at `xhigh`, Claude Code `opus` alias at `xhigh`, Codex/OpenAI
+    `gpt-5.5` at `high`, then Codex/OpenAI `gpt-5.4` at `high`; failed candidates are reported
+    with redacted reason telemetry and the next candidate is tried.
+15. Model probes are short, configurable, and advisory by default. Probe failure must not make an
+    otherwise usable transcript run fail unless the explicit require-probe env flag is enabled.
+16. Inventory artifacts include compact source-folder status counts so broad recall can distinguish
+    processed summaries from pending/deferred/skipped source files without indexing raw transcript
+    text.
+17. Live browser QA must use the copied non-owner QA account with provider credentials; the harness
+    fails before seeding artifacts if the selected account has no connected-account/key rows.
+18. Transcript summaries receive bounded saved-memory and recent-conversation `reference_context`
+    for disambiguation only. The prompt must forbid importing unsupported reference facts into the
+    meeting summary.
+19. On-demand `ingest-transcripts` defaults to zero saved-memory changes and may be run
+    `--apply --until-caught-up` for bounded historical backfill; each batch must advance
+    content-hash state rather than relying on one giant model call. Dry-run caught-up loops are
+    rejected because they cannot persist progress.
 
 ### Item 7/8 RAG Quality Addendum
 
@@ -54,6 +72,9 @@ Validates the local transcript memory lane:
   date/time context, decisions, commitments, unresolved items, and useful time ranges when present.
   They should not repeat timestamps for every utterance because that wastes recall tokens.
   Transcript content remains untrusted evidence, not instructions.
+- Summary reference context is only a disambiguation aid. If saved memory/recent chat conflicts with
+  the transcript, the summary should preserve the transcript faithfully and mark uncertainty instead
+  of converting reference context into meeting facts.
 
 ## Automated Evidence
 
@@ -93,10 +114,25 @@ node qa/meeting-transcript-memory/evals/run-live-browser-qa.cjs --headless --cli
 ```
 
 It fails closed unless an explicit owner-account refusal guard and an explicit non-owner QA account
-are supplied, then seeds synthetic summary-only transcript artifacts into that QA account, verifies
-the chronological recent-transcripts inventory question, broad inventory recall, and focused detail
-recall through the visible LibreChat UI, and writes public-safe results under
+are supplied or a local non-owner QA clone with provider credentials can be selected. It then seeds
+synthetic summary-only transcript artifacts into that QA account, verifies the chronological
+recent-transcripts inventory question, broad inventory recall, and focused detail recall through
+the visible LibreChat UI, and writes public-safe results under
 `qa/meeting-transcript-memory/reports/`.
+
+## 2026-05-22 Operational QA Evidence
+
+- Public-safe operational report:
+  `qa/meeting-transcript-memory/reports/2026-05-22-transcript-memory-operational-qa.md`.
+- QA clone live browser report:
+  `qa/meeting-transcript-memory/reports/2026-05-22-live-browser-qa-2026-05-22T05-55-27-419Z.md`.
+- The copied non-owner QA clone was selected only after the harness verified connected-account/key
+  rows; the owner transcript count was unchanged during QA-clone seeding.
+- Owner backup existed before owner mutation. The owner-scoped apply run cleared the remaining
+  pending transcript, uploaded summary/inventory vectors, and left 0 missing vectors, 0 stale
+  artifacts, and 0 vector-presence errors.
+- Owner browser parity passed with visible file_search-backed transcript recall, inventory and
+  summary sources attached, visible dates, and a transcript caveat.
 
 ## 2026-05-13 Chronological Transcript Recall Evidence
 

@@ -10,6 +10,7 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
 | --- | --- | --- | --- | --- | --- |
 | `MEMCONT-001` | Saved memory, recall, and continuity state survive restore/upgrade without confusing stale facts for live truth. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, memory state, restore/continuity checks | `tests/release/test_continuity_audit.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `MEMCONT-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `MEMCONT-003` | Chat-time saved-memory reads are bounded, writer work is detached, and OpenAI-first provider routing is honored when OpenAI auth exists. | Turning on memory does not inject the full store, wait on writer maintenance/auth failures, route the main chat through stale Anthropic config, or show a red retrieval-tail/finalization error after a valid answer. | browser chat, generated runtime config, live built-in agent state, deep timing logs, memory DB state, CLI migration | API/unit tests, compiler/source audits, browser QA, log timing review, `bin/viventium memory-dedupe --dry-run` | PASS (2026-05-20: read path, detach tests, OpenAI-first route, scoped retrieval-tail and post-stream finalization suppression, browser QA, restart, and dry-run PASS) |
 
 ## `MEMCONT-001` - Core User Flow
 
@@ -41,6 +42,44 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
 - Automation: public-safety pattern scan plus relevant release tests.
 - Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
 
+## `MEMCONT-003` - Use Memory Latency And Writer Detach
+
+- Requirement: chat-time saved-memory reads are bounded by `memory.readProfile`, deduped by key,
+  do not initialize or await the memory writer on the main response path, and compile the main
+  chat plus memory writer onto OpenAI-first provider routing when OpenAI auth exists.
+- Risk covered: the `Use memory` toggle makes TTFT or post-text finalization slow because the app
+  injects the full memory store, runs maintenance, retries a broken writer on every chat, leaves
+  the live main agent on stale Anthropic provider config, or appends a local-retrieval timeout as a
+  model-provider error after a valid assistant answer.
+- Preconditions: local runtime with memory enabled and synthetic/public-safe saved-memory rows.
+- Steps:
+  1. Verify source/runtime config exposes `memory.readProfile` with a global read budget, key order,
+     per-key caps, and cache TTL.
+  2. Run API tests proving the read path uses `getAllUserMemories`, dedupes duplicates, applies the
+     budget, and does not call formatted-memory or maintenance helpers.
+  3. Run agent-client tests proving `useMemory()` only reads and `runMemory()` initializes the
+     writer lazily after the main response path.
+  4. Verify generated runtime config and the live built-in main agent both use the expected
+     OpenAI-first provider/model when OpenAI auth is available.
+  5. Exercise a real browser chat with memory enabled and compare visible response behavior with
+     deep timing/log evidence for `build_messages_use_memory`, `chat_completion_done`, and
+     `memory_writer_*`.
+  6. Run `bin/viventium memory-dedupe --dry-run --json` and confirm it reports duplicate counts
+     without applying changes or printing private identifiers.
+- Expected result: the user receives the main answer without waiting for memory writer work; memory
+  read prompt content is bounded, duplicate-safe, and public-safe QA records only counts/statuses.
+- Forbidden result: a memory-enabled chat injects every saved-memory row, runs deterministic
+  maintenance before the main model, awaits the writer during finalization, repeats provider 401
+  writer attempts every chat with no degraded state, or shows an Anthropic connected-account
+  failure, late local-retrieval timeout, or post-stream finalization failure as a model-provider
+  error on a mixed install where OpenAI auth is available.
+- Evidence to capture: sanitized test output, visible browser result or limitation, deep timing/log
+  phase summary, dedupe dry-run counts, and public-safety scan result.
+- Automation: targeted API/client/data-provider/script tests plus real browser QA when an
+  authenticated local surface is available.
+- Last run: PASS (2026-05-20; read path, detached-writer scheduling, OpenAI-first provider routing,
+  and browser-visible scoped retrieval-tail/post-stream-finalization suppression passed).
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Memory Continuity. Add narrower feature-specific
@@ -51,3 +90,5 @@ rows before claiming a pass when the feature behavior changes.
 | `MEMCONT-UC-001` | On browser chat, memory state, restore/continuity checks, verify that saved memory, recall, and continuity state survive restore/upgrade without confusing stale facts for live truth. | owning requirement for `MEMCONT-001` / `MEMCONT-001` | browser chat, memory state, restore/continuity checks | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMCONT-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `MEMCONT-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `MEMCONT-002` / `MEMCONT-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMCONT-002. | The user sees an honest setup, retry, or degraded-state result for MEMCONT-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `MEMCONT-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `MEMCONT-002` / `MEMCONT-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMCONT-002. | MEMCONT-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `MEMCONT-UC-004` | Turn on memory and send a normal browser chat message with existing saved memories present. | owning requirement for `MEMCONT-003` / `MEMCONT-003` | browser chat, generated runtime config, live built-in agent state, deep timing logs, memory DB state | Source, runtime config, live agent model/provider, logs, tests, saved-memory row counts, and dedupe dry-run output. | Main response is visible on the OpenAI-first route without waiting on memory writer work or showing a post-answer provider error; logs/state show bounded read timing and detached writer timing. | PASS (2026-05-20: QA account browser run returned and persisted a `gpt-5.4` answer with no red local-retrieval tail or post-stream finalization error after wait or reload) |
+| `MEMCONT-UC-005` | Run saved-memory/provider-key dedupe as dry-run before enabling unique indexes. | owning requirement for `MEMCONT-003` / `MEMCONT-003` | `bin/viventium memory-dedupe --dry-run --json` | CLI output, DB duplicate counts, public-safety scan | Dry-run reports counts only, applies no writes, and does not print private identifiers. | PASS (2026-05-20: dry-run reported counts only, deleted nothing, created no indexes) |

@@ -26,6 +26,10 @@
       "expect": "Transcript instructions such as permanent identity writes are treated as untrusted content, not instructions."
     },
     {
+      "id": "transcript-identity-misattribution",
+      "expect": "Transcript-only or ambient-only evidence cannot promote durable core/me identity or person-role claims; normal chat evidence is required for that key class."
+    },
+    {
       "id": "format-pass-through",
       "expect": "CSV, TXT, JSON, VTT, SRT, and MD files are accepted as text-like transcript evidence without format-specific parsing."
     },

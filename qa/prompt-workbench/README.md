@@ -18,9 +18,12 @@ Owning docs:
 - Local UI: `viventium_v0_4/prompt-workbench/src/`
 - Local lifecycle CLI: `bin/viventium prompt-workbench`
 - macOS helper submenu: `Advanced > Prompt Workbench`
+- LibreChat entry point: account dropdown `Connected Accounts` section > `Prompt Workbench`
 - Source prompts: `viventium_v0_4/LibreChat/viventium/source_of_truth/prompts/`
 - Live sync helper: `viventium_v0_4/LibreChat/scripts/viventium-sync-agents.js`
 - Eval harness: `qa/prompt-architecture/evals/run-exact-model-evals.cjs`
+- Scheduled prompts: Scheduling Cortex private SQLite tables plus Prompt Workbench Schedules tab
+- GlassHive execution: direct host `codex-cli` worker dispatch for Workbench scheduled prompts
 
 ## Quality Bar
 
@@ -37,12 +40,29 @@ Owning docs:
   formatting churn.
 - Helper/CLI QA must prove `Open` starts then opens the workbench, and `Stop` stops only the
   workbench web app without changing the main Viventium runtime state.
+- LibreChat account-menu QA must prove the admin/operator Prompt Workbench entry under Connected
+  Accounts starts or reuses the managed local workbench and opens the returned same-host loopback URL
+  without changing cloud state; non-admin users must not get launcher access.
+- Scheduled prompt QA must prove admin auth, Prompt Flow object visibility, Drafts-tab scheduled
+  prompt preview, variable wrapping/preview, enable/disable persistence, explicit GlassHive versus
+  Viventium execution-route display, direct GlassHive dispatch, signed callback/run history, no raw
+  DB credentials, governed memory writeback behavior, and topbar sync color states.
 
 ## Latest Status
 
 Implementation and follow-up browser QA are recorded in
 `qa/prompt-workbench/reports/2026-05-15-implementation-qa.md` and
-`qa/prompt-workbench/reports/2026-05-16-usability-eval-flow-qa.md`.
+`qa/prompt-workbench/reports/2026-05-16-usability-eval-flow-qa.md`. The latest rendered-prompt and
+Flow source-map pass is recorded in
+`qa/prompt-workbench/reports/2026-05-22-rendered-flow-source-map-qa.md`. Scheduling Cortex prompt
+and config coverage is recorded in
+`qa/prompt-workbench/reports/2026-05-22-scheduling-config-workbench-qa.md`. Scheduled GlassHive
+prompts are covered in
+`qa/prompt-workbench/reports/2026-05-22-scheduled-glasshive-prompts-qa.md`. The LibreChat Connected
+Accounts entry-point pass is recorded in
+`qa/prompt-workbench/reports/2026-05-22-librechat-connected-accounts-workbench-entry-qa.md`.
+Sidebar persistence, explicit diff history baselines, and opt-in sidecar/watchdog startup are
+recorded in `qa/prompt-workbench/reports/2026-05-22-sidebar-diff-sidecar-qa.md`.
 
 Current workbench checks pass, including browser prompt edit/draft/apply/revert, focused History
 view, linked eval/QA visibility, eval case draft/discard, dry-run-only live sync review, pending

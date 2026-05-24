@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 LIBRECHAT_ROOT = REPO_ROOT / "viventium_v0_4" / "LibreChat"
 SOURCE_OF_TRUTH_ROOT = LIBRECHAT_ROOT / "viventium" / "source_of_truth"
 PROMPTS_ROOT = SOURCE_OF_TRUTH_ROOT / "prompts"
+SCHEDULING_CORTEX_ROOT = LIBRECHAT_ROOT / "viventium" / "MCPs" / "scheduling-cortex"
 AGENTS_SOURCE_PATH = SOURCE_OF_TRUTH_ROOT / "local.viventium-agents.yaml"
 LIBRECHAT_SOURCE_PATH = SOURCE_OF_TRUTH_ROOT / "local.librechat.yaml"
 AGENT_SYNC_SCRIPT = LIBRECHAT_ROOT / "scripts" / "viventium-sync-agents.js"
@@ -19,6 +20,8 @@ PROMPT_WORKBENCH_QA_COVERAGE_PATH = REPO_ROOT / "qa" / "prompt-workbench" / "pro
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if str(SCHEDULING_CORTEX_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCHEDULING_CORTEX_ROOT))
 
 
 def private_user_data_root() -> Path:

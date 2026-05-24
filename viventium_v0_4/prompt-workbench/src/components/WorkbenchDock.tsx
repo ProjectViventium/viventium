@@ -7,9 +7,9 @@ import {
   type IJsonModel,
   type TabNode,
 } from 'flexlayout-react';
-import { Activity, GitCompareArrows, Map, PencilLine, RotateCcw, TestTube2 } from 'lucide-react';
+import { Activity, Clock3, GitCompareArrows, Map, PencilLine, RotateCcw, TestTube2 } from 'lucide-react';
 import { readLocalStorage, removeLocalStorage, writeLocalStorage } from '../storage';
-import type { DraftRecord, EvalBank, EvalRun, FlowGraph, FrameLog, PromptDetail, PromptRow, SyncStatus } from '../types';
+import type { DraftRecord, EvalBank, EvalRun, FlowGraph, FrameLog, PromptDetail, PromptRow, ScheduledPrompt, SyncStatus } from '../types';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 
 const PromptFlow = lazy(() => import('./PromptFlow').then((module) => ({ default: module.PromptFlow })));
@@ -18,11 +18,13 @@ const DriftBoard = lazy(() => import('./DriftBoard').then((module) => ({ default
 const DraftPanel = lazy(() => import('./DraftPanel').then((module) => ({ default: module.DraftPanel })));
 const EvalPanel = lazy(() => import('./EvalPanel').then((module) => ({ default: module.EvalPanel })));
 const FramePanel = lazy(() => import('./FramePanel').then((module) => ({ default: module.FramePanel })));
+const ScheduledPromptsPanel = lazy(() => import('./ScheduledPromptsPanel').then((module) => ({ default: module.ScheduledPromptsPanel })));
 
 interface Props {
   prompts: PromptRow[];
   flow?: FlowGraph;
   selectedPromptId: string;
+  selectedScheduledPromptId?: string;
   selectedPrompt?: PromptDetail;
   promptLoading: boolean;
   syncStatus?: SyncStatus;
@@ -32,12 +34,17 @@ interface Props {
   evalRuns: EvalRun[];
   evalRunning: boolean;
   frames: FrameLog[];
+  scheduledPrompts: ScheduledPrompt[];
+  scheduleNewRequestNonce: number;
   themeMode: 'light' | 'dark';
   selectedPromptDirty: boolean;
   evalBlockReason?: string;
   pushBlockReason?: string;
   focusRequest?: { tab: DockTabId; promptMode?: 'history'; nonce: number };
   onSelectPrompt: (id: string) => void;
+  onSelectScheduledPrompt: (id: string) => void;
+  onOpenPrompt: (id: string) => void;
+  onOpenTab: (tab: FocusableDockTabId) => void;
   onPromptDirtyChange: (dirty: boolean) => void;
   onPromptSaved: () => void;
   onLog: (message: string) => void;
@@ -50,7 +57,7 @@ interface Props {
   onSaveEvalCase: (options: { familyId: string; caseId: string; updatedCase: Record<string, unknown>; create?: boolean }) => void;
 }
 
-const layoutStorageKey = 'viventium.promptWorkbench.dockLayout.v4';
+const layoutStorageKey = 'viventium.promptWorkbench.dockLayout.v5';
 
 const tabDefinitions = {
   flow: { name: 'Flow', icon: Map, component: 'flow' },
@@ -58,15 +65,18 @@ const tabDefinitions = {
   live: { name: 'Live Drift', icon: GitCompareArrows, component: 'live' },
   drafts: { name: 'Drafts', icon: PencilLine, component: 'drafts' },
   evals: { name: 'Evals', icon: TestTube2, component: 'evals' },
+  schedules: { name: 'Schedules', icon: Clock3, component: 'schedules' },
   frames: { name: 'Prompt Traces', icon: Activity, component: 'frames' },
 } as const;
 
 type DockTabId = keyof typeof tabDefinitions;
+type FocusableDockTabId = 'prompt' | 'live' | 'drafts' | 'evals' | 'schedules' | 'frames';
 
 export function WorkbenchDock({
   prompts,
   flow,
   selectedPromptId,
+  selectedScheduledPromptId,
   selectedPrompt,
   promptLoading,
   syncStatus,
@@ -76,12 +86,17 @@ export function WorkbenchDock({
   evalRuns,
   evalRunning,
   frames,
+  scheduledPrompts,
+  scheduleNewRequestNonce,
   themeMode,
   selectedPromptDirty,
   evalBlockReason,
   pushBlockReason,
   focusRequest,
   onSelectPrompt,
+  onSelectScheduledPrompt,
+  onOpenPrompt,
+  onOpenTab,
   onPromptDirtyChange,
   onPromptSaved,
   onLog,
@@ -132,6 +147,7 @@ export function WorkbenchDock({
       prompts,
       flow,
       selectedPromptId,
+      selectedScheduledPromptId,
       selectedPrompt,
       promptLoading,
       syncStatus,
@@ -141,12 +157,14 @@ export function WorkbenchDock({
       evalRuns,
       evalRunning,
       frames,
+      scheduledPrompts,
+      scheduleNewRequestNonce,
       themeMode,
       selectedPromptDirty,
       evalBlockReason,
       pushBlockReason,
     }),
-    [prompts, flow, selectedPromptId, selectedPrompt, promptLoading, syncStatus, reviewToken, drafts, evalBank, evalRuns, evalRunning, frames, themeMode, selectedPromptDirty, evalBlockReason, pushBlockReason],
+    [prompts, flow, selectedPromptId, selectedScheduledPromptId, selectedPrompt, promptLoading, syncStatus, reviewToken, drafts, evalBank, evalRuns, evalRunning, frames, scheduledPrompts, scheduleNewRequestNonce, themeMode, selectedPromptDirty, evalBlockReason, pushBlockReason],
   );
 
   const resetLayout = () => {
@@ -164,8 +182,11 @@ export function WorkbenchDock({
             <PromptFlow
               prompts={tabState.prompts}
               flow={tabState.flow}
+              evalBank={tabState.evalBank}
               selectedPromptId={tabState.selectedPromptId}
               onSelect={onSelectPrompt}
+              onOpenPrompt={onOpenPrompt}
+              onOpenTab={onOpenTab}
             />
           </Suspense>
         </PanelErrorBoundary>
@@ -211,11 +232,20 @@ export function WorkbenchDock({
       );
     }
     if (component === 'drafts') {
+      const selectedScheduledPrompt = tabState.selectedScheduledPromptId
+        ? tabState.scheduledPrompts.find((prompt) => prompt.id === tabState.selectedScheduledPromptId)
+        : undefined;
       return (
         <div className="dock-panel-scroll">
           <PanelErrorBoundary label="Drafts">
             <Suspense fallback={<div className="empty-state">Loading Drafts...</div>}>
-              <DraftPanel drafts={tabState.drafts} onApply={onApplyDraft} onDiscard={onDiscardDraft} />
+              <DraftPanel
+                drafts={tabState.drafts}
+                selectedScheduledPrompt={selectedScheduledPrompt}
+                onOpenSchedule={() => onOpenTab('schedules')}
+                onApply={onApplyDraft}
+                onDiscard={onDiscardDraft}
+              />
             </Suspense>
           </PanelErrorBoundary>
         </div>
@@ -247,6 +277,22 @@ export function WorkbenchDock({
             </Suspense>
           </PanelErrorBoundary>
         </div>
+      );
+    }
+    if (component === 'schedules') {
+      return (
+        <PanelErrorBoundary label="Schedules">
+          <Suspense fallback={<div className="empty-state">Loading Schedules...</div>}>
+            <ScheduledPromptsPanel
+              onLog={onLog}
+              selectedScheduledPromptId={tabState.selectedScheduledPromptId}
+              scheduledPrompts={tabState.scheduledPrompts}
+              newRequestNonce={tabState.scheduleNewRequestNonce}
+              objectMode
+              onSelectScheduledPrompt={onSelectScheduledPrompt}
+            />
+          </Suspense>
+        </PanelErrorBoundary>
       );
     }
     return <div className="empty-state">Open a workbench view.</div>;
@@ -281,6 +327,7 @@ function loadDockModel() {
     'viventium.promptWorkbench.dockLayout.v1',
     'viventium.promptWorkbench.dockLayout.v2',
     'viventium.promptWorkbench.dockLayout.v3',
+    'viventium.promptWorkbench.dockLayout.v4',
   ]) {
     removeLocalStorage(staleKey);
   }
@@ -326,6 +373,7 @@ const defaultDockLayout: IJsonModel = {
           { type: 'tab', id: 'live', name: 'Live Drift', component: 'live', enableClose: true, enableRename: false },
           { type: 'tab', id: 'drafts', name: 'Drafts', component: 'drafts', enableClose: true, enableRename: false },
           { type: 'tab', id: 'evals', name: 'Evals', component: 'evals', enableClose: true, enableRename: false },
+          { type: 'tab', id: 'schedules', name: 'Schedules', component: 'schedules', enableClose: true, enableRename: false },
           { type: 'tab', id: 'frames', name: 'Prompt Traces', component: 'frames', enableClose: true, enableRename: false },
         ],
       },

@@ -123,12 +123,23 @@ bin/viventium prompt-workbench stop
 `prompt-workbench stop` is intentionally scoped to the Prompt Workbench web app. It must not stop
 the installed Viventium runtime or any shared singleton service.
 
+Prompt Workbench can also be enabled as an optional local-runtime sidecar through
+`runtime.prompt_workbench.enabled: true` in the canonical config. When enabled, the compiled runtime
+sets `START_PROMPT_WORKBENCH=true`, the stack launcher starts Workbench during Viventium startup, and
+a local watchdog restarts it if the loopback app dies. The launcher must not print the authenticated
+Workbench URL or token into stack logs; users should open the app through `bin/viventium
+prompt-workbench open`, the helper submenu, or the LibreChat account-menu entry. If the user stops
+Workbench explicitly, the watchdog respects the local user-stopped marker instead of immediately
+reopening it.
+
 ## Do And Do Not
 
 - Do use `dev-env` when you need a side-by-side development runtime.
 - Do use `dev-runtime activate-current --validate --restart` when promoting the current checkout to
   the installed local runtime.
 - Do use `prompt-workbench open/start/stop/status` for the standalone prompt QA app.
+- Do use `runtime.prompt_workbench.enabled: true` when Prompt Workbench should stay up with the
+  local Viventium runtime.
 - Do keep heavy singleton services shared unless the user explicitly asks for full isolation and QA
   proves the isolation.
 - Do keep Viventium-owned Docker singleton services bounded with source-owned memory, CPU, PID, and

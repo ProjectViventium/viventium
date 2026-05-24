@@ -109,6 +109,7 @@ final class HelperController: ObservableObject {
     }
     @Published private(set) var snapshotInProgress: Bool = false
     @Published private(set) var transcriptIngestInProgress: Bool = false
+    @Published private(set) var transcriptSourceConfigInProgress: Bool = false
     @Published private(set) var promptWorkbenchActionInProgress: Bool = false
     @Published private(set) var workflowStatusLabel: String?
     @Published private(set) var workflowActionInProgress: Bool = false
@@ -126,6 +127,7 @@ final class HelperController: ObservableObject {
     private let stopHealthTimeoutSeconds: Int = 120
     private let postTimeoutStopGraceSeconds: Int = 30
     private let busyStateHandoffGraceSeconds: TimeInterval = 8
+    private static let transcriptPartialExitStatus: Int32 = 2
     // Heavy local stacks can legitimately take several minutes to drain all owned sidecars
     // after the initial bounded stop command has returned.
     private let delayedQuitWatchTimeoutSeconds: Int = 420
@@ -187,6 +189,14 @@ final class HelperController: ObservableObject {
 
     var transcriptIngestActionDisabled: Bool {
         self.transcriptIngestInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
+    }
+
+    var transcriptSourceActionLabel: String {
+        self.transcriptSourceConfigInProgress ? "Choosing Transcripts Folder..." : "Choose Transcripts Folder..."
+    }
+
+    var transcriptSourceActionDisabled: Bool {
+        self.transcriptSourceConfigInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
     }
 
     var promptWorkbenchActionDisabled: Bool {
@@ -433,20 +443,24 @@ final class HelperController: ObservableObject {
             let runResult = Self.runMemoryHardeningCaptured(
                 repoRoot: config.repoRoot,
                 appSupportDir: config.appSupportDir,
-                arguments: ["ingest-transcripts", "--apply", "--ignore-idle-gate", "--json"]
+                arguments: ["ingest-transcripts", "--apply", "--until-caught-up", "--ignore-idle-gate", "--json"]
             )
             let exitStatus = runResult.exitStatus
             let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)
             await MainActor.run {
                 self.transcriptIngestInProgress = false
                 let logSummary = runSummary.map { "; \($0.message)" } ?? ""
-                let statusMessage = exitStatus == 0
-                    ? (
-                        runSummary?.skipped == true
-                            ? "Manual transcript ingest skipped; scope: \(ingestScope)\(logSummary)"
-                            : "Manual transcript ingest completed; scope: \(ingestScope)\(logSummary)"
-                    )
-                    : "Manual transcript ingest failed with status \(exitStatus); scope: \(ingestScope)\(logSummary)"
+                let incomplete = exitStatus == Self.transcriptPartialExitStatus || runSummary?.incomplete == true
+                let statusMessage: String
+                if exitStatus == 0 {
+                    statusMessage = runSummary?.skipped == true
+                        ? "Manual transcript ingest skipped; scope: \(ingestScope)\(logSummary)"
+                        : "Manual transcript ingest completed; scope: \(ingestScope)\(logSummary)"
+                } else if incomplete {
+                    statusMessage = "Manual transcript ingest incomplete with status \(exitStatus); scope: \(ingestScope)\(logSummary)"
+                } else {
+                    statusMessage = "Manual transcript ingest failed with status \(exitStatus); scope: \(ingestScope)\(logSummary)"
+                }
                 self.log(statusMessage)
                 Self.appendHelperLog(
                     Self.makeNamedHelperLogURL(
@@ -465,13 +479,99 @@ final class HelperController: ObservableObject {
                         runSummary?.message,
                     ].compactMap { $0 }.joined(separator: "\n\n")
                     alert.alertStyle = .informational
+                } else if incomplete {
+                    alert.messageText = "Transcript ingest incomplete"
+                    alert.informativeText = [
+                        "Viventium processed a bounded transcript batch for \(ingestScope), but catch-up is not fully complete.",
+                        runSummary?.message,
+                        "Run ingest again to continue, or let the 3am memory job continue it.",
+                    ].compactMap { $0 }.joined(separator: "\n\n")
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "Run Again")
                 } else {
                     alert.messageText = "Transcript ingest failed"
                     alert.informativeText = "The ingest was scoped to \(ingestScope). Check helper-transcript-ingest.log for status, then run the same CLI command from Terminal if detailed diagnostics are needed."
                     alert.alertStyle = .warning
                 }
                 alert.addButton(withTitle: "OK")
-                alert.runModal()
+                if alert.runModal() == .alertFirstButtonReturn, incomplete {
+                    self.ingestMeetingTranscripts()
+                }
+            }
+        }
+    }
+
+    func chooseTranscriptsFolder() {
+        guard let config else {
+            self.presentMissingConfigAlert()
+            return
+        }
+        guard !Self.configUsesProtectedRepoRoot(config) else {
+            self.presentProtectedCheckoutAlert(action: "choose a transcripts folder")
+            return
+        }
+        guard !self.transcriptSourceConfigInProgress else {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Choose Transcripts Folder"
+        panel.message = "Choose the local folder where Viventium should read meeting transcripts."
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            self.log("Choose transcripts folder cancelled")
+            return
+        }
+
+        let selectedPath = selectedURL.path
+        self.transcriptSourceConfigInProgress = true
+        self.log("Choose transcripts folder requested")
+        Self.appendHelperLog(
+            Self.makeNamedHelperLogURL(appSupportDir: config.appSupportDir, logFileName: "helper-transcript-source.log"),
+            "Choose transcripts folder requested"
+        )
+
+        Task.detached(priority: .userInitiated) {
+            let result = Self.runCLICaptured(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["transcripts", "source", "set", selectedPath, "--json"],
+                logFileName: "helper-transcript-source.log",
+                timeoutSeconds: 120
+            )
+            await MainActor.run {
+                self.transcriptSourceConfigInProgress = false
+                let statusMessage = result.exitStatus == 0
+                    ? "Transcript source folder saved"
+                    : "Transcript source folder save failed with status \(result.exitStatus)"
+                self.log(statusMessage)
+                Self.appendHelperLog(
+                    Self.makeNamedHelperLogURL(appSupportDir: config.appSupportDir, logFileName: "helper-transcript-source.log"),
+                    statusMessage
+                )
+
+                let alert = NSAlert()
+                if result.exitStatus == 0 {
+                    alert.messageText = "Transcript folder saved"
+                    alert.informativeText = "Viventium will use the selected folder for meeting transcript memory. Use Ingest Meeting Transcripts to process new files; if you changed an existing folder while Viventium is running, restart before relying on chat recall."
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "Ingest Now")
+                    alert.addButton(withTitle: "OK")
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        self.ingestMeetingTranscripts()
+                    }
+                } else {
+                    alert.messageText = "Could not save transcript folder"
+                    alert.informativeText = "Check helper-transcript-source.log, then try again."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
             }
         }
     }
@@ -2636,6 +2736,7 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
     private struct TranscriptIngestSummary {
         let message: String
         let skipped: Bool
+        let incomplete: Bool
     }
 
     private nonisolated static func transcriptIngestRunSummary(stdout: String) -> TranscriptIngestSummary? {
@@ -2656,6 +2757,8 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
             return nil
         }
         let transcriptStats = users.compactMap { $0["transcript_ingest"] as? [String: Any] }
+        let aggregateStatus = (root["status"] as? String) ?? ""
+        let aggregateSkippedByCap = self.intValue(root["files_skipped_by_cap"])
         let filesSeen = transcriptStats.reduce(0) { $0 + self.intValue($1["files_seen"]) }
         let filesPendingBeforeRun = transcriptStats.reduce(0) { $0 + self.intValue($1["files_pending"]) }
         let filesDeferredByCap = transcriptStats.reduce(0) { $0 + self.intValue($1["files_skipped_by_cap"]) }
@@ -2688,7 +2791,11 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
         return parts.isEmpty
             ? nil
-            : TranscriptIngestSummary(message: parts.joined(separator: "; "), skipped: transcriptStats.isEmpty && !skippedReasons.isEmpty)
+            : TranscriptIngestSummary(
+                message: parts.joined(separator: "; "),
+                skipped: transcriptStats.isEmpty && !skippedReasons.isEmpty,
+                incomplete: aggregateStatus == "partial" || aggregateSkippedByCap > 0 || filesDeferredByCap > 0
+            )
     }
 
     private nonisolated static func intValue(_ value: Any?) -> Int {
@@ -3091,6 +3198,11 @@ struct ViventiumHelperApp: App {
                 }
                 .help("Import local meeting transcripts into Viventium memory when configured.")
                 .disabled(self.controller.transcriptIngestActionDisabled)
+                Button(self.controller.transcriptSourceActionLabel) {
+                    self.controller.chooseTranscriptsFolder()
+                }
+                .help("Choose the local folder where Viventium reads meeting transcripts.")
+                .disabled(self.controller.transcriptSourceActionDisabled)
                 Divider()
                 Toggle(
                     "Start Viventium at Login",

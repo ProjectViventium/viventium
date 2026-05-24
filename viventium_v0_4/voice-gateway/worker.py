@@ -92,6 +92,8 @@ _TURN_DETECTOR_RUNNER_NAME = "lk_end_of_utterance_multilingual"
 _LOCAL_WHISPER_STT_PROVIDERS = {"pywhispercpp", "whisper_local"}
 _LOCAL_WHISPER_VAD_MIN_SPEECH_S = "0.35"
 _LOCAL_WHISPER_VAD_MIN_SILENCE_S = "0.5"
+_DEFAULT_AEC_WARMUP_DURATION_S = 3.0
+_LOCAL_WHISPER_AEC_WARMUP_DURATION_S = 1.0
 _LOCAL_WHISPER_MODELS = (
     "tiny.en",
     "base.en",
@@ -370,6 +372,7 @@ class Env:
     voice_false_interruption_timeout_s: Optional[float]
     voice_resume_false_interruption: bool
     voice_min_consecutive_speech_delay_s: float
+    voice_aec_warmup_duration_s: Optional[float]
     assemblyai_end_of_turn_confidence_threshold: Optional[float]
     assemblyai_min_end_of_turn_silence_when_confident_ms: Optional[int]
     assemblyai_max_turn_silence_ms: Optional[int]
@@ -718,6 +721,12 @@ def _default_max_endpointing_delay(turn_detection: str) -> float:
     return 3.0
 
 
+def _default_aec_warmup_duration(stt_provider: str) -> float:
+    if _is_local_whisper_stt(stt_provider):
+        return _LOCAL_WHISPER_AEC_WARMUP_DURATION_S
+    return _DEFAULT_AEC_WARMUP_DURATION_S
+
+
 def _default_job_memory_warn_mb(stt_provider: str, tts_provider: str) -> float:
     normalized_stt = _normalize_stt_provider(stt_provider)
     normalized_tts = _normalize_voice_provider(tts_provider)
@@ -746,7 +755,13 @@ def _resolve_turn_handling_profile(
         stt_provider,
     )
     default_max_endpointing_delay = _default_max_endpointing_delay(voice_turn_detection)
-    default_min_interruption_words = 1 if voice_turn_detection in {"stt", "turn_detector"} else 0
+    default_min_interruption_words = (
+        0
+        if _is_local_whisper_stt(stt_provider)
+        else 1
+        if voice_turn_detection in {"stt", "turn_detector"}
+        else 0
+    )
     default_min_consecutive_speech_delay = 0.2 if voice_turn_detection in {"stt", "turn_detector"} else 0.0
     return {
         "voice_turn_detection": voice_turn_detection,
@@ -1175,6 +1190,14 @@ def _build_tts_provider_attempt(
         tts=tts_impl,
         sanitize_voice_markup=not accepts_inline_voice_controls,
     )
+
+
+def _tts_provider_accepts_inline_voice_controls(
+    capabilities: list[dict[str, Any]],
+    provider: str,
+) -> bool:
+    capability = _find_voice_capability(capabilities, modality="tts", provider=provider)
+    return bool((capability or {}).get("acceptsInlineVoiceControls"))
 
 
 def _configure_xai_standalone_tts_plugin(*, ws_url: str, sample_rate: int) -> None:
@@ -1800,6 +1823,10 @@ def load_env() -> Env:
         ),
         voice_min_consecutive_speech_delay_s=float(
             turn_handling_profile["voice_min_consecutive_speech_delay_s"]
+        ),
+        voice_aec_warmup_duration_s=_parse_optional_timeout_env(
+            "VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S",
+            _default_aec_warmup_duration(normalized_stt_provider),
         ),
         assemblyai_end_of_turn_confidence_threshold=_parse_optional_float_env(
             "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD",
@@ -2882,6 +2909,10 @@ async def entrypoint(ctx: JobContext) -> None:
         auth=auth,
         voice_mode=True,
         voice_provider=_normalize_voice_provider(env.tts_provider),
+        voice_accepts_inline_controls=_tts_provider_accepts_inline_voice_controls(
+            capabilities,
+            env.tts_provider,
+        ),
     )
     # === VIVENTIUM END ===
 
@@ -3284,7 +3315,13 @@ async def entrypoint(ctx: JobContext) -> None:
         nonlocal current_tts_provider, current_tts_impl
         current_tts_provider = provider
         current_tts_impl = tts_impl
-        llm_impl.set_voice_provider(provider)
+        llm_impl.set_voice_provider(
+            provider,
+            accepts_inline_voice_controls=_tts_provider_accepts_inline_voice_controls(
+                capabilities,
+                provider,
+            ),
+        )
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -3342,7 +3379,13 @@ async def entrypoint(ctx: JobContext) -> None:
     # Build session
     # === VIVENTIUM START ===
     # Feature: Sync final provider back into LibreChat voiceMode payloads.
-    llm_impl.set_voice_provider(primary_voice_provider)
+    llm_impl.set_voice_provider(
+        primary_voice_provider,
+        accepts_inline_voice_controls=_tts_provider_accepts_inline_voice_controls(
+            capabilities,
+            primary_voice_provider,
+        ),
+    )
     # === VIVENTIUM END ===
 
     turn_detection, turn_end_reason = load_turn_detection(env, vad is not None)
@@ -3372,9 +3415,10 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=tts_impl,
         turn_handling=turn_handling,
         min_consecutive_speech_delay=env.voice_min_consecutive_speech_delay_s,
+        aec_warmup_duration=env.voice_aec_warmup_duration_s,
     )
     logger.info(
-        "[voice-gateway] AgentSession callSessionId=%s turn_detection=%s turn_end_reason=%s min_interrupt=%ss min_interrupt_words=%s min_endpoint=%ss max_endpoint=%ss false_interrupt_timeout=%s resume_false_interrupt=%s min_consecutive_speech_delay=%ss",
+        "[voice-gateway] AgentSession callSessionId=%s turn_detection=%s turn_end_reason=%s min_interrupt=%ss min_interrupt_words=%s min_endpoint=%ss max_endpoint=%ss false_interrupt_timeout=%s resume_false_interrupt=%s min_consecutive_speech_delay=%ss aec_warmup_duration=%s",
         call_session_id,
         _turn_detection_label(turn_detection),
         turn_end_reason,
@@ -3385,7 +3429,37 @@ async def entrypoint(ctx: JobContext) -> None:
         env.voice_false_interruption_timeout_s,
         env.voice_resume_false_interruption,
         env.voice_min_consecutive_speech_delay_s,
+        env.voice_aec_warmup_duration_s,
     )
+
+    @session.on("agent_state_changed")
+    def _on_agent_state_changed(event: Any) -> None:
+        logger.info(
+            "[voice-gateway] agent_state_changed callSessionId=%s old=%s new=%s",
+            call_session_id,
+            getattr(event, "old_state", ""),
+            getattr(event, "new_state", ""),
+        )
+
+    @session.on("user_state_changed")
+    def _on_user_state_changed(event: Any) -> None:
+        logger.info(
+            "[voice-gateway] user_state_changed callSessionId=%s old=%s new=%s",
+            call_session_id,
+            getattr(event, "old_state", ""),
+            getattr(event, "new_state", ""),
+        )
+
+    @session.on("overlapping_speech")
+    def _on_overlapping_speech(event: Any) -> None:
+        logger.info(
+            "[voice-gateway] overlapping_speech callSessionId=%s is_interruption=%s probability=%.3f detection_delay=%.3fs total_duration=%.3fs",
+            call_session_id,
+            bool(getattr(event, "is_interruption", False)),
+            float(getattr(event, "probability", 0.0) or 0.0),
+            float(getattr(event, "detection_delay", 0.0) or 0.0),
+            float(getattr(event, "total_duration", 0.0) or 0.0),
+        )
 
     @session.on("conversation_item_added")
     def _on_conversation_item_added(event: Any) -> None:
@@ -3438,7 +3512,8 @@ async def entrypoint(ctx: JobContext) -> None:
     @session.on("agent_false_interruption")
     def _on_agent_false_interruption(event: Any) -> None:
         logger.info(
-            "[voice-gateway] agent_false_interruption resumed=%s timeout=%s",
+            "[voice-gateway] agent_false_interruption callSessionId=%s resumed=%s timeout=%s",
+            call_session_id,
             bool(getattr(event, "resumed", False)),
             env.voice_false_interruption_timeout_s,
         )

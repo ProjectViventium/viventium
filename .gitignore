@@ -141,3 +141,9 @@ qa/results/*
 !qa/results/
 !qa/results/README.md
 qa/repo_cleanup_audit/
+
+# Customer-specific deployment runbooks, screenshots, live QA evidence, and
+# cloud operation artifacts belong in the private enterprise deployment repo.
+docs/azure-glasshive-enterprise-vm.md
+qa/glasshive_azure_enterprise/reports/
+qa/glasshive_standard_qa/reports/

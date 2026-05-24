@@ -126,8 +126,16 @@ claim the background work has not run.
 For non-browser surfaces, use the closest real user loop:
 
 - Telegram: send/receive through the bot path, then verify delivery ledger and stored message parts.
-- Voice or LiveKit: run the actual call/playground path, then verify transcript, latency, interruption,
-  and final spoken/text state.
+- Voice or LiveKit: run the actual call/playground path, then verify synthetic or sanitized
+  transcript evidence, latency, interruption, and final spoken/text state. For TTS/STT,
+  browser-audio, voice routing, transcription, interruption, or observability changes, first prove
+  the changed code/config is present in the active runtime artifact being tested: source checkout,
+  generated config, built artifact, and installed/running process as applicable. Record public-safe
+  timestamped evidence of what was heard or delivered and correlate it with logs, DB/state, generated
+  config, and owning code before marking `PASS`. Instrumentation-only confidence, source inspection,
+  logs, DB rows, unit tests, model review, Claude review, or "the next call should show it" is
+  `PARTIAL`, not acceptance. See `qa/modern-playground-voice/cases.md` `MPV-014` for the reusable
+  post-change voice-fix acceptance case.
 - Scheduler: create or trigger the schedule through the product path, then verify execution, delivery,
   ledger, and catch-up behavior.
 - Installer or CLI: run the public command, then verify the installed/running artifact rather than only

@@ -96,7 +96,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Expected outcome: The assistant uses `file_search`, retrieves the meeting transcript inventory,
   lists the processed transcript entries in the requested chronological order, includes visible
   date/time, participants, and one-line meeting context for each entry, and adds a transcript
-  caveat line.
+  caveat line. In a copied QA account that also contains real transcript memories, it is acceptable
+  and preferred for the assistant to identify synthetic QA fixtures as synthetic and exclude them
+  from the user's real recent-transcript timeline, as long as focused fixture prompts can still
+  retrieve the fixture details.
 - Forbidden result: The answer relies on only a few semantic summary chunks, omits known processed
   transcripts from the current source folder, loses who/when/context, or treats transcript-only
   statements as durable user beliefs.
@@ -149,6 +152,130 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   `api/test/scripts/viventium-memory-hardening.test.js`; live primary QA dry-run completed with 0
   transcript characters fed to the model.
 
+## MTM-011: Model Candidate Fallback Must Be Configurable And Observable
+
+- Scenario: The preferred transcript summarization/hardening model is unavailable, overloaded, rate
+  limited, or not present in the local CLI account.
+- Expected outcome: The hardener tries the configured ordered candidate list, defaults to Claude
+  Opus 4.7 `xhigh`, the Claude Code `opus` alias `xhigh`, OpenAI GPT-5.5 `high`, then OpenAI
+  GPT-5.4 `high`, and records redacted attempt reason/status/timeout metadata.
+- Forbidden result: The run silently remaps to a different model, fails on the first unavailable
+  model despite a configured fallback, or logs raw transcript/prompt text.
+- Evidence to capture: redacted model-attempt telemetry and selected provider/model/effort.
+- Last run: 2026-05-22, owner-scoped apply run selected Claude Code `claude-opus-4-7`
+  `xhigh`, recorded the default fallback candidate list, and completed with 1 successful model
+  attempt and 0 model-attempt failures.
+
+## MTM-012: Model Probe Must Not Be A False Hard Failure
+
+- Scenario: A short model probe times out or the provider is temporarily overloaded, but the real
+  fallback candidate path may still be usable.
+- Expected outcome: Probe attempts are short and visible in telemetry; by default they are
+  advisory and can select a healthy candidate, while `VIVENTIUM_MEMORY_HARDENING_REQUIRE_MODEL_PROBE`
+  is the only hard-gate mode.
+- Forbidden result: A scheduled or manual transcript ingest fails before scanning/summarizing only
+  because an advisory probe timed out.
+- Evidence to capture: probe timeout value, attempt reasons, selected candidate, and run status.
+- Last run: 2026-05-22, owner-scoped apply run recorded a 30s advisory probe, selected a healthy
+  candidate, and completed the transcript run instead of failing at probe time.
+
+## MTM-013: Inconclusive Vector Presence Checks Must Not Cause Destructive Repair
+
+- Scenario: Mongo contains processed transcript artifacts, but the vector-presence check itself
+  errors because the vector runtime is transiently unreachable or rejects the check.
+- Expected outcome: The run records redacted vector-presence error telemetry, avoids stale deletes,
+  and does not mark processed content missing unless the vector store definitively reports absence.
+- Forbidden result: A transient presence-check error causes bulk reprocessing, deletes current
+  transcript artifacts, or lets the assistant claim no transcript evidence exists.
+- Evidence to capture: vector-presence error count/reasons, content hashes requeued, stale-artifact
+  count, and follow-up health check.
+- Last run: 2026-05-22, owner post-apply repair check reported 0 missing content hashes,
+  0 stale artifacts, and 0 vector-presence errors.
+
+## MTM-014: Live Browser QA Must Select A Real Connected QA Account
+
+- Scenario: Multiple local non-owner accounts exist, including empty synthetic accounts and a copied
+  QA account with provider credentials/memories.
+- Expected outcome: The live browser QA harness uses an explicit QA account when supplied, otherwise
+  selects a non-owner account with provider credential rows and enough local state; it fails before
+  seeding artifacts when no such QA account exists.
+- Forbidden result: The harness picks an empty synthetic account, seeds artifacts, then fails later
+  with an avoidable `401 invalid_api_key` or claims transcript recall is broken because auth was
+  absent.
+- Evidence to capture: public-safe QA account hash, provider-credential row count, owner-unchanged
+  guard, visible browser answer, and source attachments.
+- Last run: 2026-05-22, live browser QA auto-selected the connected non-owner QA clone, detected
+  9 provider-credential rows, kept the owner transcript count unchanged, and passed all browser
+  transcript-recall checks.
+
+## MTM-015: Transcript-Only Identity Or Person-Role Misattribution Must Not Enter Stable Memory
+
+- Scenario: A meeting transcript or detailed transcript summary contains ambiguous first-person
+  language, unreliable speaker attribution, or collapsed speaker labels, and the hardener proposes a
+  durable employer/role/identity fact for the user based only on transcript or Listen-Only evidence.
+- Expected outcome: Single-transcript evidence may write meeting-scoped `context` or `moments`.
+  Transcript-only or ambient-only evidence is rejected for stable durable keys (`core`, `me`,
+  `preferences`, `world`, `signals`) unless there is user-authored chat corroboration. Assistant
+  restatements do not count as corroboration. A user correction in normal chat can corroborate and
+  correct the durable memory.
+- Forbidden result: Two transcript artifacts, two ambient sources, assistant restatements, or broad
+  project-topic overlap promote stable durable memory without user-authored chat evidence for that
+  exact claim.
+- Evidence to capture: validator rejection reason, accepted chat-corroborated correction path,
+  transcript summary diarization caveat, sanitized incident notes, and live browser answer showing
+  the corrected memory is used instead of the stale transcript-derived claim.
+- Last run: 2026-05-22, automated validator/eval regressions passed and owner-scoped browser QA
+  showed the corrected saved-memory answer; see
+  `qa/meeting-transcript-memory/reports/2026-05-22-transcript-identity-misattribution-qa.md`.
+
+## MTM-016: Transcript Summaries Use Reference Context Without Importing Unsupported Facts
+
+- Scenario: A transcript uses ambiguous names, collapsed speakers, or project jargon while current
+  saved memory and recent chat contain relevant corrections or boundary context.
+- Expected outcome: The summarizer prompt includes bounded `reference_context` with saved-memory
+  keys and recent messages by role. The summary uses that context only to disambiguate or flag
+  uncertainty; it does not add facts that the transcript itself does not support.
+- Forbidden result: Runtime code uses content regex/keyword matching, or the summary silently turns
+  reference-only facts into transcript facts.
+- Evidence to capture: prompt snapshot/eval output showing `reference_context`, no unsupported fact
+  import, and no content-specific runtime heuristic.
+- Last run: 2026-05-22, prompt/unit regression passed in the LibreChat memory-hardening Jest suite
+  and real QA summarizer isolation passed in
+  `qa/meeting-transcript-memory/reports/2026-05-22-reference-context-isolation-qa.md`.
+
+## MTM-017: Historical Transcript Backfill Is Bounded And Resumable
+
+- Scenario: Existing processed summaries become stale because the transcript summarizer prompt
+  version changes, or a user installs Viventium with many existing transcript files.
+- Expected outcome: `ingest-transcripts` defaults to zero saved-memory changes, processes a bounded
+  number of pending files, writes processed content state by hash, uploads summary/inventory vectors
+  on apply, and can repeat with `--apply --until-caught-up` until no files are skipped by the batch
+  cap. Dry-run caught-up loops are rejected because they cannot persist progress.
+- Forbidden result: A single giant all-history hardener prompt/model call is required to make
+  historical summaries current, or the status-bar transcript ingest mutates stable saved memory by
+  default.
+- Evidence to capture: redacted run summaries across at least one capped batch, transcript index
+  processed counts by prompt version, vector upload counts, and no durable memory writes.
+- Last run: 2026-05-22, automated unit/release tests covered zero-change backfill and wrapper
+  defaults; QA-account and owner-account applies must refresh this row with runtime evidence.
+
+## MTM-018: Transcript Folder Selection Uses Canonical Config
+
+- Scenario: A user installs Viventium, then chooses a local transcript folder from the macOS
+  status-bar helper before ingesting transcripts.
+- Expected outcome: The helper opens a directory picker, calls the public CLI/config patcher,
+  updates only `runtime.memory_hardening.transcripts.source_dir` in canonical `config.yaml`, writes
+  a local config backup, recompiles generated runtime files, and then lets the user run bounded
+  transcript ingest. Runtime recall attaches only artifacts whose source-folder hash matches the
+  currently configured folder.
+- Forbidden result: Source code hardcodes a user email/path, the helper edits generated env files,
+  old-folder artifacts remain attached after a folder switch, or `--help`/cancel creates side
+  effects.
+- Evidence to capture: helper menu/picker QA, CLI JSON output on a synthetic config, runtime env
+  compiled value, source-folder-hash attachment filter test, and no private path in public QA.
+- Last run: PASS 2026-05-22; see
+  `qa/meeting-transcript-memory/reports/2026-05-22-transcript-folder-picker-batching-qa.md`.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Meeting Transcript Memory. Add narrower feature-specific
@@ -156,6 +283,7 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MEETING-UC-001` | Ask a browser chat question that should use processed meeting transcript memory, then inspect visible answer sources and backend evidence. | `MTM-001`-`MTM-009` | Browser chat, file/source cards, processed transcript index, and sanitized logs | Model-facing file/source order, stored source order, visible source cards, memory hardening output, and dated QA report | The answer is grounded in processed transcript evidence, not attached raw files or unrelated memory, and sources are visible. | 2026-05-13 transcript recall repair live QA - passed |
-| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock is missing, stale, or degraded. | `MTM-010` and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, and does not fabricate transcript recall. | 2026-05-13 automated stale-lock regression - passed |
-| `MEETING-UC-003` | After ingest/repair, rerun the browser recall question and compare persistence/state across refresh or retry. | `MTM-001`-`MTM-010` | Browser chat, persisted message/source state, transcript index, and logs | Stored source order, visible source cards, memory hardening summary, and dated QA report | Recall remains grounded after retry/refresh and final wording matches persisted evidence. | 2026-05-13 transcript recall repair live QA - passed |
+| `MEETING-UC-001` | Ask a browser chat question that should use processed meeting transcript memory, then inspect visible answer sources and backend evidence. | `MTM-001`-`MTM-009`, `MTM-015`, `MTM-016` | Browser chat, file/source cards, processed transcript index, and sanitized logs | Model-facing file/source order, stored source order, visible source cards, memory hardening output, and dated QA report | The answer is grounded in processed transcript evidence, not attached raw files or unrelated memory, and sources are visible. Identity/person-role claims are not invented from transcript-only evidence. | 2026-05-22 owner browser incident regression passed; prompt-v4 runtime backfill QA pending |
+| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock/provider/vector runtime is missing, stale, or degraded. | `MTM-010`-`MTM-017` and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, model/vector telemetry, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, tries configured model fallbacks, processes bounded backfill batches, and does not fabricate transcript recall or identity. | 2026-05-22 automated backfill tests passed; runtime batch QA pending |
+| `MEETING-UC-003` | After ingest/repair, rerun the browser recall question and compare persistence/state across refresh or retry. | `MTM-001`-`MTM-017` | Browser chat, persisted message/source state, transcript index, and logs | Stored source order, visible source cards, memory hardening summary, and dated QA report | Recall remains grounded after retry/refresh and final wording matches persisted evidence; corrected chat memory outranks stale transcript-derived identity. | 2026-05-22 owner browser incident regression passed after saved-memory repair and runtime restart; prompt-v4 runtime backfill QA pending |
+| `MEETING-UC-004` | Choose a transcripts folder from the status-bar helper, then ingest transcripts. | `MTM-018` | macOS helper menu/picker, CLI config patcher, generated runtime env, and transcript ingest summary | Picker visible state, config backup, runtime env value, source-folder-hash filter, bounded ingest output, and dated QA report | The chosen folder is persisted through canonical config for this install without hardcoded owner data, and ingest processes the current folder only. | PASS 2026-05-22; see `qa/meeting-transcript-memory/reports/2026-05-22-transcript-folder-picker-batching-qa.md` |
