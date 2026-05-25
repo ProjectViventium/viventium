@@ -9,7 +9,7 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 | Case ID | Requirement | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- |
 | `SCHED-001` | Create/update existing schedule | Browser/Telegram scheduling, Scheduling Cortex MCP | test_scheduling_mcp_supervision.py plus user-surface QA | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `SCHED-002` | Trigger and delivery ledger | Scheduler trigger, delivery ledger, visible notification/chat | test_scheduling_mcp_supervision.py | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
+| `SCHED-002` | Trigger and delivery ledger | Scheduler trigger, delivery ledger, visible notification/chat | test_scheduling_mcp_supervision.py | FAIL 2026-05-24 ([report](../memory-hardening/reports/2026-05-24-nightly-routines-health-review.md)); local-prod due rows were stale while a dev-env scheduler answered the shared health port |
 | `SCHED-003` | Auth/runtime failure copy | CLI/status, chat/tool failure copy | test_preflight.py or focused scheduler check | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
 
 ## `SCHED-001` - Create/update existing schedule
@@ -40,7 +40,10 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_scheduling_mcp_supervision.py.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: FAIL 2026-05-24
+  ([report](../memory-hardening/reports/2026-05-24-nightly-routines-health-review.md)); local-prod
+  scheduled rows were overdue/stale and the live scheduler health endpoint was served by a dev-env
+  scheduler attached to a different DB.
 
 ## `SCHED-003` - Auth/runtime failure copy
 
@@ -65,5 +68,5 @@ rows before claiming a pass when the feature behavior changes.
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
 | `SCHED-UC-001` | On Browser/Telegram scheduling, Scheduling Cortex MCP, verify that create/update existing schedule. | owning requirement for `SCHED-001` / `SCHED-001` | Browser/Telegram scheduling, Scheduling Cortex MCP | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-001. | The visible result for SCHED-001 matches the documented requirement. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `SCHED-UC-002` | On Scheduler trigger, delivery ledger, visible notification/chat, try trigger and delivery ledger with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `SCHED-002` / `SCHED-002` | Scheduler trigger, delivery ledger, visible notification/chat | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-002. | The user sees an honest setup, retry, or degraded-state result for SCHED-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `SCHED-UC-002` | On Scheduler trigger, delivery ledger, visible notification/chat, try trigger and delivery ledger with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `SCHED-002` / `SCHED-002` | Scheduler trigger, delivery ledger, visible notification/chat | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-002. | The user sees an honest setup, retry, or degraded-state result for SCHED-002; no fake success is accepted. | FAIL 2026-05-24 ([report](../memory-hardening/reports/2026-05-24-nightly-routines-health-review.md)); due rows did not advance in local-prod scheduler DB |
 | `SCHED-UC-003` | After auth/runtime failure copy, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `SCHED-003` / `SCHED-003` | CLI/status, chat/tool failure copy | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-003. | SCHED-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
