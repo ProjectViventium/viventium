@@ -299,8 +299,10 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: 2026-05-22, PASS. See
-`qa/prompt-workbench/reports/2026-05-22-scheduled-glasshive-prompts-qa.md`.
+Last Run: 2026-05-24, FAIL/PARTIAL. The browser-visible Workbench loaded and showed scheduled
+prompt objects, but the nightly Workbench-private deep-thought schedule remained overdue after its
+03:00 local due time and the prior due run failed with a GlassHive connection-refused error. See
+`qa/memory-hardening/reports/2026-05-24-nightly-routines-health-review.md`.
 
 ## PW-010 Eval Designer And Results
 

@@ -8,8 +8,8 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `MEMHARD-001` | Memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | User-visible behavior matches source, docs, persisted state, and logs | memory hardener, reports, runtime env, synthetic memories | `tests/release/test_memory_hardening_contract.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `MEMHARD-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `MEMHARD-001` | Memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | User-visible behavior matches source, docs, persisted state, and logs | memory hardener, reports, runtime env, synthetic memories | `tests/release/test_memory_hardening_contract.py` plus user-grade QA when visible | FAIL 2026-05-24 ([report](reports/2026-05-24-nightly-routines-health-review.md)); enabled runtime had no memory-hardening LaunchAgent and no post-due 2026-05-24 run |
+| `MEMHARD-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-24 ([report](reports/2026-05-24-nightly-routines-health-review.md)); public report uses sanitized counts, hashes, and placeholders |
 
 ## `MEMHARD-001` - Core User Flow
 
@@ -24,7 +24,10 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_memory_hardening_contract.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: FAIL 2026-05-24
+  ([report](reports/2026-05-24-nightly-routines-health-review.md)); generated runtime had memory
+  hardening enabled, but no macOS LaunchAgent was installed and no 2026-05-24 run existed after the
+  documented 03:00 local schedule.
 
 ## `MEMHARD-002` - Public-Safe Evidence Record
 
@@ -39,7 +42,9 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: PASS 2026-05-24
+  ([report](reports/2026-05-24-nightly-routines-health-review.md)); report sanitization was reviewed
+  for private paths, accounts, raw transcript text, ids, and secrets.
 
 ## Natural User Use Case Checklist
 
@@ -48,9 +53,9 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MEMHARD-UC-001` | On memory hardener, reports, runtime env, synthetic memories, verify that memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | owning requirement for `MEMHARD-001` / `MEMHARD-001` | memory hardener, reports, runtime env, synthetic memories | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `MEMHARD-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | The user sees an honest setup, retry, or degraded-state result for MEMHARD-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `MEMHARD-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | MEMHARD-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `MEMHARD-UC-001` | On memory hardener, reports, runtime env, synthetic memories, verify that memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | owning requirement for `MEMHARD-001` / `MEMHARD-001` | memory hardener, reports, runtime env, synthetic memories | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-001. | User-visible behavior matches source, docs, persisted state, and logs | FAIL 2026-05-24 ([report](reports/2026-05-24-nightly-routines-health-review.md)); schedule was enabled but absent from LaunchAgent state |
+| `MEMHARD-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | The user sees an honest setup, retry, or degraded-state result for MEMHARD-002; no fake success is accepted. | PASS 2026-05-24 ([report](reports/2026-05-24-nightly-routines-health-review.md)) |
+| `MEMHARD-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | MEMHARD-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-05-24 ([report](reports/2026-05-24-nightly-routines-health-review.md)) |
 
 ## Release Test Traceability
 

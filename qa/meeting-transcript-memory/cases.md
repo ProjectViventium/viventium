@@ -189,8 +189,11 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   transcript artifacts, or lets the assistant claim no transcript evidence exists.
 - Evidence to capture: vector-presence error count/reasons, content hashes requeued, stale-artifact
   count, and follow-up health check.
-- Last run: 2026-05-22, owner post-apply repair check reported 0 missing content hashes,
-  0 stale artifacts, and 0 vector-presence errors.
+- Last run: PARTIAL 2026-05-24
+  ([report](../memory-hardening/reports/2026-05-24-nightly-routines-health-review.md)); latest
+  hardening run avoided destructive repair and had 0 pending/deferred transcript files, but recorded
+  2 `vector_presence_auth_error` checks that need follow-up before full transcript RAG health can be
+  claimed.
 
 ## MTM-014: Live Browser QA Must Select A Real Connected QA Account
 
