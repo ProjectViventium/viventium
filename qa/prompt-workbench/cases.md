@@ -299,12 +299,10 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: 2026-05-25, PARTIAL. Synthetic public-safe QA proved a manual Workbench/GlassHive run
-can complete, and a one-time due Workbench/GlassHive schedule can fire and complete when no
-competing host worker is active. Remaining gaps: overlapping host-native Codex runs can fail
-instead of waiting/retrying, failed terminal callbacks can leave the parent task ledger marked
-success, and one-time schedules are not faithfully represented in the Workbench schedule editor.
-See `qa/scheduling-cortex/reports/2026-05-25-sched002-pw029-live-delivery-qa.md`.
+Last Run: 2026-05-26, FAIL. The scheduled 03:00 Workbench-private nightly row did not run:
+Scheduling Cortex was unavailable, Prompt Workbench returned connection refused in Playwright, the
+row remained overdue, and no current scheduled-prompt run row existed. See
+`qa/memory-hardening/reports/2026-05-26-nightly-routines-health-review.md`.
 
 ## PW-010 Eval Designer And Results
 
