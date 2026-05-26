@@ -49,8 +49,8 @@ sharing evidence, because that inspection path can expose secret-bearing runtime
   2026-05-23, active local-prod tasks still had overdue `next_run_at` values from
   2026-05-23, and the Workbench deep-thought row still showed `next_run_at=2026-05-24T10:00:00Z`
   after that due time had passed.
-- The process currently answering `localhost:7110` was the `glasshive-azure` dev-env scheduler,
-  using the dev-env scheduling DB and log files. This makes scheduler health look green while the
+- The process currently answering `localhost:7110` was a separate dev-env scheduler, using that
+  dev-env's scheduling DB and log files. This makes scheduler health look green while the
   local-prod scheduling DB is not being advanced.
 - The dev-env scheduler DB was also stale enough that restoring port ownership alone should not be
   credited as recovery; GlassHive executor reachability needs its own follow-up check.
@@ -65,7 +65,7 @@ sharing evidence, because that inspection path can expose secret-bearing runtime
 - `bin/viventium status`:
   local-prod reported core services still starting; Conversation Recall was running; Telegram was
   stopped; Docker-backed search/MCP services were starting.
-- `bin/viventium dev-env run glasshive-azure status`:
+- `bin/viventium dev-env run <dev-env-name> status`:
   dev env reported ready on its separate app-facing ports.
 - `bin/viventium memory-harden status`:
   116 total runs, 106 summarized, 10 empty, 4 failed; latest run was
@@ -118,7 +118,7 @@ sharing evidence, because that inspection path can expose secret-bearing runtime
    the expected 2026-05-24 03:00 local run did not happen.
 
 2. **P1: Scheduler health is cross-wired to a dev env.**
-   Port 7110 is occupied by the `glasshive-azure` dev-env scheduler using its own DB, while the
+   Port 7110 is occupied by a separate dev-env scheduler using its own DB, while the
    local-prod scheduling DB has stale due rows. Health checks against `localhost:7110` can therefore
    pass for the wrong runtime.
    The attached dev-env DB is also not current enough to prove delivery health, so the repair must
@@ -160,7 +160,7 @@ Confirmed additions incorporated here:
 ## Recommended Next Actions
 
 1. Restore the local-prod scheduler boundary:
-   stop or move the `glasshive-azure` dev-env scheduler off the local-prod scheduler port, then
+   stop or move the separate dev-env scheduler off the local-prod scheduler port, then
    restart local-prod and verify the scheduler process is attached to the local-prod scheduling DB.
    Then verify GlassHive executor reachability with sanitized synthetic input before crediting the
    scheduler as recovered.

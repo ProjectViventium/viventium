@@ -595,23 +595,27 @@ summarize the visible result here.
      `Download file` action.
   5. Open the same artifact through `/artifacts/download`; verify it is an attachment.
   6. Tamper a signed open token to change its kind/path/owner and verify it fails closed.
-  7. In enterprise mode, open the preview through `/v1/signed-links/{artifact_open}` without
-     service headers; verify the page's `Download file` action is itself a signed download link and
-     `View workspace` carries a worker-view token.
-  8. In browser QA, click the primary file link and verify no browser download is triggered; then
-     click `Download file` and verify the download behavior is explicit.
+  7. In enterprise mode, open the preview through the configured public origin
+     `GLASSHIVE_OPERATOR_BASE_URL` at `/v1/signed-links/{artifact_open}` without service headers;
+     verify the glass-drive-ui proxy accepts the open token, the page's `Download file` action is
+     itself a signed download link, and `View workspace` carries a worker-view token.
+  8. In browser QA, click the primary file link exactly as returned by MCP/callbacks and verify no
+     browser download is triggered; then click `Download file` and verify the download behavior is
+     explicit.
 - Expected result: every default file-delivery response opens the GlassHive preview/landing page;
   only an explicit download action returns an attachment.
 - Forbidden result: a primary result link pointing directly to `/artifacts/download`, a primary link
   labeled only as a generic file while returning an attachment, cross-kind signed-token replay,
-  unescaped artifact text in the preview page, unsigned preview-page buttons in enterprise mode, or
-  a test that only checks link presence without clicking/opening it.
+  unescaped artifact text in the preview page, unsigned preview-page buttons in enterprise mode, a
+  public proxy token-kind whitelist that accepts a kind the runtime rejects or rejects a kind the
+  runtime accepts, or a test that only checks link presence without clicking/opening it.
 - Evidence to capture: callback text, MCP payload token kinds, open/download response headers,
   browser no-download observation, download observation, and audit/log events.
 - Automation: `runtime_phase1/tests/test_api.py` artifact open/download and callback-order tests;
   `runtime_phase1/tests/test_mcp_server.py` signed open/download kind tests.
-- Last run: PASS 2026-05-25 local after the escaped-defect hardening pass and Claude-identified
-  enterprise click-through hardening; live enterprise rerun is required after deployment updates.
+- Last run: PASS 2026-05-25 local after the escaped-defect hardening pass, Claude-identified
+  enterprise click-through hardening, and local public-proxy browser QA; live enterprise rerun is
+  required after deployment updates.
 
 ## Incident Promotion Checklist
 

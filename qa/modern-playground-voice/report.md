@@ -342,7 +342,7 @@ Runtime checks:
 - LiveKit participant state and runtime logs for the verified rooms showed:
   - user participant active
   - unmuted user microphone track
-  - `JT_PUBLISHER` job assigned to `librechat-voice-gateway`
+  - publisher job assigned to `librechat-voice-gateway`
   - agent participant active
   - unmuted agent audio track
 - Voice-gateway logs showed:
