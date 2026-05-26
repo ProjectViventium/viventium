@@ -24,6 +24,12 @@ APP_FACING_PORT_KEYS = (
     "voice_gateway_health_port",
 )
 
+SCHEDULING_MCP_PORT_DEFAULTS = {
+    "isolated": 7110,
+    "compat": 7010,
+}
+SCHEDULING_MCP_PORT_OFFSET_BIAS = 100
+
 SHARED_SINGLETON_SERVICES = (
     "recall_rag",
     "searxng",
@@ -94,6 +100,11 @@ def create_env(args: argparse.Namespace) -> int:
     for key in APP_FACING_PORT_KEYS:
         if key in ports:
             ports[key] = int(ports[key]) + offset
+    runtime_profile = str(runtime.get("profile") or "isolated").strip().lower()
+    scheduling_base = ports.get("scheduling_mcp_port")
+    if scheduling_base in (None, ""):
+        scheduling_base = SCHEDULING_MCP_PORT_DEFAULTS.get(runtime_profile, 7110)
+    ports["scheduling_mcp_port"] = int(scheduling_base) + offset + SCHEDULING_MCP_PORT_OFFSET_BIAS
 
     dev_env = runtime.setdefault("dev_env", {})
     if not isinstance(dev_env, dict):

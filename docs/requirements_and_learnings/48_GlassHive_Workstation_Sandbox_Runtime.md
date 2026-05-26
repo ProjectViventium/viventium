@@ -277,9 +277,67 @@ Host-worker UX and callback requirements:
   inherit a short synchronous request timeout or a hard-coded 300 second worker timeout. Deployments
   may set an explicit run timeout through runtime env for operational policy, but the default worker
   behavior is to keep running until completion, cancellation, checkpoint, or process failure.
+- MCP `workspace_wait` is a user-requested completion wait, not the worker runtime limit. Its
+  default must be long enough for ordinary research, coding, and file-work completion checks,
+  including user requests to wait up to 30 minutes, and must be capped by deployment policy. The
+  LibreChat MCP server timeout for GlassHive must exceed the GlassHive wait cap so a legitimate wait
+  is not converted into a transport failure. A timed-out wait means "still running/check again", not
+  "failed". The model-facing follow-up context must carry the run/worker ids and the configured
+  completion-wait timeout so the host model does not lose the task between turns. If the model
+  accidentally omits ids in a same-conversation wait/status call, MCP may resolve the most recent
+  dispatch only inside the authenticated tenant/user/conversation scope. If a conversation-scoped
+  launch was remembered and the follow-up omits the conversation assertion, the tool must fail
+  closed instead of using a same-user global fallback. Enterprise launches without a conversation
+  assertion must not create a remembered user-wide fallback; explicit `run_id`/`worker_id` follow-up
+  still works. Scheduled launches return schedule handles rather than active worker/run dispatches,
+  so the recent-dispatch wait/status fallback intentionally does not attach until scheduled work
+  starts. Local non-enterprise mode is a best-effort developer convenience and must not be
+  treated as enterprise isolation unless user/conversation headers are present. Normal long waits
+  must use an efficient configurable polling cadence, not rapid browser or status loops. The runtime
+  must enforce the configured poll cadence as a floor so a misbehaving caller cannot overload the
+  operator API with sub-second or one-second long-run polling. Browser surfaces must also be
+  state-aware: active workers may refresh quickly, but retained/completed workspace tiles must back
+  off, avoid embedded desktop iframes by default, and use non-overlapping timers. The Workspaces
+  hive may cap embedded live desktop previews for active workers to protect browser resources; every
+  tile must still show status text and a Full watch path. When launch and wait happen in the same
+  turn, the host model should
+  surface the View / Steer link before entering the long wait whenever its chat protocol allows
+  assistant text before the next tool call, and must include that link in the final answer.
+- GlassHive delegation fidelity is a product requirement. The host model must not shorten,
+  summarize, paraphrase, or water down the user's request when delegating to `workspace_launch` or
+  `worker_delegate_once`. Titles and descriptions may be concise labels, but the worker-facing
+  instruction/context must include the full available user request, success criteria, constraints,
+  examples, links, file references, exclusions, and background. The `context` field exists to carry
+  that full picture when the outcome description would otherwise be too thin.
+- CLI/provider failure handling is part of the standalone MCP contract. When a worker process exits
+  non-zero, GlassHive must persist a sanitized failure taxonomy when structured CLI events expose
+  one, such as provider rate limit, content filter, provider auth/config, response failure, or
+  unknown. `workspace_status` and `workspace_wait` must return the class, retryability, user-facing
+  message, diagnostic summary, and recovery hint so the host model does not invent a blocker or
+  relaunch from scratch.
+- Host-worker capability must be checked before creating or resuming a worker or queuing a run. If a
+  requested host profile requires a missing CLI, GlassHive returns a structured
+  `runtime_dependency_missing` blocked response and creates no worker/run row. The model may recover
+  by using an available profile or sandbox/workstation execution only when that does not contradict
+  the user's explicit request.
+- Sandbox routing is a structured tool argument, not runtime prompt matching. If the user asks for
+  `sandbox`, `sandboxed workspace`, `Codex Workspace`, `workstation`, a disposable browser, or risky
+  untrusted browsing, the GlassHive MCP instructions must guide the host model to set
+  `execution_mode=docker` even when the deployment default is host. Host-default Viventium behavior
+  remains correct for real-browser/profile/local-computer requests.
+- `run_get` is a diagnostic/debugging tool. General user-result follow-up should use
+  `workspace_status` for non-blocking checks and `workspace_wait` for explicit waits, using the
+  returned `follow_up_context` ids and wait timeout so results do not get lost across turns.
+- Retrying or continuing failed work must be explicit and workspace-preserving. `workspace_continue`
+  queues a new run on the same worker with the original instruction, current workspace files/state,
+  and the user's continuation request. It is not an automatic retry loop and must not encode a
+  specific customer prompt, file type, website, provider name, or QA phrase in runtime logic.
 
 - `worker_create` and `worker_find_or_resume` accept `execution_mode=host`.
-- `codex-cli` uses local Codex CLI full-access/no-approval execution.
+- `codex-cli` uses local Codex CLI full-access/no-approval execution. Host-native Codex defaults to
+  the logged-in local Codex CLI configuration when no host-specific model override is set; it must
+  not silently inherit the server-side Docker/OpenAI-compatible provider model just because that
+  model is configured for sandbox workers.
 - `claude-code` uses local Claude Code bypass-permission execution.
 - `openclaw-general` requires `openclaw` on `PATH`; if missing, the capability must degrade with a
   clear operator-readable message.
@@ -551,6 +609,18 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
   use short-lived, worker-scoped signed URLs or a trusted proxy user assertion. A full watch link
   that falls back to `GlassHive enterprise UI requires an authenticated user assertion` is a failed
   UX/security integration because the user was given a link that cannot carry its own authorization.
+- **Artifact link semantics**: the default user-facing file-delivery link must open a GlassHive
+  file preview/landing page, not trigger a surprise raw browser download. Raw artifact downloads
+  remain supported, but they must be labeled explicitly as `Download file`; chat callbacks and MCP
+  guidance should prefer the scoped open/preview URL and expose raw download as a secondary action.
+  The preview route must work universally for text, image, and binary artifacts: text is safely
+  escaped and previewed, supported small images are shown inline, and every other file type gets a
+  clear "File is ready" landing page with a separate explicit download action. This page is a
+  user-facing artifact surface and must send restrictive security headers such as `nosniff`,
+  `no-referrer`, no-store cache headers, and a tight Content Security Policy. In enterprise mode,
+  buttons inside that preview page must also be self-authorizing signed actions: opening the
+  preview through a signed link and then clicking `Download file` or `View workspace` must not fall
+  back to an unsigned raw route that requires hidden proxy headers.
 - **Completed deliverable promotion**: for Docker workers with structured webpage deliverables,
   GlassHive must open the deliverable in the sandbox browser once the run completes. Host-native
   workers must not auto-open the user's real browser without explicit consent and must not place
@@ -598,8 +668,10 @@ but it cannot replace real user-path evidence. Every case result must be marked 
    prerequisite unavailable.
 2. File upload/download: upload a public-safe PDF or workbook, ask the worker to tastefully redesign
    it into a PowerPoint or HTML file, then download, open, and validate the produced files as a
-   user. The worker must use a universal self-check harness through its bootstrap instructions and
-   success criteria; do not overfit `AGENTS.md` to these exact QA prompts.
+   user. The default artifact link must open a GlassHive file preview/landing page first, while a
+   separately labeled `Download file` action downloads the raw artifact. The worker must use a
+   universal self-check harness through its bootstrap instructions and success criteria; do not
+   overfit `AGENTS.md` to these exact QA prompts.
 3. Scheduling: create a natural-language scheduled GlassHive task such as "in 20 minutes do X" or
    "on Mondays do X". This must work for raw LibreChat/MCP paths without relying on Scheduling
    Cortex-only behavior.
@@ -624,6 +696,27 @@ but it cannot replace real user-path evidence. Every case result must be marked 
 9. Review-only second opinion: after Codex completes its own evidence-backed assessment, run a
    Claude/ClaudeViv review-only pass with sanitized evidence and ask it to classify claims as
    `confirmed`, `partially_confirmed`, `cannot_confirm`, or `contradicted`.
+10. Failure recovery and continuation: run a synthetic long-form worker task that fails through a
+    structured provider/runtime failure, verify `workspace_status` and `workspace_wait` return the
+    right failure class and do not call it success, then ask to continue and verify GlassHive queues
+    `workspace_continue` against the same worker/workspace with the original task preserved.
+11. Host/sandbox capability routing: with host workers enabled, prompt through LibreChat using
+    public-safe language such as "use sandbox" or "use Codex Workspace" and verify the model launches
+    `execution_mode=docker`. Separately request an unavailable host profile and verify GlassHive
+    returns `runtime_dependency_missing` before creating any worker or run.
+12. Delegation fidelity and efficient waiting: use a long public-safe prompt with constraints,
+    examples, links, and exclusions, then verify the MCP tool payload preserves the full available
+    brief in `context`/instruction instead of a watered-down paraphrase. Verify same-turn wait/status
+    can recover a same-conversation recent dispatch when ids are accidentally omitted, that the
+    fallback is tenant/user/conversation scoped, that enterprise launches without a conversation
+    assertion do not create user-wide remembered fallbacks, that View / Steer is visible before or at
+    least in the final answer around long waits, and that polling cadence is not an aggressive
+    local/browser loop. Include a browser-network check that completed Workspaces tiles do not keep
+    mounting desktop iframes or refreshing every few seconds. If the user prompt also asks the host
+    to verify tool selection, View / Steer visibility, callback delivery, wait cadence, or post-run
+    inspection from the host UI, preserve those checks as context but keep them out of the worker's
+    workspace-internal blocker criteria; the host assistant/operator must verify them with
+    browser/log/DB evidence.
 
 Common variants such as "run GlassHive QA", "run the standard QA suite", or "do the GlassHive
 Standard QA" should resolve to this same procedure in agent/operator behavior. Runtime product code
@@ -648,6 +741,19 @@ runtime intent classifier.
   acknowledgement.
 - Worker prompts and QA harnesses must be general and capability-based. Do not hardcode QA case
   names, exact user prompt text, provider labels, or one owner's environment into runtime behavior.
+- Worker prompts must not confuse host/application orchestration with workspace deliverables.
+  GlassHive should let the worker use its own intelligence to finish files, browser-visible results,
+  research, code, or other workspace tasks, while the host assistant verifies View / Steer delivery,
+  MCP tool choice, callbacks, wait/status cadence, and cross-surface inspection externally.
+- User-facing dispatch tools, including `workspace_launch`, `workspace_schedule`, and
+  `worker_delegate_once`, must inject the worker-side host-orchestration separation rule into the
+  assigned run instruction unless it is already present. This keeps lower-level delegation paths from
+  reintroducing host UI checks as workspace-internal blockers.
+- For complex multi-source research, large file transformation, coding, comparison, or executive-
+  quality deliverables, GlassHive MCP instructions should guide the host model to select higher
+  effort settings (`high`/`xhigh` for Codex-style profiles, `max` for Claude-style profiles, or the
+  configured equivalent) unless the user explicitly asks for a quick/cheap pass. The runtime must
+  still treat effort as structured configuration, not prompt-string intent matching.
 - Idle/cost controls are product requirements, not operator nice-to-haves. Default enterprise
   configuration must make the cost risk visible and configurable.
 - Public QA artifacts must sanitize local paths, personal emails, account ids, subscription ids,
@@ -700,6 +806,10 @@ Default enterprise auth is `first_party_assertion`:
 - Enterprise bootstrap `source_path` file materialization requires a server-signed source token tied
   to the authenticated tenant/user. Model- or caller-supplied absolute paths under a shared upload
   root are rejected unless they came from the trusted LibreChat upload projection path.
+- Enterprise MCP result and recovery tools (`workspace_status`, `workspace_wait`,
+  `workspace_continue`, `workspace_artifacts`, and `workspace_artifact_download`) must re-check
+  tenant and owner scope before returning run text, View / Steer links, artifact listings, or signed
+  download links. A guessed run or worker id is not sufficient authorization.
 - Enterprise callbacks emit opaque, short-lived signed links for artifact download and View / Steer
   access instead of putting raw project/worker ids in user-visible text. The signed-link/member worker UI
   hides VM paths, session keys, container names, and live command diagnostics while preserving the
@@ -716,9 +826,8 @@ the GlassHive runtime accepts only `first_party_assertion` for request authoriza
 the optional MCP OAuth block is a client connection flow, not server-side token validation.
 
 The Azure setup guide, sample config, reverse-proxy expectations, provider env examples, scripts,
-and acceptance checklist live in the private enterprise deployment repo under
-`glasshive-azure-enterprise-vm/`. Public product docs keep only reusable product requirements and
-public-safe QA cases.
+and acceptance checklist live in the private enterprise deployment repo. Public product docs keep
+only reusable product requirements and public-safe QA cases.
 
 Cloud validation rule: do not mutate an enterprise Azure resource before exporting a local backup of
 the target metadata outside this public repo and proving the equivalent change locally. Backups must
@@ -786,10 +895,18 @@ persistent home and workspace mounts.
 | `WPR_SANDBOX_PIDS_LIMIT` | `4096` | Docker process cap per worker container |
 | `WPR_SANDBOX_SHM_SIZE` | `1g` | Shared memory per container |
 | `WPR_DOCKER_IMAGE_BUILD_TIMEOUT_SEC` | `900` | Cold sandbox image build timeout; separate from short Docker inspect/exec timeouts |
-| `WPR_MODEL_HOST_CODEX_CLI` | unset | Optional host-native Codex model override when the logged-in local Codex account supports a newer model than the server-side Docker provider deployment |
+| `WPR_MODEL_HOST_CODEX_CLI` | unset | Optional host-native Codex model override when the logged-in local Codex account should use a deployment-specified model instead of its local Codex config |
+| `CODEX_MODEL` | unset | Optional generic host-native Codex CLI model override; honored when `WPR_MODEL_HOST_CODEX_CLI` is unset |
+| `GLASSHIVE_HOST_CODEX_INHERIT_PROVIDER_MODEL` | unset | Opt-in compatibility switch for host-native Codex to inherit `WPR_MODEL_CODEX_CLI`; leave unset so host workers use local Codex config by default |
 | `WPR_OPENCLAW_START_GATEWAY` | `false` | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention |
 | `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
+| `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` | `1800` | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout |
+| `WPR_MCP_BLOCKING_WAIT_MAX_SEC` | `1800` | Hard cap on MCP blocking wait duration; prevents a chat request from blocking longer than policy while the worker continues in the background |
+| `WPR_MCP_BLOCKING_WAIT_POLL_INTERVAL_SEC` | `5` | Efficient polling cadence and floor for `workspace_wait`; models should omit per-call poll intervals for normal long work, and the runtime must not allow lower long-run polling values |
+| `WPR_MCP_RECENT_DISPATCH_TTL_SEC` | `14400` | In-process recent-dispatch fallback TTL for same authenticated user/conversation wait/status recovery |
+| `WPR_MCP_RECENT_DISPATCH_MAX_ENTRIES` | `1024` | Safety cap on in-process recent-dispatch fallback entries |
+| GlassHive LibreChat MCP `timeout` | `1860000` ms | Config-level timeout for the GlassHive MCP server, intentionally longer than the 30-minute wait cap plus overhead; deployments should keep a generous cushion above `WPR_MCP_BLOCKING_WAIT_MAX_SEC` plus proxy/runtime latency |
 | `WPR_MCP_HOST` | `127.0.0.1` | MCP server bind |
 | `WPR_MCP_PORT` | `8767` | MCP server port |
 | `WPR_MCP_BASE_URL` | `http://127.0.0.1:8766` | Control plane URL |

@@ -53,6 +53,25 @@ The launcher must treat the Scheduling Cortex MCP as a supervised local sidecar,
 optional startup. Startup success requires a real `/health` probe, and a lightweight watchdog must
 restart the MCP if the process exits while LibreChat remains running.
 
+### Runtime Health Identity
+
+Scheduling Cortex is a per-runtime sidecar, not a shared dev-env singleton. The unauthenticated
+local `/health` endpoint remains available for launcher and watchdog probes, but it must include a
+public-safe runtime identity:
+
+- `status`
+- `service`
+- `db_path_sha256`
+- optional diagnostic fields such as `state_root_sha256`, `runtime_profile`, `dev_env_enabled`,
+  `dev_env_name_sha256`, and `pid`
+
+The launcher must only accept a healthy scheduler as "ours" when `db_path_sha256` matches the
+launcher runtime's expected `SCHEDULING_DB_PATH`. Missing identity, malformed identity, or a
+different DB hash is a port-ownership conflict, not a healthy local-prod scheduler. In that case the
+launcher and watchdog must fail loud or wait without killing the other runtime. Raw DB paths, App
+Support paths, schedule prompts, schedule content, user ids, tokens, and operator-chosen dev-env
+names must not appear in the health payload or public QA evidence.
+
 - A task is a misfire when it is due but first processed after `SCHEDULER_MISFIRE_GRACE_S`
   seconds. The default grace is 900 seconds.
 - User-created one-time reminders default to catch-up delivery when they are late but still inside

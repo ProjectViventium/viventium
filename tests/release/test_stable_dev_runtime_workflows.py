@@ -66,7 +66,7 @@ def minimal_config() -> dict:
     }
 
 
-def test_dev_env_offsets_only_app_facing_ports_and_records_shared_singletons(tmp_path: Path) -> None:
+def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) -> None:
     app_support = tmp_path / "App Support" / "Viventium"
     config = app_support / "config.yaml"
     config.parent.mkdir(parents=True)
@@ -94,6 +94,7 @@ def test_dev_env_offsets_only_app_facing_ports_and_records_shared_singletons(tmp
     assert ports["lc_frontend_port"] == 4190
     assert ports["playground_port"] == 4300
     assert ports["voice_gateway_health_port"] == 9301
+    assert ports["scheduling_mcp_port"] == 8210
     assert ports["rag_api_port"] == 8110
     assert ports["google_mcp_port"] == 8111
     assert dev_config["runtime"]["dev_env"]["shared_singleton_services"] == [
@@ -110,6 +111,7 @@ def test_dev_env_shared_singletons_compile_without_duplicate_start_flags(tmp_pat
     config["runtime"]["dev_env"] = {
         "enabled": True,
         "name": "dev",
+        "port_offset": 1000,
         "shared_singleton_services": [
             "recall_rag",
             "searxng",
@@ -134,6 +136,8 @@ def test_dev_env_shared_singletons_compile_without_duplicate_start_flags(tmp_pat
     assert "START_FIRECRAWL=false" in env_text
     assert "START_GOOGLE_MCP=false" in env_text
     assert "START_MS365_MCP=false" in env_text
+    assert "VIVENTIUM_SCHEDULING_MCP_PORT=8210" in env_text
+    assert "SCHEDULING_MCP_URL=http://localhost:8210/mcp" in env_text
     assert "VIVENTIUM_SHARED_GOOGLE_MCP=true" in env_text
     assert "VIVENTIUM_SHARED_MS365_MCP=true" in env_text
     assert "VIVENTIUM_WORK_REQUEST_CREATE_PR_AFTER_USER_APPROVAL=false" in env_text

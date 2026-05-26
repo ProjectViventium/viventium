@@ -36,7 +36,7 @@ calls share one token result for the same call options.
   microphone disabled, then calls `setMicrophoneEnabled(true)` after connection. This sequencing is
   correct, but the UI did not clearly show that microphone enablement was part of startup.
 - Runtime log evidence: successful local calls show explicit dispatch creation, browser room join,
-  user microphone track publish, `JT_PUBLISHER` assignment, and agent participant join. Permission
+  user microphone track publish, publisher job assignment, and agent participant join. Permission
   denial in browser QA correctly prevents the microphone-publish step and surfaces a call-start
   error.
 
@@ -73,7 +73,7 @@ calls share one token result for the same call options.
     leaving the call muted.
 - Runtime supporting evidence:
   - LiveKit logs from successful local voice starts show user microphone track publication followed
-    by `JT_PUBLISHER` job assignment and agent join.
+    by publisher job assignment and agent join.
 
 ## Automated Checks
 

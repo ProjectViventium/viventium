@@ -34,7 +34,11 @@ background-cortex behavior.
 - Streaming TTS chunking must not send punctuation-only deltas such as a standalone period as their
   own synthesis input after speech has already started. Runtime should buffer phrase-sized chunks
   and treat orphan punctuation as a speech-normalization artifact, while preserving meaningful
-  numeric punctuation such as decimal splits.
+  numeric punctuation such as decimal splits. Short follow-up clauses or questions must not be
+  whitespace-flushed just before a delayed `?` or `!` arrives; terminal question/exclamation marks
+  must remain attached to their phrase so TTS keeps the intended prosody. Whitespace and
+  length-driven flushing should cut at a safe whitespace boundary and retain the trailing word in
+  the buffer instead of relying on a later provider continuation to preserve leading whitespace.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
@@ -198,7 +202,7 @@ background-cortex behavior.
   dispatch only and prepares that dispatch before issuing the token. Token-room-config dispatch is
   an opt-in compatibility mode, not the default restart-recovery path, because token-embedded agent
   config has been unreliable across local LiveKit/server-SDK version combinations. The
-  authoritative runtime proof remains the later `JT_PUBLISHER` job receipt plus persisted
+  authoritative runtime proof remains the later publisher job receipt plus persisted
   `activeJobId`/`activeWorkerId`.
 - The request that wins the Viventium dispatch claim must create explicit LiveKit dispatch even if
   `ListDispatch` reports a token-room-config agent entry. On local LiveKit server versions that do
@@ -222,7 +226,7 @@ background-cortex behavior.
   then surface a Viventium-specific recovery message if the runtime is still unavailable.
 - Publisher-dispatch workers join after the user microphone track is published. A successful call
   startup therefore requires all of these observable states: room connection, user microphone track
-  publish, `JT_PUBLISHER` job assignment, voice gateway job receipt, and persisted
+  publish, publisher job assignment, voice gateway job receipt, and persisted
   `activeJobId`/`activeWorkerId`.
 - Background/sleep recovery must not treat an intentional visible-page disconnect as a dropped
   connection. End Call should leave the page in the pre-connect state without silently starting a
@@ -265,6 +269,9 @@ background-cortex behavior.
   must preserve leading and trailing whitespace on streamed TTS chunks after markup/nonverbal
   normalization, including whitespace-only deltas, so `["What's", " up?"]` remains
   `What's up?`, not `What'sup?`.
+- Cartesia streaming markup parsing must buffer incomplete bracket and angle-tag controls before
+  provider normalization so partial markers such as `[laugh` + `ter]` never reach TTS as literal
+  fragments.
 - Modern playground transcripts must preserve assistant message boundaries. The default path uses
   async LiveKit transcript output (`VIVENTIUM_VOICE_SYNC_TRANSCRIPTION` unset/false) so the browser
   shows each assistant answer as soon as the LLM completes it instead of pacing words with TTS

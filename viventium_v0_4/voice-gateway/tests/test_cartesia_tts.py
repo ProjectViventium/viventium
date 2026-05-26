@@ -29,6 +29,7 @@ from cartesia_tts import (
     _split_emotion_segments,
     _streaming_transcript_for_segment,
     _with_emotion_ssml,
+    EmotionSegment,
     StreamingEmotionState,
 )
 
@@ -370,6 +371,25 @@ class TestCartesiaEmotionSegments(unittest.TestCase):
         segments = _consume_streaming_emotion_chunk(state, "C</spell> done.", final=False)
         data = [(seg.text.strip(), seg.emotion, seg.stage) for seg in segments]
         self.assertEqual(data, [("<spell>ABC</spell> done.", None, None)])
+
+    def test_streaming_state_buffers_partial_laughter_marker(self) -> None:
+        state = StreamingEmotionState()
+        segments: list[tuple[str, str | None, str | None]] = []
+
+        for chunk in ["Ha ", "[laugh", "ter] okay?"]:
+            for segment in _consume_streaming_emotion_chunk(state, chunk, final=False):
+                segments.append((segment.text.strip(), segment.emotion, segment.stage))
+
+        self.assertEqual(segments, [("Ha", None, None), ("", None, "laughter"), ("okay?", None, None)])
+
+    def test_streaming_state_drops_unmatched_bracket_tail_on_final(self) -> None:
+        state = StreamingEmotionState()
+
+        self.assertEqual(
+            _consume_streaming_emotion_chunk(state, "Ha [laugh", final=False),
+            [EmotionSegment(text="Ha ", emotion=None, stage=None)],
+        )
+        self.assertEqual(_consume_streaming_emotion_chunk(state, "", final=True), [])
 
     def test_streaming_emotion_state_preserves_emotion_across_chunks(self) -> None:
         state = StreamingEmotionState()

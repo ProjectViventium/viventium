@@ -423,6 +423,54 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(tts.last_stream_chunks, ["I get it", ", however, timing matters."])
 
+    async def test_streaming_provider_input_preserves_delayed_question_before_next_phrase(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("Sleep okay")
+        stream.push_text("?")
+        stream.push_text(" Want to plan today?")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(tts.last_stream_chunks, ["Sleep okay", "? Want to plan today?"])
+
+    async def test_streaming_provider_input_preserves_quoted_delayed_question(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("Sleep okay")
+        stream.push_text('?"')
+        stream.push_text(" she asked.")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(tts.last_stream_chunks, ["Sleep okay", '?" she asked.'])
+
+    async def test_streaming_provider_input_preserves_delayed_exclamation_before_next_phrase(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+
+        stream = wrapper.stream()
+        stream.push_text("That landed")
+        stream.push_text("!")
+        stream.push_text(" Keep going.")
+        stream.end_input()
+
+        async with stream:
+            async for _ in stream:
+                pass
+
+        self.assertEqual(tts.last_stream_chunks, ["That landed", "! Keep going."])
+
     async def test_streaming_fallback_strips_control_tags_for_openai(self) -> None:
         selected: list[str] = []
         primary = FakeStreamingTTS(sample_rate=44100, should_fail=True)

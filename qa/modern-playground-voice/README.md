@@ -362,7 +362,7 @@ Executed QA:
 - Restarted the supported local stack with the modern playground enabled.
 - Verified the generated LiveKit runtime advertises a local/LAN node address for local browser
   calls while keeping the public edge URL available for public callers.
-- Verified LiveKit logs show room connection, user microphone track publish, `JT_PUBLISHER`
+- Verified LiveKit logs show room connection, user microphone track publish, publisher job
   assignment, voice gateway job receipt, and voice gateway `activeJobId` / `activeWorkerId`
   persistence.
 - Verified Modern transcript chat from the LibreChat voice-call button:

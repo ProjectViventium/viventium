@@ -5655,8 +5655,36 @@ stop_running_services() {
   # === VIVENTIUM END ===
   if [[ -d "$SCHEDULING_MCP_DIR" || -f "$SCHEDULING_MCP_PID_FILE" ]]; then
     stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
-    kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
-    kill_by_pattern_scoped "uv run python -m scheduling_cortex.server" "$SCHEDULING_MCP_DIR"
+    if port_has_listener "$SCHEDULING_MCP_PORT"; then
+      local scheduler_health_payload=""
+      local scheduler_matches_runtime=false
+      scheduler_health_payload="$(curl -fsS --max-time 3 "http://localhost:${SCHEDULING_MCP_PORT}/health" 2>/dev/null || true)"
+      if [[ -n "$scheduler_health_payload" ]] &&
+        "${PYTHON_BIN:-python3}" - "$SCHEDULING_DB_PATH" "$scheduler_health_payload" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+expected = hashlib.sha256(str(Path(sys.argv[1]).expanduser().resolve()).encode("utf-8")).hexdigest()
+try:
+    payload = json.loads(sys.argv[2])
+except Exception:
+    raise SystemExit(1)
+if payload.get("status") == "ok" and str(payload.get("db_path_sha256") or "") == expected:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+      then
+        scheduler_matches_runtime=true
+      fi
+
+      if [[ -n "$scheduler_health_payload" && "$scheduler_matches_runtime" != "true" ]]; then
+        log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT belongs to a different runtime or older health contract; leaving it running during this runtime stop"
+      else
+        kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
+      fi
+    fi
   fi
 
   if [[ -d "$GLASSHIVE_RUNTIME_DIR" || -f "$GLASSHIVE_RUNTIME_PID_FILE" || -f "$GLASSHIVE_MCP_PID_FILE" ]]; then
@@ -5974,8 +6002,53 @@ scheduling_mcp_health_url() {
   printf 'http://localhost:%s/health\n' "$SCHEDULING_MCP_PORT"
 }
 
-scheduling_mcp_healthy() {
+scheduling_mcp_health_reachable() {
   curl -fsS --max-time 3 "$(scheduling_mcp_health_url)" >/dev/null 2>&1
+}
+
+scheduling_mcp_matches_runtime() {
+  local payload
+  payload="$(curl -fsS --max-time 3 "$(scheduling_mcp_health_url)" 2>/dev/null)" || return 1
+  local python_cmd="${PYTHON_BIN:-python3}"
+  "$python_cmd" - "$SCHEDULING_DB_PATH" "$payload" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+db_path = str(Path(sys.argv[1]).expanduser().resolve())
+expected = hashlib.sha256(db_path.encode("utf-8")).hexdigest()
+try:
+    payload = json.loads(sys.argv[2])
+except Exception:
+    raise SystemExit(1)
+if payload.get("status") != "ok":
+    raise SystemExit(1)
+actual = str(payload.get("db_path_sha256") or "")
+if not actual or actual != expected:
+    raise SystemExit(1)
+PY
+}
+
+scheduling_mcp_healthy() {
+  scheduling_mcp_matches_runtime
+}
+
+wait_for_scheduling_mcp_runtime() {
+  local label="$1"
+  local retries="${2:-30}"
+  if ! [[ "$retries" =~ ^[0-9]+$ ]] || [[ "$retries" -lt 1 ]]; then
+    retries=30
+  fi
+  for _ in $(seq 1 "$retries"); do
+    if scheduling_mcp_matches_runtime; then
+      log_success "$label ready"
+      return 0
+    fi
+    sleep 1
+  done
+  log_warn "$label did not respond with matching runtime identity in time"
+  return 1
 }
 
 telegram_local_bot_api_enabled() {
@@ -6258,12 +6331,23 @@ start_scheduling_mcp_watchdog() {
     trap 'exit 0' INT TERM HUP
     local consecutive_failures=0
     local failed_recoveries=0
+    local foreign_runtime_warned=false
 
     while true; do
       sleep "$interval_s"
       if scheduling_mcp_healthy; then
         consecutive_failures=0
         failed_recoveries=0
+        foreign_runtime_warned=false
+        continue
+      fi
+
+      if scheduling_mcp_health_reachable; then
+        if [[ "$foreign_runtime_warned" != "true" ]]; then
+          log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is healthy but does not match this runtime identity; leaving the other runtime untouched"
+          foreign_runtime_warned=true
+        fi
+        consecutive_failures=0
         continue
       fi
 
@@ -6274,9 +6358,10 @@ start_scheduling_mcp_watchdog() {
 
       log_warn "Scheduling Cortex MCP watchdog detected ${consecutive_failures} failed health checks"
       if restart_scheduling_mcp_runtime &&
-        wait_for_http "$(scheduling_mcp_health_url)" "Scheduling Cortex MCP after watchdog restart" "$recovery_retries"; then
+        wait_for_scheduling_mcp_runtime "Scheduling Cortex MCP after watchdog restart" "$recovery_retries"; then
         consecutive_failures=0
         failed_recoveries=0
+        foreign_runtime_warned=false
         continue
       fi
 
@@ -7673,6 +7758,10 @@ start_scheduling_mcp() {
       log_success "Scheduling Cortex MCP already healthy on port $SCHEDULING_MCP_PORT"
       return 0
     fi
+    if scheduling_mcp_health_reachable; then
+      log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is healthy but belongs to a different runtime or an older health contract; refusing to claim it"
+      return 1
+    fi
     # === VIVENTIUM START ===
     # Feature: Restart Scheduling MCP on stack restart to refresh secrets.
     # === VIVENTIUM END ===
@@ -7771,8 +7860,8 @@ PY
     return 1
   fi
 
-  if ! wait_for_http "$(scheduling_mcp_health_url)" "Scheduling Cortex MCP"; then
-    log_error "Scheduling Cortex MCP process started but health check failed"
+  if ! wait_for_scheduling_mcp_runtime "Scheduling Cortex MCP"; then
+    log_error "Scheduling Cortex MCP process started but runtime identity check failed"
     tail -20 "$LOG_DIR/scheduling_cortex_mcp.log" 2>/dev/null || true
     return 1
   fi

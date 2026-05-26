@@ -1040,6 +1040,11 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
     servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")
     glasshive = servers["glasshive-workers-projects"]
     assert glasshive["url"] == "${GLASSHIVE_MCP_URL}"
+    assert glasshive["timeout"] == config_compiler.DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS
+    assert glasshive["timeout"] >= (
+        config_compiler.DEFAULT_GLASSHIVE_MCP_BLOCKING_WAIT_MAX_SEC * 1000
+        + config_compiler.DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_BUFFER_SEC * 1000
+    )
     assert "X-WPR-Token" not in glasshive["headers"]
     assert glasshive["headers"]["X-Viventium-Tenant-Id"] == "tenant-alpha"
     assert glasshive["headers"]["X-Viventium-User-Id"] == "{{LIBRECHAT_USER_ID}}"
@@ -1282,6 +1287,7 @@ def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path
     assert glasshive is True
     assert servers["scheduling-cortex"]["viventiumTrustedServerInstructions"] is True
     assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
+    assert servers["glasshive-workers-projects"]["timeout"] == 1860000
 
     for instructions, product_phrase, other_provider in [
         (ms365, "microsoft 365 owns authenticated outlook mail", "google workspace"),
@@ -1324,8 +1330,16 @@ def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -
         assert "do not branch on prompt text" in instructions
 
 
-def test_source_of_truth_exposes_glasshive_native_scheduler_tools() -> None:
+def test_source_of_truth_exposes_glasshive_native_scheduler_and_followup_tools() -> None:
     expected_tools = {
+        "workspace_launch_mcp_glasshive-workers-projects",
+        "workspace_status_mcp_glasshive-workers-projects",
+        "workspace_wait_mcp_glasshive-workers-projects",
+        "workspace_continue_mcp_glasshive-workers-projects",
+        "workspace_artifacts_mcp_glasshive-workers-projects",
+        "workspace_artifact_download_mcp_glasshive-workers-projects",
+        "workspace_preferences_get_mcp_glasshive-workers-projects",
+        "workspace_preferences_set_mcp_glasshive-workers-projects",
         "workspace_schedule_mcp_glasshive-workers-projects",
         "worker_schedule_mcp_glasshive-workers-projects",
         "worker_schedules_mcp_glasshive-workers-projects",
