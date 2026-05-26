@@ -15,6 +15,8 @@ confusing upstream component boundaries.
   - LibreChat frontend
   - Modern LiveKit Playground (`agent-starter-react`)
   - voice health port when needed
+- Dev envs also separate per-runtime sidecars that own mutable runtime-local state, including
+  Scheduling Cortex.
 - The classic `agents-playground` UI is not part of local prod or dev-env defaults. It remains an
   explicit classic-playground opt-in only, so default starts do not spend resources on the old UI.
 - Heavy local services are shared singleton services by default:
@@ -49,6 +51,7 @@ boundary:
 | LibreChat frontend | canonical installed port | offset port |
 | Modern LiveKit Playground | canonical installed port | offset port |
 | voice health port | canonical installed port | offset port when needed |
+| Scheduling Cortex MCP | canonical installed port and scheduler DB | offset port and dev-env scheduler DB |
 | Meilisearch conversation search | shared singleton | use local prod singleton |
 | recall/RAG | shared singleton | use local prod singleton |
 | SearXNG | shared singleton | use local prod singleton |
@@ -140,6 +143,9 @@ reopening it.
 - Do use `prompt-workbench open/start/stop/status` for the standalone prompt QA app.
 - Do use `runtime.prompt_workbench.enabled: true` when Prompt Workbench should stay up with the
   local Viventium runtime.
+- Do keep Scheduling Cortex per-runtime: local prod and each dev env get distinct scheduler DBs and
+  distinct MCP ports. The default dev-env scheduler port is biased away from shared singleton ports
+  so it does not collide with RAG.
 - Do keep heavy singleton services shared unless the user explicitly asks for full isolation and QA
   proves the isolation.
 - Do keep Viventium-owned Docker singleton services bounded with source-owned memory, CPU, PID, and

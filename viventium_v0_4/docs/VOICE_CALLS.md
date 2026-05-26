@@ -56,7 +56,7 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   1. fetch connection details with explicit call-session dispatch prepared, then connect the room
      with microphone disabled
   2. enable the microphone after the room is connected
-  3. let LiveKit assign the `JT_PUBLISHER` job to `librechat-voice-gateway`
+  3. let LiveKit assign the publisher job to `librechat-voice-gateway`
   4. persist the active job/worker ids on the call session
 - The Start chat gesture is single-flight. Once the user clicks it, the page should show connection
   and microphone progress, disable duplicate starts, and automatically enable the microphone after
@@ -66,7 +66,7 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - `dispatchConfirmedAt` is durable call-session state that dispatch was prepared and the participant
   token was issued, not durable proof that LiveKit has already started a worker. The default path
   verifies or creates explicit LiveKit dispatch for call sessions; token-room-config dispatch is an
-  opt-in compatibility mode. The authoritative runtime proof is the later `JT_PUBLISHER` job
+  opt-in compatibility mode. The authoritative runtime proof is the later publisher job
   receipt plus persisted `activeJobId`/`activeWorkerId`.
 - The connection-details request that wins the Viventium dispatch claim force-creates explicit
   LiveKit dispatch. A `ListDispatch` entry from token room config is not enough evidence that a
@@ -186,7 +186,12 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   started, a punctuation-only delta such as `.` must not be pushed as an isolated synthesis input,
   because some providers speak it as a literal word. The gateway buffers phrase boundaries and
   drops orphan punctuation that arrives after its owning phrase was already emitted, while keeping
-  numeric decimal splits intact.
+  numeric decimal splits intact. The LLM-side phrase buffer must also hold short unfinished
+  post-terminal tails across whitespace when the next token can be a meaningful `?` or `!`; those
+  marks must attach to the phrase before text reaches LiveKit TTS. Whitespace and length-driven
+  flushes split at a safe whitespace boundary and keep the trailing word buffered, so provider
+  continuation does not have to recover a missing word boundary from a leading-space-only next
+  chunk.
 - The final text emitted to TTS after phrase buffering must be speech-safe. The gateway strips or
   converts source/reference labels, citation remnants, markdown links/images, raw URLs, bare
   domains, emails, code fences, headings, list/table scaffolding, unknown angle tags, and stray
@@ -280,6 +285,9 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
 - Cartesia joins continuation transcripts verbatim. The voice gateway preserves leading and
   trailing whitespace on streamed transcript chunks after markup/nonverbal normalization, including
   whitespace-only deltas, so chunk boundaries do not collapse words such as `What's` + ` up?`.
+- Incomplete bracket and angle-tag voice controls are buffered before Cartesia normalization, so
+  split markers such as `[laugh` + `ter]` are normalized as `[laughter]` instead of being spoken as
+  literal fragments.
 - Current default request contract:
   - `Cartesia-Version: 2026-03-01`
   - `model_id: sonic-3`

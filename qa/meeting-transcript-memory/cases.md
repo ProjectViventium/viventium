@@ -189,11 +189,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   transcript artifacts, or lets the assistant claim no transcript evidence exists.
 - Evidence to capture: vector-presence error count/reasons, content hashes requeued, stale-artifact
   count, and follow-up health check.
-- Last run: PARTIAL 2026-05-24
-  ([report](../memory-hardening/reports/2026-05-24-nightly-routines-health-review.md)); latest
-  hardening run avoided destructive repair and had 0 pending/deferred transcript files, but recorded
-  2 `vector_presence_auth_error` checks that need follow-up before full transcript RAG health can be
-  claimed.
+- Last run: PASS/PARTIAL 2026-05-25
+  ([report](../memory-hardening/reports/2026-05-25-nightly-routines-health-review.md)); latest
+  scheduled hardening run cleared vector-presence auth errors and avoided destructive repair, but
+  vector repair remained incomplete because 3 files were deferred by the per-run cap.
 
 ## MTM-014: Live Browser QA Must Select A Real Connected QA Account
 
@@ -259,8 +258,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   default.
 - Evidence to capture: redacted run summaries across at least one capped batch, transcript index
   processed counts by prompt version, vector upload counts, and no durable memory writes.
-- Last run: 2026-05-22, automated unit/release tests covered zero-change backfill and wrapper
-  defaults; QA-account and owner-account applies must refresh this row with runtime evidence.
+- Last run: PARTIAL 2026-05-25
+  ([report](../memory-hardening/reports/2026-05-25-nightly-routines-health-review.md)); scheduled
+  apply requeued 23 missing-vector transcript artifacts, processed 20 within the bounded batch, and
+  left 3 files deferred by cap for a later caught-up run.
 
 ## MTM-018: Transcript Folder Selection Uses Canonical Config
 
@@ -287,6 +288,6 @@ rows before claiming a pass when the feature behavior changes.
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
 | `MEETING-UC-001` | Ask a browser chat question that should use processed meeting transcript memory, then inspect visible answer sources and backend evidence. | `MTM-001`-`MTM-009`, `MTM-015`, `MTM-016` | Browser chat, file/source cards, processed transcript index, and sanitized logs | Model-facing file/source order, stored source order, visible source cards, memory hardening output, and dated QA report | The answer is grounded in processed transcript evidence, not attached raw files or unrelated memory, and sources are visible. Identity/person-role claims are not invented from transcript-only evidence. | 2026-05-22 owner browser incident regression passed; prompt-v4 runtime backfill QA pending |
-| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock/provider/vector runtime is missing, stale, or degraded. | `MTM-010`-`MTM-017` and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, model/vector telemetry, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, tries configured model fallbacks, processes bounded backfill batches, and does not fabricate transcript recall or identity. | 2026-05-22 automated backfill tests passed; runtime batch QA pending |
+| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock/provider/vector runtime is missing, stale, or degraded. | `MTM-010`-`MTM-017` and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, model/vector telemetry, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, tries configured model fallbacks, processes bounded backfill batches, and does not fabricate transcript recall or identity. | PARTIAL 2026-05-25 ([report](../memory-hardening/reports/2026-05-25-nightly-routines-health-review.md)); vector auth errors cleared, bounded batch left 3 deferred files |
 | `MEETING-UC-003` | After ingest/repair, rerun the browser recall question and compare persistence/state across refresh or retry. | `MTM-001`-`MTM-017` | Browser chat, persisted message/source state, transcript index, and logs | Stored source order, visible source cards, memory hardening summary, and dated QA report | Recall remains grounded after retry/refresh and final wording matches persisted evidence; corrected chat memory outranks stale transcript-derived identity. | 2026-05-22 owner browser incident regression passed after saved-memory repair and runtime restart; prompt-v4 runtime backfill QA pending |
 | `MEETING-UC-004` | Choose a transcripts folder from the status-bar helper, then ingest transcripts. | `MTM-018` | macOS helper menu/picker, CLI config patcher, generated runtime env, and transcript ingest summary | Picker visible state, config backup, runtime env value, source-folder-hash filter, bounded ingest output, and dated QA report | The chosen folder is persisted through canonical config for this install without hardcoded owner data, and ingest processes the current folder only. | PASS 2026-05-22; see `qa/meeting-transcript-memory/reports/2026-05-22-transcript-folder-picker-batching-qa.md` |

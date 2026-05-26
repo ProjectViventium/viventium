@@ -368,13 +368,13 @@ class TestLibreChatStreamingRun(unittest.TestCase):
     def test_streamed_sse_deltas_preserve_reported_word_boundaries(self) -> None:
         expected = (
             "Nice, invoice cleared is a real milestone. "
-            "On JT and Lisa, what's your read, is this them getting protective, "
+            "On the two stakeholders, what's your read, is this them getting protective, "
             "or trying to formalize something before it gets bigger?"
         )
         events = [
             {"text": "Nice, invoice cleared "},
             {"text": "is a real milestone. "},
-            {"text": "On JT and Lisa, what's "},
+            {"text": "On the two stakeholders, what's "},
             {"text": "your read, is this "},
             {"text": "them getting protective, or trying "},
             {"text": "to formalize something "},
@@ -416,9 +416,9 @@ class TestLibreChatStreamingRun(unittest.TestCase):
         ]:
             self.assertNotIn(bad_join, spoken_text)
 
-    def test_streamed_sse_deltas_drop_orphan_period_after_flushed_phrase(self) -> None:
+    def test_streamed_sse_deltas_attach_delayed_period_after_max_split(self) -> None:
         first = "This phrase is long enough to cross the streaming TTS length threshold"
-        expected = f"{first} Next thought."
+        expected = f"{first}. Next thought."
         events = [
             {"text": first},
             {"text": "."},
@@ -451,6 +451,40 @@ class TestLibreChatStreamingRun(unittest.TestCase):
 
         self.assertEqual("".join(chunks), expected)
         self.assertNotIn(".", chunks)
+
+    def test_streamed_sse_deltas_preserve_delayed_question_mark(self) -> None:
+        expected = "Good morning. Sleep okay?"
+        events = [
+            {"text": "Good morning. Sleep okay "},
+            {"text": "?"},
+            {
+                "final": True,
+                "responseMessage": {
+                    "content": [{"type": "text", "text": expected}],
+                },
+            },
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeStreamingSseSession(events)
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            chunks: list[str] = []
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        chunks = asyncio.run(run_stream())
+
+        self.assertEqual(chunks, [expected])
+        self.assertEqual("".join(chunks), expected)
 
 
 class TestFinalEventHelpers(unittest.TestCase):
@@ -704,23 +738,122 @@ class TestVoiceTtsDeltaBuffer(unittest.TestCase):
         self.assertEqual(emitted, [" Good to hear you."])
         self.assertEqual(buffer.finalize(), [])
 
-    def test_drops_standalone_period_after_prior_speech(self) -> None:
+    def test_preserves_delayed_question_mark_after_whitespace_candidate(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+
+        self.assertEqual(buffer.feed("Good morning. Sleep okay "), [])
+        self.assertEqual(buffer.feed("?"), ["Good morning. Sleep okay?"])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_preserves_delayed_exclamation_after_whitespace_candidate(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+
+        self.assertEqual(buffer.feed("Right. That landed "), [])
+        self.assertEqual(buffer.feed("!"), ["Right. That landed!"])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_keeps_whitespace_latency_for_single_ongoing_sentence(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+
+        self.assertEqual(buffer.feed("Nice, invoice cleared "), ["Nice, invoice "])
+        self.assertEqual(buffer.feed("is a real milestone."), ["cleared is a real milestone."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_keeps_whitespace_latency_for_long_post_terminal_tail(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer()
+
+        self.assertEqual(
+            buffer.feed("Yeah. You've been threading "),
+            ["Yeah. You've been "],
+        )
+        self.assertEqual(buffer.feed("that needle."), ["threading that needle."])
+
+    def test_preserves_delayed_question_mark_after_long_single_sentence(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+
+        chunks = buffer.feed("Did you really mean the deployment should roll back tonight ")
+        chunks.extend(buffer.feed("?"))
+        chunks.extend(buffer.finalize())
+
+        self.assertEqual("".join(chunks), "Did you really mean the deployment should roll back tonight?")
+        self.assertNotIn("?", chunks)
+
+    def test_max_length_flush_keeps_owner_word_for_delayed_period(self) -> None:
         buffer = _VoiceTtsDeltaBuffer(max_chars=12)
-        self.assertEqual(buffer.feed("This phrase is long enough"), ["This phrase is long enough"])
-        self.assertEqual(buffer.feed("."), [])
+        self.assertEqual(buffer.feed("This phrase is long enough"), ["This phrase "])
+        self.assertEqual(buffer.feed("."), ["is long enough."])
         self.assertEqual(buffer.finalize(), [])
 
     def test_drops_orphan_period_before_next_phrase(self) -> None:
-        buffer = _VoiceTtsDeltaBuffer(max_chars=12)
-        self.assertEqual(buffer.feed("This phrase is long enough"), ["This phrase is long enough"])
+        buffer = _VoiceTtsDeltaBuffer()
+        self.assertEqual(buffer.feed("Done."), ["Done."])
         self.assertEqual(buffer.feed("."), [])
         self.assertEqual(buffer.feed(" Next thought."), [" Next thought."])
         self.assertEqual(buffer.finalize(), [])
 
     def test_preserves_decimal_split_after_prior_speech(self) -> None:
         buffer = _VoiceTtsDeltaBuffer(min_first_chars=1, max_chars=1)
-        self.assertEqual(buffer.feed("3"), ["3"])
-        self.assertEqual(buffer.feed(".14 is pi."), [".14 is pi."])
+        self.assertEqual(buffer.feed("3"), [])
+        self.assertEqual(buffer.feed(".14 is pi."), ["3.14 is pi."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_max_length_flush_keeps_trailing_word_in_buffer(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(max_chars=24)
+
+        self.assertEqual(
+            buffer.feed("Nice, invoice cleared is a real"),
+            ["Nice, invoice cleared "],
+        )
+        self.assertEqual(buffer.feed(" milestone."), ["is a real milestone."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_max_length_flush_waits_when_no_safe_whitespace_boundary_exists(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(max_chars=8)
+
+        self.assertEqual(buffer.feed("Supercalifragilistic"), [])
+        self.assertEqual(buffer.feed("."), ["Supercalifragilistic."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_max_length_flush_uses_first_safe_boundary_after_target(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(max_chars=8)
+
+        self.assertEqual(buffer.feed("Supercalifragilistic word"), ["Supercalifragilistic "])
+        self.assertEqual(buffer.feed(" lands."), ["word lands."])
+        self.assertEqual(buffer.finalize(), [])
+
+    def test_holds_short_open_quote_for_delayed_question_mark(self) -> None:
+        buffer = _VoiceTtsDeltaBuffer(
+            sanitize_chunk=lambda text: sanitize_voice_tts_text(
+                text,
+                preserve_leading_space=text[:1].isspace(),
+                preserve_trailing_space=text[-1:].isspace(),
+                allow_voice_controls=False,
+            )
+        )
+
+        self.assertEqual(buffer.feed("She asked, “Sleep okay "), [])
+        self.assertEqual(buffer.feed("?”"), ["She asked, “Sleep okay?”"])
         self.assertEqual(buffer.finalize(), [])
 
     def test_flushes_remainder_on_finalize(self) -> None:

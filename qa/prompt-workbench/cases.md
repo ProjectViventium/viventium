@@ -299,10 +299,12 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: 2026-05-24, FAIL/PARTIAL. The browser-visible Workbench loaded and showed scheduled
-prompt objects, but the nightly Workbench-private deep-thought schedule remained overdue after its
-03:00 local due time and the prior due run failed with a GlassHive connection-refused error. See
-`qa/memory-hardening/reports/2026-05-24-nightly-routines-health-review.md`.
+Last Run: 2026-05-25, PARTIAL. Synthetic public-safe QA proved a manual Workbench/GlassHive run
+can complete, and a one-time due Workbench/GlassHive schedule can fire and complete when no
+competing host worker is active. Remaining gaps: overlapping host-native Codex runs can fail
+instead of waiting/retrying, failed terminal callbacks can leave the parent task ledger marked
+success, and one-time schedules are not faithfully represented in the Workbench schedule editor.
+See `qa/scheduling-cortex/reports/2026-05-25-sched002-pw029-live-delivery-qa.md`.
 
 ## PW-010 Eval Designer And Results
 
@@ -944,6 +946,36 @@ the main runtime when only Workbench is stopped. Workbench must also not immedia
 user-visible Stop action while the stack watchdog is alive.
 
 Last Run: 2026-05-22, sidebar persistence, diff history baseline, and sidecar watchdog QA.
+
+## PW-032 One-Time Scheduled Prompt State Parity
+
+Requirement: Prompt Workbench schedule details must faithfully represent the schedule type and
+active/next-run state stored in Scheduling Cortex.
+
+User Outcome: A user can inspect a fired one-time scheduled prompt without seeing a misleading
+enabled recurring schedule or accidentally saving it as a daily prompt.
+
+Surfaces: Web UI, API, Scheduling Cortex SQLite
+
+Steps:
+
+1. Create a synthetic Workbench scheduled prompt with a one-time due schedule through the same API
+   used by local tooling.
+2. Let Scheduling Cortex fire it.
+3. Open the scheduled prompt in Workbench and inspect the Prompt Flow row plus Schedules detail
+   editor.
+4. Compare visible active/schedule fields with the backing definition, task, and run rows.
+
+Expected Result: A fired one-time schedule is visibly inactive or completed when its backing task
+has `active=0` and `next_run_at=null`; the editor preserves or clearly labels one-time schedule
+state instead of defaulting to daily `03:00`.
+
+Forbidden Result: Workbench shows `enabled · not scheduled`, checks `Enabled`, or displays a daily
+schedule for a fired one-time task unless the user explicitly changes the schedule type.
+
+Last Run: 2026-05-25, FAIL. Synthetic one-time due QA completed, but the Workbench row/editor
+showed the definition as enabled with no next run and the editor fell back to a daily schedule. See
+`qa/scheduling-cortex/reports/2026-05-25-sched002-pw029-live-delivery-qa.md`.
 
 ## Natural User Use Case Checklist
 

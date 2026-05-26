@@ -262,6 +262,8 @@ class _NoResponseStreamGuard:
 #   like "dot". Buffer phrase-sized chunks and drop orphan punctuation that arrives after the
 #   phrase it was meant to punctuate has already been sent to TTS.
 class _VoiceTtsDeltaBuffer:
+    _CLOSING_PUNCTUATION = "\"'”’)]}"
+
     def __init__(
         self,
         *,
@@ -279,7 +281,50 @@ class _VoiceTtsDeltaBuffer:
     @staticmethod
     def _is_orphan_punctuation(text: str) -> bool:
         stripped = (text or "").strip()
-        return bool(stripped) and all(ch in ".,!?;:…" for ch in stripped)
+        punctuation = ".,!?;:…"
+        closers = _VoiceTtsDeltaBuffer._CLOSING_PUNCTUATION
+        return (
+            bool(stripped)
+            and any(ch in punctuation for ch in stripped)
+            and all(ch in punctuation or ch in closers for ch in stripped)
+        )
+
+    @classmethod
+    def _terminal_candidate(cls, text: str) -> str:
+        candidate = (text or "").strip()
+        while candidate and candidate[-1] in cls._CLOSING_PUNCTUATION:
+            candidate = candidate[:-1].rstrip()
+        return candidate
+
+    @classmethod
+    def _ends_with_terminal(cls, text: str) -> bool:
+        candidate = cls._terminal_candidate(text)
+        if not candidate:
+            return False
+        if candidate[-1] == "." and len(candidate) >= 2 and candidate[-2].isdigit():
+            # Hold digit-dot tails long enough to see whether the next delta is a decimal/version
+            # continuation instead of sentence punctuation.
+            return False
+        return candidate[-1] in ".!?;:"
+
+    @staticmethod
+    def _has_short_unclosed_quote_tail(text: str) -> bool:
+        speech_text = strip_voice_control_tags(text)
+        stripped = speech_text.strip()
+        if not stripped:
+            return False
+
+        curly_open = stripped.rfind("“")
+        curly_close = stripped.rfind("”")
+        if curly_open > curly_close:
+            last_open = curly_open
+        elif stripped.count('"') % 2:
+            last_open = stripped.rfind('"')
+        else:
+            return False
+
+        tail = stripped[last_open + 1 :].strip()
+        return bool(tail) and len(tail) <= 24
 
     @staticmethod
     def _ends_inside_non_speech_artifact(text: str) -> bool:
@@ -301,22 +346,74 @@ class _VoiceTtsDeltaBuffer:
             return True
         return False
 
+    def _has_short_unterminated_post_terminal_tail(self, text: str) -> bool:
+        speech_text = strip_voice_control_tags(text)
+        stripped = speech_text.strip()
+        if not stripped or stripped[-1] in ".!?;:":
+            return False
+
+        last_terminal = -1
+        for match in re.finditer(r"[.!?;:]", stripped):
+            idx = match.start()
+            if (
+                match.group(0) == "."
+                and idx > 0
+                and idx + 1 < len(stripped)
+                and stripped[idx - 1].isdigit()
+                and stripped[idx + 1].isdigit()
+            ):
+                continue
+            last_terminal = idx
+
+        if last_terminal < 0:
+            return False
+
+        tail = stripped[last_terminal + 1 :].strip()
+        return bool(tail) and len(tail) <= self._min_first_chars + 8
+
     def _should_flush(self, text: str) -> bool:
+        return self._flush_split_index(text) is not None
+
+    def _find_safe_max_split_index(self, text: str) -> Optional[int]:
+        if not text:
+            return None
+
+        candidates = [
+            match.end()
+            for match in re.finditer(r"\s+", text)
+            if match.end() >= self._min_first_chars and match.end() < len(text)
+        ]
+        if not candidates:
+            return None
+
+        preferred = [idx for idx in candidates if idx <= self._max_chars]
+        if preferred:
+            return max(preferred)
+        return min(candidates)
+
+    def _flush_split_index(self, text: str) -> Optional[int]:
         speech_text = strip_voice_control_tags(text)
         stripped = speech_text.strip()
         if not stripped:
-            return False
+            return None
         if self._has_emitted and self._is_orphan_punctuation(stripped):
-            return False
+            return None
         if self._ends_inside_non_speech_artifact(text):
-            return False
-        if len(stripped) >= self._max_chars:
-            return True
-        if len(stripped) >= 4 and stripped[-1] in ".!?;:":
-            return True
+            return None
+        if len(stripped) >= 4 and self._ends_with_terminal(stripped):
+            return len(text)
         if len(stripped) >= self._min_first_chars + 8 and text[-1:].isspace():
-            return True
-        return False
+            # A delayed terminal mark often arrives as the next tiny token (`?`, `!`, or `.`).
+            # Do not flush a short second sentence before its punctuation can attach.
+            if (
+                self._has_short_unterminated_post_terminal_tail(text)
+                or self._has_short_unclosed_quote_tail(text)
+            ):
+                return None
+            return self._find_safe_max_split_index(text) or len(text)
+        if len(stripped) >= self._max_chars:
+            return self._find_safe_max_split_index(text)
+        return None
 
     def _drop_leading_orphan_punctuation(self, text: str) -> str:
         if not text or not self._last_emitted_text:
@@ -376,15 +473,19 @@ class _VoiceTtsDeltaBuffer:
         if not delta:
             return []
         self._buffer += delta
-        if not self._should_flush(self._buffer):
-            return []
-        out = self._buffer
-        self._buffer = ""
-        out = self._prepare_output(out)
-        if not out:
-            return []
-        self._has_emitted = True
-        return [self._mark_emitted(out)]
+        emitted: list[str] = []
+        while True:
+            split_index = self._flush_split_index(self._buffer)
+            if split_index is None or split_index <= 0:
+                break
+            out = self._buffer[:split_index]
+            self._buffer = self._buffer[split_index:]
+            out = self._prepare_output(out)
+            if not out:
+                continue
+            self._has_emitted = True
+            emitted.append(self._mark_emitted(out))
+        return emitted
 
     def finalize(self) -> list[str]:
         if not self._buffer:

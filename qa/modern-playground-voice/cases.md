@@ -10,10 +10,10 @@
 | `MPV-UC-004` | Reload linked chat after a voice turn that used model/tooling. | `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-005` | LibreChat browser conversation | DB message content parts, logs, transcript, generated no-reasoning config | Visible chat persists audible answer only; no reasoning blocks or raw private transcript leak. | 2026-05-21 PASS for recovered provider-error cleanup and route restoration; full spoken audio not rerun |
 | `MPV-UC-005` | Open a modern-playground call page while voice settings are cold, slow, or temporarily unavailable. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-007` | Modern Playground browser page plus launcher/runtime logs | Browser network timing, visible CTA state, retry copy, Next.js route compile logs, call-session DB counts | Start chat remains available, settings loading is bounded/retryable, and cold-route compile is prewarmed on launcher startup. | 2026-05-18 PASS for pre-call gate and bounded settings load; full microphone join not rerun |
 | `MPV-UC-006` | Speak a thought, pause for `0.7s` to `1.5s`, then continue speaking in the same LiveKit call. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-008` | Modern Playground browser with fake microphone WAV, LiveKit, voice worker, Mongo | Voice gateway timing logs, Listen-Only ingress record, Mongo transcript message count, synthetic fixture manifest | Both endpointed STT segments are persisted as one continued transcript turn/message inside the continuation window. | 2026-05-18 PASS with synthetic TTS/fake-mic QA |
-| `MPV-UC-007` | Click Start chat once and wait for the call to connect. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-009` | Modern Playground browser page, LiveKit, voice gateway logs | Button state, browser console/network, LiveKit microphone publish, `JT_PUBLISHER` assignment, call-session DB state | One click starts the call, duplicate clicks are disabled, and the microphone turns on after room connect. | 2026-05-18 PASS for one-click visible UI and duplicate-request prevention; full fresh spoken-turn remains under broader call cases |
+| `MPV-UC-007` | Click Start chat once and wait for the call to connect. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-009` | Modern Playground browser page, LiveKit, voice gateway logs | Button state, browser console/network, LiveKit microphone publish, publisher job assignment, call-session DB state | One click starts the call, duplicate clicks are disabled, and the microphone turns on after room connect. | 2026-05-18 PASS for one-click visible UI and duplicate-request prevention; full fresh spoken-turn remains under broader call cases |
 | `MPV-UC-008` | Install or bootstrap with the default voice-capable configuration. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-010` | Installer/bootstrap component selection and launcher help | `bootstrap_components.select_components`, compiled runtime env, launcher flags | Default selection includes `agent-starter-react` and excludes `agents-playground`; classic UI appears only after explicit classic selection. | 2026-05-19 automated release case added |
 | `MPV-UC-011` | Reload a linked chat after provider overload was recovered by visible assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-011` | LibreChat browser conversation | DB content parts, recovered error-class metadata, renderer tests, runtime logs | Recovered answer is visible, stale provider error card is not visible, refresh keeps the clean state. | 2026-05-21 PASS in `reports/2026-05-21-recovered-provider-error-card-cleanup.md` |
-| `MPV-UC-012` | Hear a streamed voice answer whose model deltas split punctuation from the phrase. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-012` | Modern Playground call with xAI/Cartesia/fallback TTS as available | Voice gateway exact TTS debug logs, transcript, provider metrics, buffer unit tests | The assistant speaks naturally and never says a standalone period as "dot"; transcript remains readable. | 2026-05-21 PASS; see dated TTS orphan punctuation QA report |
+| `MPV-UC-012` | Hear a streamed voice answer whose model deltas split punctuation from the phrase. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-012` | Modern Playground call with xAI/Cartesia/fallback TTS as available | Voice gateway exact TTS debug logs, transcript, provider metrics, buffer unit tests | The assistant speaks naturally, never says a standalone period as "dot", and preserves delayed question/exclamation prosody; transcript remains readable. | 2026-05-25 PASS automated regression; live audible rerun pending after runtime restart |
 | `MPV-UC-013` | Hear a streamed voice answer when model text contains links, emails, references, markdown, or provider markup. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-013` | Modern Playground call with current TTS route and fallback route | Voice gateway `llm_delta`, `tts_emit`, provider request logs when available, sanitizer/unit tests | TTS receives speech-safe phrase chunks; plain providers do not receive raw tags; provider-supported controls are preserved only on capable routes. | 2026-05-21 PASS; live browser QA plus provider metrics |
 | `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | 2026-05-22 PASS for local Whisper barge-in runtime/browser/log proof |
 | `MPV-UC-015` | Interrupt a local Whisper assistant reply while it is speaking. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-015` | Modern Playground call with local `pywhispercpp` STT | Visible transcript, audible behavior, voice gateway interruption policy/state logs, generated runtime config, DB call-session route | A sustained one-word or short-phrase barge-in pauses/interrupts the agent without waiting for final local Whisper text; AssemblyAI word-guard defaults remain unchanged. | 2026-05-22 PASS in `reports/2026-05-22-local-whisper-bargein-qa.md` |
@@ -302,7 +302,7 @@
   3. Confirm the primary button changes to startup progress and is disabled while connection is in
      flight.
   4. Confirm the room connects and the microphone publishes automatically after room connect.
-  5. Inspect LiveKit logs for user microphone track publish and `JT_PUBLISHER` worker assignment.
+  5. Inspect LiveKit logs for user microphone track publish and publisher worker assignment.
   6. Inspect call-session DB state for active job/worker evidence when a full live call is run.
 - Expected Result: The first click owns the whole startup. The UI never requires a second Start chat
   click. The temporary pre-connect muted state is not presented as the call default; after connect,
@@ -377,7 +377,8 @@
 
 - Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`
 - User Outcome: A live voice answer sounds conversational even when provider/model streaming splits
-  punctuation into separate deltas.
+  punctuation into separate deltas, including delayed question/exclamation marks after a whitespace
+  boundary.
 - Surfaces: Modern Playground, Voice Gateway `LibreChatLLM`, LiveKit TTS stream, xAI/Cartesia/OpenAI
   or ElevenLabs TTS routes, transcript display.
 - Preconditions: canonical local runtime running from the current checkout; exact TTS debug logging
@@ -386,13 +387,18 @@
   1. Start an authenticated modern-playground call.
   2. Send a synthetic prompt that asks for two short plain sentences.
   3. Listen to the spoken answer and verify it does not say "dot", "period", or other literal
-     punctuation names for sentence-ending punctuation.
+     punctuation names for sentence-ending punctuation, and that short questions still sound like
+     questions when the displayed transcript ends in `?`.
   4. Inspect sanitized voice gateway logs for exact JSON-escaped TTS deltas and final text.
   5. Verify no TTS-bound chunk is punctuation-only after speech has started.
   6. Repeat or simulate the delta sequence with the unit regression for `[" Good", " to", " hear",
-     " you", "."]`, standalone `"."`, and numeric `3` + `.14`.
-- Expected Result: TTS receives speakable phrase fragments; orphan punctuation is not pushed as an
-  isolated synthesis input; decimal splits remain intact; transcript text remains readable.
+     " you", "."]`, standalone `"."`, delayed `["Good morning. Sleep okay ", "?"]`, delayed
+     exclamation, a long single-sentence delayed question, quote-wrapped delayed `?”`, numeric `3`
+     + `.14`, and whitespace/max-length phrase splits that should keep the trailing word buffered
+     instead of relying on provider-leading whitespace.
+- Expected Result: TTS receives speakable phrase fragments; orphan periods are not pushed as isolated
+  synthesis input; delayed `?`/`!` remain attached to their phrase; decimal splits remain intact;
+  transcript text remains readable.
 - Forbidden Result: the voice says `dot` or `period` for a sentence-ending punctuation chunk; the
   runtime fixes the issue by changing the agent's selected model/provider; public QA artifacts
   include raw private transcripts, call-session ids, or account identifiers.
@@ -407,7 +413,13 @@
   phrase is not emitted as its own TTS chunk; live stack restarted from the fixed checkout.
   2026-05-22 follow-up added exact provider-bound `[VoiceTTSInput]` instrumentation and automated
   assertions that forwarded and dropped chunks are logged with JSON-escaped text; second-opinion
-  edge cases for standalone decimal points and split clause punctuation now pass.
+  edge cases for standalone decimal points and split clause punctuation now pass. 2026-05-25
+  automated follow-up PASS: delayed `?`/`!` after whitespace no longer become orphan punctuation,
+  while standalone-period and decimal regressions still pass. 2026-05-25 second automated follow-up
+  PASS: whitespace and length-driven flushing now split at safe whitespace and keep the trailing
+  word buffered; long single-sentence delayed questions, delayed quote-wrapped questions, and split
+  `[laughter]` markers are covered by regression tests; live audible rerun remains required before
+  release-ready closure.
 
 ## MPV-013 Streaming TTS Must Not Speak Raw Artifacts
 

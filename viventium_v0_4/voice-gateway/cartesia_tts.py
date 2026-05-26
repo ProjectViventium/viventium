@@ -583,6 +583,11 @@ def _partition_streamable_emotion_text(text: str) -> tuple[str, str]:
     if last_lt > last_gt:
         safe_len = last_lt
 
+    last_bracket_open = text.rfind("[")
+    last_bracket_close = text.rfind("]")
+    if last_bracket_open > last_bracket_close:
+        safe_len = min(safe_len, last_bracket_open)
+
     safe_text = text[:safe_len]
     unmatched_wrapper_start = _find_unmatched_voice_wrapper_start(safe_text)
     if unmatched_wrapper_start is not None:
@@ -600,6 +605,10 @@ def _normalize_streaming_emotion_tail(text: str) -> str:
     last_gt = tail.rfind(">")
     if last_lt > last_gt:
         tail = tail[:last_lt]
+    last_bracket_open = tail.rfind("[")
+    last_bracket_close = tail.rfind("]")
+    if last_bracket_open > last_bracket_close:
+        tail = tail[:last_bracket_open]
 
     tail = re.sub(
         r"<emotion\s+value=[\"']?([^\"'>]+)[\"']?\s*>",

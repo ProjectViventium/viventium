@@ -139,6 +139,18 @@
 - Communication must be efficient and specific: summarize what was changed, how it was verified,
   what was pushed or left local, and what still needs live QA, without dumping raw logs or private
   machine details.
+- Delegated agent/workspace work must preserve the user's full intent. When handing work to
+  GlassHive, another worker, a scheduler, or any long-running background system, do not replace the
+  request with a thin paraphrase. Pass the full available task, success criteria, constraints,
+  examples, links, file references, exclusions, and background context through the structured fields
+  that own that delegation. Use summaries only as labels or titles, not as the worker's complete
+  instruction.
+- Keep host/application orchestration checks separate from worker deliverable gates. For GlassHive,
+  requirements such as which MCP tool was selected, whether the chat surfaced the View / Steer link,
+  callback delivery, wait/status polling cadence, and post-run inspection from the host UI belong to
+  the host assistant/operator QA layer. Preserve those checks as context, but do not make a sandbox
+  worker fail a completed file/browser/research/code task just because it cannot observe the host
+  chat UI from inside its workspace.
 
 ### 2.6 Production QA Operating Discipline
 - `qa/README.md` is the QA operating contract. Every developer and AI agent must treat it as the

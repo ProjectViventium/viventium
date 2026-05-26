@@ -82,6 +82,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     rather than duplicated in that dev env
   - default shared singleton services are recall/RAG, SearXNG, Firecrawl, Google Workspace MCP, and
     Microsoft 365 MCP
+  - Scheduling Cortex is not a shared singleton; dev-env config/compile must give it an offset
+    `scheduling_mcp_port`/`VIVENTIUM_SCHEDULING_MCP_PORT` and per-env scheduler DB so a dev env
+    cannot satisfy local-prod scheduler health
   - dev envs may offset app-facing ports, but shared singleton service ports must stay aligned with
     the installed runtime unless the operator explicitly chooses full isolation
   - generated env must expose the dev-env and shared-singleton state so launcher/helper surfaces can

@@ -91,6 +91,7 @@ viventium_v0_3_py/viventium_v1/storage/memory/**/snapshots/
 **/mcp_server_debug.log
 output/
 .playwright-cli/
+*.claude-review.json
 # Archive and deprecated code (excluded from repo)
 viventium_v0_3_py/archive/*
 viventium_v0_3_py/archive/**/*

@@ -67,6 +67,11 @@ DEFAULT_XAI_TTS_CODEC = "mp3"
 DEFAULT_XAI_TTS_BIT_RATE = "128000"
 DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
 DEFAULT_GLASSHIVE_FOLLOWUP_TIMEOUT_S = "600"
+DEFAULT_GLASSHIVE_MCP_BLOCKING_WAIT_MAX_SEC = 1800
+DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_BUFFER_SEC = 60
+DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
+    DEFAULT_GLASSHIVE_MCP_BLOCKING_WAIT_MAX_SEC + DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_BUFFER_SEC
+) * 1000
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
@@ -643,6 +648,7 @@ PROFILE_DEFAULTS = {
         "livekit_udp_port": 7882,
     },
 }
+DEV_ENV_SCHEDULING_MCP_PORT_OFFSET_BIAS = 100
 
 RUNTIME_PORT_KEYS = {
     "lc_api_port",
@@ -1170,6 +1176,26 @@ def resolve_runtime_profile(config: dict[str, Any]) -> tuple[str, dict[str, Any]
         if key not in RUNTIME_PORT_KEYS or value in (None, ""):
             continue
         profile[key] = positive_int(value, f"runtime.ports.{key}")
+    dev_env = runtime.get("dev_env", {}) or {}
+    if isinstance(dev_env, dict) and resolve_bool(dev_env.get("enabled"), False):
+        offset_raw = dev_env.get("port_offset")
+        if "scheduling_mcp_port" not in port_overrides and offset_raw not in (None, ""):
+            try:
+                offset = int(offset_raw)
+            except (TypeError, ValueError) as exc:
+                raise SystemExit(
+                    f"runtime.dev_env.port_offset must be an integer, got {offset_raw!r}"
+                ) from exc
+            scheduling_port = (
+                profile["scheduling_mcp_port"]
+                + offset
+                + DEV_ENV_SCHEDULING_MCP_PORT_OFFSET_BIAS
+            )
+            if scheduling_port <= 0:
+                raise SystemExit(
+                    "runtime.dev_env.port_offset produced an invalid scheduling_mcp_port"
+                )
+            profile["scheduling_mcp_port"] = scheduling_port
     return runtime_profile, profile
 
 
@@ -3189,7 +3215,7 @@ def build_mcp_servers(
             "headers": glasshive_headers,
             "startup": False,
             "chatMenu": True,
-            "timeout": 120000,
+            "timeout": DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS,
             "serverInstructions": True,
             "viventiumTrustedServerInstructions": True,
         }

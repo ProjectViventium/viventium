@@ -184,7 +184,13 @@ class _ProviderTextBoundaryNormalizer:
     @staticmethod
     def _is_orphan_punctuation(text: str) -> bool:
         stripped = (text or "").strip()
-        return bool(stripped) and all(ch in ".,!?;:…" for ch in stripped)
+        punctuation = ".,!?;:…"
+        closers = "\"'”’)]}"
+        return (
+            bool(stripped)
+            and any(ch in punctuation for ch in stripped)
+            and all(ch in punctuation or ch in closers for ch in stripped)
+        )
 
     def push_text(self, text: str) -> str:
         self.last_decision = ""
@@ -222,11 +228,19 @@ class _ProviderTextBoundaryNormalizer:
             self.last_decision = "preserved_pending_decimal_point"
             return f"{pending}{text}"
 
-        if pending and all(ch in ",;:" for ch in pending):
+        pending_core = pending.rstrip("\"'”’)]}")
+
+        if pending and all(ch in ",;:" for ch in pending_core):
             self.last_decision = "preserved_pending_clause_punctuation"
             if text[:1].isspace():
                 return f"{pending}{text}"
             return f"{pending} {text}" if previous and not previous[-1:].isspace() else f"{pending}{text}"
+
+        if previous and pending and pending_core and all(ch in "?!" for ch in pending_core):
+            self.last_decision = "preserved_pending_terminal_prosody"
+            if text[:1].isspace():
+                return f"{pending}{text}"
+            return f"{pending} {text}" if not previous[-1:].isspace() else f"{pending}{text}"
 
         self.last_decision = "dropped_pending_terminal_punctuation"
         if previous and not previous[-1:].isspace() and next_non_space and not text[:1].isspace():
@@ -237,11 +251,17 @@ class _ProviderTextBoundaryNormalizer:
         if not text or not self._last_sent_text:
             return text
 
-        match = re.match(r"^(\s*)([.,!?;:…]+)(\s*)", text)
+        match = re.match(r"^(\s*)([.,!?;:…]+[\"'”’)\]}]*)(\s*)", text)
         if not match:
             return text
 
         if not any(ch in ".!?…" for ch in match.group(2)):
+            return text
+
+        if self.last_decision == "preserved_pending_terminal_prosody":
+            return text
+
+        if any(ch in "?!" for ch in match.group(2)):
             return text
 
         remaining = text[match.end() :]
