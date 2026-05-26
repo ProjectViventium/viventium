@@ -85,8 +85,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   are missing, or after a derived vector rebuild without a scoped repair/reseed.
 - Evidence to capture: redacted RAG health, primary QA count unchanged check, QA-account source counts,
   file_search source attachments, and public-safe recovery note.
-- Last run: 2026-05-12, live browser regression passed in
-  `qa/meeting-transcript-memory/reports/2026-05-12-live-browser-qa-2026-05-13T02-30-02-460Z.md`.
+- Last run: BLOCKED 2026-05-26
+  ([report](../memory-hardening/reports/2026-05-26-nightly-routines-health-review.md)); live
+  RAG/vector health was unavailable, so browser recall signoff was not attempted and existing
+  vector-backed transcript rows were treated as supporting evidence only.
 
 ## MTM-007: Chronological Recent Transcript Summary Must Use Inventory Context
 
@@ -189,10 +191,10 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   transcript artifacts, or lets the assistant claim no transcript evidence exists.
 - Evidence to capture: vector-presence error count/reasons, content hashes requeued, stale-artifact
   count, and follow-up health check.
-- Last run: PASS/PARTIAL 2026-05-25
-  ([report](../memory-hardening/reports/2026-05-25-nightly-routines-health-review.md)); latest
-  scheduled hardening run cleared vector-presence auth errors and avoided destructive repair, but
-  vector repair remained incomplete because 3 files were deferred by the per-run cap.
+- Last run: PARTIAL 2026-05-26
+  ([report](../memory-hardening/reports/2026-05-26-nightly-routines-health-review.md)); latest
+  scheduled hardening run recorded 36 vector-presence check failures and deferred transcript vector
+  writes as `vector_runtime_unreachable`, while avoiding destructive repair.
 
 ## MTM-014: Live Browser QA Must Select A Real Connected QA Account
 

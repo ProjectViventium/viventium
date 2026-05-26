@@ -273,6 +273,16 @@ Host-worker UX and callback requirements:
   cannot cancel a later successful run. If a worker reports termination after stdout/exit artifacts
   were written, the service must attempt `collect_completed_run(worker, run_id)` before marking the
   run cancelled.
+- CLI worker metadata must stay aligned with structured profile/execution-mode selection. A
+  `codex-cli` worker must not be created or reported as OpenClaw just because the control-plane row
+  has not yet been reconciled with the live runtime. Before a run is executed, the service must
+  persist runtime/workspace metadata when available so failure/status/artifact paths can report the
+  actual worker and generated files.
+- A non-zero CLI exit is not proof that the worker produced no useful files. When stdout/stderr
+  contains structured provider evidence such as `response.failed` or `turn.failed`, GlassHive must
+  classify from that run evidence before falling back to generic runtime-error text. Failed terminal
+  status and callbacks should still expose owner-scoped artifact links when workspace files exist
+  and should guide retryable work toward `workspace_continue` in the same workspace.
 - CLI worker runs are long-running background work by default. Host and Docker workers must not
   inherit a short synchronous request timeout or a hard-coded 300 second worker timeout. Deployments
   may set an explicit run timeout through runtime env for operational policy, but the default worker
@@ -332,6 +342,21 @@ Host-worker UX and callback requirements:
   queues a new run on the same worker with the original instruction, current workspace files/state,
   and the user's continuation request. It is not an automatic retry loop and must not encode a
   specific customer prompt, file type, website, provider name, or QA phrase in runtime logic.
+- Continuation prompts must preserve the original user request without recursively nesting prior
+  GlassHive continuation wrappers. Each retry should carry the base task once, the current
+  workspace state, the latest failure class/recovery hint, and the user's newest continuation
+  instruction. This prevents prompt bloat, unnecessary provider cost, and degraded reliability while
+  still honoring the full-context requirement.
+- If a provider stream or retryable runtime I/O capture failure happens after the worker created a
+  fresh user-facing deliverable in `artifacts/` or `index.html`, GlassHive may promote the run to
+  completed with an honest warning and signed artifact links. Arbitrary partial files outside the
+  user-facing artifact locations remain failed and retryable; this avoids hiding real incomplete
+  work while preventing a finished file delivery from being reported as "no artifacts" or failed.
+- Codex effort values are provider-route dependent. GlassHive accepts `none`, `minimal`, `low`,
+  `medium`, `high`, and `xhigh`, but deployments must set
+  `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` when the selected OpenAI-compatible route supports only
+  a subset. Unsupported requested efforts must fall back through
+  `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` instead of failing the user task.
 
 - `worker_create` and `worker_find_or_resume` accept `execution_mode=host`.
 - `codex-cli` uses local Codex CLI full-access/no-approval execution. Host-native Codex defaults to
@@ -899,10 +924,12 @@ persistent home and workspace mounts.
 | `CODEX_MODEL` | unset | Optional generic host-native Codex CLI model override; honored when `WPR_MODEL_HOST_CODEX_CLI` is unset |
 | `GLASSHIVE_HOST_CODEX_INHERIT_PROVIDER_MODEL` | unset | Opt-in compatibility switch for host-native Codex to inherit `WPR_MODEL_CODEX_CLI`; leave unset so host workers use local Codex config by default |
 | `WPR_OPENCLAW_START_GATEWAY` | `false` | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention |
+| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,minimal,low,medium,high,xhigh` | Comma-separated Codex effort values supported by the configured Codex provider route; set this when a deployment route rejects a value such as `minimal` |
+| `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` |
 | `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
-| `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` | `1800` | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout |
-| `WPR_MCP_BLOCKING_WAIT_MAX_SEC` | `1800` | Hard cap on MCP blocking wait duration; prevents a chat request from blocking longer than policy while the worker continues in the background |
+| `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` | `1800` | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout; enterprise deployments that expect 25+ minute research/file jobs may raise this, for example to `2700` |
+| `WPR_MCP_BLOCKING_WAIT_MAX_SEC` | `1800` | Hard cap on MCP blocking wait duration; prevents a chat request from blocking longer than policy while the worker continues in the background; enterprise deployments may raise this with a matching LibreChat MCP `timeout` cushion, for example to `3600` |
 | `WPR_MCP_BLOCKING_WAIT_POLL_INTERVAL_SEC` | `5` | Efficient polling cadence and floor for `workspace_wait`; models should omit per-call poll intervals for normal long work, and the runtime must not allow lower long-run polling values |
 | `WPR_MCP_RECENT_DISPATCH_TTL_SEC` | `14400` | In-process recent-dispatch fallback TTL for same authenticated user/conversation wait/status recovery |
 | `WPR_MCP_RECENT_DISPATCH_MAX_ENTRIES` | `1024` | Safety cap on in-process recent-dispatch fallback entries |
@@ -921,6 +948,11 @@ persistent home and workspace mounts.
 | `GLASSHIVE_HOST_RUN_TIMEOUT_SEC` / `WPR_HOST_RUN_TIMEOUT_SEC` | unset | Optional host-specific override for host-native CLI runs |
 | `GLASSHIVE_IDLE_TERMINATE_AFTER_S` | `0` | When positive, stop idle worker compute while preserving workspace/home state |
 | `GLASSHIVE_IDLE_REAPER_INTERVAL_S` | `60` | Idle reaper interval |
+
+For long enterprise research/file jobs, the wait defaults should be treated as a chat transport
+policy, not a worker-kill policy. Raising `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` to 2700 and
+`WPR_MCP_BLOCKING_WAIT_MAX_SEC` to 3600 is valid when the LibreChat MCP transport timeout has a
+larger cushion; the worker continues in the background if the chat wait exits early.
 | `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER` | `0` | When positive, cap active workers per authenticated user |
 | `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT` | `0` | When positive, cap active workers across the tenant deployment |
 | `GLASSHIVE_MAX_WORKSPACES_PER_USER` | `0` | When positive, cap retained non-terminated workspaces per authenticated user |

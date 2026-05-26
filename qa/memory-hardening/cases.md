@@ -8,8 +8,8 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `MEMHARD-001` | Memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | User-visible behavior matches source, docs, persisted state, and logs | memory hardener, reports, runtime env, synthetic memories | `tests/release/test_memory_hardening_contract.py` plus user-grade QA when visible | PASS/PARTIAL 2026-05-25 ([report](reports/2026-05-25-nightly-routines-health-review.md)); scheduled apply ran successfully and updated one key, but transcript vector repair still had 3 files deferred by cap |
-| `MEMHARD-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-25 ([report](reports/2026-05-25-nightly-routines-health-review.md)); public report uses sanitized counts, timestamps, status fields, and redacts raw launchctl/browser evidence |
+| `MEMHARD-001` | Memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | User-visible behavior matches source, docs, persisted state, and logs | memory hardener, reports, runtime env, synthetic memories | `tests/release/test_memory_hardening_contract.py` plus user-grade QA when visible | PARTIAL 2026-05-26 ([report](reports/2026-05-26-nightly-routines-health-review.md)); scheduled apply fired and exited 0, but transcript vector lifecycle deferred with RAG/vector runtime unreachable |
+| `MEMHARD-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-26 ([report](reports/2026-05-26-nightly-routines-health-review.md)); public report uses sanitized counts, timestamps, status fields, and omits raw runtime/browser evidence |
 
 ## `MEMHARD-001` - Core User Flow
 
@@ -24,11 +24,10 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_memory_hardening_contract.py` plus any narrower feature tests discovered during implementation.
-- Last run: PASS/PARTIAL 2026-05-25
-  ([report](reports/2026-05-25-nightly-routines-health-review.md)); the macOS LaunchAgent was
-  installed and the scheduled apply completed at the documented 03:00 local schedule with one
-  validated key update, but transcript vector repair remained bounded/incomplete with 3 files
-  deferred by cap.
+- Last run: PARTIAL 2026-05-26
+  ([report](reports/2026-05-26-nightly-routines-health-review.md)); the macOS LaunchAgent was
+  installed and the scheduled apply completed at the documented 03:00 local schedule, but transcript
+  vector work was deferred because the RAG/vector runtime was unreachable.
 
 ## `MEMHARD-002` - Public-Safe Evidence Record
 
@@ -43,8 +42,8 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: PASS 2026-05-25
-  ([report](reports/2026-05-25-nightly-routines-health-review.md)); report sanitization was reviewed
+- Last run: PASS 2026-05-26
+  ([report](reports/2026-05-26-nightly-routines-health-review.md)); report sanitization was reviewed
   for private paths, accounts, raw transcript text, ids, secrets, launch tokens, and raw browser
   snapshots.
 
@@ -55,9 +54,9 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `MEMHARD-UC-001` | On memory hardener, reports, runtime env, synthetic memories, verify that memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | owning requirement for `MEMHARD-001` / `MEMHARD-001` | memory hardener, reports, runtime env, synthetic memories | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS/PARTIAL 2026-05-25 ([report](reports/2026-05-25-nightly-routines-health-review.md)); scheduled apply succeeded, transcript backfill remains capped |
-| `MEMHARD-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | The user sees an honest setup, retry, or degraded-state result for MEMHARD-002; no fake success is accepted. | PASS 2026-05-25 ([report](reports/2026-05-25-nightly-routines-health-review.md)) |
-| `MEMHARD-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | MEMHARD-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-05-25 ([report](reports/2026-05-25-nightly-routines-health-review.md)) |
+| `MEMHARD-UC-001` | On memory hardener, reports, runtime env, synthetic memories, verify that memory hardening runs are bounded, public-safe, and preserve durable facts while pruning stale/private noise. | owning requirement for `MEMHARD-001` / `MEMHARD-001` | memory hardener, reports, runtime env, synthetic memories | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-001. | User-visible behavior matches source, docs, persisted state, and logs | PARTIAL 2026-05-26 ([report](reports/2026-05-26-nightly-routines-health-review.md)); scheduled apply succeeded, but transcript vector lifecycle was deferred because RAG/vector runtime was unreachable |
+| `MEMHARD-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | The user sees an honest setup, retry, or degraded-state result for MEMHARD-002; no fake success is accepted. | PASS 2026-05-26 ([report](reports/2026-05-26-nightly-routines-health-review.md)) |
+| `MEMHARD-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `MEMHARD-002` / `MEMHARD-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMHARD-002. | MEMHARD-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-05-26 ([report](reports/2026-05-26-nightly-routines-health-review.md)) |
 
 ## Release Test Traceability
 

@@ -25,7 +25,7 @@ Use `GH-STD-NNN` for durable cases and `GH-STD-UC-NNN` for natural user use case
 | GH-STD-015 | Same | Metadata-block firewall drift is detected automatically after deployment. | Azure VM, Docker worker network, systemd timer/logs | Scheduled probe plus alert | PASS/PARTIAL 2026-05-24; stricter hourly systemd probe passed live and distinguishes blocked endpoints from probe-runtime failure, with external alert transport still deployment-specific. |
 | GH-STD-016 | Same | Standalone status/wait tools report the newest worker result instead of stale failed context, without hiding the requested run outcome. | Direct MCP, LibreChat MCP, worker runs/artifacts | Automated MCP test plus live conversation RCA | PASS 2026-05-24 locally and on a live enterprise deployment for stale-run wait regression and requested-run outcome preservation. |
 | GH-STD-017 | Same | Deployment default worker profile is honored when the caller omits `profile`. | UI, MCP, API, worker runtime, provider route | Automated/default-path MCP launch plus live worker smoke | PASS/PARTIAL 2026-05-25 UTC on a live enterprise deployment; default-path MCP launch omitted `profile`, resolved to `codex-cli`, completed through the validated Responses route, and cleanup terminated the QA worker. |
-| GH-STD-018 | Same | Failed long-running worker tasks report a structured failure class, completion waits do not mislabel still-running work as failure, and retryable work can be explicitly continued in the same workspace without overfitting the prompt. | Direct MCP, LibreChat MCP, worker runtime, DB/state | Automated failure-class/wait/continue tests plus user-grade browser QA | NEW 2026-05-25; automated regression added, browser QA pending after local runtime restart. |
+| GH-STD-018 | Same | Failed long-running worker tasks report a structured failure class, completion waits do not mislabel still-running work as failure, fresh user-facing artifacts are delivered even if the provider disconnects or the worker I/O capture closes after creation, and retryable work can be explicitly continued in the same workspace without overfitting the prompt or recursively bloating continuation instructions. | Direct MCP, LibreChat MCP, worker runtime, DB/state | Automated failure-class/wait/continue tests plus user-grade browser QA | PASS/PARTIAL 2026-05-26; automated runtime/API/MCP regression passes locally and on a live enterprise deployment for Codex runtime-label drift, provider failure classification, timeout config, failed-run artifact links, continuation effort override, continuation de-duplication, fresh artifact promotion, nested HTML path preservation, stale artifact rejection, and retryable runtime I/O failure classification; authenticated browser QA remains required when a signed-in browser profile is available. |
 | GH-STD-019 | Same | Host-default deployments still honor explicit sandbox/Codex Workspace requests and fail closed before row creation when a selected host CLI is unavailable. | Direct MCP, LibreChat MCP, API, DB/state | Automated MCP/API tests plus user-grade browser QA | NEW 2026-05-25; regression added for missing host CLI preflight and source-of-truth MCP wording, local browser QA pending. |
 | GH-STD-020 | Same | Long prompts keep their full context when delegated, host-side orchestration checks stay out of worker blocker criteria, same-conversation wait/status recovers omitted ids safely, View / Steer is surfaced around long waits, and waiting/browser watching does not overload local/cloud resources. | Direct MCP, LibreChat MCP, tool payloads, logs/process state, Workspaces/watch browser polling | Automated MCP tests plus browser/resource QA | PASS 2026-05-25 locally for MCP contract tests, browser LibreChat launch/wait/result flow, View / Steer before wait, Workspaces inspection, artifact links, callback link sanitization, efficient 5-second wait polling, and state-aware Workspaces/full-watch browser polling backoff; cloud soak remains separate. |
 | GH-STD-021 | Same | Every GlassHive file-delivery response uses a preview/open link as the primary user link and an explicitly labeled raw download link only as a secondary action; enterprise preview-page buttons remain signed. | Callbacks, direct API, signed links, MCP artifact tools, LibreChat-rendered links | Automated API/MCP contract tests plus browser click/no-download QA | PASS 2026-05-25 locally for callback link ordering, `artifact_open` vs `artifact_download` signed-token kinds, default preview headers, binary/image/text/SVG artifact behavior, enterprise signed preview click-through, and browser no-surprise-download proof. |
@@ -56,7 +56,7 @@ summarize the visible result here.
 | GH-STD-UC-015 | Restart Docker or reapply guardrails, then wait for the scheduled metadata probe. | GH-STD-015 | Azure VM/systemd | systemd timer status, service logs, alert target | Probe passes when IMDS is blocked and fails noisily if IMDS becomes reachable or the probe cannot run. | PASS/PARTIAL 2026-05-24; stricter timer/service run passed live, example OnFailure unit added, external alert wiring optional. |
 | GH-STD-UC-016 | Ask "wait/check results" after a worker had an older failed run but later completed. | GH-STD-016 | Direct MCP, LibreChat MCP | Tool output, run ordering, latest artifact links, chat wording | The assistant acknowledges the requested run outcome when stale, then answers from the newest effective run and provides available artifacts; it does not summarize an older failed run as the current outcome. | PASS 2026-05-24 locally and on a live enterprise deployment. |
 | GH-STD-UC-017 | Launch a workspace without specifying a worker profile. | GH-STD-017 | MCP, direct UI | Worker profile selected, provider route, output artifact, cleanup state | Deployment default is used exactly; for enterprise defaults this should be `codex-cli` unless the deployment deliberately overrides it and proves the override. | PASS/PARTIAL 2026-05-25 UTC. |
-| GH-STD-UC-018 | Ask a complex research/file task, ask GlassHive to wait for the result, observe a synthetic provider failure, then say continue/retry. | GH-STD-018 | MCP, LibreChat MCP, workspace state | Completion-wait timeout policy, failure class, retryability, original instruction preservation, continuation run id, visible chat wording | The model waits with the configured completion timeout, reports "still running" on timeout instead of false failure, reports the real failure class when terminal failure occurs, and uses `workspace_continue` to preserve the same workspace when the user asks to continue. | NEW 2026-05-25; automated test added. |
+| GH-STD-UC-018 | Ask a complex research/file task, ask GlassHive to wait for the result, observe a synthetic provider failure, then say continue/retry. | GH-STD-018 | MCP, LibreChat MCP, workspace state | Completion-wait timeout policy, failure class, retryability, original instruction preservation, continuation run id, visible chat wording, artifact links for partial files | The model waits with the configured completion timeout, reports "still running" on timeout instead of false failure, reports the real failure class when terminal failure occurs, surfaces partial artifacts when files exist, and uses `workspace_continue` to preserve the same workspace when the user asks to continue. | PASS/PARTIAL 2026-05-26 local automated coverage; live browser QA remains required. |
 | GH-STD-UC-019 | In a host-default Viventium deployment, ask the chat model to "use sandbox" or "use Codex Workspace" for a public-safe task. Separately ask for an unavailable host worker. | GH-STD-019 | LibreChat MCP, direct MCP, API/DB | Tool call arguments, worker execution mode, worker/run row counts, blocked payload fields, visible chat wording | Explicit sandbox language results in `execution_mode=docker`; unavailable host profile returns `runtime_dependency_missing` before worker/run creation; the assistant does not say work is running when no workspace was started. | NEW 2026-05-25; automated test added, browser QA pending. |
 | GH-STD-UC-020 | Give a long, constraint-heavy public-safe brief, ask GlassHive to use sandbox/Codex Workspace and wait, then inspect the MCP payload, visible chat, and resource usage. | GH-STD-020 | LibreChat MCP, direct MCP, process/log/DB state, Workspaces/watch browser pages | Tool arguments, full-context preservation, recent-dispatch fallback, View / Steer visibility, poll cadence, process list, browser network cadence | The worker receives the full available brief rather than a watered-down summary; host-side checks such as View / Steer visibility and wait cadence are verified by the host, not reported as worker blockers after deliverables are complete; wait/status uses explicit ids or same-conversation fallback; View / Steer is shown before or at least with final result; no abandoned browser/status loop overloads the machine. | PASS 2026-05-25 local browser QA with synthetic long brief, sandbox/Codex workspace, same-turn wait, artifact links, Workspaces inspection, DB/log evidence, resource snapshot, and completed-workspace browser polling backoff proof. |
 | GH-STD-UC-021 | Click the primary GlassHive file link from a completed run, then click the explicit download action. | GH-STD-021 | LibreChat MCP callback, direct API, browser | Link labels/order, signed-token kind, response headers, browser download event, artifact open page content | Primary `Open GlassHive file` link opens a preview/landing page and does not download. Only the `Download file` action returns an attachment, and enterprise click-through does not require hidden auth headers. | PASS 2026-05-25 local API/MCP/browser QA including enterprise signed preview click-through; live enterprise rerun required after deployment updates. |
@@ -459,14 +459,22 @@ summarize the visible result here.
 - Steps:
   1. Create or simulate a worker run that exits non-zero with structured provider failure events.
   2. Verify persisted run fields contain `failure_class`, `failure_retryable`,
-     `failure_user_message`, `failure_recommended_recovery`, and redacted diagnostics.
+     `failure_user_message`, `failure_recommended_recovery`, and redacted diagnostics; the worker
+     profile/runtime label must reflect the selected runtime such as `codex-cli`, not stale
+     fallback metadata.
   3. Call `workspace_status` and `workspace_wait` for that run.
   4. Call `workspace_wait` without `timeout_seconds` under a synthetic timeout policy and verify it
      uses the configured default/cap while returning "still running" rather than false failure.
-  5. Ask to continue/retry and verify the model/tool path uses `workspace_continue`, not a fresh
+  5. If workspace files exist despite the failed terminal run, verify MCP status/callback guidance
+     surfaces signed artifact open links and does not say no artifacts were produced.
+  6. If a fresh user-facing file was created under `artifacts/` or any workspace `index.html`
+     during a provider-response/rate/runtime-I/O capture failure, verify GlassHive reports the run
+     as completed with artifact links and an honest warning; verify stale files and arbitrary
+     partial files outside user-facing artifact locations remain failed/retryable.
+  7. Ask to continue/retry and verify the model/tool path uses `workspace_continue`, not a fresh
      launch, and that the continuation instruction preserves the original task and current
-     workspace state.
-  6. Run the same behavior through local LibreChat MCP/browser before release acceptance.
+     workspace state without recursively nesting prior GlassHive continuation wrappers.
+  8. Run the same behavior through local LibreChat MCP/browser before release acceptance.
 - Expected result: users get clear failure copy and an explicit same-workspace continuation path
   when retryable; wait timeouts say the worker is still running and keep the View / Steer link
   available, without hardcoded branches for one prompt, user, provider label, or file type.
@@ -476,10 +484,20 @@ summarize the visible result here.
   continue.
 - Evidence to capture: tool output, DB/run fields, redacted logs, continuation run instruction
   shape, View / Steer link, and browser chat wording.
-- Automation: `tests/test_profile_runtime.py` failure-classification tests and
-  `tests/test_mcp_server.py` status/continue tests.
-- Last run: NEW 2026-05-25; automated regression added and focused tests pass locally. Browser QA
-  remains required before release/deployment signoff.
+- Automation: `tests/test_profile_runtime.py` failure-classification tests,
+  `tests/test_api.py` runtime/artifact recovery tests, and `tests/test_mcp_server.py`
+  status/wait/continue tests.
+- Last run: PASS/PARTIAL 2026-05-26 local and live enterprise automated/direct-MCP coverage. Local
+  `uv run pytest -q` passed for runtime/API/MCP/bootstrap regression coverage including Codex
+  runtime label, structured provider failure classification from stdout, failed-run partial
+  artifact links, wait timeout config, continuation effort override, continuation de-duplication,
+  provider effort fallback, fresh artifact promotion, nested `index.html` path preservation, and
+  stale artifact non-promotion. A follow-up hardening pass added explicit retryable
+  `runtime_io_failed` classification for closed stdin/TTY worker-session failures and verified fresh
+  user-facing artifacts can still be delivered for that failure class. A live enterprise direct-MCP
+  run completed a complex workspace recovery as `codex-cli`/Docker and returned artifact links for a
+  Markdown report, spreadsheet-ready CSV, and final delivery manifest; authenticated browser QA
+  remains required when a signed-in browser profile is available.
 
 ## GH-STD-019 - Host/Sandbox Capability Routing And Preflight
 
