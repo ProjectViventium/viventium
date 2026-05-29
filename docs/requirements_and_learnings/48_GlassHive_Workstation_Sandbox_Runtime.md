@@ -500,13 +500,25 @@ a worker. GlassHive owns **delegated, long, multi-step, Deep Research, and compu
 where the levers below make it as fast as it can be without being resource-hungry. Every lever is
 config-driven and must not be hardcoded or overfitted to one profile, model, effort, or policy:
 
-- **Warm worker resume (favorite workspaces).** A worker/workspace can be flagged `favorite`
-  (`update_worker_metadata(favorite=...)`), and idle reaping is **off by default**
+- **Where the time actually goes (measured).** A cold `codex-cli` host worker answering
+  "any new emails today?" took **~5m01s wall-clock**, decomposed from the runtime events + codex
+  rollout as: **queue→start 0.0s** (always-on runtime, instant host spawn) + **~301s agent loop** =
+  ~30 sequential broker tool calls at ~6.5s each (~195s, fetching messages largely one-by-one) +
+  model reasoning turns (~80s) + final summarize (~15s). For comparison the Connected Accounts
+  hand-off (claude-opus, in-process) answered the same question in **~35–45s** with just **3** tool
+  calls including a *batched* content fetch. So the gap is the worker's granular autonomous loop +
+  reasoning, **not** spawn/bootstrap.
+- **Warm worker resume (favorite workspaces) — helps docker, not host.** A worker/workspace can be
+  flagged `favorite` (`update_worker_metadata(favorite=...)`), and idle reaping is **off by default**
   (`GLASSHIVE_IDLE_TERMINATE_AFTER_S=0`), so workers stay warm and `Resume`/`Open workspace` reuses
-  the warm sandbox instead of cold-spawning. Warm resume avoids the cold-start cost that dominates a
-  fresh launch (a cold codex-CLI worker email run measured ~5 min wall-clock — mostly spawn +
-  agent-loop, not the provider call). This is the single biggest interactive speed lever inside
-  GlassHive.
+  the warm worker. But for **host** workers the cold-start penalty is already ~0s (measured 0.0s
+  queue→start), so warm-resume saves little — its real value is **docker/sandbox** workers, where
+  container cold-start is a genuine cost, and continuity (preserved files/browser/login). Do not sell
+  warm-resume as the host-mode speed lever.
+- **The host-mode speed levers are the agent loop, not the sandbox:** fewer/batched tool calls,
+  reasoning effort (`high` over `xhigh`), and a faster quality worker model (below). Interactive
+  connected-account reads should use the hand-off agent; GlassHive is for delegated/Deep Research
+  work where the loop is the point.
 - **Reasoning effort.** The codex worker's effort is config-driven via
   `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
   `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`
