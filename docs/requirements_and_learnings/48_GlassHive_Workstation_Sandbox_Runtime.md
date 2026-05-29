@@ -551,6 +551,34 @@ accurate, complete, and useful for the user's intent. For the same "any new emai
   specific field against the source rather than trusting a synthesized summary.
 - Evaluate every speed change against the **full metric**, not just wall-clock. A latency win that degrades
   Quality is a regression. QA the *result*, not only the clock (`qa/connected-accounts-handoff/`).
+
+### Closing the GlassHive usefulness gap (memory + recall context)
+
+The worker today does **not** receive the user's saved **memory** — the "# Existing memory about the user"
+block the Main Agent injects (`api/.../agents/client.js` `useMemory` → `memoryContext`, gated by
+`user.personalization.memories`, the `MEMORIES` USE permission, and `appConfig.memory` token limits). It
+*does* receive conversation-**recall** file IDs in the launch bundle
+(`glasshive_upload_context.tool_resources.file_search.file_ids`: `conversation_recall:*`, `meeting_summary:*`),
+but those only help if the worker has a tool to query them. This is why the worker — lacking user-context —
+produced an exhaustive dump while the memory-equipped Main Agent prioritized by what matters to the user.
+
+To give the worker **parity** on Quality (Relevance, Usefulness, Alignment) — by strengthening the path, not
+routing around it:
+- **Inject the user's memory into the worker bootstrap**, the same source the Main Agent uses
+  (`db.getFormattedMemories`, gated by the same memory permission + `appConfig.memory` token limit), appended
+  as a "what you know about the user" block when the capability-broker bundle is built
+  (`GlassHiveCapabilityBootstrapService`). It is the user's own worker, so the user's own memory is in-scope;
+  honor `user.personalization.memories` / `appConfig.memory.disabled` (config-driven, never forced).
+- **Make recall queryable:** confirm the worker has a `file_search`/recall tool that can read the passed
+  `file_search.file_ids` (via the broker or the worker runtime). Passing IDs without a tool to query them is
+  inert; expose recall through the same broker so the worker can ground in prior context like the Main Agent.
+- Then judge the worker on the **full outcome metric** — complete *and* relevant/useful, not just complete —
+  measuring result quality before/after, not only latency. The worker stays the decider of shape; this only
+  gives it the same context the Main Agent has so its intelligence has something to prioritize with.
+
+**Status:** finding + fix design captured (evidence above); the memory-injection code change
+(`GlassHiveCapabilityBootstrapService`) and the Claude-Code-worker before/after measurement are the next
+implementation steps (worker model switch is config-driven via `GLASSHIVE_DEFAULT_WORKER_PROFILE=claude-code`).
 - **Reasoning effort.** The codex worker's effort is config-driven via
   `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
   `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`
