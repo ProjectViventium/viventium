@@ -535,17 +535,22 @@ accurate, complete, and useful for the user's intent. For the same "any new emai
 | Precision on literal details | risk: compressed a meeting time (showed Myk Pono Calendly **1:00 PM** vs the worker's **10 AM** — a synthesis/precision discrepancy) | **higher** — read each message, so literal subjects/times were verbatim |
 | Usefulness for "a quick rundown" | **higher** — scannable, prioritized, actionable | lower for triage (a thorough dump), higher for an audit/full sweep |
 
-**Decision / value (do not re-litigate per session):**
-- Neither path strictly dominates. **Match the path to the intent:** a "quick rundown / what's new"
-  request → **hand-off agent** (prioritized, actionable, ~40s); a "full sweep / don't miss anything /
-  exact details" request → **GlassHive worker** (complete, precise, verbatim), accepting the minutes.
-- **Faster is not automatically better.** A faster, synthesized answer can drop or compress a literal
-  detail (the meeting-time discrepancy above). When literal accuracy matters (times, amounts, names),
-  prefer the path that reads the source (worker, or a hand-off agent instructed to fetch exact
-  fields), and verify the specific field rather than trusting a synthesized summary.
-- Evaluate every speed change against **result quality**, not just wall-clock. A latency win that
-  degrades accuracy/completeness for the user's intent is a regression. QA the *result*, not only the
-  clock (`qa/connected-accounts-handoff/` tracks both).
+**Decision / value (do not re-litigate per session) — PARITY, not routing rubrics:**
+- Both paths must independently meet the Core Outcome Metric (`01_Key_Principles.md` §0): Quality
+  (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable). Do **not**
+  hardcode "quick rundown → hand-off, full sweep → worker." Whether a result is turned into a rundown is
+  the Main Agent's and the user's call, not a runtime rubric. GlassHive's own job is **truth and
+  completeness**; the worker's intelligence decides the shape.
+- So the gap above is a **GlassHive quality+speed gap to close, not a reason to route around it.** Close
+  it by (a) running the worker on a capable model (**Claude Code CLI**; codex was both slower here and,
+  separately, weekly-credit-limited — see [[codex-credits-claude-fallback]]) and (b) giving the worker the
+  **same memory + conversation-recall context the Main Agent receives**, so its results are as relevant and
+  useful, not merely complete.
+- **Faster is not automatically better.** A faster, synthesized answer can drop/compress a literal detail
+  (the meeting-time discrepancy above). When literal accuracy matters (times, amounts, names), verify the
+  specific field against the source rather than trusting a synthesized summary.
+- Evaluate every speed change against the **full metric**, not just wall-clock. A latency win that degrades
+  Quality is a regression. QA the *result*, not only the clock (`qa/connected-accounts-handoff/`).
 - **Reasoning effort.** The codex worker's effort is config-driven via
   `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
   `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`

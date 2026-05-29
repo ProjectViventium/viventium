@@ -6,6 +6,18 @@
 
 ## 🎯 Core Development Principles
 
+### 0. The Core Outcome Metric (always evaluate)
+
+**outcome = Quality (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable)**
+are the core metric of the viventium project that we must always evaluate in tests, QA, development, design.
+
+- This is the lens for every path, feature, agent, and flow. Never evaluate Performance (speed/latency)
+  in isolation — a faster result that is less intelligent, relevant, useful, or aligned is a regression.
+- **Parity, not routing rubrics.** Where multiple execution paths can serve the same request (e.g. an
+  in-process hand-off agent and a GlassHive worker), each must independently meet this metric. Do not
+  hardcode a rubric like "quick request → path A, thorough request → path B"; let the AI (Main Agent and
+  the worker) decide intelligently, and make every path produce truthful, complete, useful, fast results.
+
 ### 1. Beautifully Simple and Efficient
 - **Do not overcomplicate things** - Seek elegant, efficient solutions
 - Study the codebase, components, and research web for inspiration to identify the most beautiful and efficient way to implement features

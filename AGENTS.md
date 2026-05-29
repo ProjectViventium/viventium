@@ -3,6 +3,16 @@
 Lean repository-specific instructions for Codex. Keep this file short, concrete, and focused on
 Viventium-specific rules; deep feature truth belongs in the existing docs.
 
+## Core Outcome Metric
+
+**outcome = Quality (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable)**
+are the core metric of the viventium project that we must always evaluate in tests, QA, development, design.
+Never optimize Performance in isolation — a faster result that is less intelligent, relevant, useful, or
+aligned is a regression. Where multiple paths can serve the same request (e.g. an in-process hand-off agent
+vs a GlassHive worker), aim for **parity**: each path must meet this metric on its own AI. Do not hardcode a
+routing rubric ("which path for which request"); let the Main Agent and worker decide intelligently, and make
+every path truthful, complete, useful, and fast.
+
 ## Read Before Coding
 
 For any non-trivial task, read:
