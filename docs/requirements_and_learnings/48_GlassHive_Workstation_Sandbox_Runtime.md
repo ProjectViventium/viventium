@@ -576,9 +576,72 @@ routing around it:
   measuring result quality before/after, not only latency. The worker stays the decider of shape; this only
   gives it the same context the Main Agent has so its intelligence has something to prioritize with.
 
-**Status:** finding + fix design captured (evidence above); the memory-injection code change
-(`GlassHiveCapabilityBootstrapService`) and the Claude-Code-worker before/after measurement are the next
-implementation steps (worker model switch is config-driven via `GLASSHIVE_DEFAULT_WORKER_PROFILE=claude-code`).
+**Status:** memory-injection **implemented** (`client.js` threads `config.configurable.glasshive_worker_memory`
+from the same `memoryResult` the Main Agent uses → `GlassHiveCapabilityBootstrapService.workerMemoryBlock`
+appends it to the worker `agents_md`/`claude_md`/`codex_md` when present; broker spec covers inject/omit).
+Claude-Code-worker before/after **measured** — see next subsection.
+
+### Claude Code worker switch — measured results + two interop fixes (2026-05-29)
+
+**Switch mechanism (no restart, config-driven, reversible).** Worker profile resolves as: explicit
+tool arg → per-user preference (`default_worker_profile`) → env `GLASSHIVE_DEFAULT_WORKER_PROFILE`
+(`mcp_server.py` `_resolve_profile_from_preferences`). Setting the per-user preference
+(`PATCH /v1/preferences {"default_worker_profile":"claude-code"}`, owner `demo-owner`/`local` for
+non-enterprise) flips the worker to claude-code with **no restart** and no broker-secret risk, because
+the Main Agent omits the profile arg. The env var is the alternative (needs a restart).
+
+**Measured ("any new emails today?", host workers, both inboxes; runs table timing):**
+
+| | Hand-off (claude-opus) | GlassHive worker — codex gpt-5.4 | GlassHive worker — claude-code sonnet-4-6 |
+| --- | --- | --- | --- |
+| Worker duration | ~40s (in-process) | 301s (5m01s) | **88–144s (~2 min; 3 runs)** |
+| Providers read | Gmail + Outlook | Gmail + Outlook | Gmail + Outlook *(after fix #2)* |
+| Quality | prioritized, occasionally compresses a detail | complete + verbatim, verbose | complete, prioritized, action-items surfaced, **honest about gaps** |
+| Speed vs codex | — | baseline | **~2.5–3.4× faster** |
+
+So switching the worker to claude-code **does** improve speed (~2–3.5×) while meeting the Core Outcome
+Metric on Quality (both providers, prioritized + actionable, literal meeting time correct: 1 PM ET = 10 AM
+PDT). Faster *and* complete once the two bugs below are fixed.
+
+**Cold vs warm:** the Main Agent spawns a **fresh** worker per request (it did not auto-`workspace_continue`
+even for "refresh and check again"). For **host** workers spawn ≈ 0s, so there is no container-warmth
+penalty; run-to-run variance (88/120/144s) reflects Claude prompt-cache warmth + output verbosity, not
+cold/warm container state. Conversation continuity still works because the Main Agent threads prior context
+into the new worker's instruction (the warm follow-up correctly answered "nothing new since… the two items
+still stand"). The dedicated `workspace_continue` resume path exists but is not triggered by a natural
+re-check; warm-resume remains a docker-startup lever, not a host one (consistent with the section above).
+
+**Bug #1 — claude-code host worker auth: "Not logged in · Please run /login" (fixed).**
+`profile_runtime.py` `_host_env` built the worker subprocess env from a small allowlist that **omitted
+`USER`/`LOGNAME`**. On macOS the claude CLI's subscription auth lives in the **login Keychain** and resolves
+the credential item **by user**; with `USER` absent the worker exits in ~15–20 ms with "Not logged in".
+Codex is unaffected because its auth is a portable file (`~/.codex/auth.json`) the runtime copies into the
+worker — claude has no equivalent provisioning. Verified by isolation matrix: full-env worked with **and
+without** `start_new_session=True` (so setsid was a red herring); stripped-env failed both ways; adding
+`USER` alone fixed it. **Fix:** add `USER`/`LOGNAME` (identity, not secrets — secret-stripping unchanged) to
+the host-env allowlist. Verified live (worker authed + completed the read) + `test_profile_runtime.py`
+asserts the passthrough.
+
+**Bug #2 — MS365/Outlook unreadable for the claude worker: `expected record, received array at
+structuredContent` (fixed).** The broker route (`routes/viventium/glasshiveCapabilities.js`, `tools/call`)
+set `structuredContent: result` unconditionally. MS365 `list_mail_messages` returns an **array**, but per MCP
+`structuredContent` must be a JSON **object**, so a strict client (claude-code worker) rejected every Outlook
+read; codex's lenient MCP client tolerated the array, which is why codex got Outlook and claude did not. No
+broker tool advertises an `outputSchema`, so `structuredContent` is optional. **Fix:** emit
+`structuredContent` only for plain objects; arrays/scalars travel in the `content[0].text` block (which
+codex already consumes). Verified live (claude worker then read Gmail **and** Outlook) + a route regression
+test. This is the claude-side manifestation of the broker-result-shape contract — not the F3 timeout case.
+
+**Durability of the auth fix (production / Panorad).** The macOS helper is a GUI menu-bar app
+(`LSUIElement`/`NSApplication`), so it runs in the user's Aqua session with login-Keychain access; its child
+runtime inherits that access, which is why the original failure was the `USER` env-strip **alone**, not
+missing Keychain — making the `USER`/`LOGNAME` fix the complete fix for the helper-launched runtime. The
+measurement runtime was relaunched from a keychain-attached shell and reparented to launchd (structurally
+matching the helper's detached launch) and authed workers. **Residual gate:** re-verify after a real helper
+restart. For session-independent durability (a future launchd job that detaches the security session, or
+enterprise/headless Panorad), provision a **headless token** — `claude setup-token` (user-run OAuth) →
+inject `CLAUDE_CODE_OAUTH_TOKEN` into the worker env via the bootstrap, the file/token parity codex already
+has. Do **not** extract or persist the Keychain token.
 - **Reasoning effort.** The codex worker's effort is config-driven via
   `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
   `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`
