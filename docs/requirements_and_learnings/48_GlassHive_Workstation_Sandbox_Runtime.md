@@ -490,6 +490,46 @@ The harness prompt is materialized as `harness-prompt.md` for operator visibilit
 - do not promise that every website will keep the login forever; site-side expiry and MFA can still
   happen
 
+### Speed, Warm Workers, and Cost Controls (User Options)
+
+GlassHive worker tasks are inherently heavier than a same-process agent hand-off (a worker is a real
+agent loop in its own sandbox). For **interactive connected-account reads** (the user's own Gmail /
+Outlook inbox, calendar, or file lookups), the fast path is the dedicated **Connected Accounts
+hand-off agent** (`qa/connected-accounts-handoff/`), which answers inline in seconds without spawning
+a worker. GlassHive owns **delegated, long, multi-step, Deep Research, and computer/browser** work,
+where the levers below make it as fast as it can be without being resource-hungry. Every lever is
+config-driven and must not be hardcoded or overfitted to one profile, model, effort, or policy:
+
+- **Warm worker resume (favorite workspaces).** A worker/workspace can be flagged `favorite`
+  (`update_worker_metadata(favorite=...)`), and idle reaping is **off by default**
+  (`GLASSHIVE_IDLE_TERMINATE_AFTER_S=0`), so workers stay warm and `Resume`/`Open workspace` reuses
+  the warm sandbox instead of cold-spawning. Warm resume avoids the cold-start cost that dominates a
+  fresh launch (a cold codex-CLI worker email run measured ~5 min wall-clock — mostly spawn +
+  agent-loop, not the provider call). This is the single biggest interactive speed lever inside
+  GlassHive.
+- **Reasoning effort.** The codex worker's effort is config-driven via
+  `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
+  `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`
+  (default `medium`). Prefer `high` over `xhigh` for everyday tasks where the extra budget does not
+  change the outcome; reserve `xhigh` for genuinely hard work. A user/operator option, never a
+  hardcoded constant.
+- **Worker model.** Config-driven via `WPR_MODEL_CODEX_CLI` (default `gpt-5.4`) and
+  `WPR_MODEL_OPENCLAW_CLAUDE` (default `claude-sonnet-4-6`). Choose from a launch-ready quality family
+  (model governance in `01_Key_Principles.md`); never use a low-tier model (GPT-mini / Haiku class)
+  as a speed lever. A faster quality model is a supported option, not a silent default override.
+- **Keep-awake vs cost (default OFF for always-on prewarm).** Keeping workers warm has ongoing
+  compute cost. Workers stay warm by default for responsiveness; enable idle / paused / max-duration
+  reaping (`GLASSHIVE_IDLE_TERMINATE_AFTER_S` and equivalents) to release compute. For **enterprise**,
+  treat an always-on prewarmed-workspace pool as an explicit, default-off opt-in with a documented
+  cost — surfaced as a clear per-workspace "keep awake for fast responses" toggle next to the existing
+  `favorite` flag, so the path of least resistance never silently incurs standing compute.
+
+The product surface should expose `favorite` and a "keep awake" toggle as simple, clearly-labeled
+per-workspace options (the runtime metadata and idle-reaper config already back them). Interactive
+connected-account answers go through the hand-off agent; GlassHive stays the engine for delegated and
+Deep Research work, tuned for speed via warm resume + effort/model options rather than a hardcoded
+fast path.
+
 ---
 
 ## Bootstrap and Auth Projection
