@@ -74,8 +74,11 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Trace the real owning path before editing: trigger -> config/compiler -> runtime -> user-visible
   output.
 - For local stable-runtime work, keep the modes distinct:
-  - local prod is the installed user-facing runtime started by the helper
-  - dev envs are optional side-by-side runtimes with separate app-facing ports/state
+  - local prod is the installed user-facing runtime started by the helper; its default
+    app-facing ports are API `3180`, LibreChat web `3190`, and modern playground `3300`
+  - dev envs are optional side-by-side runtimes with separate app-facing ports/state; the
+    default `dev` offset keeps them on API `4180`, LibreChat web `4190`, and modern playground
+    `4300`
   - heavy singleton services stay shared by default: recall/RAG, SearXNG, Firecrawl, Google Workspace MCP, and Microsoft 365 MCP
   - promoting a local checkout uses `bin/viventium dev-runtime activate-current --validate --restart`; do not copy source into install paths
 - For install/runtime/release fixes, classify the delivery surfaces separately:
@@ -93,6 +96,11 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Prefer shared structural fixes over one-off patches, hacks, or owner-machine workarounds.
 - Do not hardcode on agent names, prompt text, tool substrings, provider labels, user identity, or one machine's state unless a source-of-truth doc explicitly requires it.
 - CRITICAL RULE: do not add regex or keyword matching in runtime code to detect user intent, provider selection, email phrasing, or productivity scope. Activation prompts in `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml` own that behavior; classifier outages are solved with `activation.fallbacks`, not heuristics.
+- For GlassHive, remember that workers are general intelligent workers: less is more. The host
+  should broker real goals, constraints, files, MCP/tool capabilities, and tool results without
+  inventing plans, success criteria, provider lists, fake MCP usage, forced artifacts, or
+  prompt-specific workflows; harness/runtime owns reliable data in/out, prerequisite recovery, and
+  universal completion self-checks.
 - If a proposed fix looks like the user's exact complaint turned into an `if` statement, widen the
   investigation first.
 - In the LibreChat fork, wrap upstream modifications with `VIVENTIUM START` / `VIVENTIUM END` plus

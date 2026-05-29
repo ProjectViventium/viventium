@@ -133,6 +133,353 @@ def test_glasshive_executor_branches_before_librechat_generation(tmp_path: Path,
     assert [url.rsplit("/", 1)[-1] for url, _ in calls] == ["projects", "find-or-resume", "assign"]
 
 
+def test_glasshive_dispatch_replaces_stale_cached_project_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scheduling_cortex import dispatch
+    from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+
+    db_path = tmp_path / "schedules.db"
+    private_root = tmp_path / "private"
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
+    monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
+
+    stale_project_id = "prj_stale"
+    replacement_project_id = "prj_replacement"
+    task_metadata = {
+        "workbench_scheduled_prompt": {
+            "definition_id": "def-1",
+            "version_id": "ver-1",
+            "title": "QA",
+            "rendered_hash": "abc",
+            "variable_snapshot_hash": "def",
+            "variable_snapshot_json": "{}",
+            "memory_write_mode": "off",
+            "workspace_alias": "workbench-scheduled-def-1",
+            "workspace_root": str(tmp_path),
+            "my_folder": str(tmp_path / "my_folder"),
+            "glasshive_project_id": stale_project_id,
+        }
+    }
+    storage.create_scheduled_prompt_definition(
+        {
+            "id": "def-1",
+            "user_id": "user-1",
+            "task_id": "task-1",
+            "title": "QA",
+            "source_prompt_id": None,
+            "template_id": None,
+            "prompt_text": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "timezone": "UTC",
+            "active": 1,
+            "memory_write_mode": "off",
+            "workspace_alias": "workbench-scheduled-def-1",
+            "my_folder": str(tmp_path / "my_folder"),
+            "metadata": {"glasshive_project_id": stale_project_id},
+            "created_at": "2026-05-27T10:00:00Z",
+            "updated_at": "2026-05-27T10:00:00Z",
+        }
+    )
+    storage.create_task(
+        {
+            "id": "task-1",
+            "user_id": "user-1",
+            "agent_id": "prompt-workbench",
+            "prompt": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:prompt-workbench",
+            "created_source": "user",
+            "created_at": "2026-05-27T10:00:00Z",
+            "updated_at": "2026-05-27T10:00:00Z",
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-05-27T10:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": task_metadata,
+        }
+    )
+
+    get_calls: list[str] = []
+    post_calls: list[str] = []
+
+    def fake_get_json(url: str, headers: dict[str, str], timeout_s: int) -> dict[str, object]:
+        get_calls.append(url)
+        if url.endswith(f"/v1/projects/{stale_project_id}"):
+            raise dispatch.HttpJsonError(
+                "GET /v1/projects/prj_stale failed: HTTP 404: Not Found",
+                status=404,
+                method="GET",
+                path="/v1/projects/prj_stale",
+            )
+        return {"project_id": replacement_project_id}
+
+    def fake_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout_s: int) -> dict[str, object]:
+        post_calls.append(url)
+        if url.endswith("/v1/projects"):
+            return {"project_id": replacement_project_id}
+        if url.endswith(f"/v1/projects/{replacement_project_id}/workers/find-or-resume"):
+            return {"worker_id": "wrk_1"}
+        if url.endswith("/assign"):
+            return {"run_id": "run_1"}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(dispatch, "_get_json", fake_get_json)
+    monkeypatch.setattr(dispatch, "_post_json", fake_post_json)
+
+    result = dispatch.dispatch_task(storage.get_task("user-1", "task-1"))
+
+    assert result["delivery"]["outcome"] == "queued"
+    assert any(url.endswith(f"/v1/projects/{stale_project_id}") for url in get_calls)
+    assert any(url.endswith(f"/v1/projects/{replacement_project_id}/workers/find-or-resume") for url in post_calls)
+    updated_definition = storage.get_scheduled_prompt_definition("def-1")
+    assert updated_definition["metadata"]["glasshive_project_id"] == replacement_project_id
+    updated_task = storage.get_task("user-1", "task-1")
+    assert (
+        updated_task["metadata"]["workbench_scheduled_prompt"]["glasshive_project_id"]
+        == replacement_project_id
+    )
+
+
+def test_glasshive_dispatch_repairs_task_cache_from_valid_definition_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scheduling_cortex import dispatch
+    from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+
+    db_path = tmp_path / "schedules.db"
+    private_root = tmp_path / "private"
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
+    monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
+
+    stale_project_id = "prj_task_stale"
+    valid_project_id = "prj_definition_valid"
+    storage.create_scheduled_prompt_definition(
+        {
+            "id": "def-1",
+            "user_id": "user-1",
+            "task_id": "task-1",
+            "title": "QA",
+            "source_prompt_id": None,
+            "template_id": None,
+            "prompt_text": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "timezone": "UTC",
+            "active": 1,
+            "memory_write_mode": "off",
+            "workspace_alias": "workbench-scheduled-def-1",
+            "my_folder": str(tmp_path / "my_folder"),
+            "metadata": {"glasshive_project_id": valid_project_id},
+            "created_at": "2026-05-27T10:00:00Z",
+            "updated_at": "2026-05-27T10:00:00Z",
+        }
+    )
+    storage.create_task(
+        {
+            "id": "task-1",
+            "user_id": "user-1",
+            "agent_id": "prompt-workbench",
+            "prompt": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:prompt-workbench",
+            "created_source": "user",
+            "created_at": "2026-05-27T10:00:00Z",
+            "updated_at": "2026-05-27T10:00:00Z",
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-05-27T10:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": {
+                "workbench_scheduled_prompt": {
+                    "definition_id": "def-1",
+                    "version_id": "ver-1",
+                    "title": "QA",
+                    "rendered_hash": "abc",
+                    "variable_snapshot_hash": "def",
+                    "variable_snapshot_json": "{}",
+                    "memory_write_mode": "off",
+                    "workspace_alias": "workbench-scheduled-def-1",
+                    "workspace_root": str(tmp_path),
+                    "my_folder": str(tmp_path / "my_folder"),
+                    "glasshive_project_id": stale_project_id,
+                }
+            },
+        }
+    )
+
+    post_calls: list[str] = []
+
+    def fake_get_json(url: str, headers: dict[str, str], timeout_s: int) -> dict[str, object]:
+        if url.endswith(f"/v1/projects/{stale_project_id}"):
+            raise dispatch.HttpJsonError(
+                "GET /v1/projects/prj_task_stale failed: HTTP 404: Not Found",
+                status=404,
+                method="GET",
+                path="/v1/projects/prj_task_stale",
+            )
+        if url.endswith(f"/v1/projects/{valid_project_id}"):
+            return {"project_id": valid_project_id}
+        raise AssertionError(url)
+
+    def fake_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout_s: int) -> dict[str, object]:
+        post_calls.append(url)
+        if url.endswith(f"/v1/projects/{valid_project_id}/workers/find-or-resume"):
+            return {"worker_id": "wrk_1"}
+        if url.endswith("/assign"):
+            return {"run_id": "run_1"}
+        raise AssertionError(f"unexpected POST {url}")
+
+    monkeypatch.setattr(dispatch, "_get_json", fake_get_json)
+    monkeypatch.setattr(dispatch, "_post_json", fake_post_json)
+
+    result = dispatch.dispatch_task(storage.get_task("user-1", "task-1"))
+
+    assert result["delivery"]["outcome"] == "queued"
+    assert not any(url.endswith("/v1/projects") for url in post_calls)
+    assert any(url.endswith(f"/v1/projects/{valid_project_id}/workers/find-or-resume") for url in post_calls)
+    updated_task = storage.get_task("user-1", "task-1")
+    assert (
+        updated_task["metadata"]["workbench_scheduled_prompt"]["glasshive_project_id"]
+        == valid_project_id
+    )
+
+
+def test_glasshive_dispatch_does_not_replace_project_on_non_404_validation_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scheduling_cortex import dispatch
+    from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+
+    db_path = tmp_path / "schedules.db"
+    private_root = tmp_path / "private"
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
+    monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
+
+    project_id = "prj_validation_error"
+    storage.create_scheduled_prompt_definition(
+        {
+            "id": "def-1",
+            "user_id": "user-1",
+            "task_id": "task-1",
+            "title": "QA",
+            "source_prompt_id": None,
+            "template_id": None,
+            "prompt_text": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "timezone": "UTC",
+            "active": 1,
+            "memory_write_mode": "off",
+            "workspace_alias": "workbench-scheduled-def-1",
+            "my_folder": str(tmp_path / "my_folder"),
+            "metadata": {"glasshive_project_id": project_id},
+            "created_at": "2026-05-27T10:00:00Z",
+            "updated_at": "2026-05-27T10:00:00Z",
+        }
+    )
+    storage.create_task(
+        {
+            "id": "task-1",
+            "user_id": "user-1",
+            "agent_id": "prompt-workbench",
+            "prompt": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:prompt-workbench",
+            "created_source": "user",
+            "created_at": "2026-05-27T10:00:00Z",
+            "updated_at": "2026-05-27T10:00:00Z",
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-05-27T10:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": {
+                "workbench_scheduled_prompt": {
+                    "definition_id": "def-1",
+                    "version_id": "ver-1",
+                    "title": "QA",
+                    "rendered_hash": "abc",
+                    "variable_snapshot_hash": "def",
+                    "variable_snapshot_json": "{}",
+                    "memory_write_mode": "off",
+                    "workspace_alias": "workbench-scheduled-def-1",
+                    "workspace_root": str(tmp_path),
+                    "my_folder": str(tmp_path / "my_folder"),
+                    "glasshive_project_id": project_id,
+                }
+            },
+        }
+    )
+
+    post_calls: list[str] = []
+
+    def fake_get_json(url: str, headers: dict[str, str], timeout_s: int) -> dict[str, object]:
+        raise dispatch.HttpJsonError(
+            "GET /v1/projects/prj_validation_error failed: HTTP 500: Server Error",
+            status=500,
+            method="GET",
+            path="/v1/projects/prj_validation_error",
+        )
+
+    def fake_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout_s: int) -> dict[str, object]:
+        post_calls.append(url)
+        raise AssertionError(f"unexpected POST {url}")
+
+    monkeypatch.setattr(dispatch, "_get_json", fake_get_json)
+    monkeypatch.setattr(dispatch, "_post_json", fake_post_json)
+
+    with pytest.raises(dispatch.HttpJsonError):
+        dispatch.dispatch_task(storage.get_task("user-1", "task-1"))
+
+    assert post_calls == []
+
+
 def test_glasshive_dispatch_refuses_stale_prompt_when_definition_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -325,6 +672,37 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", secret)
 
     storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
+    storage.create_task(
+        {
+            "id": "task-1",
+            "user_id": "user-1",
+            "agent_id": "prompt-workbench",
+            "prompt": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:prompt-workbench",
+            "created_source": "user",
+            "created_at": "2026-05-22T10:00:00Z",
+            "updated_at": "2026-05-22T10:00:00Z",
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-05-23T10:00:00Z",
+            "last_status": "error",
+            "last_error": "previous stale failure",
+            "last_delivery_outcome": "failed",
+            "last_delivery_reason": "previous stale failure",
+            "last_delivery_at": "2026-05-22T09:00:00Z",
+            "last_generated_text": None,
+            "last_delivery": {"outcome": "failed", "reason": "previous stale failure", "generated_text": None},
+            "metadata": {},
+        }
+    )
     private_detail_path = tmp_path / "private" / "scheduled-run-1.json"
     private_detail_path.parent.mkdir(parents=True)
     private_detail_path.write_text(json.dumps({"memory_write_mode": "propose"}), encoding="utf-8")
@@ -394,6 +772,223 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
     assert "FINAL REPORT" not in updated["callback_payload_json"]
     assert "mongodb://" not in updated["callback_payload_json"]
     assert "FINAL REPORT" in private_detail_path.read_text(encoding="utf-8")
+    task = storage.get_task("user-1", "task-1")
+    assert task["last_status"] == "success"
+    assert task["last_error"] is None
+    assert task["last_delivery_outcome"] == "sent"
+    assert task["last_delivery"]["scheduled_prompt_run_id"] == "scheduled-run-1"
+
+
+def test_glasshive_capacity_callback_keeps_run_queued_and_clears_stale_parent_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("fastmcp")
+    from starlette.testclient import TestClient
+
+    from scheduling_cortex.server import build_server
+    from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+
+    secret = "test-secret"
+    worker_id = "wrk_capacity"
+    glasshive_run_id = "run_capacity"
+    db_path = tmp_path / "schedules.db"
+    monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", secret)
+
+    storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
+    storage.create_task(
+        {
+            "id": "task-capacity",
+            "user_id": "user-capacity",
+            "agent_id": "prompt-workbench",
+            "prompt": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:prompt-workbench",
+            "created_source": "user",
+            "created_at": "2026-05-22T10:00:00Z",
+            "updated_at": "2026-05-22T10:00:00Z",
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-05-23T10:00:00Z",
+            "last_status": "error",
+            "last_error": "previous stale failure",
+            "last_delivery_outcome": "failed",
+            "last_delivery_reason": "previous stale failure",
+            "last_delivery_at": "2026-05-22T09:00:00Z",
+            "last_generated_text": None,
+            "last_delivery": {"outcome": "failed", "reason": "previous stale failure", "generated_text": None},
+            "metadata": {},
+        }
+    )
+    private_detail_path = tmp_path / "private" / "scheduled-run-capacity.json"
+    private_detail_path.parent.mkdir(parents=True)
+    private_detail_path.write_text(json.dumps({"memory_write_mode": "propose"}), encoding="utf-8")
+    storage.create_scheduled_prompt_run(
+        {
+            "run_id": "scheduled-run-capacity",
+            "task_id": "task-capacity",
+            "definition_id": "def-capacity",
+            "user_id": "user-capacity",
+            "version_id": "ver-capacity",
+            "due_at": "2026-05-22T10:00:00Z",
+            "started_at": "2026-01-01T00:00:01Z",
+            "completed_at": None,
+            "status": "queued",
+            "executor": "glasshive_host",
+            "rendered_hash": "rendered",
+            "variable_snapshot_hash": "snapshot",
+            "glasshive_project_id": "proj_capacity",
+            "glasshive_worker_id": worker_id,
+            "glasshive_run_id": glasshive_run_id,
+            "result_summary": None,
+            "error_class": None,
+            "private_detail_path": str(private_detail_path),
+            "callback_payload_json": None,
+            "created_at": "2026-05-22T10:00:01Z",
+            "updated_at": "2026-05-22T10:00:01Z",
+        }
+    )
+
+    mcp = build_server(storage)
+    if not hasattr(mcp, "http_app"):
+        pytest.skip("Cannot extract ASGI app from FastMCP server")
+    client = TestClient(mcp.http_app(transport="streamable-http"))
+    payload = {
+        "event": "run.waiting_on_capacity",
+        "worker_id": worker_id,
+        "run_id": glasshive_run_id,
+        "run_state": "queued",
+        "message": "The codex-cli host worker is already busy with another active workspace.",
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    binding = f"{worker_id}:{glasshive_run_id}".encode("utf-8")
+    derived_secret = hmac.new(secret.encode("utf-8"), binding, hashlib.sha256).hexdigest().encode("utf-8")
+    signature = "sha256=" + hmac.new(derived_secret, raw, hashlib.sha256).hexdigest()
+
+    response = client.post(
+        "/internal/scheduled-prompts/glasshive-callback",
+        content=raw,
+        headers={"content-type": "application/json", "x-glasshive-signature": signature},
+    )
+
+    assert response.status_code == 200
+    updated = storage.get_scheduled_prompt_run("scheduled-run-capacity")
+    assert updated["status"] == "queued"
+    assert updated["completed_at"] is None
+    assert updated["error_class"] is None
+    assert updated["result_summary"] == "GlassHive run is waiting for host worker capacity and will retry."
+    callback_summary = json.loads(updated["callback_payload_json"])
+    assert callback_summary["event"] == "run.waiting_on_capacity"
+    task = storage.get_task("user-capacity", "task-capacity")
+    assert task["last_status"] == "running"
+    assert task["last_error"] is None
+    assert task["last_delivery_outcome"] == "queued"
+    assert task["last_delivery"]["reason"] == "run.waiting_on_capacity"
+
+
+def test_glasshive_queued_callback_does_not_downgrade_running_workbench_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("fastmcp")
+    from starlette.testclient import TestClient
+
+    from scheduling_cortex.server import build_server
+    from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+
+    secret = "test-secret"
+    worker_id = "wrk_ordering"
+    glasshive_run_id = "run_ordering"
+    monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", secret)
+    storage = ScheduleStorage(StorageConfig(db_path=str(tmp_path / "schedules.db")))
+    storage.create_task(
+        {
+            "id": "task-ordering",
+            "user_id": "user-ordering",
+            "agent_id": "prompt-workbench",
+            "prompt": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:prompt-workbench",
+            "created_source": "user",
+            "created_at": "2026-05-22T10:00:00Z",
+            "updated_at": "2026-05-22T10:00:00Z",
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "user",
+            "last_run_at": "2026-05-22T10:00:01Z",
+            "next_run_at": "2026-05-23T10:00:00Z",
+            "last_status": "running",
+            "last_error": None,
+            "last_delivery_outcome": "queued",
+            "last_delivery_reason": "run.started",
+            "last_delivery_at": "2026-05-22T10:00:01Z",
+            "last_generated_text": None,
+            "last_delivery": {"outcome": "queued", "reason": "run.started", "generated_text": None},
+            "metadata": {},
+        }
+    )
+    private_detail_path = tmp_path / "private" / "scheduled-run-ordering.json"
+    private_detail_path.parent.mkdir(parents=True)
+    private_detail_path.write_text("{}", encoding="utf-8")
+    storage.create_scheduled_prompt_run(
+        {
+            "run_id": "scheduled-run-ordering",
+            "task_id": "task-ordering",
+            "definition_id": "def-ordering",
+            "user_id": "user-ordering",
+            "version_id": "ver-ordering",
+            "due_at": "2026-05-22T10:00:00Z",
+            "started_at": "2026-05-22T10:00:01Z",
+            "completed_at": None,
+            "status": "running",
+            "executor": "glasshive_host",
+            "rendered_hash": "rendered",
+            "variable_snapshot_hash": "snapshot",
+            "glasshive_project_id": "proj_ordering",
+            "glasshive_worker_id": worker_id,
+            "glasshive_run_id": glasshive_run_id,
+            "result_summary": "GlassHive run started.",
+            "error_class": None,
+            "private_detail_path": str(private_detail_path),
+            "callback_payload_json": None,
+            "created_at": "2026-05-22T10:00:01Z",
+            "updated_at": "2026-05-22T10:00:01Z",
+        }
+    )
+
+    mcp = build_server(storage)
+    if not hasattr(mcp, "http_app"):
+        pytest.skip("Cannot extract ASGI app from FastMCP server")
+    client = TestClient(mcp.http_app(transport="streamable-http"))
+    payload = {"event": "run.queued", "worker_id": worker_id, "run_id": glasshive_run_id, "message": "Queued"}
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    binding = f"{worker_id}:{glasshive_run_id}".encode("utf-8")
+    derived_secret = hmac.new(secret.encode("utf-8"), binding, hashlib.sha256).hexdigest().encode("utf-8")
+    signature = "sha256=" + hmac.new(derived_secret, raw, hashlib.sha256).hexdigest()
+
+    response = client.post(
+        "/internal/scheduled-prompts/glasshive-callback",
+        content=raw,
+        headers={"content-type": "application/json", "x-glasshive-signature": signature},
+    )
+
+    assert response.status_code == 200
+    updated = storage.get_scheduled_prompt_run("scheduled-run-ordering")
+    assert updated["status"] == "running"
+    assert updated["completed_at"] is None
+    assert storage.get_task("user-ordering", "task-ordering")["last_status"] == "running"
 
 
 def test_apply_governed_callback_routes_memory_proposals_through_helper(

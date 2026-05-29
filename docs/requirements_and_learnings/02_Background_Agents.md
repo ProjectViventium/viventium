@@ -29,6 +29,12 @@ For the manager-readable handbook, start with:
   - its built-in source-of-truth contract must include `web_search`
   - when its execution family is `openAI / gpt-5.4`, its shipped `model_parameters` must use
     `reasoning_effort: xhigh`, not Anthropic/Google-only thinking fields such as `thinkingBudget`
+- Shipping a specialist background agent does not require the main Viventium agent to auto-activate
+  it. In the GlassHive broker-first local baseline, the main agent keeps `Deep Research`, `MS365`,
+  and `Google` background activation disabled. Live web/productivity execution should be handled by
+  the main/direct tool path, including GlassHive workers that receive connected-account capability
+  access through the broker. The specialist agents remain defined with their owned tools for direct
+  use, explicit future re-enablement, and regression coverage.
 - Background agents must receive the same user memory context as the main agent when memories are
   enabled, so insights do not regress to fresh-chat behavior.
 - Output is merged as background insights and can influence a later voiced follow-up in playground
@@ -453,6 +459,21 @@ Use this order so the fix stays surgical:
   - connected-account providers must be measured through their connected-account initializer path
   - standalone eval scripts must bootstrap Mongo/runtime dependencies before running activation
   - cooldown state must be cleared between benchmark scenarios when one real user is reused
+- On May 27, 2026, a generic plural inbox request exposed two distinct failure classes:
+  - unrestricted "check my inboxes" style prompts are productivity activation prompts, not runtime
+    heuristics; both Google and MS365 cortices should activate unless the latest user message or
+    immediate provider clarification restricts the provider
+  - if a productivity cortex initializes with owned MCP tools and the primary execution model fails
+    before any tool call or insight, the error must preserve activation/tool metadata and attempt
+    the configured execution fallback. Tool, MCP, OAuth, and auth failures remain non-retryable by
+    LLM fallback and must be surfaced as their real failure class.
+  - a productivity cortex that reaches a terminal Phase B result without any current-run live tool
+    call is not a successful inbox/workspace check. Runtime must surface a sanitized
+    `no_live_tool_execution` limitation instead of treating empty output as a normal silent
+    completion or allowing the follow-up to claim the provider was outside scope.
+  - Google/MS365 source direct-action declarations describe same-scope behavior only when those MCPs
+    are actually connected to the main agent. In the shipped local default, Viv main remains
+    background-only for Google/MS365 and must not gain those MCP tools just to fix activation.
 - On April 12, 2026, corrected live benchmarking under the real 11-cortex parallel load showed
   Groq as the best primary for the shipping activation topology. The May 10, 2026 VPN incident did
   not supersede that benchmark; it tightened the requirement that fallback QA distinguish provider
@@ -466,3 +487,21 @@ Use this order so the fix stays surgical:
     proving the limitation was latency, not activation reasoning quality
   - the tested SambaNova candidates remained non-viable for the current 11-cortex topology because
     they exhausted the full 2-second budget under parallel activation
+
+### GlassHive Capability Broker Retirement Gate
+
+Google Workspace, Microsoft 365, and Deep Research background agents must not be removed merely
+because the GlassHive capability broker exists. Retirement is allowed only after a shadow-mode gate
+proves:
+
+- the broker is projected through GlassHive bootstrap without provider-token leakage
+- two-user isolation and OAuth revoke/update cases pass
+- content-read and write-confirmation policy is enforced for productivity providers
+- paired legacy-background-agent vs broker-backed-worker evals meet the agreed numeric parity target
+- a server-side kill switch can disable broker projection without code changes
+
+This gate is the release/removal gate. The local broker-first baseline may disable automatic
+main-agent activation for `Deep Research`, `MS365`, and `Google` while keeping those specialist
+agents defined, testable, and re-enableable. That local soft-retirement proves the main agent no
+longer routes live connected-account work through less capable automatic background specialists; it
+does not by itself prove full broker parity, scheduled-grant renewal, or permanent removal readiness.

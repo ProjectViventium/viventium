@@ -635,6 +635,30 @@ Product contract:
   context and must not be confused with a LaunchAgent timezone override
 - default lookback is 7 days
 - default idle gate skips users active in the last 60 minutes
+- the wrapper has a separate power/thermal gate for model-backed hardening and transcript ingest:
+  on macOS it skips dry-run/apply/transcript model work while the laptop is on battery power or
+  under a recorded thermal/performance warning, unless an operator explicitly passes
+  `--ignore-power-gate` with `VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE=1`.
+  `--ignore-idle-gate` must not bypass the power gate.
+- local model-backed maintenance should reuse `scripts/viventium/power_budget.py` instead of
+  re-implementing one-off `pmset` probes; maintenance audit automation must treat a power-budget
+  skip as an honest `SKIPPED`/`PARTIAL` finding, not as a reason to force `--ignore-power-gate`.
+- allowed hardening work runs its Node/model child at lower OS priority so foreground UI, Codex, and
+  Viventium runtime processes stay responsive.
+- model-backed dry-run/apply runs also have an efficiency gate inside the Node hardener, not only in
+  the wrapper. By default a completed model-backed run starts a 5 minute cooldown; `--ignore-power-gate` and
+  `VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE=1` do not bypass that cooldown. The separate
+  cooldown override is `--ignore-efficiency-gate` plus
+  `VIVENTIUM_MEMORY_HARDENING_ALLOW_EFFICIENCY_OVERRIDE=1`.
+- `apply --run-id <run-id>` replays an existing private proposal and is not model-backed; it is not
+  part of the model-work cooldown, though normal lock/idempotency and memory-write policy still
+  apply.
+- transcript apply batches have a default floor of 5 files per Node invocation and a default wrapper
+  cap of 1 batch per invocation. This prevents one-file shell loops from repeatedly paying process,
+  model-probe, Mongo, and vector startup costs while still preserving resumable catch-up.
+- the macOS helper's manual transcript ingest is an interactive maintenance action: it may bypass
+  the cooldown for an operator click, but it still respects the power/thermal gate and uses a
+  bounded one-batch transcript pass.
 - default input cap is 500,000 estimated characters and full-lookback mode is on by default
 - the job imports the generated runtime memory instructions for key semantics, but uses a separate
   batch hardener prompt

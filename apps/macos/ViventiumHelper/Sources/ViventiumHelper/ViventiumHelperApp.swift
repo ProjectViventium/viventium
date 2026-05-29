@@ -34,6 +34,20 @@ private struct CommandCaptureResult {
     let stdout: String
 }
 
+private struct StackHealthSnapshot {
+    let apiReady: Bool
+    let frontendReady: Bool
+    let playgroundReady: Bool
+
+    var healthy: Bool {
+        self.apiReady && self.frontendReady && self.playgroundReady
+    }
+
+    var preferredSurfaceIsPlaygroundOnly: Bool {
+        !self.healthy && self.playgroundReady
+    }
+}
+
 private struct HealWorkflowSettings {
     let provider: String
     let reasoningEffort: String
@@ -136,6 +150,8 @@ final class HelperController: ObservableObject {
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
     private var launchAtLoginRefreshTask: Task<Void, Never>?
+    private var steadyStateHealthSnapshot: (runtime: RuntimePorts, checkedAt: Date, snapshot: StackHealthSnapshot)?
+    private let steadyStateHealthRefreshInterval: TimeInterval = 30
     private let automaticTerminationReason = "Viventium status-bar helper keeps the local runtime available after login."
 
     init() {
@@ -443,7 +459,19 @@ final class HelperController: ObservableObject {
             let runResult = Self.runMemoryHardeningCaptured(
                 repoRoot: config.repoRoot,
                 appSupportDir: config.appSupportDir,
-                arguments: ["ingest-transcripts", "--apply", "--until-caught-up", "--ignore-idle-gate", "--json"]
+                arguments: [
+                    "ingest-transcripts",
+                    "--apply",
+                    "--until-caught-up",
+                    "--max-batches",
+                    "1",
+                    "--transcript-max-files-per-run",
+                    "5",
+                    "--interactive-maintenance",
+                    "--ignore-idle-gate",
+                    "--skip-model-probe",
+                    "--json"
+                ]
             )
             let exitStatus = runResult.exitStatus
             let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)
@@ -1151,12 +1179,21 @@ final class HelperController: ObservableObject {
 
         let allowBusyStateTransition = force
         Task {
-            let preferredOpenURLString = await Self.preferredOpenURLString(runtime: runtime, host: host)
-            let healthy = await Self.userFacingSurfaceHealthy(runtime: runtime)
+            let snapshot = await self.stackHealthSnapshot(
+                runtime: runtime,
+                force: force || self.stackState.actionBusy
+            )
+            let preferredOpenURLString = Self.preferredOpenURLString(
+                runtime: runtime,
+                host: host,
+                snapshot: snapshot
+            )
+            let healthy = snapshot.healthy
             let splitWorkspace = await Self.stackOwnedByDifferentRepo(
                 runtime: runtime,
                 appSupportDir: config.appSupportDir,
-                expectedRepoRoot: config.repoRoot
+                expectedRepoRoot: config.repoRoot,
+                knownSnapshot: snapshot
             )
             self.openURLString = preferredOpenURLString
             let inFlightState = Self.inFlightStackState(appSupportDir: config.appSupportDir)
@@ -1182,6 +1219,23 @@ final class HelperController: ObservableObject {
             }
             self.stackState = .stopped
         }
+    }
+
+    private func stackHealthSnapshot(runtime: RuntimePorts, force: Bool = false) async -> StackHealthSnapshot {
+        if !force,
+           let cached = self.steadyStateHealthSnapshot,
+           cached.runtime == runtime,
+           Date().timeIntervalSince(cached.checkedAt) < self.steadyStateHealthRefreshInterval {
+            return cached.snapshot
+        }
+
+        let snapshot = await Self.stackHealthSnapshot(runtime: runtime)
+        if snapshot.healthy {
+            self.steadyStateHealthSnapshot = (runtime, Date(), snapshot)
+        } else {
+            self.steadyStateHealthSnapshot = nil
+        }
+        return snapshot
     }
 
     private func refreshLaunchAtLoginState(force: Bool = false) {
@@ -1715,44 +1769,63 @@ final class HelperController: ObservableObject {
         return (200..<400).contains(status)
     }
 
+    private nonisolated static func playgroundHealthy(port: Int) async -> Bool {
+        guard let status = await self.firstHTTPStatus(urls: self.loopbackCandidateURLs(port: port, path: "/api/health")) else {
+            return false
+        }
+        return (200..<400).contains(status)
+    }
+
+    private nonisolated static func stackHealthSnapshot(runtime: RuntimePorts) async -> StackHealthSnapshot {
+        let apiReady = await self.apiHealthy(port: runtime.apiPort)
+        let frontendReady = apiReady ? await self.frontendHealthy(port: runtime.frontendPort) : false
+        // Voice-call deep links land on the dedicated modern playground. Probe it separately so
+        // the helper can still prefer that surface when it is the only user-facing surface ready.
+        let playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)
+        return StackHealthSnapshot(
+            apiReady: apiReady,
+            frontendReady: frontendReady,
+            playgroundReady: playgroundReady
+        )
+    }
+
     private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool {
-        let apiReady = await self.apiHealthy(port: apiPort)
-        guard apiReady else {
-            return false
-        }
-        let frontendReady = await self.frontendHealthy(port: frontendPort)
-        guard frontendReady else {
-            return false
-        }
-        // Voice-call deep links land on the dedicated modern playground, so the helper must
-        // require that surface too before it reports Viventium as healthy.
-        return await self.frontendHealthy(port: playgroundPort)
+        await self.stackHealthSnapshot(
+            runtime: RuntimePorts(
+                apiPort: apiPort,
+                frontendPort: frontendPort,
+                playgroundPort: playgroundPort,
+                runtimeProfile: "isolated",
+                managedStopCheckURLs: []
+            )
+        ).healthy
     }
 
     private nonisolated static func frontendURLString(host: String, port: Int) -> String {
         "http://\(host):\(port)"
     }
 
-    private nonisolated static func preferredOpenURLString(runtime: RuntimePorts, host: String) async -> String {
-        if await self.stackHealthy(
-            apiPort: runtime.apiPort,
-            frontendPort: runtime.frontendPort,
-            playgroundPort: runtime.playgroundPort
-        ) {
+    private nonisolated static func preferredOpenURLString(
+        runtime: RuntimePorts,
+        host: String,
+        snapshot: StackHealthSnapshot
+    ) -> String {
+        if snapshot.healthy {
             return self.frontendURLString(host: host, port: runtime.frontendPort)
         }
-        if await self.frontendHealthy(port: runtime.playgroundPort) {
+        if snapshot.preferredSurfaceIsPlaygroundOnly {
             return self.frontendURLString(host: host, port: runtime.playgroundPort)
         }
         return self.frontendURLString(host: host, port: runtime.frontendPort)
     }
 
+    private nonisolated static func preferredOpenURLString(runtime: RuntimePorts, host: String) async -> String {
+        let snapshot = await self.stackHealthSnapshot(runtime: runtime)
+        return self.preferredOpenURLString(runtime: runtime, host: host, snapshot: snapshot)
+    }
+
     private nonisolated static func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool {
-        return await self.stackHealthy(
-            apiPort: runtime.apiPort,
-            frontendPort: runtime.frontendPort,
-            playgroundPort: runtime.playgroundPort
-        )
+        await self.stackHealthSnapshot(runtime: runtime).healthy
     }
 
     private nonisolated static func waitForHealthyStack(
@@ -1938,6 +2011,17 @@ final class HelperController: ObservableObject {
             return 0
         }
         return size.uint64Value
+    }
+
+    private nonisolated static func rotateHelperLogIfNeeded(_ url: URL, maxBytes: UInt64 = 25 * 1024 * 1024) {
+        guard self.fileSize(url) > maxBytes else {
+            return
+        }
+        let rotatedURL = url.deletingPathExtension()
+            .appendingPathExtension("previous")
+            .appendingPathExtension(url.pathExtension)
+        try? FileManager.default.removeItem(at: rotatedURL)
+        try? FileManager.default.moveItem(at: url, to: rotatedURL)
     }
 
     private nonisolated static func launchFailureMarkerSeen(startLogURL: URL?, startLogOffset: UInt64) -> Bool {
@@ -2323,7 +2407,9 @@ final class HelperController: ObservableObject {
         guard FileManager.default.isExecutableFile(atPath: binViventiumPath) else {
             return nil
         }
-        let logPath = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName).path
+        let logURL = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName)
+        self.rotateHelperLogIfNeeded(logURL)
+        let logPath = logURL.path
         let pidFileURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("runtime/\(pidFileName)")
         let runnerScriptURL = URL(fileURLWithPath: self.helperDetachedCommandScriptPath(
@@ -2831,7 +2917,7 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
     }
 }
 
-private struct RuntimePorts {
+private struct RuntimePorts: Equatable {
     let apiPort: Int
     let frontendPort: Int
     let playgroundPort: Int
@@ -2994,7 +3080,8 @@ private extension HelperController {
     nonisolated static func stackOwnedByDifferentRepo(
         runtime: RuntimePorts,
         appSupportDir: String,
-        expectedRepoRoot: String
+        expectedRepoRoot: String,
+        knownSnapshot: StackHealthSnapshot? = nil
     ) async -> Bool {
         guard
             let ownerState = self.loadStackOwnerState(appSupportDir: appSupportDir, runtimeProfile: runtime.runtimeProfile)
@@ -3008,7 +3095,10 @@ private extension HelperController {
             return false
         }
 
-        if await self.userFacingSurfaceHealthy(runtime: runtime) {
+        if knownSnapshot?.healthy == true {
+            return true
+        }
+        if knownSnapshot == nil, await self.userFacingSurfaceHealthy(runtime: runtime) {
             return true
         }
         return await self.managedServicesRunning(runtime: runtime)

@@ -1,0 +1,31 @@
+# ACT-27 Broker-First Retirement LiveKit QA
+- Started: 2026-05-27T07:28:45.793Z
+- Scope: modern playground real browser join through local LiveKit, typed transcript prompt, Mongo verification; public-safe hashes only.
+- Playground hash: `cfedde6bd70df1d4`
+- QA user hash: `4cec47b586b8232b`
+- Call session hash: `cdd95b6dae306064`
+- Room hash: `6041619ab9fb68be`
+- Prompt hash: `0084be06da29d75c`
+- Conversation hash: `8332fa3ac1940e4f`
+- LiveKit page started: true
+- Transcript opened: true
+- Transcript input enabled: true
+- Prompt visible in transcript: true
+- Assistant final answer visible in transcript: true
+- Voice worker active job present: true
+- Message count: 3
+- User message count: 1
+- Assistant message count: 2
+- Answer text length: 2561
+- Required final label present: true
+- Background-cortex promise present: false
+- Tool call count: 3
+- Stored cortex part count: 1
+- Stored cortex names: Red Team
+- Forbidden retired stored cortex names: none
+- GlassHive/direct-tool evidence present: true
+- Limitation wording present: true
+- Browser console warning/error count: 2
+- Browser page error count: 0
+- Evidence scope: typed transcript in a real LiveKit playground session; audible call QA was not run because ACT-27 changes activation/config routing, not voice audio behavior.
+- Result: PASS for ACT-27 local soft-retirement; this does not prove full GlassHive broker parity/removal readiness.

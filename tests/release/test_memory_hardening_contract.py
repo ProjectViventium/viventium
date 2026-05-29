@@ -86,14 +86,233 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["max_changes_per_user"] == 3
     assert settings["max_input_chars"] == 500000
     assert settings["require_full_lookback"] is True
+    assert settings["min_apply_interval_seconds"] == 300
     assert settings["provider_profile"] == "launch_ready_only"
     assert settings["anthropic_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["anthropic"]
     assert settings["openai_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]
     assert settings["anthropic_effort"] == "xhigh"
     assert settings["openai_reasoning_effort"] == "xhigh"
     assert settings["transcripts"]["rag_mode"] == "detailed_summary_only"
+    assert settings["transcripts"]["min_files_per_run"] == 5
+    assert settings["transcripts"]["max_batches_per_invocation"] == 1
     assert settings["transcripts"]["reference_memory_max_chars"] == 24000
     assert settings["transcripts"]["reference_messages_max_chars"] == 36000
+
+
+def test_memory_hardening_apply_transcript_batch_floor_is_node_authoritative() -> None:
+    script = """
+process.env.VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN = '5';
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const options = hardener.parseArgs([
+  '--mode', 'apply',
+  '--transcripts-only',
+  '--transcript-max-files-per-run', '1'
+]);
+process.stdout.write(JSON.stringify({
+  maxFiles: options.transcriptMaxFilesPerRun,
+  minFiles: options.transcriptMinFilesPerRun
+}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload == {"maxFiles": 5, "minFiles": 5}
+
+
+def test_memory_hardening_node_cooldown_blocks_repeat_apply_without_power_override_bypass(
+    tmp_path: Path,
+) -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const paths = { stateDir: process.argv[1] };
+hardener.writeEfficiencyMarker(paths, {
+  status: 'finished',
+  run_id: 'previous',
+  mode: 'apply',
+  started_at: '2026-05-27T10:00:00.000Z',
+  finished_at: '2026-05-27T10:00:00.000Z',
+  min_apply_interval_seconds: 300,
+  transcript_max_files_per_run: 5,
+  transcript_min_files_per_run: 5,
+  transcripts_only: true
+});
+process.env.VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE = '1';
+const decision = hardener.modelApplyCooldownDecision(
+  {
+    mode: 'apply',
+    transcriptsOnly: true,
+    minApplyIntervalSeconds: 300,
+    ignoreEfficiencyGate: true
+  },
+  paths,
+  new Date('2026-05-27T10:01:00.000Z')
+);
+process.stdout.write(JSON.stringify(decision));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(tmp_path / "state")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["allowed"] is False
+    assert payload["reason"] == "maintenance_cooldown"
+    assert payload["nextAllowedAt"] == "2026-05-27T10:05:00.000Z"
+
+
+def test_memory_hardening_node_cooldown_blocks_repeat_dry_run(tmp_path: Path) -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const paths = { stateDir: process.argv[1] };
+hardener.writeEfficiencyMarker(paths, {
+  status: 'finished',
+  run_id: 'previous',
+  mode: 'apply',
+  started_at: '2026-05-27T10:00:00.000Z',
+  finished_at: '2026-05-27T10:00:00.000Z',
+  min_apply_interval_seconds: 300,
+  transcripts_only: false
+});
+const decision = hardener.modelApplyCooldownDecision(
+  { mode: 'dry-run', minApplyIntervalSeconds: 300 },
+  paths,
+  new Date('2026-05-27T10:01:00.000Z')
+);
+process.stdout.write(JSON.stringify(decision));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(tmp_path / "state")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["allowed"] is False
+    assert payload["reason"] == "maintenance_cooldown"
+
+
+def test_memory_hardening_efficiency_override_requires_flag_and_env(tmp_path: Path) -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const paths = { stateDir: process.argv[1] };
+hardener.writeEfficiencyMarker(paths, {
+  status: 'finished',
+  run_id: 'previous',
+  mode: 'apply',
+  started_at: '2026-05-27T10:00:00.000Z',
+  finished_at: '2026-05-27T10:00:00.000Z',
+  min_apply_interval_seconds: 300,
+  transcripts_only: true
+});
+process.env.VIVENTIUM_MEMORY_HARDENING_ALLOW_EFFICIENCY_OVERRIDE = '1';
+const envOnly = hardener.modelApplyCooldownDecision(
+  { mode: 'apply', transcriptsOnly: true, minApplyIntervalSeconds: 300 },
+  paths,
+  new Date('2026-05-27T10:01:00.000Z')
+);
+const flagAndEnv = hardener.modelApplyCooldownDecision(
+  {
+    mode: 'apply',
+    transcriptsOnly: true,
+    minApplyIntervalSeconds: 300,
+    ignoreEfficiencyGate: true
+  },
+  paths,
+  new Date('2026-05-27T10:01:00.000Z')
+);
+process.stdout.write(JSON.stringify({envOnly, flagAndEnv}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(tmp_path / "state")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["envOnly"]["allowed"] is False
+    assert payload["envOnly"]["reason"] == "maintenance_cooldown"
+    assert payload["flagAndEnv"]["allowed"] is True
+    assert payload["flagAndEnv"]["reason"] == "efficiency_override"
+    assert payload["flagAndEnv"]["bypassed"] is True
+
+
+def test_memory_hardening_existing_run_apply_is_not_model_cooldown_gated() -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+process.stdout.write(JSON.stringify({
+  freshApply: hardener.isCooldownGatedModelRun({ mode: 'apply' }),
+  dryRun: hardener.isCooldownGatedModelRun({ mode: 'dry-run' }),
+  existingRunApply: hardener.isCooldownGatedModelRun({ mode: 'apply', runId: 'existing' })
+}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload == {"freshApply": True, "dryRun": True, "existingRunApply": False}
+
+
+def test_memory_hardening_interactive_maintenance_bypasses_cooldown_only(tmp_path: Path) -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const paths = { stateDir: process.argv[1] };
+hardener.writeEfficiencyMarker(paths, {
+  status: 'finished',
+  run_id: 'previous',
+  mode: 'apply',
+  started_at: '2026-05-27T10:00:00.000Z',
+  finished_at: '2026-05-27T10:00:00.000Z',
+  min_apply_interval_seconds: 300,
+  transcripts_only: true
+});
+const decision = hardener.modelApplyCooldownDecision(
+  {
+    mode: 'apply',
+    transcriptsOnly: true,
+    minApplyIntervalSeconds: 300,
+    interactiveMaintenance: true
+  },
+  paths,
+  new Date('2026-05-27T10:01:00.000Z')
+);
+process.stdout.write(JSON.stringify(decision));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, str(tmp_path / "state")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["allowed"] is True
+    assert payload["reason"] == "interactive_maintenance"
+    assert payload["bypassed"] is True
 
 
 def test_memory_hardening_default_fallbacks_respect_provider_boundary() -> None:
@@ -536,6 +755,164 @@ def test_ingest_transcripts_defaults_to_zero_saved_memory_changes() -> None:
     assert command[command.index("--max-changes-per-user") + 1] == "0"
 
 
+class MemoryHardenArgs:
+    repo_root = ROOT
+    app_support_dir = ROOT
+    runtime_dir = ROOT
+    command = "ingest-transcripts"
+    apply = True
+    until_caught_up = False
+    mongo_uri = None
+    config_path = None
+    run_id = None
+    user_email = None
+    user_id = None
+    lookback_days = None
+    min_user_idle_minutes = None
+    max_changes_per_user = None
+    max_input_chars = None
+    provider = None
+    model = None
+    proposal_file = None
+    transcripts_dir = None
+    transcript_max_files_per_run = None
+    transcript_max_chars_per_file = None
+    transcript_summary_max_chars = None
+    transcript_reference_memory_max_chars = None
+    transcript_reference_messages_max_chars = None
+    transcript_rag_mode = None
+    allow_delete = False
+    ignore_idle_gate = False
+    ignore_power_gate = False
+    ignore_efficiency_gate = False
+    interactive_maintenance = False
+    skip_model_probe = False
+    allow_partial_lookback = False
+    scheduled = False
+    json = True
+
+
+def make_memory_harden_args(**overrides):
+    class Args:
+        pass
+
+    args = Args()
+    for key, value in MemoryHardenArgs.__dict__.items():
+        if not key.startswith("__"):
+            setattr(args, key, value)
+    for key, value in overrides.items():
+        setattr(args, key, value)
+    return args
+
+
+def test_memory_hardening_power_gate_skips_model_work_on_battery(monkeypatch, capsys) -> None:
+    args = make_memory_harden_args()
+
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: True)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    monkeypatch.setattr(
+        memory_harden,
+        "run_node_once",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("model work should not run")),
+    )
+
+    status = memory_harden.run_node(args, {})
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert status == 0
+    assert payload["status"] == "skipped"
+    assert payload["reason"] == "on_battery_power"
+    assert payload["users"][0]["status"] == "skipped"
+
+
+def test_memory_hardening_power_gate_requires_override_env_with_flag(monkeypatch, capsys) -> None:
+    args = make_memory_harden_args(ignore_power_gate=True, json=True)
+
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: True)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+
+    status = memory_harden.run_node(args, {})
+
+    assert status == 0
+    assert json.loads(capsys.readouterr().out)["reason"] == "on_battery_power"
+
+
+def test_memory_hardening_power_gate_allows_explicit_override(monkeypatch) -> None:
+    args = make_memory_harden_args(ignore_power_gate=True, json=False)
+
+    class Completed:
+        returncode = 0
+
+    calls = []
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: True)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda command, **kwargs: calls.append(command) or Completed())
+
+    status = memory_harden.run_node(args, {"VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE": "1"})
+
+    assert status == 0
+    assert calls
+    assert "--transcripts-only" in calls[0]
+
+
+def test_memory_hardening_efficiency_override_is_separate_from_power_override() -> None:
+    args = make_memory_harden_args(ignore_efficiency_gate=True, interactive_maintenance=True)
+
+    command = memory_harden.node_command(
+        args,
+        {
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+        },
+    )
+
+    assert "--ignore-efficiency-gate" in command
+    assert "--interactive-maintenance" in command
+    assert "--ignore-power-gate" not in command
+
+
+def test_memory_hardening_ignore_idle_gate_does_not_bypass_power_gate(monkeypatch, capsys) -> None:
+    args = make_memory_harden_args(ignore_idle_gate=True)
+
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: True)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+
+    status = memory_harden.run_node(args, {})
+
+    assert status == 0
+    assert json.loads(capsys.readouterr().out)["reason"] == "on_battery_power"
+
+
+def test_memory_hardening_power_gate_skips_on_thermal_warning(monkeypatch, capsys) -> None:
+    args = make_memory_harden_args()
+
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: True)
+
+    status = memory_harden.run_node(args, {})
+
+    assert status == 0
+    assert json.loads(capsys.readouterr().out)["reason"] == "thermal_or_performance_warning"
+
+
+def test_memory_hardening_power_gate_env_can_disable_gate(monkeypatch) -> None:
+    args = make_memory_harden_args(json=False)
+
+    class Completed:
+        returncode = 0
+
+    calls = []
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: True)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda command, **kwargs: calls.append(command) or Completed())
+
+    status = memory_harden.run_node(args, {"VIVENTIUM_MEMORY_HARDENING_POWER_GATE": "off"})
+
+    assert status == 0
+    assert calls
+
+
 def test_ingest_transcripts_until_caught_up_requires_apply() -> None:
     class Args:
         apply = False
@@ -547,6 +924,41 @@ def test_ingest_transcripts_until_caught_up_requires_apply() -> None:
         assert "--until-caught-up requires --apply" in str(exc)
     else:
         raise AssertionError("expected --until-caught-up dry-run to fail closed")
+
+
+def test_ingest_transcripts_until_caught_up_defaults_to_single_batch(monkeypatch, capsys) -> None:
+    args = make_memory_harden_args(until_caught_up=True, json=True)
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps(
+            {
+                "schemaVersion": 1,
+                "run_id": "batch-1",
+                "users": [{"transcript_ingest": {"files_skipped_by_cap": 9}}],
+                "apply_results": [],
+            }
+        )
+
+    calls = []
+    monkeypatch.setattr(memory_harden, "run_node_once", lambda *_args: calls.append(1) or Completed())
+
+    status = memory_harden.run_transcript_backfill_until_caught_up(args, {}, {})
+
+    assert status == memory_harden.PARTIAL_BACKFILL_EXIT
+    assert len(calls) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "max_batches_reached"
+
+
+def test_memory_harden_status_does_not_take_global_cli_lock() -> None:
+    text = (ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    section = text.split("\n  memory-harden)", 1)[1].split(";;", 1)[0]
+
+    assert 'memory_harden_subcommand="${1:-}"' in section
+    assert 'if [[ "$memory_harden_subcommand" != "status" ]]; then' in section
+    assert 'acquire_cli_lock "$COMMAND"' in section
+    assert 'compile_config >/dev/null' in section
 
 
 def test_ingest_transcripts_until_caught_up_stops_when_batches_drain(monkeypatch) -> None:
@@ -824,6 +1236,8 @@ def test_scheduled_transcript_ingest_honors_dry_run_first_marker(tmp_path, monke
         calls.append(command)
         return Completed()
 
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
     monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
 
     status = memory_harden.run_node(

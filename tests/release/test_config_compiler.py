@@ -678,6 +678,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_MAX_INPUT_CHARS=500000" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_REQUIRE_FULL_LOOKBACK=true" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST=true" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=300" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.5" in runtime_env
@@ -689,6 +690,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=20" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN=5" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION=1" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=500000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=32000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=90" in runtime_env
@@ -3976,10 +3979,13 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
             "personalization": {"default_conversation_recall": False},
             "memory_hardening": {
                 "operator_user_email": "qa@example.com",
+                "min_apply_interval_seconds": 600,
                 "transcripts": {
                     "source_dir": "/path/to/transcripts",
                     "ignore_globs": ["_index.json", "state/**"],
                     "max_files_per_run": 12,
+                    "min_files_per_run": 6,
+                    "max_batches_per_invocation": 2,
                     "max_chars_per_file": 200000,
                     "summary_max_chars": 28000,
                     "reference_memory_max_chars": 18000,
@@ -4036,9 +4042,12 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "START_RAG_API=true" in runtime_env
     assert "RAG_API_URL=http://localhost:8110" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=600" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS='_index.json,state/**'" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN=6" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION=2" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_REFERENCE_MEMORY_MAX_CHARS=18000" in runtime_env
@@ -4046,10 +4055,13 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE=detailed_summary_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in librechat_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=600" in librechat_env
     assert "RAG_API_URL=http://localhost:8110" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS='_index.json,state/**'" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN=6" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION=2" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in librechat_env

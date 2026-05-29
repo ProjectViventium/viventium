@@ -145,12 +145,34 @@
   examples, links, file references, exclusions, and background context through the structured fields
   that own that delegation. Use summaries only as labels or titles, not as the worker's complete
   instruction.
+- GlassHive workers are general intelligent workers, so less is more. Host assistants and MCP tool
+  descriptions should provide the user's actual goal, constraints, files, connected MCP/tool
+  capability context, and explicit success conditions, then trust the worker to choose the path.
+  Do not manufacture project goals, rubrics, provider lists, output artifacts, or workflow steps
+  just because a prior QA prompt happened to need them.
+- GlassHive data in and data out must be exact. The host application must pass real uploads, file
+  references, MCP grants/capabilities, retrieved context, and tool results without pretending they
+  exist or were used. If data, auth, files, or MCP access are unavailable, the delegation should
+  preserve that fact so the worker can choose a fallback or report a concrete blocker.
+- Delegated workers must receive a universal completion contract. Before reporting completion, the
+  worker must compare the actual result against the user's request, success criteria, constraints,
+  files/artifacts, visible state, or tool results when applicable; continue or remediate when the
+  result does not satisfy the request; and report a specific blocker only when it cannot complete the
+  task. This contract must stay capability-general and must not encode one QA prompt, one file type,
+  one provider, or one host application as special runtime behavior.
 - Keep host/application orchestration checks separate from worker deliverable gates. For GlassHive,
   requirements such as which MCP tool was selected, whether the chat surfaced the View / Steer link,
   callback delivery, wait/status polling cadence, and post-run inspection from the host UI belong to
   the host assistant/operator QA layer. Preserve those checks as context, but do not make a sandbox
   worker fail a completed file/browser/research/code task just because it cannot observe the host
   chat UI from inside its workspace.
+- Worker substrate failures are harness/runtime failures before they are user tasks. If a worker
+  cannot start because of missing or incompatible local prerequisites, credentials, sidecars, tools,
+  or runtime versions, the harness must classify the failure, try configured safe recovery or routing
+  such as a managed dependency, alternate available profile, or sandbox/workstation mode when that
+  does not contradict the user's request, and only then ask the user/operator for action with the
+  exact blocker. Do not make "install a global tool on your machine" the first visible recovery when
+  a managed or sandboxed path is available.
 
 ### 2.6 Production QA Operating Discipline
 - `qa/README.md` is the QA operating contract. Every developer and AI agent must treat it as the

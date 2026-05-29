@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -189,6 +190,14 @@ def http_ok(url: str) -> bool:
 
 def any_http_ok(*urls: str) -> bool:
     return any(url and http_ok(url) for url in urls)
+
+
+def url_with_path(url: str, path: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    normalized_path = "/" + path.lstrip("/")
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, normalized_path, parsed.query, parsed.fragment)
+    )
 
 
 def http_status(url: str) -> int | None:
@@ -921,8 +930,8 @@ def build_service_rows(
     )
     playground_ok = (
         any_http_ok(
-            playground_url,
-            f"http://127.0.0.1:{playground_port}",
+            url_with_path(playground_url, "/api/health"),
+            f"http://127.0.0.1:{playground_port}/api/health",
         )
         if probe_live
         else False

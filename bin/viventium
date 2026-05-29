@@ -3596,14 +3596,19 @@ case "$COMMAND" in
       subcommand_usage memory-harden
       exit 0
     fi
-    acquire_cli_lock "$COMMAND"
+    memory_harden_subcommand="${1:-}"
+    if [[ "$memory_harden_subcommand" != "status" ]]; then
+      acquire_cli_lock "$COMMAND"
+    fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     if [[ ! -f "$CONFIG_FILE" ]]; then
       echo "Missing config: $CONFIG_FILE" >&2
       echo "Run: bin/viventium install" >&2
       exit 1
     fi
-    compile_config >/dev/null
+    if [[ "$memory_harden_subcommand" != "status" ]]; then
+      compile_config >/dev/null
+    fi
     prepare_runtime_exports
     if [[ -f "$GENERATED_ENV" ]]; then
       set -a

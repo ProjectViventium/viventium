@@ -468,6 +468,7 @@ DEFAULT_MEMORY_HARDENING = {
     "max_input_chars": 500000,
     "require_full_lookback": True,
     "dry_run_first": True,
+    "min_apply_interval_seconds": 300,
     "provider_profile": "launch_ready_only",
     "anthropic_model": "claude-opus-4-7",
     "anthropic_effort": "xhigh",
@@ -477,6 +478,8 @@ DEFAULT_MEMORY_HARDENING = {
         "source_dir": "",
         "ignore_globs": [],
         "max_files_per_run": 20,
+        "min_files_per_run": 5,
+        "max_batches_per_invocation": 1,
         "max_chars_per_file": 500000,
         "summary_max_chars": 32000,
         "reference_memory_max_chars": 24000,
@@ -1998,6 +2001,10 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings["max_input_chars"] = positive_int(
         settings.get("max_input_chars"), "runtime.memory_hardening.max_input_chars"
     )
+    settings["min_apply_interval_seconds"] = positive_int(
+        settings.get("min_apply_interval_seconds"),
+        "runtime.memory_hardening.min_apply_interval_seconds",
+    )
     settings["anthropic_model"] = str(
         settings.get("anthropic_model") or DEFAULT_MEMORY_HARDENING["anthropic_model"]
     )
@@ -2017,6 +2024,14 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     transcripts["max_files_per_run"] = positive_int(
         transcripts.get("max_files_per_run"),
         "runtime.memory_hardening.transcripts.max_files_per_run",
+    )
+    transcripts["min_files_per_run"] = positive_int(
+        transcripts.get("min_files_per_run"),
+        "runtime.memory_hardening.transcripts.min_files_per_run",
+    )
+    transcripts["max_batches_per_invocation"] = positive_int(
+        transcripts.get("max_batches_per_invocation"),
+        "runtime.memory_hardening.transcripts.max_batches_per_invocation",
     )
     transcripts["max_chars_per_file"] = positive_int(
         transcripts.get("max_chars_per_file"),
@@ -2300,6 +2315,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true"
         if memory_hardening["dry_run_first"]
         else "false",
+        "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS": str(
+            memory_hardening["min_apply_interval_seconds"]
+        ),
         "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE": memory_hardening["provider_profile"],
         "VIVENTIUM_MEMORY_HARDENING_PROVIDER": memory_hardening_model["provider"],
         "VIVENTIUM_MEMORY_HARDENING_MODEL": memory_hardening_model["model"],
@@ -2316,6 +2334,12 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         ),
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN": str(
             memory_hardening["transcripts"]["max_files_per_run"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN": str(
+            memory_hardening["transcripts"]["min_files_per_run"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION": str(
+            memory_hardening["transcripts"]["max_batches_per_invocation"]
         ),
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE": str(
             memory_hardening["transcripts"]["max_chars_per_file"]
@@ -2477,6 +2501,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(LIBRECHAT_UPLOADS_DIR)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
         env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
+        env["VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET"] = scoped_secret(
+            call_session_secret,
+            "glasshive-capability-broker",
+        )
         if glasshive_enterprise["enabled"]:
             enterprise_public_api_origin = str(network.get("public_api_origin", "") or "").strip()
             env["GLASSHIVE_ENTERPRISE_MODE"] = "true"
@@ -3486,9 +3514,12 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "ALLOW_SOCIAL_LOGIN",
         "RAG_API_URL",
         "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL",
+        "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS",

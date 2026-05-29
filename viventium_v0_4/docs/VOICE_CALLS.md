@@ -52,6 +52,10 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   is reachable and before the voice worker starts. Prewarm failures are logged as startup evidence
   and should not prevent the rest of the runtime from starting; each prewarm request is bounded so
   route compilation cannot hold startup behind a long hang.
+- The helper's steady-state readiness check uses the modern playground's lightweight `/api/health`
+  route. It must not use the root page as a recurring health probe, because the root route renders
+  the user-facing Next.js app and can create unnecessary dev-server work and log volume while local
+  prod is simply staying available.
 - The stable sequence is:
   1. fetch connection details with explicit call-session dispatch prepared, then connect the room
      with microphone disabled

@@ -95,6 +95,67 @@
 - User-created MCP servers must not be able to set this flag through the public MCP creation UI/API.
   It belongs to reviewed source-of-truth/runtime config.
 
+### GlassHive Capability Broker Projection
+
+- GlassHive workers launched from Viventium/LibreChat receive connected-account MCP access through a
+  host-owned `glasshive-user-capabilities` broker MCP projected in `bootstrap_bundle_json`, not by
+  copying provider OAuth/API tokens into the worker and not by having GlassHive read LibreChat
+  storage directly.
+- The broker uses the same LibreChat MCP registry/auth/token-refresh path as normal MCP calls and
+  re-checks user scope, current server policy, and current auth state on list/describe/invoke.
+- MCP servers opt in with a reviewed, server-managed `viventiumGlassHive` policy block. Like
+  `viventiumRequestContext`, this block must be omitted from public MCP creation/update input.
+- The worker-facing broker should re-export native typed tools with namespaced names where possible.
+  A generic invoke helper may exist as an escape hatch, but it is not the default capability surface.
+- Productivity reads are not automatically safe just because they are not writes. Policy must be able
+  to distinguish metadata reads, content reads, and mutations; content reads and writes require the
+  configured per-tool/content confirmation model before background productivity agents can retire.
+- For connected-account facts or actions delegated to GlassHive, brokered MCP/tool access is exposed
+  as worker context and is preferred when it can satisfy the task. Tool choice is not a worker success
+  criterion unless the user explicitly made it one. Browser or computer UI inspection remains available
+  when MCP/tools are missing, unavailable, auth-blocked, explicitly required, or genuinely the better
+  visual/manual QA route.
+- Host models must not invent project goals, success criteria, provider lists, output schemas,
+  artifacts, ranking rules, or workflow steps just because a brokered MCP exists. If the user did not
+  provide distinct acceptance criteria, `workspace_launch`/`workspace_schedule` should use a minimal
+  criterion such as "Satisfy the user's request as stated, preserving explicit constraints," and put
+  broker availability plus other background in `context`.
+- Memory-derived priorities, active-thread/contact/deal lists, guessed urgency rubrics, and similar
+  personalization must not be added to a GlassHive task unless the user explicitly asked to use
+  memory/prior context. Generic connected-account prompts should stay generic and let the worker
+  inspect live MCP/tool evidence.
+- For vague user adjectives such as "urgent" or "important", the host model must pass the adjective
+  through instead of defining a private rubric unless the user defines the rubric.
+- When the worker runtime also has non-broker host app connectors for the same connected account, the
+  `glasshive-user-capabilities` broker remains first choice because it is scoped by the host
+  application's user/run grant and current MCP registry. Non-broker host connectors are fallback only
+  after the broker path is missing, unavailable, auth-blocked, or explicitly required.
+- Content-read intent must be host-bound, not worker-authored. The host may mint a signed broker grant
+  with a content-read scope when the user explicitly asks to inspect connected-account content; a
+  worker-supplied boolean alone must not satisfy the content-read gate.
+- Write confirmation must not be a worker-authored boolean. Mutating broker calls require a
+  host-signed confirmation token bound to the broker grant, server, tool, invocation id, and
+  argument hash; until a user-facing approval flow mints that token, writes fail closed.
+- Broker invocation replay checks must use the shared LibreChat flow/cache backing store. If that
+  shared store is unavailable, invocation-id-bearing broker calls fail closed by default; an
+  in-memory replay fallback is permitted only for explicit local single-process testing.
+- Scheduled GlassHive work must not rely on a grant that expires before the run starts. The broker
+  may extend run-scoped grants for scheduled work within a conservative cap, but far-future or
+  recurring connected-account work needs a renewal design before it can replace productivity
+  background agents.
+- Host-mode broker URLs must match the actual LibreChat listener. Local launches bind LibreChat to a
+  deterministic loopback host so a worker's projected MCP URL cannot point at an address family where
+  the broker is not listening.
+- Host-native Codex workers must receive broker MCP config through the Codex CLI config location it
+  actually loads (`$CODEX_HOME/config.toml`), not only a workspace-local diagnostic file. The worker
+  process environment should point `CODEX_HOME` at a worker-local directory with owner-only
+  permissions so the run can use the broker without exposing grants in command-line arguments.
+- The main Viventium agent should prefer this direct GlassHive/broker path over auto-activating
+  provider-specific productivity background cortices. In the local broker-first baseline, `MS365`,
+  `Google`, and `Deep Research` remain shipped specialist agents, but their main-agent background
+  activation is disabled so provider access is not mediated by a less capable background specialist
+  when the connected worker/direct-tool harness can own the work.
+
 ### MCP-Owned Instruction Contract
 
 Capability cognition belongs at the MCP boundary, not in the user-level Viventium agent prompt.
@@ -445,6 +506,9 @@ In January 2026 we temporarily worked around DCR issues by pre-seeding FastMCP O
     `login_required`, plus refresh success/failure
 - A token-present state is not accepted as "connected" until tool discovery or a real user-scoped
   Google tool call succeeds after refresh/reconnect.
+- A broker-visible MCP server with zero discovered tools must be reported as unavailable,
+  OAuth-required, or no-tools-discovered. Do not present an empty tool inventory as a healthy
+  connected capability.
 
 ### Validation
 1. Canonical local restart path:

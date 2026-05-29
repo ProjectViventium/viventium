@@ -1484,7 +1484,7 @@ while (($#)); do
 done
 
 case "$url" in
-  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/)
+  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/api/health|http://127.0.0.1:3300/api/health)
     if [[ "$write_code_only" == "1" ]]; then
       printf '200'
     fi
@@ -2268,7 +2268,7 @@ while (($#)); do
 done
 
 case "$url" in
-  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/)
+  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/api/health|http://127.0.0.1:3300/api/health)
     if [[ "$write_code_only" == "1" ]]; then
       printf '200'
     fi

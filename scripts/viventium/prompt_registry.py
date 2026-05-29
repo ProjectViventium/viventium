@@ -48,6 +48,7 @@ KNOWN_RUNTIME_PLACEHOLDERS = frozenset(
         "current_user",
         "current_date",
         "current_datetime",
+        "glasshive_worker_capability_summary",
         "iso_datetime",
     }
 )

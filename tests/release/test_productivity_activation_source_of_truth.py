@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
 import yaml
@@ -65,6 +67,26 @@ BACKGROUND_CORTEX_FOLLOW_UP_SERVICE = (
     / "viventium"
     / "BackgroundCortexFollowUpService.js"
 )
+AGENT_CLIENT_CONTROLLER = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "api"
+    / "server"
+    / "controllers"
+    / "agents"
+    / "client.js"
+)
+RUNTIME_CARD_GUARD_PROMPT = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "viventium"
+    / "source_of_truth"
+    / "prompts"
+    / "main"
+    / "background_cortex_runtime_card_guard.md"
+)
 SYNC_AGENTS_SCRIPT = (
     REPO_ROOT
     / "viventium_v0_4"
@@ -128,6 +150,37 @@ def test_productivity_activation_configs_define_explicit_scope_keys() -> None:
         activation_by_agent_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["intent_scope"]
         == "productivity_google_workspace"
     )
+
+
+def test_broker_first_local_baseline_disables_retired_main_background_cortices() -> None:
+    activation_by_agent_id = _load_activation_by_agent_id()
+    agents_by_id = _load_background_agents_by_id()
+
+    retired_main_background_cortices = {
+        "agent_viventium_deep_research_95aeb3": "web_search",
+        "agent_viventium_online_tool_use_95aeb3": "sys__server__sys_mcp_ms-365",
+        "agent_8Y1d7JNhpubtvzYz3hvEv": "sys__server__sys_mcp_google_workspace",
+    }
+
+    for agent_id, required_tool in retired_main_background_cortices.items():
+        assert activation_by_agent_id[agent_id]["enabled"] is False
+        assert required_tool in set(agents_by_id[agent_id]["tools"])
+
+    assert (
+        activation_by_agent_id["agent_viventium_confirmation_bias_95aeb3"]["enabled"] is True
+    )
+
+
+def test_confirmation_bias_is_compact_no_tool_review() -> None:
+    agents_by_id = _load_background_agents_by_id()
+    confirmation_bias = agents_by_id["agent_viventium_confirmation_bias_95aeb3"]
+    instructions = confirmation_bias["instructions"].lower()
+
+    assert confirmation_bias["tools"] == []
+    assert "no external tools" in instructions
+    assert "do not assess inbox" in instructions
+    assert "do not claim to access email, calendar, files, web search" in instructions
+    assert "google/ms365 services" in instructions
 
 
 def test_productivity_activation_prompts_define_chat_format_negative_boundary() -> None:
@@ -217,6 +270,89 @@ def test_productivity_execution_agents_ship_owned_mcp_tools() -> None:
     assert "file_search" not in google_tools
 
 
+def test_main_agent_does_not_ship_provider_productivity_mcp_tools() -> None:
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
+    main_tools = set(bundle["mainAgent"]["tools"])
+
+    assert not any("_mcp_google_workspace" in tool for tool in main_tools)
+    assert not any("_mcp_ms-365" in tool for tool in main_tools)
+
+
+def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() -> None:
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
+    instructions = bundle["mainAgent"]["instructions"].lower()
+
+    assert "do not promise that a background cortex/agent will check gmail" in instructions
+    assert "do not promise that a background cortex/agent will check outlook" in instructions
+    assert "do not defer the check to background cortices" in instructions
+    assert "use a brokered worker when that is the available connected-account path" in instructions
+    assert "memory is background" in instructions
+    assert "verified current-run google connector/tool evidence" in instructions
+    assert "verified current-run microsoft connector/tool evidence" in instructions
+
+
+def test_runtime_card_guard_fallback_matches_productivity_live_data_rule() -> None:
+    agent_client_source = AGENT_CLIENT_CONTROLLER.read_text(encoding="utf-8").lower()
+
+    assert "background_cortex_runtime_card_guard_fallback" in agent_client_source
+    assert "do not tell the user that background cortices will check gmail" in agent_client_source
+    assert "outlook, ms365, google workspace, the web, or any live connector" in agent_client_source
+    assert "verified current-run tool evidence, a brokered worker" in agent_client_source
+
+
+def test_runtime_card_guard_source_prompt_matches_inline_fallback() -> None:
+    prompt_source = RUNTIME_CARD_GUARD_PROMPT.read_text(encoding="utf-8")
+    _, _, prompt_body = prompt_source.partition("---\n")
+    _, _, prompt_body = prompt_body.partition("---\n")
+
+    agent_client_source = AGENT_CLIENT_CONTROLLER.read_text(encoding="utf-8")
+    match = re.search(
+        r"const BACKGROUND_CORTEX_RUNTIME_CARD_GUARD_FALLBACK = \[(.*?)\]\.join\('\\n'\);",
+        agent_client_source,
+        re.DOTALL,
+    )
+    assert match is not None
+
+    fallback_lines: list[str] = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        fallback_lines.append(ast.literal_eval(stripped.rstrip(",")))
+
+    normalize = lambda text: "\n".join(line.rstrip() for line in text.strip().splitlines())
+    assert normalize(prompt_body) == normalize("\n".join(fallback_lines))
+
+
+def test_productivity_direct_action_surfaces_are_same_scope_forward_contracts() -> None:
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
+    policy = bundle["config"]["viventium"]["background_cortices"]["activation_policy"]
+    surfaces = policy["direct_action_mcp_servers"]
+    intent_scopes = {
+        cortex["activation"]["intent_scope"]
+        for cortex in bundle["mainAgent"]["background_cortices"]
+        if cortex.get("activation", {}).get("intent_scope", "").startswith("productivity_")
+    }
+
+    productivity_surfaces = [
+        surface
+        for surface in surfaces
+        if str(surface.get("scope_key", "")).startswith("productivity_")
+    ]
+    assert productivity_surfaces
+    for surface in productivity_surfaces:
+        assert surface["scope_key"] in intent_scopes
+        assert surface["same_scope_background_allowed"] is True
+        assert "when this mcp is connected to the main agent" in surface["owns"].lower()
+        assert "available to the main agent" not in surface["owns"].lower()
+
+
 def test_productivity_activation_prompts_keep_parallel_provider_rule() -> None:
     activation_by_agent_id = _load_activation_by_agent_id()
 
@@ -227,6 +363,26 @@ def test_productivity_activation_prompts_keep_parallel_provider_rule() -> None:
     assert "Another cortex may activate in parallel for the Microsoft portion" in google_prompt
     assert "check both Outlook and Gmail and summarize anything urgent" in ms365_prompt
     assert "check both Outlook and Gmail and summarize anything urgent" in google_prompt
+
+
+def test_productivity_activation_prompts_cover_generic_plural_inbox_sweeps() -> None:
+    activation_by_agent_id = _load_activation_by_agent_id()
+
+    ms365_prompt = activation_by_agent_id["agent_viventium_online_tool_use_95aeb3"]["prompt"]
+    google_prompt = activation_by_agent_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["prompt"]
+
+    for prompt, provider in (
+        (ms365_prompt, "Microsoft"),
+        (google_prompt, "Google"),
+    ):
+        assert "check my inboxes" in prompt
+        assert "check my email accounts" in prompt
+        assert "check all my inboxes for anything urgent" in prompt
+        assert "with no provider restriction" in prompt
+        assert f"true for the {provider}" in prompt
+
+    assert "check my Gmail inbox; ignore Outlook" in ms365_prompt
+    assert "check my Outlook inbox; ignore Gmail" in google_prompt
 
 
 def test_background_agent_execution_models_match_launch_bundle_mix() -> None:

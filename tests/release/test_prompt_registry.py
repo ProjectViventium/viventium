@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import json
 import re
+import shutil
 import subprocess
 
 import pytest
@@ -100,6 +101,12 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert isinstance(agents["mainAgent"]["instructions"], str)
     assert "# Identity" in agents["mainAgent"]["instructions"]
     assert "{{current_user}}" in agents["mainAgent"]["instructions"]
+    assert "For important actions, If unsure which service the user means, ask." in agents["mainAgent"]["instructions"]
+    assert "configured/available connected email providers" in agents["mainAgent"]["instructions"]
+    assert "pass broker/MCP/tool availability as context" in agents["mainAgent"]["instructions"]
+    assert "Do not make tool choice, provider lists" in agents["mainAgent"]["instructions"]
+    assert "memory-derived priorities" in agents["mainAgent"]["instructions"]
+    assert "For vague user adjectives like urgent or important, pass the adjective through" in agents["mainAgent"]["instructions"]
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)
     assert "Microsoft 365 owns" in librechat["mcpServers"]["ms-365"]["serverInstructions"]
@@ -201,6 +208,7 @@ def test_phase_b_follow_up_prompts_render_with_declared_variables() -> None:
             "recent_response_context": "Here is the response you JUST sent to the user:",
             "continuation_context": "",
             "background_insights": "- worker: The task finished.",
+            "background_limitations": "",
         },
     )
     system = render_prompt(
@@ -219,6 +227,7 @@ def test_phase_b_follow_up_prompts_render_with_declared_variables() -> None:
             "user_request": "Summarize the finished task.",
             "recent_response": "I am checking.",
             "background_insights": "- worker: The task finished.",
+            "background_limitations": "",
         },
     )
 
@@ -351,21 +360,38 @@ def test_scheduling_cortex_fastmcp_instructions_match_registry_prompt() -> None:
     assert registry_instructions == server_instructions
 
 
-def _load_glasshive_instruction_builder():
+def _load_glasshive_instruction_namespace():
     tree = ast.parse(GLASSHIVE_MCP_SERVER.read_text(encoding="utf-8"))
     selected_names = {
+        "_allowed_worker_profiles",
+        "_configured_default_worker_profile",
         "_default_execution_mode",
+        "_host_profile_available",
+        "_host_profile_binary",
         "_host_workers_enabled",
         "_host_worker_mentions",
+        "_worker_capability_summary",
         "glasshive_workers_server_instructions",
     }
     selected_nodes = [
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in selected_names
+        if (isinstance(node, ast.FunctionDef) and node.name in selected_names)
+        or (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "HOST_SIDE_ORCHESTRATION_GUIDANCE"
+                for target in node.targets
+            )
+        )
     ]
-    namespace: dict[str, object] = {"os": os}
+    namespace: dict[str, object] = {"os": os, "shutil": shutil}
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(GLASSHIVE_MCP_SERVER), "exec"), namespace)
+    return namespace
+
+
+def _load_glasshive_instruction_builder():
+    namespace = _load_glasshive_instruction_namespace()
     return namespace["glasshive_workers_server_instructions"]
 
 
@@ -376,11 +402,66 @@ def test_glasshive_fastmcp_default_instructions_match_registry_prompt(monkeypatc
     monkeypatch.setenv("WPR_HOST_MENTION_CLAUDE", "@claude")
     monkeypatch.setenv("WPR_HOST_MENTION_OPENCLAW", "@openclaw")
 
-    server_instructions = _load_glasshive_instruction_builder()().strip()
+    namespace = _load_glasshive_instruction_namespace()
+    server_instructions = namespace["glasshive_workers_server_instructions"]().strip()
     registry = load_prompt_registry(PROMPT_ROOT)
-    registry_instructions = render_prompt("mcp.glasshive_workers.server", registry).strip()
+    registry_instructions = render_prompt(
+        "mcp.glasshive_workers.server",
+        registry,
+        variables={
+            "glasshive_worker_capability_summary": namespace["_worker_capability_summary"](),
+        },
+    ).strip()
 
     assert registry_instructions == server_instructions
+
+
+def test_live_data_prompt_uses_non_important_best_judgment_for_connected_inbox() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    rendered = render_prompt("main.truth_live_data", registry)
+
+    assert (
+        "- For important actions, If unsure which service the user means, ask. "
+        "Otherwise, use your best judgement or get what you can."
+    ) in rendered
+    assert "configured/available connected email providers" in rendered
+    assert "do not defer the check to background cortices" in rendered
+    assert "pass broker/MCP/tool availability as context" in rendered
+    assert "memory-derived priorities" in rendered
+    assert "For vague user adjectives like urgent or important, pass the adjective through" in rendered
+    assert "trust the GlassHive worker to choose the best path" in rendered
+
+
+def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GLASSHIVE_HOST_WORKERS_ENABLED", "true")
+    monkeypatch.setenv("WPR_DEFAULT_EXECUTION_MODE", "host")
+
+    namespace = _load_glasshive_instruction_namespace()
+    registry = load_prompt_registry(PROMPT_ROOT)
+    rendered = render_prompt(
+        "mcp.glasshive_workers.server",
+        registry,
+        variables={
+            "glasshive_worker_capability_summary": namespace["_worker_capability_summary"](),
+        },
+    )
+
+    assert "MCP/tools are preferred when they can satisfy the task" in rendered
+    assert "Do not make tool choice a workspace success criterion" in rendered
+    assert "Do not invent project goals, success criteria" in rendered
+    assert "memory-derived priorities" in rendered
+    assert "For vague user adjectives like urgent or important, pass the adjective through" in rendered
+    assert "trust the GlassHive worker to find the best path" in rendered
+    assert "Satisfy the user's request as stated, preserving explicit constraints" in rendered
+    assert "Authorization still requires a host-signed broker grant with content-read scope" in rendered
+    assert "does not unlock content reads or writes" in rendered
+    assert "success_criteria as broker/tool evidence gates" not in rendered
+    assert "Browser or computer use remains available" in rendered
+    assert "preferred scoped option" in rendered
+    assert "non-broker host connectors are fallback after" in rendered
+    assert "set connected_account_content_intent=true" in rendered
 
 
 def test_three_way_prompt_ref_resolution_matches_python_js_sync_and_runtime(

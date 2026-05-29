@@ -57,6 +57,11 @@ disabled.
 - Runtime code must not infer intent from prompt text, provider names, or tool-substring matching.
   The main agent chooses structured tool arguments (`execution_mode`, `profile`, `workspace_root`,
   `alias`, callback metadata) from source-of-truth prompts, MCP schemas, and config.
+- GlassHive delegation should stay sparse and faithful. The host assistant passes the user's real
+  goal, explicit constraints, files/uploads, MCP/tool capability context, and success conditions; it
+  must not turn those capabilities into a made-up plan, rubric, artifact requirement, or provider
+  checklist. If MCP/tool data is unavailable or unproven, pass that fact instead of pretending the
+  worker already has evidence.
 - If host vs sandbox is genuinely ambiguous and both are available, the user-facing question should
   be short and outcome-oriented: ask whether to use the real computer/session or an isolated
   sandbox. If the task clearly requires an existing login/session or local file/app, default to host.
@@ -80,6 +85,14 @@ disabled.
 - CLI worker prompts, including Docker and host-native CLI workers, must require a final
   user-facing completion block, headed `FINAL REPORT:`, so callback delivery can surface results
   instead of progress chatter or stale resumed-session summaries.
+- CLI worker prompts, `AGENTS.md`, `CODEX.md`, `CLAUDE.md`, and other bootstrap instructions must
+  include a universal completion self-check before that final report. The worker should inspect the
+  concrete output it produced, compare it with the user's request and success criteria, fix or
+  continue when the output is incomplete, and report only remaining blockers. This is a general
+  harness rule, not a prompt-specific list of file types, providers, UI surfaces, or QA phrases.
+- `AGENTS.md` is the canonical Codex project-instruction file. Compatibility files such as
+  `CLAUDE.md` and `CODEX.md` may still be materialized for non-Codex workers and older clients, but
+  they should import or mirror the same concise rules instead of growing separate product truth.
 - CLI output parsing must treat intermediate assistant messages as progress. For Codex/Claude-style
   workers, GlassHive should publish the explicit `FINAL REPORT:` section when present, otherwise the
   latest assistant result, not a concatenation of every progress message.
@@ -330,6 +343,20 @@ Host-worker UX and callback requirements:
   `runtime_dependency_missing` blocked response and creates no worker/run row. The model may recover
   by using an available profile or sandbox/workstation execution only when that does not contradict
   the user's explicit request.
+- Host-worker preflight must cover incompatible versions and missing runtime substrate, not only
+  absent binaries. If a local CLI/runtime such as Node, Python, Codex, Claude, browser automation, or
+  a helper sidecar is present but too old or misconfigured for the selected profile, GlassHive should
+  classify it as a runtime dependency problem, try configured safe recovery first, and preserve the
+  same user task. Runtime version requirements and recovery branches must come from profile metadata
+  or runtime configuration, not hardcoded prompt or provider-name rules. Safe recovery includes using
+  GlassHive-managed/bundled dependencies, a worker-local toolchain, another available profile, or
+  sandbox/workstation mode when that does not contradict the user's request. Deployments must declare
+  which of those recovery branches are actually available; unavailable branches are skipped rather
+  than simulated with ad hoc shell commands. If recovery creates a replacement worker/run, the
+  model-visible `follow_up_context` must reference the active recovered run, and blocked preflight
+  attempts must not become the conversation's current dispatch. A chat-visible "install or change
+  your global machine environment" instruction is allowed only after configured recovery paths are
+  unavailable, unsafe, or explicitly rejected.
 - Sandbox routing is a structured tool argument, not runtime prompt matching. If the user asks for
   `sandbox`, `sandboxed workspace`, `Codex Workspace`, `workstation`, a disposable browser, or risky
   untrusted browsing, the GlassHive MCP instructions must guide the host model to set
@@ -372,6 +399,16 @@ Host-worker UX and callback requirements:
 - Parent-visible logs are redacted; raw per-run logs are local files with restrictive permissions.
 - Host child processes receive a minimal runtime environment. Provider keys, callback secrets,
   LibreChat secrets, and broad parent process env are not inherited by default.
+- Host and sandbox workers may receive a run-scoped GlassHive capability broker grant through
+  project MCP config when the host opts in. That grant is not a provider credential, must be
+  short-lived, should be written with owner-only file permissions, and must be redacted from
+  snapshots, support bundles, callbacks, and public QA evidence.
+- Both sandbox and host-native materialization paths must enforce owner-only permissions for broker
+  MCP config, Claude local settings, and Codex config files because any of them can carry
+  grant-bearing project configuration.
+- Docker sandbox workers must be able to reach the host-owned broker endpoint on Linux as well as
+  Docker Desktop. The sandbox launch must provide a `host.docker.internal` alias via Docker
+  `host-gateway` unless the deployment explicitly overrides the broker URL or disables the alias.
 
 ### Host Workspace Layout
 
@@ -472,9 +509,19 @@ The harness prompt is materialized as `harness-prompt.md` for operator visibilit
 - `env` -> `~/.glasshive/runtime.env` (sourced in .bashrc)
 - `claude_project_mcp` -> workspace `.mcp.json`
 - `claude_settings_local` -> workspace `.claude/settings.local.json`
-- `claude_md` / `agents_md` -> workspace `CLAUDE.md` / `AGENTS.md`
+- `claude_md` / `agents_md` / `codex_md` -> workspace `CLAUDE.md` / `AGENTS.md` / `CODEX.md`
 - `files` -> workspace or home by scope
-- `codex_config_append` -> `~/.codex/config.toml`
+- `codex_config_append` -> worker-local `$CODEX_HOME/config.toml` and a workspace `.codex/config.toml`
+  diagnostic mirror. Host-native Codex workers must run with `CODEX_HOME` pointed at that
+  worker-local directory so Codex CLI loads the projected MCP config without leaking broker grants
+  into process arguments. Minimal Codex auth may be copied from the host Codex home into the
+  worker-local Codex home with owner-only permissions.
+- Run-scoped env and MCP/client config must be refreshed before each worker run, including reused
+  workers. Broker grants can rotate between runs; stale Claude `.mcp.json` headers, stale Codex MCP
+  blocks, or duplicate MCP server sections are security and reliability bugs.
+- Claude project MCP config must not persist literal broker bearer grants when an env-indirected
+  form is available. The bootstrap writer should materialize broker `Authorization` headers as
+  `Bearer ${GLASSHIVE_CAPABILITY_BROKER_TOKEN}` and keep the grant itself in the worker runtime env.
 
 ### Critical Boundary
 
@@ -498,6 +545,24 @@ If the GlassHive MCP server config is DB-sourced, request-context placeholders a
 when the reviewed Viventium-managed server config carries `viventiumRequestContext: true`.
 Arbitrary DB-sourced MCP servers must not receive user/body placeholder expansion, env secrets, or
 OpenID tokens through this path.
+
+For connected-account MCP access inside GlassHive, use the host-owned broker pattern: the worker
+talks to `glasshive-user-capabilities`, and the host invokes reviewed user-authorized MCPs server-side.
+Do not pass raw Google Workspace, Microsoft 365, or other provider tokens into the worker workspace.
+If a host-native runtime also exposes its own connected-account app connector, the broker remains the
+first choice when it covers that provider; host app connectors are fallback only after the broker path
+is missing, unavailable, auth-blocked, or explicitly requested.
+
+A connected-account worker may treat brokered content access as available only when the bootstrap
+contains a complete host-signed broker bundle: broker MCP server config, a projected broker grant
+token in the worker env/config, and declared scope such as content-read for the requested operation.
+A caller-authored intent flag, prompt wording, or provider name is never enough. If the complete
+bundle is absent, incomplete, expired, or scope-limited, GlassHive must inject an honesty guard that
+requires the worker to report the limitation instead of claiming Gmail, Google Workspace, Outlook,
+Microsoft 365, or other brokered MCP reachability. Enterprise env allowlists may expose the broker
+grant token needed to call the host broker, but they must not expose raw provider OAuth tokens or API
+keys. Host broker endpoints should rate-limit by grant/user/tenant and redact grant/token fields in
+logs and audit previews.
 
 Callbacks are signed per worker/run. The parent callback receiver derives a per-run HMAC key from
 the compiled callback secret plus `worker_id` and `run_id`, rejects stale timestamps and duplicate
@@ -770,6 +835,26 @@ runtime intent classifier.
   GlassHive should let the worker use its own intelligence to finish files, browser-visible results,
   research, code, or other workspace tasks, while the host assistant verifies View / Steer delivery,
   MCP tool choice, callbacks, wait/status cadence, and cross-surface inspection externally.
+- Worker prompts must also make the worker responsible for checking its own deliverable before
+  completion. The final `FINAL REPORT:` should follow a local self-check of the actual files,
+  artifacts, browser-visible result, command/test output, or researched facts when those are relevant
+  to the task. The worker should continue or repair mismatches it can fix, and report a blocker only
+  when the remaining blocker is real and specific.
+- GlassHive harness/runtime recovery must happen below the worker intelligence when the worker cannot
+  even start. Version mismatches, missing CLIs, broken sidecars, or unavailable managed dependencies
+  are not user-facing project goals and must not be delegated as "fix this on your end" unless the
+  configured managed/profile/sandbox recovery options have been exhausted or would require an unsafe
+  global host mutation.
+- GlassHive MCP caller instructions must expose brokered MCP/tool capability as context, not as
+  invented workspace goals. Unless the user explicitly specified them, callers must not manufacture
+  success criteria, provider lists, output formats, artifacts, ranking rules, or workflow steps for
+  the worker. Use minimal acceptance criteria when needed and trust the GlassHive worker to choose
+  the best path from the user's request, available MCPs/tools, and runtime context.
+- Callers must also avoid injecting memory-derived priorities, active-thread/contact/deal lists, or
+  guessed urgency rubrics into `description`, `success_criteria`, or `context` unless the user
+  explicitly asked GlassHive to use remembered or prior-chat context.
+- For vague user adjectives such as "urgent" or "important", callers must pass the adjective
+  through instead of defining a private rubric unless the user defines the rubric.
 - User-facing dispatch tools, including `workspace_launch`, `workspace_schedule`, and
   `worker_delegate_once`, must inject the worker-side host-orchestration separation rule into the
   assigned run instruction unless it is already present. This keeps lower-level delegation paths from
@@ -781,6 +866,10 @@ runtime intent classifier.
   still treat effort as structured configuration, not prompt-string intent matching.
 - Idle/cost controls are product requirements, not operator nice-to-haves. Default enterprise
   configuration must make the cost risk visible and configurable.
+- Paused/idle compute release must be idempotent. Once GlassHive has stopped worker compute while
+  preserving workspace state, the worker record must carry a durable release marker so periodic
+  reaper passes do not repeatedly stop the same already-released compute or emit duplicate lifecycle
+  events. Starting/resuming compute clears that marker.
 - Public QA artifacts must sanitize local paths, personal emails, account ids, subscription ids,
   raw logs, DB exports, screenshots with private content, and secret-bearing commands.
 - Enterprise service managers must disable raw uvicorn access logs or prove redaction before logs
@@ -947,6 +1036,7 @@ persistent home and workspace mounts.
 | `GLASSHIVE_RUN_TIMEOUT_SEC` / `WPR_RUN_TIMEOUT_SEC` | unset | Optional explicit timeout for long-running CLI worker runs; unset means no default hard cap |
 | `GLASSHIVE_HOST_RUN_TIMEOUT_SEC` / `WPR_HOST_RUN_TIMEOUT_SEC` | unset | Optional host-specific override for host-native CLI runs |
 | `GLASSHIVE_IDLE_TERMINATE_AFTER_S` | `0` | When positive, stop idle worker compute while preserving workspace/home state |
+| `GLASSHIVE_PAUSED_TERMINATE_AFTER_S` | `0` | When positive, stop manually paused worker compute after the configured age; already-released paused compute must be skipped until the worker is resumed |
 | `GLASSHIVE_IDLE_REAPER_INTERVAL_S` | `60` | Idle reaper interval |
 
 For long enterprise research/file jobs, the wait defaults should be treated as a chat transport

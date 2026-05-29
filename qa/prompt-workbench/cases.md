@@ -299,10 +299,12 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: 2026-05-26, FAIL. The scheduled 03:00 Workbench-private nightly row did not run:
-Scheduling Cortex was unavailable, Prompt Workbench returned connection refused in Playwright, the
-row remained overdue, and no current scheduled-prompt run row existed. See
-`qa/memory-hardening/reports/2026-05-26-nightly-routines-health-review.md`.
+Last Run: 2026-05-27, PASS. After the stale-cache and host-worker callback fixes, the built-in
+`Subconscious Deep Thought` schedule was manually triggered on the real local admin account. The run
+queued, executed through GlassHive, completed, updated the parent task ledger to `success` / `sent`,
+and the real Workbench UI showed the latest `Recent Runs` entry as completed. Earlier synthetic
+stale-cache proof also passed. See
+`qa/scheduling-cortex/reports/2026-05-27-real-account-glasshive-backpressure-ledger-qa.md`.
 
 ## PW-010 Eval Designer And Results
 

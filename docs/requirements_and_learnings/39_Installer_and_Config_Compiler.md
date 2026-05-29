@@ -64,6 +64,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `WPR_BOOTSTRAP_SOURCE_ROOTS`
   - `VIVENTIUM_GLASSHIVE_CALLBACK_URL`
   - `VIVENTIUM_GLASSHIVE_CALLBACK_SECRET`
+  - `VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET`
   - `GLASSHIVE_ENTERPRISE_MODE`
   - `GLASSHIVE_AUTH_MODE`
   - `GLASSHIVE_ENTERPRISE_TENANT_ID`
@@ -164,6 +165,27 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     first-run guard
   - when `dry_run_first` is enabled, the first scheduled apply with no marker performs a dry-run
     and writes the marker before future scheduled applies can mutate memory
+  - model-backed memory hardening and transcript ingest are power-gated by the wrapper on macOS:
+    they skip while the machine is on battery power or has recorded thermal/performance warnings
+    unless an operator explicitly passes `--ignore-power-gate` with
+    `VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE=1`. `--ignore-idle-gate` only bypasses user-idle
+    checks and must not bypass this power/thermal gate.
+  - the power/thermal check is a shared local maintenance contract in
+    `scripts/viventium/power_budget.py`; audit automations must report power-budget skips instead
+    of forcing model-backed work with `--ignore-power-gate`.
+  - when hardening is allowed to run, the wrapper starts the Node/model child at lower OS priority
+    so scheduled work does not compete with foreground local-prod/dev work.
+  - model-backed dry-run/apply hardening has a Node-owned efficiency gate in addition to the wrapper
+    power gate: default `min_apply_interval_seconds` is 300, the public marker is stored in
+    memory-hardening state without raw paths or content, and the only non-interactive bypass is
+    `--ignore-efficiency-gate` paired with
+    `VIVENTIUM_MEMORY_HARDENING_ALLOW_EFFICIENCY_OVERRIDE=1`. Power overrides are intentionally
+    separate and must not bypass this cooldown.
+  - `apply --run-id <run-id>` applies an already generated proposal and does not invoke model-backed
+    proposal generation; it is intentionally outside the model-work cooldown.
+  - `bin/viventium memory-harden status` is read-only operational inspection and must not wait on
+    the global user-facing CLI lock or recompile config; it reports existing generated/runtime
+    state while a hardening run may be in progress.
   - non-macOS operators must wire an equivalent cron/systemd timer; the public CLI currently
     auto-installs schedules only through macOS LaunchAgents
   - `provider_profile` must stay `launch_ready_only`
@@ -183,7 +205,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - ignore globs are serialized into env as a comma-separated list; glob literals should not contain
     commas
   - transcript caps are deterministic cost controls, not content judgment:
-    `max_files_per_run` default 20, `max_chars_per_file` default 500,000,
+    `max_files_per_run` default 20, `min_files_per_run` default 5 for apply-mode Node batches,
+    `max_batches_per_invocation` default 1 in the wrapper, `max_chars_per_file` default 500,000,
     `summary_max_chars` default 32,000, reference saved-memory context default 24,000 chars,
     reference recent-conversation context default 36,000 chars, and stable-evidence decay default
     90 days
@@ -200,7 +223,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     vector-backed file_search resources
   - the macOS helper's manual `Advanced > Ingest Meeting Transcripts` action uses the same wrapper
     path, shows the active operator scope before and after the run, bypasses the idle gate because
-    it is user-triggered, defaults to zero durable saved-memory changes, and writes only
+    it is user-triggered, marks the run as interactive maintenance so the cooldown can be bypassed
+    for that click, keeps the power/thermal gate in force, runs one bounded batch of at least 5
+    transcript files, defaults to zero durable saved-memory changes, and writes only
     status/scope/count helper logs. Durable memory reflection remains the normal scheduled hardener
     responsibility unless the operator explicitly overrides the change cap.
   - introducing a future newer model family requires updating model governance and release contract
