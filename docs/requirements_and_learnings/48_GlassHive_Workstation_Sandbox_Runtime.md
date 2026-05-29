@@ -642,6 +642,23 @@ restart. For session-independent durability (a future launchd job that detaches 
 enterprise/headless Panorad), provision a **headless token** — `claude setup-token` (user-run OAuth) →
 inject `CLAUDE_CODE_OAUTH_TOKEN` into the worker env via the bootstrap, the file/token parity codex already
 has. Do **not** extract or persist the Keychain token.
+
+**Enterprise (AITP/Maisy/Panorad) compatibility of these two fixes.** Enterprise GlassHive runs **docker**
+workers with **provider-route auth** (Codex→Azure OpenAI Responses, OpenClaw→Portkey, Claude→Anthropic/Portkey
+via `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`), not macOS Keychain (`host_worker.enabled` is forced false +
+`default_execution_mode=docker` when `glasshive_azure_enterprise_enabled`). Therefore:
+- The `USER`/`LOGNAME` fix is in `_host_env` (host runtime) and **does not touch** the enterprise docker path
+  (`_container_env`) — no enterprise behavior change, no regression.
+- The `structuredContent` fix is in the shared broker route and is **universal** — it equally unblocks the
+  enterprise docker claude worker (a strict MCP client) once that deployment repairs its Anthropic/Portkey
+  credential. It is a net improvement for enterprise, not a risk.
+- Enterprise's claude-code worker is gated on repairing that credential and on its
+  `GLASSHIVE_ALLOWED_WORKER_PROFILES` allowlist (`codex-cli,openclaw-general`); its durable headless path is
+  the same `CLAUDE_CODE_OAUTH_TOKEN`/API-key injection above (already its model).
+- The local `default_worker_profile=claude-code` is **local-scoped**: the compiler default is `codex-cli`
+  (no change for unset configs), and the runtime fails closed if a default is not in an environment's
+  allowlist — so enterprise stays `codex-cli` and cannot silently inherit an unadvertised worker.
+No cloud change was made; this records compatibility so the enterprise contract stays respected.
 - **Reasoning effort.** The codex worker's effort is config-driven via
   `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
   `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`

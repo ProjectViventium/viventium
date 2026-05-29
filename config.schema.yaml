@@ -335,6 +335,8 @@ properties:
                 type: boolean
               workspace_root:
                 type: string
+              default_worker_profile:
+                type: string
               default_execution_mode:
                 type: string
                 enum: [host, docker]

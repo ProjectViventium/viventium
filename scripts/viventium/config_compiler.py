@@ -361,6 +361,12 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     prompt_visibility = host_worker.get("prompt_visibility") or {}
     workspace_root = str(host_worker.get("workspace_root") or "~/viventium").strip() or "~/viventium"
     enabled = resolve_bool(host_worker.get("enabled"), True)
+    # Config-driven default worker profile. Defaults to codex-cli (prior behavior, no
+    # change for anyone who does not set it). Local configs may opt into claude-code.
+    # The runtime validates this against GLASSHIVE_ALLOWED_WORKER_PROFILES, so a default
+    # that is not in an environment's allowlist (e.g. enterprise excludes claude-code)
+    # fails closed at startup rather than silently using an unadvertised worker.
+    default_worker_profile = str(host_worker.get("default_worker_profile") or "codex-cli").strip() or "codex-cli"
     default_execution_mode = str(host_worker.get("default_execution_mode") or "host").strip().lower()
     if default_execution_mode not in {"host", "docker"}:
         default_execution_mode = "host"
@@ -372,6 +378,7 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     return {
         "enabled": enabled,
         "workspace_root": workspace_root,
+        "default_worker_profile": default_worker_profile,
         "default_execution_mode": default_execution_mode,
         "mentions": {
             "codex": str(mentions.get("codex") or "@codex"),
@@ -2485,6 +2492,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
         env["GLASSHIVE_HOST_WORKERS_ENABLED"] = "true" if glasshive_host_worker["enabled"] else "false"
+        env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] = str(glasshive_host_worker["default_worker_profile"])
         env["WPR_HOST_WORKSPACE_ROOT"] = str(glasshive_host_worker["workspace_root"])
         env["WPR_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] = "true" if glasshive_host_worker["destructive_confirmation_enabled"] else "false"
