@@ -212,7 +212,13 @@ The 5s delay is **most consistent** with:
 ---
 
 ## Local Fast Profile Addendum (2026-03-05)
-Local env was updated to align with the Phase A/background values that reduce voice-call startup
+Historical note: the values in this addendum were superseded by the May 30 two-mode contract in
+`02_Background_Agents.md`. Current generated runtime defaults are voice async ON with
+`VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690`,
+`VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`, and text async OFF with
+`VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300`.
+
+Older local env was updated to align with the Phase A/background values that reduce voice-call startup
 delay without letting the main voice LLM start before Phase A knows whether background processing is
 active:
 
@@ -369,12 +375,11 @@ into the low-risk latency fix.
 
 - The config compiler now emits the documented voice Phase A env:
   `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice`,
-  `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false`,
-  `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500`, and
-  `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false`.
-- Fully async voice background detection remains an explicit operator opt-in, because the shipped
-  default must let Phase A know that background processing has kicked off before the main voice LLM
-  starts.
+  `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true`,
+  `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690`, and
+  `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`.
+- Fully async voice background detection is now the shipped default; text async remains an explicit
+  opt-in via its independent text flag.
 - Fully async opt-in detection explicitly keeps `all_within_budget` detection semantics in the
   background so Phase B receives the complete activated set. The `any_activated_on_voice`
   early-notice behavior belongs to the shipped sync Phase A path.
@@ -397,9 +402,9 @@ into the low-risk latency fix.
   count. It intentionally does not log prompt text, message text, auth headers, or provider keys.
 - The voice gateway now supplies a per-turn stream id to LibreChat, so sequential voice turns can be
   correlated and do not depend on conversation id as an implicit stream identifier.
-- Live local DB for the experimental main agent was set to `xai / grok-4.3` with
-  `voice_llm_model_parameters.reasoning_effort: "none"`. Tracked source YAML was intentionally not
-  changed because the live DB is the active experiment surface for this incident.
+- The current local source-of-truth main-agent voice route is `xai / grok-4.3` with
+  `voice_llm_model_parameters.reasoning_effort: "none"`; live DB must be synced and verified through
+  the agent sync path rather than by relying on hand-edited runtime state.
 
 ### Microtiming addendum (2026-05-19)
 
@@ -539,9 +544,10 @@ Second-opinion review from Claude validated the broad RCA and corrected two deta
   effect, not just a retry loop. Primary init cost about 2.1s; total client init cost about 4.15s.
   The fallback route currently repeats tool/MCP loading on the happy path.
 - The existing hydrated-tool Phase A recheck does not help this scenario when request tools are
-  already populated but do not own the configured Google Workspace / Microsoft 365 hold scopes. A
-  simple env flip such as `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true` would be a risky
-  shortcut, not the aligned fix.
+  already populated but do not own the configured Google Workspace / Microsoft 365 hold scopes.
+  Owner decision 2026-05-30: accept the voice-mode async tradeoff and ship
+  `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true`; first-answer speed wins, while late or
+  side-effecting context must surface through Phase B/follow-up evidence.
 
 Recommended least-risk order:
 

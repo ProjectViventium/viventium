@@ -171,6 +171,26 @@ print(JSON.stringify({
     return summary, warnings
 
 
+def resolve_mongo_uri(runtime_env: dict[str, str], runtime_dir: Path) -> str | None:
+    mongo_uri = runtime_env.get("MONGO_URI")
+    if mongo_uri:
+        return mongo_uri
+
+    librechat_env = runtime_dir / "service-env" / "librechat.env"
+    if librechat_env.is_file():
+        service_env = load_env_file(librechat_env)
+        mongo_uri = service_env.get("MONGO_URI")
+        if mongo_uri:
+            return mongo_uri
+
+    mongo_port = runtime_env.get("VIVENTIUM_LOCAL_MONGO_PORT")
+    mongo_db = runtime_env.get("VIVENTIUM_LOCAL_MONGO_DB")
+    if mongo_port and mongo_db:
+        return f"mongodb://127.0.0.1:{mongo_port}/{mongo_db}"
+
+    return None
+
+
 def read_schedule_summary(db_path: Path) -> tuple[dict[str, Any], list[str]]:
     summary: dict[str, Any] = {
         "dbPresent": db_path.is_file(),
@@ -244,7 +264,7 @@ def capture_manifest(args: argparse.Namespace) -> dict[str, Any]:
         runtime_env.get("SCHEDULING_DB_PATH") or state_root / "scheduling" / "schedules.db"
     ).expanduser()
 
-    mongo_summary, mongo_warnings = read_mongo_summary(runtime_env.get("MONGO_URI"))
+    mongo_summary, mongo_warnings = read_mongo_summary(resolve_mongo_uri(runtime_env, runtime_dir))
     schedule_summary, schedule_warnings = read_schedule_summary(scheduling_db)
 
     warnings: list[str] = []

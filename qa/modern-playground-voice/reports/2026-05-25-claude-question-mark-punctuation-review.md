@@ -1,3 +1,5 @@
+<!-- qa-evidence-exempt: Legacy or historical run note predates the V2 QA report template; retained as public-safe context, not a fresh completion claim. -->
+
 # Claude Review Prompt: Streaming TTS Question-Mark Regression
 
 You are review-only. Do not make code changes. Use maximum effort and challenge the proposed fix with evidence from the repo, LiveKit behavior, and tests.

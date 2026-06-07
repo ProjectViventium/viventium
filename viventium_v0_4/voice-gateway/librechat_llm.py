@@ -250,7 +250,6 @@ class _NoResponseStreamGuard:
         self._buffer = []
         self._buffer_text = ""
         return False, ([cleaned] if cleaned else [])
-# === VIVENTIUM END ===
 
 
 # === VIVENTIUM START ===
@@ -985,6 +984,9 @@ class _LibreChatLLMStream(llm.LLMStream):
                         "streamId": self._request_id,
                         "voiceMode": self._llm_impl._voice_mode,
                         "voiceProvider": self._llm_impl._voice_provider,
+                        # Normalize cumulative/snapshot-shaped text at LibreChat's stream boundary
+                        # before SSE fan-out, resumable storage, and Mongo aggregation.
+                        "viventiumTextDeltaMode": "auto",
                         # Ensure surface-aware prompt rules apply for voice calls.
                         "viventiumInputMode": "voice_call",
                         "viventiumSurface": "voice",
@@ -1154,7 +1156,7 @@ class _LibreChatLLMStream(llm.LLMStream):
                                     if _should_debug_voice_markup():
                                         display_delta = debug_display_filter.feed(delta)
                                         logger.info(
-                                            "[VoiceMarkup] llm_delta raw_json=%s tts_delta_json=%s display_delta_json=%s",
+                                            "[VoiceMarkup] llm_delta stream_delta_json=%s tts_delta_json=%s display_delta_json=%s",
                                             _debug_text_json(raw_delta),
                                             _debug_text_json(delta),
                                             _debug_text_json(display_delta),

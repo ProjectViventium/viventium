@@ -2745,3 +2745,25 @@ mkdir -p tmp/voice-component-fork-inventory
 ```
 
 Use that local raw file during the future upstream pull/rebase to inspect exact old context and line-by-line additions/removals for each hunk ID. Before any public commit, keep only this tracked inventory unless the raw diff has been separately sanitized and reviewed.
+
+## Local STT tuning learnings (2026-05-30)
+
+- Local STT (`pywhispercpp` / `large-v3-turbo`, warm) is accurate and faster than real-time
+  (WER 0.000 on clean synthetic clips; 15.6s audio → ~0.66s decode). It is **not** a current voice
+  bottleneck; the real voice latency wins are the LLM/cortex/EOU/preemptive-TTS levers, not STT.
+- **Temperature-fallback cap — investigated and REJECTED:** whisper.cpp retries the decode at rising
+  temperatures (step `temperature_inc`, default 0.2) on threshold failure. New env
+  `VIVENTIUM_STT_TEMPERATURE_INC` in `pywhispercpp_provider.py` can bound/disable it, but the full
+  21-case degraded A/B showed `=0` **regresses accuracy** on noisy/quiet audio (e.g. WER 0.000→0.204)
+  and is **not faster** (mean p50 493→540ms). The retries do real accuracy work. Knob ships but
+  **defaults to library behavior**; do not set it to 0 globally.
+- Do **not** touch the `audio_ctx`>12s full-context logic for speed — it protects long-utterance
+  accuracy (truncation risk).
+- **Core ML / ANE encoder is PARKED on Apple Silicon + macOS 26:** the prebuilt `pywhispercpp` wheel
+  is Metal-only (verified: 0 CoreML symbols, no `.mlmodelc`); enabling it needs full Xcode (`coremlc`)
+  and the ANE encoder path is broken upstream (whisper.cpp #3702 → silent Metal fallback). Net today =
+  Metal parity, no speedup. ANE is also the wrong accelerator for the rest of the local stack
+  (Chatterbox TTS / LLM decode are autoregressive → Metal/MLX; VAD + int8 turn-detector → no benefit).
+- QA: reusable accuracy+speed harness `viventium_v0_4/voice-gateway/tests/stt_local_accuracy_bench.py`
+  (clean + degraded clips, hard WER-regression gate); living QA area `qa/voice-stt-local/`. Per Key
+  Principles §0, an STT change ships only if faster AND no WER regression > 0.02.

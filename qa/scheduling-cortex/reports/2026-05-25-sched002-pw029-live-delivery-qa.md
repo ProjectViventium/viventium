@@ -1,3 +1,5 @@
+<!-- qa-evidence-exempt: Legacy or historical run note predates the V2 QA report template; retained as public-safe context, not a fresh completion claim. -->
+
 # SCHED-002 / PW-029 Live Delivery QA - 2026-05-25
 
 ## Status

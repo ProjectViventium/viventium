@@ -93,7 +93,7 @@ echo "Mode: $TELEGRAM_BACKEND"
 if [ "$TELEGRAM_BACKEND" = "livekit" ]; then
   echo "LiveKit URL: $LIVEKIT_URL"
 else
-  echo "LibreChat Origin: ${VIVENTIUM_LIBRECHAT_ORIGIN:-http://localhost:3180}"
+  echo "LibreChat Origin: ${VIVENTIUM_LIBRECHAT_ORIGIN:-http://127.0.0.1:3180}"
 fi
 
 # Ensure dependencies are installed (optional check)

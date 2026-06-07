@@ -165,6 +165,17 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     )
 
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert config["runtime"]["nightly_routines"]["enabled"] is True
+    assert config["runtime"]["prompt_workbench"]["enabled"] is True
+    assert config["runtime"]["prompt_workbench"]["seed_nightly"]["active"] is True
+    assert config["runtime"]["prompt_workbench"]["seed_nightly"]["executor"] == "glasshive_host"
+    assert config["runtime"]["memory_hardening"]["enabled"] is True
+    assert config["runtime"]["memory_hardening"]["operator_user_email"] == ""
+    assert config["runtime"]["memory_hardening"]["transcripts"]["source_dir"] == ""
+    assert (
+        config["runtime"]["memory_hardening"]["transcripts"]["rag_mode"]
+        == "detailed_summary_only"
+    )
     assert config["runtime"]["retrieval"]["embeddings"]["provider"] == "ollama"
     assert config["runtime"]["retrieval"]["embeddings"]["model"] == "qwen3-embedding:0.6b"
     assert config["runtime"]["retrieval"]["embeddings"]["profile"] == "medium"
@@ -176,6 +187,8 @@ def test_build_base_config_matches_easy_install_defaults() -> None:
     assert config["runtime"]["auth"]["allow_registration"] is True
     assert config["runtime"]["auth"]["bootstrap_registration_once"] is False
     assert config["runtime"]["auth"]["allow_password_reset"] is False
+    assert config["integrations"]["glasshive"]["enabled"] is True
+    assert config["integrations"]["glasshive"]["host_worker"]["enabled"] is True
     assert config["integrations"]["code_interpreter"]["enabled"] is False
     assert config["integrations"]["web_search"]["enabled"] is False
     assert config["integrations"]["web_search"]["search_provider"] == "searxng"
@@ -227,6 +240,8 @@ def test_configure_easy_install_keeps_conversation_recall_deferred_when_docker_d
             return None
 
     prompt_web_search_calls: list[bool] = []
+    prompt_recall_calls: list[bool] = []
+    prompt_transcript_calls: list[bool] = []
 
     monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: True)
     monkeypatch.setattr(wizard, "docker_total_memory_bytes", lambda: None)
@@ -234,6 +249,16 @@ def test_configure_easy_install_keeps_conversation_recall_deferred_when_docker_d
         wizard,
         "prompt_web_search",
         lambda *_args, **_kwargs: prompt_web_search_calls.append(True),
+    )
+    monkeypatch.setattr(
+        wizard,
+        "prompt_conversation_recall",
+        lambda *_args, **_kwargs: prompt_recall_calls.append(True),
+    )
+    monkeypatch.setattr(
+        wizard,
+        "prompt_transcript_source",
+        lambda *_args, **_kwargs: prompt_transcript_calls.append(True),
     )
     monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
@@ -246,8 +271,12 @@ def test_configure_easy_install_keeps_conversation_recall_deferred_when_docker_d
     config, deferred = wizard.configure_easy_install(FakeUI())
 
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
-    assert "conversation_recall" in deferred
+    assert config["integrations"]["glasshive"]["enabled"] is True
+    assert config["runtime"]["prompt_workbench"]["enabled"] is True
+    assert config["runtime"]["memory_hardening"]["enabled"] is True
     assert prompt_web_search_calls == [True]
+    assert prompt_recall_calls == [True]
+    assert prompt_transcript_calls == [True]
 
 
 def test_configure_easy_install_defers_conversation_recall_without_docker(monkeypatch) -> None:
@@ -265,10 +294,24 @@ def test_configure_easy_install_defers_conversation_recall_without_docker(monkey
             return None
 
     monkeypatch.setattr(wizard, "docker_desktop_installed", lambda: False)
+    prompt_web_search_calls: list[dict[str, object]] = []
+    prompt_recall_calls: list[dict[str, object]] = []
+    prompt_transcript_calls: list[bool] = []
+
     monkeypatch.setattr(
         wizard,
         "prompt_web_search",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Easy Install should not prompt for web search without Docker Desktop")),
+        lambda *_args, **kwargs: prompt_web_search_calls.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(
+        wizard,
+        "prompt_conversation_recall",
+        lambda *_args, **kwargs: prompt_recall_calls.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(
+        wizard,
+        "prompt_transcript_source",
+        lambda *_args, **_kwargs: prompt_transcript_calls.append(True),
     )
     monkeypatch.setattr(wizard, "prompt_voice_settings", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard, "ensure_generated_secret", lambda *_args, **_kwargs: None)
@@ -281,8 +324,11 @@ def test_configure_easy_install_defers_conversation_recall_without_docker(monkey
     config, deferred = wizard.configure_easy_install(FakeUI())
 
     assert config["runtime"]["personalization"]["default_conversation_recall"] is False
-    assert "conversation_recall" in deferred
-    assert "web_search" in deferred
+    assert prompt_web_search_calls == [
+        {"easy": False, "docker_installed": False, "docker_memory_bytes": None}
+    ]
+    assert prompt_recall_calls == [{"docker_installed": False}]
+    assert prompt_transcript_calls == [True]
 
 
 def test_normalize_preset_preserves_dormant_voice_provider_keys(monkeypatch) -> None:
@@ -540,6 +586,89 @@ def test_prompt_web_search_with_docker_warns_when_firecrawl_memory_is_low() -> N
 
     assert any("bounded local Firecrawl profile" in note for note in ui.notes)
     assert any("prefer Firecrawl API" in note for note in ui.notes)
+
+
+def test_prompt_conversation_recall_without_docker_records_preflight_need() -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    ui = _FakeWizardUI(selects=[], confirms=[True])
+    deferred: list[str] = []
+
+    wizard.prompt_conversation_recall(
+        ui,
+        config,
+        deferred,
+        docker_installed=False,
+    )
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is True
+    assert "conversation_recall" not in deferred
+    assert any("install Docker Desktop during preflight" in note for note in ui.notes)
+
+
+def test_prompt_conversation_recall_deferred_when_user_skips() -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    ui = _FakeWizardUI(selects=[], confirms=[False])
+    deferred: list[str] = []
+
+    wizard.prompt_conversation_recall(
+        ui,
+        config,
+        deferred,
+        docker_installed=True,
+    )
+
+    assert config["runtime"]["personalization"]["default_conversation_recall"] is False
+    assert "conversation_recall" in deferred
+
+
+def test_prompt_transcript_source_sets_existing_folder(tmp_path: Path) -> None:
+    wizard = load_wizard_module()
+    source_dir = tmp_path / "transcripts"
+    source_dir.mkdir()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    ui = _FakeWizardUI(selects=[], texts=[str(source_dir)], confirms=[True])
+    deferred: list[str] = []
+
+    wizard.prompt_transcript_source(ui, config, deferred)
+
+    assert config["runtime"]["memory_hardening"]["transcripts"]["source_dir"] == str(source_dir)
+    assert "transcript_ingest" not in deferred
+
+
+def test_easy_voice_uses_hosted_guidance_on_non_apple_silicon(monkeypatch) -> None:
+    wizard = load_wizard_module()
+    config = wizard.build_base_config(
+        install_mode="native",
+        primary_provider="openai",
+        auth_mode="connected_account",
+        secondary_provider="none",
+    )
+    ui = _FakeWizardUI(selects=[], confirms=[True])
+    monkeypatch.setattr(wizard, "is_apple_silicon_mac", lambda: False)
+
+    wizard.prompt_voice_settings(ui, config, advanced=False)
+
+    assert config["voice"]["mode"] == "hosted"
+    assert config["voice"]["stt_provider"] == "openai"
+    assert config["voice"]["tts_provider"] == "openai"
+    assert any("Hosted voice" in note for note in ui.notes)
 
 
 def test_prompt_telegram_reprompts_until_botfather_token_looks_valid(monkeypatch) -> None:

@@ -921,6 +921,14 @@ sync_memory_hardening_schedule() {
   fi
 }
 
+apply_default_nightly_routines() {
+  [[ -f "$CONFIG_FILE" ]] || return 0
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/default_nightly_routines.py" \
+    --config "$CONFIG_FILE" \
+    --write \
+    --quiet
+}
+
 continuity_audit_root() {
   if declare -F continuity_audit_dir >/dev/null 2>&1; then
     continuity_audit_dir "$APP_SUPPORT_DIR"
@@ -2254,6 +2262,38 @@ PY
   [[ "$code" =~ ^(2|3)[0-9][0-9]$ ]]
 }
 
+http_url_reachable() {
+  local url="${1:-}"
+  local timeout_seconds="${2:-2}"
+  [[ -n "$url" ]] || return 1
+
+  local code=""
+  if command -v curl >/dev/null 2>&1; then
+    code="$(curl -sS -L -o /dev/null --max-time "$timeout_seconds" -w '%{http_code}' "$url" 2>/dev/null || true)"
+  else
+    code="$(
+      "$PYTHON_BIN" - "$url" "$timeout_seconds" <<'PY'
+import sys
+import urllib.error
+import urllib.request
+
+url = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
+request = urllib.request.Request(url, method="GET")
+try:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        print(getattr(response, "status", 200))
+except urllib.error.HTTPError as error:
+    print(error.code)
+except Exception:
+    print("000")
+PY
+    )"
+  fi
+
+  [[ "$code" =~ ^[1-4][0-9][0-9]$ ]]
+}
+
 local_http_surface_healthy() {
   local port="${1:-}"
   local path_suffix="${2:-/}"
@@ -2272,6 +2312,23 @@ api_surface_healthy() {
 frontend_surface_healthy() {
   local port="${1:-}"
   local_http_surface_healthy "$port" "/"
+}
+
+rag_api_surface_healthy() {
+  local base_url=""
+  base_url="$(read_generated_env_value "RAG_API_URL" "")"
+  if [[ -z "$base_url" ]]; then
+    local rag_port=""
+    rag_port="$(read_generated_env_value "VIVENTIUM_RAG_API_PORT" "")"
+    if [[ -n "$rag_port" ]]; then
+      base_url="http://localhost:${rag_port}"
+    fi
+  fi
+  base_url="${base_url%/}"
+  [[ -n "$base_url" ]] || return 1
+
+  http_url_healthy "${base_url}/health" ||
+    http_url_healthy "${base_url}/"
 }
 
 searxng_surface_healthy() {
@@ -2311,6 +2368,54 @@ firecrawl_surface_healthy() {
   return 1
 }
 
+mcp_url_surface_reachable() {
+  local env_key="${1:-}"
+  local fallback_url="${2:-}"
+  local url=""
+  url="$(read_generated_env_value "$env_key" "$fallback_url")"
+  url="${url%/}"
+  [[ -n "$url" ]] || return 1
+  http_url_reachable "$url" 3
+}
+
+runtime_pid_file_running() {
+  local pid_file_name="${1:-}"
+  [[ -n "$pid_file_name" ]] || return 1
+
+  local runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  local state_root=""
+  state_root="$(read_generated_env_value "VIVENTIUM_STATE_ROOT" "")"
+  if [[ -z "$state_root" ]]; then
+    state_root="$APP_SUPPORT_DIR/state/runtime/$runtime_profile"
+  fi
+
+  local candidate pid
+  for candidate in "$state_root/$pid_file_name" "$state_root/logs/$pid_file_name"; do
+    [[ -f "$candidate" ]] || continue
+    pid="$(tr -d '[:space:]' <"$candidate" 2>/dev/null || true)"
+    if pid_is_running "$pid"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+telegram_bridge_surface_healthy() {
+  local api_port=""
+  local frontend_port=""
+  local playground_port=""
+  assign_runtime_ports api_port frontend_port playground_port
+  (
+    runtime_pid_file_running "telegram_bot.pid" ||
+      runtime_pid_file_running "telegram_bot_deferred.pid"
+  ) && api_surface_healthy "$api_port"
+}
+
+telegram_codex_surface_healthy() {
+  runtime_pid_file_running "telegram_codex.pid"
+}
+
 optional_install_surfaces_healthy() {
   if runtime_env_true "START_SEARXNG" "false" && ! searxng_surface_healthy; then
     return 1
@@ -2319,6 +2424,25 @@ optional_install_surfaces_healthy() {
     return 1
   fi
   return 0
+}
+
+runtime_optional_surfaces_healthy() {
+  if runtime_env_true "START_RAG_API" "false" && ! rag_api_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "START_GOOGLE_MCP" "false" && ! mcp_url_surface_reachable "GOOGLE_WORKSPACE_MCP_URL" "http://localhost:8111/mcp"; then
+    return 1
+  fi
+  if runtime_env_true "START_MS365_MCP" "false" && ! mcp_url_surface_reachable "MS365_MCP_SERVER_URL" "http://localhost:6274/mcp"; then
+    return 1
+  fi
+  if runtime_env_true "START_TELEGRAM" "false" && ! telegram_bridge_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "START_TELEGRAM_CODEX" "false" && ! telegram_codex_surface_healthy; then
+    return 1
+  fi
+  optional_install_surfaces_healthy
 }
 
 pid_matches_repo_scope() {
@@ -2406,15 +2530,21 @@ launch_stack_detached() {
     echo "Run: bin/viventium install" >&2
     exit 1
   fi
+  local core_surfaces_healthy=1
   if user_surface_healthy; then
-    echo "Viventium is already running."
-    return 0
+    core_surfaces_healthy=0
+    if runtime_optional_surfaces_healthy; then
+      echo "Viventium is already running."
+      return 0
+    fi
   fi
   if detached_launch_process_group_running; then
     echo "Viventium is already starting."
     return 0
   fi
-  if is_stack_running; then
+  if [[ "$core_surfaces_healthy" == "0" ]]; then
+    echo "Viventium core surfaces are running, but enabled sidecars need startup. Repairing..."
+  elif is_stack_running; then
     echo "Detected Viventium processes, but no healthy user-facing surface. Restarting the local stack..."
     stop_stack_for_upgrade
   fi
@@ -3277,9 +3407,11 @@ case "$COMMAND" in
       fi
       "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
     fi
+    apply_default_nightly_routines
     CURRENT_INSTALL_STAGE="preflight"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     run_preflight apply
+    apply_default_nightly_routines
     CURRENT_INSTALL_STAGE="bootstrap-components"
     write_install_stage "$CURRENT_INSTALL_STAGE"
     bootstrap_components
@@ -3390,7 +3522,9 @@ case "$COMMAND" in
     UPGRADE_AUDIT_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
     PRE_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "pre-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
     echo "Pre-upgrade continuity audit written to $(display_safe_path "$PRE_UPGRADE_CONTINUITY_AUDIT")"
+    apply_default_nightly_routines
     run_preflight apply
+    apply_default_nightly_routines
     bootstrap_components_upgrade_checked
     compile_config
     "$REPO_ROOT/scripts/viventium/doctor.sh" \
@@ -3459,6 +3593,7 @@ case "$COMMAND" in
       exit 1
     fi
     "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
+    apply_default_nightly_routines
     compile_config
     sync_memory_hardening_schedule
     ;;
@@ -3468,6 +3603,7 @@ case "$COMMAND" in
     ;;
   compile-config)
     acquire_cli_lock "$COMMAND"
+    apply_default_nightly_routines
     compile_config "$@"
     sync_memory_hardening_schedule
     ;;
@@ -3596,14 +3732,19 @@ case "$COMMAND" in
       subcommand_usage memory-harden
       exit 0
     fi
-    acquire_cli_lock "$COMMAND"
+    memory_harden_subcommand="${1:-}"
+    if [[ "$memory_harden_subcommand" != "status" ]]; then
+      acquire_cli_lock "$COMMAND"
+    fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     if [[ ! -f "$CONFIG_FILE" ]]; then
       echo "Missing config: $CONFIG_FILE" >&2
       echo "Run: bin/viventium install" >&2
       exit 1
     fi
-    compile_config >/dev/null
+    if [[ "$memory_harden_subcommand" != "status" ]]; then
+      compile_config >/dev/null
+    fi
     prepare_runtime_exports
     if [[ -f "$GENERATED_ENV" ]]; then
       set -a
@@ -3755,6 +3896,7 @@ case "$COMMAND" in
     # fixes and silently leaving the machine in an older behavior state than the current branch.
     # compile_config is cheap relative to stack startup and keeps start deterministic.
     # === VIVENTIUM END ===
+    apply_default_nightly_routines
     compile_config
     sync_memory_hardening_schedule
     prepare_runtime_exports

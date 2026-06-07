@@ -54,7 +54,7 @@ from utils.env import coerce_bool
 from utils.singleton import SingletonAlreadyRunning, acquire_telegram_singleton_lock
 # === VIVENTIUM START ===
 # Feature: Centralized voice reply gating helper.
-from utils.voice import normalize_voice_preference, should_request_voice_mode, should_send_voice_reply
+from utils.voice import normalize_voice_preference, should_request_audio_reply, should_send_voice_reply
 # === VIVENTIUM END ===
 # === VIVENTIUM START ===
 # Feature: Telegram account linking flow + citation-safe formatting helpers.
@@ -562,8 +562,9 @@ async def command_bot(update, context, title="", has_command=True):
                 bot_info = await context.bot.get_me(read_timeout=time_out, write_timeout=time_out, connect_timeout=time_out, pool_timeout=time_out)
                 bot_info_username = bot_info.username
             except Exception as e:
-                bot_info_username = update_message.reply_to_message.from_user.username
-                logger.error(f"Error getting bot info: {e}")
+                reply_sender = getattr(getattr(update_message, "reply_to_message", None), "from_user", None)
+                bot_info_username = getattr(reply_sender, "username", None)
+                logger.warning("Telegram bot get_me failed while handling update; reply context available=%s: %s", bool(reply_sender), e)
 
             if update_message.reply_to_message \
             and update_message.from_user.is_bot == False \
@@ -876,7 +877,8 @@ async def getViventiumResponse(
     telegram_user_id = str(update_message.from_user.id) if update_message.from_user else ""
     telegram_username = update_message.from_user.username if update_message.from_user else ""
 
-    # Voice output preference controls both prompt routing and final audio send.
+    # Telegram remains a text-mode surface. Voice preferences control optional audio delivery only;
+    # LiveKit voice-call mode/prompt routing stays false for Telegram turns.
     always_voice = False
     voice_responses_enabled = True
     try:
@@ -890,11 +892,12 @@ async def getViventiumResponse(
     always_voice_active = normalize_voice_preference(always_voice, False)
     voice_responses_active = normalize_voice_preference(voice_responses_enabled, True)
 
-    voice_mode = should_request_voice_mode(
+    telegram_audio_requested = should_request_audio_reply(
         voice_note_detected=voice_note_detected,
         always_voice=always_voice_active,
         voice_enabled=voice_responses_active,
     )
+    voice_mode = False
     input_mode = "voice_note" if voice_note_detected else "text"
     # === VIVENTIUM START ===
     _tg_timing_log(
@@ -902,8 +905,9 @@ async def getViventiumResponse(
         "response_start",
         response_start_ts,
         extra=(
-            f"voice={int(voice_mode)} input_voice={int(bool(voice_note_detected))} "
-            f"always_voice={int(always_voice_active)} files={len(files) if files else 0}"
+            f"voice={int(voice_mode)} audio_requested={int(telegram_audio_requested)} "
+            f"input_voice={int(bool(voice_note_detected))} always_voice={int(always_voice_active)} "
+            f"files={len(files) if files else 0}"
         ),
     )
     _tg_deep_log(
@@ -912,8 +916,9 @@ async def getViventiumResponse(
         response_start_ts,
         base_ts=response_start_ts,
         extra=(
-            f"voice={int(voice_mode)} input_voice={int(bool(voice_note_detected))} "
-            f"always_voice={int(always_voice_active)} files={len(files) if files else 0}"
+            f"voice={int(voice_mode)} audio_requested={int(telegram_audio_requested)} "
+            f"input_voice={int(bool(voice_note_detected))} always_voice={int(always_voice_active)} "
+            f"files={len(files) if files else 0}"
         ),
     )
     # === VIVENTIUM END ===
@@ -940,7 +945,7 @@ async def getViventiumResponse(
         # Fix: Always render HTML for text display, even when input was a voice note.
         # Voice-note input should NOT degrade text readability.
         # TTS synthesis has its own sanitization path (prepare_tts_text in tts.py).
-        return render_telegram_markdown(text, strip_voice_markup=voice_mode), "HTML"
+        return render_telegram_markdown(text, strip_voice_markup=telegram_audio_requested), "HTML"
         # === VIVENTIUM NOTE END ===
     # === VIVENTIUM END ===
 
@@ -1186,6 +1191,7 @@ async def getViventiumResponse(
         # === VIVENTIUM START ===
         # Feature: Capture LibreChat attachment events (files/images) for Telegram delivery.
         lc_attachments: list[dict[str, Any]] = []
+        bridge_error_audio_allowed = True
         # === VIVENTIUM END ===
         async for data in robot.ask_stream_async(
             text,
@@ -1206,11 +1212,17 @@ async def getViventiumResponse(
             # === VIVENTIUM START ===
             # If the bridge emits structured events (e.g., attachments), capture them and continue.
             if isinstance(data, dict):
-                if data.get("type") == "attachment":
-                    attachment = data.get("attachment")
-                    if isinstance(attachment, dict):
-                        lc_attachments.append(attachment)
-                continue
+                if data.get("type") == "bridge_error":
+                    bridge_error_audio_allowed = bool(data.get("speak", False))
+                    data = str(data.get("text") or "")
+                    if not data:
+                        continue
+                else:
+                    if data.get("type") == "attachment":
+                        attachment = data.get("attachment")
+                        if isinstance(attachment, dict):
+                            lc_attachments.append(attachment)
+                    continue
             # === VIVENTIUM END ===
             if stop_event.is_set() and convo_id == target_convo_id and answer_messageid and answer_messageid < reset_mess_id:
                 return
@@ -1595,7 +1607,7 @@ async def getViventiumResponse(
                             if now_parse_mode == "HTML"
                             else (
                                 sanitize_telegram_display_text(tmpresult)
-                                if voice_mode
+                                if telegram_audio_requested
                                 else sanitize_telegram_text(tmpresult)
                             )
                         )
@@ -1616,21 +1628,23 @@ async def getViventiumResponse(
                     now_parse_mode,
                     fallback_text=(
                         sanitize_telegram_display_text(tmpresult)
-                        if voice_mode
+                        if telegram_audio_requested
                         else sanitize_telegram_text(tmpresult)
                     ),
                 )
 
     # === VIVENTIUM START ===
     # Feature: Centralized gating for voice replies.
-    # Reuse the same preference snapshot used before generation so prompt routing
-    # and final audio delivery cannot disagree during one Telegram turn.
+    # Reuse the same preference snapshot used before generation so audio delivery
+    # stays consistent during one Telegram turn.
     should_send_voice = should_send_voice_reply(
         voice_note_detected=voice_note_detected,
         always_voice=always_voice_active,
         voice_enabled=voice_responses_active,
         text=tmpresult,
     )
+    if not bridge_error_audio_allowed:
+        should_send_voice = False
     logger.info(
         "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s send=%s",
         trace_id,
@@ -2233,7 +2247,12 @@ async def error(update, context):
     if "Message to be replied not found" in traceback_string:
         logger.warning('error: telegram.error.BadRequest: Message to be replied not found')
         return
-    logger.warning('Update "%s" caused error "%s"', update, context.error)
+    logger.warning(
+        'Telegram update caused error "%s" (update_id=%s, message_id=%s)',
+        context.error,
+        getattr(update, "update_id", None),
+        getattr(getattr(update, "effective_message", None), "message_id", None),
+    )
     logger.warning('Error traceback: %s', ''.join(traceback_string))
 
 # REMOVED: MCP Commands - MCP integration is handled by Viventium agent directly

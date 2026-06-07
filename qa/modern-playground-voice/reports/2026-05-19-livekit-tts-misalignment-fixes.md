@@ -1,3 +1,5 @@
+<!-- qa-evidence-exempt: Legacy or historical run note predates the V2 QA report template; retained as public-safe context, not a fresh completion claim. -->
+
 # LiveKit TTS Misalignment Fixes
 
 Date: 2026-05-19

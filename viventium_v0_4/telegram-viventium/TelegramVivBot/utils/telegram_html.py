@@ -20,9 +20,15 @@ _FENCED_CODE_RE = re.compile(r"```(\w*)\n([\s\S]*?)```", re.MULTILINE)
 _INLINE_CODE_RE = re.compile(r"`([^`\n]+?)`")
 _LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]+)\)")
 _BOLD_ASTERISK_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
-_BOLD_UNDERSCORE_RE = re.compile(r"__(.+?)__", re.DOTALL)
+_BOLD_UNDERSCORE_RE = re.compile(
+    r"(?<![\w])__(?![_\s])(.+?)(?<![\s_])__(?![\w])",
+    re.DOTALL,
+)
 _ITALIC_ASTERISK_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
-_ITALIC_UNDERSCORE_RE = re.compile(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)")
+_ITALIC_UNDERSCORE_RE = re.compile(
+    r"(?<![\w])_(?![_\s])(.+?)(?<![\s_])_(?![\w])",
+    re.DOTALL,
+)
 _STRIKETHROUGH_RE = re.compile(r"~~(.+?)~~")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 _BLOCKQUOTE_RE = re.compile(r"^>\s?(.*)$", re.MULTILINE)

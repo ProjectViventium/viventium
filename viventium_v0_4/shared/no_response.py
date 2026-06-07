@@ -18,6 +18,12 @@ NO_RESPONSE_TAG = "{NTA}"
 # Accept whitespace variants like "{ NTA }" and case variants like "{nta}".
 _NO_RESPONSE_TAG_RE = re.compile(r"^\s*\{\s*NTA\s*\}\s*$", re.IGNORECASE)
 _INLINE_NO_RESPONSE_TAG_RE = re.compile(r"\{\s*NTA\s*\}", re.IGNORECASE)
+# Defensive last-mile cleanup for malformed internal no-response artifacts produced by
+# stream-boundary corruption, while keeping exact-match suppression semantics strict.
+_INLINE_NO_RESPONSE_ARTIFACT_RE = re.compile(
+    r"(?<![$\\])\{(?:[NTA{}\s]*)N(?:[NTA{}\s]*)T(?:[NTA{}\s]*)A(?:[NTA{}\s]*)\}?",
+    re.IGNORECASE,
+)
 
 # Match a trailing {NTA} at the end of a response (after content).
 # The model sometimes generates content then appends {NTA}, violating the
@@ -87,18 +93,23 @@ def strip_inline_nta(text: Optional[str], *, preserve_outer_whitespace: bool = F
     - If the model violates the "ONLY {NTA}" rule and includes real content too,
       preserve the real content while preventing the raw marker from leaking into
       UI, chat logs, or TTS output.
+    - If an upstream stream-boundary bug malformed the same internal marker, strip
+      that known marker artifact too. This does not broaden no-response suppression;
+      only exact/no-response-only checks suppress a whole message.
     """
     if not isinstance(text, str):
         return text or ""
     leading_whitespace = preserve_outer_whitespace and text[:1].isspace()
     trailing_whitespace = preserve_outer_whitespace and text[-1:].isspace()
-    cleaned = _INLINE_NO_RESPONSE_TAG_RE.sub(" ", text)
+    cleaned = _INLINE_NO_RESPONSE_ARTIFACT_RE.sub(" ", text)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"\s+\n", "\n", cleaned)
     cleaned = re.sub(r"\n\s+", "\n", cleaned)
     if preserve_outer_whitespace:
         cleaned = cleaned.strip()
         if not cleaned:
+            if text and text.isspace():
+                return " "
             return ""
         if leading_whitespace:
             cleaned = " " + cleaned.lstrip()

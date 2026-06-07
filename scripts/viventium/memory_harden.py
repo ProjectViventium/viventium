@@ -12,6 +12,13 @@ import sys
 from pathlib import Path
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import power_budget
+
+
 DEFAULT_SCHEDULE = "0 3 * * *"
 DEFAULT_TIMEZONE = "America/Toronto"
 LAUNCH_AGENT_LABEL = "ai.viventium.memory-harden"
@@ -182,6 +189,50 @@ def user_email_for_run(args: argparse.Namespace, runtime_env: dict[str, str]) ->
     ).strip()
 
 
+def bool_env_disabled(value: str | None) -> bool:
+    return power_budget.bool_env_disabled(value)
+
+
+def command_uses_model_work(args: argparse.Namespace) -> bool:
+    return str(getattr(args, "command", "") or "") in {"dry-run", "apply", "ingest-transcripts"}
+
+
+def running_on_battery_power() -> bool:
+    return power_budget.running_on_battery_power()
+
+
+def thermal_state_constrained() -> bool:
+    return power_budget.thermal_state_constrained()
+
+
+def power_gate_skip_reason(args: argparse.Namespace, env: dict[str, str]) -> str | None:
+    if not command_uses_model_work(args):
+        return None
+    return power_budget.skip_reason(
+        env=env,
+        gate_env_name="VIVENTIUM_MEMORY_HARDENING_POWER_GATE",
+        ignore_power_gate=getattr(args, "ignore_power_gate", False),
+        override_env_name="VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE",
+        running_on_battery=running_on_battery_power(),
+        thermal_constrained=thermal_state_constrained(),
+    )
+
+
+def emit_resource_gate_skip(args: argparse.Namespace, reason: str) -> int:
+    if getattr(args, "json", False):
+        payload = {
+            "schemaVersion": 1,
+            "status": "skipped",
+            "reason": reason,
+            "users": [{"status": "skipped", "reason": reason}],
+            "apply_results": [],
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"memory hardening skipped: {reason}", file=sys.stderr)
+    return 0
+
+
 def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[str]:
     script = args.repo_root / "viventium_v0_4" / "LibreChat" / "scripts" / "viventium-memory-hardening.js"
     node_mode = args.command
@@ -268,6 +319,10 @@ def node_command(args: argparse.Namespace, runtime_env: dict[str, str]) -> list[
         command.append("--allow-delete")
     if args.ignore_idle_gate:
         command.append("--ignore-idle-gate")
+    if getattr(args, "ignore_efficiency_gate", False):
+        command.append("--ignore-efficiency-gate")
+    if getattr(args, "interactive_maintenance", False):
+        command.append("--interactive-maintenance")
     if args.skip_model_probe:
         command.append("--skip-model-probe")
     if args.allow_partial_lookback:
@@ -289,13 +344,19 @@ def transcript_backfill_skipped_by_cap(summary: dict[str, object]) -> int:
     return skipped
 
 
+def model_subprocess_kwargs(*, capture_output: bool) -> dict[str, object]:
+    kwargs: dict[str, object] = {"text": True, "capture_output": capture_output}
+    if hasattr(os, "nice"):
+        kwargs["preexec_fn"] = lambda: os.nice(10)
+    return kwargs
+
+
 def run_node_once(args: argparse.Namespace, runtime_env: dict[str, str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         node_command(args, runtime_env),
         cwd=args.repo_root / "viventium_v0_4" / "LibreChat",
         env=env,
-        text=True,
-        capture_output=True,
+        **model_subprocess_kwargs(capture_output=True),
     )
 
 
@@ -304,7 +365,11 @@ def run_transcript_backfill_until_caught_up(
 ) -> int:
     if not getattr(args, "apply", False):
         raise SystemExit("--until-caught-up requires --apply because dry-runs do not advance transcript state")
-    max_batches = int(getattr(args, "max_batches", None) or 25)
+    max_batches = int(
+        getattr(args, "max_batches", None)
+        or env.get("VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION")
+        or 1
+    )
     if max_batches <= 0:
         raise SystemExit("--max-batches must be greater than 0")
     final_status = 0
@@ -375,6 +440,9 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_EFFORT", "xhigh")
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
+    skip_reason = power_gate_skip_reason(args, env)
+    if skip_reason:
+        return emit_resource_gate_skip(args, skip_reason)
     scheduled_apply = args.command == "apply" or (
         args.command == "ingest-transcripts" and getattr(args, "apply", False)
     )
@@ -394,7 +462,7 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
                 node_command(args, runtime_env),
                 cwd=args.repo_root / "viventium_v0_4" / "LibreChat",
                 env=env,
-                text=True,
+                **model_subprocess_kwargs(capture_output=False),
             )
             if result.returncode == 0:
                 marker.parent.mkdir(parents=True, exist_ok=True)
@@ -407,7 +475,7 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
         command,
         cwd=args.repo_root / "viventium_v0_4" / "LibreChat",
         env=env,
-        text=True,
+        **model_subprocess_kwargs(capture_output=False),
     )
     return int(process.returncode)
 
@@ -441,6 +509,9 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--transcript-rag-mode")
         sub.add_argument("--allow-delete", action="store_true")
         sub.add_argument("--ignore-idle-gate", action="store_true")
+        sub.add_argument("--ignore-power-gate", action="store_true")
+        sub.add_argument("--ignore-efficiency-gate", action="store_true")
+        sub.add_argument("--interactive-maintenance", action="store_true")
         sub.add_argument("--skip-model-probe", action="store_true")
         sub.add_argument("--allow-partial-lookback", action="store_true")
         sub.add_argument("--scheduled", action="store_true")
@@ -470,6 +541,9 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--max-batches", type=int)
     ingest.add_argument("--allow-delete", action="store_true")
     ingest.add_argument("--ignore-idle-gate", action="store_true")
+    ingest.add_argument("--ignore-power-gate", action="store_true")
+    ingest.add_argument("--ignore-efficiency-gate", action="store_true")
+    ingest.add_argument("--interactive-maintenance", action="store_true")
     ingest.add_argument("--skip-model-probe", action="store_true")
     ingest.add_argument("--allow-partial-lookback", action="store_true")
     ingest.add_argument("--scheduled", action="store_true")

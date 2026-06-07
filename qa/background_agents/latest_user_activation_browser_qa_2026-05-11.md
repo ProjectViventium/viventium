@@ -1,21 +1,22 @@
 # Latest-User Activation Browser QA
-- Started: 2026-05-12T16:42:05.332Z
+- Started: 2026-05-31T02:37:44.908Z
 - Scope: local synthetic browser run with public-safe hashes only; release approval still requires committed diffs, nested pin agreement, scans, and review-only gates.
 - Contract: setup cards must appear, then the latest simple output-only user message must answer without stale-history cortex cards.
 - Client hash: `1907c09a5927cc92`
 - API hash: `49e73564e9d328ef`
 - QA user hash: `70a842432bd857c0`
-- Setup prompt hash: `1f43af103a0a0520`
+- Setup prompt hash: `e399817237a4f1ce`
 - Test prompt hash: `0a0cd1aa1cd51611`
 - Conversation hash: `unverified`
 - Setup cards visible: false
 - Setup follow-up ready: false
 - Latest assistant hash: `unverified`
 - Latest parent text length: 0
-- Latest parent includes TEST_OK: false
+- Expected text: `2b14d3f7bff03b94`
+- Latest parent includes expected text: false
 - Latest parent exactly expected text: false
-- TEST_OK visible before reload: false
-- TEST_OK visible after reload: false
+- Expected text visible before reload: false
+- Expected text visible after reload: false
 - Latest direct assistant count: 0
 - Latest Phase B child count: 0
 - Latest Phase B visible child count: 0
@@ -24,4 +25,4 @@
 - Direct access-token fallback used: false
 - Environment blocked: false
 - Result: FAIL
-- Error: Local QA JWT auth requires VIVENTIUM_QA_ALLOW_LOCAL_JWT=1
+- Error: QA user not found

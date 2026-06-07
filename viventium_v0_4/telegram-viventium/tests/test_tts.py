@@ -105,11 +105,10 @@ def test_prepare_tts_text_strips_shared_artifacts_without_breaking_word_boundari
     assert "turn0search4" not in cleaned
     assert "https://" not in cleaned
     assert "qa@example.com" not in cleaned
-    assert "example.com" not in cleaned
+    assert "visit example.com" in cleaned
     assert "Good to hear you. Next." in cleaned
     assert "Persian. If you mean coolest, read brief." in cleaned
     assert "email available" in cleaned
-    assert "link available" in cleaned
 
 
 def test_prepare_tts_text_matches_livekit_common_artifact_cleanup():
@@ -123,6 +122,19 @@ def test_prepare_tts_text_matches_livekit_common_artifact_cleanup():
     assert tts_module.prepare_tts_text(raw) == sse.sanitize_voice_tts_text(
         raw,
         allow_voice_controls=True,
+    )
+
+
+def test_prepare_tts_text_preserves_dot_heavy_technical_tokens_like_livekit():
+    sse = _load_voice_gateway_sse_module()
+    raw = "Use .NET, asp.net, v1.2A, U.S.A., and node.js. Done.Next."
+
+    assert tts_module.prepare_tts_text(raw) == sse.sanitize_voice_tts_text(
+        raw,
+        allow_voice_controls=True,
+    )
+    assert tts_module.prepare_tts_text(raw) == (
+        "Use .NET, asp.net, v1.2A, U.S.A., and node.js. Done. Next."
     )
 
 
@@ -184,6 +196,17 @@ def test_prepare_tts_text_strips_inline_nta_like_livekit():
     assert tts_module.prepare_tts_text("Useful context { NTA } keep going.") == (
         "Useful context keep going."
     )
+
+
+def test_prepare_tts_text_strips_malformed_internal_nta_artifacts_like_livekit():
+    sse = _load_voice_gateway_sse_module()
+    raw = "Useful context {N{NTATA}} and {N{NTA} keep going."
+
+    assert tts_module.prepare_tts_text(raw) == sse.sanitize_voice_tts_text(
+        raw,
+        allow_voice_controls=True,
+    )
+    assert "{N" not in tts_module.prepare_tts_text(raw)
 
 
 def test_plain_fallback_stage_direction_cleanup_matches_livekit():

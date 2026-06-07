@@ -6,10 +6,12 @@ import json
 import os
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from installer_ui import InstallerUI  # noqa: E402
+from brain_readiness import ADVANCED_OFF_KEYS, FEATURE_BY_KEY, feature_guidance, feature_label  # noqa: E402
 from retrieval_config import resolve_retrieval_embeddings_settings  # noqa: E402
 from telegram_tokens import telegram_bot_token_looks_valid  # noqa: E402
 
@@ -189,6 +192,14 @@ def http_ok(url: str) -> bool:
 
 def any_http_ok(*urls: str) -> bool:
     return any(url and http_ok(url) for url in urls)
+
+
+def url_with_path(url: str, path: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    normalized_path = "/" + path.lstrip("/")
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, normalized_path, parsed.query, parsed.fragment)
+    )
 
 
 def http_status(url: str) -> int | None:
@@ -638,10 +649,19 @@ def telegram_recent_runtime_issue(log_paths: list[Path]) -> tuple[str, str] | No
         ),
     )
 
+    recovery_markers = (
+        "starting polling mode",
+        "application started",
+        "telegram bot started",
+    )
+
     for path in log_paths:
         text = recent_log_text(path).lower()
         if not text:
             continue
+        latest_recovery = max((text.rfind(marker) for marker in recovery_markers), default=-1)
+        if latest_recovery >= 0:
+            text = text[latest_recovery:]
         for needles, status, detail in issue_checks:
             if any(needle in text for needle in needles):
                 return status, detail
@@ -662,6 +682,7 @@ def telegram_service_status(
     pending_pid_file_name: str | None = None,
     pending_marker_file_name: str | None = None,
     pending_detail: str | None = None,
+    requires_lc_api: bool = False,
 ) -> tuple[str, str]:
     token = str(runtime_env.get(token_env_key, "") or "").strip()
     state_roots = runtime_state_root_candidates(config, runtime_env, runtime_dir, repo_root)
@@ -702,6 +723,23 @@ def telegram_service_status(
         issue = telegram_recent_runtime_issue(log_paths)
         if issue is not None:
             return issue
+        if probe_live and requires_lc_api:
+            lc_origin = str(runtime_env.get("VIVENTIUM_LIBRECHAT_ORIGIN") or "").strip().rstrip("/")
+            api_port = runtime_port(config, runtime_env, "VIVENTIUM_LC_API_PORT", "lc_api_port", 3180)
+            api_health_urls = (
+                url_with_path(lc_origin, "/health") if lc_origin else "",
+                url_with_path(lc_origin, "/api/health") if lc_origin else "",
+                f"http://localhost:{api_port}/health",
+                f"http://127.0.0.1:{api_port}/health",
+                f"http://localhost:{api_port}/api/health",
+                f"http://127.0.0.1:{api_port}/api/health",
+            )
+            if not any_http_ok(*api_health_urls):
+                detail = lc_origin or f"http://127.0.0.1:{api_port}"
+                return (
+                    "Running with issues",
+                    f"LibreChat API is unreachable at {detail}; Telegram cannot start new chats until it recovers.",
+                )
         return "Running", running_detail
 
     if pending_running:
@@ -854,6 +892,310 @@ def web_search_summary(config: dict[str, Any]) -> str:
     return f"{search_label} + {scraper_label}"
 
 
+def transcript_source_dir(config: dict[str, Any], runtime_env: dict[str, str] | None = None) -> str:
+    runtime_env = runtime_env or {}
+    env_source = str(runtime_env.get("VIVENTIUM_MEMORY_TRANSCRIPTS_DIR") or "").strip()
+    if env_source:
+        return env_source
+    transcripts = (
+        ((config.get("runtime") or {}).get("memory_hardening") or {}).get("transcripts") or {}
+    )
+    return str(transcripts.get("source_dir") or "").strip()
+
+
+def scheduler_mcp_url(runtime_env: dict[str, str]) -> str:
+    explicit = str(runtime_env.get("SCHEDULING_MCP_URL") or "").strip()
+    if explicit:
+        return explicit
+    port = str(
+        runtime_env.get("VIVENTIUM_SCHEDULING_MCP_PORT")
+        or runtime_env.get("SCHEDULING_MCP_PORT")
+        or "7110"
+    ).strip()
+    if port.isdigit():
+        return f"http://localhost:{port}/mcp"
+    return ""
+
+
+def scheduler_health_url(url: str) -> str:
+    return url_with_path(url, "/health") if url else ""
+
+
+def scheduler_db_path(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+) -> Path | None:
+    explicit = str(runtime_env.get("SCHEDULING_DB_PATH") or "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    state_root = runtime_state_root(config, runtime_env, runtime_dir)
+    if state_root is None:
+        return None
+    return state_root / "scheduling" / "schedules.db"
+
+
+def _sqlite_table_names(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _sqlite_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def scheduler_ledger_summary(path: Path | None) -> str:
+    if path is None:
+        return "ledger location pending"
+    if not path.is_file():
+        return "ledger pending"
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+    except Exception:
+        return "ledger unreadable"
+    try:
+        with conn:
+            tables = _sqlite_table_names(conn)
+            if "scheduled_tasks" not in tables:
+                return "ledger schema pending"
+            columns = _sqlite_columns(conn, "scheduled_tasks")
+            active_count = None
+            if "active" in columns:
+                active_count = int(
+                    conn.execute("SELECT COUNT(*) FROM scheduled_tasks WHERE active = 1").fetchone()[0]
+                )
+            total_count = int(conn.execute("SELECT COUNT(*) FROM scheduled_tasks").fetchone()[0])
+            count_summary = (
+                f"{active_count} active / {total_count} total"
+                if active_count is not None
+                else f"{total_count} total"
+            )
+            wanted = [
+                column
+                for column in (
+                    "last_status",
+                    "last_delivery_outcome",
+                    "last_delivery_at",
+                    "last_run_at",
+                    "next_run_at",
+                )
+                if column in columns
+            ]
+            if not wanted:
+                return count_summary
+            order_column = "last_delivery_at" if "last_delivery_at" in columns else "updated_at"
+            if order_column not in columns:
+                order_column = "created_at" if "created_at" in columns else "id"
+            selected = ", ".join(wanted)
+            row = conn.execute(
+                f"SELECT {selected} FROM scheduled_tasks "
+                f"ORDER BY COALESCE({order_column}, '') DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return count_summary
+            values = dict(zip(wanted, row))
+            status_bits: list[str] = []
+            if values.get("last_status"):
+                status_bits.append(f"last status {values['last_status']}")
+            if values.get("last_delivery_outcome"):
+                status_bits.append(f"delivery {values['last_delivery_outcome']}")
+            if values.get("next_run_at"):
+                status_bits.append(f"next {values['next_run_at']}")
+            return f"{count_summary}; " + "; ".join(status_bits) if status_bits else count_summary
+    except Exception:
+        return "ledger unreadable"
+    finally:
+        conn.close()
+
+
+def scheduler_ledger_has_latest_issue(path: Path | None) -> bool:
+    if path is None or not path.is_file():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+    except Exception:
+        return False
+    try:
+        with conn:
+            if "scheduled_tasks" not in _sqlite_table_names(conn):
+                return False
+            columns = _sqlite_columns(conn, "scheduled_tasks")
+            wanted = [
+                column
+                for column in ("last_status", "last_delivery_outcome", "last_delivery_at", "updated_at", "created_at")
+                if column in columns
+            ]
+            if not {"last_status", "last_delivery_outcome"} & set(wanted):
+                return False
+            order_column = "last_delivery_at" if "last_delivery_at" in columns else "updated_at"
+            if order_column not in columns:
+                order_column = "created_at" if "created_at" in columns else "id"
+            selected = ", ".join(column for column in ("last_status", "last_delivery_outcome") if column in columns)
+            if not selected:
+                return False
+            row = conn.execute(
+                f"SELECT {selected} FROM scheduled_tasks "
+                f"ORDER BY COALESCE({order_column}, '') DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return False
+            values = dict(zip(selected.split(", "), row))
+            last_status = str(values.get("last_status") or "").strip().lower()
+            last_delivery = str(values.get("last_delivery_outcome") or "").strip().lower()
+            return last_status in {"error", "failed"} or last_delivery in {
+                "failed",
+                "dead_lettered",
+                "error",
+            }
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def scheduler_status_and_detail(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+    runtime_dir: Path | None,
+    *,
+    probe_live: bool,
+    stack_should_be_live: bool,
+    startup_in_progress: bool,
+) -> tuple[str, str]:
+    start_enabled = resolve_bool(runtime_env.get("START_SCHEDULING_MCP"), True)
+    url = scheduler_mcp_url(runtime_env)
+    db_path = scheduler_db_path(config, runtime_env, runtime_dir)
+    ledger = scheduler_ledger_summary(db_path)
+    ledger_has_issue = scheduler_ledger_has_latest_issue(db_path)
+    if probe_live and url:
+        if http_ok(scheduler_health_url(url)):
+            if ledger_has_issue:
+                return "Running with issues", f"{url} | {ledger}"
+            return "Running", f"{url} | {ledger}"
+        if stack_should_be_live and start_enabled:
+            return (
+                "Starting" if startup_in_progress else "Action Required",
+                f"Endpoint not reachable at {scheduler_health_url(url) or url} | {ledger}",
+            )
+    return "Configured", f"{url or 'Local Scheduling Cortex MCP'} | {ledger}"
+
+
+def secondary_ai_configured(config: dict[str, Any]) -> bool:
+    llm = config.get("llm", {}) or {}
+    secondary = llm.get("secondary", {}) or {}
+    provider = str(secondary.get("provider") or "").strip().lower()
+    if provider and provider != "none":
+        return True
+    extra_provider_keys = llm.get("extra_provider_keys", {}) or {}
+    if not isinstance(extra_provider_keys, dict):
+        return False
+    return any(
+        provider_name in {"openai", "anthropic", "x_ai", "xai"} and secret_node_configured(node)
+        for provider_name, node in extra_provider_keys.items()
+    )
+
+
+def brain_setup_state(
+    key: str,
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+) -> tuple[str, str]:
+    integrations = config.get("integrations", {}) or {}
+    runtime = config.get("runtime", {}) or {}
+    personalization = runtime.get("personalization", {}) or {}
+    voice = config.get("voice", {}) or {}
+
+    if key == "primary_ai":
+        if foundation_api_key_present(config):
+            return "Ready", "Foundation provider API-key fallback is configured"
+        if any(
+            foundation_connected_account_runtime_configured(config, runtime_env, provider)
+            for provider in ("openai", "anthropic")
+        ):
+            return (
+                "Needs setup",
+                "Connected-account route is configured; create or sign in to the local account and verify the provider connection in Settings > Connected Accounts.",
+            )
+        return "Needs setup", feature_guidance(key)
+    if key == "secondary_ai":
+        if secondary_ai_configured(config):
+            return "Ready", "Fallback provider configured"
+        return "Needs setup", "No fallback configured; add one later if you want provider redundancy."
+    if key == "transcript_ingest":
+        source = transcript_source_dir(config, runtime_env)
+        if source:
+            return "Ready", "Transcript source folder configured"
+        return "Needs setup", feature_guidance(key)
+    if key == "conversation_recall":
+        if resolve_bool(personalization.get("default_conversation_recall"), False):
+            return "Ready", "Local recall/RAG enabled; verify RAG health before declaring full brain readiness."
+        return "Needs setup", feature_guidance(key)
+    if key == "web_search":
+        if resolve_bool((integrations.get("web_search") or {}).get("enabled"), False):
+            return "Ready", web_search_summary(config)
+        return "Needs setup", feature_guidance(key)
+    if key == "voice":
+        mode = str(voice.get("mode") or "disabled").strip().lower()
+        if mode in {"local", "hosted"}:
+            return "Ready", voice_status(config)
+        return "Needs setup", feature_guidance(key)
+    if key == "telegram":
+        if resolve_bool((integrations.get("telegram") or {}).get("enabled"), False):
+            return "Ready", "Telegram bridge configured; live status row verifies token/process/API health."
+        return "Needs setup", feature_guidance(key)
+    if key == "telegram_codex":
+        if resolve_bool((integrations.get("telegram_codex") or {}).get("enabled"), False):
+            return "Ready", "Telegram Codex configured; live status row verifies token/process health."
+        return "Needs setup", feature_guidance(key)
+    if key == "google_workspace":
+        if resolve_bool((integrations.get("google_workspace") or {}).get("enabled"), False):
+            return "Ready", "Google Workspace MCP configured"
+        return "Needs setup", feature_guidance(key)
+    if key == "ms365":
+        if resolve_bool((integrations.get("ms365") or {}).get("enabled"), False):
+            return "Ready", "Microsoft 365 MCP configured"
+        return "Needs setup", feature_guidance(key)
+    if key == "whatsapp":
+        return "Not available", feature_guidance(key)
+    if key in ADVANCED_OFF_KEYS:
+        enabled = False
+        if key == "remote_access":
+            enabled = normalize_remote_call_mode(config) != "disabled"
+        else:
+            enabled = resolve_bool((integrations.get(key) or {}).get("enabled"), False)
+        if enabled:
+            return "Ready", "Explicitly enabled by this install"
+        return "Disabled by choice", feature_guidance(key)
+    return "Ready", FEATURE_BY_KEY.get(key).health_probe if key in FEATURE_BY_KEY else ""
+
+
+def build_brain_setup_rows(
+    config: dict[str, Any],
+    runtime_env: dict[str, str],
+) -> list[tuple[str, str, str]]:
+    keys = (
+        "primary_ai",
+        "secondary_ai",
+        "transcript_ingest",
+        "conversation_recall",
+        "web_search",
+        "voice",
+        "telegram",
+        "telegram_codex",
+        "google_workspace",
+        "ms365",
+        "whatsapp",
+        "code_interpreter",
+        "skyvern",
+        "openclaw",
+        "remote_access",
+    )
+    return [
+        (feature_label(key), *brain_setup_state(key, config, runtime_env))
+        for key in keys
+    ]
+
+
 def build_service_rows(
     config: dict[str, Any],
     runtime_env: dict[str, str],
@@ -894,12 +1236,16 @@ def build_service_rows(
         stack_should_be_live=stack_should_be_live,
     )
     auth_settings = resolve_runtime_auth(config, runtime_env)
+    runtime = config.get("runtime", {}) or {}
     code_interpreter_url = runtime_env.get("LIBRECHAT_CODE_BASEURL", "")
     rag_api_url = runtime_env.get("RAG_API_URL", "")
     google_mcp_url = runtime_env.get("GOOGLE_WORKSPACE_MCP_URL", "")
     ms365_mcp_url = runtime_env.get("MS365_MCP_SERVER_URL", "")
     searxng_url = runtime_env.get("SEARXNG_INSTANCE_URL", "")
     firecrawl_url = runtime_env.get("FIRECRAWL_API_URL") or runtime_env.get("FIRECRAWL_BASE_URL", "")
+    glasshive_url = runtime_env.get("GLASSHIVE_OPERATOR_BASE_URL") or runtime_env.get("GLASSHIVE_MCP_URL", "")
+    prompt_workbench_port = str(runtime_env.get("VIVENTIUM_PROMPT_WORKBENCH_PORT") or "8781").strip()
+    prompt_workbench_url = f"http://localhost:{prompt_workbench_port}" if prompt_workbench_port else ""
 
     frontend_ok = (
         any_http_ok(
@@ -922,7 +1268,8 @@ def build_service_rows(
     playground_ok = (
         any_http_ok(
             playground_url,
-            f"http://127.0.0.1:{playground_port}",
+            url_with_path(playground_url, "/api/health"),
+            f"http://127.0.0.1:{playground_port}/api/health",
         )
         if probe_live
         else False
@@ -957,6 +1304,16 @@ def build_service_rows(
         ),
         ("Remote Access", remote_status, remote_detail),
     ]
+
+    scheduler_status, scheduler_detail = scheduler_status_and_detail(
+        config,
+        runtime_env,
+        runtime_dir,
+        probe_live=probe_live,
+        stack_should_be_live=stack_should_be_live,
+        startup_in_progress=startup_in_progress,
+    )
+    rows.append(("Scheduler", scheduler_status, scheduler_detail))
 
     integrations = config.get("integrations", {}) or {}
     primary = ((config.get("llm", {}) or {}).get("primary", {}) or {})
@@ -1013,6 +1370,87 @@ def build_service_rows(
         )
     )
 
+    if resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False) or resolve_bool(runtime_env.get("START_GLASSHIVE"), False):
+        glasshive_running = probe_live and glasshive_url and any_http_ok(
+            glasshive_url,
+            url_with_path(glasshive_url, "/health"),
+        )
+        if glasshive_running:
+            glasshive_status = "Running"
+        elif probe_live and stack_should_be_live and resolve_bool(runtime_env.get("START_GLASSHIVE"), False):
+            glasshive_status = "Starting" if startup_in_progress else "Action Required"
+        else:
+            glasshive_status = "Configured"
+        worker_profile = runtime_env.get("GLASSHIVE_DEFAULT_WORKER_PROFILE") or "codex-cli"
+        rows.append(
+            (
+                "GlassHive",
+                glasshive_status,
+                f"{glasshive_url or 'Local GlassHive runtime'} | default worker: {worker_profile}",
+            )
+        )
+
+    if resolve_bool(((runtime.get("prompt_workbench") or {}).get("enabled")), False) or resolve_bool(runtime_env.get("START_PROMPT_WORKBENCH"), False):
+        workbench_running = probe_live and prompt_workbench_url and any_http_ok(
+            prompt_workbench_url,
+            url_with_path(prompt_workbench_url, "/api/health"),
+        )
+        if workbench_running:
+            workbench_status = "Running"
+        elif probe_live and stack_should_be_live and resolve_bool(runtime_env.get("START_PROMPT_WORKBENCH"), False):
+            workbench_status = "Starting" if startup_in_progress else "Action Required"
+        else:
+            workbench_status = "Configured"
+        rows.append(("Prompt Workbench", workbench_status, prompt_workbench_url or "Local Prompt Workbench"))
+
+    seed_nightly = (runtime.get("prompt_workbench") or {}).get("seed_nightly") or {}
+    if resolve_bool(seed_nightly.get("enabled"), resolve_bool(runtime_env.get("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ENABLED"), False)):
+        nightly_active = resolve_bool(seed_nightly.get("active"), resolve_bool(runtime_env.get("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE"), False))
+        nightly_executor = (
+            runtime_env.get("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR")
+            or seed_nightly.get("executor")
+            or "glasshive_host"
+        )
+        rows.append(
+            (
+                "Nightly Reflection",
+                "Active" if nightly_active else "Configured",
+                f"03:00 local Workbench schedule via {nightly_executor}; seeded for the first resolved local admin user",
+            )
+        )
+
+    memory_hardening = runtime.get("memory_hardening") or {}
+    if resolve_bool(memory_hardening.get("enabled"), resolve_bool(runtime_env.get("VIVENTIUM_MEMORY_HARDENING_ENABLED"), False)):
+        memory_scope = "all memory-enabled users unless scoped in config"
+        operator_scope = str(memory_hardening.get("operator_user_email") or "").strip()
+        if operator_scope:
+            memory_scope = "single configured operator user"
+        dry_run_first = resolve_bool(
+            runtime_env.get("VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST"),
+            resolve_bool(memory_hardening.get("dry_run_first"), True),
+        )
+        memory_detail = (
+            f"{runtime_env.get('VIVENTIUM_MEMORY_HARDENING_SCHEDULE') or memory_hardening.get('schedule') or '0 3 * * *'} local; "
+            f"{memory_scope}; dry-run-first {'on' if dry_run_first else 'off'}"
+        )
+        rows.append(
+            (
+                "Memory Hardening",
+                "Scheduled",
+                memory_detail,
+            )
+        )
+        source_dir = transcript_source_dir(config, runtime_env)
+        rows.append(
+            (
+                "Transcript Ingest",
+                "Configured" if source_dir else "Needs setup",
+                "Transcript source folder configured"
+                if source_dir
+                else "Choose a folder with bin/viventium transcripts source set <folder>; empty means pending, not failed",
+            )
+        )
+
     if resolve_bool((integrations.get("telegram") or {}).get("enabled"), False):
         telegram_status, telegram_detail = telegram_service_status(
             config=config,
@@ -1027,6 +1465,7 @@ def build_service_rows(
             pending_pid_file_name="telegram_bot_deferred.pid",
             pending_marker_file_name="telegram_bot_deferred.pending",
             pending_detail="Waiting for LibreChat API before first Telegram bridge start on this Mac",
+            requires_lc_api=True,
         )
         rows.append(("Telegram Bridge", telegram_status, telegram_detail))
     if resolve_bool((integrations.get("telegram_codex") or {}).get("enabled"), False):
@@ -1217,43 +1656,18 @@ def resolve_summary_heading(
 
 
 def build_setup_later_rows(config: dict[str, Any]) -> list[tuple[str, str]]:
-    integrations = config.get("integrations", {}) or {}
-    runtime = config.get("runtime", {}) or {}
-    personalization = runtime.get("personalization", {}) or {}
-
     rows: list[tuple[str, str]] = []
-    if not resolve_bool(personalization.get("default_conversation_recall"), False):
-        retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
-        if retrieval_embeddings["provider"] == "ollama":
-            rows.append(
-                (
-                    "Conversation Recall",
-                    f"Docker Desktop and Ollama if you want local recall; first start pulls {retrieval_embeddings['model']}",
+    for label, state, action in build_brain_setup_rows(config, {}):
+        if state == "Ready":
+            continue
+        if label == "Conversation Recall/RAG":
+            retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
+            if retrieval_embeddings["provider"] == "ollama":
+                action = (
+                    "Docker Desktop and Ollama if you want local recall; "
+                    f"first start pulls {retrieval_embeddings['model']}"
                 )
-            )
-        else:
-            rows.append(("Conversation Recall", "Docker Desktop if you want local recall"))
-    if not resolve_bool((integrations.get("web_search") or {}).get("enabled"), False):
-        rows.append(
-            (
-                "Web Search",
-                "Serper API key plus Firecrawl API key, or Docker Desktop for local SearXNG + Firecrawl",
-            )
-        )
-    if not resolve_bool((integrations.get("code_interpreter") or {}).get("enabled"), False):
-        rows.append(("Code Interpreter", "Docker Desktop for the sandbox service"))
-    if not resolve_bool((integrations.get("telegram") or {}).get("enabled"), False):
-        rows.append(("Telegram", "Bot token from @BotFather"))
-    if not resolve_bool((integrations.get("telegram_codex") or {}).get("enabled"), False):
-        rows.append(("Telegram Codex", "A separate BotFather token"))
-    if not resolve_bool((integrations.get("google_workspace") or {}).get("enabled"), False):
-        rows.append(("Google Workspace", "OAuth client ID, client secret, and refresh token"))
-    if not resolve_bool((integrations.get("ms365") or {}).get("enabled"), False):
-        rows.append(("Microsoft 365", "Azure app credentials; Docker for the local sidecar"))
-    if not resolve_bool((integrations.get("skyvern") or {}).get("enabled"), False):
-        rows.append(("Skyvern", "Skyvern API key and Docker"))
-    if not resolve_bool((integrations.get("openclaw") or {}).get("enabled"), False):
-        rows.append(("OpenClaw Exposure", "Enable it later from the configure flow"))
+        rows.append((label, action))
     return rows
 
 
@@ -1340,10 +1754,7 @@ def build_next_steps(
 def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[str, str] | None = None) -> str | None:
     runtime_env = runtime_env or {}
     integrations = config.get("integrations", {}) or {}
-    foundation_needed = not foundation_api_key_present(config) and not any(
-        foundation_connected_account_runtime_configured(config, runtime_env, provider)
-        for provider in ("openai", "anthropic")
-    )
+    foundation_needed = not foundation_api_key_present(config)
     google_workspace_enabled = resolve_bool(
         (integrations.get("google_workspace") or {}).get("enabled"),
         False,
@@ -1437,13 +1848,13 @@ def main() -> None:
         style="green",
     )
 
-    setup_later_rows = build_setup_later_rows(config)
-    if setup_later_rows:
+    brain_setup_rows = build_brain_setup_rows(config, runtime_env)
+    if brain_setup_rows:
         ui.print_blank()
         ui.print_table(
-            "Set Up Later",
-            ("Feature", "What you will need"),
-            setup_later_rows,
+            "Viventium Brain Setup",
+            ("Surface", "State", "Next action"),
+            brain_setup_rows,
             style="yellow",
         )
 

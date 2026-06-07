@@ -21,7 +21,12 @@ sys.modules.setdefault("PIL.Image", _fake_pil_image)
 _fake_aient_pkg = sys.modules.setdefault("aient", types.ModuleType("aient"))
 _fake_aient_inner_pkg = sys.modules.setdefault("aient.aient", types.ModuleType("aient.aient"))
 _fake_aient_utils_pkg = sys.modules.setdefault("aient.aient.utils", types.ModuleType("aient.aient.utils"))
+_fake_aient_core_pkg = sys.modules.setdefault("aient.aient.core", types.ModuleType("aient.aient.core"))
+_fake_aient_models_pkg = sys.modules.setdefault("aient.aient.models", types.ModuleType("aient.aient.models"))
 _fake_aient_scripts = types.ModuleType("aient.aient.utils.scripts")
+_fake_aient_core_utils = types.ModuleType("aient.aient.core.utils")
+_fake_aient_whisper = types.ModuleType("aient.aient.models.whisper")
+_fake_aient_assemblyai = types.ModuleType("aient.aient.models.assemblyai")
 
 
 async def _fake_document_extract(*_args, **_kwargs):
@@ -45,12 +50,40 @@ _fake_aient_scripts.extract_audio_from_video = _fake_extract_audio_from_video
 _fake_aient_scripts.transcribe_audio_file = _fake_transcribe_audio_file
 _fake_aient_scripts.get_audio_message = _fake_get_audio_message
 
+
+class _FakeBaseAPI:
+    def __init__(self, api_url: str = "", **_kwargs):
+        self.chat_url = api_url
+        self.audio_speech = api_url
+
+
+class _FakeAssemblyAI:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+
+_fake_aient_core_utils.get_engine = lambda *_args, **_kwargs: None
+_fake_aient_core_utils.BaseAPI = _FakeBaseAPI
+_fake_aient_assemblyai.AssemblyAI = _FakeAssemblyAI
+
 _fake_aient_pkg.aient = _fake_aient_inner_pkg
 _fake_aient_inner_pkg.utils = _fake_aient_utils_pkg
+_fake_aient_inner_pkg.core = _fake_aient_core_pkg
+_fake_aient_inner_pkg.models = _fake_aient_models_pkg
 _fake_aient_utils_pkg.scripts = _fake_aient_scripts
+_fake_aient_core_pkg.utils = _fake_aient_core_utils
+_fake_aient_models_pkg.whisper = _fake_aient_whisper
+_fake_aient_models_pkg.assemblyai = _fake_aient_assemblyai
 sys.modules["aient.aient.utils.scripts"] = _fake_aient_scripts
+sys.modules["aient.aient.core.utils"] = _fake_aient_core_utils
+sys.modules["aient.aient.models.whisper"] = _fake_aient_whisper
+sys.modules["aient.aient.models.assemblyai"] = _fake_aient_assemblyai
 
-from TelegramVivBot.utils.voice import should_request_voice_mode, should_send_voice_reply
+from TelegramVivBot.utils.voice import (
+    should_request_audio_reply,
+    should_request_voice_mode,
+    should_send_voice_reply,
+)
 
 # === VIVENTIUM START ===
 # Feature: Provide a minimal config stub so utils.scripts avoids full config import.
@@ -135,9 +168,9 @@ def test_should_send_voice_reply_always_voice():
     )
 
 
-def test_should_request_voice_mode_for_voice_note():
+def test_should_request_audio_reply_for_voice_note():
     assert (
-        should_request_voice_mode(
+        should_request_audio_reply(
             voice_note_detected=True,
             always_voice=False,
             voice_enabled=True,
@@ -146,9 +179,9 @@ def test_should_request_voice_mode_for_voice_note():
     )
 
 
-def test_should_request_voice_mode_for_always_voice_text():
+def test_should_request_audio_reply_for_always_voice_text():
     assert (
-        should_request_voice_mode(
+        should_request_audio_reply(
             voice_note_detected=False,
             always_voice=True,
             voice_enabled=True,
@@ -157,12 +190,23 @@ def test_should_request_voice_mode_for_always_voice_text():
     )
 
 
-def test_should_request_voice_mode_honors_string_disabled_value():
+def test_should_request_audio_reply_honors_string_disabled_value():
+    assert (
+        should_request_audio_reply(
+            voice_note_detected=True,
+            always_voice=True,
+            voice_enabled="false",
+        )
+        is False
+    )
+
+
+def test_telegram_never_requests_librechat_voice_call_mode():
     assert (
         should_request_voice_mode(
             voice_note_detected=True,
             always_voice=True,
-            voice_enabled="false",
+            voice_enabled=True,
         )
         is False
     )

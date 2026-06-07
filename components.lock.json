@@ -7,7 +7,7 @@
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "ed8d7286a79a4d82947dfa7dd3d69d86e45fb1ac"
+      "ref": "b9f8660725571fb7875f64d9010b44120775a0be"
     },
     {
       "name": "agents-playground",
@@ -35,14 +35,14 @@
       "path": "viventium_v0_4/agent-starter-react",
       "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
       "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
-      "ref": "e4d05d62e68a2edb6348f1019e2d4c9cf19cc0bc"
+      "ref": "83044a509b2ccd798deee916291776912b5c1b9e"
     },
     {
       "name": "GlassHive",
       "path": "viventium_v0_4/GlassHive",
       "origin": "https://github.com/ProjectViventium/GlassHive.git",
       "upstream": "",
-      "ref": "7614a6ad76dbc8e4788fb207cfee18d16293866d"
+      "ref": "c8e08cf8921ff184af23fde7eb884cabc7a2b9fc"
     },
     {
       "name": "ms-365-mcp-server",

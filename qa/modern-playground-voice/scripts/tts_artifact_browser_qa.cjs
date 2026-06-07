@@ -4,6 +4,14 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const {
+  DEFAULT_TTS_FORBIDDEN_ARTIFACT_KEYS,
+  DEFAULT_VISIBLE_FORBIDDEN_ARTIFACT_KEYS,
+  addCounts,
+  artifactCounts,
+  stripProtectedTextRanges,
+  sumForbiddenArtifacts,
+} = require('./voice_artifact_contract.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const LIBRECHAT_ROOT = path.join(REPO_ROOT, 'viventium_v0_4', 'LibreChat');
@@ -59,34 +67,21 @@ function requireLocalQaAuth() {
   }
 }
 
-function artifactCounts(text) {
-  const value = String(text || '');
-  return {
-    punctuationOnly: /^[\s.,!?;:…]+$/.test(value.trim()) && value.trim().length > 0 ? 1 : 0,
-    rawUrl: /\bhttps?:\/\/|\bwww\./i.test(value) ? 1 : 0,
-    rawEmail: /\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/.test(value) ? 1 : 0,
-    sourceLabel: /\b(?:sources?|references?|citations?)\s*:/i.test(value) ? 1 : 0,
-    markdownLink: /\[[^\]]+\]\([^)]+\)/.test(value) ? 1 : 0,
-    codeFence: /```|`[^`]+`/.test(value) ? 1 : 0,
-    unknownAngleTag: /<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?>/.test(value) ? 1 : 0,
-    internalTurnId: /turn\d+[A-Za-z]+\d+/i.test(value) ? 1 : 0,
-    privateUseCitationMarker:
-      /(?:\\ue2(?:00|01|02|03|04|06)|ue2(?:00|01|02|03|04|06)|[\uE200-\uE206])/i.test(value)
-        ? 1
-        : 0,
-    knownMissingSpaceJoin:
-      /\b(?:clearedis|what'syour|thisthem|tryingto|somethingbefore|threadingthat|keepingViventium|yourswhile|showingup|meetingframed|arethey|walkinginto|notme)\b/i.test(
-        value,
-      )
-        ? 1
-        : 0,
-  };
-}
-
-function addCounts(target, source) {
-  for (const [key, value] of Object.entries(source)) {
-    target[key] = (target[key] || 0) + Number(value || 0);
-  }
+async function readTranscriptMessages(page) {
+  return page
+    .locator('[data-lk-message-origin]')
+    .evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const origin = node.getAttribute('data-lk-message-origin') || '';
+        const spans = Array.from(node.querySelectorAll('span'));
+        const messageNode = spans.length > 0 ? spans[spans.length - 1] : node;
+        return {
+          origin,
+          text: (messageNode.textContent || '').trim(),
+        };
+      }),
+    )
+    .catch(() => []);
 }
 
 function parseDebugJsonField(message, name) {
@@ -110,12 +105,15 @@ function parseDebugJsonField(message, name) {
 function scanVoiceLog(offset) {
   const result = {
     rawDeltaCount: 0,
+    streamDeltaCount: 0,
     ttsEmitCount: 0,
     ttsProviderMetricCount: 0,
     ttsProviderCancelledCount: 0,
     ttsProviderCharacters: 0,
     rawArtifacts: {},
     rawAggregateArtifacts: {},
+    streamArtifacts: {},
+    streamAggregateArtifacts: {},
     ttsArtifacts: {},
     ttsAggregateArtifacts: {},
     providerLabels: [],
@@ -132,6 +130,7 @@ function scanVoiceLog(offset) {
       fs.readSync(fd, buffer, 0, buffer.length, start);
     }
     const rawChunks = [];
+    const streamChunks = [];
     const ttsChunks = [];
     for (const line of buffer.toString('utf8').split(/\r?\n/)) {
       if (
@@ -166,9 +165,17 @@ function scanVoiceLog(offset) {
       }
       if (message.includes('[VoiceMarkup] llm_delta')) {
         const raw = parseDebugJsonField(message, 'raw_json');
-        result.rawDeltaCount += 1;
-        rawChunks.push(raw);
-        addCounts(result.rawArtifacts, artifactCounts(raw));
+        const stream = parseDebugJsonField(message, 'stream_delta_json');
+        if (raw) {
+          result.rawDeltaCount += 1;
+          rawChunks.push(raw);
+          addCounts(result.rawArtifacts, artifactCounts(raw));
+        }
+        if (stream) {
+          result.streamDeltaCount += 1;
+          streamChunks.push(stream);
+          addCounts(result.streamArtifacts, artifactCounts(stream));
+        }
       }
       if (message.includes('[VoiceMarkup] tts_emit')) {
         const chunk = parseDebugJsonField(message, 'chunk_json');
@@ -178,6 +185,7 @@ function scanVoiceLog(offset) {
       }
     }
     result.rawAggregateArtifacts = artifactCounts(rawChunks.join(''));
+    result.streamAggregateArtifacts = artifactCounts(streamChunks.join(''));
     result.ttsAggregateArtifacts = artifactCounts(ttsChunks.join(''));
   } finally {
     fs.closeSync(fd);
@@ -248,17 +256,33 @@ async function fetchJson(url, options = {}) {
 }
 
 async function cleanupCallArtifacts(db, { userId, callSessionId, conversationId }) {
+  const session = await db
+    .collection('viventiumcallsessions')
+    .findOne({ callSessionId }, { projection: { conversationId: 1 } });
+  const conversationIds = [...new Set([conversationId, session?.conversationId])]
+    .map((value) => String(value || '').trim())
+    .filter((value) => value && value !== 'new');
   const messageFilter = {
     user: userId,
-    'metadata.viventium.callSessionId': callSessionId,
+    $or: [
+      { 'metadata.viventium.callSessionId': callSessionId },
+      ...(conversationIds.length ? [{ conversationId: { $in: conversationIds } }] : []),
+    ],
   };
-  const messages = await db.collection('messages').find(messageFilter, { projection: { _id: 1 } }).toArray();
+  const messages = await db
+    .collection('messages')
+    .find(messageFilter, { projection: { _id: 1 } })
+    .toArray();
   const messageIds = messages.map((message) => message._id);
   const [messageDelete, conversationDelete, ingressDelete, sessionDelete] = await Promise.all([
     db.collection('messages').deleteMany(messageFilter),
-    messageIds.length
-      ? db.collection('conversations').deleteMany({ user: userId, messages: { $in: messageIds } })
-      : db.collection('conversations').deleteMany({ user: userId, conversationId }),
+    conversationIds.length
+      ? db
+          .collection('conversations')
+          .deleteMany({ user: userId, conversationId: { $in: conversationIds } })
+      : messageIds.length
+        ? db.collection('conversations').deleteMany({ user: userId, messages: { $in: messageIds } })
+        : db.collection('conversations').deleteMany({ user: userId, conversationId }),
     db.collection('viventiumvoiceingressevents').deleteMany({ callSessionId }),
     db.collection('viventiumcallsessions').deleteOne({ callSessionId }),
   ]);
@@ -268,6 +292,17 @@ async function cleanupCallArtifacts(db, { userId, callSessionId, conversationId 
     ingressEvents: ingressDelete.deletedCount,
     callSessions: sessionDelete.deletedCount,
   };
+}
+
+async function loadCallSessionConversationId(db, callSessionId) {
+  if (!callSessionId) {
+    return '';
+  }
+  const session = await db
+    .collection('viventiumcallsessions')
+    .findOne({ callSessionId }, { projection: { conversationId: 1 } });
+  const conversationId = String(session?.conversationId || '').trim();
+  return conversationId && conversationId !== 'new' ? conversationId : '';
 }
 
 async function main() {
@@ -305,8 +340,19 @@ async function main() {
     startClicked: false,
     transcriptToggled: false,
     promptSent: false,
+    agentSendReady: false,
     inputEnabled: false,
     transcriptVisible: false,
+    expectedContentVisible: false,
+    semanticModelHealthy: false,
+    artifactOk: false,
+    ttsTextArtifactEvidence: 'not_checked',
+    transcriptMessageCount: 0,
+    remoteTranscriptTextHashes: [],
+    pageArtifacts: {},
+    persistedAssistantCount: 0,
+    persistedAssistantTextHashes: [],
+    persistedAssistantArtifacts: {},
     logScan: null,
     cleanup: null,
     consoleErrorCount: 0,
@@ -375,14 +421,39 @@ async function main() {
     );
     result.inputEnabled = true;
     await input.fill(prompt, { timeout: 60_000 });
-    await page.keyboard.press('Enter');
+    const sendButton = page.locator('button[title="Send"]');
+    await sendButton.waitFor({ state: 'visible', timeout: 60_000 });
+    await page.waitForFunction(
+      () => {
+        const button = Array.from(document.querySelectorAll('button')).find(
+          (node) => node.getAttribute('title') === 'Send',
+        );
+        return Boolean(button && !button.disabled);
+      },
+      null,
+      { timeout: 90_000 },
+    );
+    result.agentSendReady = true;
+    await sendButton.click({ timeout: 60_000 });
     result.promptSent = true;
 
     const started = Date.now();
     while (Date.now() - started < 120_000) {
       const scan = scanVoiceLog(beforeOffset);
-      const text = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
-      result.transcriptVisible = /\b(done|brief|email|link available|references)\b/i.test(text);
+      const transcriptMessages = await readTranscriptMessages(page);
+      const remoteText = transcriptMessages
+        .filter((message) => message.origin === 'remote')
+        .map((message) => message.text)
+        .filter(Boolean)
+        .join('\n');
+      result.transcriptMessageCount = transcriptMessages.length;
+      result.remoteTranscriptTextHashes = transcriptMessages
+        .filter((message) => message.origin === 'remote' && message.text)
+        .map((message) => shortHash(message.text));
+      result.pageArtifacts = artifactCounts(remoteText);
+      result.transcriptVisible = remoteText.trim().length > 0;
+      result.expectedContentVisible =
+        /\b(done|brief|email|link available|references|going on|tell me)\b/i.test(remoteText);
       const providerCompleted =
         scan.ttsProviderMetricCount > 0 && scan.ttsProviderCancelledCount === 0;
       if (scan.ttsEmitCount > 0 && result.transcriptVisible && providerCompleted) {
@@ -392,30 +463,75 @@ async function main() {
       await page.waitForTimeout(1500);
     }
     result.logScan = result.logScan || scanVoiceLog(beforeOffset);
+    const resolvedConversationId = await loadCallSessionConversationId(db, call?.callSessionId);
+    if (resolvedConversationId) {
+      result.conversationHash = shortHash(resolvedConversationId);
+    }
     const tts = result.logScan.ttsArtifacts || {};
     const ttsAggregate = result.logScan.ttsAggregateArtifacts || {};
-    const forbiddenTtsArtifacts = [
-      'punctuationOnly',
-      'rawUrl',
-      'rawEmail',
-      'sourceLabel',
-      'markdownLink',
-      'codeFence',
-      'unknownAngleTag',
-      'internalTurnId',
-      'privateUseCitationMarker',
-      'knownMissingSpaceJoin',
-    ].reduce((sum, key) => sum + Number(tts[key] || 0) + Number(ttsAggregate[key] || 0), 0);
-    result.ok =
+    const assistantMessageFilter =
+      call?.callSessionId
+        ? {
+            user: auth.userId,
+            isCreatedByUser: false,
+            $or: [
+              { 'metadata.viventium.callSessionId': call.callSessionId },
+              ...(resolvedConversationId ? [{ conversationId: resolvedConversationId }] : []),
+            ],
+          }
+        : null;
+    const persistedAssistantMessages = assistantMessageFilter
+      ? await db
+          .collection('messages')
+          .find(assistantMessageFilter, { projection: { messageId: 1, text: 1 } })
+          .sort({ createdAt: 1 })
+          .toArray()
+      : [];
+    const persistedAssistantText = persistedAssistantMessages
+      .map((message) => String(message.text || ''))
+      .filter(Boolean)
+      .join('\n');
+    result.persistedAssistantCount = persistedAssistantMessages.length;
+    result.persistedAssistantTextHashes = persistedAssistantMessages.map((message) =>
+      shortHash(`${message.messageId || ''}:${message.text || ''}`),
+    );
+    result.persistedAssistantArtifacts = artifactCounts(persistedAssistantText);
+    const ttsTextArtifactScanAvailable = Number(result.logScan.ttsEmitCount || 0) > 0;
+    const forbiddenTtsArtifacts = ttsTextArtifactScanAvailable
+      ? sumForbiddenArtifacts(tts, DEFAULT_TTS_FORBIDDEN_ARTIFACT_KEYS) +
+        sumForbiddenArtifacts(ttsAggregate, DEFAULT_TTS_FORBIDDEN_ARTIFACT_KEYS)
+      : 0;
+    const forbiddenPageArtifacts = sumForbiddenArtifacts(
+      result.pageArtifacts,
+      DEFAULT_VISIBLE_FORBIDDEN_ARTIFACT_KEYS,
+    );
+    const forbiddenPersistedArtifacts = sumForbiddenArtifacts(
+      result.persistedAssistantArtifacts,
+      DEFAULT_VISIBLE_FORBIDDEN_ARTIFACT_KEYS,
+    );
+    const providerCompleted =
+      result.logScan.ttsProviderMetricCount > 0 && result.logScan.ttsProviderCancelledCount === 0;
+    const debugStreamObserved =
+      Number(result.logScan.rawDeltaCount || 0) + Number(result.logScan.streamDeltaCount || 0) > 0;
+    result.semanticModelHealthy =
+      debugStreamObserved ||
+      (providerCompleted && result.expectedContentVisible && result.persistedAssistantCount > 0);
+    result.ttsTextArtifactEvidence = ttsTextArtifactScanAvailable
+      ? 'debug_tts_chunks'
+      : 'provider_metric_visible_persisted';
+    result.artifactOk =
       result.callCreated &&
       result.pageOpened &&
       result.startClicked &&
+      result.agentSendReady &&
       result.promptSent &&
       result.transcriptVisible &&
-      result.logScan.ttsEmitCount > 0 &&
-      result.logScan.ttsProviderMetricCount > 0 &&
-      result.logScan.ttsProviderCancelledCount === 0 &&
-      forbiddenTtsArtifacts === 0;
+      result.persistedAssistantCount > 0 &&
+      providerCompleted &&
+      forbiddenTtsArtifacts === 0 &&
+      forbiddenPageArtifacts === 0 &&
+      forbiddenPersistedArtifacts === 0;
+    result.ok = result.artifactOk && result.semanticModelHealthy;
 
     const endButton = page.getByRole('button', { name: /end call/i });
     if (await endButton.count().catch(() => 0)) {
@@ -448,7 +564,27 @@ async function main() {
   process.exitCode = result.ok ? 0 : 1;
 }
 
-main().catch((error) => {
-  console.error(error.stack || error.message || String(error));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || error.message || String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  DEFAULT_AGENT_ID,
+  LIBRECHAT_ROOT,
+  LOCAL_JWT_ALLOW_ENV,
+  LOG_PATH,
+  OUTPUT_DIR,
+  artifactCounts,
+  cleanupCallArtifacts,
+  createQaAuth,
+  fetchJson,
+  loadCallSessionConversationId,
+  loadEnv,
+  requireLocalQaAuth,
+  scanVoiceLog,
+  shortHash,
+  stripProtectedTextRanges,
+};

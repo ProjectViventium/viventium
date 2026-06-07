@@ -96,6 +96,11 @@ names must not appear in the health payload or public QA evidence.
   rows record `last_delivery_outcome=missed`, a structured reason such as
   `misfire_grace_exceeded` or `catch_up_window_exceeded`, `last_delivery_at`, and a
   `last_delivery` payload with due time, local due label, late seconds, and policy details.
+- If Scheduler dispatch receives a structured LibreChat `scheduler/chat` `user_not_found` failure,
+  the task is orphaned: the owning user no longer exists, so the scheduler must preserve the failed
+  ledger, record `orphaned_user_not_found`, deactivate the task, and avoid retrying it forever. Other
+  failures such as expired provider OAuth remain active/action-required because the user can repair
+  the account connection.
 - Exact wall-clock delivery while the Mac is asleep is not guaranteed by this MCP alone. That would
   require a separate wake-scheduling or cloud-dispatch design.
 
@@ -112,6 +117,33 @@ names must not appear in the health payload or public QA evidence.
   schedules, and future scheduled prompt types must all use the same generated-text visibility path:
   canonical result -> `{NTA}`/empty suppression or visible content -> channel fan-out -> delivery
   ledger.
+
+### Workbench / GlassHive Channel
+- Plain-English happy path: scheduled prompt -> filled placeholders -> GlassHive run -> callback ->
+  scheduler ledger -> Workbench shows completed.
+- The built-in local nightly reflection follows this path by default on supported installs and
+  upgrades. Prompt Workbench seeds the `Subconscious Deep Thought` schedule for the first resolved
+  local admin user, renders placeholders privately, dispatches via the configured GlassHive host
+  worker profile, and records the Scheduler/Workbench/GlassHive ledger without hardcoding a
+  developer account.
+- Workbench-private scheduled prompts use Scheduling Cortex for recurrence, due/misfire policy,
+  run history, and the parent delivery ledger. Workbench owns authoring, variable preview, manual
+  trigger, and the visible run-history surface.
+- Workbench schedules with `executor="glasshive_host"` render their private prompt variables before
+  dispatch, store public-safe rendered and variable-snapshot hashes, then dispatch to GlassHive
+  before LibreChat generation. Raw rendered prompt text and private result details stay in private
+  runtime storage, not public QA artifacts.
+- GlassHive callback handling must update both the child `scheduled_prompt_runs` row and the parent
+  `scheduled_tasks` delivery fields. A terminal callback is not accepted as healthy if the parent
+  ledger, child row, GlassHive run row, or visible Workbench state disagree.
+- Pre-assignment GlassHive errors must preserve structured failure fields such as
+  `runtime_dependency_missing`; generic `HTTP 409: Conflict` is not enough evidence. If host
+  execution is unavailable and the scheduled task has no host-specific workspace-root constraint,
+  Scheduler may retry through the documented sandbox/workstation route before terminal failure.
+- Nightly QA must inspect the GlassHive callback outbox as part of scheduler health: active
+  pending/delivering counts, active max attempts, oldest pending age, stale delivering rows, and
+  before/after `dead_lettered` delta. A fresh dead-letter delta or stale active backlog is a
+  degraded delivery substrate even when the newest run row says `success`.
 
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.

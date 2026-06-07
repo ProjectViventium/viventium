@@ -19,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from installer_ui import CheckboxOption, InstallerUI, SelectOption
+from brain_readiness import feature_guidance, feature_label
 from retrieval_config import (
     DEFAULT_RETRIEVAL_EMBEDDINGS_MODEL,
     DEFAULT_RETRIEVAL_EMBEDDINGS_PROFILE,
@@ -36,17 +37,6 @@ SERPER_API_KEYS_URL = "https://serper.dev/api-keys"
 FIRECRAWL_API_KEYS_URL = "https://docs.firecrawl.dev/introduction#api-key"
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
 DOCKER_FEATURES = {"ms365", "conversation_recall", "code_interpreter", "skyvern"}
-FEATURE_GUIDANCE = {
-    "conversation_recall": "Docker Desktop and Ollama for local recall",
-    "code_interpreter": "Docker Desktop for the sandbox service",
-    "web_search": "Serper + Firecrawl APIs, or let Viventium install Docker Desktop for local SearXNG and Firecrawl",
-    "telegram": "Bot token from @BotFather",
-    "telegram_codex": "A separate BotFather token",
-    "google_workspace": "Google OAuth client ID, secret, and refresh token",
-    "ms365": "Azure app credentials and Docker",
-    "skyvern": "Skyvern API key and Docker",
-    "openclaw": "Enable later from configure when you need exposure monitoring",
-}
 
 
 def default_local_tts_provider() -> str:
@@ -444,6 +434,29 @@ def build_base_config(
                 "allow_password_reset": False,
             },
             "personalization": {"default_conversation_recall": False},
+            "memory_hardening": {
+                "enabled": True,
+                "schedule": "0 3 * * *",
+                "operator_user_email": "",
+                "dry_run_first": True,
+                "transcripts": {
+                    "source_dir": "",
+                    "rag_mode": "detailed_summary_only",
+                },
+            },
+            "prompt_workbench": {
+                "enabled": True,
+                "seed_nightly": {
+                    "enabled": True,
+                    "active": True,
+                    "executor": "glasshive_host",
+                },
+            },
+            "nightly_routines": {
+                "enabled": True,
+                "defaults_version": 1,
+                "auto_worker_profile": True,
+            },
             "retrieval": {
                 "embeddings": {
                     "provider": DEFAULT_RETRIEVAL_EMBEDDINGS_PROVIDER,
@@ -487,7 +500,14 @@ def build_base_config(
             "telegram_codex": {"enabled": False},
             "google_workspace": {"enabled": False},
             "ms365": {"enabled": False},
-            "glasshive": {"enabled": False},
+            "glasshive": {
+                "enabled": True,
+                "host_worker": {
+                    "enabled": True,
+                    "workspace_root": "~/viventium",
+                    "default_execution_mode": "host",
+                },
+            },
             "skyvern": {"enabled": False},
             "openclaw": {"enabled": False},
         },
@@ -674,6 +694,13 @@ def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
         ),
         CheckboxOption(
             group="Productivity Integrations",
+            value="transcript_ingest",
+            label="Transcript Ingest",
+            note="Index summaries from a local transcript folder",
+            checked=False,
+        ),
+        CheckboxOption(
+            group="Productivity Integrations",
             value="google_workspace",
             label="Google Workspace",
             note="Gmail, Calendar, and Drive via OAuth",
@@ -747,6 +774,14 @@ def set_local_voice_defaults(config: dict[str, Any]) -> None:
     voice["tts_provider_fallback"] = (
         "openai" if voice["tts_provider"] == LOCAL_TTS_PROVIDER else ""
     )
+
+
+def set_hosted_voice_defaults(config: dict[str, Any]) -> None:
+    voice = config["voice"]
+    voice["mode"] = "hosted"
+    voice["stt_provider"] = "openai"
+    voice["tts_provider"] = "openai"
+    voice["tts_provider_fallback"] = ""
 
 
 def set_web_search_defaults(
@@ -912,6 +947,74 @@ def prompt_web_search(
         )
 
 
+def prompt_conversation_recall(
+    ui: InstallerUI,
+    config: dict[str, Any],
+    deferred: list[str],
+    *,
+    docker_installed: bool,
+) -> None:
+    ui.print_section(
+        "Conversation Recall/RAG",
+        (
+            "Conversation Recall lets Viventium search prior chats and RAG artifacts locally. "
+            "It is guided opt-in because it uses Docker/Ollama resources on this Mac."
+        ),
+        style="cyan",
+    )
+    if not ui.confirm("Enable local Conversation Recall/RAG now?", default=False):
+        disable_feature(config, "conversation_recall", deferred)
+        return
+
+    personalization = config.setdefault("runtime", {}).setdefault("personalization", {})
+    personalization["default_conversation_recall"] = True
+    if not docker_installed:
+        ui.print_note(
+            "Viventium will install Docker Desktop during preflight and start the local RAG/Ollama path before marking recall ready."
+        )
+
+
+def prompt_transcript_source(
+    ui: InstallerUI,
+    config: dict[str, Any],
+    deferred: list[str],
+    *,
+    confirm_first: bool = True,
+) -> None:
+    ui.print_section(
+        "Transcript Ingest",
+        (
+            "If you already keep meeting transcripts in a folder, Viventium can index summaries "
+            "from that folder. Leave this pending if you do not have the folder ready."
+        ),
+        style="cyan",
+    )
+    if confirm_first and not ui.confirm("Connect a local transcript folder now?", default=False):
+        mark_deferred(deferred, "transcript_ingest")
+        return
+
+    source_dir = ui.text("Transcript folder path", allow_empty=True).strip()
+    if not source_dir:
+        mark_deferred(deferred, "transcript_ingest")
+        return
+
+    source_path = Path(source_dir).expanduser()
+    if not source_path.is_dir():
+        ui.print_error(
+            "That transcript folder was not found. Finish the install now and add it later with bin/viventium transcripts source set <folder>."
+        )
+        mark_deferred(deferred, "transcript_ingest")
+        return
+
+    transcripts = (
+        config.setdefault("runtime", {})
+        .setdefault("memory_hardening", {})
+        .setdefault("transcripts", {})
+    )
+    transcripts["source_dir"] = source_dir
+    transcripts.setdefault("rag_mode", "detailed_summary_only")
+
+
 def prompt_optional_secret(
     ui: InstallerUI,
     prompt: str,
@@ -957,7 +1060,18 @@ def prompt_voice_settings(ui: InstallerUI, config: dict[str, Any], advanced: boo
         if is_apple_silicon_mac():
             set_local_voice_defaults(config)
         else:
-            config["voice"]["mode"] = "disabled"
+            ui.print_section(
+                "Voice",
+                "This Mac is not on the local Apple Silicon voice path. You can still set up hosted STT/TTS now or leave voice pending.",
+                style="cyan",
+            )
+            if ui.confirm("Use hosted voice providers?", default=True):
+                set_hosted_voice_defaults(config)
+                ui.print_note(
+                    "Hosted voice will use the same OpenAI account/API-key path until you choose a dedicated STT/TTS provider."
+                )
+            else:
+                disable_feature(config, "voice", [])
         return
 
     default_mode = "local" if is_apple_silicon_mac() else "hosted"
@@ -1148,18 +1262,8 @@ def summarize_setup_later(ui: InstallerUI, deferred: list[str]) -> None:
         return
     rows = [
         (
-            {
-                "conversation_recall": "Conversation Recall",
-                "code_interpreter": "Code Interpreter",
-                "web_search": "Web Search",
-                "telegram": "Telegram",
-                "telegram_codex": "Telegram Codex",
-                "google_workspace": "Google Workspace",
-                "ms365": "Microsoft 365",
-                "skyvern": "Skyvern",
-                "openclaw": "OpenClaw Exposure",
-            }.get(key, key),
-            FEATURE_GUIDANCE.get(key, "Run bin/viventium configure later"),
+            feature_label(key),
+            feature_guidance(key),
         )
         for key in deferred
     ]
@@ -1182,7 +1286,7 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
     prompt_voice_settings(ui, config, advanced=False)
     docker_installed = docker_desktop_installed()
     deferred = [
-        "conversation_recall",
+        "secondary_ai",
         "code_interpreter",
         "telegram_codex",
         "google_workspace",
@@ -1190,25 +1294,23 @@ def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
         "skyvern",
         "openclaw",
     ]
-    if docker_installed:
-        prompt_web_search(
-            ui,
-            config,
-            deferred,
-            easy=True,
-            docker_installed=True,
-            docker_memory_bytes=docker_total_memory_bytes(),
-        )
-        ui.print_note(
-            "Conversation Recall stays off in Easy Install. Turn it on later from bin/viventium configure when you are ready to add the local Docker + Ollama path."
-        )
-    else:
-        ui.print_note(
-            "Easy Install keeps Web Search and Conversation Recall off until Docker Desktop is installed. Turn them on later from bin/viventium configure."
-        )
-        disable_feature(config, "web_search", deferred)
+    prompt_web_search(
+        ui,
+        config,
+        deferred,
+        easy=False,
+        docker_installed=docker_installed,
+        docker_memory_bytes=docker_total_memory_bytes() if docker_installed else None,
+    )
     if not resolve_bool((config["integrations"]["web_search"]).get("enabled"), False):
         mark_deferred(deferred, "web_search")
+    prompt_conversation_recall(
+        ui,
+        config,
+        deferred,
+        docker_installed=docker_installed,
+    )
+    prompt_transcript_source(ui, config, deferred)
     if ui.confirm("Connect a Telegram bot now?", default=False):
         prompt_telegram(ui, config, deferred, easy=True)
         if not resolve_bool((config["integrations"]["telegram"]).get("enabled"), False):
@@ -1370,6 +1472,11 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
         )
     else:
         mark_deferred(deferred, "web_search")
+
+    if "transcript_ingest" in selected:
+        prompt_transcript_source(ui, config, deferred, confirm_first=False)
+    else:
+        mark_deferred(deferred, "transcript_ingest")
 
     config["integrations"]["openclaw"]["enabled"] = "openclaw" in selected
     if "openclaw" not in selected:

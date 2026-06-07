@@ -35,11 +35,22 @@ runtime:
     livekit_node_ip: ""
   personalization:
     default_conversation_recall: false
+  nightly_routines:
+    enabled: true
+    defaults_version: 1
+    auto_worker_profile: true
+  prompt_workbench:
+    enabled: true
+    seed_nightly:
+      enabled: true
+      active: true
+      executor: glasshive_host
   memory_hardening:
-    enabled: false
+    enabled: true
     schedule: "0 3 * * *"
     timezone: America/Toronto
     operator_user_email: ""
+    provider: ""
     lookback_days: 7
     min_user_idle_minutes: 60
     max_changes_per_user: 3
@@ -94,6 +105,12 @@ voice:
   wing_mode:
     default_enabled: false
 integrations:
+  glasshive:
+    enabled: true
+    host_worker:
+      enabled: true
+      workspace_root: ~/viventium
+      default_execution_mode: host
   code_interpreter:
     enabled: false
   web_search:

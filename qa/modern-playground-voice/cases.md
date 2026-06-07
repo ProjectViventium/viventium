@@ -17,6 +17,8 @@
 | `MPV-UC-013` | Hear a streamed voice answer when model text contains links, emails, references, markdown, or provider markup. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-013` | Modern Playground call with current TTS route and fallback route | Voice gateway `llm_delta`, `tts_emit`, provider request logs when available, sanitizer/unit tests | TTS receives speech-safe phrase chunks; plain providers do not receive raw tags; provider-supported controls are preserved only on capable routes. | 2026-05-21 PASS; live browser QA plus provider metrics |
 | `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | 2026-05-22 PASS for local Whisper barge-in runtime/browser/log proof |
 | `MPV-UC-015` | Interrupt a local Whisper assistant reply while it is speaking. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-015` | Modern Playground call with local `pywhispercpp` STT | Visible transcript, audible behavior, voice gateway interruption policy/state logs, generated runtime config, DB call-session route | A sustained one-word or short-phrase barge-in pauses/interrupts the agent without waiting for final local Whisper text; AssemblyAI word-guard defaults remain unchanged. | 2026-05-22 PASS in `reports/2026-05-22-local-whisper-bargein-qa.md` |
+| `MPV-UC-016` | Open the Listening picker, select `AssemblyAI` → `Universal-3 Pro streaming (u3-rt-pro)`, then start a call and speak. | `docs/requirements_and_learnings/06_Voice_Calls.md` (AssemblyAI Streaming Engine Selection) / `MPV-017` | Modern Playground browser, voice gateway worker, LiveKit, `ASSEMBLYAI_API_KEY` configured | Listening dropdown options, voice gateway `connecting to AssemblyAI model=...` log, `/capabilities` payload, transcript, worker STT-selection tests | `Universal-3 Pro streaming (u3-rt-pro)` is selectable, the call connects, and the worker runs the selected `u3-rt-pro` engine with a real STT transcript. | 2026-05-29 PARTIAL: automated plumbing PASS + live `/capabilities` shows `u3-rt-pro` `available=True` + real-browser confirm that the picker lists and applies `Universal-3 Pro streaming (u3-rt-pro)`; only the audible-call transcript remains |
+| `MPV-UC-017` | Receive a streamed answer whose server emits growing text snapshots instead of pure incremental token deltas. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-018` | Modern Playground browser, voice gateway stream, LibreChat voice route, Mongo/chat reload | Gateway chunks, visible transcript, persisted assistant text/content parts, follow-up decision metadata | The assistant text appears once, `{NTA}` remains silent, and the linked LibreChat chat reload never shows malformed control tags or adjacent duplicate words. | 2026-05-30 PARTIAL PASS in `reports/2026-05-30-cumulative-delta-snapshot-rca.md`; artifact fixed and linked chat cleaned on read, but healthy primary-provider stream rerun blocked by local provider failures |
 
 ## MPV-001 Authenticated Call Launch
 
@@ -33,7 +35,10 @@
   4. Click `Start chat`.
   5. Open transcript and send a synthetic typed prompt.
 - Expected Result: LiveKit connects, the voice worker receives the job, and the assistant returns a
-  real answer. Forbidden result: `Session ended / Agent left the room unexpectedly`.
+  real answer. The typed input cannot be submitted until the agent participant is available; pressing
+  Enter obeys the same availability guard as the disabled Send button. Forbidden result:
+  `Session ended / Agent left the room unexpectedly`, or a browser/harness action marking
+  `promptSent=true` without a corresponding voice worker/chat route hit.
 - Evidence: `qa/modern-playground-voice/README.md`
 - Last Run: 2026-05-18 partial pass for synthetic microphone/worker dispatch in
   `reports/2026-05-18-whispercpp-turn-taking-endpointing.md`; authenticated answer acceptance still
@@ -86,13 +91,16 @@
   parent chain. The second stream does not return `Stream not found`. Any Phase B continuation from
   the first turn is adjudicated with the newer visible exchange and may resolve to silence. Distinct
   generated turns use distinct one-turn stream ids unless the requests were intentionally coalesced
-  inside the same ingress window.
+  inside the same ingress window. If the Phase B adjudicator resolves to `{NTA}`, empty, skipped, or
+  otherwise terminal-silent, the persisted follow-up decision is visible to the voice poller and the
+  poller exits early instead of waiting the whole follow-up window.
 - Forbidden Result: the second user turn appears only in the playground transcript but not in Mongo;
   the voice gateway speaks a generic service error; a stale first-turn follow-up is generated with
   moved-on state missing; a later turn subscribes to or completes an older turn's stream.
 - Evidence: `qa/modern-playground-voice/reports/2026-05-15-livekit-parity-latency-followup-qa.md`
-- Last Run: 2026-05-15 partial browser/DB regression. Fresh multi-turn Phase B overlap timing is
-  still needed for the full MPV-003 stress case.
+- Last Run: 2026-05-30 PARTIAL. Automated voice follow-up scheduler regression passed and a real
+  fake-microphone LiveKit run proved the active playground/worker path. A fresh spoken multi-turn
+  Phase B overlap run is still needed for the full MPV-003 stress case.
 
 ## MPV-004 Voice Latency Timing Profile
 
@@ -551,6 +559,177 @@
   `agent_speaking`, `user_speaking`, and `agent_paused` in the voice gateway state sequence with no
   browser console errors; see `reports/2026-05-22-local-whisper-bargein-qa.md`.
 
+## MPV-016 Streaming TTS Must Preserve Inter-Word Spacing (xAI)
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md` (xAI Standalone TTS Contract).
+- User Outcome: On an xAI standalone voice call, the spoken audio keeps normal word spacing; the
+  assistant says "Hello there, how are you?" — not a glued "Hellothere,howareyou?" — while the chat
+  transcript already reads correctly.
+- Surfaces: Modern Playground, Voice Gateway `LibreChatLLM` deltas, `FallbackTTS` boundary
+  normalizer, `livekit-plugins-xai` streaming TTS (`wss://api.x.ai/v1/tts`), transcript display.
+- Preconditions: canonical local runtime from the checkout under test; active Speaking route is xAI
+  standalone (`VIVENTIUM_XAI_TTS_API` unset/`tts`); synthetic non-personal multi-sentence prompt;
+  exact TTS-input debug logging enabled only for local QA.
+- Steps:
+  1. Confirm the active worker constructs the xAI plugin with a `retain_format=True` word tokenizer
+     (`worker._build_xai_tts_word_tokenizer`).
+  2. Start an authenticated Modern Playground call on the xAI route and send a multi-sentence prompt.
+  3. Compare the visible transcript spacing against the audible speech (and, when available, the
+     `[VoiceTTSInput]`/provider request text reconstructed from the `text.delta` frames).
+  4. Verify the model/provider route was not silently changed to make the test pass.
+- Expected Result: The text reconstructed from the xAI `text.delta` frames equals the transcript
+  spacing; no inter-word spaces are dropped; first delta of each segment has no spurious leading
+  space.
+- Forbidden Result: words glue together in the spoken audio while the transcript looks fine;
+  whitespace is "fixed" by mangling `sse.py`/`fallback_tts.py` sanitizers (which already preserve
+  spacing); the fix flips the selected provider/model; QA artifacts expose private transcript
+  content or session/call ids.
+- Evidence: `viventium_v0_4/voice-gateway/tests/test_xai_standalone_tts.py`
+  (`test_injected_tokenizer_preserves_word_spacing_for_xai_deltas`,
+  `test_default_plugin_tokenizer_would_drop_spacing`,
+  `test_xai_tts_constructed_with_space_preserving_tokenizer`), plus a dated public-safe report and
+  browser/audio observation when the live runtime is restarted.
+- Last Run: 2026-05-30 PASS. (1) Deterministic reproduction against the pinned
+  `livekit-plugins-xai` `WordTokenizer` and the real `_VoiceTtsDeltaBuffer` +
+  `_ProviderTextBoundaryNormalizer` chain: default `retain_format=False` produced
+  `"Hellothere,Icheckedyourinvoiceanditcleared.What'snext?"` while the injected `retain_format=True`
+  tokenizer produced the transcript-matching `"Hello there, I checked your invoice and it cleared.
+  What's next?"`. New regression tests pass; full voice-gateway suite (316 tests) green. (2) Live
+  user-path proof: the voice gateway worker was restarted on this branch (fixed `worker.py`,
+  registered as `librechat-voice-gateway`) with opt-in `text.delta` debug logging; a real
+  authenticated LibreChat call (same `roomName/callSessionId/agentName/autoConnect` URL shape as the
+  reported bug) on the `xAI - Eve` standalone route returned a spoken multi-sentence answer. The
+  logged per-word `text.delta` payloads sent to `wss://api.x.ai/v1/tts` carried a leading space on
+  every continuation token (first token none), reassembling to the transcript-matching
+  `"I'm Viventium, your second brain and force multiplier ... keeping momentum without fluff"`;
+  provider metrics `label=livekit.plugins.xai.tts.TTS characters=134`. Audio waveform animated and
+  the visible transcript matched. Audible spacing verified via the exact websocket payload + active
+  TTS playback (not human listening). Debug logging was then turned off and the worker relaunched
+  clean. Residual (pre-existing, not this fix): orphan sentence-terminal `.` is dropped before xAI
+  per `MPV-012`.
+
+## MPV-017 AssemblyAI Universal-3 Pro Streaming Engine Selection
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md` (AssemblyAI Streaming Engine
+  Selection).
+- User Outcome: In the Modern Playground "Listening" picker the user can choose
+  `AssemblyAI` → `Universal-3 Pro streaming (u3-rt-pro)`, start a call, and the call runs on the
+  selected `u3-rt-pro` engine that was proven in R&D — not a silent plugin default.
+- Surfaces: Modern Playground `voice-route-control` Listening selector, `useVoiceRoute` fallback
+  capabilities, voice gateway capability catalog + `_apply_requested_voice_route` +
+  `build_stt_selection`, `livekit-plugins-assemblyai` `STT(model=...)`, LiveKit transcript.
+- Preconditions: canonical local runtime from the checkout under test; `ASSEMBLYAI_API_KEY`
+  configured so AssemblyAI is `available`; synthetic non-personal prompt.
+- Steps:
+  1. Confirm the active worker advertises the AssemblyAI engine variants in `/capabilities`
+     (`u3-rt-pro` first, then `universal-streaming-english`, `universal-streaming-multilingual`;
+     legacy `universal-streaming` absent).
+  2. Open the Listening picker in a real browser; confirm `AssemblyAI` lists
+     `Universal-3 Pro streaming (u3-rt-pro)` and select it.
+  3. Start a call and speak (or play a synthetic fake-microphone WAV).
+  4. Confirm the voice gateway logs `connecting to AssemblyAI model=u3-rt-pro` (or the selected
+     engine when a different one is chosen) and a real STT transcript appears.
+  5. Switch to `Universal Streaming (Multilingual)` and confirm the worker applies the newly
+     selected engine on the next call rather than ignoring it.
+- Expected Result: The picker selection is carried end-to-end; the worker constructs
+  `assemblyai.STT` with the selected `model`; the default with no override is `u3-rt-pro`; an
+  unknown engine normalizes back to `u3-rt-pro` instead of failing the call.
+- Forbidden Result: the picker shows an engine that the runtime never applies (cosmetic variant);
+  the catalog advertises a non-plugin id such as `universal-streaming`; selecting an engine has no
+  effect on the actual AssemblyAI model; QA artifacts leak private transcript content, call ids,
+  account identifiers, local paths, or secrets.
+- Evidence: `viventium_v0_4/voice-gateway/tests/test_worker_stt_assemblyai.py`
+  (`test_build_stt_selection_passes_model_to_plugin`,
+  `test_apply_requested_route_applies_selected_variant`,
+  `test_catalog_lists_u3_rt_pro_and_drops_legacy_id`,
+  `test_default_model_is_u3_rt_pro`), `tests/release/test_config_compiler.py`
+  (`VIVENTIUM_ASSEMBLYAI_STT_MODEL` default + override assertions),
+  `tests/release/test_voice_playground_dispatch_contract.py`, plus a dated public-safe report and
+  live browser/audio observation when the gateway is restarted on this branch.
+- Last Run: 2026-05-29 PARTIAL. Automated end-to-end plumbing proven:
+  `build_stt_selection(...).model == "u3-rt-pro"`, the requested AssemblyAI variant is applied (was
+  previously dropped), the catalog drops the invalid `universal-streaming` id, the compiler emits the
+  `VIVENTIUM_ASSEMBLYAI_STT_MODEL` default/override, and the full voice-gateway suite (329 tests) plus
+  the touched release suites are green. Live runtime confirmed: the running Viventium voice gateway
+  (health port 8301, started after the edit) serves `GET /capabilities` with the AssemblyAI engine
+  `available=True` and `variants=['u3-rt-pro', 'universal-streaming-english',
+  'universal-streaming-multilingual']` — the exact feed the picker reads. Visible browser confirmed:
+  in the real playground the Listening → AssemblyAI submenu lists `Universal-3 Pro streaming
+  (u3-rt-pro)` and selecting it updates the Listening row (badge flips COVERED→METERED); reverted to
+  the prior local route afterward. Remaining: an audible `model=u3-rt-pro` call transcript; see
+  `reports/2026-05-29-assemblyai-u3-rt-pro-listening-engine.md`.
+
+## MPV-018 Cumulative Voice Stream Snapshots Must Not Duplicate Text
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md` (Live Response Streaming).
+- User Outcome: When a provider or LibreChat stream sends a growing assistant message snapshot
+  through the delta event shape, the live voice call speaks and displays the final sentence once,
+  and the linked LibreChat conversation persists the same clean text.
+- Surfaces: Voice Gateway `LibreChatLLM` stream, LibreChat voice route message-delta boundary,
+  resumable generation replay, content aggregation, Modern Playground transcript, linked LibreChat
+  conversation, Mongo messages.
+- Preconditions: canonical local runtime running from the checkout under test; synthetic
+  non-personal prompt that elicits a short answer; debug logs may be enabled locally but public
+  artifacts must use sanitized hashes/text.
+- Steps:
+  1. Run the unit regressions that simulate cumulative `on_message_delta` snapshots for normal text,
+     quoted repeated text, `{NTA}`, mid-word snapshots such as `Hel` -> `Hello`, resumable replay,
+     and legitimate repeated incremental text such as `ha` followed by `haha`.
+  2. Restart the active voice runtime from the patched checkout.
+  3. Start an authenticated Modern Playground call in a real browser and send a synthetic prompt only
+     after the Send control becomes enabled by an available agent participant.
+  4. Inspect the visible transcript and linked LibreChat chat after reload.
+  5. Inspect Mongo assistant rows for the call and the voice gateway/LibreChat logs for the same
+     turn.
+- Expected Result: Growing snapshots are normalized to missing suffixes before SSE/resumable
+  fan-out, replay, content aggregation, speech/display/save, and recent-response context. The final
+  assistant answer has no adjacent duplicate words such as `Tell Tell`, no malformed no-response
+  text such as `{N{NTATA}}`, and a terminal `{NTA}` follow-up remains silent. Meaningful repetition
+  inside quote-wrapped text, markdown blockquotes, inline code, fenced code, or true incremental
+  output such as `ha` + `haha` remains unchanged and does not trigger duplicate-artifact QA failure.
+  Mid-word cumulative snapshots reconstruct the intended word once.
+- Forbidden Result: any internal no-response marker is spoken, displayed, or persisted; cumulative
+  snapshots are appended verbatim and create duplicated text; a cleanup step repairs only the final
+  persisted message after raw bad chunks already reached browser/TTS/replay; old persisted corrupted
+  messages are treated as proof that the runtime fix failed instead of being handled by an explicit
+  data-repair decision; the QA harness reports a transcript/artifact result without proving the
+  worker route was actually exercised.
+- Evidence: dated public-safe report under `qa/modern-playground-voice/reports/`, gateway and
+  LibreChat regression tests, real-browser run, sanitized DB/log correlation, and any data-repair
+  recommendation kept separate from the product-code fix.
+- Last Run: 2026-05-31 PASS for artifact behavior, Redis replay still BLOCKED in
+  `reports/2026-05-31-boundary-delta-normalizer-root-fix.md`. The root-path fix moved cumulative
+  snapshot normalization to the LibreChat message-delta boundary before SSE/resumable fan-out,
+  aggregation, TTS/display, and persistence; the stale downstream duplicate-repair helper and
+  gateway-side duplicate normalizer were removed so the boundary remains the owner. The artifact
+  condition inventory now lives in product code at
+  `viventium_v0_4/LibreChat/api/server/services/viventium/voiceArtifactText.js`, with QA importing
+  it through `scripts/voice_artifact_contract.cjs`. ClaudeViv's follow-up gap on inline markdown
+  emphasis/decorative markers was added to that contract plus the voice TTS sanitizer, and live QA
+  then exposed the first-save owner: `BaseClient.saveMessageToDatabase` saved voice assistant rows
+  before request-controller normalization. That first-save path now uses the same product sanitizer.
+  A later ClaudeViv review caught non-voice content-to-text parity, Python sanitizer drift, and
+  dot-heavy technical-token risks; non-voice parity was restored, and LiveKit/Telegram TTS tests now
+  load the shared JavaScript artifact contract for sanitizer-owned classes while preserving `.NET`,
+  `asp.net`, `node.js`, and version-like tokens.
+  The active runtime was restarted from the checkout under test; Chrome plus the automated browser
+  harness exercised the call path with the expected cleaned assistant response and zero
+  page/persisted artifact counts. Redis replay infrastructure remains unavailable, so replay-specific
+  acceptance is still BLOCKED.
+  Earlier context:
+  2026-05-30 PARTIAL PASS in
+  `reports/2026-05-30-cumulative-delta-snapshot-rca.md`. Regression/unit checks passed, local prod
+  was restarted from the patched checkout, the reported linked chat no longer renders the malformed
+  marker or duplicate-word artifacts, and the Modern Playground harness proved a real call route with
+  clean visible/persisted/log artifacts. Claude review flagged a missing write-path duplicate case;
+  that regression was added and passed. 2026-05-31 quote-aware regression pass added protected-span
+  coverage for quoted, blockquoted, and code-formatted repeated words in
+  `reports/2026-05-31-quoted-text-artifact-coverage.md`. Full PASS is still blocked until a healthy
+  primary model provider streams a normal assistant answer through this path after the local provider
+  failures are resolved.
+
 ## Release Test Traceability
 
 - `tests/release/test_voice_playground_dispatch_contract.py`
+- `tests/release/test_config_compiler.py` (`VIVENTIUM_ASSEMBLYAI_STT_MODEL` default + override)
+- `viventium_v0_4/voice-gateway/tests/test_worker_stt_assemblyai.py` (AssemblyAI engine selection)

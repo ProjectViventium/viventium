@@ -41,7 +41,7 @@ except ModuleNotFoundError:
 HEALTH_ENDPOINTS = {
     "api": ("http://localhost:3180/api/health", {200}),
     "web": ("http://localhost:3190/", {200}),
-    "playground": ("http://localhost:3300/", {200}),
+    "playground": ("http://localhost:3300/api/health", {200}),
     "scheduling_mcp": ("http://localhost:7110/health", {200}),
     "livekit": ("http://localhost:7888/", {200}),
     "rag": ("http://localhost:8110/health", {200}),

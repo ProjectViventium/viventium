@@ -41,6 +41,7 @@ from livekit.agents import (
     TurnHandlingOptions,
     WorkerOptions,
     cli,
+    tokenize,
 )
 from livekit.agents.worker import WorkerType
 from livekit.plugins import openai
@@ -285,6 +286,18 @@ except Exception:
 # === VIVENTIUM END ===
 
 
+_TERMINAL_CORTEX_FOLLOWUP_DECISION_RESULTS = {"suppressed", "empty", "skipped"}
+
+
+def _terminal_cortex_followup_decision(decision: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(decision, dict):
+        return None
+    result = str(decision.get("result") or "").strip().lower()
+    if result in _TERMINAL_CORTEX_FOLLOWUP_DECISION_RESULTS:
+        return decision
+    return None
+
+
 @dataclass(frozen=True)
 class Env:
     livekit_agent_name: str
@@ -373,6 +386,7 @@ class Env:
     voice_resume_false_interruption: bool
     voice_min_consecutive_speech_delay_s: float
     voice_aec_warmup_duration_s: Optional[float]
+    assemblyai_stt_model: str
     assemblyai_end_of_turn_confidence_threshold: Optional[float]
     assemblyai_min_end_of_turn_silence_when_confident_ms: Optional[int]
     assemblyai_max_turn_silence_ms: Optional[int]
@@ -891,6 +905,55 @@ def _normalize_local_stt_model(model_name: str) -> str:
     return (model_name or "").strip() or _default_local_stt_model()
 
 
+# === VIVENTIUM START ===
+# Feature: Selectable AssemblyAI streaming STT model in the modern playground "Listening" picker
+# Added: 2026-05-29
+# Why: AssemblyAI was already wired as a Listening provider, but its engine variant was cosmetic.
+# The capability catalog advertised a single id "universal-streaming" (which is not even a valid
+# plugin model string) and the selected variant was dropped in _apply_requested_voice_route, so the
+# model was never passed to assemblyai.STT(). Every AssemblyAI call therefore silently ran the
+# plugin default ("universal-streaming-english") and the picker had no effect. R&D
+# (private/rnd/livekit_performance) proved "u3-rt-pro" (Universal-3 Pro streaming) as the higher
+# quality low-latency engine, so we expose the real, plugin-valid model set, make selection work
+# end-to-end, and default to the proven u3-rt-pro. Ids must stay aligned with the
+# livekit-plugins-assemblyai STT(model=...) Literal; unknown/empty ids normalize to the default so
+# we never hand the provider an invalid model string.
+ASSEMBLYAI_DEFAULT_STT_MODEL = "u3-rt-pro"
+# (model_id, human-facing label). Order defines the picker order; the first entry is the default.
+ASSEMBLYAI_STT_MODELS: tuple[tuple[str, str], ...] = (
+    ("u3-rt-pro", "Universal-3 Pro streaming (u3-rt-pro)"),
+    ("universal-streaming-english", "Universal Streaming (English)"),
+    ("universal-streaming-multilingual", "Universal Streaming (Multilingual)"),
+)
+_ASSEMBLYAI_STT_MODEL_IDS = {model_id for model_id, _label in ASSEMBLYAI_STT_MODELS}
+
+
+def _normalize_assemblyai_stt_model(model_name: str) -> str:
+    value = (model_name or "").strip()
+    if value == "u3-pro":
+        # Provider-deprecated alias; the plugin itself remaps u3-pro -> u3-rt-pro.
+        return "u3-rt-pro"
+    if value in _ASSEMBLYAI_STT_MODEL_IDS:
+        return value
+    return ASSEMBLYAI_DEFAULT_STT_MODEL
+
+
+def _assemblyai_model_label(model_id: str) -> str:
+    for candidate_id, label in ASSEMBLYAI_STT_MODELS:
+        if candidate_id == model_id:
+            return label
+    return model_id
+
+
+def _assemblyai_stt_model_variants(selected_model: str) -> list[tuple[str, str]]:
+    # Selected model first (mirrors the OpenAI/local-whisper variant ordering), then the full set.
+    # _dedupe_variants collapses the duplicate when the selected model is already in the catalog.
+    normalized = _normalize_assemblyai_stt_model(selected_model)
+    ordered = [normalized, *[model_id for model_id, _label in ASSEMBLYAI_STT_MODELS]]
+    return [(model_id, _assemblyai_model_label(model_id)) for model_id in ordered]
+# === VIVENTIUM END ===
+
+
 def _local_whisper_model_variants(recommended_model: str) -> list[tuple[str, str]]:
     ordered_models = [recommended_model, *_LOCAL_WHISPER_MODELS]
     return [
@@ -1065,7 +1128,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             if HAS_ASSEMBLYAI and assemblyai_api_key
             else "AssemblyAI plugin or ASSEMBLYAI_API_KEY missing",
             "variantLabel": _provider_variant_type("assemblyai", modality="stt"),
-            "variants": _dedupe_variants("universal-streaming"),
+            "variants": _dedupe_variants(*_assemblyai_stt_model_variants(env.assemblyai_stt_model)),
         },
         {
             "id": "pywhispercpp",
@@ -1200,6 +1263,101 @@ def _tts_provider_accepts_inline_voice_controls(
     return bool((capability or {}).get("acceptsInlineVoiceControls"))
 
 
+# === VIVENTIUM START ===
+# Feature: Preserve inter-word spacing in xAI standalone TTS websocket input.
+# Added: 2026-05-30
+#
+# Why:
+# - The LiveKit xAI plugin (livekit/plugins/xai/tts.py) tokenizes synthesis input with
+#   `tokenize.basic.WordTokenizer(ignore_punctuation=False)` and sends EACH word token as a
+#   separate `{"type": "text.delta", "delta": word.token}` frame over wss://api.x.ai/v1/tts.
+#   The xAI server concatenates those deltas verbatim.
+# - That WordTokenizer defaults to `retain_format=False`, which DROPS the whitespace between
+#   words (it advances `word_start = pos + 1` past the space). So "Hello world" is emitted as the
+#   bare tokens "Hello","world" and the server speaks "Helloworld". Every inter-word space is lost.
+# - The on-screen chat transcript is unaffected: LiveKit's TranscriptSynchronizer already uses a
+#   `retain_format=True` WordTokenizer (see test_worker_turn_handling.py), so the displayed text
+#   keeps its spacing while only the spoken audio runs words together. This is why the symptom
+#   looks like a sanitization bug but is not — our sse.py/fallback_tts.py sanitizers preserve
+#   spacing; the loss happens downstream inside the plugin's word-delta streaming.
+#
+# Fix:
+# - Inject a `retain_format=True` WordTokenizer so each emitted token keeps its leading whitespace
+#   (" world"), making the reconstructed websocket text match the original spacing exactly.
+# - Keep `ignore_punctuation=False` (xAI relies on punctuation for prosody) and the plugin default
+#   `split_character=False` so non-spaced scripts (CJK) keep the same delta granularity.
+def _xai_tts_delta_logging_enabled() -> bool:
+    return (
+        (os.getenv("VIVENTIUM_VOICE_DEBUG_TTS", "") or "").strip() == "1"
+        or (os.getenv("VIVENTIUM_VOICE_LOG_TTS_INPUTS", "") or "").strip() == "1"
+    )
+
+
+class _LoggingWordStream:
+    """Diagnostic proxy around a LiveKit `WordStream`.
+
+    The xAI plugin streams each emitted word token to `wss://api.x.ai/v1/tts` as a separate
+    `{"type": "text.delta", "delta": word.token}` frame. When voice TTS debug logging is enabled
+    this proxy records the exact per-word payloads (with safe JSON escaping) so the websocket-level
+    spacing can be verified without leaking secrets. It never alters the tokens or the stream.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self._index = 0
+
+    def push_text(self, text: str) -> None:
+        self._inner.push_text(text)
+
+    def flush(self) -> None:
+        self._inner.flush()
+
+    def end_input(self) -> None:
+        self._inner.end_input()
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+    def __aiter__(self) -> Any:
+        return self
+
+    async def __anext__(self) -> Any:
+        token = await self._inner.__anext__()
+        try:
+            value = getattr(token, "token", "") or ""
+            logger.info(
+                "[VoiceTTSInput] action=word_delta provider=xai transport=ws stage=text.delta index=%s leading_space=%s token_json=%s",
+                self._index,
+                bool(value[:1].isspace()),
+                json.dumps(value, ensure_ascii=False),
+            )
+            self._index += 1
+        except Exception:
+            pass
+        return token
+
+
+class _SpacePreservingWordTokenizer(tokenize.basic.WordTokenizer):
+    """xAI synthesis word tokenizer that preserves inter-word spacing.
+
+    Identical to the plugin's tokenizer except `retain_format=True` (set by the factory below). When
+    voice TTS debug logging is enabled it wraps the word stream so the exact `text.delta` payloads
+    sent to the xAI websocket are logged; otherwise it returns the plain stream so the production
+    path is unchanged.
+    """
+
+    def stream(self, *, language: Optional[str] = None) -> Any:
+        inner = super().stream(language=language)
+        if _xai_tts_delta_logging_enabled():
+            return _LoggingWordStream(inner)
+        return inner
+
+
+def _build_xai_tts_word_tokenizer() -> tokenize.WordTokenizer:
+    return _SpacePreservingWordTokenizer(ignore_punctuation=False, retain_format=True)
+# === VIVENTIUM END ===
+
+
 def _configure_xai_standalone_tts_plugin(*, ws_url: str, sample_rate: int) -> None:
     """Align LiveKit's xAI plugin module constants with our compiled runtime config."""
     if xai_plugin is None:
@@ -1322,7 +1480,18 @@ def _apply_requested_voice_route(
                     or runtime_env.openai_stt_model,
                 )
             elif requested_stt_provider == "assemblyai":
-                runtime_env = replace(runtime_env, stt_provider="assemblyai")
+                runtime_env = replace(
+                    runtime_env,
+                    stt_provider="assemblyai",
+                    assemblyai_stt_model=_normalize_assemblyai_stt_model(
+                        _resolve_requested_variant(
+                            capability,
+                            stt_selection["variant"],
+                            runtime_env.assemblyai_stt_model,
+                        )
+                        or runtime_env.assemblyai_stt_model
+                    ),
+                )
             elif requested_stt_provider == "pywhispercpp":
                 runtime_env = replace(
                     runtime_env,
@@ -1828,6 +1997,9 @@ def load_env() -> Env:
             "VIVENTIUM_VOICE_AEC_WARMUP_DURATION_S",
             _default_aec_warmup_duration(normalized_stt_provider),
         ),
+        assemblyai_stt_model=_normalize_assemblyai_stt_model(
+            os.getenv("VIVENTIUM_ASSEMBLYAI_STT_MODEL", "")
+        ),
         assemblyai_end_of_turn_confidence_threshold=_parse_optional_float_env(
             "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD",
         ),
@@ -2096,6 +2268,10 @@ def load_vad(env: Optional[Env] = None) -> Optional[Any]:
 # === VIVENTIUM END ===
 def _build_assemblyai_stt_kwargs(env: Env) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
+    # Pass the selected/configured engine through to the plugin. Without this the variant chosen in
+    # the Listening picker (or VIVENTIUM_ASSEMBLYAI_STT_MODEL) is ignored and AssemblyAI falls back
+    # to its own plugin default. Normalized so an unknown value can never reach the provider.
+    kwargs["model"] = _normalize_assemblyai_stt_model(env.assemblyai_stt_model)
     if env.assemblyai_end_of_turn_confidence_threshold is not None:
         kwargs["end_of_turn_confidence_threshold"] = env.assemblyai_end_of_turn_confidence_threshold
     if env.assemblyai_min_end_of_turn_silence_when_confident_ms is not None:
@@ -2580,6 +2756,29 @@ class CortexFollowupScheduler:
                                         spoken,
                                     )
                                 return
+
+                        followup_decision = _terminal_cortex_followup_decision(
+                            data.get("followUpDecision")
+                        )
+                        if followup_decision is not None:
+                            if log_latency:
+                                logger.info(
+                                    "[VoiceLatency][Followup] cortex_decision_terminal_ms=%s seq=%s message_id=%s result=%s reason=%s llm_result=%s strategy=%s",
+                                    int((time.monotonic() - started_at) * 1000),
+                                    seq,
+                                    message_id,
+                                    followup_decision.get("result") or "",
+                                    followup_decision.get("suppressionReason") or "none",
+                                    followup_decision.get("llmResult") or "",
+                                    followup_decision.get("selectedStrategy") or "",
+                                )
+                            logger.info(
+                                "[voice-gateway] Cortex follow-up decision is terminal and silent: message_id=%s result=%s reason=%s",
+                                message_id,
+                                followup_decision.get("result") or "",
+                                followup_decision.get("suppressionReason") or "none",
+                            )
+                            return
 
                         insights = data.get("insights")
                         if isinstance(insights, list):
@@ -3083,6 +3282,13 @@ async def entrypoint(ctx: JobContext) -> None:
                 api_key=xai_api_key,
                 voice=env.xai_voice,
                 language=env.xai_language,
+                # === VIVENTIUM START ===
+                # Preserve inter-word spacing in the xAI websocket text deltas. Without this the
+                # plugin's default WordTokenizer (retain_format=False) strips spaces and the spoken
+                # audio glues words together while the chat transcript stays correct. See
+                # _build_xai_tts_word_tokenizer for the full root-cause note.
+                tokenizer=_build_xai_tts_word_tokenizer(),
+                # === VIVENTIUM END ===
             )
             _apply_xai_tts_streaming_latency_options(
                 tts_instance,

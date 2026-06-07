@@ -635,7 +635,34 @@ Product contract:
   context and must not be confused with a LaunchAgent timezone override
 - default lookback is 7 days
 - default idle gate skips users active in the last 60 minutes
+- the wrapper has a separate power/thermal gate for model-backed hardening and transcript ingest:
+  on macOS it skips dry-run/apply/transcript model work while the laptop is on battery power or
+  under a recorded thermal/performance warning, unless an operator explicitly passes
+  `--ignore-power-gate` with `VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE=1`.
+  `--ignore-idle-gate` must not bypass the power gate.
+- local model-backed maintenance should reuse `scripts/viventium/power_budget.py` instead of
+  re-implementing one-off `pmset` probes; maintenance audit automation must treat a power-budget
+  skip as an honest `SKIPPED`/`PARTIAL` finding, not as a reason to force `--ignore-power-gate`.
+- allowed hardening work runs its Node/model child at lower OS priority so foreground UI, Codex, and
+  Viventium runtime processes stay responsive.
+- model-backed dry-run/apply runs also have an efficiency gate inside the Node hardener, not only in
+  the wrapper. By default a completed model-backed run starts a 5 minute cooldown; `--ignore-power-gate` and
+  `VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE=1` do not bypass that cooldown. The separate
+  cooldown override is `--ignore-efficiency-gate` plus
+  `VIVENTIUM_MEMORY_HARDENING_ALLOW_EFFICIENCY_OVERRIDE=1`.
+- `apply --run-id <run-id>` replays an existing private proposal and is not model-backed; it is not
+  part of the model-work cooldown, though normal lock/idempotency and memory-write policy still
+  apply.
+- transcript apply batches have a default floor of 5 files per Node invocation and a default wrapper
+  cap of 1 batch per invocation. This prevents one-file shell loops from repeatedly paying process,
+  model-probe, Mongo, and vector startup costs while still preserving resumable catch-up.
+- the macOS helper's manual transcript ingest is an interactive maintenance action: it may bypass
+  the cooldown for an operator click, but it still respects the power/thermal gate and uses a
+  bounded one-batch transcript pass.
 - default input cap is 500,000 estimated characters and full-lookback mode is on by default
+- default model-call timeout is 30 minutes for unattended hardening. The prompt can legitimately be
+  large near the input cap, so a shorter timeout can create false provider fallback even when the
+  configured model/schema path is healthy.
 - the job imports the generated runtime memory instructions for key semantics, but uses a separate
   batch hardener prompt
 - if the 7-day corpus exceeds the configured input cap, the job fails closed for that user unless
@@ -647,6 +674,9 @@ Product contract:
 - model output is a proposal only; database writes go through the existing memory methods and
   shared memory policy
 - raw proposals and rollback snapshots stay under App Support state
+- apply and rollback audit summaries may record public-safe counts, key names, timestamps, and
+  rollback-summary filenames, but never raw memory values, raw user ids, transcripts, prompts, or
+  rollback snapshot contents
 - redacted run logs record memory-instruction presence/hash, lookback coverage, message counts,
   conversation counts, prompt size, and changed key names without storing raw conversation text
 - macOS installs reconcile the LaunchAgent from generated config; the scheduled job invokes the
@@ -655,13 +685,21 @@ Product contract:
   equivalent.
 - `runtime.memory_hardening.operator_user_email` optionally scopes scheduled/helper hardening to one
   local account; empty means all local users are eligible
+- a scheduled run that exits successfully with `user_count=0` is a healthy empty/skip result when
+  eligible users are intentionally absent, for example because the scoped user has memory disabled.
+  It is not substantive memory work, but it is also not degraded. QA must reserve `PARTIAL` or
+  `FAIL` for provider errors, inconclusive eligibility, unavailable runtime dependencies, stale
+  transcript/vector work that should have run, or an unexpected empty selection.
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
   auth, preferring Claude Code `claude-opus-4-7` at `xhigh` when Anthropic is available and falling
   back through the Claude Code `opus` alias before Codex/OpenAI `gpt-5.5` at `high` and then
   `gpt-5.4` at `high` when OpenAI is the available foundation route
-- the OpenAI/Codex hardening path must pass a structured output schema and the configured reasoning
-  effort to the Codex CLI, matching the compiler-emitted tuple and configurable fallback list
-  instead of relying on stale internal hardener fallbacks
+- the OpenAI/Codex hardening path must pass a Codex/OpenAI-compatible structured output schema and
+  the configured reasoning effort to the Codex CLI, matching the compiler-emitted tuple and
+  configurable fallback list instead of relying on stale internal hardener fallbacks. The
+  provider-facing schema must satisfy OpenAI structured-output constraints such as requiring every
+  declared object property and avoiding unsupported composition keywords like `oneOf`; runtime
+  validation still owns the final memory/evidence contract after the model returns JSON.
 - the generated macOS LaunchAgent must use direct `ProgramArguments` through `/usr/bin/env -i`
   rather than `/bin/bash -lc`; the job receives the minimal deterministic environment and invokes
   `scripts/viventium/memory_harden.py` directly at the daily 3am wall-clock schedule

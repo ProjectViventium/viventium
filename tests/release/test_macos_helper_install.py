@@ -45,6 +45,7 @@ def _make_fake_executable(path: Path) -> None:
         "# ingest-transcripts\n"
         "# --ignore-idle-gate\n"
         "# --until-caught-up\n"
+        "# --interactive-maintenance\n"
         "# Choose Transcripts Folder\n"
         "# prompt-workbench\n"
         "exit 0\n",
@@ -521,6 +522,7 @@ def test_install_prefers_matching_shipped_prebuilt_helper_on_clean_install(tmp_p
     assert "helper-transcript-ingest.log" in helper_strings
     assert "helper-transcript-source.log" in helper_strings
     assert "--ignore-idle-gate" in helper_strings
+    assert "--interactive-maintenance" in helper_strings
     assert "Viventium status-bar helper keeps the local runtime available after login." in helper_strings
     assert "disableAutomaticTermination" in helper_strings
     signature = subprocess.run(
@@ -616,7 +618,16 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private nonisolated static func firstHTTPStatus(urls: [URL], timeoutInterval: TimeInterval = 1.5) async -> Int?" in source
     assert 'await self.firstHTTPStatus(urls: self.loopbackCandidateURLs(port: port, path: "/api/health"))' in source
     assert 'await self.firstHTTPStatus(urls: self.loopbackCandidateURLs(port: port, path: "/"))' in source
+    assert "private nonisolated static func playgroundHealthy(port: Int) async -> Bool" in source
+    assert "let playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)" in source
+    assert "private var steadyStateHealthSnapshot:" in source
+    assert "private let steadyStateHealthRefreshInterval: TimeInterval = 30" in source
+    assert "let snapshot = await self.stackHealthSnapshot(" in source
+    assert "Self.preferredOpenURLString(" in source
+    assert "snapshot: snapshot" in source
     assert "return await self.firstHTTPStatus(urls: self.candidateURLs(for: url)) != nil" in source
+    assert "private nonisolated static func rotateHelperLogIfNeeded(" in source
+    assert "self.rotateHelperLogIfNeeded(logURL)" in source
     assert 'pidFileName: "helper-detached-start.pid"' in source
     assert 'pidFileName: "helper-detached-stop.pid"' in source
     assert "repoRoot: repoRoot," in source
@@ -696,7 +707,10 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'logFileName: "helper-transcript-ingest.log"' in source
     assert '"Manual transcript ingest requested; scope: \\(ingestScope)"' in source
     assert "let runResult = Self.runMemoryHardeningCaptured(" in source
-    assert 'arguments: ["ingest-transcripts", "--apply", "--until-caught-up", "--ignore-idle-gate", "--json"]' in source
+    assert '"--max-batches"' in source
+    assert '"--transcript-max-files-per-run"' in source
+    assert '"--interactive-maintenance"' in source
+    assert '"--skip-model-probe"' in source
     assert "let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)" in source
     assert "private nonisolated static func runMemoryHardeningStatusOnly(" in source
     assert "private nonisolated static func runMemoryHardeningCaptured(" in source
@@ -803,7 +817,10 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'appendingPathComponent("state/runtime/\\(runtimeProfile)/stack-owner.json")' in source
     assert 'let managedStopCheckURLs: [String]' in source
     assert 'managedStopCheckURLs: self.managedStopCheckURLs(values: values)' in source
-    assert "return await self.stackHealthy(" in user_facing_health_section
+    assert "knownSnapshot: StackHealthSnapshot? = nil" in source
+    assert "knownSnapshot: snapshot" in source
+    assert "if knownSnapshot?.healthy == true" in source
+    assert "await self.stackHealthSnapshot(runtime: runtime).healthy" in user_facing_health_section
     assert "managedServicesHealthy" not in user_facing_health_section
     assert "managedServicesRunning(runtime: runtime)" in stop_completion_section
     assert 'if self.boolValue(values["START_SCHEDULING_MCP"])' in source
@@ -883,7 +900,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'let playgroundPort = Int(values["VIVENTIUM_PLAYGROUND_PORT"] ?? "") ?? 3300' in source
     assert 'let runtimeProfile = values["VIVENTIUM_RUNTIME_PROFILE"] ?? "isolated"' in source
     assert 'self.openURLString = Self.frontendURLString(host: host, port: runtime.frontendPort)' in source
-    assert "let preferredOpenURLString = await Self.preferredOpenURLString(runtime: runtime, host: host)" in source
+    assert "let preferredOpenURLString = Self.preferredOpenURLString(" in source
     assert "self.openURLString = preferredOpenURLString" in source
     assert "let playgroundPort: Int" in source
     assert "let runtimeProfile: String" in source
@@ -895,12 +912,13 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'legacyLogRoot.appendingPathComponent("telegram_codex.pid")' in source
     assert 'private nonisolated static func frontendURLString(host: String, port: Int) -> String' in source
     assert "private nonisolated static func preferredOpenURLString(runtime: RuntimePorts, host: String) async -> String" in source
+    assert "private nonisolated static func preferredOpenURLString(" in source
     assert "return self.frontendURLString(host: host, port: runtime.playgroundPort)" in source
     assert "private nonisolated static func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool" in source
     assert "private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool" in source
-    assert "return await self.frontendHealthy(port: playgroundPort)" in source
-    assert "return await self.stackHealthy(" in user_facing_health_section
-    assert "playgroundPort: runtime.playgroundPort" in source
+    assert "return await self.frontendHealthy(port: playgroundPort)" not in source
+    assert "await self.stackHealthSnapshot(runtime: runtime).healthy" in user_facing_health_section
+    assert "await self.playgroundHealthy(port: runtime.playgroundPort)" in source
     assert "return await self.managedServicesHealthy(runtime: runtime)" not in source
     assert "let shouldPreserveBusyState =" in source
     assert "self.stackState.actionBusy &&" in source
@@ -1002,6 +1020,7 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'strings "$installed_executable" | grep -F -- "ingest-transcripts" >/dev/null' in install_script
     assert 'strings "$installed_executable" | grep -F -- "--ignore-idle-gate" >/dev/null' in install_script
     assert 'strings "$installed_executable" | grep -F -- "--until-caught-up" >/dev/null' in install_script
+    assert 'strings "$installed_executable" | grep -F -- "--interactive-maintenance" >/dev/null' in install_script
     assert 'strings "$installed_executable" | grep -F -- "Choose Transcripts Folder" >/dev/null' in install_script
     assert 'verify_installed_bundle' in install_script
     assert "sign_installed_bundle() {" in install_script

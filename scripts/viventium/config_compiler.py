@@ -75,6 +75,7 @@ DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
+DEFAULT_ASSEMBLYAI_STT_MODEL = "u3-rt-pro"
 DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD = "0.01"
 DEFAULT_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS = "100"
 DEFAULT_ASSEMBLYAI_MAX_TURN_SILENCE_MS = "1000"
@@ -124,6 +125,7 @@ LOCAL_MCP_ALLOWED_DOMAINS = ["localhost", "127.0.0.1", "host.docker.internal"]
 REPO_ROOT = SCRIPT_DIR.parent.parent
 GLASSHIVE_RUNTIME_DIR = REPO_ROOT / "viventium_v0_4" / "GlassHive" / "runtime_phase1"
 LIBRECHAT_UPLOADS_DIR = REPO_ROOT / "viventium_v0_4" / "LibreChat" / "uploads"
+CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
 LEGACY_CANONICAL_ENV_IMPORT_KEYS = (
     "AZURE_AI_FOUNDRY_API_KEY",
     "AZURE_AI_FOUNDRY_API_VERSION",
@@ -351,6 +353,49 @@ def explicit_url_port(value: str) -> str:
     return str(port)
 
 
+def _executable_path(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def codex_app_search_roots() -> list[Path]:
+    override = os.environ.get("VIVENTIUM_CODEX_APP_DIRS", "").strip()
+    if override:
+        return [Path(entry).expanduser() for entry in override.split(os.pathsep) if entry.strip()]
+    return [Path("/Applications"), Path.home() / "Applications"]
+
+
+def codex_app_cli_candidates() -> list[Path]:
+    root_candidates = [root / "Codex.app" / "Contents" / "Resources" / "codex" for root in codex_app_search_roots()]
+    if os.environ.get("VIVENTIUM_CODEX_APP_DIRS", "").strip():
+        candidates: list[Path] = [*root_candidates, CODEX_APP_CLI]
+    else:
+        candidates = [CODEX_APP_CLI, *root_candidates]
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def resolve_host_cli_path(command: str, explicit_path: Any = None) -> str:
+    candidates: list[Path] = []
+    if explicit_path:
+        candidates.append(Path(str(explicit_path)).expanduser())
+    discovered = shutil.which(command)
+    if discovered:
+        candidates.append(Path(discovered))
+    if command == "codex":
+        candidates.extend(codex_app_cli_candidates())
+    for candidate in candidates:
+        if _executable_path(candidate):
+            return str(candidate)
+    return ""
+
+
 def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, Any]:
     integrations = config.get("integrations", {}) or {}
     glasshive = integrations.get("glasshive") or {}
@@ -361,6 +406,12 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     prompt_visibility = host_worker.get("prompt_visibility") or {}
     workspace_root = str(host_worker.get("workspace_root") or "~/viventium").strip() or "~/viventium"
     enabled = resolve_bool(host_worker.get("enabled"), True)
+    # Config-driven default worker profile. Defaults to codex-cli (prior behavior, no
+    # change for anyone who does not set it). Local configs may opt into claude-code.
+    # The runtime validates this against GLASSHIVE_ALLOWED_WORKER_PROFILES, so a default
+    # that is not in an environment's allowlist (e.g. enterprise excludes claude-code)
+    # fails closed at startup rather than silently using an unadvertised worker.
+    default_worker_profile = str(host_worker.get("default_worker_profile") or "codex-cli").strip() or "codex-cli"
     default_execution_mode = str(host_worker.get("default_execution_mode") or "host").strip().lower()
     if default_execution_mode not in {"host", "docker"}:
         default_execution_mode = "host"
@@ -369,9 +420,13 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     if glasshive_azure_enterprise_enabled(config):
         enabled = False
         default_execution_mode = "docker"
+    codex_cli_path = resolve_host_cli_path("codex", host_worker.get("codex_bin"))
+    claude_cli_path = resolve_host_cli_path("claude", host_worker.get("claude_bin"))
+    openclaw_cli_path = resolve_host_cli_path("openclaw", host_worker.get("openclaw_bin"))
     return {
         "enabled": enabled,
         "workspace_root": workspace_root,
+        "default_worker_profile": default_worker_profile,
         "default_execution_mode": default_execution_mode,
         "mentions": {
             "codex": str(mentions.get("codex") or "@codex"),
@@ -382,9 +437,12 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "advisory_reviewer_enabled": resolve_bool(advisory_reviewer.get("enabled"), False),
         "advisory_reviewer_mode": str(advisory_reviewer.get("mode") or "review_final").strip() or "review_final",
         "prompt_visibility_enabled": resolve_bool(prompt_visibility.get("enabled"), True),
-        "codex_cli_available": shutil.which("codex") is not None,
-        "claude_cli_available": shutil.which("claude") is not None,
-        "openclaw_cli_available": shutil.which("openclaw") is not None,
+        "codex_cli_path": codex_cli_path,
+        "claude_cli_path": claude_cli_path,
+        "openclaw_cli_path": openclaw_cli_path,
+        "codex_cli_available": bool(codex_cli_path),
+        "claude_cli_available": bool(claude_cli_path),
+        "openclaw_cli_available": bool(openclaw_cli_path),
     }
 
 VOICE_PROVIDER_KEYCHAIN_SERVICES = {
@@ -462,12 +520,14 @@ DEFAULT_MEMORY_HARDENING = {
     "schedule": "0 3 * * *",
     "timezone": "America/Toronto",
     "operator_user_email": "",
+    "provider": "",
     "lookback_days": 7,
     "min_user_idle_minutes": 60,
     "max_changes_per_user": 3,
     "max_input_chars": 500000,
     "require_full_lookback": True,
     "dry_run_first": True,
+    "min_apply_interval_seconds": 300,
     "provider_profile": "launch_ready_only",
     "anthropic_model": "claude-opus-4-7",
     "anthropic_effort": "xhigh",
@@ -477,6 +537,8 @@ DEFAULT_MEMORY_HARDENING = {
         "source_dir": "",
         "ignore_globs": [],
         "max_files_per_run": 20,
+        "min_files_per_run": 5,
+        "max_batches_per_invocation": 1,
         "max_chars_per_file": 500000,
         "summary_max_chars": 32000,
         "reference_memory_max_chars": 24000,
@@ -1981,6 +2043,9 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings["dry_run_first"] = resolve_bool(settings.get("dry_run_first"), True)
     settings["require_full_lookback"] = resolve_bool(settings.get("require_full_lookback"), True)
     settings["operator_user_email"] = str(settings.get("operator_user_email") or "").strip()
+    settings["provider"] = str(settings.get("provider") or "").strip().lower()
+    if settings["provider"] and settings["provider"] not in {"anthropic", "openai"}:
+        raise SystemExit("runtime.memory_hardening.provider must be anthropic, openai, or empty")
     settings["schedule"] = str(settings.get("schedule") or DEFAULT_MEMORY_HARDENING["schedule"])
     settings["timezone"] = str(settings.get("timezone") or DEFAULT_MEMORY_HARDENING["timezone"])
     settings["provider_profile"] = str(
@@ -1997,6 +2062,10 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     )
     settings["max_input_chars"] = positive_int(
         settings.get("max_input_chars"), "runtime.memory_hardening.max_input_chars"
+    )
+    settings["min_apply_interval_seconds"] = positive_int(
+        settings.get("min_apply_interval_seconds"),
+        "runtime.memory_hardening.min_apply_interval_seconds",
     )
     settings["anthropic_model"] = str(
         settings.get("anthropic_model") or DEFAULT_MEMORY_HARDENING["anthropic_model"]
@@ -2017,6 +2086,14 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     transcripts["max_files_per_run"] = positive_int(
         transcripts.get("max_files_per_run"),
         "runtime.memory_hardening.transcripts.max_files_per_run",
+    )
+    transcripts["min_files_per_run"] = positive_int(
+        transcripts.get("min_files_per_run"),
+        "runtime.memory_hardening.transcripts.min_files_per_run",
+    )
+    transcripts["max_batches_per_invocation"] = positive_int(
+        transcripts.get("max_batches_per_invocation"),
+        "runtime.memory_hardening.transcripts.max_batches_per_invocation",
     )
     transcripts["max_chars_per_file"] = positive_int(
         transcripts.get("max_chars_per_file"),
@@ -2071,6 +2148,21 @@ def resolve_memory_hardening_model_tuple(
     config: dict[str, Any],
     settings: dict[str, Any],
 ) -> dict[str, str]:
+    explicit_provider = str(settings.get("provider") or "").strip().lower()
+    if explicit_provider == "anthropic":
+        return {
+            "provider": "anthropic",
+            "model": settings["anthropic_model"],
+            "effort": settings["anthropic_effort"],
+            "effort_env": "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT",
+        }
+    if explicit_provider == "openai":
+        return {
+            "provider": "openai",
+            "model": settings["openai_model"],
+            "effort": settings["openai_reasoning_effort"],
+            "effort_env": "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT",
+        }
     available = [provider for provider in enabled_provider_names(config) if provider in {"anthropic", "openai"}]
     provider = choose_provider(available, ["anthropic", "openai"], available[0] if available else "")
     if provider == "anthropic":
@@ -2219,6 +2311,14 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         True,
     )
     prompt_workbench_enabled = resolve_bool(prompt_workbench.get("enabled"), False)
+    seed_nightly = prompt_workbench.get("seed_nightly", {}) if isinstance(prompt_workbench, dict) else {}
+    if not isinstance(seed_nightly, dict):
+        seed_nightly = {}
+    seed_nightly_enabled = resolve_bool(seed_nightly.get("enabled"), prompt_workbench_enabled)
+    seed_nightly_active = resolve_bool(seed_nightly.get("active"), prompt_workbench_enabled)
+    seed_nightly_executor = str(seed_nightly.get("executor") or "glasshive_host").strip() or "glasshive_host"
+    if seed_nightly_executor not in {"glasshive_host", "viventium_agent"}:
+        raise SystemExit("runtime.prompt_workbench.seed_nightly.executor must be glasshive_host or viventium_agent")
 
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
@@ -2244,6 +2344,14 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if prompt_workbench_enabled
         else "false",
         "START_PROMPT_WORKBENCH": "true" if prompt_workbench_enabled else "false",
+        "VIVENTIUM_PROMPT_WORKBENCH_PORT": str(profile.get("prompt_workbench_port") or 8781),
+        "VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ENABLED": "true"
+        if seed_nightly_enabled
+        else "false",
+        "VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE": "true"
+        if seed_nightly_active
+        else "false",
+        "VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR": seed_nightly_executor,
         "VIVENTIUM_SHARED_SINGLETON_SERVICES": ",".join(sorted(shared_services)),
         "VIVENTIUM_WORK_REQUEST_CREATE_PR_AFTER_USER_APPROVAL": "true"
         if feature_request_pr_after_approval
@@ -2300,7 +2408,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true"
         if memory_hardening["dry_run_first"]
         else "false",
+        "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS": str(
+            memory_hardening["min_apply_interval_seconds"]
+        ),
         "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE": memory_hardening["provider_profile"],
+        "VIVENTIUM_MEMORY_HARDENING_CONFIGURED_PROVIDER": memory_hardening["provider"],
         "VIVENTIUM_MEMORY_HARDENING_PROVIDER": memory_hardening_model["provider"],
         "VIVENTIUM_MEMORY_HARDENING_MODEL": memory_hardening_model["model"],
         "VIVENTIUM_MEMORY_HARDENING_EFFORT": memory_hardening_model["effort"],
@@ -2316,6 +2428,12 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         ),
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN": str(
             memory_hardening["transcripts"]["max_files_per_run"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN": str(
+            memory_hardening["transcripts"]["min_files_per_run"]
+        ),
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION": str(
+            memory_hardening["transcripts"]["max_batches_per_invocation"]
         ),
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE": str(
             memory_hardening["transcripts"]["max_chars_per_file"]
@@ -2372,7 +2490,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_CALL_SESSION_SECRET": call_session_secret,
         "VIVENTIUM_TELEGRAM_SECRET": call_session_secret,
         "VIVENTIUM_SCHEDULER_SECRET": call_session_secret,
-        "VIVENTIUM_LIBRECHAT_ORIGIN": f"http://localhost:{profile['lc_api_port']}",
+        "VIVENTIUM_LIBRECHAT_ORIGIN": f"http://127.0.0.1:{profile['lc_api_port']}",
         "SCHEDULING_MCP_URL": f"http://localhost:{profile['scheduling_mcp_port']}/mcp",
         "GLASSHIVE_MCP_URL": "http://127.0.0.1:8767/mcp",
         "GOOGLE_WORKSPACE_MCP_URL": f"http://localhost:{profile['google_mcp_port']}/mcp",
@@ -2461,6 +2579,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] = "true"
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
         env["GLASSHIVE_HOST_WORKERS_ENABLED"] = "true" if glasshive_host_worker["enabled"] else "false"
+        env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] = str(glasshive_host_worker["default_worker_profile"])
         env["WPR_HOST_WORKSPACE_ROOT"] = str(glasshive_host_worker["workspace_root"])
         env["WPR_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] = "true" if glasshive_host_worker["destructive_confirmation_enabled"] else "false"
@@ -2473,10 +2592,29 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["WPR_HOST_CODEX_CLI_AVAILABLE"] = "true" if glasshive_host_worker["codex_cli_available"] else "false"
         env["WPR_HOST_CLAUDE_CLI_AVAILABLE"] = "true" if glasshive_host_worker["claude_cli_available"] else "false"
         env["WPR_HOST_OPENCLAW_CLI_AVAILABLE"] = "true" if glasshive_host_worker["openclaw_cli_available"] else "false"
+        if glasshive_host_worker["codex_cli_path"]:
+            env["WPR_CODEX_BIN"] = str(glasshive_host_worker["codex_cli_path"])
+        if glasshive_host_worker["claude_cli_path"]:
+            env["WPR_CLAUDE_CODE_BIN"] = str(glasshive_host_worker["claude_cli_path"])
+        if glasshive_host_worker["openclaw_cli_path"]:
+            env["WPR_OPENCLAW_BIN"] = str(glasshive_host_worker["openclaw_cli_path"])
+        if not glasshive_enterprise["enabled"]:
+            env["WPR_DB_PATH"] = str(
+                APP_SUPPORT_VIVENTIUM_DIR
+                / "state"
+                / "runtime"
+                / runtime_profile
+                / "glasshive"
+                / "runtime_phase1.db"
+            )
         env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(LIBRECHAT_UPLOADS_DIR)
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(LIBRECHAT_UPLOADS_DIR)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
         env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
+        env["VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET"] = scoped_secret(
+            call_session_secret,
+            "glasshive-capability-broker",
+        )
         if glasshive_enterprise["enabled"]:
             enterprise_public_api_origin = str(network.get("public_api_origin", "") or "").strip()
             env["GLASSHIVE_ENTERPRISE_MODE"] = "true"
@@ -2688,10 +2826,34 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     # keeps Phase A activation awareness in the main-response path, but releases early on the first
     # true voice activation instead of waiting for every detector.
     env["VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE"] = DEFAULT_CORTEX_PHASE_A_NOTICE_MODE
-    env["VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC"] = "false"
-    env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] = "500"
-    env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "false"
+    # Background Activation Detection — two INDEPENDENT modes (voice, text). Each mode owns its own
+    # async flag and its own detection time budget; neither flag affects the other mode. See
+    # docs/requirements_and_learnings/02_Background_Agents.md.
+    #   async OFF (default both modes): detection blocks up to the mode budget, early-exits the moment
+    #     all activation results are in, then Phase A runs with that knowledge.
+    #   async ON: the main answer and detection run in parallel; if a cortex activates within budget,
+    #     the speculative answer is cancelled ("nevermind") and Phase A is re-run with cortex knowledge;
+    #     otherwise the speculative answer stands. Phase B (non-blocked follow-up) is unchanged.
+    # Budgets — owner decision 2026-05-30: text = 1300ms, voice = 690ms (Groq classifier ~0.6-1.3s, so
+    # slow activations time out and surface via the follow-up turn). Voice async is ON (owner target):
+    # the nevermind+redo orchestrator was verified live via text chat (shared agent-pipeline code, parity)
+    # 2026-05-30 — clean commit-path stream + activation-path nevermind -> cortex-aware Phase A + cards.
+    # Text async stays default OFF (token-cautious); flip the text flag to enable it.
+    # Owner decision 2026-05-30: voice mode stays async even when a configured direct-action
+    # tool-hold cortex is present. The main answer should not wait on classifier/tool-hold
+    # bookkeeping; late or side-effecting work must surface through Phase B/follow-up evidence.
+    env["VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC"] = "true"
+    env["VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC"] = "false"
+    env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] = "690"
+    env["VIVENTIUM_TEXT_PHASE_A_AWAIT_MS"] = "1300"
+    env["VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS"] = "2000"
+    env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "true"
     env["VIVENTIUM_VOICE_LOG_LATENCY"] = "1"
+    # Enable LibreChat structured/redacted/rotated debug logs (debug-YYYY-MM-DD.log). Without this,
+    # winston (packages/data-schemas/src/config/winston.ts:58) only writes error-*.log and the per-day
+    # debug file stays empty, leaving QA/RCA without the structured trace sink. Matches upstream
+    # .env.example default DEBUG_LOGGING=true.
+    env["DEBUG_LOGGING"] = "true"
 
     env["VIVENTIUM_FC_CONSCIOUS_LLM_PROVIDER"], env["VIVENTIUM_FC_CONSCIOUS_LLM_MODEL"] = assignments["conscious"]
     env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"], env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] = assignments["background_analysis"]
@@ -2944,6 +3106,14 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     assemblyai_key = resolve_voice_provider_secret(voice, resolved_voice, "assemblyai")
     if assemblyai_key:
         env["ASSEMBLYAI_API_KEY"] = assemblyai_key
+    # Engine selection: canonical `voice.stt.model` picks the AssemblyAI streaming model; default to
+    # the proven Universal-3 Pro streaming engine. The worker re-normalizes unknown values, so this
+    # stays a soft default rather than a hard validation gate.
+    env["VIVENTIUM_ASSEMBLYAI_STT_MODEL"] = (
+        DEFAULT_ASSEMBLYAI_STT_MODEL
+        if stt_config.get("model") in (None, "")
+        else str(stt_config.get("model")).strip()
+    )
     env["VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD"] = (
         DEFAULT_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD
         if stt_config.get("end_of_turn_confidence_threshold") in (None, "")
@@ -3484,11 +3654,15 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "ALLOW_EMAIL_LOGIN",
         "ALLOW_REGISTRATION",
         "ALLOW_SOCIAL_LOGIN",
+        "DEBUG_LOGGING",
         "RAG_API_URL",
         "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL",
+        "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN",
+        "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS",
         "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS",
@@ -3497,7 +3671,10 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_FC_CONSCIOUS_LLM_MODEL",
         "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE",
         "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC",
+        "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC",
         "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS",
+        "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS",
+        "VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS",
         "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD",
         "VIVENTIUM_VOICE_LOG_LATENCY",
         "OPENID_CLIENT_ID",

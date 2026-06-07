@@ -45,6 +45,30 @@ properties:
         properties:
           default_conversation_recall:
             type: boolean
+      nightly_routines:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          defaults_version:
+            type: integer
+          auto_worker_profile:
+            type: boolean
+      prompt_workbench:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          seed_nightly:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              active:
+                type: boolean
+              executor:
+                type: string
+                enum: [glasshive_host, viventium_agent]
       memory_hardening:
         type: object
         properties:
@@ -56,6 +80,9 @@ properties:
             type: string
           operator_user_email:
             type: string
+          provider:
+            type: string
+            enum: ["", anthropic, openai]
           lookback_days:
             type: integer
           min_user_idle_minutes:
@@ -206,6 +233,19 @@ properties:
             type: integer
           max_turn_silence_ms:
             type: integer
+      turn_handling:
+        type: object
+        properties:
+          min_endpointing_delay_s:
+            type: number
+          max_endpointing_delay_s:
+            type: number
+          min_interruption_duration_s:
+            type: number
+          min_interruption_words:
+            type: integer
+          min_consecutive_speech_delay_s:
+            type: number
       tts:
         type: object
         properties:
@@ -334,6 +374,8 @@ properties:
               enabled:
                 type: boolean
               workspace_root:
+                type: string
+              default_worker_profile:
                 type: string
               default_execution_mode:
                 type: string

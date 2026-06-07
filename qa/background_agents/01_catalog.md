@@ -20,6 +20,10 @@
 
 - The execution-family column is the launch-ready shipped baseline from source-of-truth.
 - The activation-family column is the shipped primary activation baseline.
+- `Deep Research`, `MS365`, and `Google` remain shipped specialist agents, but the main Viventium
+  agent disables their background activation in the GlassHive broker-first local baseline. Live
+  web/productivity execution should use the main/direct GlassHive capability path unless this policy
+  is explicitly re-enabled.
 - Runtime fallbacks and live benchmark evidence are tracked in:
   - `qa/background_agents/activation_reliability_2026-04-12.md`
   - `docs/requirements_and_learnings/02_Background_Agents.md`

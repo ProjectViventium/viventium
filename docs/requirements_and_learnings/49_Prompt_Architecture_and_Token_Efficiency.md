@@ -288,6 +288,7 @@ The owner split is:
 | Authoring, variable preview, enable/disable, manual trigger, run history | Prompt Workbench |
 | Recurrence, misfire/retry policy, durable run ledger, callback receiver | Scheduling Cortex |
 | Direct execution | GlassHive host worker with `profile="codex-cli"` and `execution_mode="host"` |
+| Host dependency recovery | Scheduling Cortex preserves GlassHive failure classes and may safely retry through sandbox/workstation execution when no host-specific workspace root is required |
 | Memory writeback | Governed LibreChat/Viventium memory methods or proposals, never direct Mongo writes |
 
 Scheduling Cortex scheduled tasks now carry `executor`. Existing reminders keep
@@ -297,6 +298,16 @@ LibreChat generation and queues GlassHive directly through the HTTP project / wo
 / assign path. GlassHive receives rendered prompt snapshots, private workspace files, callback
 metadata, and a `FINAL REPORT:` contract. It does not receive Mongo credentials or direct parent DB
 access.
+
+Plain-English happy path: scheduled prompt -> filled placeholders -> GlassHive run -> callback ->
+scheduler ledger -> Workbench shows completed.
+
+Pre-assignment GlassHive failures must stay structured. If GlassHive reports host substrate failure
+such as `runtime_dependency_missing`, Scheduling Cortex records that failure class instead of
+flattening it to a generic HTTP error. When the task does not require a host-specific workspace root,
+Scheduling Cortex may retry the same Workbench task through the documented sandbox/workstation
+execution path before recording a terminal failure. Runtime code must not branch this behavior on
+the prompt title, user identity, or prompt text.
 
 The Schedules detail UI must display the execution route as an explicit configuration panel. A
 Workbench-private scheduled prompt shows `GlassHive host`, profile `codex-cli`, mode `host`, the
@@ -310,6 +321,14 @@ development port. The callback URL is derived from `SCHEDULING_MCP_URL`, then
 `SCHEDULING_GLASSHIVE_CALLBACK_URL` override for deployments that need one. Prompt Workbench loads
 the canonical local runtime env before dispatch so standalone launches use the same Scheduling
 Cortex port as the installed runtime.
+
+Run acceptance is ledger plus callback-substrate health, not just "latest row completed." A
+Workbench/GlassHive scheduled prompt is healthy only when the scheduled prompt run row, parent
+`scheduled_tasks` delivery ledger, GlassHive run row, and terminal callback state agree, and the
+GlassHive callback outbox has no active stale backlog. Nightly QA must capture before/after
+dead-letter deltas, active pending/delivering counts, active max attempts, and oldest pending age.
+Raw rendered prompt text, callback payload JSON, private detail paths, account identifiers, and
+private result text stay outside public QA artifacts.
 
 Workbench must also surface user-level schedules that were created through Viventium or Scheduling
 Cortex before this UI existed. Those rows are exposed as `sourceKind="user_schedule"` prompt

@@ -188,3 +188,4 @@ Use stable `QASYS-NNN` IDs for QA-system structure, traceability, evidence, and 
 ## Release Test Traceability
 
 - `tests/release/test_qa_operating_contract.py`
+- `tests/release/test_qa_results_public_safety.py`

@@ -30,6 +30,7 @@ def default_voice_components() -> list[dict[str, str]]:
         make_component("viventium_v0_4/LibreChat", "LibreChat"),
         make_component("viventium_v0_4/agents-playground", "agents-playground"),
         make_component("viventium_v0_4/agent-starter-react", "agent-starter-react"),
+        make_component("viventium_v0_4/GlassHive", "GlassHive"),
         make_component("viventium_v0_4/google_workspace_mcp", "google_workspace_mcp"),
     ]
 
@@ -67,6 +68,30 @@ def test_select_components_skips_playgrounds_when_voice_is_disabled() -> None:
     )
 
     assert names == {"LibreChat"}
+
+
+def test_select_components_fetches_glasshive_when_enabled() -> None:
+    names = selected_component_names(
+        {
+            "voice": {"mode": "local"},
+            "runtime": {"playground_variant": "modern"},
+            "integrations": {"glasshive": {"enabled": True}},
+        }
+    )
+
+    assert names == {"LibreChat", "agent-starter-react", "GlassHive"}
+
+
+def test_select_components_skips_glasshive_when_disabled() -> None:
+    names = selected_component_names(
+        {
+            "voice": {"mode": "local"},
+            "runtime": {"playground_variant": "modern"},
+            "integrations": {"glasshive": {"enabled": False}},
+        }
+    )
+
+    assert names == {"LibreChat", "agent-starter-react"}
 
 
 def test_clone_or_update_component_accepts_bootable_vendored_checkout(tmp_path: Path) -> None:

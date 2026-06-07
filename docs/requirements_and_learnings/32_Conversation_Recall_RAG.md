@@ -16,9 +16,11 @@ This feature adds two user-facing controls:
 2. Agent-level recall scoped to conversations where that agent was used.
 
 The same file-search surface also carries optional meeting transcript recall resources when
-`VIVENTIUM_MEMORY_TRANSCRIPTS_DIR` is configured and the memory hardening operator has processed
-new or changed transcript files. Those transcript resources are separate from the conversation
-recall corpus and use the `meeting_transcript` file context.
+`VIVENTIUM_MEMORY_TRANSCRIPTS_DIR` is configured, the memory hardening operator has processed new
+or changed transcript files, and the user's global conversation-recall opt-in is enabled. The env
+folder alone is not permission to attach transcript evidence when the user has turned recall off.
+Those transcript resources are separate from the conversation recall corpus and use the
+`meeting_transcript` file context.
 
 Listen-Only Mode call transcripts are another transcript-evidence lane. They are stored as
 structured `listen_only_transcript` message metadata for the owning conversation history, but they
@@ -62,14 +64,22 @@ evidence.
 - Inventory ordering uses meeting date/time when that metadata is available and falls back to file
   mtime only for unknown dates. Oversized inventory output truncates by full entries with an
   explicit omitted-count marker, so the model is not shown a silently sliced middle range.
-- Attach meeting transcript artifacts to file_search only when a valid transcript folder is
-  configured, the artifact source-folder hash matches the current folder, and the artifact kind
-  matches the configured transcript RAG mode. The vector runtime must also be configured and
-  healthy; otherwise transcript resources stay unattached rather than pretending dead vector files
-  are searchable.
+- Attach meeting transcript artifacts to file_search only when the user has opted into global
+  conversation recall, a valid transcript folder is configured, the artifact source-folder hash
+  matches the current folder, and the artifact kind matches the configured transcript RAG mode. The
+  vector runtime must also be configured and healthy; otherwise transcript resources stay
+  unattached rather than pretending dead vector files are searchable.
 - Before a transcript artifact is attached or skipped as already processed, vector-store existence
   must be checked against the current source index. A missing vector document invalidates the
   processed shortcut and requeues the transcript for summary/vector repair.
+- Vector existence verification must not block the turn when the RAG sidecar is slow or hung
+  (added 2026-05-29; `VIVENTIUM_RECALL_VERIFY_NONBLOCKING`, default-on; `ragFilesExistNonBlocking` in
+  `packages/api/src/files/rag.ts`). A fresh cached verified-id set is used immediately; otherwise the
+  check races a short deadline (`VIVENTIUM_RAG_VERIFY_TIMEOUT_MS`, default 1000ms) and, on timeout,
+  returns the last-known-good set (or empty => source-only) while the real verification refreshes the
+  cache in the background. A healthy sidecar (tens of ms) still verifies synchronously, so the
+  "never advertise a vector id we have not verified present" invariant holds in the common case; only
+  a slow/hung sidecar degrades to last-known-good/source-only instead of a multi-second init block.
 - Do not materialize meeting transcript summaries as fake conversations. Conversation recall remains
   chat history; transcript recall remains transcript evidence.
 - Do not index Listen-Only transcript entries into the normal prior-chat corpus. They are visible

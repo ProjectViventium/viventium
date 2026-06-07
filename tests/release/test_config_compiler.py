@@ -146,11 +146,28 @@ def test_prompt_workbench_sidecar_compiles_as_explicit_runtime_opt_in() -> None:
     assert disabled_env["VIVENTIUM_PROMPT_WORKBENCH_ENABLED"] == "false"
     assert disabled_env["START_PROMPT_WORKBENCH"] == "false"
 
-    config["runtime"]["prompt_workbench"] = {"enabled": True}
+    config["runtime"]["prompt_workbench"] = {
+        "enabled": True,
+        "seed_nightly": {"enabled": True, "active": True, "executor": "glasshive_host"},
+    }
     enabled_env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
 
     assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_ENABLED"] == "true"
     assert enabled_env["START_PROMPT_WORKBENCH"] == "true"
+    assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ENABLED"] == "true"
+    assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE"] == "true"
+    assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR"] == "glasshive_host"
+
+
+def test_memory_hardening_explicit_provider_controls_cli_provider() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["memory_hardening"] = {"enabled": True, "provider": "anthropic"}
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["VIVENTIUM_MEMORY_HARDENING_ENABLED"] == "true"
+    assert env["VIVENTIUM_MEMORY_HARDENING_CONFIGURED_PROVIDER"] == "anthropic"
+    assert env["VIVENTIUM_MEMORY_HARDENING_PROVIDER"] == "anthropic"
 
 
 def test_livrechat_openid_auth_compiles_env_yaml_and_service_env(tmp_path: Path) -> None:
@@ -660,11 +677,13 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=600" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
-    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
-    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in librechat_env
-    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in librechat_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in librechat_env
+    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
+    assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
-    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
+    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180" in runtime_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
     assert "VIVENTIUM_MAIN_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
@@ -678,6 +697,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_MAX_INPUT_CHARS=500000" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_REQUIRE_FULL_LOOKBACK=true" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST=true" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=300" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.5" in runtime_env
@@ -689,6 +709,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=20" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN=5" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION=1" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=500000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=32000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=90" in runtime_env
@@ -806,8 +828,21 @@ def test_glasshive_enabled_requires_config_and_runtime_dir(tmp_path: Path, monke
 def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime_dir = tmp_path / "runtime_phase1"
     runtime_dir.mkdir(parents=True)
+    app_support_root = tmp_path / "app-support" / "Viventium"
+    codex_bin = tmp_path / "bin" / "codex"
+    claude_bin = tmp_path / "bin" / "claude"
+    codex_bin.parent.mkdir(parents=True)
+    codex_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    claude_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    codex_bin.chmod(0o755)
+    claude_bin.chmod(0o755)
     monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
-    monkeypatch.setattr(config_compiler.shutil, "which", lambda name: f"/usr/local/bin/{name}" if name in {"codex", "claude"} else None)
+    monkeypatch.setattr(config_compiler, "APP_SUPPORT_VIVENTIUM_DIR", app_support_root)
+    monkeypatch.setattr(
+        config_compiler.shutil,
+        "which",
+        lambda name: str({"codex": codex_bin, "claude": claude_bin}.get(name, "")) or None,
+    )
 
     base_config = {
         "version": 1,
@@ -894,6 +929,12 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
     assert enabled_env["WPR_HOST_CLAUDE_CLI_AVAILABLE"] == "true"
     assert enabled_env["WPR_HOST_OPENCLAW_CLI_AVAILABLE"] == "false"
+    assert enabled_env["WPR_CODEX_BIN"] == str(codex_bin)
+    assert enabled_env["WPR_CLAUDE_CODE_BIN"] == str(claude_bin)
+    assert "WPR_OPENCLAW_BIN" not in enabled_env
+    assert enabled_env["WPR_DB_PATH"] == str(
+        app_support_root / "state" / "runtime" / "isolated" / "glasshive" / "runtime_phase1.db"
+    )
     assert enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"].endswith("viventium_v0_4/LibreChat/uploads")
     assert enabled_env["WPR_BOOTSTRAP_SOURCE_ROOTS"] == enabled_env["WPR_LIBRECHAT_UPLOADS_ROOT"]
     assert enabled_env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"].endswith("/api/viventium/glasshive/callback")
@@ -914,6 +955,55 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert glasshive_headers["X-Viventium-Telegram-Message-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}"
     assert glasshive_headers["X-Viventium-Request-Files"] == "{{LIBRECHAT_BODY_FILES_JSON_B64}}"
     assert glasshive_headers["X-Viventium-Tool-Resources"] == "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}"
+
+
+def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    app_cli = tmp_path / "Codex.app" / "Contents" / "Resources" / "codex"
+    app_cli.parent.mkdir(parents=True)
+    app_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    app_cli.chmod(0o755)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(config_compiler, "CODEX_APP_CLI", app_cli)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True}
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    assert env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
+    assert env["WPR_CODEX_BIN"] == str(app_cli)
+
+
+def test_render_runtime_env_discovers_codex_app_bundle_from_user_app_search_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    app_root = tmp_path / "Applications"
+    app_cli = app_root / "Codex.app" / "Contents" / "Resources" / "codex"
+    app_cli.parent.mkdir(parents=True)
+    app_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    app_cli.chmod(0o755)
+    monkeypatch.setenv("VIVENTIUM_CODEX_APP_DIRS", str(app_root))
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {"enabled": True}
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    assert env["WPR_HOST_CODEX_CLI_AVAILABLE"] == "true"
+    assert env["WPR_CODEX_BIN"] == str(app_cli)
 
 
 def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1005,6 +1095,7 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
     assert env["GLASSHIVE_SIGNED_LINK_SECRET"] != env["WPR_API_TOKEN"]
     assert env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "false"
     assert env["WPR_DEFAULT_EXECUTION_MODE"] == "docker"
+    assert "WPR_DB_PATH" not in env
     assert env["WPR_API_TOKEN"] == "service-token-test"
     assert env["GLASSHIVE_MCP_SERVICE_TOKEN"] == "service-token-test"
     assert env["OPENAI_API_KEY"] == "openai-test"
@@ -2576,7 +2667,7 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert "XAI_API_KEY=synthetic_xai_test" in runtime_env
     assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in runtime_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-secret-2" in runtime_env
-    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in runtime_env
+    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180" in runtime_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "START_TELEGRAM_CODEX=true" in runtime_env
     assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in runtime_env
@@ -2615,7 +2706,7 @@ def test_config_compiler_with_integrations_and_voice(tmp_path: Path) -> None:
     assert "telegram_codex" in telegram_codex_projects["projects"]
     assert f"BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in telegram_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in telegram_env
-    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180" in telegram_env
+    assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180" in telegram_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-secret-2" in telegram_env
     assert f"TELEGRAM_CODEX_BOT_TOKEN={VALID_TELEGRAM_CODEX_TOKEN}" in telegram_codex_env
 
@@ -2710,6 +2801,7 @@ def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path)
             "stt_provider": "assemblyai",
             "stt": {
                 "secret_value": "assemblyai-test",
+                "model": "universal-streaming-multilingual",
                 "end_of_turn_confidence_threshold": 0.31,
                 "min_end_of_turn_silence_when_confident_ms": 240,
                 "max_turn_silence_ms": 1500,
@@ -2786,6 +2878,7 @@ def test_config_compiler_emits_voice_turn_handling_env_overrides(tmp_path: Path)
     assert "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS=240" in runtime_env
     assert "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1500" in runtime_env
     assert "VIVENTIUM_ASSEMBLYAI_FORMAT_TURNS=true" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_STT_MODEL=universal-streaming-multilingual" in runtime_env
     assert "VIVENTIUM_STT_VAD_MIN_SPEECH=0.12" in runtime_env
     assert "VIVENTIUM_STT_VAD_MIN_SILENCE=0.72" in runtime_env
     assert "VIVENTIUM_STT_VAD_ACTIVATION=0.33" in runtime_env
@@ -3011,14 +3104,18 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S=900" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in runtime_env
-    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false" in runtime_env
-    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in runtime_env
-    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in runtime_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in runtime_env
+    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in runtime_env
+    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in runtime_env
+    assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in runtime_env
+    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in runtime_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
-    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
-    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500" in librechat_env
-    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false" in librechat_env
+    assert "VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true" in librechat_env
+    assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
+    assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
+    assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
 
 
@@ -3146,6 +3243,7 @@ def test_config_compiler_emits_assemblyai_turn_detection_defaults_when_unset(tmp
     assert "VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD=0.01" in runtime_env
     assert "VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS=100" in runtime_env
     assert "VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS=1000" in runtime_env
+    assert "VIVENTIUM_ASSEMBLYAI_STT_MODEL=u3-rt-pro" in runtime_env
 
 
 def test_config_compiler_emits_assemblyai_turn_detection_defaults_for_override_paths(
@@ -3976,10 +4074,13 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
             "personalization": {"default_conversation_recall": False},
             "memory_hardening": {
                 "operator_user_email": "qa@example.com",
+                "min_apply_interval_seconds": 600,
                 "transcripts": {
                     "source_dir": "/path/to/transcripts",
                     "ignore_globs": ["_index.json", "state/**"],
                     "max_files_per_run": 12,
+                    "min_files_per_run": 6,
+                    "max_batches_per_invocation": 2,
                     "max_chars_per_file": 200000,
                     "summary_max_chars": 28000,
                     "reference_memory_max_chars": 18000,
@@ -4036,9 +4137,12 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "START_RAG_API=true" in runtime_env
     assert "RAG_API_URL=http://localhost:8110" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=600" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS='_index.json,state/**'" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN=6" in runtime_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION=2" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_REFERENCE_MEMORY_MAX_CHARS=18000" in runtime_env
@@ -4046,10 +4150,13 @@ def test_config_compiler_starts_rag_when_transcript_source_is_configured(tmp_pat
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE=detailed_summary_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL=qa@example.com" in librechat_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=600" in librechat_env
     assert "RAG_API_URL=http://localhost:8110" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=/path/to/transcripts" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS='_index.json,state/**'" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_FILES_PER_RUN=12" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MIN_FILES_PER_RUN=6" in librechat_env
+    assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_BATCHES_PER_INVOCATION=2" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_MAX_CHARS_PER_FILE=200000" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_SUMMARY_MAX_CHARS=28000" in librechat_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_STABLE_EVIDENCE_MAX_AGE_DAYS=45" in librechat_env

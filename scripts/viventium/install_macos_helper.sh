@@ -593,6 +593,10 @@ verify_installed_bundle() {
     echo "[viventium] Installed helper is missing bounded transcript catch-up support." >&2
     exit 1
   fi
+  if ! strings "$installed_executable" | grep -F -- "--interactive-maintenance" >/dev/null; then
+    echo "[viventium] Installed helper is missing interactive transcript maintenance support." >&2
+    exit 1
+  fi
   if ! strings "$installed_executable" | grep -F -- "Choose Transcripts Folder" >/dev/null; then
     echo "[viventium] Installed helper is missing the transcript folder picker." >&2
     exit 1

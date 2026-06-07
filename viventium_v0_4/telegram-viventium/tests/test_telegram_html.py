@@ -36,6 +36,19 @@ def test_markdown_to_html_converts_inline_and_fenced_code():
     assert "print('ok')" in rendered
 
 
+def test_markdown_to_html_preserves_identifier_underscores():
+    text = "TELEGRAM_REAL_QA_OK_20260531"
+    rendered = markdown_to_html(text)
+    assert rendered == text
+    assert "<i>" not in rendered
+
+
+def test_markdown_to_html_still_converts_boundary_underscore_emphasis():
+    rendered = markdown_to_html("Use _italic_ and __bold__ here.")
+    assert "<i>italic</i>" in rendered
+    assert "<b>bold</b>" in rendered
+
+
 def test_markdown_to_html_converts_links():
     text = "[Open site](https://chat.viventium.ai)"
     rendered = markdown_to_html(text)

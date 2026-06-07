@@ -623,6 +623,10 @@ def test_standard_feature_qa_folders_have_case_catalogs_and_report_home() -> Non
 def test_dated_qa_reports_use_evidence_template_or_explicit_exemption() -> None:
     violations: list[str] = []
     for report_path in sorted(QA_ROOT.glob("*/reports/*.md")):
+        if report_path.name == "README.md":
+            continue
+        if _is_git_ignored(report_path):
+            continue
         text = _read(report_path)
         if REPORT_EVIDENCE_EXEMPTION_RE.search(text):
             continue

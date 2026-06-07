@@ -32,6 +32,11 @@ confusing upstream component boundaries.
   starting the voice worker so local users and developers do not pay the first-hit Next.js dev
   compile cost on the call page. These prewarm requests are bounded and warn-only so a stuck dev
   compile does not delay the rest of runtime startup for minutes.
+- The macOS helper must not keep the installed local-prod runtime healthy by repeatedly rendering
+  expensive user-facing pages. Steady-state helper checks use one shared health snapshot per refresh
+  cycle, probe the modern playground through a lightweight `/api/health` endpoint, and back off while
+  the stack remains healthy. This keeps local prod running beside dev work without turning the helper
+  into a background Next.js page renderer.
 
 ## Mental Model For Contributors
 
@@ -150,6 +155,8 @@ reopening it.
   proves the isolation.
 - Do keep Viventium-owned Docker singleton services bounded with source-owned memory, CPU, PID, and
   log-rotation defaults; live-only container edits are not a durable product fix.
+- Do keep helper-launched stack logs bounded on fresh starts so long-lived local prod runs do not
+  accumulate unbounded dev-server output.
 - Do treat Meilisearch indexes/tasks as derived conversation-search state and rebuild from Mongo
   only through the supported readiness/sync path.
 - Do keep generated runtime state under App Support out of git.

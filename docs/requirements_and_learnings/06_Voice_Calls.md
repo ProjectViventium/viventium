@@ -27,6 +27,8 @@ background-cortex behavior.
 - The shipped background follow-up window should stay in parity across LibreChat, live voice, and
   Telegram unless a future doc explicitly splits those defaults.
 - Voice-mode output must be plain conversational text and strip citation markers before TTS.
+- Modern-playground typed input must not submit a user message until the LiveKit agent participant is
+  actually available. A disabled send button must not be bypassable by pressing Enter.
 - Voice-call prompt output should use simple ASCII punctuation unless the active TTS provider
   explicitly requires provider-owned markup. Smart punctuation such as long dashes can survive into
   TTS text in ways that sound unnatural, so the voice surface prompt should prefer commas, periods,
@@ -39,6 +41,34 @@ background-cortex behavior.
   must remain attached to their phrase so TTS keeps the intended prosody. Whitespace and
   length-driven flushing should cut at a safe whitespace boundary and retain the trailing word in
   the buffer instead of relying on a later provider continuation to preserve leading whitespace.
+- Live voice and linked chat persistence must tolerate providers/frameworks that emit either true
+  incremental text deltas or growing cumulative text snapshots. Cumulative snapshots must be
+  normalized at the LibreChat `on_message_delta` stream boundary, before SSE/resumable fan-out,
+  generation-job replay, content aggregation, TTS, transcript display, Mongo persistence, and
+  Phase-B recent-response context. Final-message cleanup is only a safety net; it is not an
+  acceptable primary fix. `{NTA}` must remain exact and silent; malformed recombinations such as
+  doubled control tags or adjacent duplicate words are forbidden in audio, playground transcript,
+  linked LibreChat chat, stream replay, and saved assistant rows.
+- Duplicate-artifact cleanup must preserve meaningful quoted, blockquoted, and code-formatted text.
+  Repetition inside `"..."`, curly quotes, markdown blockquotes, inline code, or fenced code can be
+  intentional user/source content and must not be collapsed merely because it repeats words. Only
+  unprotected cumulative-stream artifacts should be rewritten.
+- Voice artifact handling has a single product-owned condition contract:
+  `viventium_v0_4/LibreChat/api/server/services/viventium/voiceArtifactText.js`.
+  Browser, Chrome, and text-level regressions import it through
+  `qa/modern-playground-voice/scripts/voice_artifact_contract.cjs` rather than copying forbidden marker
+  punctuation, citation, URL/email, markdown emphasis/decorative-marker, voice-control,
+  missing-space, or duplicate-word checks. When a new escaped artifact class is found, update this
+  product contract and its synthetic wildcard corpus first, then update runtime/docs/tests that own
+  the product behavior. The LiveKit and Telegram Python speech sanitizers are language-specific
+  adapters, but their regression tests must load this same contract and prove the sanitizer-owned
+  classes stay in parity. Full URLs and `www.` links are speech artifacts; bare dot-heavy technical
+  tokens such as `.NET`, `asp.net`, `node.js`, and version-like strings must not be treated as raw
+  URL artifacts merely because they contain periods.
+- If asynchronous/speculative background detection starts a main-provider run and no background
+  cortex activates, any provider failure from that speculative run must propagate into the normal
+  fallback/error path. Only an intentional abort caused by a real activated cortex may suppress a
+  late stream-abort error.
 - Provider-bound Anthropic histories must drop malformed thinking blocks before execution.
 - Voice input mode must be propagated to main agents and background cortices.
 - A connected call must not die just because the user is quiet for a long time.
@@ -208,6 +238,13 @@ background-cortex behavior.
   `ListDispatch` reports a token-room-config agent entry. On local LiveKit server versions that do
   not reliably assign workers from token room config alone, treating that listing as an already-live
   explicit dispatch causes the browser to connect and then time out with no agent worker.
+- Forced explicit dispatch creation must not depend on `ListDispatch` succeeding. During local
+  cold starts, LiveKit can briefly return a dispatch-list `503` even though `CreateDispatch` can
+  still prepare the room. Existing-dispatch cleanup is best-effort on the forced path.
+- If a call-session room connects and publishes the microphone but no agent participant appears
+  after startup, the playground must reclaim and recreate the explicit dispatch a bounded number of
+  times. This is recovery for the local race where LiveKit accepts dispatch before the worker
+  registers, logs `no worker is available`, and never replays the assignment automatically.
 - Explicit-dispatch modern-playground calls must connect the LiveKit room before enabling the
   microphone track. The `/api/connection-details` route can legitimately spend time preparing the
   token and dispatch metadata, and browser-side pre-connect microphone publication must not race
@@ -280,6 +317,21 @@ background-cortex behavior.
   `RoomOptions(text_output=TextOutputOptions(sync_transcription=...))`, not deprecated
   `RoomOutputOptions`. The playground transcript reader must key boundaries by LiveKit text-stream
   id, not by segment text or provider names.
+- Voice adapters must tolerate either incremental text deltas or cumulative message snapshots from
+  the LibreChat/agent stream. The voice gateway declares `viventiumTextDeltaMode=auto` on the
+  LibreChat voice request, and LibreChat must normalize a growing snapshot such as `I`, `I hear`,
+  `I hear you` to incremental suffixes before emitting or aggregating that event. Auto mode must also
+  handle mid-word snapshots such as `Hel` -> `Hello` while preserving obvious exact-doubling
+  incremental repetitions such as `ha` + `haha`. Non-voice chat remains incremental by default
+  unless the caller explicitly opts into snapshot normalization. Internal no-response markers such
+  as `{NTA}` must remain exact and silent; malformed recombinations of partial snapshots must never
+  be spoken, displayed, saved, or replayed. Quote-wrapped, blockquoted, or code-formatted repeated
+  words remain content; they are not duplicate-stream artifacts unless they appear outside those
+  protected spans.
+- Exact/no-response-only checks remain strict so meaningful content is not suppressed by a malformed
+  marker. Last-mile speech/display sanitizers may still strip known malformed internal marker
+  artifacts as defensive cleanup, but that is not the primary fix for cumulative snapshots; the
+  LibreChat message-delta boundary remains the stream-contract owner.
 - Voice gateway -> LibreChat streaming must use a per-turn stream id, not a conversation id or other
   long-lived call identifier, as the SSE stream key. The gateway should send its own turn request id
   as `streamId` when posting to `/api/viventium/voice/chat`, and the LibreChat voice route must
@@ -326,9 +378,11 @@ background-cortex behavior.
   assistant text and Telegram display are not sufficient proof because both intentionally strip
   voice-control markup.
 - Telegram voice-note and always-voice replies must reuse the same saved Speaking route as the
-  modern playground. The resolved route must survive the handoff from LibreChat generation to
-  Telegram audio delivery across both the per-user conversation key and the raw Telegram chat id;
-  a cache miss must not silently drift TTS back to process defaults.
+  modern playground for TTS delivery only. Telegram remains a text-mode LibreChat surface with an
+  audio attachment on top, so route sharing must not opt Telegram into the LiveKit Voice Call LLM
+  override or voice-call prompt. The resolved route must survive the handoff from LibreChat
+  generation to Telegram audio delivery across both the per-user conversation key and the raw
+  Telegram chat id; a cache miss must not silently drift TTS back to process defaults.
 - Telegram full-text TTS must apply the same speech-safe artifact cleanup as the modern LiveKit
   path before any provider request, including direct proactive callback synthesis that bypasses the
   main bot final-response helper. Cleanup must remove internal citation ids, source/reference
@@ -362,6 +416,10 @@ background-cortex behavior.
 - In live voice, only the main agent's user-facing outputs may be spoken:
   - the immediate Phase A main response
   - a persisted Phase B `cortex_followup` main-agent continuation, when one exists
+  - whether Phase A blocks on detection or runs speculatively (voice async "nevermind+redo") is owned
+    by the canonical two-mode contract in `docs/requirements_and_learnings/02_Background_Agents.md`
+    ("2026-05-30 … Two Independent Modes"): voice uses `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC`
+    + `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690`. These speakable-output rules are unchanged either way.
 - Provider reasoning/thinking deltas are not voice response content. Even if a provider emits
   `on_reasoning_delta` events during a voice call, the voice stream and persisted assistant message
   must suppress those parts. A voice call transcript must not render LibreChat `Thoughts` cards or
@@ -377,6 +435,10 @@ background-cortex behavior.
 - If voice follow-up generation returns empty text for a normal follow-up, the voice surface stays
   silent rather than speaking raw `cortex_insight` fallback text. Forced replacement/deferred-primary
   paths may still use governed fallback text when they explicitly own the user-visible answer.
+- The voice follow-up poller must consume the shared persisted Phase B decision metadata. A terminal
+  silent decision (`{NTA}`, empty, skipped, suppressed, or moved-on) should stop polling and log the
+  decision under existing voice timing/debug flags instead of waiting the full follow-up window and
+  making silence look like a missing Phase B trigger.
 
 ### Turn-Taking Ownership Contract
 - AssemblyAI-backed voice calls must default to provider endpointing (`turn_detection=stt`) instead
@@ -537,6 +599,26 @@ background-cortex behavior.
   - keep local `min_endpointing_delay` near zero
   - let AssemblyAI own endpointing timing with explicit provider knobs
   - prefer explicit compiler-emitted defaults over leaving the plugin/API path ambiguous
+
+#### AssemblyAI Streaming Engine Selection
+- AssemblyAI exposes a selectable streaming engine in the modern playground "Listening" picker. The
+  selection must be real, not cosmetic: the chosen engine has to be carried end-to-end (picker →
+  `requestedVoiceRoute.stt.variant` → `_apply_requested_voice_route` → `assemblyai.STT(model=...)`).
+  A capability catalog that advertises an engine id while the runtime drops it and always runs the
+  plugin default is a defect.
+- The catalog must list only engine ids that the installed `livekit-plugins-assemblyai` plugin
+  actually accepts. As of the May 2026 baseline that is `u3-rt-pro`,
+  `universal-streaming-english`, and `universal-streaming-multilingual`. The legacy placeholder id
+  `universal-streaming` is not a valid plugin model and must not be advertised.
+- The out-of-the-box default is `u3-rt-pro` (Universal-3 Pro streaming), validated for the Core
+  Outcome Metric (quality + latency) with public-safe R&D evidence kept outside this repo. The
+  default is config-overridable through canonical `voice.stt.model` and
+  `VIVENTIUM_ASSEMBLYAI_STT_MODEL`.
+- Engine selection must fail safe: an empty or unknown engine id normalizes back to the default
+  rather than handing the provider an invalid `model` string. This normalization is generic
+  constant-driven plumbing (an allowlist of valid ids), not per-name business logic.
+- The frontend fallback engine list (used before the live agent publishes its capabilities) and the
+  voice-gateway capability catalog must stay aligned on the same id set.
 - The same ownership contract must work for both short exchanges and long continuous speech; fixes
   must widen the structural runtime contract, not hardcode one reproduced sentence shape.
 
@@ -563,6 +645,18 @@ background-cortex behavior.
     compatibility testing
   - legacy Grok Voice Agent routing is allowed only when explicitly configured with
     `VIVENTIUM_XAI_TTS_API=voice_agent`
+- Inter-word spacing into xAI is a TTS-input formatting requirement, not a sanitization concern:
+  - `livekit-plugins-xai` streams synthesis text to `wss://api.x.ai/v1/tts` as per-word
+    `text.delta` frames and the xAI server concatenates those frames verbatim. The plugin tokenizes
+    with `tokenize.basic.WordTokenizer`, whose default `retain_format=False` drops the whitespace
+    between words, so the spoken audio glues words together (e.g. "Helloworld") while the chat
+    transcript stays correct (LiveKit's transcript synchronizer already uses a `retain_format=True`
+    word tokenizer).
+  - The voice gateway must construct the xAI plugin with a `retain_format=True` word tokenizer via
+    `worker._build_xai_tts_word_tokenizer()` so each `text.delta` keeps its leading space and the
+    websocket receives the original spacing. Do not chase this in `sse.py`/`fallback_tts.py`; those
+    sanitizers already preserve spacing. Regression coverage lives in
+    `viventium_v0_4/voice-gateway/tests/test_xai_standalone_tts.py`.
 - xAI TTS capabilities live in `viventium_v0_4/shared/voice/xai_tts_capabilities.json`.
   Prompt builders, Telegram TTS, voice-gateway capability metadata, display sanitizers, and tests
   must consume that contract instead of maintaining independent xAI tag lists.
@@ -585,8 +679,9 @@ background-cortex behavior.
   - display sanitizers must also strip malformed xAI wrapper remnants such as `[soft]...[/soft]`
     and orphan closing tags like `[/soft]`; malformed provider markup is never user-facing text
 - Telegram voice-note and always-voice replies must use the same saved Speaking route as the modern
-  playground for xAI too. The resolved xAI route variant is the xAI `voice_id`, and Telegram must
-  prefer `VIVENTIUM_XAI_TTS_API_KEY` over a generic `XAI_API_KEY` just like the LiveKit gateway.
+  playground for xAI TTS too. The resolved xAI route variant is the xAI `voice_id`, and Telegram
+  must prefer `VIVENTIUM_XAI_TTS_API_KEY` over a generic `XAI_API_KEY` just like the LiveKit
+  gateway. This route sharing is speech delivery, not Voice Call LLM routing.
 
 ### Remote Browser Voice Contract
 - Enabling remote access must not break the canonical localhost voice path.

@@ -244,8 +244,11 @@ Steps:
 5. Open the Drafts tab for that same scheduled prompt object and confirm it shows the private
    scheduled prompt body, a rendered-variable view, and variable snapshot details without treating
    the private prompt as a public source-file draft.
-6. Inspect the Schedules execution panel and confirm Workbench-private schedules show the direct
-   GlassHive host route, `codex-cli` profile, host mode, workspace root, and private `my_folder`.
+6. Inspect the Schedules execution panel and confirm Workbench-private schedules show the configured
+   GlassHive route, selected host worker profile (`codex-cli` or `claude-code`), execution mode,
+   workspace root, and private `my_folder`; host runtime dependency failures must preserve the
+   failure class and safely recover to sandbox/workstation mode when no host workspace root is
+   required.
 7. Resize the Prompt Flow pane and confirm the header, object count, and add button stay visible
    while the tree scrolls.
 8. Inspect variable chips for user, memories, memory agent prompt, governed database context,
@@ -288,21 +291,32 @@ Existing user-level `scheduled_tasks` rows remain owned by Scheduling Cortex, ap
 Prompt Flow/Schedules UI, and can be toggled/edited/run/deleted without duplicate Workbench
 definition rows. The built-in Workbench schedule appears as `Subconscious Deep Thought`; docs and
 template metadata preserve `Nightly subconscious thought formation` as the nightly template alias.
+On fresh installs and upgrades, the built-in schedule is active by default, resolves the first local
+admin user without a hardcoded personal account, and uses the compiled GlassHive worker profile
+selected from the signed-in Codex or Claude CLI.
 `apply_governed` routes through the LibreChat/Viventium memory policy helper and memory methods,
 duplicate live memory keys touched by the proposal are deduped or policy-blocked before apply,
 unrelated duplicate memory categories are not rewritten, manual runs are idempotent, and persisted
 run history/callback rows contain sanitized summaries/error classes while raw payloads live only in
-private detail files.
+private detail files. If the host worker substrate is unavailable before assignment and the task has
+no host-specific workspace root, Scheduler retries the same Workbench task through
+sandbox/workstation execution before recording a terminal failure.
 
 Forbidden Result: Workbench asking the main Viventium agent to use GlassHive, direct host-worker
 Mongo credentials, direct `memoryentries` writes or prompt text that instructs direct DB edits,
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: 2026-05-26, FAIL. The scheduled 03:00 Workbench-private nightly row did not run:
-Scheduling Cortex was unavailable, Prompt Workbench returned connection refused in Playwright, the
-row remained overdue, and no current scheduled-prompt run row existed. See
-`qa/memory-hardening/reports/2026-05-26-nightly-routines-health-review.md`.
+Last Run: 2026-06-05, PASS with significant performance regression. The June 5 built-in `Subconscious Deep
+Thought` run completed through Scheduler -> GlassHive -> callback -> Workbench, and Playwright
+confirmed the enabled schedule row, detail panel, Jun 5 recent completed run, next Jun 6 local
+display, and private proposal summary listing were visible without triggering a run. The run started
+at `2026-06-05T10:00:09Z` and completed at `2026-06-05T13:07:10Z`, so the chain passed but took
+11,220 seconds versus recent 190-236 second runs. Scheduler, GlassHive, and callback outbox health
+were clean for the built-in chain; four recurring active user-level provider-reconnect rows were not
+due yet at audit time and remain account-action follow-up outside the built-in Workbench route. Raw
+prompt, account, path, memory, browser snapshot, and result details stayed private. See
+`qa/memory-hardening/reports/2026-06-05-nightly-routines-health-review.md`.
 
 ## PW-010 Eval Designer And Results
 
@@ -975,6 +989,40 @@ Last Run: 2026-05-25, FAIL. Synthetic one-time due QA completed, but the Workben
 showed the definition as enabled with no next run and the editor fell back to a daily schedule. See
 `qa/scheduling-cortex/reports/2026-05-25-sched002-pw029-live-delivery-qa.md`.
 
+## PW-033 Express Nightly Reflection Readiness
+
+Requirement: Express/Advanced/upgrade installs must seed and surface the built-in nightly
+reflection through the same production chain: scheduled prompt -> filled placeholders -> GlassHive
+run -> callback -> scheduler ledger -> Workbench shows completed.
+
+User Outcome: A new user gets the nightly reflection workflow without knowing internal scheduler
+or GlassHive wiring, and status tells them whether it is ready, pending setup, degraded, or complete.
+
+Surfaces: Prompt Workbench UI, Scheduling Cortex, GlassHive callback, install/status summary,
+generated runtime config.
+
+Steps:
+
+1. Compile an Express-shaped config and verify Workbench, seed-nightly, Scheduler, and GlassHive env
+   are enabled without developer account values.
+2. Open Workbench and confirm the built-in nightly prompt is visible and active for the resolved
+   first local admin user.
+3. Trigger or wait for a synthetic safe due run and verify placeholder population, GlassHive run
+   creation, callback completion, scheduler ledger status, and visible Workbench completion.
+4. Restart/reload and confirm the completed state persists.
+5. Verify degraded cases: missing worker CLI auth, callback failure, scheduler endpoint down, and
+   no first-admin owner yet.
+
+Expected Result: The Workbench row and scheduler ledger agree; setup/degraded states are explicit;
+no raw prompt/result/private user identifier is written to public QA.
+
+Forbidden Result: A seeded schedule without GlassHive delivery, a callback success not reflected in
+Workbench, an owner-specific hardcoded account, or public evidence containing raw reflection text.
+
+Last Run: PARTIAL 2026-06-02; latest real nightly passed the owner-runtime delivery chain in about
+3 minutes and status/install coverage is tracked under `INST-004`, but the prior duration outlier
+and clean-machine first-admin proof remain release gates.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Prompt Workbench. Add narrower feature-specific
@@ -990,6 +1038,7 @@ rows before claiming a pass when the feature behavior changes.
 | `PW-UC-006` | Search scheduling prompts and inspect prompt, config, evals, QA, and history together. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-016`, `PW-027` | Real browser against built local workbench plus prompt context API | Prompt registry rows, source YAML config summaries, eval-bank promptRefs, git metadata, browser DOM/screenshot evidence, and release tests | Scheduling continuity and MCP prompts show related direct-action owner config, main-agent tool exposure, MCP server config, linked evals, QA chips, and public-safe history. | 2026-05-22 scheduling config coverage QA - passed |
 | `PW-UC-007` | Open Prompt Workbench from the LibreChat account dropdown as an admin/operator. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-028` | Real browser against same-host local LibreChat plus `/api/viventium/prompt-workbench/start` and the managed workbench tab | Browser DOM/screenshot evidence, local API response, CLI status JSON, server logs, and route tests | The account dropdown shows Prompt Workbench directly below Connected Accounts for admins, selecting it opens the local managed workbench URL in a new tab, non-admin route access is blocked, and no cloud/provider account state changes. | 2026-05-22 LibreChat entry QA - passed |
 | `PW-UC-008` | Close the sync sidebar, reload, select diff baselines, and verify opt-in Workbench sidecar startup. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-031` | Real browser against built local Workbench plus `/api/prompts/:id/revisions/:revision`, compiler output, launcher smoke logs, and CLI status | Browser storage/DOM/screenshot evidence, prompt revision API, release tests, launcher pid/log state | Sidebar stays closed after reload, `Compare from` changes the actual diff baseline, the revision API is prompt-path/git based, and the local sidecar starts only when enabled without token leakage. | 2026-05-22 sidebar/diff/sidecar QA - passed |
+| `PW-UC-009` | Inspect the built-in nightly reflection schedule after Express install or upgrade, then verify a completed run. | `39_Installer_and_Config_Compiler.md` / `PW-033`, `INST-004` | Prompt Workbench UI, Scheduler ledger, GlassHive callbacks, install/status summary | Browser-visible schedule/completion, sanitized scheduler delivery fields, generated env keys, callback status counts, focused tests. | Nightly reflection is active for the resolved local admin, placeholders are filled at run time, callbacks complete, and Workbench shows completed without private data leakage. | PARTIAL 2026-06-03 ([nightly review](../memory-hardening/reports/2026-06-03-nightly-routines-health-review.md)); schedule was enabled and not yet due, so today's completed run needs a follow-up after `2026-06-03T10:00:00Z` |
 
 ## Release Test Traceability
 
