@@ -42,9 +42,9 @@ Fix:
 
 ## 2026-04-28 Parity Follow-Up
 
-Observed drift:
+Observed drift at the time, superseded by the 2026-05-30 correction below:
 
-- Telegram voice-note turns requested LibreChat `voiceMode=true`, but text turns with
+- Telegram voice-note turns requested LibreChat voice-call mode, but text turns with
   `ALWAYS_VOICE_RESPONSE=true` only synthesized audio after the LLM completed.
 - That meant always-voice text replies could be spoken without the main agent receiving the
   voice-mode Cartesia prompt before generation.
@@ -55,13 +55,11 @@ Observed drift:
 - Telegram Cartesia TTS preserved SSML in the transcript, but did not set
   `generation_config.emotion` from the LLM-selected `<emotion value="..."/>` tag.
 
-Fix:
+Historical fix, superseded by the 2026-05-30 correction below:
 
-- Telegram now computes the voice-mode generation route from the same preferences used for final
-  audio delivery:
-  - voice note + voice enabled -> `voiceMode=true`
-  - text + always voice + voice enabled -> `voiceMode=true`
-  - voice disabled -> no voice-mode prompt and no audio reply
+- Telegram formerly computed the voice-call-mode generation route from the same preferences used
+  for final audio delivery. Current product truth has split those concerns: preferences control
+  audio delivery only, while Telegram keeps LibreChat voice-call mode false.
 - `input_mode` stays tied to actual input type, so always-voice text messages still send
   `input_mode=text`.
 - Raw assistant text is preserved for TTS while Telegram-visible text uses a deterministic display
@@ -82,21 +80,29 @@ Verification:
 - Send a Telegram voice note from the linked account.
 - Expected:
   - Telegram transcribes the voice note.
-  - LibreChat receives the turn with `voiceMode=true`.
-  - Telegram receives the text reply.
+  - LibreChat receives the turn with `voiceMode=false`, `viventiumSurface=telegram`, and
+    `viventiumInputMode=voice_note`.
+  - Telegram receives the text-mode reply.
   - Telegram also receives an audio reply synthesized with Cartesia Sonic-3 and the Lyra voice ID.
 - Turn on always-voice replies and send a Telegram text message.
 - Expected:
-  - LibreChat receives the turn with `voiceMode=true` and `input_mode=text`.
-  - The main agent may emit Cartesia Sonic-3 markup because the voice prompt was present before
-    generation.
+  - LibreChat receives the turn with `voiceMode=false`, `viventiumSurface=telegram`, and
+    `viventiumInputMode=text`.
+  - The main agent uses the normal Telegram text prompt/model path; always-voice does not opt into
+    the LiveKit Voice Call LLM override or voice-call prompt.
   - Telegram text hides voice-control markup.
-  - Telegram audio preserves the raw markup for Cartesia and uses the selected saved Speaking
-    voice.
+  - Telegram audio uses the selected saved Speaking voice after speech-safe cleanup.
 - Turn off voice replies and send either text or voice input.
 - Expected:
   - No Telegram audio reply is sent.
-  - LibreChat is not put into voice-mode output for that turn.
+  - LibreChat is not put into voice-call mode for that turn.
+
+## 2026-05-30 Product-Truth Correction
+
+The 2026-04-28 parity follow-up treated Telegram audio replies as if they should request LibreChat
+`voiceMode=true`. That interpretation is now corrected: Telegram voice-note and always-voice replies
+are text-mode turns with optional audio delivery on top. The shared Speaking route is only a TTS
+route-sharing contract; it is not the LiveKit Voice Call LLM override contract.
 
 ## 2026-04-28 Delayed Voice Reply Incident
 

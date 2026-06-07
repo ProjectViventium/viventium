@@ -308,6 +308,7 @@ class TestListenOnlyStream(unittest.TestCase):
         post_json = fake_session.post_calls[0][1]["json"]
         self.assertEqual(post_json["streamId"], captured_stream_ids[0])
         self.assertTrue(post_json["streamId"].startswith("lc_"))
+        self.assertEqual(post_json["viventiumTextDeltaMode"], "auto")
 
     def test_aborts_librechat_stream_when_sse_closes_without_final_event(self) -> None:
         fake_session = _FakeClosedStreamSession()
@@ -415,6 +416,125 @@ class TestLibreChatStreamingRun(unittest.TestCase):
             "somethingbefore",
         ]:
             self.assertNotIn(bad_join, spoken_text)
+
+    def test_streamed_server_normalized_message_deltas_do_not_duplicate_speech(self) -> None:
+        expected = "I'm here. Tell me what's going on."
+        events = [
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": "I'm"}]}},
+            },
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": " here"}]}},
+            },
+            {
+                "event": "on_message_delta",
+                "data": {
+                    "delta": {"content": [{"type": "text", "text": ". Tell me"}]},
+                },
+            },
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": " what's going on."}]}},
+            },
+            {"final": True, "responseMessage": {"content": [{"type": "text", "text": expected}]}},
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeStreamingSseSession(events)
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            chunks: list[str] = []
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        spoken_text = "".join(asyncio.run(run_stream()))
+
+        self.assertEqual(spoken_text, expected)
+        self.assertNotIn("I'mI'm", spoken_text)
+        self.assertNotIn("here here", spoken_text)
+
+    def test_streamed_server_normalized_no_response_marker_stays_silent(self) -> None:
+        events = [
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": "{N"}]}},
+            },
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": "TA"}]}},
+            },
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": "}"}]}},
+            },
+            {"final": True, "responseMessage": {"content": [{"type": "text", "text": "{NTA}"}]}},
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeStreamingSseSession(events)
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["hello"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            chunks: list[str] = []
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        self.assertEqual(asyncio.run(run_stream()), [])
+
+    def test_streamed_server_normalized_quoted_repetition_is_not_collapsed(self) -> None:
+        expected = 'She said "no no no no no no" and waited.'
+        events = [
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": 'She said "no'}]}},
+            },
+            {
+                "event": "on_message_delta",
+                "data": {
+                    "delta": {"content": [{"type": "text", "text": " no no"}]},
+                },
+            },
+            {
+                "event": "on_message_delta",
+                "data": {"delta": {"content": [{"type": "text", "text": ' no no no" and waited.'}]}},
+            },
+            {"final": True, "responseMessage": {"content": [{"type": "text", "text": expected}]}},
+        ]
+
+        async def run_stream() -> list[str]:
+            fake_session = _FakeStreamingSseSession(events)
+            ctx = ChatContext(items=[ChatMessage(role="user", content=["quote it"])])
+            llm = LibreChatLLM(
+                origin="http://librechat.test",
+                auth=LibreChatAuth(call_session_id="call_1", call_secret="secret"),
+            )
+            chunks: list[str] = []
+            with patch("librechat_llm.aiohttp.ClientSession", return_value=fake_session):
+                stream = llm.chat(chat_ctx=ctx)
+                async with stream:
+                    async for chunk in stream:
+                        if chunk.delta and chunk.delta.content:
+                            chunks.append(chunk.delta.content)
+            return chunks
+
+        self.assertEqual("".join(asyncio.run(run_stream())), expected)
 
     def test_streamed_sse_deltas_attach_delayed_period_after_max_split(self) -> None:
         first = "This phrase is long enough to cross the streaming TTS length threshold"
@@ -553,6 +673,7 @@ class TestFinalEventHelpers(unittest.TestCase):
             [{"cortex_name": "Background Analysis", "insight": "Secret code: 27."}]
         )
         self.assertIn("Secret code: 27.", speech)
+        self.assertEqual(speech.count("Secret code: 27."), 1)
         self.assertNotIn("Background insights update.", speech)
 
     # === VIVENTIUM START ===

@@ -14,6 +14,7 @@ from no_response import (  # noqa: E402
     is_no_response_only,
     is_no_response_tag,
     normalize_no_response_text,
+    strip_inline_nta,
 )
 
 
@@ -47,3 +48,20 @@ def test_normalize_no_response_text() -> None:
     assert normalize_no_response_text("Nothing new to add for now.") == NO_RESPONSE_TAG
     assert normalize_no_response_text("{NTA}") == NO_RESPONSE_TAG
     assert normalize_no_response_text("hello") == "hello"
+
+
+def test_strip_inline_nta_removes_malformed_internal_marker_artifacts() -> None:
+    assert strip_inline_nta("{N{NTATA}}") == ""
+    assert strip_inline_nta("Useful {N{NTATA}} context") == "Useful context"
+    assert strip_inline_nta("Useful {N{N{NTA}}} context") == "Useful context"
+    assert strip_inline_nta("Useful {NTA context") == "Useful context"
+    assert strip_inline_nta("Useful {N{NTA} context") == "Useful context"
+
+
+def test_strip_inline_nta_preserves_template_variable_shape() -> None:
+    assert strip_inline_nta("${NTA}") == "${NTA}"
+    assert strip_inline_nta("set token=${NTA}") == "set token=${NTA}"
+
+
+def test_malformed_internal_marker_does_not_become_no_response_only() -> None:
+    assert is_no_response_only("{N{NTATA}}") is False

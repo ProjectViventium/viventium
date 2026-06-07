@@ -35,7 +35,7 @@ All chat messages route through the LibreChat Agents pipeline (same brain as the
    ```bash
    # Required: LibreChat backend + auth
    VIVENTIUM_TELEGRAM_BACKEND=librechat
-   VIVENTIUM_LIBRECHAT_ORIGIN=http://localhost:3180
+   VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180
    VIVENTIUM_TELEGRAM_SECRET=your_shared_secret
    VIVENTIUM_TELEGRAM_USER_ID=your_librechat_user_id
    VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3

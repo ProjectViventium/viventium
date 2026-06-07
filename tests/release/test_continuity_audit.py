@@ -92,6 +92,41 @@ def test_python_and_bash_path_sanitizers_match(tmp_path: Path) -> None:
         )
 
 
+def test_resolve_mongo_uri_derives_local_runtime_uri(tmp_path: Path) -> None:
+    continuity_audit = load_continuity_audit_module()
+
+    uri = continuity_audit.resolve_mongo_uri(
+        {
+            "MONGO_URI": "",
+            "VIVENTIUM_LOCAL_MONGO_PORT": "27117",
+            "VIVENTIUM_LOCAL_MONGO_DB": "LibreChatViventium",
+        },
+        tmp_path / "runtime",
+    )
+
+    assert uri == "mongodb://127.0.0.1:27117/LibreChatViventium"
+
+
+def test_resolve_mongo_uri_prefers_generated_service_env(tmp_path: Path) -> None:
+    continuity_audit = load_continuity_audit_module()
+
+    runtime_dir = tmp_path / "runtime"
+    service_env = runtime_dir / "service-env" / "librechat.env"
+    service_env.parent.mkdir(parents=True)
+    service_env.write_text("MONGO_URI=mongodb://127.0.0.1:27118/ServiceEnvDb\n", encoding="utf-8")
+
+    uri = continuity_audit.resolve_mongo_uri(
+        {
+            "MONGO_URI": "",
+            "VIVENTIUM_LOCAL_MONGO_PORT": "27117",
+            "VIVENTIUM_LOCAL_MONGO_DB": "LibreChatViventium",
+        },
+        runtime_dir,
+    )
+
+    assert uri == "mongodb://127.0.0.1:27118/ServiceEnvDb"
+
+
 def test_compare_manifests_flags_older_surfaces(tmp_path: Path) -> None:
     continuity_audit = load_continuity_audit_module()
     snapshot_manifest = tmp_path / "snapshot.json"

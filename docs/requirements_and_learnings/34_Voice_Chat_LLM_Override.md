@@ -19,13 +19,12 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
    bag. Voice settings are separate authoring state.
 9. Modern playground disclosures must resolve the effective assistant route from the actual call
    agent and show the concrete provider/model that will answer the call.
-10. Shipped source-of-truth for Anthropic voice routes must use the launch-ready Anthropic voice
-    default exposed in the runtime model inventory, currently `claude-sonnet-4-5`, and set
-    `voice_llm_model_parameters.thinking: false` explicitly so fresh installs and syncs preserve
-    low-latency voice behavior without relying on inheritance from the primary model bag. This is
-    not a generic claim that Sonnet is faster than every Anthropic model; Haiku remains an
-    activation fallback, while the shipped voice route must choose from launch-ready Anthropic
-    models actually exposed to the app.
+10. Shipped source-of-truth voice routes must seed provider-specific voice parameters explicitly so
+    fresh installs and syncs preserve low-latency behavior without relying on inheritance from the
+    primary model bag. The current local main-agent voice route is `xai / grok-4.3` with
+    `voice_llm_model_parameters.reasoning_effort: "none"`. Anthropic voice routes must instead use
+    a launch-ready Anthropic model exposed in the runtime inventory and set
+    `voice_llm_model_parameters.thinking: false`.
 11. Voice model parameters must be normalized to the selected voice provider before the runtime call.
     A provider override must not leak incompatible thinking/reasoning fields from the primary model
     bag into the voice request.
@@ -43,9 +42,13 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
 | Web UI text chat | false | — | — | NO |
 | LiveKit Playground voice call | true | voice_call | voice | YES |
 | Telegram text | false | text | telegram | NO |
+| Telegram always-voice text | false | text | telegram | NO |
 | Telegram voice note | false | voice_note | telegram | NO |
 | Scheduler | false | scheduled | — | NO |
 | Background cortex follow-up (voice) | true | voice_call | voice | YES |
+
+Telegram always-voice means "text-mode answer plus Telegram audio attachment." It intentionally
+does not select the Voice Call LLM, voice-call prompt, or voice-call Phase A policy.
 
 ## Architecture
 

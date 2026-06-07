@@ -34,8 +34,8 @@ def should_send_voice_reply(
     text: Optional[str],
 ) -> bool:
     # === VIVENTIUM START ===
-    # Voice replies require both output routing and generated text.
-    if not should_request_voice_mode(
+    # Voice replies require both audio-output routing and generated text.
+    if not should_request_audio_reply(
         voice_note_detected=voice_note_detected,
         always_voice=always_voice,
         voice_enabled=voice_enabled,
@@ -48,10 +48,10 @@ def should_send_voice_reply(
 
 
 # === VIVENTIUM START ===
-# Feature: Shared pre-generation voice-mode routing.
-# Purpose: The same user preference that causes Telegram to send audio must also
-# request voice-mode prompt instructions before the LLM response is generated.
-def should_request_voice_mode(
+# Feature: Shared Telegram audio-output routing.
+# Purpose: Keep Telegram voice-note / always-voice audio delivery independent from
+# LibreChat voice-call mode. Telegram is a text surface that can attach an audio reply.
+def should_request_audio_reply(
     *,
     voice_note_detected: bool,
     always_voice: bool,
@@ -62,4 +62,20 @@ def should_request_voice_mode(
     if not voice_enabled:
         return False
     return bool(voice_note_detected or always_voice)
+
+
+def should_request_voice_mode(
+    *,
+    voice_note_detected: bool,
+    always_voice: bool,
+    voice_enabled: bool,
+) -> bool:
+    """Return whether Telegram should request LibreChat voice-call mode.
+
+    Telegram voice notes and always-voice replies are text-mode turns with optional
+    audio delivery, so they must not opt into the LiveKit/voice-call prompt,
+    Phase-A, or LLM override path.
+    """
+    _ = voice_note_detected, always_voice, voice_enabled
+    return False
 # === VIVENTIUM END ===

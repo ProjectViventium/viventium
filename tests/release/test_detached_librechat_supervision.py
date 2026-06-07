@@ -132,6 +132,26 @@ def test_telegram_restart_kills_scoped_orphan_bot_processes() -> None:
     )
 
 
+def test_telegram_start_reconciles_pidfile_free_orphan_before_launching() -> None:
+    launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    start_telegram_bot = launcher_text[
+        launcher_text.index("start_telegram_bot() {") :
+        launcher_text.index("\nschedule_deferred_telegram_bot_start() {")
+    ]
+
+    assert "find_running_telegram_bot_pids() {" in launcher_text
+    assert 'find_scope_pattern_pids "python.*bot.py" "$telegram_dir_scope"' in launcher_text
+    assert 'EXISTING_TELEGRAM_PIDS="$(find_running_telegram_bot_pids "$PWD")"' in start_telegram_bot
+    assert "Telegram bot process is running without a current pid file; reconciling" in start_telegram_bot
+    assert 'printf \'%s\\n\' "$EXISTING_TELEGRAM_PIDS" >"$TELEGRAM_BOT_PID_FILE"' in start_telegram_bot
+    assert '"${existing_telegram_pid_count:-0}" -gt 1' in start_telegram_bot
+    assert start_telegram_bot.index('EXISTING_TELEGRAM_PIDS="$(find_running_telegram_bot_pids "$PWD")"') < start_telegram_bot.index(
+        'nohup "$telegram_python" bot.py'
+    )
+
+
 def test_cleanup_kills_librechat_processes_only_inside_librechat_scope() -> None:
     launcher_text = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
         encoding="utf-8"

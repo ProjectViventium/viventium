@@ -57,6 +57,11 @@ disabled.
 - Runtime code must not infer intent from prompt text, provider names, or tool-substring matching.
   The main agent chooses structured tool arguments (`execution_mode`, `profile`, `workspace_root`,
   `alias`, callback metadata) from source-of-truth prompts, MCP schemas, and config.
+- GlassHive delegation should stay sparse and faithful. The host assistant passes the user's real
+  goal, explicit constraints, files/uploads, MCP/tool capability context, and success conditions; it
+  must not turn those capabilities into a made-up plan, rubric, artifact requirement, or provider
+  checklist. If MCP/tool data is unavailable or unproven, pass that fact instead of pretending the
+  worker already has evidence.
 - If host vs sandbox is genuinely ambiguous and both are available, the user-facing question should
   be short and outcome-oriented: ask whether to use the real computer/session or an isolated
   sandbox. If the task clearly requires an existing login/session or local file/app, default to host.
@@ -80,9 +85,53 @@ disabled.
 - CLI worker prompts, including Docker and host-native CLI workers, must require a final
   user-facing completion block, headed `FINAL REPORT:`, so callback delivery can surface results
   instead of progress chatter or stale resumed-session summaries.
+- CLI worker prompts, `AGENTS.md`, `CODEX.md`, `CLAUDE.md`, and other bootstrap instructions must
+  include a universal completion self-check before that final report. The worker should inspect the
+  concrete output it produced, compare it with the user's request and success criteria, fix or
+  continue when the output is incomplete, and report only remaining blockers. This is a general
+  harness rule, not a prompt-specific list of file types, providers, UI surfaces, or QA phrases.
+- `AGENTS.md` is the canonical Codex project-instruction file. Compatibility files such as
+  `CLAUDE.md` and `CODEX.md` may still be materialized for non-Codex workers and older clients, but
+  they should import or mirror the same concise rules instead of growing separate product truth.
 - CLI output parsing must treat intermediate assistant messages as progress. For Codex/Claude-style
   workers, GlassHive should publish the explicit `FINAL REPORT:` section when present, otherwise the
   latest assistant result, not a concatenation of every progress message.
+
+### Core GlassHive Worker Operating Instructions
+
+These instructions are the canonical high-level worker behavior contract. They are part of
+GlassHive's general-intelligence design: the host should pass real goals, constraints, files,
+MCP/tool capabilities, and explicit success conditions, while the worker should execute, self-check,
+and deliver instead of asking avoidable questions or reporting partial success.
+
+```
+CRITICAL OPERATING INSTRUCTIONS (FOLLOW STRICTLY):
+
+1. PATH OF LEAST RESISTANCE: Use the simplest, most direct solution. Don't reinvent wheels.
+
+2. JUST DO IT: Execute immediately without asking questions. Users want RESULTS. Rely on your intelligence, tools, MCPs, skills to find ways around blockers to get it done full and complete.
+
+3. SELF-TEST AND VERIFY:
+   - After creating code, RUN IT
+   - After starting a server, CURL IT to confirm it responds
+   - After researching or creating files, open them and deliver them
+   - NEVER report success without verification
+   - Debate with yourself on gaps, issues, mistakes, misalignments in your delivery and work on them. Do not stop early. Do not just tell the user what you missed. Actually take action and address them so that the delivery to the user is complete and reliable.
+
+4. LOOP UNTIL SUCCESS:
+   - If something fails, FIX IT and try again
+   - Keep iterating until ACTUALLY COMPLETE
+
+5. NO USER INTERVENTION: Deliver a COMPLETE, WORKING solution.
+```
+
+This contract prevents avoidable clarification, premature stopping, and fake completion. It does not
+override product safety, tenant/user scope, auth boundaries, or destructive-action checkpoints. For
+host-native workers, destructive host changes, credential/keychain/browser-session changes, broad
+network exfiltration, or writes outside the workspace still require an explicit checkpoint unless the
+project definition safely authorizes them. The loop requirement is bounded by available runtime,
+tools, MCPs, files, auth, time, and budget: workers should fix what they can, but must report a
+concrete blocker instead of spending indefinitely.
 
 ### Why Selenium's Docker Image (Not Selenium Grid)
 
@@ -209,6 +258,17 @@ Host-worker UX and callback requirements:
   persisted in a local callback outbox until delivered, persisted in the conversation store after
   receiver acceptance, and projected into a durable surface-delivery ledger for non-web surfaces
   such as Telegram and live voice.
+- The callback outbox must be bounded and observable, not an infinite retry sink. Permanent callback
+  failures and exhausted transient failures terminate as retained `dead_lettered` audit rows with a
+  non-secret failure class; stale `delivering` rows are reclaimed for replay; deterministic
+  non-recoverable rows such as missing callback URL or invalid payload JSON do not retry forever.
+  Runtime health must expose active callback backlog, active max attempts, oldest pending age,
+  delivering count, and dead-letter count so QA can distinguish a clean run from a silently rotting
+  delivery substrate.
+- Callback health acceptance is delta-based. Historical `dead_lettered` rows are allowed as audit
+  evidence, but a fresh dead-letter delta during a scheduled run is a failed/degraded delivery
+  substrate even when the newest parent run row says `success`. Active max attempts must be scoped
+  to `pending`/`delivering` rows so old terminal audit rows do not pin the live health signal.
 - Surface delivery state must be DB-backed and idempotent. Telegram and voice can still poll during
   the original turn for low latency, but terminal/actionable callbacks must survive the poll window,
   bot/gateway restart, and LibreChat process restart. Delivery rows need claim leases, retry/backoff,
@@ -304,8 +364,9 @@ Host-worker UX and callback requirements:
   starts. Local non-enterprise mode is a best-effort developer convenience and must not be
   treated as enterprise isolation unless user/conversation headers are present. Normal long waits
   must use an efficient configurable polling cadence, not rapid browser or status loops. The runtime
-  must enforce the configured poll cadence as a floor so a misbehaving caller cannot overload the
-  operator API with sub-second or one-second long-run polling. Browser surfaces must also be
+  must enforce the configured poll cadence as a floor and back off during long waits so a misbehaving
+  caller cannot overload the operator API with sub-second, one-second, or constant rapid long-run
+  polling. Browser surfaces must also be
   state-aware: active workers may refresh quickly, but retained/completed workspace tiles must back
   off, avoid embedded desktop iframes by default, and use non-overlapping timers. The Workspaces
   hive may cap embedded live desktop previews for active workers to protect browser resources; every
@@ -330,6 +391,24 @@ Host-worker UX and callback requirements:
   `runtime_dependency_missing` blocked response and creates no worker/run row. The model may recover
   by using an available profile or sandbox/workstation execution only when that does not contradict
   the user's explicit request.
+- Host-worker preflight must cover incompatible versions and missing runtime substrate, not only
+  absent binaries. If a local CLI/runtime such as Node, Python, Codex, Claude, browser automation, or
+  a helper sidecar is present but too old or misconfigured for the selected profile, GlassHive should
+  classify it as a runtime dependency problem, try configured safe recovery first, and preserve the
+  same user task. Runtime version requirements and recovery branches must come from profile metadata
+  or runtime configuration, not hardcoded prompt or provider-name rules. Safe recovery includes using
+  GlassHive-managed/bundled dependencies, a worker-local toolchain, another available profile, or
+  sandbox/workstation mode when that does not contradict the user's request. Deployments must declare
+  which of those recovery branches are actually available; unavailable branches are skipped rather
+  than simulated with ad hoc shell commands. If recovery creates a replacement worker/run, the
+  model-visible `follow_up_context` must reference the active recovered run, and blocked preflight
+  attempts must not become the conversation's current dispatch. A chat-visible "install or change
+  your global machine environment" instruction is allowed only after configured recovery paths are
+  unavailable, unsafe, or explicitly rejected.
+- Scheduler-owned REST dispatch paths must follow the same recovery rule as MCP dispatch: when host
+  `runtime_dependency_missing` occurs before assignment and the task has no host-specific
+  workspace-root constraint, retry the same task through an available sandbox/workstation execution
+  mode before recording a terminal scheduled-prompt failure.
 - Sandbox routing is a structured tool argument, not runtime prompt matching. If the user asks for
   `sandbox`, `sandboxed workspace`, `Codex Workspace`, `workstation`, a disposable browser, or risky
   untrusted browsing, the GlassHive MCP instructions must guide the host model to set
@@ -372,6 +451,16 @@ Host-worker UX and callback requirements:
 - Parent-visible logs are redacted; raw per-run logs are local files with restrictive permissions.
 - Host child processes receive a minimal runtime environment. Provider keys, callback secrets,
   LibreChat secrets, and broad parent process env are not inherited by default.
+- Host and sandbox workers may receive a run-scoped GlassHive capability broker grant through
+  project MCP config when the host opts in. That grant is not a provider credential, must be
+  short-lived, should be written with owner-only file permissions, and must be redacted from
+  snapshots, support bundles, callbacks, and public QA evidence.
+- Both sandbox and host-native materialization paths must enforce owner-only permissions for broker
+  MCP config, Claude local settings, and Codex config files because any of them can carry
+  grant-bearing project configuration.
+- Docker sandbox workers must be able to reach the host-owned broker endpoint on Linux as well as
+  Docker Desktop. The sandbox launch must provide a `host.docker.internal` alias via Docker
+  `host-gateway` unless the deployment explicitly overrides the broker URL or disables the alias.
 
 ### Host Workspace Layout
 
@@ -453,6 +542,199 @@ The harness prompt is materialized as `harness-prompt.md` for operator visibilit
 - do not promise that every website will keep the login forever; site-side expiry and MFA can still
   happen
 
+### Speed, Warm Workers, and Cost Controls (User Options)
+
+GlassHive worker tasks are inherently heavier than a same-process agent hand-off (a worker is a real
+agent loop in its own sandbox). The same-process **Connected Accounts hand-off agent** was measured as
+a speed experiment, but it is not the product direction for connected-account work: it lets a less
+capable in-process agent choose the Google/MS365 tool path and bypasses the GlassHive worker broker.
+For interactive connected-account reads (the user's own Gmail / Outlook inbox, calendar, or file
+lookups), the supported path is still GlassHive broker-first. Improve speed by making the worker and
+broker better, not by routing around them. Every lever is config-driven and must not be hardcoded or
+overfitted to one profile, model, effort, or policy:
+
+- **Where the time actually goes (measured).** A cold `codex-cli` host worker answering
+  "any new emails today?" took **~5m01s wall-clock**, decomposed from the runtime events + codex
+  rollout as: **queue→start 0.0s** (always-on runtime, instant host spawn) + **~301s agent loop** =
+  ~30 sequential broker tool calls at ~6.5s each (~195s, fetching messages largely one-by-one) +
+  model reasoning turns (~80s) + final summarize (~15s). The rejected same-process hand-off answered
+  the same question faster mainly because it used just **3** tool calls including a *batched* content
+  fetch. That comparison is useful as a performance clue, not as an allowed routing shortcut. The gap
+  is the worker's granular autonomous loop + reasoning, **not** spawn/bootstrap.
+- **Warm worker resume (favorite workspaces) — helps docker, not host.** A worker/workspace can be
+  flagged `favorite` (`update_worker_metadata(favorite=...)`), and idle reaping is **off by default**
+  (`GLASSHIVE_IDLE_TERMINATE_AFTER_S=0`), so workers stay warm and `Resume`/`Open workspace` reuses
+  the warm worker. But for **host** workers the cold-start penalty is already ~0s (measured 0.0s
+  queue→start), so warm-resume saves little — its real value is **docker/sandbox** workers, where
+  container cold-start is a genuine cost, and continuity (preserved files/browser/login). Do not sell
+  warm-resume as the host-mode speed lever.
+- **The host-mode speed levers are the agent loop, not the sandbox:** fewer/batched broker tool calls,
+  reasoning effort (`high` over `xhigh`), and a faster quality worker model (below). Interactive
+  connected-account reads must still use the GlassHive broker-first path; the fix is to make that
+  path reliable, scoped, and fast enough.
+
+### Results Quality vs Speed — the metric that matters most (measured)
+
+Speed is necessary but **not** the deciding metric — the deciding metric is whether the *answer* is
+accurate, complete, and useful for the user's intent. For the same "any new emails today?" query
+(2026-05-28, both inboxes):
+
+| | Hand-off agent (claude-opus, in-process) | GlassHive worker (gpt-5.4 codex, autonomous loop) |
+| --- | --- | --- |
+| Latency | ~40s | ~5m01s |
+| Output | 1316 chars, 12 bullets | 3036 chars, 27 bullets |
+| Shape | prioritized: "Worth your attention" / "Calendar churn" / "Noise", with synthesized context (for example, related actions merged into one bullet) + an explicit "main thing to action" | exhaustive: "Important/Time-Sensitive" + "Other New Mail", every item source-labeled (Gmail/Outlook) + subject + gist, including duplicate-thread notes |
+| Completeness | selective (newsletters grouped, not all enumerated) | **higher** — enumerated ~26 items including every newsletter, caught a second relevant opportunity + a repository migration the hand-off folded into "noise" |
+| Precision on literal details | risk: compressed a meeting time across timezones — a synthesis/precision discrepancy | **higher** — read each message, so literal subjects/times were verbatim |
+| Usefulness for "a quick rundown" | **higher** — scannable, prioritized, actionable | lower for triage (a thorough dump), higher for an audit/full sweep |
+
+**Decision / value (do not re-litigate per session) — PARITY, not routing rubrics:**
+- Both paths must independently meet the Core Outcome Metric (`01_Key_Principles.md` §0): Quality
+  (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable). Do **not**
+  hardcode "quick rundown → hand-off, full sweep → worker." Whether a result is turned into a rundown is
+  the Main Agent's and the user's call, not a runtime rubric. GlassHive's own job is **truth and
+  completeness**; the worker's intelligence decides the shape.
+- So the gap above is a **GlassHive quality+speed gap to close, not a reason to route around it.** Close
+  it by (a) running the worker on a capable model (**Claude Code CLI**; codex was both slower here and,
+  separately, weekly-credit-limited — see [[codex-credits-claude-fallback]]) and (b) giving the worker the
+  **same memory + conversation-recall context the Main Agent receives**, so its results are as relevant and
+  useful, not merely complete.
+- **Faster is not automatically better.** A faster, synthesized answer can drop/compress a literal detail
+  (the meeting-time discrepancy above). When literal accuracy matters (times, amounts, names), verify the
+  specific field against the source rather than trusting a synthesized summary.
+- Evaluate every speed change against the **full metric**, not just wall-clock. A latency win that degrades
+  Quality is a regression. QA the *result*, not only the clock (`qa/glasshive-mcp-capability-broker/`).
+
+### Closing the GlassHive usefulness gap (memory + recall context)
+
+The worker today does **not** receive the user's saved **memory** — the "# Existing memory about the user"
+block the Main Agent injects (`api/.../agents/client.js` `useMemory` → `memoryContext`, gated by
+`user.personalization.memories`, the `MEMORIES` USE permission, and `appConfig.memory` token limits). It
+*does* receive conversation-**recall** file IDs in the launch bundle
+(`glasshive_upload_context.tool_resources.file_search.file_ids`: `conversation_recall:*`, `meeting_summary:*`),
+but those only help if the worker has a tool to query them. This is why the worker — lacking user-context —
+produced an exhaustive dump while the memory-equipped Main Agent prioritized by what matters to the user.
+
+To give the worker **parity** on Quality (Relevance, Usefulness, Alignment) — by strengthening the path, not
+routing around it:
+- **Inject the user's memory into the worker bootstrap**, the same source the Main Agent uses
+  (`db.getFormattedMemories`, gated by the same memory permission + `appConfig.memory` token limit), appended
+  as a "what you know about the user" block when the capability-broker bundle is built
+  (`GlassHiveCapabilityBootstrapService`). It is the user's own worker, so the user's own memory is in-scope;
+  honor `user.personalization.memories` / `appConfig.memory.disabled` (config-driven, never forced).
+- **Make recall queryable:** confirm the worker has a `file_search`/recall tool that can read the passed
+  `file_search.file_ids` (via the broker or the worker runtime). Passing IDs without a tool to query them is
+  inert; expose recall through the same broker so the worker can ground in prior context like the Main Agent.
+- Then judge the worker on the **full outcome metric** — complete *and* relevant/useful, not just complete —
+  measuring result quality before/after, not only latency. The worker stays the decider of shape; this only
+  gives it the same context the Main Agent has so its intelligence has something to prioritize with.
+
+**Status:** memory-injection **implemented** (`client.js` threads `config.configurable.glasshive_worker_memory`
+from the same `memoryResult` the Main Agent uses → `GlassHiveCapabilityBootstrapService.workerMemoryBlock`
+appends it to the worker `agents_md`/`claude_md`/`codex_md` when present; broker spec covers inject/omit).
+Claude-Code-worker before/after **measured** — see next subsection.
+
+### Claude Code worker switch — measured results + two interop fixes (2026-05-29)
+
+**Switch mechanism (no restart, config-driven, reversible).** Worker profile resolves as: explicit
+tool arg → per-user preference (`default_worker_profile`) → env `GLASSHIVE_DEFAULT_WORKER_PROFILE`
+(`mcp_server.py` `_resolve_profile_from_preferences`). Setting the per-user preference
+(`PATCH /v1/preferences {"default_worker_profile":"claude-code"}`, scoped to the local user/tenant for
+non-enterprise) flips the worker to claude-code with **no restart** and no broker-secret risk, because
+the Main Agent omits the profile arg. The env var is the alternative (needs a restart).
+
+**Measured ("any new emails today?", host workers, both inboxes; runs table timing):**
+
+| | Hand-off (claude-opus) | GlassHive worker — codex gpt-5.4 | GlassHive worker — claude-code sonnet-4-6 |
+| --- | --- | --- | --- |
+| Worker duration | ~40s (in-process) | 301s (5m01s) | **88–144s (~2 min; 3 runs)** |
+| Providers read | Gmail + Outlook | Gmail + Outlook | Gmail + Outlook *(after fix #2)* |
+| Quality | prioritized, occasionally compresses a detail | complete + verbatim, verbose | complete, prioritized, action-items surfaced, **honest about gaps** |
+| Speed vs codex | — | baseline | **~2.5–3.4× faster** |
+
+So switching the worker to claude-code **does** improve speed (~2–3.5×) while meeting the Core Outcome
+Metric on Quality (both providers, prioritized + actionable, and literal time details preserved across
+timezone conversion). Faster *and* complete once the two bugs below are fixed.
+
+**Cold vs warm:** the Main Agent spawns a **fresh** worker per request (it did not auto-`workspace_continue`
+even for "refresh and check again"). For **host** workers spawn ≈ 0s, so there is no container-warmth
+penalty; run-to-run variance (88/120/144s) reflects Claude prompt-cache warmth + output verbosity, not
+cold/warm container state. Conversation continuity still works because the Main Agent threads prior context
+into the new worker's instruction (the warm follow-up correctly answered "nothing new since… the two items
+still stand"). The dedicated `workspace_continue` resume path exists but is not triggered by a natural
+re-check; warm-resume remains a docker-startup lever, not a host one (consistent with the section above).
+
+**Bug #1 — claude-code host worker auth: "Not logged in · Please run /login" (fixed).**
+`profile_runtime.py` `_host_env` built the worker subprocess env from a small allowlist that **omitted
+`USER`/`LOGNAME`**. On macOS the claude CLI's subscription auth lives in the **login Keychain** and resolves
+the credential item **by user**; with `USER` absent the worker exits in ~15–20 ms with "Not logged in".
+Codex is unaffected because its auth is a portable file (`~/.codex/auth.json`) the runtime copies into the
+worker — claude has no equivalent provisioning. Verified by isolation matrix: full-env worked with **and
+without** `start_new_session=True` (so setsid was a red herring); stripped-env failed both ways; adding
+`USER` alone fixed it. **Fix:** add `USER`/`LOGNAME` (identity, not secrets — secret-stripping unchanged) to
+the host-env allowlist. Verified live (worker authed + completed the read) + `test_profile_runtime.py`
+asserts the passthrough.
+
+**Bug #2 — MS365/Outlook unreadable for the claude worker: `expected record, received array at
+structuredContent` (fixed).** The broker route (`routes/viventium/glasshiveCapabilities.js`, `tools/call`)
+set `structuredContent: result` unconditionally. MS365 `list_mail_messages` returns an **array**, but per MCP
+`structuredContent` must be a JSON **object**, so a strict client (claude-code worker) rejected every Outlook
+read; codex's lenient MCP client tolerated the array, which is why codex got Outlook and claude did not. No
+broker tool advertises an `outputSchema`, so `structuredContent` is optional. **Fix:** emit
+`structuredContent` only for plain objects; arrays/scalars travel in the `content[0].text` block (which
+codex already consumes). Verified live (claude worker then read Gmail **and** Outlook) + a route regression
+test. This is the claude-side manifestation of the broker-result-shape contract — not the F3 timeout case.
+
+**Durability of the auth fix (production / headless deployments).** The macOS helper is a GUI menu-bar app
+(`LSUIElement`/`NSApplication`), so it runs in the user's Aqua session with login-Keychain access; its child
+runtime inherits that access, which is why the original failure was the `USER` env-strip **alone**, not
+missing Keychain — making the `USER`/`LOGNAME` fix the complete fix for the helper-launched runtime. The
+measurement runtime was relaunched from a keychain-attached shell and reparented to launchd (structurally
+matching the helper's detached launch) and authed workers. **Residual gate:** re-verify after a real helper
+restart. For session-independent durability (a future launchd job that detaches the security session, or
+enterprise/headless workers), provision a **headless token** — `claude setup-token` (user-run OAuth) →
+inject `CLAUDE_CODE_OAUTH_TOKEN` into the worker env via the bootstrap, the file/token parity codex already
+has. Do **not** extract or persist the Keychain token.
+
+**Enterprise/headless compatibility of these two fixes.** Enterprise GlassHive runs **docker**
+workers with **provider-route auth** (Codex→Azure OpenAI Responses, OpenClaw→Portkey, Claude→Anthropic/Portkey
+via `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`), not macOS Keychain (`host_worker.enabled` is forced false +
+`default_execution_mode=docker` when `glasshive_azure_enterprise_enabled`). Therefore:
+- The `USER`/`LOGNAME` fix is in `_host_env` (host runtime) and **does not touch** the enterprise docker path
+  (`_container_env`) — no enterprise behavior change, no regression.
+- The `structuredContent` fix is in the shared broker route and is **universal** — it equally unblocks the
+  enterprise docker claude worker (a strict MCP client) once that deployment repairs its Anthropic/Portkey
+  credential. It is a net improvement for enterprise, not a risk.
+- Enterprise's claude-code worker is gated on repairing that credential and on its
+  `GLASSHIVE_ALLOWED_WORKER_PROFILES` allowlist (`codex-cli,openclaw-general`); its durable headless path is
+  the same `CLAUDE_CODE_OAUTH_TOKEN`/API-key injection above (already its model).
+- The local `default_worker_profile=claude-code` is **local-scoped**: the compiler default is `codex-cli`
+  (no change for unset configs), and the runtime fails closed if a default is not in an environment's
+  allowlist — so enterprise stays `codex-cli` and cannot silently inherit an unadvertised worker.
+No cloud change was made; this records compatibility so the enterprise contract stays respected.
+- **Reasoning effort.** The codex worker's effort is config-driven via
+  `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
+  `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`
+  (default `medium`). Prefer `high` over `xhigh` for everyday tasks where the extra budget does not
+  change the outcome; reserve `xhigh` for genuinely hard work. A user/operator option, never a
+  hardcoded constant.
+- **Worker model.** Config-driven via `WPR_MODEL_CODEX_CLI` (default `gpt-5.4`) and
+  `WPR_MODEL_OPENCLAW_CLAUDE` (default `claude-sonnet-4-6`). Choose from a launch-ready quality family
+  (model governance in `01_Key_Principles.md`); never use a low-tier model (GPT-mini / Haiku class)
+  as a speed lever. A faster quality model is a supported option, not a silent default override.
+- **Keep-awake vs cost (default OFF for always-on prewarm).** Keeping workers warm has ongoing
+  compute cost. Workers stay warm by default for responsiveness; enable idle / paused / max-duration
+  reaping (`GLASSHIVE_IDLE_TERMINATE_AFTER_S` and equivalents) to release compute. For **enterprise**,
+  treat an always-on prewarmed-workspace pool as an explicit, default-off opt-in with a documented
+  cost — surfaced as a clear per-workspace "keep awake for fast responses" toggle next to the existing
+  `favorite` flag, so the path of least resistance never silently incurs standing compute.
+
+The product surface should expose `favorite` and a "keep awake" toggle as simple, clearly-labeled
+per-workspace options (the runtime metadata and idle-reaper config already back them). Interactive
+connected-account answers go through the GlassHive broker-first worker path; tune that path for speed
+via broker batching, warm resume, and effort/model options rather than a hardcoded same-process
+shortcut.
+
 ---
 
 ## Bootstrap and Auth Projection
@@ -472,9 +754,19 @@ The harness prompt is materialized as `harness-prompt.md` for operator visibilit
 - `env` -> `~/.glasshive/runtime.env` (sourced in .bashrc)
 - `claude_project_mcp` -> workspace `.mcp.json`
 - `claude_settings_local` -> workspace `.claude/settings.local.json`
-- `claude_md` / `agents_md` -> workspace `CLAUDE.md` / `AGENTS.md`
+- `claude_md` / `agents_md` / `codex_md` -> workspace `CLAUDE.md` / `AGENTS.md` / `CODEX.md`
 - `files` -> workspace or home by scope
-- `codex_config_append` -> `~/.codex/config.toml`
+- `codex_config_append` -> worker-local `$CODEX_HOME/config.toml` and a workspace `.codex/config.toml`
+  diagnostic mirror. Host-native Codex workers must run with `CODEX_HOME` pointed at that
+  worker-local directory so Codex CLI loads the projected MCP config without leaking broker grants
+  into process arguments. Minimal Codex auth may be copied from the host Codex home into the
+  worker-local Codex home with owner-only permissions.
+- Run-scoped env and MCP/client config must be refreshed before each worker run, including reused
+  workers. Broker grants can rotate between runs; stale Claude `.mcp.json` headers, stale Codex MCP
+  blocks, or duplicate MCP server sections are security and reliability bugs.
+- Claude project MCP config must not persist literal broker bearer grants when an env-indirected
+  form is available. The bootstrap writer should materialize broker `Authorization` headers as
+  `Bearer ${GLASSHIVE_CAPABILITY_BROKER_TOKEN}` and keep the grant itself in the worker runtime env.
 
 ### Critical Boundary
 
@@ -498,6 +790,24 @@ If the GlassHive MCP server config is DB-sourced, request-context placeholders a
 when the reviewed Viventium-managed server config carries `viventiumRequestContext: true`.
 Arbitrary DB-sourced MCP servers must not receive user/body placeholder expansion, env secrets, or
 OpenID tokens through this path.
+
+For connected-account MCP access inside GlassHive, use the host-owned broker pattern: the worker
+talks to `glasshive-user-capabilities`, and the host invokes reviewed user-authorized MCPs server-side.
+Do not pass raw Google Workspace, Microsoft 365, or other provider tokens into the worker workspace.
+If a host-native runtime also exposes its own connected-account app connector, the broker remains the
+first choice when it covers that provider; host app connectors are fallback only after the broker path
+is missing, unavailable, auth-blocked, or explicitly requested.
+
+A connected-account worker may treat brokered content access as available only when the bootstrap
+contains a complete host-signed broker bundle: broker MCP server config, a projected broker grant
+token in the worker env/config, and declared scope such as content-read for the requested operation.
+A caller-authored intent flag, prompt wording, or provider name is never enough. If the complete
+bundle is absent, incomplete, expired, or scope-limited, GlassHive must inject an honesty guard that
+requires the worker to report the limitation instead of claiming Gmail, Google Workspace, Outlook,
+Microsoft 365, or other brokered MCP reachability. Enterprise env allowlists may expose the broker
+grant token needed to call the host broker, but they must not expose raw provider OAuth tokens or API
+keys. Host broker endpoints should rate-limit by grant/user/tenant and redact grant/token fields in
+logs and audit previews.
 
 Callbacks are signed per worker/run. The parent callback receiver derives a per-run HMAC key from
 the compiled callback secret plus `worker_id` and `run_id`, rejects stale timestamps and duplicate
@@ -556,7 +866,7 @@ must not silently inherit the shorter background-follow-up grace window.
 ### Exposed MCP Tools
 
 - **High-level launch**: `workspace_launch` for normal user-facing delegation with `description`,
-  required `success_criteria`, and optional `context`; `worker_delegate_once` for lower-level
+  optional `success_criteria`, and optional `context`; `worker_delegate_once` for lower-level
   one-call delegation when the caller already has a precise title/instruction.
 - **Project**: `projects_list`, `project_create`, `project_get`, `project_runs`, `project_events`
 - **Worker**: `workers_list`, `worker_create`, `worker_get`, `worker_live`
@@ -645,7 +955,11 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
   `no-referrer`, no-store cache headers, and a tight Content Security Policy. In enterprise mode,
   buttons inside that preview page must also be self-authorizing signed actions: opening the
   preview through a signed link and then clicking `Download file` or `View workspace` must not fall
-  back to an unsigned raw route that requires hidden proxy headers.
+  back to an unsigned raw route that requires hidden proxy headers. When the preview is embedded in
+  the watch/steer frame, `View workspace` must navigate the top-level page instead of recursively
+  loading another watch page inside the preview frame. When a worker creates multiple user-facing
+  files, Watch / Steer must expose the artifact inventory with explicit open/download actions for
+  each file instead of stranding everything except the latest promoted artifact.
 - **Completed deliverable promotion**: for Docker workers with structured webpage deliverables,
   GlassHive must open the deliverable in the sandbox browser once the run completes. Host-native
   workers must not auto-open the user's real browser without explicit consent and must not place
@@ -712,11 +1026,14 @@ but it cannot replace real user-path evidence. Every case result must be marked 
    retain raw `gh_token`, bearer/service-token values, or opaque artifact signed-link paths.
 7. Efficiency/performance: prove idle workspaces automatically release compute while preserving
    workspace data, active/queued/checkpoint work is not killed, quotas are enforced, and spawn/resume
-   paths are measured against the documented responsiveness target.
+   paths are measured against the documented responsiveness target. When a quota is hit, API and MCP
+   responses must return structured capacity guidance with owner-scoped existing workspace options,
+   must not suggest profile/sandbox switching as a quota fix, and must not invite an automatic
+   relaunch loop.
 8. Professional UX: preserve the designed GlassHive UI, keep workspace/takeover views space
    efficient, avoid overlapping layers, make constrained screens scroll, present persistent
    environments as `Workspaces`, show the launcher title `Define the project once. Watch the
-   worker deliver.`, and keep documented launch fields (`Describe your project`, required
+   worker deliver.`, and keep documented launch fields (`Describe your project`, optional
    `Success Criteria`, optional `Context`) instead of drifting to ad hoc fields.
 9. Review-only second opinion: after Codex completes its own evidence-backed assessment, run a
    Claude/ClaudeViv review-only pass with sanitized evidence and ask it to classify claims as
@@ -770,6 +1087,38 @@ runtime intent classifier.
   GlassHive should let the worker use its own intelligence to finish files, browser-visible results,
   research, code, or other workspace tasks, while the host assistant verifies View / Steer delivery,
   MCP tool choice, callbacks, wait/status cadence, and cross-surface inspection externally.
+- Worker prompts must also make the worker responsible for checking its own deliverable before
+  completion. The final `FINAL REPORT:` should follow a local self-check of the actual files,
+  artifacts, browser-visible result, command/test output, or researched facts when those are relevant
+  to the task. The worker should continue or repair mismatches it can fix, and report a blocker only
+  when the remaining blocker is real and specific.
+- GlassHive harness/runtime recovery must happen below the worker intelligence when the worker cannot
+  even start. Version mismatches, missing CLIs, broken sidecars, or unavailable managed dependencies
+  are not user-facing project goals and must not be delegated as "fix this on your end" unless the
+  configured managed/profile/sandbox recovery options have been exhausted or would require an unsafe
+  global host mutation.
+- GlassHive MCP caller instructions must expose brokered MCP/tool capability as context, not as
+  invented workspace goals. Unless the user explicitly specified them, callers must not manufacture
+  success criteria, provider lists, output formats, artifacts, ranking rules, or workflow steps for
+  the worker. Use minimal acceptance criteria when needed and trust the GlassHive worker to choose
+  the best path from the user's request, available MCPs/tools, and runtime context. `workspace_launch`
+  and `workspace_schedule` therefore make `success_criteria` optional; when omitted, GlassHive
+  supplies the minimal default internally instead of forcing the host model to invent criteria.
+- The host must not predict connected-account or MCP routing. It should pass the user's requested
+  accounts/resources, factual broker capability context, verified tool results, and any user-stated
+  constraints, then stop shaping the worker's plan. Provider names, MCP ids, account mappings,
+  output formats, and artifact choices belong in the worker instruction only when the user explicitly
+  said them or the host has current tool evidence. This rule is universal: it is not specific to
+  Google Workspace, Microsoft 365, LibreChat, email, calendars, or any one QA prompt.
+- This pass-through rule needs observability, not just prompt text. GlassHive/host QA must capture
+  the generated tool arguments, worker instruction, broker capability projection, broker tool calls,
+  worker output, host-rendered answer, and relevant logs/DB rows so tests can prove the host did not
+  add unsupported assumptions or present unverified memory/tool claims as worker findings.
+- Callers must also avoid injecting memory-derived priorities, active-thread/contact/deal lists, or
+  guessed urgency rubrics into `description`, `success_criteria`, or `context` unless the user
+  explicitly asked GlassHive to use remembered or prior-chat context.
+- For vague user adjectives such as "urgent" or "important", callers must pass the adjective
+  through instead of defining a private rubric unless the user defines the rubric.
 - User-facing dispatch tools, including `workspace_launch`, `workspace_schedule`, and
   `worker_delegate_once`, must inject the worker-side host-orchestration separation rule into the
   assigned run instruction unless it is already present. This keeps lower-level delegation paths from
@@ -781,6 +1130,10 @@ runtime intent classifier.
   still treat effort as structured configuration, not prompt-string intent matching.
 - Idle/cost controls are product requirements, not operator nice-to-haves. Default enterprise
   configuration must make the cost risk visible and configurable.
+- Paused/idle compute release must be idempotent. Once GlassHive has stopped worker compute while
+  preserving workspace state, the worker record must carry a durable release marker so periodic
+  reaper passes do not repeatedly stop the same already-released compute or emit duplicate lifecycle
+  events. Starting/resuming compute clears that marker.
 - Public QA artifacts must sanitize local paths, personal emails, account ids, subscription ids,
   raw logs, DB exports, screenshots with private content, and secret-bearing commands.
 - Enterprise service managers must disable raw uvicorn access logs or prove redaction before logs
@@ -920,6 +1273,9 @@ persistent home and workspace mounts.
 | `WPR_SANDBOX_PIDS_LIMIT` | `4096` | Docker process cap per worker container |
 | `WPR_SANDBOX_SHM_SIZE` | `1g` | Shared memory per container |
 | `WPR_DOCKER_IMAGE_BUILD_TIMEOUT_SEC` | `900` | Cold sandbox image build timeout; separate from short Docker inspect/exec timeouts |
+| `WPR_CODEX_BIN` | `codex` | Host-native Codex executable path. Viventium local runtime config must compile an absolute app-bundled path when the helper/LaunchAgent service `PATH` cannot discover `codex`; app-bundle discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`. |
+| `WPR_CLAUDE_CODE_BIN` | `claude` | Host-native Claude executable path when configured/discovered. |
+| `WPR_OPENCLAW_BIN` | `openclaw` | Host-native OpenClaw executable path when configured/discovered. |
 | `WPR_MODEL_HOST_CODEX_CLI` | unset | Optional host-native Codex model override when the logged-in local Codex account should use a deployment-specified model instead of its local Codex config |
 | `CODEX_MODEL` | unset | Optional generic host-native Codex CLI model override; honored when `WPR_MODEL_HOST_CODEX_CLI` is unset |
 | `GLASSHIVE_HOST_CODEX_INHERIT_PROVIDER_MODEL` | unset | Opt-in compatibility switch for host-native Codex to inherit `WPR_MODEL_CODEX_CLI`; leave unset so host workers use local Codex config by default |
@@ -930,7 +1286,7 @@ persistent home and workspace mounts.
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
 | `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` | `1800` | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout; enterprise deployments that expect 25+ minute research/file jobs may raise this, for example to `2700` |
 | `WPR_MCP_BLOCKING_WAIT_MAX_SEC` | `1800` | Hard cap on MCP blocking wait duration; prevents a chat request from blocking longer than policy while the worker continues in the background; enterprise deployments may raise this with a matching LibreChat MCP `timeout` cushion, for example to `3600` |
-| `WPR_MCP_BLOCKING_WAIT_POLL_INTERVAL_SEC` | `5` | Efficient polling cadence and floor for `workspace_wait`; models should omit per-call poll intervals for normal long work, and the runtime must not allow lower long-run polling values |
+| `WPR_MCP_BLOCKING_WAIT_POLL_INTERVAL_SEC` | `5` | Initial efficient polling cadence and floor for `workspace_wait`; models should omit per-call poll intervals for normal long work, and the runtime keeps early checks responsive before backing off toward the 30s cap |
 | `WPR_MCP_RECENT_DISPATCH_TTL_SEC` | `14400` | In-process recent-dispatch fallback TTL for same authenticated user/conversation wait/status recovery |
 | `WPR_MCP_RECENT_DISPATCH_MAX_ENTRIES` | `1024` | Safety cap on in-process recent-dispatch fallback entries |
 | GlassHive LibreChat MCP `timeout` | `1860000` ms | Config-level timeout for the GlassHive MCP server, intentionally longer than the 30-minute wait cap plus overhead; deployments should keep a generous cushion above `WPR_MCP_BLOCKING_WAIT_MAX_SEC` plus proxy/runtime latency |
@@ -944,9 +1300,12 @@ persistent home and workspace mounts.
 | `GLASSHIVE_CALLBACK_RETRY_ATTEMPTS` | `3` | Callback delivery attempts before GlassHive records `callback.failed` |
 | `GLASSHIVE_CALLBACK_RETRY_BASE_DELAY_S` | `0.5` | Linear callback retry base delay in seconds |
 | `GLASSHIVE_CALLBACK_RETRY_INTERVAL_S` | `30` | Periodic pending-callback replay interval in seconds |
+| `GLASSHIVE_CALLBACK_MAX_TOTAL_ATTEMPTS` | `25` | Hard upper bound for total callback outbox attempts across immediate and periodic replay; exhausted rows are retained as `dead_lettered` audit records instead of retrying forever |
+| `GLASSHIVE_MAX_CAPACITY_RETRY_ATTEMPTS` | `6` | Hard upper bound for automatic capacity requeues such as host-worker-busy waits; exhausted runs fail with explicit recovery guidance instead of minting unlimited wait callbacks |
 | `GLASSHIVE_RUN_TIMEOUT_SEC` / `WPR_RUN_TIMEOUT_SEC` | unset | Optional explicit timeout for long-running CLI worker runs; unset means no default hard cap |
 | `GLASSHIVE_HOST_RUN_TIMEOUT_SEC` / `WPR_HOST_RUN_TIMEOUT_SEC` | unset | Optional host-specific override for host-native CLI runs |
 | `GLASSHIVE_IDLE_TERMINATE_AFTER_S` | `0` | When positive, stop idle worker compute while preserving workspace/home state |
+| `GLASSHIVE_PAUSED_TERMINATE_AFTER_S` | `0` | When positive, stop manually paused worker compute after the configured age; already-released paused compute must be skipped until the worker is resumed |
 | `GLASSHIVE_IDLE_REAPER_INTERVAL_S` | `60` | Idle reaper interval |
 
 For long enterprise research/file jobs, the wait defaults should be treated as a chat transport

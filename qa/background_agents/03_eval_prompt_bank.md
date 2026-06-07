@@ -272,3 +272,86 @@ shipped background-agent roster.
   - The final visible result must distinguish verified current-run inbox evidence from degraded or missing auth; it must not substitute conversation recall when provider tools are unavailable.
   - The Phase B follow-up must preserve the live main-agent provider/model route and must not switch
     to a compiled/source default provider after the parent response has already run.
+
+### ACT-25 Generic plural inbox sweep activates both productivity cortices
+
+- User prompt:
+  - "Check my inboxes for anything urgent."
+- Expected primary activations:
+  - `MS365`
+  - `Google`
+- Negative controls:
+  - "Check my Gmail inbox; ignore Outlook." activates `Google` only.
+  - "Check my Outlook inbox; ignore Gmail." activates `MS365` only.
+  - If the latest user message is a provider clarification to a prior question, the latest provider
+    restriction wins over older generic inbox context.
+- Outcome assertions:
+  - Activation prompts must make the unrestricted plural/all-inbox request a provider-scoped
+    action for both productivity cortices.
+  - The fix must live in source activation prompts and evals, not runtime keyword matching.
+  - Browser QA must show named Google and MS365 background rows/cards or a public-safe provider/auth
+    block; a no-card result is a failure when connected accounts are available.
+
+### ACT-26 Phase B provider-stage failures preserve metadata and retry fallback
+
+- Scenario:
+  - A productivity cortex activates, initializes with owned provider MCP tools, and then the primary
+    execution model fails before returning insight or completing any tool call.
+- Expected primary activations:
+  - the activated productivity cortex from the user request
+- Outcome assertions:
+  - The persisted cortex part must preserve `activation_scope`, `configured_tools`, and
+    `completed_tool_calls` even on terminal error.
+  - Generic pre-tool provider-route failures should be classified as recoverable provider failures
+    and should attempt the configured execution fallback.
+  - If fallback also finishes without completing a live provider tool call, productivity cortices
+    must surface a sanitized live-tool-evidence limitation instead of a silent success.
+  - MCP/tool/auth failures remain non-retryable as tool/auth failures; fallback must not mask them.
+  - Logs must include the primary provider/model failure class and the fallback route when fallback
+    is attempted.
+
+### ACT-27 Broker-first retirement of specialist background activation
+
+- User prompts:
+  - "Check both synthetic Outlook and Gmail inboxes for urgent items, and also sanity-check whether I am confirmation-biasing myself about the plan."
+  - "Do deep web research on this synthetic vendor category and compare the strongest options."
+- Expected primary activations:
+  - `Confirmation Bias` may activate for the independent bias-review portion.
+  - `Deep Research`, `MS365`, and `Google` must not auto-activate as main-agent background cortices
+    in the GlassHive broker-first local baseline.
+- Outcome assertions:
+  - The source-of-truth and live main-agent rows must have `activation.enabled=false` for
+    `agent_viventium_deep_research_95aeb3`, `agent_viventium_online_tool_use_95aeb3`, and
+    `agent_8Y1d7JNhpubtvzYz3hvEv`.
+  - The standalone specialist agents must remain present with their owned web or provider MCP tools
+    so direct use or future re-enablement does not degrade their capability contract.
+  - Browser, Telegram, and voice QA must not show Deep Research, MS365, or Google background cards
+    for these prompts. Provider work should travel through the main/direct tool path, including
+    GlassHive broker access where connected-account evidence is needed.
+  - The final visible answer must not claim a provider inbox or research check succeeded unless the
+    current run produced verified tool or worker evidence. Missing auth/tool/runtime state must be
+    stated as a limitation, not replaced with recall.
+
+### ACT-33 Main-agent provider rate limit before visible text does not leak raw provider plumbing
+
+- Scenario:
+  - The main user-facing agent route fails with a recoverable provider error such as HTTP 429 or
+    `MODEL_RATE_LIMIT` before any visible assistant text is produced.
+- User prompts:
+  - Use a synthetic public-safe prompt that would normally require a normal assistant answer or
+    GlassHive delegation, such as "Create a short synthetic research brief and tell me when the
+    workspace is ready."
+- Expected primary activations:
+  - Not activation-specific. This case protects the main-agent completion path that owns the first
+    visible assistant answer before background/GlassHive work can help.
+- Outcome assertions:
+  - If a valid fallback route is configured, runtime retries it once and the user sees the fallback
+    answer, with logs identifying the primary provider/model failure class and fallback route.
+  - If no valid fallback is configured or the fallback also fails, the user sees a concise
+    provider-class blocker with an actionable retry/configuration path.
+  - Stored assistant content must not be empty except for an opaque error part when a user-visible
+    answer or blocker is required.
+  - Raw LangChain troubleshooting URLs, stack/plumbing text, and bare `MODEL_RATE_LIMIT` bubbles are
+    forbidden user-visible output.
+  - MCP/tool/auth failures remain owned by their tool-specific error path; this fallback case must
+    not mask unstructured MCP or tool failures as model-provider failures.

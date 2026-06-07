@@ -49,11 +49,14 @@
 - Requirement: idle workspaces stop compute automatically to reduce cloud cost while preserving
   workspace/home state.
 - Expected: idle ready/paused worker compute is terminated after threshold; running/queued workers
-  are not killed; state becomes resumable; `worker.idle_terminated` audit event is recorded.
-- Forbidden: deleting workspace data, killing active work, or leaving no audit event.
+  are not killed; state becomes resumable; lifecycle audit events are recorded once per compute
+  release cycle; repeated reaper passes skip already-released paused compute until resume/start.
+- Forbidden: deleting workspace data, killing active work, leaving no audit event, or repeatedly
+  emitting `worker.paused_compute_terminated` for the same already-released paused worker.
 - Evidence: idle reaper unit test, local Edge/Playwright worker page, DB events, and resume smoke.
-- Last run: PASS automated on 2026-05-23 and live config verified: unit regression proves compute
-  stops while workspace state is preserved; live env has idle terminate/reaper settings enabled.
+- Last run: PASS automated on 2026-05-27: runtime regression proves released paused compute is
+  durably marked, second reaper pass is idempotent, resume clears the marker, and workspace state is
+  preserved. Live cloud rollout was not performed.
 
 ## GH-AZ-005: User-Level Browser QA
 

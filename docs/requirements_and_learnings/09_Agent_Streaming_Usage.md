@@ -15,7 +15,10 @@ Perplexity) stream usage fields in multiple chunks, which triggers LangChain mer
   - `streamUsage` defaults to `true` for standard providers.
   - For providers in `customProviders`, force `streamUsage = false` and `usage = true`.
   - Perplexity must be included in `customProviders` to prevent `completion_tokens` merge warnings.
-  - Voice-mode requests (`viventiumSurface=voice` or `viventiumInputMode` starts with `voice`) disable `streamUsage` to avoid repeated merge warnings in voice streams.
+  - Voice-call requests (`viventiumSurface=voice` or `viventiumInputMode=voice_call`) disable
+    `streamUsage` to avoid repeated merge warnings in voice streams.
+  - Telegram `voice_note` input is a text-mode turn with optional audio delivery, so it does not
+    count as voice-call mode for this policy.
   - `VIVENTIUM_DISABLE_STREAM_USAGE=1` disables `streamUsage` globally and forces `usage = true`.
   - The `viventium-librechat-start.sh` launcher exports `VIVENTIUM_DISABLE_STREAM_USAGE=1` by default (override to re-enable).
 

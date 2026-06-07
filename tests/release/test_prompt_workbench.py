@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import importlib.util
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,6 +39,22 @@ PROMPT_WORKBENCH_SCRIPT_SPEC = importlib.util.spec_from_file_location(
 assert PROMPT_WORKBENCH_SCRIPT_SPEC and PROMPT_WORKBENCH_SCRIPT_SPEC.loader
 prompt_workbench_cli = importlib.util.module_from_spec(PROMPT_WORKBENCH_SCRIPT_SPEC)
 PROMPT_WORKBENCH_SCRIPT_SPEC.loader.exec_module(prompt_workbench_cli)
+
+
+def synthetic_home_path(*parts: str) -> str:
+    return "/" + "/".join(("Users", "example-user", *parts))
+
+
+def synthetic_private_ip() -> str:
+    return ".".join(("192", "168", "1", "10"))
+
+
+@pytest.fixture(autouse=True)
+def restore_environment_after_workbench_test() -> None:
+    before = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(before)
 
 
 def write_prompt(root: Path, rel: str, prompt_id: str, body: str, **metadata: object) -> Path:
@@ -937,7 +954,10 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
         "task-user-level",
         {
             "last_status": "failed",
-            "last_error": "failure at /Users/private/path with mongodb://127.0.0.1:27017/db and http://192.168.1.10:8783/log",
+            "last_error": (
+                f"failure at {synthetic_home_path('private', 'path')} "
+                f"with mongodb://127.0.0.1:27017/db and http://{synthetic_private_ip()}:8783/log"
+            ),
             "updated_at": now,
         },
     )
@@ -947,7 +967,7 @@ def test_user_level_scheduled_tasks_show_in_workbench_and_can_be_managed(
     assert failed_run["status"] == "failed"
     assert "/Users/" not in failed_run["errorClass"]
     assert "mongodb://" not in failed_run["errorClass"]
-    assert "192.168.1.10" not in failed_run["errorClass"]
+    assert synthetic_private_ip() not in failed_run["errorClass"]
 
     deleted = client.delete(f"/api/scheduled-prompts/{user_schedule['id']}")
     assert deleted.status_code == 200
@@ -977,6 +997,51 @@ def test_workbench_startup_seeds_builtin_nightly_template(tmp_path: Path, monkey
     task = scheduled_prompts.storage().get_task("startup-admin", seeded[0]["task_id"])
     assert task["executor"] == "glasshive_host"
     assert task["channel"] == "workbench"
+
+
+def test_workbench_startup_seeds_active_glasshive_nightly_from_runtime_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "startup-admin")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL", "startup-admin@example.test")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ENABLED", "true")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE", "true")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR", "glasshive_host")
+    monkeypatch.setenv("GLASSHIVE_DEFAULT_WORKER_PROFILE", "claude-code")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    with TestClient(app):
+        pass
+
+    rows = scheduled_prompts.storage().list_scheduled_prompt_definitions(user_id="startup-admin")
+    seeded = [row for row in rows if row.get("template_id") == scheduled_prompts.NIGHTLY_TEMPLATE_ID]
+    assert len(seeded) == 1
+    assert seeded[0]["active"]
+    task = scheduled_prompts.storage().get_task("startup-admin", seeded[0]["task_id"])
+    assert task["executor"] == "glasshive_host"
+    assert task["metadata"]["workbench_scheduled_prompt"]["execution_profile"] == "claude-code"
+
+
+def test_workbench_nightly_seed_logs_unresolved_admin_retry_window(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from prompt_workbench import app as app_module
+
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_POLL_SECONDS", "0")
+    monkeypatch.setattr(app_module, "_seed_builtin_scheduled_prompts", lambda: False)
+
+    with caplog.at_level(logging.WARNING, logger="prompt_workbench.nightly_seed"):
+        app_module._seed_when_first_admin_exists()
+
+    assert "could not resolve a unique local admin" in caplog.text
 
 
 def test_prompt_workbench_stop_sets_user_stopped_marker(tmp_path: Path) -> None:
@@ -1302,9 +1367,10 @@ def test_public_safety_scan_applies_to_eval_json(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
 
     with pytest.raises(ValueError, match="Private pattern bearer_token"):
+        fake_bearer_token = "Bearer " + "abcdefghijklmnop"
         drafts.create_file_draft(
             target_path=prompt_bank,
-            new_text='{"note": "Bearer abcdefghijklmnop"}',
+            new_text=json.dumps({"note": fake_bearer_token}),
             kind="eval-edit",
             private_root=tmp_path / "private",
         )

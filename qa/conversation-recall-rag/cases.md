@@ -8,9 +8,10 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `RAG-001` | Recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, RAG API, embeddings preflight, logs | `tests/release/test_rag_api_override_contract.py` plus user-grade QA when visible | PARTIAL 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)); RAG/vector path passed, authenticated browser chat not run to avoid private session/cloud use |
-| `RAG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)) |
+| `RAG-001` | Recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, RAG API, embeddings preflight, logs | `tests/release/test_rag_api_override_contract.py` plus user-grade QA when visible | PARTIAL 2026-06-05 ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); RAG health was `UP`, latest hardener vector telemetry was clean, and focused RAG regressions passed, but today's hardener skipped on battery and direct vector-document proof plus browser recall/source grounding were not rerun |
+| `RAG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-27 ([report](../memory-hardening/reports/2026-05-27-nightly-routines-health-review.md)); report summarizes degraded RAG state without raw private runtime data |
 | `RAG-003` | Background conversation-recall maintenance must not starve live recall search during voice calls. | Voice users get either fast grounded recall or an honest fast degraded result, not a 8-30s tool stall. | voice call, RAG API, vector DB, embeddings service, logs | Synthetic active-call recall/query harness plus RAG queue and voice latency logs | PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); RCA proved starvation risk, product fix not yet applied |
+| `RAG-004` | Installer Recall/RAG opt-in must stay honest about Docker/Ollama/vector prerequisites. | A new user can skip Recall/RAG without a false failure, or opt in and see exact readiness/degraded state before the brain is called ready. | installer wizard, preflight, generated env, RAG API, vector DB, browser recall | `test_wizard.py`, `test_install_summary.py`, `test_ollama_embeddings_prereqs.py`, user-grade browser recall QA | PARTIAL 2026-05-31; installer/status coverage added under `INST-004`, browser recall proof remains |
 
 ## `RAG-001` - Core User Flow
 
@@ -25,7 +26,12 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_rag_api_override_contract.py` plus any narrower feature tests discovered during implementation.
-- Last run: PARTIAL 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)); RAG/vector path passed, authenticated browser chat not run to avoid private session/cloud use.
+- Last run: PARTIAL 2026-06-05
+  ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md));
+  RAG API health returned `UP`, latest hardener telemetry reported 0 vector-presence errors and 0
+  requeued missing vectors, transcript indexes remained fully processed, and focused RAG regressions
+  passed. Today's scheduled hardener skipped on battery, and direct JWT-backed vector-document proof
+  plus browser chat recall/source grounding were not rerun in this overnight audit.
 
 ## `RAG-002` - Public-Safe Evidence Record
 
@@ -40,7 +46,9 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)).
+- Last run: PASS 2026-05-27
+  ([report](../memory-hardening/reports/2026-05-27-nightly-routines-health-review.md)); the public
+  report summarizes degraded RAG state without raw private runtime data.
 
 ## `RAG-003` - Live Recall Search During Background Maintenance
 
@@ -58,6 +66,33 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Automation: add a synthetic active-maintenance/file-search latency harness before claiming fixed.
 - Last run: PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); live logs proved 8s recall query and 30s transcript query timeouts while background recall uploads were active.
 
+## `RAG-004` - Installer Recall/RAG Opt-In Readiness
+
+- Requirement: Conversation Recall/RAG is core to the cognitive system but remains guided opt-in
+  because it requires Docker/Ollama/vector resource consent.
+- Risk covered: Easy install turns recall on from ambient Docker detection, or status calls recall
+  ready while RAG API, embeddings, vector DB, or browser recall grounding is missing.
+- Preconditions: synthetic installer configs can simulate Docker present/missing and RAG enabled/
+  disabled; user-grade proof needs a local runtime with public-safe recall content.
+- Steps:
+  1. Build Express configs with Docker absent and present; confirm recall remains off unless the
+     user explicitly opts in.
+  2. When opted in without Docker, confirm preflight/readiness tells the user Docker/Ollama will be
+     required before readiness.
+  3. Compile generated env and verify RAG/embeddings keys align with the opt-in state.
+  4. Run status and confirm `Conversation Recall/RAG` is `Needs setup`, `Ready`, or `Degraded`
+     with a concrete next action.
+  5. For release signoff, ask a browser recall question and verify grounded visible sources plus
+     backend/vector evidence.
+- Expected result: skipping recall is not a failure; opting in requires real prerequisites and
+  browser recall proof before full readiness.
+- Forbidden result: Docker presence alone enables recall, missing vectors are hidden, or public QA
+  includes private conversations/query text/screenshots.
+- Evidence to capture: wizard choices, generated env key summary, status row, RAG/vector health,
+  browser visible result, and public-safety scan.
+- Last run: PARTIAL 2026-05-31; automated installer/status coverage added, browser recall proof
+  remains.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Conversation Recall Rag. Add narrower feature-specific
@@ -65,10 +100,11 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `RAG-UC-001` | On browser chat, RAG API, embeddings preflight, logs, verify that recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | owning requirement for `RAG-001` / `RAG-001` | browser chat, RAG API, embeddings preflight, logs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-001. | User-visible behavior matches source, docs, persisted state, and logs | PARTIAL 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)); RAG/vector path passed, authenticated browser chat not run |
-| `RAG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | The user sees an honest setup, retry, or degraded-state result for RAG-002; no fake success is accepted. | PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)) |
-| `RAG-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | RAG-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-05-19 ([report](reports/2026-05-19-rag-runtime-guardrails-and-recall-qa.md)) |
+| `RAG-UC-001` | On browser chat, RAG API, embeddings preflight, logs, verify that recall answers are grounded in retrieved conversation/RAG evidence and omit unsupported live facts. | owning requirement for `RAG-001` / `RAG-001` | browser chat, RAG API, embeddings preflight, logs | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-001. | User-visible behavior matches source, docs, persisted state, and logs | PARTIAL 2026-06-05 ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); RAG health and stale clean hardener vector telemetry passed, but browser recall signoff and direct vector-document proof remain pending |
+| `RAG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | The user sees an honest setup, retry, or degraded-state result for RAG-002; no fake success is accepted. | PASS 2026-05-27 ([report](../memory-hardening/reports/2026-05-27-nightly-routines-health-review.md)) |
+| `RAG-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | RAG-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-05-27 ([report](../memory-hardening/reports/2026-05-27-nightly-routines-health-review.md)) |
 | `RAG-UC-004` | During a voice call, ask for earlier conversation or transcript recall while a background recall refresh is active. | owning requirement for `RAG-003` / `RAG-003` | voice call, RAG API, vector DB, embeddings service, logs | Voice timing logs, RAG queue/upload/query logs, DB corpus metadata, and visible/user-facing result. | The user gets fast grounded recall or a clear fast degraded response; no 8-30s recall/tool stall. | PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); RCA only, fix not yet applied |
+| `RAG-UC-005` | During Express setup, skip Recall/RAG, opt in without Docker, and opt in with services healthy. | `39_Installer_and_Config_Compiler.md` / `RAG-004`, `INST-004` | installer wizard, preflight, status, RAG API/vector DB, browser chat | Wizard output, generated env keys, preflight/degraded state, RAG/vector health, browser-visible grounded answer. | Recall is pending when skipped, prerequisite-gated when opted in, and only called ready after service and browser grounding proof. | PARTIAL 2026-05-31; automated setup/status coverage added, browser proof remains |
 
 ## Release Test Traceability
 

@@ -26,13 +26,31 @@ if str(_SHARED_PATH) not in os.sys.path:
 try:
     from no_response import strip_inline_nta
 except Exception:
-    def strip_inline_nta(text: Optional[str]) -> str:
+    def strip_inline_nta(text: Optional[str], *, preserve_outer_whitespace: bool = False) -> str:
         if not isinstance(text, str):
             return text or ""
-        cleaned = re.sub(r"\{\s*NTA\s*\}", " ", text, flags=re.IGNORECASE)
+        leading_whitespace = preserve_outer_whitespace and text[:1].isspace()
+        trailing_whitespace = preserve_outer_whitespace and text[-1:].isspace()
+        cleaned = re.sub(
+            r"(?<![$\\])\{\s*N\s*(?:\{\s*NTA\s*\}?\s*TA\s*\}*|\{\s*NTA\s*\}?|TA\s*\}?)",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
         cleaned = re.sub(r"\s+\n", "\n", cleaned)
         cleaned = re.sub(r"\n\s+", "\n", cleaned)
+        if preserve_outer_whitespace:
+            cleaned = cleaned.strip()
+            if not cleaned:
+                if text and text.isspace():
+                    return " "
+                return ""
+            if leading_whitespace:
+                cleaned = " " + cleaned.lstrip()
+            if trailing_whitespace:
+                cleaned = cleaned.rstrip() + " "
+            return cleaned
         return cleaned.strip()
 
 
@@ -85,10 +103,20 @@ _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((?:https?://|www\.)[^)]+\)")
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
 _GENERIC_ANGLE_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?/?>")
 _CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+_MARKDOWN_SPACED_DECORATION_RE = re.compile(
+    r"(?<!\w)(?P<marker>\*{3}|_{3}|~{3})\s+(?P<text>[^*_~\n]+?)\s+(?P=marker)(?!\w)"
+)
+_MARKDOWN_EMPHASIS_RE = re.compile(
+    r"(?<!\w)(?P<marker>\*{1,3}|_{1,3}|~~)(?=\S)(?P<text>.*?\S)(?P=marker)(?!\w)",
+    re.DOTALL,
+)
+_MARKDOWN_MARKER_ONLY_LINE_RE = re.compile(r"(?m)^\s*(?:[*_~]\s*)+\s*$")
 _HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
 _LIST_PREFIX_RE = re.compile(r"(?m)^\s*(?:[-*+]|\d+[.)]|\u2022)\s+")
 _PLAN_PREFIX_RE = re.compile(r"(?im)^\s*(?:structured\s+)?(?:plan|steps?)\s*:\s*")
 _TABLE_ROW_RE = re.compile(r"(?m)^\s*[|:\\-\\s]+$")
+_WHITESPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,!?;:])")
+_SENTENCE_BOUNDARY_WITHOUT_SPACE_RE = re.compile(r"([.!?])([A-Z])")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _TOOL_DIRECTIVE_PREFIX_RE = re.compile(
     r"(?i)^(use|list|fetch|pull|query|find|locate|get|retrieve|search|open|check|"
@@ -101,7 +129,6 @@ _TOOL_DIRECTIVE_KEYWORDS_RE = re.compile(
     r"calendar view|start of day|end of day|inbox|calendar|email|messages?|events?"
     r")\b"
 )
-_INLINE_NTA_DELTA_RE = re.compile(r"\{\s*NTA\s*\}", re.IGNORECASE)
 # === VIVENTIUM END ===
 # === VIVENTIUM END ===
 
@@ -476,6 +503,54 @@ def _strip_unknown_angle_tags(text: str, *, allow_voice_controls: bool) -> str:
     return _GENERIC_ANGLE_TAG_RE.sub(_replace, text)
 
 
+def _strip_inline_markdown_emphasis(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _MARKDOWN_SPACED_DECORATION_RE.sub(lambda match: match.group("text") or "", text)
+    for _ in range(4):
+        updated = _MARKDOWN_EMPHASIS_RE.sub(lambda match: match.group("text") or "", cleaned)
+        if updated == cleaned:
+            break
+        cleaned = updated
+    cleaned = _MARKDOWN_MARKER_ONLY_LINE_RE.sub(" ", cleaned)
+    return cleaned
+
+
+def _normalize_voice_surface_whitespace(text: str) -> str:
+    if not text:
+        return ""
+
+    def _strip_space_before_punctuation(match: re.Match[str]) -> str:
+        punct = match.group(1)
+        if punct == ".":
+            next_char = match.string[match.end() : match.end() + 1]
+            after_next = match.string[match.end() + 1 : match.end() + 2]
+            if next_char.isupper() and after_next.isupper():
+                return match.group(0)
+        return punct
+
+    def _space_sentence_boundary(match: re.Match[str]) -> str:
+        punct = match.group(1)
+        next_char = match.group(2)
+        if punct != ".":
+            return f"{punct} {next_char}"
+        previous = match.string[match.start() - 1 : match.start()]
+        after_next = match.string[match.end() : match.end() + 1]
+        if previous.isdigit():
+            return match.group(0)
+        if previous.isupper() and (not after_next or after_next.isupper() or after_next == "."):
+            return match.group(0)
+        if next_char.isupper() and after_next.isupper():
+            return match.group(0)
+        return f"{punct} {next_char}"
+
+    cleaned = re.sub(r"\s*[\r\n]+\s*", " ", text)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = _WHITESPACE_BEFORE_PUNCT_RE.sub(_strip_space_before_punctuation, cleaned)
+    cleaned = _SENTENCE_BOUNDARY_WITHOUT_SPACE_RE.sub(_space_sentence_boundary, cleaned)
+    return cleaned
+
+
 def sanitize_voice_tts_text(
     text: str,
     *,
@@ -501,11 +576,11 @@ def sanitize_voice_tts_text(
     cleaned = _REFERENCE_DEF_RE.sub(" ", cleaned)
     cleaned = _MARKDOWN_IMAGE_RE.sub(lambda m: (m.group(1) or "image available"), cleaned)
     cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
+    cleaned = _strip_inline_markdown_emphasis(cleaned)
     if not allow_voice_controls:
         cleaned = strip_voice_control_tags(cleaned)
     cleaned = _EMAIL_RE.sub(" email available ", cleaned)
     cleaned = _URL_RE.sub(" link available ", cleaned)
-    cleaned = _BARE_DOMAIN_RE.sub(" link available ", cleaned)
     cleaned = cleaned.replace("`", "")
     cleaned = _strip_unknown_angle_tags(cleaned, allow_voice_controls=allow_voice_controls)
     cleaned = _HEADING_RE.sub("", cleaned)
@@ -513,12 +588,7 @@ def sanitize_voice_tts_text(
     cleaned = _LIST_PREFIX_RE.sub("", cleaned)
     cleaned = _TABLE_ROW_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\(\s*\)", "", cleaned)
-    cleaned = re.sub(r"\s*[\r\n]+\s*", " ", cleaned)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", cleaned)
-    # Ensure space after sentence-ending punctuation when followed by uppercase letter.
-    cleaned = re.sub(r"([.!?])([A-Z])", r"\1 \2", cleaned)
-    cleaned = cleaned.strip()
+    cleaned = _normalize_voice_surface_whitespace(cleaned).strip()
     if preserve_leading_space and leading_space and cleaned:
         cleaned = " " + cleaned
     if preserve_trailing_space and trailing_space and cleaned:
@@ -539,7 +609,9 @@ def sanitize_voice_delta_text(text: str) -> str:
     if not text:
         return ""
     cleaned = sanitize_voice_text(text)
-    cleaned = _INLINE_NTA_DELTA_RE.sub(" ", cleaned)
+    if cleaned and cleaned.isspace():
+        return " "
+    cleaned = strip_inline_nta(cleaned, preserve_outer_whitespace=True)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     # Defensive: sometimes streamed JSON carries escaped newlines as literal backslash sequences.
     return cleaned.replace("\\n", "\n").replace("\\r", "\r")

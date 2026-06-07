@@ -201,6 +201,10 @@ def _executor(value: Any) -> str:
     return executor
 
 
+def _default_glasshive_worker_profile() -> str:
+    return (os.getenv("GLASSHIVE_DEFAULT_WORKER_PROFILE") or "codex-cli").strip() or "codex-cli"
+
+
 def _worker_strategy(value: Any) -> str:
     strategy = str(value or "same_worker").strip()
     if strategy not in GLASSHIVE_WORKER_STRATEGIES:
@@ -379,7 +383,7 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
         "my_folder": definition.get("my_folder") or _glasshive_my_folder(definition["user_id"]),
         "executor": executor,
         "glasshive_worker_strategy": worker_strategy,
-        "execution_profile": str(execution.get("execution_profile") or "codex-cli"),
+        "execution_profile": str(execution.get("execution_profile") or _default_glasshive_worker_profile()),
         "execution_mode": str(execution.get("execution_mode") or "host"),
     }
     return metadata
@@ -547,7 +551,7 @@ def _public_definition(definition: dict[str, Any]) -> dict[str, Any]:
         "myFolder": definition.get("my_folder"),
         "workspaceRoot": workbench_metadata.get("workspace_root") or execution.get("workspace_root") or _workspace_root(),
         "workspaceAlias": definition.get("workspace_alias") or workbench_metadata.get("workspace_alias"),
-        "executionProfile": workbench_metadata.get("execution_profile") or execution.get("execution_profile") or ("codex-cli" if executor == "glasshive_host" else "main Viventium"),
+        "executionProfile": workbench_metadata.get("execution_profile") or execution.get("execution_profile") or (_default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium"),
         "executionMode": workbench_metadata.get("execution_mode") or execution.get("execution_mode") or ("host" if executor == "glasshive_host" else "scheduler delivery"),
         "glasshiveWorkerStrategy": workbench_metadata.get("glasshive_worker_strategy") or execution.get("glasshive_worker_strategy") or "same_worker",
         "nextRunAt": (task or {}).get("next_run_at"),
@@ -658,7 +662,7 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
         "channel": channel,
         "conversation_policy": conversation_policy,
         "glasshive_worker_strategy": worker_strategy,
-        "execution_profile": "codex-cli" if executor == "glasshive_host" else "main Viventium",
+        "execution_profile": _default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium",
         "execution_mode": "host" if executor == "glasshive_host" else "scheduler delivery",
         "workspace_root": _workspace_root(),
     }
@@ -800,7 +804,7 @@ def update_scheduled_prompt(definition_id: str, payload: dict[str, Any], *, user
         execution["channel"] = _channel_for_executor(executor, execution.get("channel"))
         execution["conversation_policy"] = _conversation_policy(execution.get("conversation_policy"))
         execution["glasshive_worker_strategy"] = _worker_strategy(execution.get("glasshive_worker_strategy"))
-        execution["execution_profile"] = "codex-cli" if executor == "glasshive_host" else "main Viventium"
+        execution["execution_profile"] = _default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium"
         execution["execution_mode"] = "host" if executor == "glasshive_host" else "scheduler delivery"
         execution["workspace_root"] = _workspace_root()
         metadata = {**metadata, "execution": execution}
@@ -1188,9 +1192,17 @@ def apply_memory_proposal(
     }
 
 
-def seed_nightly_prompt(*, user_id: str, email: str | None = None, active: bool = False) -> dict[str, Any]:
+def seed_nightly_prompt(
+    *,
+    user_id: str,
+    email: str | None = None,
+    active: bool = False,
+    executor: str | None = None,
+) -> dict[str, Any]:
     rows = storage().list_scheduled_prompt_definitions(user_id=user_id)
     template = nightly_prompt_template()
+    if executor:
+        template["executor"] = _executor(executor)
     for row in rows:
         if row.get("template_id") == NIGHTLY_TEMPLATE_ID:
             updates: dict[str, Any] = {}
@@ -1200,6 +1212,8 @@ def seed_nightly_prompt(*, user_id: str, email: str | None = None, active: bool 
                 updates["promptText"] = NIGHTLY_PROMPT_TEMPLATE
             if active and not row.get("active"):
                 updates["active"] = True
+            if executor and _public_definition(row).get("executor") != template["executor"]:
+                updates["executor"] = template["executor"]
             if updates:
                 return update_scheduled_prompt(str(row["id"]), updates, user_id=user_id, email=email)
             return _public_definition(row)

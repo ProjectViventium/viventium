@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import hashlib
+import logging
 import os
 import re
+import threading
+import time
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -18,13 +21,28 @@ from .runtime_env import load_viventium_runtime_env
 
 
 load_viventium_runtime_env()
+logger = logging.getLogger("prompt_workbench.nightly_seed")
 
 
 def _env_flag(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _seed_builtin_scheduled_prompts() -> None:
+def _seed_nightly_enabled() -> bool:
+    raw = (os.getenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ENABLED") or "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def _seed_nightly_executor() -> str:
+    value = (os.getenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR") or "glasshive_host").strip()
+    return value if value in {"glasshive_host", "viventium_agent"} else "glasshive_host"
+
+
+def _seed_builtin_scheduled_prompts() -> bool:
+    if not _seed_nightly_enabled():
+        return True
     user_id = (os.getenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID") or "").strip()
     email = (os.getenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL") or "").strip()
     if not user_id or user_id in {"local-admin", "test-admin"}:
@@ -33,21 +51,50 @@ def _seed_builtin_scheduled_prompts() -> None:
             user_id = admin_user["_id"]
             email = admin_user.get("email", "")
     if not user_id or user_id in {"local-admin", "test-admin"}:
-        return
+        return False
     try:
         scheduled_prompts.seed_nightly_prompt(
             user_id=user_id,
             email=email or None,
             active=_env_flag("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE"),
+            executor=_seed_nightly_executor(),
         )
-    except Exception:
+    except Exception as exc:
         # Built-in private prompt seeding is best-effort; admin APIs still surface failures when edited.
-        return
+        logger.warning("Built-in nightly reflection seed failed: %s", exc.__class__.__name__)
+        return False
+    return True
+
+
+def _seed_when_first_admin_exists() -> None:
+    try:
+        max_attempts = int((os.getenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_MAX_ATTEMPTS") or "480").strip())
+    except ValueError:
+        max_attempts = 480
+    try:
+        interval_seconds = float((os.getenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_POLL_SECONDS") or "15").strip())
+    except ValueError:
+        interval_seconds = 15.0
+    max_attempts = max(1, max_attempts)
+    interval_seconds = max(0.2, interval_seconds)
+    for _ in range(max_attempts):
+        time.sleep(interval_seconds)
+        if _seed_builtin_scheduled_prompts():
+            return
+    logger.warning(
+        "Built-in nightly reflection seed could not resolve a unique local admin before the retry window closed."
+    )
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    _seed_builtin_scheduled_prompts()
+    seeded = _seed_builtin_scheduled_prompts()
+    if not seeded and _seed_nightly_enabled():
+        threading.Thread(
+            target=_seed_when_first_admin_exists,
+            name="prompt-workbench-nightly-seed",
+            daemon=True,
+        ).start()
     yield
 
 

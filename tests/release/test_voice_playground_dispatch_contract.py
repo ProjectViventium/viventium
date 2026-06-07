@@ -541,7 +541,7 @@ def test_connection_details_route_runtime_hydrates_dispatch_metadata_from_call_s
                 "status": 200,
                 "json": {
                         "requestedVoiceRoute": {
-                            "stt": {"provider": "assemblyai", "variant": "universal-streaming"},
+                            "stt": {"provider": "assemblyai", "variant": "u3-rt-pro"},
                             "tts": {
                                 "provider": "cartesia",
                                 "variant": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
@@ -567,7 +567,7 @@ def test_connection_details_route_runtime_hydrates_dispatch_metadata_from_call_s
     assert explicit_metadata["callSessionId"] == "call-123"
     assert explicit_metadata["requestedVoiceRoute"]["stt"] == {
         "provider": "assemblyai",
-        "variant": "universal-streaming",
+        "variant": "u3-rt-pro",
     }
     _assert_no_token_dispatch(result)
 
@@ -592,7 +592,7 @@ def test_connection_details_route_runtime_preserves_existing_requested_voice_rou
                 {
                     "callSessionId": "call-keep",
                     "requestedVoiceRoute": {
-                        "stt": {"provider": "assemblyai", "variant": "universal-streaming"},
+                        "stt": {"provider": "assemblyai", "variant": "u3-rt-pro"},
                         "tts": {"provider": "local_chatterbox_turbo_mlx_8bit", "variant": "mlx-community/chatterbox-turbo-8bit"},
                     },
                 }

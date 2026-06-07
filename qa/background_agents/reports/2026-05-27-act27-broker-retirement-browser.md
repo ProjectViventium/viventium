@@ -1,0 +1,21 @@
+<!-- qa-evidence-exempt: Legacy or historical run note predates the V2 QA report template; retained as public-safe context, not a fresh completion claim. -->
+
+# ACT-27 Broker-First Retirement Browser QA
+- Started: 2026-05-27T07:24:49.228Z
+- Scope: real local browser prompt with public-safe hashes only.
+- QA user hash: `6ecda1cbcc9ce509`
+- Prompt hash: `dc6a3479ea09e456`
+- Conversation hash: `75f35dbd61f74bf9`
+- Forbidden retired background cards: Deep Research, MS365, Google
+- Initial visible row count: 1
+- Reload visible row count: 1
+- Forbidden initial rows: none
+- Forbidden reload rows: none
+- Forbidden stored cortex names: none
+- Optional stored cortex names: Confirmation Bias
+- Assistant message count: 1
+- Answer text length: 6843
+- Stored cortex part count: 2
+- GlassHive/direct-tool evidence present: true
+- Limitation wording present: true
+- Result: PASS for ACT-27 local soft-retirement; this does not prove full GlassHive broker parity/removal readiness.

@@ -12,10 +12,14 @@ release_tests:
     qa_owner: qa/background_agents/cases.md
   tests/release/test_bootstrap_components.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_brain_readiness.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_cli_upgrade.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_common_sh.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_config_settings.py:
+    qa_owner: qa/meeting-transcript-memory/cases.md
   tests/release/test_config_compiler.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_continuity_audit.py:
@@ -27,6 +31,8 @@ release_tests:
   tests/release/test_detached_librechat_supervision.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_directory_link.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_default_nightly_routines.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_doctor_sh.py:
     qa_owner: qa/installer-resilience/cases.md
@@ -77,6 +83,8 @@ release_tests:
   tests/release/test_public_bootstrap_manifests.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_qa_operating_contract.py:
+    qa_owner: qa/qa-system-audit/cases.md
+  tests/release/test_qa_results_public_safety.py:
     qa_owner: qa/qa-system-audit/cases.md
   tests/release/test_rag_api_override_contract.py:
     qa_owner: qa/conversation-recall-rag/cases.md

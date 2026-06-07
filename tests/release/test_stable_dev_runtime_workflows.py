@@ -19,6 +19,7 @@ DEV_RUNTIME = REPO_ROOT / "scripts" / "viventium" / "dev_runtime.py"
 WORKFLOWS = REPO_ROOT / "scripts" / "viventium" / "workflows.py"
 UPGRADE_CHECK = REPO_ROOT / "scripts" / "viventium" / "upgrade_check.py"
 HELPER_LIFECYCLE_QA = REPO_ROOT / "scripts" / "viventium" / "qa_helper_lifecycle.py"
+INSTALL_SUMMARY = REPO_ROOT / "scripts" / "viventium" / "install_summary.py"
 PASSWORD_RESET_LINK_SCRIPT = (
     REPO_ROOT / "viventium_v0_4" / "LibreChat" / "config" / "issue-password-reset-link.js"
 )
@@ -953,10 +954,35 @@ def test_helper_lifecycle_qa_uses_localhost_health_probes() -> None:
     source = HELPER_LIFECYCLE_QA.read_text(encoding="utf-8")
     assert '"api": ("http://localhost:3180/api/health", {200})' in source
     assert '"web": ("http://localhost:3190/", {200})' in source
-    assert '"playground": ("http://localhost:3300/", {200})' in source
+    assert '"playground": ("http://localhost:3300/api/health", {200})' in source
     assert "http://127.0.0.1:3180" not in source
     assert "http://127.0.0.1:3190" not in source
     assert "http://127.0.0.1:3300" not in source
+
+
+def test_cli_optional_telegram_surface_requires_api_health() -> None:
+    source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    assert "telegram_bridge_surface_healthy() {" in source
+    assert 'runtime_pid_file_running "telegram_bot.pid"' in source
+    assert 'runtime_pid_file_running "telegram_bot_deferred.pid"' in source
+    assert 'api_surface_healthy "$api_port"' in source
+
+
+def test_install_summary_uses_lightweight_playground_health_probe() -> None:
+    source = INSTALL_SUMMARY.read_text(encoding="utf-8")
+    assert "def url_with_path(url: str, path: str) -> str:" in source
+    assert 'url_with_path(playground_url, "/api/health")' in source
+    assert 'f"http://127.0.0.1:{playground_port}/api/health"' in source
+    assert 'f"http://127.0.0.1:{playground_port}",' not in source
+
+
+def test_modern_playground_exposes_lightweight_health_route() -> None:
+    health_route = REPO_ROOT / "viventium_v0_4" / "agent-starter-react" / "app" / "api" / "health" / "route.ts"
+    content = health_route.read_text(encoding="utf-8")
+    assert "VIVENTIUM START" in content
+    assert "NextResponse.json" in content
+    assert "surface: 'modern-playground'" in content
+    assert "'Cache-Control': 'no-store'" in content
 
 
 def test_helper_lifecycle_qa_help_does_not_require_pyobjc_bridge() -> None:

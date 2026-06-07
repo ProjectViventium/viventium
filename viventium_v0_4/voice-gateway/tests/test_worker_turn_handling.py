@@ -250,7 +250,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
             capabilities = _build_voice_capability_catalog(env)
             updated = _apply_requested_voice_route(
                 env,
-                {"stt": {"provider": "assemblyai", "variant": "universal-streaming"}},
+                {"stt": {"provider": "assemblyai", "variant": "u3-rt-pro"}},
                 capabilities,
             )
 
@@ -410,7 +410,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
             capabilities = _build_voice_capability_catalog(env)
             updated = _apply_requested_voice_route(
                 env,
-                {"stt": {"provider": "assemblyai", "variant": "universal-streaming"}},
+                {"stt": {"provider": "assemblyai", "variant": "u3-rt-pro"}},
                 capabilities,
             )
             assemblyai_key = _vad_kwargs_cache_key(_silero_vad_kwargs_for_env(updated))
@@ -506,8 +506,11 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(env.voice_job_memory_warn_mb, 1600.0)
         self.assertEqual(env.voice_job_memory_limit_mb, 2200.0)
 
-    def test_build_assemblyai_stt_kwargs_only_includes_configured_values(self) -> None:
+    def test_build_assemblyai_stt_kwargs_includes_model_and_configured_values(self) -> None:
+        # The engine model is always passed (the selectable Listening picker depends on it); the
+        # optional endpointing knobs are still only included when configured.
         env = SimpleNamespace(
+            assemblyai_stt_model="universal-streaming-multilingual",
             assemblyai_end_of_turn_confidence_threshold=0.27,
             assemblyai_min_end_of_turn_silence_when_confident_ms=210,
             assemblyai_max_turn_silence_ms=1300,
@@ -517,6 +520,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(
             _build_assemblyai_stt_kwargs(env),
             {
+                "model": "universal-streaming-multilingual",
                 "end_of_turn_confidence_threshold": 0.27,
                 "min_turn_silence": 210,
                 "max_turn_silence": 1300,
@@ -527,6 +531,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
     def test_build_stt_selection_passes_assemblyai_turn_kwargs(self) -> None:
         env = SimpleNamespace(
             stt_provider="assemblyai",
+            assemblyai_stt_model="u3-rt-pro",
             assemblyai_end_of_turn_confidence_threshold=0.29,
             assemblyai_min_end_of_turn_silence_when_confident_ms=190,
             assemblyai_max_turn_silence_ms=1250,
@@ -543,6 +548,7 @@ class TestWorkerTurnHandling(unittest.TestCase):
         self.assertEqual(stt_impl, "assemblyai-stt")
         self.assertEqual(provider, "assemblyai")
         stt_cls.assert_called_once_with(
+            model="u3-rt-pro",
             end_of_turn_confidence_threshold=0.29,
             min_turn_silence=190,
             max_turn_silence=1250,

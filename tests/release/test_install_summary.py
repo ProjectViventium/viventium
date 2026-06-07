@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -86,7 +87,7 @@ def test_build_service_rows_accepts_ipv4_loopback_when_localhost_probe_fails(mon
         return url in {
             "http://127.0.0.1:3190",
             "http://127.0.0.1:3180/api/health",
-            "http://127.0.0.1:3300",
+                "http://127.0.0.1:3300/api/health",
         }
 
     monkeypatch.setattr(install_summary, "http_ok", fake_http_ok)
@@ -333,6 +334,53 @@ def test_build_service_rows_marks_running_telegram_bridge_from_pid_file(monkeypa
     assert "Polling Telegram bridge" in telegram_detail
 
 
+def test_build_service_rows_marks_running_telegram_bridge_with_dead_api_as_issue(monkeypatch, tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": True},
+        },
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    runtime_root = tmp_path / "state" / "runtime" / "isolated"
+    runtime_root.mkdir(parents=True)
+    (runtime_root / "telegram_bot.pid").write_text(str(os.getpid()), encoding="utf-8")
+
+    def fake_http_ok(url: str) -> bool:
+        return url in {
+            "http://localhost:3190",
+            "http://localhost:3300",
+        }
+
+    monkeypatch.setattr(install_summary, "http_ok", fake_http_ok)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "BOT_TOKEN": VALID_TELEGRAM_TOKEN,
+            "VIVENTIUM_LIBRECHAT_ORIGIN": "http://127.0.0.1:3180",
+            "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        },
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    telegram_status, telegram_detail = services["Telegram Bridge"]
+    assert telegram_status == "Running with issues"
+    assert "LibreChat API is unreachable" in telegram_detail
+    assert "Telegram cannot start new chats" in telegram_detail
+
+
 def test_build_service_rows_marks_running_telegram_conflict_as_issue(monkeypatch, tmp_path: Path) -> None:
     install_summary = load_install_summary_module()
 
@@ -377,6 +425,59 @@ def test_build_service_rows_marks_running_telegram_conflict_as_issue(monkeypatch
     assert telegram_status == "Running with issues"
     assert "polling conflict" in telegram_detail
     assert "getUpdates" not in telegram_detail
+
+
+def test_build_service_rows_ignores_telegram_conflict_before_latest_recovery(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {
+            "telegram": {"enabled": True},
+        },
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    runtime_root = tmp_path / "state" / "runtime" / "isolated"
+    logs_root = runtime_root / "logs"
+    logs_root.mkdir(parents=True)
+    pid_file = runtime_root / "telegram_bot.pid"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    (logs_root / "telegram_bot.log").write_text(
+        "\n".join(
+            [
+                "telegram.error.Conflict: terminated by other getUpdates request",
+                "Starting polling mode with timeout=30s",
+                "Application started",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda _url: True)
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "BOT_TOKEN": VALID_TELEGRAM_TOKEN,
+            "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        },
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    telegram_status, telegram_detail = services["Telegram Bridge"]
+    assert telegram_status == "Running"
+    assert telegram_detail == "Polling Telegram bridge on this Mac"
 
 
 def test_build_service_rows_marks_running_telegram_auth_error_as_issue(
@@ -589,7 +690,7 @@ def test_build_setup_later_rows_mentions_ollama_for_conversation_recall() -> Non
     later = {name: detail for name, detail in rows}
 
     assert (
-        later["Conversation Recall"]
+        later["Conversation Recall/RAG"]
         == "Docker Desktop and Ollama if you want local recall; first start pulls qwen3-embedding:0.6b"
     )
 
@@ -1447,6 +1548,262 @@ def test_build_service_rows_reports_status_bar_helper_not_running(
 
     assert services["macOS Status Bar Helper"][0] == "Action Required"
     assert "not running" in services["macOS Status Bar Helper"][1]
+
+
+def test_build_service_rows_reports_default_nightly_routines() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+            "prompt_workbench": {
+                "enabled": True,
+                "seed_nightly": {"enabled": True, "active": True, "executor": "glasshive_host"},
+            },
+            "memory_hardening": {"enabled": True, "schedule": "0 3 * * *"},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {"glasshive": {"enabled": True}},
+    }
+    runtime_env = {
+        "START_GLASSHIVE": "true",
+        "GLASSHIVE_OPERATOR_BASE_URL": "http://127.0.0.1:8780",
+        "GLASSHIVE_DEFAULT_WORKER_PROFILE": "claude-code",
+        "START_PROMPT_WORKBENCH": "true",
+        "VIVENTIUM_PROMPT_WORKBENCH_PORT": "8781",
+        "VIVENTIUM_MEMORY_HARDENING_ENABLED": "true",
+    }
+
+    rows = install_summary.build_service_rows(config, runtime_env, probe_live=False)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["GlassHive"] == (
+        "Configured",
+        "http://127.0.0.1:8780 | default worker: claude-code",
+    )
+    assert services["Prompt Workbench"] == ("Configured", "http://localhost:8781")
+    assert services["Nightly Reflection"] == (
+        "Active",
+        "03:00 local Workbench schedule via glasshive_host; seeded for the first resolved local admin user",
+    )
+    assert services["Memory Hardening"] == (
+        "Scheduled",
+        "0 3 * * * local; all memory-enabled users unless scoped in config; dry-run-first on",
+    )
+    assert services["Transcript Ingest"] == (
+        "Needs setup",
+        "Choose a folder with bin/viventium transcripts source set <folder>; empty means pending, not failed",
+    )
+
+
+def test_build_service_rows_reports_scheduler_health_and_sanitized_ledger(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    db_path = tmp_path / "scheduler.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE scheduled_tasks (
+              id TEXT PRIMARY KEY,
+              active INTEGER,
+              last_status TEXT,
+              last_delivery_outcome TEXT,
+              last_delivery_at TEXT,
+              next_run_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO scheduled_tasks (
+              id, active, last_status, last_delivery_outcome, last_delivery_at, next_run_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "synthetic-task",
+                1,
+                "success",
+                "sent",
+                "2026-05-31T10:00:00Z",
+                "2026-06-01T10:00:00Z",
+            ),
+        )
+
+    config = {
+        "runtime": {"ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "START_SCHEDULING_MCP": "true",
+        "SCHEDULING_MCP_URL": "http://localhost:7110/mcp",
+        "SCHEDULING_DB_PATH": str(db_path),
+    }
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda url: url == "http://localhost:7110/health")
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        runtime_env,
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Scheduler"][0] == "Running"
+    assert "1 active / 1 total" in services["Scheduler"][1]
+    assert "last status success" in services["Scheduler"][1]
+    assert "delivery sent" in services["Scheduler"][1]
+    assert "synthetic-task" not in services["Scheduler"][1]
+
+
+def test_build_service_rows_marks_scheduler_running_with_ledger_issue(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    db_path = tmp_path / "scheduler.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE scheduled_tasks (
+              id TEXT PRIMARY KEY,
+              active INTEGER,
+              last_status TEXT,
+              last_delivery_outcome TEXT,
+              last_delivery_at TEXT,
+              next_run_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO scheduled_tasks (
+              id, active, last_status, last_delivery_outcome, last_delivery_at, next_run_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "synthetic-task",
+                1,
+                "error",
+                "failed",
+                "2026-05-31T10:00:00Z",
+                "2026-06-01T10:00:00Z",
+            ),
+        )
+
+    config = {
+        "runtime": {"ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+
+    monkeypatch.setattr(install_summary, "http_ok", lambda url: url == "http://localhost:7110/health")
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {
+            "START_SCHEDULING_MCP": "true",
+            "SCHEDULING_MCP_URL": "http://localhost:7110/mcp",
+            "SCHEDULING_DB_PATH": str(db_path),
+        },
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Scheduler"][0] == "Running with issues"
+    assert "last status error" in services["Scheduler"][1]
+    assert "delivery failed" in services["Scheduler"][1]
+
+
+def test_build_brain_setup_rows_reports_guided_and_lab_postures() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "personalization": {"default_conversation_recall": False},
+            "memory_hardening": {"transcripts": {"source_dir": ""}},
+            "network": {"remote_call_mode": "disabled"},
+        },
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "connected_account"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {
+            "web_search": {"enabled": False},
+            "telegram": {"enabled": False},
+            "telegram_codex": {"enabled": False},
+            "google_workspace": {"enabled": False},
+            "ms365": {"enabled": False},
+            "code_interpreter": {"enabled": False},
+            "skyvern": {"enabled": False},
+            "openclaw": {"enabled": False},
+        },
+    }
+
+    rows = install_summary.build_brain_setup_rows(config, {})
+    states = {name: (state, action) for name, state, action in rows}
+
+    assert states["Primary AI"][0] == "Needs setup"
+    assert states["Transcript Ingest"][0] == "Needs setup"
+    assert states["Conversation Recall/RAG"][0] == "Needs setup"
+    assert states["WhatsApp"][0] == "Not available"
+    assert states["Code Interpreter"][0] == "Disabled by choice"
+    assert states["Skyvern"][0] == "Disabled by choice"
+    assert states["OpenClaw"][0] == "Disabled by choice"
+    assert states["Remote Access"][0] == "Disabled by choice"
+
+
+def test_build_brain_setup_rows_does_not_call_connected_account_route_ready() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"personalization": {"default_conversation_recall": False}},
+        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        "VIVENTIUM_OPENAI_AUTH_MODE": "connected_account",
+    }
+
+    rows = install_summary.build_brain_setup_rows(config, runtime_env)
+    states = {name: (state, action) for name, state, action in rows}
+
+    assert states["Primary AI"][0] == "Needs setup"
+    assert "Connected Accounts" in states["Primary AI"][1]
+
+
+def test_build_connected_accounts_notice_still_prompts_for_connected_account_route() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {},
+        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        "VIVENTIUM_OPENAI_AUTH_MODE": "connected_account",
+    }
+
+    notice = install_summary.build_connected_accounts_notice(config, runtime_env)
+
+    assert notice is not None
+    assert "Connect" in notice
+    assert "OpenAI" in notice
 
 
 def test_macos_helper_status_reports_hidden_when_status_bar_is_disabled(

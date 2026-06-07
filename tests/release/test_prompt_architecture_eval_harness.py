@@ -308,6 +308,19 @@ def test_latest_user_activation_browser_eval_targets_latest_turn_not_setup_text(
     assert "latestPhaseBChildVisibleTextCount === 0" in script_text
 
 
+def test_latest_user_activation_browser_eval_honors_custom_expected_text() -> None:
+    script_text = LATEST_USER_ACTIVATION_EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert "testExpectedText: process.env.VIVENTIUM_QA_TEST_EXPECTED_TEXT || 'TEST_OK'" in script_text
+    assert "textIncludesExpectedAnswer" in script_text
+    assert "dedupeVisibleAnswerTextParts" in script_text
+    assert "return dedupeVisibleAnswerTextParts([text, partText]).join('\\n').trim();" in script_text
+    assert "expectedText: args.testExpectedText" in script_text
+    assert "Expected text visible before reload:" in script_text
+    assert "Expected text visible after reload:" in script_text
+    assert "() => /\\bTEST_OK\\b/.test(document.body.innerText || '')" not in script_text
+    assert "/\\bTEST_OK\\b/.test(await visibleBodyText(page))" not in script_text
+
+
 def test_background_prompt_debug_logging_uses_hashes_not_raw_previews() -> None:
     client_text = AGENT_CLIENT_PATH.read_text(encoding="utf-8")
     cortex_text = BACKGROUND_CORTEX_SERVICE_PATH.read_text(encoding="utf-8")

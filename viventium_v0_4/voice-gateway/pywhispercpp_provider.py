@@ -183,6 +183,26 @@ def _transcribe_kwargs(
     }
     if audio_ctx > 0:
         params["audio_ctx"] = audio_ctx
+
+    # === VIVENTIUM START ===
+    # Feature: Bounded temperature-fallback for real-time STT tail latency.
+    # Why: whisper.cpp retries the whole decode at higher temperatures (step = temperature_inc,
+    #   default 0.2) whenever a segment fails compression/logprob/entropy thresholds. On hard or
+    #   noisy audio this re-runs the decoder up to ~5x (0.0,0.2,0.4,0.6,0.8,1.0), which is the main
+    #   source of worst-case latency spikes on the voice hot path. Setting temperature_inc to 0
+    #   disables the fallback loop (single greedy pass). This is OFF by default: per Key Principles 0
+    #   (outcome = Quality + Performance) we only ship a behavior change once the local STT accuracy
+    #   harness (tests/stt_local_accuracy_bench.py) proves no WER regression on the degraded-audio
+    #   suite that actually triggers the fallback. Tune via VIVENTIUM_STT_TEMPERATURE_INC
+    #   (float, e.g. "0" to disable retries, "0.2" = whisper.cpp default); unset = library default.
+    # Added: 2026-05-30
+    # === VIVENTIUM END ===
+    temperature_inc_raw = (os.getenv("VIVENTIUM_STT_TEMPERATURE_INC", "") or "").strip()
+    if temperature_inc_raw:
+        try:
+            params["temperature_inc"] = max(0.0, float(temperature_inc_raw))
+        except ValueError:
+            pass
     return params
 
 

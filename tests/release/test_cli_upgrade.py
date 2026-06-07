@@ -20,6 +20,19 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def copy_cli_fixture(repo_root: Path) -> None:
+    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    (repo_root / "scripts" / "viventium").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        REPO_ROOT / "scripts" / "viventium" / "default_nightly_routines.py",
+        repo_root / "scripts" / "viventium" / "default_nightly_routines.py",
+    )
+    shutil.copy2(
+        REPO_ROOT / "scripts" / "viventium" / "host_cli_auth.py",
+        repo_root / "scripts" / "viventium" / "host_cli_auth.py",
+    )
+
+
 def extract_shell_function(text: str, name: str) -> str:
     lines = text.splitlines()
     start = None
@@ -110,6 +123,7 @@ def test_install_autostart_hands_off_to_detached_health_checked_start() -> None:
     assert "sanitize_macos_locale() {" in cli_source
     assert "sanitize_macos_locale" in cli_source.split("refresh_repo_python() {", 1)[0]
     assert "optional_install_surfaces_healthy() {" in cli_source
+    assert "runtime_optional_surfaces_healthy() {" in cli_source
     assert "install_surfaces_healthy() {" in cli_source
     assert "render_install_wait_progress() {" in cli_source
     assert "install_wait_log_activity_summary() {" in cli_source
@@ -164,6 +178,15 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
     assert 'docker ps -q --filter "name=^/viventium_firecrawl_api$"' in firecrawl_surface_function
     assert 'if runtime_env_true "START_SEARXNG" "false" && ! searxng_surface_healthy; then' in cli_source
     assert 'if runtime_env_true "START_FIRECRAWL" "false" && ! firecrawl_surface_healthy; then' in cli_source
+    runtime_optional_function = extract_shell_function(cli_source, "runtime_optional_surfaces_healthy")
+    assert 'if runtime_env_true "START_RAG_API" "false" && ! rag_api_surface_healthy; then' in runtime_optional_function
+    assert 'if runtime_env_true "START_GOOGLE_MCP" "false" && ! mcp_url_surface_reachable "GOOGLE_WORKSPACE_MCP_URL" "http://localhost:8111/mcp"; then' in runtime_optional_function
+    assert 'if runtime_env_true "START_MS365_MCP" "false" && ! mcp_url_surface_reachable "MS365_MCP_SERVER_URL" "http://localhost:6274/mcp"; then' in runtime_optional_function
+    assert 'if runtime_env_true "START_TELEGRAM" "false" && ! telegram_bridge_surface_healthy; then' in runtime_optional_function
+    assert 'if runtime_env_true "START_TELEGRAM_CODEX" "false" && ! telegram_codex_surface_healthy; then' in runtime_optional_function
+    assert '[[ "$code" =~ ^[1-4][0-9][0-9]$ ]]' in extract_shell_function(cli_source, "http_url_reachable")
+    assert "runtime_pid_file_running" in extract_shell_function(cli_source, "telegram_bridge_surface_healthy")
+    assert "optional_install_surfaces_healthy" in runtime_optional_function
     assert 'waiting_on+=("$(searxng_install_wait_label)")' in cli_source
     assert 'waiting_on+=("$(firecrawl_install_wait_label)")' in cli_source
     assert "all_user_surfaces_healthy" in install_surfaces_function
@@ -540,6 +563,26 @@ def test_cli_usage_lists_runtime_recovery_commands() -> None:
     assert "uninstall         Remove the local Viventium install state and helper app." in usage_section
 
 
+def test_cli_reconciles_default_nightly_routines_on_supported_entrypoints() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    command_cases = cli_source.split('case "$COMMAND" in', 1)[1]
+    install_section = command_cases.split("  install|bootstrap)", 1)[1].split("  upgrade|update)", 1)[0]
+    upgrade_section = command_cases.split("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+    configure_section = command_cases.split("  configure|wizard)", 1)[1].split("  reset)", 1)[0]
+    compile_config_section = command_cases.split("  compile-config)", 1)[1].split("  prepare-runtime-exports)", 1)[0]
+    start_section = command_cases.split("  start)", 1)[1].split("  stop)", 1)[0]
+
+    assert "apply_default_nightly_routines() {" in cli_source
+    assert 'scripts/viventium/default_nightly_routines.py' in cli_source
+    assert install_section.count("apply_default_nightly_routines") == 2
+    assert install_section.index("apply_default_nightly_routines") < install_section.index("run_preflight apply")
+    assert upgrade_section.count("apply_default_nightly_routines") == 2
+    assert upgrade_section.index("apply_default_nightly_routines") < upgrade_section.index("run_preflight apply")
+    assert "apply_default_nightly_routines" in configure_section
+    assert "apply_default_nightly_routines" in compile_config_section
+    assert "apply_default_nightly_routines\n    compile_config" in start_section
+
+
 def test_runtime_checkout_use_writes_machine_local_setting_without_helper_refresh(tmp_path: Path) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -777,7 +820,7 @@ def test_install_restores_terminal_input_for_wizard_and_preflight_when_stdin_is_
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1013,6 +1056,105 @@ def test_launch_stack_detached_skips_restart_while_detached_group_is_alive() -> 
         "ok",
     ]
     assert "stack-check" not in completed.stderr
+
+
+def test_launch_stack_detached_waits_when_sidecar_repair_is_already_starting(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+    fake_python = tmp_path / "python"
+    write_executable(fake_python, "#!/bin/sh\nprintf '4242\\n'\n")
+    app_support = tmp_path / "app-support"
+    config = tmp_path / "config.yaml"
+    runtime = tmp_path / "runtime"
+    config.write_text("version: 1\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"PYTHON_BIN={fake_python}\n"
+                f"APP_SUPPORT_DIR={app_support}\n"
+                f"CONFIG_FILE={config}\n"
+                f"RUNTIME_DIR={runtime}\n"
+                "LOCK_FILE=/tmp/viventium-test.lock\n"
+                f"REPO_ROOT={REPO_ROOT}\n"
+                "ensure_app_support_layout() { mkdir -p \"$1/logs\"; }\n"
+                "user_surface_healthy() { return 0; }\n"
+                "runtime_optional_surfaces_healthy() { return 1; }\n"
+                "detached_launch_process_group_running() { return 0; }\n"
+                "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
+                "stop_stack_for_upgrade() { printf 'unexpected-stop\\n'; return 0; }\n"
+                "if launch_stack_detached; then\n"
+                "  printf 'ok\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "Viventium is already starting.",
+        "ok",
+    ]
+    assert "stack-check" not in completed.stderr
+
+
+def test_launch_stack_detached_starts_repair_when_core_healthy_and_sidecars_unhealthy(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function_def = extract_shell_function(cli_source, "launch_stack_detached")
+    fake_python = tmp_path / "python"
+    write_executable(fake_python, "#!/bin/sh\nprintf '4242\\n'\n")
+    app_support = tmp_path / "app-support"
+    config = tmp_path / "config.yaml"
+    runtime = tmp_path / "runtime"
+    config.write_text("version: 1\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"{function_def}"
+                f"PYTHON_BIN={fake_python}\n"
+                f"APP_SUPPORT_DIR={app_support}\n"
+                f"CONFIG_FILE={config}\n"
+                f"RUNTIME_DIR={runtime}\n"
+                "LOCK_FILE=/tmp/viventium-test.lock\n"
+                f"REPO_ROOT={REPO_ROOT}\n"
+                "ensure_app_support_layout() { mkdir -p \"$1/logs\"; }\n"
+                "user_surface_healthy() { return 0; }\n"
+                "runtime_optional_surfaces_healthy() { return 1; }\n"
+                "detached_launch_process_group_running() { return 1; }\n"
+                "is_stack_running() { printf 'stack-check\\n' >&2; return 0; }\n"
+                "stop_stack_for_upgrade() { printf 'unexpected-stop\\n'; return 0; }\n"
+                "if launch_stack_detached; then\n"
+                "  printf 'ok\\n'\n"
+                "fi\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "Viventium core surfaces are running, but enabled sidecars need startup. Repairing...",
+        "Launched Viventium in the background (pid 4242).",
+        "ok",
+    ]
+    assert "stack-check" not in completed.stderr
     assert "restarted" not in completed.stdout
 
 
@@ -1200,7 +1342,7 @@ def test_upgrade_refreshes_python_after_preflight_install(tmp_path: Path) -> Non
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1356,7 +1498,7 @@ def test_upgrade_restart_stops_running_stack_before_bootstrap(tmp_path: Path) ->
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1484,7 +1626,7 @@ while (($#)); do
 done
 
 case "$url" in
-  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/)
+  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/|http://localhost:3300/api/health|http://127.0.0.1:3300/api/health)
     if [[ "$write_code_only" == "1" ]]; then
       printf '200'
     fi
@@ -1543,7 +1685,7 @@ def test_upgrade_refuses_dirty_selected_component_refresh(tmp_path: Path) -> Non
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1636,7 +1778,7 @@ def test_start_uses_generated_librechat_yaml_at_runtime(tmp_path: Path) -> None:
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1772,7 +1914,7 @@ def test_start_recompiles_runtime_even_when_generated_env_is_newer_than_config(t
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1876,7 +2018,7 @@ def test_start_in_native_mode_does_not_force_skip_docker(tmp_path: Path) -> None
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -1981,7 +2123,7 @@ def test_cli_refuses_concurrent_operation_when_lock_is_active(tmp_path: Path) ->
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -2025,7 +2167,7 @@ def test_cli_clears_stale_operation_lock_before_running(tmp_path: Path) -> None:
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -2073,7 +2215,7 @@ def test_upgrade_refuses_running_stack_without_restart(tmp_path: Path) -> None:
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -2160,7 +2302,7 @@ def test_upgrade_restart_stops_scoped_dependency_jobs_before_bootstrap(tmp_path:
     repo_root.mkdir(parents=True, exist_ok=True)
     (repo_root / "bin").mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    copy_cli_fixture(repo_root)
 
     common_sh = """#!/usr/bin/env bash
 set -euo pipefail
@@ -2268,7 +2410,7 @@ while (($#)); do
 done
 
 case "$url" in
-  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/)
+  http://localhost:3180/api/health|http://127.0.0.1:3180/api/health|http://localhost:3190/|http://127.0.0.1:3190/|http://localhost:3300/|http://127.0.0.1:3300/|http://localhost:3300/api/health|http://127.0.0.1:3300/api/health)
     if [[ "$write_code_only" == "1" ]]; then
       printf '200'
     fi

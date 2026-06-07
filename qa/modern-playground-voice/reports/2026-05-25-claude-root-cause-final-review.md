@@ -1,3 +1,5 @@
+<!-- qa-evidence-exempt: Legacy or historical run note predates the V2 QA report template; retained as public-safe context, not a fresh completion claim. -->
+
 # Claude Review Prompt: Streaming TTS Boundary Final Review
 
 You are review-only. Do not make code changes. Use maximum effort.

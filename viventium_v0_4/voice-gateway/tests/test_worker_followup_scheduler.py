@@ -112,6 +112,67 @@ class TestCortexFollowupScheduler(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(session.say_calls, [])
 
+    async def test_stops_polling_when_server_reports_silent_followup_decision(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session, timeout_s=0.2, grace_s=0.05)
+        calls = 0
+
+        async def _fake_fetch(self, _http_session, _message_id):
+            nonlocal calls
+            calls += 1
+            return {
+                "insights": [{"cortex_id": "pattern", "insight": "Internal background realization."}],
+                "followUp": None,
+                "followUpDecision": {
+                    "result": "suppressed",
+                    "llmResult": "nta",
+                    "selectedStrategy": "no_response_suppressed",
+                    "suppressionReason": "no_response_tag",
+                },
+            }
+
+        scheduler._fetch_cortex = MethodType(_fake_fetch, scheduler)
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule("msg_123", [], "", cortex_expected=True)
+            await scheduler._task
+
+        self.assertEqual(session.say_calls, [])
+        self.assertEqual(calls, 1)
+
+    async def test_does_not_treat_persisted_decision_with_reason_as_silent_terminal(self) -> None:
+        session = _DummySession()
+        scheduler = self._build_scheduler(session=session, timeout_s=0.7, grace_s=0.01)
+        calls = 0
+
+        async def _fake_fetch(self, _http_session, _message_id):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {
+                    "insights": [],
+                    "followUp": None,
+                    "followUpDecision": {
+                        "result": "persisted",
+                        "selectedStrategy": "deferred",
+                        "suppressionReason": "older_user_message",
+                    },
+                }
+            return {
+                "insights": [{"cortex_id": "pattern", "insight": "Background thought."}],
+                "followUp": {"messageId": "follow_123", "text": "Follow-up after persistence."},
+            }
+
+        scheduler._fetch_cortex = MethodType(_fake_fetch, scheduler)
+
+        with mock.patch.object(worker.aiohttp, "ClientSession", _FakeClientSession):
+            scheduler.schedule("msg_123", [], "", cortex_expected=True)
+            await scheduler._task
+
+        self.assertEqual(len(session.say_calls), 1)
+        self.assertEqual(session.say_calls[0]["text"], "Follow-up after persistence.")
+        self.assertEqual(calls, 2)
+
     async def test_speaks_glasshive_callback_result(self) -> None:
         session = _DummySession()
         scheduler = self._build_scheduler(session=session)

@@ -1,3 +1,5 @@
+<!-- qa-evidence-exempt: Legacy or historical run note predates the V2 QA report template; retained as public-safe context, not a fresh completion claim. -->
+
 # Conversation Recall RAG Runtime Guardrails And QA
 
 ## Scope

@@ -2,6 +2,9 @@ import os
 import sys
 import unittest
 import asyncio
+import json
+import subprocess
+from pathlib import Path
 
 # Ensure voice-gateway root is on sys.path so `import sse` works
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -204,6 +207,25 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         cleaned = sanitize_voice_followup_text("{NTA} Useful follow-up {NTA}")
         self.assertEqual(cleaned, "Useful follow-up")
 
+    def test_sanitize_voice_tts_text_strips_malformed_internal_nta_artifacts(self) -> None:
+        cases = [
+            "{N{NTATA}}",
+            "{N{N{NTA}}}",
+            "The marker {N{NTATA}} should not leak.",
+            "Useful context {NTA",
+            "Useful context {N{NTA}",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                cleaned = sanitize_voice_tts_text(text)
+                self.assertNotIn("{N", cleaned)
+                self.assertNotIn("NTA", cleaned)
+
+    def test_sanitize_voice_delta_text_strips_malformed_internal_nta_artifacts(self) -> None:
+        cleaned = sanitize_voice_delta_text("The marker {N{NTATA}} should not leak.")
+        self.assertNotIn("{N", cleaned)
+        self.assertNotIn("NTA", cleaned)
+
     def test_sanitize_voice_followup_text_adds_space_after_sentence_punctuation(self) -> None:
         # Test that missing spaces after sentence-ending punctuation are added
         text = "First sentence.Second sentence"
@@ -236,23 +258,41 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("```", cleaned)
         self.assertIn("the brief.", cleaned)
 
-    def test_sanitize_voice_tts_text_normalizes_urls_domains_and_email(self) -> None:
+    def test_sanitize_voice_tts_text_strips_inline_markdown_emphasis(self) -> None:
+        text = "Use **bold** and _italic_ words, then ~~remove~~ this. *** rule ***"
+        cleaned = sanitize_voice_tts_text(text)
+        self.assertEqual(cleaned, "Use bold and italic words, then remove this. rule")
+
+    def test_sanitize_voice_tts_text_strips_marker_only_markdown_chunk(self) -> None:
+        self.assertEqual(sanitize_voice_tts_text("*"), "")
+        self.assertEqual(sanitize_voice_tts_text("***"), "")
+
+    def test_sanitize_voice_tts_text_preserves_math_asterisk(self) -> None:
+        cleaned = sanitize_voice_tts_text("Five times three is 5 * 3.")
+        self.assertIn("5 * 3", cleaned)
+
+    def test_sanitize_voice_tts_text_normalizes_urls_and_email_preserves_bare_domains(self) -> None:
         text = "Go to example.com or www.example.org, then email qa@example.com."
         cleaned = sanitize_voice_tts_text(text)
-        self.assertNotIn("example.com", cleaned)
+        self.assertIn("example.com", cleaned)
         self.assertNotIn("www.example.org", cleaned)
         self.assertNotIn("qa@example.com", cleaned)
         self.assertIn("link available", cleaned)
         self.assertIn("email available", cleaned)
 
+    def test_sanitize_voice_tts_text_preserves_dot_heavy_technical_tokens(self) -> None:
+        text = "Use .NET, asp.net, v1.2A, U.S.A., and node.js. Done.Next."
+        cleaned = sanitize_voice_tts_text(text)
+        self.assertEqual(
+            cleaned,
+            "Use .NET, asp.net, v1.2A, U.S.A., and node.js. Done. Next.",
+        )
+        self.assertNotIn("link available", cleaned)
+
     def test_sanitize_voice_tts_text_does_not_convert_common_filename_domains(self) -> None:
         text = "Open read.me, index.co, node.app, and thing.dev in the project."
         cleaned = sanitize_voice_tts_text(text)
-        self.assertIn("read.me", cleaned)
-        self.assertIn("index.co", cleaned)
-        self.assertIn("node.app", cleaned)
-        self.assertIn("thing.dev", cleaned)
-        self.assertNotIn("link available", cleaned)
+        self.assertEqual(cleaned, text)
 
     def test_sanitize_voice_tts_text_keeps_reference_label_content_without_link(self) -> None:
         cleaned = sanitize_voice_tts_text("References: I have a few good ones.")
@@ -281,6 +321,54 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
     def test_sanitize_voice_tts_text_can_preserve_trailing_space(self) -> None:
         cleaned = sanitize_voice_tts_text("invoice cleared ", preserve_trailing_space=True)
         self.assertEqual(cleaned, "invoice cleared ")
+
+    def test_sanitize_voice_tts_text_tracks_shared_artifact_contract(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        contract_path = repo_root / "qa/modern-playground-voice/scripts/voice_artifact_contract.cjs"
+        script = (
+            "const contract = require(process.argv[1]);"
+            "process.stdout.write(JSON.stringify({"
+            "keys: contract.DEFAULT_TTS_FORBIDDEN_ARTIFACT_KEYS,"
+            "cases: contract.SYNTHETIC_FORBIDDEN_ARTIFACT_CASES,"
+            "counts: contract.artifactCounts"
+            "}));"
+        )
+        payload = json.loads(
+            subprocess.check_output(["node", "-e", script, str(contract_path)], text=True)
+        )
+        sanitizer_owned_keys = {
+            "rawUrl",
+            "rawEmail",
+            "sourceLabel",
+            "markdownLink",
+            "markdownEmphasis",
+            "codeFence",
+            "unknownAngleTag",
+            "voiceControlMarker",
+            "internalTurnId",
+            "numericCitation",
+            "privateUseCitationMarker",
+            "internalNoResponseMarker",
+        }
+        self.assertTrue(sanitizer_owned_keys.issubset(set(payload["keys"])))
+
+        for case in payload["cases"]:
+            key = case.get("key")
+            if key not in sanitizer_owned_keys:
+                continue
+            with self.subTest(key=key, text=case.get("text")):
+                cleaned = sanitize_voice_tts_text(case.get("text") or "")
+                check_script = (
+                    "const contract = require(process.argv[1]);"
+                    "process.stdout.write(JSON.stringify(contract.artifactCounts(process.argv[2])));"
+                )
+                counts = json.loads(
+                    subprocess.check_output(
+                        ["node", "-e", check_script, str(contract_path), cleaned],
+                        text=True,
+                    )
+                )
+                self.assertEqual(counts.get(key, 0), 0, cleaned)
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
@@ -291,7 +379,8 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sanitize_voice_delta_text("hello "), "hello ")
 
     def test_sanitize_voice_delta_text_strips_inline_nta_tokens(self) -> None:
-        self.assertEqual(sanitize_voice_delta_text("{NTA}hello"), " hello")
+        self.assertEqual(sanitize_voice_delta_text("{NTA}hello"), "hello")
+        self.assertEqual(sanitize_voice_delta_text("first{NTA}second"), "first second")
 
     # === VIVENTIUM START ===
     # Feature: Tests for strip_voice_control_tags (SSML + structural stage-direction stripping).

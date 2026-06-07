@@ -25,6 +25,12 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from installer_ui import InstallerUI
+from host_cli_auth import (
+    codex_app_cli_candidates as shared_codex_app_cli_candidates,
+    host_cli_auth_ready as shared_host_cli_auth_ready,
+    host_cli_command as shared_host_cli_command,
+    host_cli_exists as shared_host_cli_exists,
+)
 from retrieval_config import resolve_retrieval_embeddings_settings
 
 
@@ -46,6 +52,7 @@ UPNPC_EXTERNAL_IP_RE = re.compile(r"ExternalIPAddress\s*=\s*([0-9.]+)")
 DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS = 3.0
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
+CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
 
 
 @dataclass
@@ -118,6 +125,30 @@ def glasshive_callback_secret_configured(config: dict[str, Any]) -> bool:
 
 def command_exists(command: str) -> bool:
     return shutil.which(command) is not None
+
+
+def executable_path_exists(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def codex_app_search_roots() -> list[Path]:
+    return list({candidate.parents[3] for candidate in shared_codex_app_cli_candidates()})
+
+
+def codex_app_cli_candidates() -> list[Path]:
+    return shared_codex_app_cli_candidates()
+
+
+def host_cli_exists(command: str) -> bool:
+    return shared_host_cli_exists(command)
+
+
+def host_cli_command(command: str) -> str:
+    return shared_host_cli_command(command)
+
+
+def host_cli_auth_ready(command: str) -> bool:
+    return shared_host_cli_auth_ready(command)
 
 
 def command_runtime_ready(
@@ -766,9 +797,10 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     )
     if ctx["glasshive"] and ctx["glasshive_host_worker"]:
         callback_secret_ready = glasshive_callback_secret_configured(config)
-        codex_ready = command_exists("codex")
-        claude_ready = command_exists("claude")
-        openclaw_ready = command_exists("openclaw")
+        codex_ready = host_cli_auth_ready("codex")
+        claude_ready = host_cli_auth_ready("claude")
+        openclaw_ready = host_cli_exists("openclaw")
+        worker_cli_ready = codex_ready or claude_ready
         workspace_ready = host_workspace_root_ready(ctx["glasshive_host_workspace_root"])
         items.extend(
             [
@@ -785,32 +817,42 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                     ),
                 ),
                 PreflightItem(
-                    key="glasshive_host_codex_cli",
-                    label="Codex CLI",
+                    key="glasshive_host_worker_cli_auth",
+                    label="Codex or Claude CLI login",
                     category="GlassHive host workers",
-                    reason="run @codex host-native workers on this computer",
-                    status="ok" if codex_ready else "missing",
-                    install_kind="manual" if not codex_ready else "none",
+                    reason="run required GlassHive host-native nightly workers on this computer",
+                    status="ok" if worker_cli_ready else "missing",
+                    install_kind="manual" if not worker_cli_ready else "none",
+                    manual_command=(
+                        "Install and sign in to either Codex (`codex login`) or Claude Code "
+                        "(`claude auth login`), then rerun preflight"
+                    ),
+                ),
+                PreflightItem(
+                    key="glasshive_host_codex_cli",
+                    label="Codex CLI login",
+                    category="GlassHive host workers",
+                    reason="available for @codex host-native workers",
+                    status="ok" if codex_ready else "optional",
                     command="codex",
-                    manual_command="Install and sign in to the Codex CLI, then rerun preflight",
+                    manual_command="Install and sign in to the Codex CLI to make Codex the default GlassHive host worker",
                 ),
                 PreflightItem(
                     key="glasshive_host_claude_cli",
-                    label="Claude CLI",
+                    label="Claude CLI login",
                     category="GlassHive host workers",
-                    reason="run @claude host-native workers on this computer",
-                    status="ok" if claude_ready else "missing",
-                    install_kind="manual" if not claude_ready else "none",
+                    reason="available for @claude host-native workers",
+                    status="ok" if claude_ready else "optional",
                     command="claude",
-                    manual_command="Install and sign in to Claude Code, then rerun preflight",
+                    manual_command="Install and sign in to Claude Code to make Claude available as a GlassHive host worker",
                 ),
                 PreflightItem(
                     key="glasshive_host_openclaw_cli",
                     label="OpenClaw CLI",
                     category="GlassHive host workers",
                     reason="run @openclaw host-native workers on this computer",
-                    status="ok" if openclaw_ready else "missing",
-                    install_kind="manual" if not openclaw_ready else "none",
+                    status="ok" if openclaw_ready else "optional",
+                    install_kind="none",
                     command="openclaw",
                     manual_command=(
                         "Install and sign in to the OpenClaw CLI to enable @openclaw host workers; "
@@ -1263,7 +1305,7 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
 
 
 def missing_items(items: list[PreflightItem]) -> list[PreflightItem]:
-    return [item for item in items if item.status != "ok"]
+    return [item for item in items if item.status not in {"ok", "optional"}]
 
 
 def manual_missing_items(items: list[PreflightItem]) -> list[PreflightItem]:

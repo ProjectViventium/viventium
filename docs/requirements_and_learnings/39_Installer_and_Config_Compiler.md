@@ -62,8 +62,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `WPR_HOST_PROMPT_VISIBILITY`
   - `WPR_LIBRECHAT_UPLOADS_ROOT`
   - `WPR_BOOTSTRAP_SOURCE_ROOTS`
+  - `WPR_DB_PATH`
+  - `WPR_CODEX_BIN`
+  - `WPR_CLAUDE_CODE_BIN`
+  - `WPR_OPENCLAW_BIN`
   - `VIVENTIUM_GLASSHIVE_CALLBACK_URL`
   - `VIVENTIUM_GLASSHIVE_CALLBACK_SECRET`
+  - `VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET`
   - `GLASSHIVE_ENTERPRISE_MODE`
   - `GLASSHIVE_AUTH_MODE`
   - `GLASSHIVE_ENTERPRISE_TENANT_ID`
@@ -94,6 +99,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     from the active runtime checkout just like helper/manual operator commands
   - GlassHive host-worker availability is read from compiled runtime env; workflow commands must not
     invent a second GlassHive enablement source
+  - compiled runtime env must expose the host worker's executable and persistence inputs as the
+    launched service sees them, including supported Codex app-bundled CLI paths and the active local
+    GlassHive DB path; shell-only availability or repo-local fallback state is not a product
+    readiness signal
   - when GlassHive host workers are unavailable, workflow commands fail loud unless the operator
     explicitly chooses documented degraded mode
 - Web search ownership is part of that same compiler contract:
@@ -129,14 +138,86 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - the generated provider token is part of the public product contract; downstream runtime
     initialization must accept the compiler-emitted canonical value instead of requiring a
     different alias such as `openAI`
+- The supported local nightly-routines default is installed from canonical config, not from owner
+  machine leftovers:
+  - Express/Easy and Advanced installs enable GlassHive, Prompt Workbench, the built-in Workbench
+    nightly reflection schedule, and memory hardening by default
+  - upgrades reconcile the same defaults into existing canonical configs once, then compile the
+    generated runtime from that config
+  - `bin/viventium install`, `upgrade`, `configure`, `compile-config`, and `start` all run the same
+    default-nightly reconciler before compiling runtime artifacts, so later CLI auth can be picked up
+    without hand-editing App Support files
+  - the reconciler must never write a real account email, local absolute user path, raw prompt,
+    transcript, token, or owner-specific value into canonical config
+  - the default GlassHive worker profile is filled from the currently signed-in local worker CLI
+    only when no explicit profile is already configured: Codex when `codex login status` succeeds,
+    otherwise Claude when `claude auth status` succeeds
+  - the reconciler must not overwrite an explicit configured worker profile on later `start`,
+    `compile-config`, `configure`, or `upgrade`; user choice beats auto-detection
+  - GlassHive host-worker preflight requires at least one signed-in Codex or Claude CLI; if neither
+    is usable, the installer must stop with one clear action to sign in to one of them, not ask the
+    user product-design questions
+  - OpenClaw may be reported as optional, but missing OpenClaw must not block the default nightly
+    workflow when Codex or Claude is ready
+  - worker CLI auth is not the same as model-provider API or connected-account auth for memory
+    hardening. The worker gate proves GlassHive can run a host-native worker; `runtime.memory_hardening.provider`
+    remains an explicit operator choice or is selected by the config compiler from the configured
+    LLM auth surfaces.
+  - the default built-in reflection schedule must target the first resolved local admin user after
+    account creation and remain idempotent; it must not hardcode a public QA account, developer
+    account, or private operator identity
+  - if the user later signs into Codex or Claude and reruns a supported entrypoint, the generated
+    runtime must fill a previously empty worker profile from the newly available CLI
+  - if multiple local admins exist before any schedule owner can be resolved, the installer/runtime
+    must not guess a personal account. The supported automatic path is the normal first-admin local
+    install; multi-admin ambiguity is an operator-visible setup limitation until a deterministic
+    owner is available.
+- Express Rich Brain Readiness is a first-class installer contract, owned by the shared
+  `scripts/viventium/brain_readiness.py` registry and reflected in wizard prompts, preflight,
+  generated config, install/status output, doctor-style health, and QA rows:
+  - Express installs the core spine automatically: core app/helper, Scheduler, GlassHive, Prompt
+    Workbench, built-in nightly reflection, memory hardening with dry-run-first, and viable local
+    voice on Apple Silicon
+  - GlassHive is mandatory for Express moving forward; host-worker preflight must detect Codex CLI
+    or Claude CLI sign-in and fail with one clear action when neither worker can run
+  - the built-in nightly flow is documented and tested as: scheduled prompt -> filled placeholders
+    -> GlassHive run -> callback -> scheduler ledger -> Workbench shows completed
+  - memory hardening and nightly reflection must resolve the installing user's first local admin
+    path without asking for a developer email, hardcoding an owner account, or leaking private data
+  - user-owned or resource-heavy surfaces are guided setup, not fake-ready defaults: primary AI
+    provider account/API-key, optional fallback provider, transcript folder, Conversation
+    Recall/RAG, web search provider, Telegram, Telegram Codex, Google Workspace MCP, Microsoft 365
+    MCP, and hosted voice when local voice is not viable
+  - Conversation Recall/RAG remains guided opt-in because it requires Docker/Ollama/vector-resource
+    consent; Docker presence alone must not turn it on
+  - Transcript ingest is pending until `runtime.memory_hardening.transcripts.source_dir` is set by
+    the wizard, helper, or `bin/viventium transcripts source set <folder>`; an empty source is a
+    setup-pending state, not a failure
+  - Web Search is guided in Express: local Docker-backed SearXNG/Firecrawl or hosted Serper/
+    Firecrawl keys are both valid, and status must identify the exact degraded local service when
+    enabled health is incomplete
+  - Code Interpreter, Skyvern, OpenClaw, and Remote Access remain off by default. They are
+    Advanced/Lab or explicit guided opt-in surfaces and must not appear enabled in public examples
+    unless that example is clearly lab-scoped
+  - WhatsApp must not be advertised as installed or configured until an owning runtime integration,
+    requirement doc, and QA surface exist
+  - upgrades preserve explicit disables and never invent secrets, OAuth grants, transcript paths,
+    user emails, local absolute paths, or private account state. They may add readiness/status cards
+    and reconcile missing core-spine defaults idempotently.
 - `runtime.memory_hardening` is the canonical source for the local saved-memory hardening operator
   job:
-  - default is `enabled: false`
+  - default local installs set `enabled: true`; explicit user disablement remains respected after
+    the defaults marker has been applied
   - default schedule is `0 3 * * *`
   - schedules are local macOS wall-clock time; the exported timezone value is operator context,
     not a LaunchAgent timezone conversion
   - `operator_user_email` optionally scopes scheduled/helper hardening to one local account; empty
     means all local users are eligible
+  - a successful scheduled run with `user_count=0` is healthy empty/skip evidence when user memory
+    is intentionally disabled or no local users are eligible. Installer/runtime QA must not mark
+    that as degraded merely because no memory writes occurred; it must mark it degraded only when
+    eligibility is unknown, unexpectedly empty, or accompanied by provider/runtime/transcript/vector
+    errors.
   - default lookback is 7 days
   - default idle gate is 60 minutes
   - default max semantic edits is 3 keys per user per run
@@ -164,6 +245,27 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     first-run guard
   - when `dry_run_first` is enabled, the first scheduled apply with no marker performs a dry-run
     and writes the marker before future scheduled applies can mutate memory
+  - model-backed memory hardening and transcript ingest are power-gated by the wrapper on macOS:
+    they skip while the machine is on battery power or has recorded thermal/performance warnings
+    unless an operator explicitly passes `--ignore-power-gate` with
+    `VIVENTIUM_MEMORY_HARDENING_ALLOW_POWER_OVERRIDE=1`. `--ignore-idle-gate` only bypasses user-idle
+    checks and must not bypass this power/thermal gate.
+  - the power/thermal check is a shared local maintenance contract in
+    `scripts/viventium/power_budget.py`; audit automations must report power-budget skips instead
+    of forcing model-backed work with `--ignore-power-gate`.
+  - when hardening is allowed to run, the wrapper starts the Node/model child at lower OS priority
+    so scheduled work does not compete with foreground local-prod/dev work.
+  - model-backed dry-run/apply hardening has a Node-owned efficiency gate in addition to the wrapper
+    power gate: default `min_apply_interval_seconds` is 300, the public marker is stored in
+    memory-hardening state without raw paths or content, and the only non-interactive bypass is
+    `--ignore-efficiency-gate` paired with
+    `VIVENTIUM_MEMORY_HARDENING_ALLOW_EFFICIENCY_OVERRIDE=1`. Power overrides are intentionally
+    separate and must not bypass this cooldown.
+  - `apply --run-id <run-id>` applies an already generated proposal and does not invoke model-backed
+    proposal generation; it is intentionally outside the model-work cooldown.
+  - `bin/viventium memory-harden status` is read-only operational inspection and must not wait on
+    the global user-facing CLI lock or recompile config; it reports existing generated/runtime
+    state while a hardening run may be in progress.
   - non-macOS operators must wire an equivalent cron/systemd timer; the public CLI currently
     auto-installs schedules only through macOS LaunchAgents
   - `provider_profile` must stay `launch_ready_only`
@@ -183,7 +285,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - ignore globs are serialized into env as a comma-separated list; glob literals should not contain
     commas
   - transcript caps are deterministic cost controls, not content judgment:
-    `max_files_per_run` default 20, `max_chars_per_file` default 500,000,
+    `max_files_per_run` default 20, `min_files_per_run` default 5 for apply-mode Node batches,
+    `max_batches_per_invocation` default 1 in the wrapper, `max_chars_per_file` default 500,000,
     `summary_max_chars` default 32,000, reference saved-memory context default 24,000 chars,
     reference recent-conversation context default 36,000 chars, and stable-evidence decay default
     90 days
@@ -200,7 +303,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     vector-backed file_search resources
   - the macOS helper's manual `Advanced > Ingest Meeting Transcripts` action uses the same wrapper
     path, shows the active operator scope before and after the run, bypasses the idle gate because
-    it is user-triggered, defaults to zero durable saved-memory changes, and writes only
+    it is user-triggered, marks the run as interactive maintenance so the cooldown can be bypassed
+    for that click, keeps the power/thermal gate in force, runs one bounded batch of at least 5
+    transcript files, defaults to zero durable saved-memory changes, and writes only
     status/scope/count helper logs. Durable memory reflection remains the normal scheduled hardener
     responsibility unless the operator explicitly overrides the change cap.
   - introducing a future newer model family requires updating model governance and release contract
@@ -231,7 +336,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - a stray `docker` CLI on `PATH` is not enough to treat Docker Desktop as available
   - shared Docker availability checks in wizard and preflight must require the real Docker Desktop
     app/cask install
-  - Easy Install may offer local Web Search only when Docker Desktop is actually present
+  - Easy Install may offer local Web Search as a guided choice; when Docker Desktop is absent the
+    prompt must say that local SearXNG/Firecrawl requires automatic Docker Desktop installation,
+    while hosted Serper/Firecrawl requires user-owned keys
   - Easy Install keeps local Conversation Recall deferred by default instead of auto-enabling it
     from ambient Docker detection
 - Homebrew-installed CLI prerequisites must be validated as runnable tools, not just files on
@@ -311,6 +418,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - host worker doctor/preflight must report local `codex`, `claude`, and `openclaw` CLI
     availability separately; missing OpenClaw degrades only the `@openclaw` host worker, not Codex
     or Claude workers
+  - host worker CLI availability must match the launched service environment, not only the
+    interactive shell. On macOS, a valid app-bundled Codex CLI path is a supported Codex host-worker
+    runtime and the compiler must emit it as `WPR_CODEX_BIN` when `codex` is not on the service
+    `PATH`; discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`.
   - generated GlassHive MCP headers must include user, agent, conversation, parent message, and
     current message context so `worker_find_or_resume` can seed same-chat callback metadata without
     a controller-level mention parser
@@ -373,6 +484,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
       - `VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S`
     - default:
       - 600 seconds, because host-native browser/desktop work can legitimately take several minutes
+  - GlassHive callback delivery health is runtime state, not generated config. Generated config owns
+    callback URL/secret/wait-window inputs, but runtime health and nightly QA must prove callback
+    outbox delivery, active backlog, active retry attempts, stale delivering reclaim, and dead-letter
+    delta from the live store.
       - this timeout must not inherit the shorter background follow-up grace window
     - valid range:
       - 30-86400 seconds; compiler and preflight should reject values outside that range
@@ -412,11 +527,17 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice`
     - this value, plus the voice Phase A knobs below, must be emitted into both `runtime.env` and
       `service-env/librechat.env` so the installed LibreChat service uses the same default as source
-    - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false` keeps fully async voice detection as
-      an opt-in; the default path waits only until the first true activation or the 500ms voice
-      Phase A budget
-    - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=500`
-    - `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=false`
+    - background detection budgets/flags are owner-canonical in
+      `docs/requirements_and_learnings/02_Background_Agents.md` ("2026-05-30 … Two Independent Modes").
+      The compiler emits, for the two independent modes (neither flag affects the other mode):
+    - `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` (voice async "nevermind+redo" default
+      ON)
+    - `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false` (text async opt-in; default OFF)
+    - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690` (voice detection budget)
+    - `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300` (text detection budget)
+    - `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS=2000` (shared fallback budget)
+    - `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true` (voice stays async even when a
+      configured tool-hold cortex exists; Phase B/follow-up owns late or side-effecting evidence)
     - `VIVENTIUM_VOICE_LOG_LATENCY=1`
   - generated runtime must not rely on one machine's shell exports or App Support hand edits to
     change end-of-turn behavior
@@ -629,9 +750,14 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     untouched
   - clean installs and upgrades must refresh the shipped helper fallback when the helper source
     changes, or new users will not see the same Advanced submenu
-- The config compiler owns the opt-in Workbench sidecar flag:
+- The config compiler owns the Workbench sidecar flag:
   - `runtime.prompt_workbench.enabled: true` compiles to `VIVENTIUM_PROMPT_WORKBENCH_ENABLED=true`
     and `START_PROMPT_WORKBENCH=true`
+  - supported local installs and upgrades set this flag true by default because Prompt Workbench is
+    part of the nightly reflection contract
+  - `runtime.prompt_workbench.seed_nightly.enabled/active/executor` compiles to
+    `VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_*` env keys; default local behavior is an active
+    `glasshive_host` Workbench schedule
   - the main launcher may start and watchdog Prompt Workbench only when that compiled/env flag is
     enabled, or when an equivalent explicit env override is provided
   - stack-managed starts must suppress stdout from `bin/viventium prompt-workbench start` so the
@@ -662,8 +788,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 - On April 12, 2026, voice-call QA exposed the install/bootstrap side of the same contract:
   - the main agent's fast voice route can be visibly active in runtime logs while still relying on
     inherited primary-model parameters if the seeded source-of-truth omits the dedicated voice bag
-  - shipped Anthropic voice overrides must therefore seed `voice_llm_model_parameters.thinking:
-    false` explicitly
+  - shipped voice overrides must therefore seed provider-specific voice parameters explicitly
+    (`voice_llm_model_parameters.reasoning_effort: none` for the current xAI/Grok voice route, or
+    `voice_llm_model_parameters.thinking: false` for Anthropic voice routes)
   - seed/sync tooling must preserve that bag so fresh installs, local rebuilds, and reviewed syncs
     all keep the same low-latency voice defaults
 - On April 13, 2026, a remote clean-machine audit showed the next nested-release boundary:
@@ -760,12 +887,15 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     partial-stack startup must repair the missing surface
   - local conversation-search sync failures may degrade recall freshness, but they must not abort
     frontend availability during first-run startup
-- On April 13, 2026, remote clean-machine onboarding exposed the next optional-service rule:
-  - GlassHive is not part of the minimum public first-run contract
+- On April 13, 2026, remote clean-machine onboarding exposed the optional-service consistency rule
+  that still applies when a user explicitly disables GlassHive:
   - generated `librechat.yaml`, seeded built-in agent tools, and runtime MCP/tool loading must all
     agree when GlassHive is off
   - otherwise a missing local GlassHive MCP can surface to fresh users as a generic `No key found`
     error even though foundation-model auth is healthy
+- On May 31, 2026, the nightly-routines QA follow-up superseded the old local default: GlassHive is
+  part of the supported local install and upgrade path because the built-in nightly reflection uses
+  scheduled Workbench prompts delivered through GlassHive.
 - The same April 13, 2026 remote clean-machine pass exposed the public-clone bootstrap boundary:
   - a shipped public checkout can contain vendored component source without nested git history
   - `bootstrap_components.py` must therefore treat a bootable vendored component tree as valid
@@ -785,7 +915,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - before restart, the live generated runtime still pointed memory at `openai / gpt-5.4` and the
     running helper logs showed the unsupported-provider initialization failure
   - after the compiler/runtime fix and restart, the generated runtime pointed memory at
-    `anthropic / claude-sonnet-4-5`
+    `xai / grok-4.3` with `voice_llm_model_parameters.reasoning_effort: none`
   - the saved-memory path then ran through product code without manual App Support or Mongo edits
 - On April 9, 2026, the same ownership rule extended to local-first conversation recall:
   - the compiler must emit the selected retrieval embeddings provider/model explicitly

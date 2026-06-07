@@ -6,6 +6,18 @@
 
 ## 🎯 Core Development Principles
 
+### 0. The Core Outcome Metric (always evaluate)
+
+**outcome = Quality (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable)**
+are the core metric of the viventium project that we must always evaluate in tests, QA, development, design.
+
+- This is the lens for every path, feature, agent, and flow. Never evaluate Performance (speed/latency)
+  in isolation — a faster result that is less intelligent, relevant, useful, or aligned is a regression.
+- **Parity, not routing rubrics.** Where multiple execution paths can serve the same request (e.g. an
+  in-process hand-off agent and a GlassHive worker), each must independently meet this metric. Do not
+  hardcode a rubric like "quick request → path A, thorough request → path B"; let the AI (Main Agent and
+  the worker) decide intelligently, and make every path produce truthful, complete, useful, fast results.
+
 ### 1. Beautifully Simple and Efficient
 - **Do not overcomplicate things** - Seek elegant, efficient solutions
 - Study the codebase, components, and research web for inspiration to identify the most beautiful and efficient way to implement features
@@ -130,6 +142,11 @@
 - User-facing error copy is part of product truth. If the underlying failure is rate limit, auth,
   missing key, provider outage, local runtime unavailable, or unsupported configuration, the message
   must say the correct class of problem instead of a generic service failure.
+- On any user-facing agent route, a recoverable provider failure before visible assistant text is
+  produced should retry exactly once through the configured fallback route when one is valid. If no
+  fallback is configured or the fallback also fails, the user-visible result must be a concise,
+  actionable provider-class blocker; it must not expose raw LangChain/internal troubleshooting text
+  as the assistant answer.
 - Retrieval/tool failures must never be laundered into "nothing exists." For web search and other
   evidence tools, distinguish successful-empty results from provider unavailable, timeout, rate
   limit, auth/config missing, request rejected, and unsupported configuration. For named-entity,
@@ -145,12 +162,40 @@
   examples, links, file references, exclusions, and background context through the structured fields
   that own that delegation. Use summaries only as labels or titles, not as the worker's complete
   instruction.
+- GlassHive workers are general intelligent workers, so less is more. Host assistants and MCP tool
+  descriptions should provide the user's actual goal, constraints, files, connected MCP/tool
+  capability context, and explicit success conditions, then trust the worker to choose the path.
+  Do not manufacture project goals, rubrics, provider lists, output artifacts, or workflow steps
+  just because a prior QA prompt happened to need them.
+- For brokered MCP/tool delegation, the host is a faithful courier, not the planner. It must pass the
+  user's request through with factual available context, verified tool results, and brokered
+  capability grants; it must not predict which connected provider, account, MCP, tool, output format,
+  or workflow the worker should use unless the user explicitly specified that choice or current
+  tool evidence proves it. The design assumption is that users and host applications can connect
+  unpredictable MCPs, so GlassHive must expose capabilities and let the general worker decide.
+- GlassHive data in and data out must be exact. The host application must pass real uploads, file
+  references, MCP grants/capabilities, retrieved context, and tool results without pretending they
+  exist or were used. If data, auth, files, or MCP access are unavailable, the delegation should
+  preserve that fact so the worker can choose a fallback or report a concrete blocker.
+- Delegated workers must receive a universal completion contract. Before reporting completion, the
+  worker must compare the actual result against the user's request, success criteria, constraints,
+  files/artifacts, visible state, or tool results when applicable; continue or remediate when the
+  result does not satisfy the request; and report a specific blocker only when it cannot complete the
+  task. This contract must stay capability-general and must not encode one QA prompt, one file type,
+  one provider, or one host application as special runtime behavior.
 - Keep host/application orchestration checks separate from worker deliverable gates. For GlassHive,
   requirements such as which MCP tool was selected, whether the chat surfaced the View / Steer link,
   callback delivery, wait/status polling cadence, and post-run inspection from the host UI belong to
   the host assistant/operator QA layer. Preserve those checks as context, but do not make a sandbox
   worker fail a completed file/browser/research/code task just because it cannot observe the host
   chat UI from inside its workspace.
+- Worker substrate failures are harness/runtime failures before they are user tasks. If a worker
+  cannot start because of missing or incompatible local prerequisites, credentials, sidecars, tools,
+  or runtime versions, the harness must classify the failure, try configured safe recovery or routing
+  such as a managed dependency, alternate available profile, or sandbox/workstation mode when that
+  does not contradict the user's request, and only then ask the user/operator for action with the
+  exact blocker. Do not make "install a global tool on your machine" the first visible recovery when
+  a managed or sandboxed path is available.
 
 ### 2.6 Production QA Operating Discipline
 - `qa/README.md` is the QA operating contract. Every developer and AI agent must treat it as the
@@ -415,7 +460,13 @@ A developer referring to a single document about a respective feature **must per
 - **Do not blindly overwrite live instructions or conversation starters either**. A stale scaffold can erase user-authored main-agent or background-agent prompt edits just as easily as it can erase tools.
 - **`--prompts-only` safe fields**: `id`, `name`, `description`, `instructions`, `conversation_starters`, `background_cortices` (with safe merge that only touches `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, and the explicitly reviewed reliability field `activation.fallbacks`). Treat fallback changes as live runtime-behavior changes, not as copy-only prompt edits.
 - **`--activation-config-only` safe fields**: only `background_cortices`, with an allowlist merge over `activation.enabled`, `activation.prompt`, `activation.confidence_threshold`, `activation.fallbacks`, `activation.model`, `activation.provider`, `activation.cooldown_ms`, `activation.max_history`, and `activation.intent_scope`. Use `--activation-fields=...` to narrow further.
-- **`--model-config-only` safe fields**: only top-level agent model fields (`provider`, `model`, `model_parameters`, `voice_llm_model`, `voice_llm_provider`). Use this when correcting stale model drift without touching tools or prompts.
+- **`--model-config-only` safe fields**: only agent model/provider fields and their parameter bags
+  (`provider`, `model`, `model_parameters`, `voice_llm_model`, `voice_llm_provider`,
+  `voice_llm_model_parameters`, `voice_fallback_llm_model`, `voice_fallback_llm_provider`,
+  `voice_fallback_llm_model_parameters`, `fallback_llm_model`, `fallback_llm_provider`,
+  `fallback_llm_model_parameters`). Use this when correcting stale model drift without touching
+  tools or prompts. Voice model changes that depend on provider-specific knobs, such as xAI
+  `reasoning_effort: none`, must prove the parameter bag survived the sync.
 - **Use `--agent-ids=...` for surgical pushes** when only a subset of background agents changed. This keeps model/prompt fixes narrowly scoped instead of rewriting the whole roster.
 - **Always dry-run first**: `push --prompts-only --dry-run --env=<env>` to preview changes before applying.
 - Safety UX rule for operator tooling:

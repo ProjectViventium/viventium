@@ -10,7 +10,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from TelegramVivBot.utils.librechat_bridge import (
+    _bridge_error_event,
     _strip_markdown,
+    _start_chat_error_message,
+    _start_chat_error_safe_to_retry,
     _stream_error_message,
     _is_file_attachment_payload,
     _empty_response_message,
@@ -374,6 +377,16 @@ def test_stream_error_message_classifies_tool_errors():
         _stream_error_message("Unauthorized provider credentials")
         == "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
     )
+    assert (
+        _stream_error_message(
+            "Client error '404 Not Found' for url 'http://example.com/api/viventium/telegram/stream/stream-1?resume=true'"
+        )
+        == "Response stream expired during reconnect. Please send the message again."
+    )
+    assert (
+        _stream_error_message("The generation job does not exist or has expired.")
+        == "Response stream expired during reconnect. Please send the message again."
+    )
     assert _stream_error_message("plain timeout") == "Connection error. Please retry."
 
 
@@ -672,6 +685,190 @@ def _make_bridge():
     return bridge
 
 
+def test_start_chat_error_retry_classifier_only_allows_pre_ingress_connect_failures():
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    request = bridge_module.httpx.Request(
+        "POST",
+        "http://127.0.0.1:3180/api/viventium/telegram/chat",
+    )
+    response = bridge_module.httpx.Response(503, request=request)
+
+    assert _start_chat_error_safe_to_retry(
+        bridge_module.httpx.ConnectError("connect", request=request)
+    )
+    assert _start_chat_error_safe_to_retry(
+        bridge_module.httpx.ConnectTimeout("connect timeout", request=request)
+    )
+    assert _start_chat_error_safe_to_retry(
+        bridge_module.httpx.PoolTimeout("pool timeout", request=request)
+    )
+    assert not _start_chat_error_safe_to_retry(
+        bridge_module.httpx.ReadTimeout("read timeout", request=request)
+    )
+    assert not _start_chat_error_safe_to_retry(
+        bridge_module.httpx.HTTPStatusError("status", request=request, response=response)
+    )
+    assert not _start_chat_error_safe_to_retry(Exception("generic"))
+
+
+def test_start_chat_error_messages_are_class_specific_and_non_spoken():
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    request = bridge_module.httpx.Request(
+        "POST",
+        "http://127.0.0.1:3180/api/viventium/telegram/chat",
+    )
+    response = bridge_module.httpx.Response(403, request=request)
+    error = bridge_module.httpx.HTTPStatusError("status", request=request, response=response)
+
+    assert (
+        _start_chat_error_message(bridge_module.httpx.ConnectError("connect", request=request))
+        == "Viventium's local API is starting or unavailable. Please retry in a moment."
+    )
+    assert (
+        _start_chat_error_message(bridge_module.httpx.ReadTimeout("read timeout", request=request))
+        == "Viventium's local API did not answer Telegram in time. Please retry."
+    )
+    assert "not authorized" in _start_chat_error_message(error)
+    assert _bridge_error_event("Transport issue", speak=False) == {
+        "type": "bridge_error",
+        "text": "Transport issue",
+        "speak": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ask_stream_async_reports_prestart_connect_error_as_non_spoken_bridge_error():
+    bridge = _make_bridge()
+    bridge.start_chat_connect_retries = 0
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    async def fake_start_chat(**kwargs):
+        _ = kwargs
+        request = bridge_module.httpx.Request(
+            "POST",
+            "http://127.0.0.1:3180/api/viventium/telegram/chat",
+        )
+        raise bridge_module.httpx.ConnectError("All connection attempts failed", request=request)
+
+    bridge._start_chat = fake_start_chat  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in bridge.ask_stream_async("hi", "123")]
+
+    assert chunks == [
+        {
+            "type": "bridge_error",
+            "text": "Viventium's local API is starting or unavailable. Please retry in a moment.",
+            "speak": False,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ask_stream_async_retries_once_for_safe_prestart_connect_failure():
+    bridge = _make_bridge()
+    bridge.start_chat_connect_retries = 1
+    bridge.start_chat_connect_retry_delay_s = 0
+    calls = 0
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    async def fake_start_chat(**kwargs):
+        nonlocal calls
+        _ = kwargs
+        calls += 1
+        if calls == 1:
+            request = bridge_module.httpx.Request(
+                "POST",
+                "http://127.0.0.1:3180/api/viventium/telegram/chat",
+            )
+            raise bridge_module.httpx.ConnectTimeout("connect timeout", request=request)
+        return LibreChatSession(stream_id="stream-ok", conversation_id="conv-ok")
+
+    async def fake_stream_response(stream_id, chat_id, *, trace_id=None):
+        _ = stream_id, chat_id, trace_id
+        yield "done"
+
+    bridge._start_chat = fake_start_chat  # type: ignore[assignment]
+    bridge._stream_response = fake_stream_response  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in bridge.ask_stream_async("hi", "123")]
+
+    assert calls == 2
+    assert chunks == ["done"]
+
+
+@pytest.mark.asyncio
+async def test_ask_stream_async_does_not_retry_ambiguous_read_timeout():
+    bridge = _make_bridge()
+    bridge.start_chat_connect_retries = 2
+    calls = 0
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    async def fake_start_chat(**kwargs):
+        nonlocal calls
+        _ = kwargs
+        calls += 1
+        request = bridge_module.httpx.Request(
+            "POST",
+            "http://127.0.0.1:3180/api/viventium/telegram/chat",
+        )
+        raise bridge_module.httpx.ReadTimeout("read timeout", request=request)
+
+    bridge._start_chat = fake_start_chat  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in bridge.ask_stream_async("hi", "123")]
+
+    assert calls == 1
+    assert chunks == [
+        {
+            "type": "bridge_error",
+            "text": "Viventium's local API did not answer Telegram in time. Please retry.",
+            "speak": False,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ask_stream_async_does_not_retry_prestart_http_503():
+    bridge = _make_bridge()
+    bridge.start_chat_connect_retries = 2
+    calls = 0
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    async def fake_start_chat(**kwargs):
+        nonlocal calls
+        _ = kwargs
+        calls += 1
+        request = bridge_module.httpx.Request(
+            "POST",
+            "http://127.0.0.1:3180/api/viventium/telegram/chat",
+        )
+        response = bridge_module.httpx.Response(503, request=request)
+        raise bridge_module.httpx.HTTPStatusError(
+            "LibreChat chat failed (503)",
+            request=request,
+            response=response,
+        )
+
+    bridge._start_chat = fake_start_chat  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in bridge.ask_stream_async("hi", "123")]
+
+    assert calls == 1
+    assert chunks == [
+        {
+            "type": "bridge_error",
+            "text": "Viventium's local API is starting or recovering. Please retry in a moment.",
+            "speak": False,
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_ask_stream_async_listens_for_followup_events_even_when_raw_insights_disabled():
     bridge = _make_bridge()
@@ -821,6 +1018,75 @@ async def test_insight_listener_treats_missing_completed_stream_as_benign(monkey
 
     assert warnings == []
     assert bridge._active_stream_by_chat == {}
+
+
+@pytest.mark.asyncio
+async def test_stream_response_reports_expired_stream_as_non_spoken_bridge_error(monkeypatch):
+    bridge = _make_bridge()
+    bridge.max_retries = 0
+
+    class _FakeResponse:
+        def __init__(self):
+            import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+            self.status_code = 404
+            self.text = '{"error":"Stream not found","message":"The generation job does not exist or has expired."}'
+            self.request = bridge_module.httpx.Request(
+                "GET",
+                "http://example.com/api/viventium/telegram/stream/stream-missing",
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def raise_for_status(self):
+            import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+            raise bridge_module.httpx.HTTPStatusError(
+                "Client error '404 Not Found' for url 'http://example.com/api/viventium/telegram/stream/stream-missing?resume=true'",
+                request=self.request,
+                response=self,
+            )
+
+        def aiter_bytes(self):
+            async def _gen():
+                if False:
+                    yield b""
+
+            return _gen()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        def stream(self, *args, **kwargs):
+            _ = args, kwargs
+            return _FakeResponse()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+
+    chunks = [chunk async for chunk in bridge._stream_response("stream-missing", "111")]
+
+    assert chunks == [
+        {
+            "type": "bridge_error",
+            "text": "Response stream expired during reconnect. Please send the message again.",
+            "speak": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1610,6 +1876,59 @@ async def test_start_chat_duplicate_ack_returns_none(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_start_chat_non_200_preserves_http_status_for_classification(monkeypatch):
+    bridge = _make_bridge()
+
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    class _FakeResponse:
+        status_code = 503
+        text = '{"error":"starting"}'
+        request = bridge_module.httpx.Request(
+            "POST",
+            "http://example.com/api/viventium/telegram/chat",
+        )
+
+        @staticmethod
+        def json():
+            return {"error": "starting"}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return False
+
+        async def post(self, _url, json=None, headers=None):
+            _ = json, headers
+            return _FakeResponse()
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+
+    with pytest.raises(bridge_module.httpx.HTTPStatusError) as raised:
+        await bridge._start_chat(
+            text="hello",
+            conversation_id="new",
+            agent_id="agent-1",
+            telegram_chat_id="chat-1",
+            telegram_user_id="user-1",
+            telegram_username="name",
+            telegram_message_id="123",
+            telegram_update_id="456",
+            preference_convo_id="chat-1",
+            voice_mode=False,
+            input_mode="text",
+        )
+
+    assert raised.value.response.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_start_chat_parses_voice_route_from_response(monkeypatch):
     bridge = _make_bridge()
 
@@ -1639,7 +1958,7 @@ async def test_start_chat_parses_voice_route_from_response(monkeypatch):
             return False
 
         async def post(self, _url, json=None, headers=None):
-            assert json["voiceMode"] is True
+            assert json["voiceMode"] is False
             assert headers["X-VIVENTIUM-TELEGRAM-SECRET"] == "test-secret"
             return _FakeResponse()
 
@@ -1657,7 +1976,7 @@ async def test_start_chat_parses_voice_route_from_response(monkeypatch):
         telegram_message_id="123",
         telegram_update_id="456",
         preference_convo_id="chat-1",
-        voice_mode=True,
+        voice_mode=False,
         input_mode="voice_note",
     )
 
@@ -1704,6 +2023,110 @@ async def test_poll_for_followup_sends_followup():
     assert len(messages) == 1
     assert messages[0][0] == 101
     assert "Follow up text" in messages[0][1] or "Follow" in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_stops_on_silent_followup_decision():
+    bridge = _make_bridge()
+    messages = []
+    calls = 0
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-silent-decision"
+    chat_id = "101"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._response_message_ids[stream_id] = "msg-silent"
+    bridge._conversation_by_stream[stream_id] = "conv-silent"
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        nonlocal calls
+        _ = message_id, conversation_id, stream_id
+        calls += 1
+        return {
+            "cortexParts": [
+                {"type": "cortex_insight", "status": "complete", "insight": "Internal context."}
+            ],
+            "followUp": None,
+            "followUpDecision": {
+                "result": "suppressed",
+                "llmResult": "nta",
+                "selectedStrategy": "no_response_suppressed",
+                "suppressionReason": "no_response_tag",
+            },
+        }
+
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert messages == []
+    assert calls == 1
+    assert bridge._has_followup_sent(stream_id) is False
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_keeps_polling_persisted_decision_with_reason():
+    bridge = _make_bridge()
+    messages = []
+    calls = 0
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-persisted-decision"
+    chat_id = "101"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._response_message_ids[stream_id] = "msg-persisted"
+    bridge._conversation_by_stream[stream_id] = "conv-persisted"
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        nonlocal calls
+        _ = message_id, conversation_id, stream_id
+        calls += 1
+        if calls == 1:
+            return {
+                "cortexParts": [
+                    {"type": "cortex_insight", "status": "complete", "insight": "Internal context."}
+                ],
+                "followUp": None,
+                "followUpDecision": {
+                    "result": "persisted",
+                    "selectedStrategy": "deferred",
+                    "suppressionReason": "older_user_message",
+                },
+            }
+        return {
+            "cortexParts": [
+                {"type": "cortex_insight", "status": "complete", "insight": "Internal context."}
+            ],
+            "followUp": {"messageId": "follow-persisted", "text": "Follow-up after persistence."},
+            "followUpDecision": {
+                "result": "persisted",
+                "selectedStrategy": "deferred",
+                "suppressionReason": "older_user_message",
+            },
+        }
+
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert len(messages) == 1
+    assert messages[0][0] == 101
+    assert "Follow-up after persistence." in messages[0][1]
+    assert calls == 2
 
 
 # === VIVENTIUM START ===
@@ -2154,6 +2577,50 @@ async def test_poll_for_followup_sends_canonical_text_when_hold_was_replaced():
     assert len(messages) == 1
     assert messages[0][0] == 606
     assert "Real final answer" in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_sends_canonical_text_before_terminal_silent_decision():
+    bridge = _make_bridge()
+    messages = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-canonical-terminal-decision"
+    chat_id = "616"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._response_message_ids[stream_id] = "msg-canonical-terminal-decision"
+    bridge._conversation_by_stream[stream_id] = "conv-canonical-terminal-decision"
+    bridge._stream_text_by_stream[stream_id] = "Checking now."
+    bridge._brief_main_reply_by_stream[stream_id] = True
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "cortexParts": [],
+            "followUp": None,
+            "canonicalText": "Real final answer after tool hold.",
+            "followUpDecision": {
+                "result": "skipped",
+                "llmResult": "skipped",
+                "selectedStrategy": "none",
+                "suppressionReason": "no_usable_phase_b_output",
+            },
+        }
+
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert len(messages) == 1
+    assert messages[0][0] == 616
+    assert "Real final answer after tool hold." in messages[0][1]
 
 
 @pytest.mark.asyncio

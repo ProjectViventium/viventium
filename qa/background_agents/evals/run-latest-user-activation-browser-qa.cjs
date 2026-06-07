@@ -343,6 +343,23 @@ function extractTextFromContentPart(part) {
   return '';
 }
 
+function dedupeVisibleAnswerTextParts(parts) {
+  const result = [];
+  const seen = new Set();
+  for (const part of parts) {
+    if (typeof part !== 'string' || !part.trim()) {
+      continue;
+    }
+    const normalized = normalizeAnswerText(part);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(part.trim());
+  }
+  return result;
+}
+
 function extractVisibleAnswerTextFromMessage(message) {
   if (!message || typeof message !== 'object') {
     return '';
@@ -351,10 +368,7 @@ function extractVisibleAnswerTextFromMessage(message) {
   const partText = Array.isArray(message.content)
     ? message.content.map(extractTextFromContentPart).filter(Boolean).join('\n')
     : '';
-  return [text, partText]
-    .filter((part) => typeof part === 'string' && part.trim().length > 0)
-    .join('\n')
-    .trim();
+  return dedupeVisibleAnswerTextParts([text, partText]).join('\n').trim();
 }
 
 function normalizeAnswerText(text) {
@@ -365,6 +379,12 @@ function isExactExpectedAnswer(text, expectedText) {
   const actual = normalizeAnswerText(text);
   const expected = normalizeAnswerText(expectedText);
   return actual === expected || actual === `"${expected}"`;
+}
+
+function textIncludesExpectedAnswer(text, expectedText) {
+  const actual = normalizeAnswerText(text).toLowerCase();
+  const expected = normalizeAnswerText(expectedText).toLowerCase();
+  return Boolean(expected) && actual.includes(expected);
 }
 
 function isPlaceholderAnswerText(text) {
@@ -451,7 +471,13 @@ async function waitForAssistantParent({
   throw new Error('missing_latest_assistant_parent');
 }
 
-async function readLatestTurnState({ qaAuth, conversationId, userMessageId, assistantMessageId }) {
+async function readLatestTurnState({
+  qaAuth,
+  conversationId,
+  userMessageId,
+  assistantMessageId,
+  expectedText = '',
+}) {
   const parent = await qaAuth.db.collection('messages').findOne({
     user: qaAuth.userId,
     conversationId,
@@ -489,8 +515,8 @@ async function readLatestTurnState({ qaAuth, conversationId, userMessageId, assi
   return {
     parentHash: hashValue(parent?.messageId || ''),
     parentTextLength: parentText.length,
-    parentIncludesTestOk: /\bTEST_OK\b/.test(parentText),
-    parentExactExpected: isExactExpectedAnswer(parentText, 'TEST_OK'),
+    parentIncludesExpectedText: textIncludesExpectedAnswer(parentText, expectedText),
+    parentExactExpected: isExactExpectedAnswer(parentText, expectedText),
     directAssistantCount: directChildren.length,
     phaseBChildCount: phaseBChildren.length,
     phaseBChildVisibleTextCount: childVisibleTextCount,
@@ -610,11 +636,18 @@ async function run() {
       requireExactText: true,
     });
     await page.waitForFunction(
-      () => /\bTEST_OK\b/.test(document.body.innerText || ''),
-      undefined,
+      (expectedText) =>
+        String(document.body.innerText || '')
+          .replace(/\s+/g, ' ')
+          .toLowerCase()
+          .includes(String(expectedText || '').replace(/\s+/g, ' ').trim().toLowerCase()),
+      args.testExpectedText,
       { timeout: 60000 },
     );
-    result.testOkVisibleBeforeReload = /\bTEST_OK\b/.test(await visibleBodyText(page));
+    result.testOkVisibleBeforeReload = textIncludesExpectedAnswer(
+      await visibleBodyText(page),
+      args.testExpectedText,
+    );
 
     // Wait past the normal activation/status window so a stale-history activation has time to attach.
     await page.waitForTimeout(Math.max(0, args.settleMs));
@@ -623,12 +656,13 @@ async function run() {
       conversationId,
       userMessageId: latestUserMessage.messageId,
       assistantMessageId: latestAssistantParent.messageId,
+      expectedText: args.testExpectedText,
     });
     const latestParentText = extractVisibleAnswerTextFromMessage(latestAssistantParent);
     Object.assign(result, {
       latestParentHash: latestState.parentHash,
       latestParentTextLength: latestState.parentTextLength,
-      latestParentIncludesTestOk: latestState.parentIncludesTestOk,
+      latestParentIncludesTestOk: latestState.parentIncludesExpectedText,
       latestParentExactExpectedText: isExactExpectedAnswer(
         latestParentText,
         args.testExpectedText,
@@ -651,7 +685,10 @@ async function run() {
       authState = await installAccessToken(page, qaAuth.accessToken);
       result.directAccessTokenFallbackUsed ||= authState.mode === 'direct_access_token_fallback';
     }
-    result.testOkVisibleAfterReload = /\bTEST_OK\b/.test(await visibleBodyText(page));
+    result.testOkVisibleAfterReload = textIncludesExpectedAnswer(
+      await visibleBodyText(page),
+      args.testExpectedText,
+    );
     result.pass =
       result.setupCardsVisible &&
       result.setupFollowUpReady &&
@@ -694,10 +731,11 @@ async function run() {
     `- Setup follow-up ready: ${Boolean(result.setupFollowUpReady)}`,
     `- Latest assistant hash: \`${result.latestParentHash || 'unverified'}\``,
     `- Latest parent text length: ${result.latestParentTextLength}`,
-    `- Latest parent includes TEST_OK: ${Boolean(result.latestParentIncludesTestOk)}`,
+    `- Expected text: \`${hashValue(args.testExpectedText)}\``,
+    `- Latest parent includes expected text: ${Boolean(result.latestParentIncludesTestOk)}`,
     `- Latest parent exactly expected text: ${Boolean(result.latestParentExactExpectedText)}`,
-    `- TEST_OK visible before reload: ${Boolean(result.testOkVisibleBeforeReload)}`,
-    `- TEST_OK visible after reload: ${Boolean(result.testOkVisibleAfterReload)}`,
+    `- Expected text visible before reload: ${Boolean(result.testOkVisibleBeforeReload)}`,
+    `- Expected text visible after reload: ${Boolean(result.testOkVisibleAfterReload)}`,
     `- Latest direct assistant count: ${result.latestDirectAssistantCount}`,
     `- Latest Phase B child count: ${result.latestPhaseBChildCount}`,
     `- Latest Phase B visible child count: ${result.latestPhaseBChildVisibleTextCount}`,

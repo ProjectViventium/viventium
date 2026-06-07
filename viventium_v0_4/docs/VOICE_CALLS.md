@@ -52,6 +52,10 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   is reachable and before the voice worker starts. Prewarm failures are logged as startup evidence
   and should not prevent the rest of the runtime from starting; each prewarm request is bounded so
   route compilation cannot hold startup behind a long hang.
+- The helper's steady-state readiness check uses the modern playground's lightweight `/api/health`
+  route. It must not use the root page as a recurring health probe, because the root route renders
+  the user-facing Next.js app and can create unnecessary dev-server work and log volume while local
+  prod is simply staying available.
 - The stable sequence is:
   1. fetch connection details with explicit call-session dispatch prepared, then connect the room
      with microphone disabled
@@ -70,7 +74,12 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   receipt plus persisted `activeJobId`/`activeWorkerId`.
 - The connection-details request that wins the Viventium dispatch claim force-creates explicit
   LiveKit dispatch. A `ListDispatch` entry from token room config is not enough evidence that a
-  local LiveKit worker will be assigned.
+  local LiveKit worker will be assigned. On the forced-create path, `ListDispatch` cleanup is
+  best-effort because local LiveKit can briefly return `503` while `CreateDispatch` remains the
+  useful recovery action.
+- If the room connects and no agent participant appears after the microphone is published, the
+  playground performs a bounded dispatch reclaim. This covers the cold-start race where dispatch
+  is accepted before the worker is registered and LiveKit does not replay the publisher assignment.
 - The playground retries transient `/api/connection-details`, call-state, and voice-settings fetch
   failures once during startup and never shows raw browser errors such as `Failed to fetch` as the
   user-facing recovery text.
@@ -121,12 +130,12 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   Phase A start after the first true background activation with a generic "background is brewing"
   instruction. Final activation detection continues for Phase B, and text surfaces keep waiting for
   the full detection budget.
-- `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=false` is the shipped default so the main voice
-  LLM does not start before Phase A has either seen the first true activation or reached the voice
-  Phase A wait budget. Fully async detection remains available only as an explicit opt-in.
-- Fully async opt-in detection uses `all_within_budget` semantics in the background so Phase B gets
-  the complete activated set; the early `any_activated_on_voice` release applies to the shipped sync
-  Phase A path.
+- `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC=true` is the shipped default. The main voice LLM
+  and activation detection start together; if a cortex activates inside the 690 ms budget before
+  visible output, the speculative answer is aborted and Phase A is re-run with activation awareness.
+  Phase B still receives the complete activated set.
+- Text chat uses its own independent flag, `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC`, and
+  remains OFF by default with a 1300 ms budget.
 - Internal `cortex_insight` content remains available in LibreChat's background-insight UI, but it
   must not be voiced directly into the modern playground transcript/TTS path.
 - Voice follow-up requests set `suppressBackgroundCortices=true` to prevent recursion.
@@ -194,8 +203,21 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   chunk.
 - The final text emitted to TTS after phrase buffering must be speech-safe. The gateway strips or
   converts source/reference labels, citation remnants, markdown links/images, raw URLs, bare
-  domains, emails, code fences, headings, list/table scaffolding, unknown angle tags, and stray
-  spaces before punctuation before the chunk is forwarded to LiveKit TTS.
+  `http(s)`/`www` links, emails, code fences, inline markdown emphasis/decorative markers,
+  headings, list/table scaffolding, unknown angle tags, and stray spaces before punctuation before
+  the chunk is forwarded to LiveKit TTS. Bare dot-heavy technical tokens such as `.NET`, `asp.net`,
+  `node.js`, and version-like strings are preserved unless they appear inside explicit source/link
+  scaffolding.
+- Artifact handling is centralized in the product module
+  `viventium_v0_4/LibreChat/api/server/services/viventium/voiceArtifactText.js`; QA re-exports it
+  from `qa/modern-playground-voice/scripts/voice_artifact_contract.cjs`. Browser, Chrome, and
+  text-level regressions should import that condition list instead of maintaining separate
+  forbidden-marker
+  inventories for punctuation-only chunks, source/citation remnants, raw links/emails, voice-control
+  markup, markdown emphasis/decorative markers, missing-space joins, malformed no-response markers,
+  or duplicate stream snapshots. The Python LiveKit and Telegram TTS sanitizers remain
+  implementation adapters, and their tests load the same JavaScript contract to prevent condition
+  drift.
 - For incident diagnosis, `VIVENTIUM_VOICE_LOG_TTS_INPUTS=1` emits `[VoiceTTSInput]` at the final
   provider boundary. Those lines show forwarded/dropped/control actions, provider class/transport,
   punctuation-only status, leading/trailing-space flags, and JSON-escaped text, so a spoken `dot`
@@ -388,6 +410,15 @@ Defaults mirror v1:
 Supported providers:
 - `whisper_local` / `pywhispercpp` (local whisper.cpp, wrapped in StreamAdapter+Silero VAD)
 - `assemblyai` (requires `ASSEMBLYAI_API_KEY`)
+  - Selectable streaming engine in the modern playground "Listening" picker, also settable via
+    canonical `voice.stt.model` / `VIVENTIUM_ASSEMBLYAI_STT_MODEL`:
+    - `u3-rt-pro` — **default**, AssemblyAI Universal-3 Pro streaming (validated for quality +
+      latency in R&D `private/rnd/livekit_performance`)
+    - `universal-streaming-english`
+    - `universal-streaming-multilingual`
+  - The selected engine is passed straight to `assemblyai.STT(model=...)`. Unknown/empty values
+    normalize back to `u3-rt-pro` so the provider never receives an invalid model string. The picker
+    must list only plugin-valid ids (no cosmetic placeholder such as the legacy `universal-streaming`).
 - `openai` (uses `VIVENTIUM_OPENAI_STT_MODEL`, wrapped in StreamAdapter+VAD when available)
 
 VAD tuning (shared with v1):
@@ -481,7 +512,10 @@ Added: 2026-01-11
 ## Optional Voice Knobs
 - `VIVENTIUM_VOICE_MODE_PROMPT` (override voice-mode instructions)
 - `VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE` (default `any_activated_on_voice`)
-- `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC` (default `false`; fully async opt-in)
+- `VIVENTIUM_VOICE_BACKGROUND_AGENT_DETECTION_ASYNC` (default `true`)
+- `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC` (default `false`; text surfaces only)
+- `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS` (default `690`)
+- `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS` (default `1300`; text surfaces only)
 - `VIVENTIUM_VOICE_CORTEX_DETECT_TIMEOUT_MS` (0 = disable for voice)
 - `VIVENTIUM_VOICE_FOLLOWUP_TIMEOUT_S`
 - `VIVENTIUM_VOICE_FOLLOWUP_INTERVAL_S`
@@ -506,6 +540,7 @@ Added: 2026-01-11
 - `VIVENTIUM_VOICE_RESUME_FALSE_INTERRUPTION`
 - `VIVENTIUM_VOICE_MIN_CONSECUTIVE_SPEECH_DELAY_S`
 - `VIVENTIUM_TURN_DETECTION` (`vad`, `stt`, `turn_detector`)
+- `VIVENTIUM_ASSEMBLYAI_STT_MODEL` (`u3-rt-pro` default, `universal-streaming-english`, `universal-streaming-multilingual`)
 - `VIVENTIUM_ASSEMBLYAI_END_OF_TURN_CONFIDENCE_THRESHOLD`
 - `VIVENTIUM_ASSEMBLYAI_MIN_END_OF_TURN_SILENCE_WHEN_CONFIDENT_MS`
 - `VIVENTIUM_ASSEMBLYAI_MAX_TURN_SILENCE_MS`

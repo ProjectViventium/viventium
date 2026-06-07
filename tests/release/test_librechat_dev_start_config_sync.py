@@ -43,3 +43,12 @@ def test_full_stack_launcher_compiles_prompt_registry_bundle() -> None:
     assert 'export VIVENTIUM_PROMPT_BUNDLE_PATH="$prompt_bundle_target"' in launcher_text
     assert "Prompt registry bundle generated at $prompt_bundle_target" in launcher_text
     subprocess.run(["bash", "-n", str(FULL_STACK_LAUNCHER_PATH)], check=True)
+
+
+def test_full_stack_launcher_binds_librechat_host_deterministically() -> None:
+    launcher_text = FULL_STACK_LAUNCHER_PATH.read_text(encoding="utf-8")
+
+    assert "HOST=127.0.0.1" in launcher_text
+    assert 'upsert_env_kv "$env_file" "HOST" "127.0.0.1"' in launcher_text
+    assert 'export HOST="127.0.0.1"' in launcher_text
+    subprocess.run(["bash", "-n", str(FULL_STACK_LAUNCHER_PATH)], check=True)

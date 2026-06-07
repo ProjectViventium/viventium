@@ -14,8 +14,9 @@ stream back to Telegram through the existing bridge.
 - Telegram must differentiate voice-note input vs text input and forward that mode to LibreChat.
 - Telegram media transcription failures must surface as explicit media errors, not as transcript text,
   and must not be forwarded into LibreChat as if the user said them.
-- Telegram text responses should leverage MarkdownV2 formatting; voice-mode responses must be plain
-  conversational text.
+- Telegram text responses should use robust Telegram HTML generated from standard Markdown. Telegram
+  voice-note and always-voice audio replies are still text-mode responses with an audio attachment
+  on top; they must not switch the LibreChat turn into LiveKit voice-call mode.
 - Background follow-ups must preserve the same formatting rules as the main response.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
@@ -29,6 +30,13 @@ stream back to Telegram through the existing bridge.
   frontend dev-server exits or launcher-side supervision gaps.
 - Detached/local launches must recover the LibreChat API when the real API child dies even if an
   npm/nodemon parent process is still alive.
+- Local Telegram-to-LibreChat API traffic should default to explicit IPv4 loopback
+  (`127.0.0.1`) to avoid localhost address-family ambiguity during restart windows. Status must
+  treat Telegram as degraded when the bot process is alive but the configured LibreChat API origin
+  cannot be reached.
+- Successful LibreChat stream jobs must remain available briefly after completion so Telegram retry
+  or resume can recover the final event. A late reconnect after a completed response must not become
+  a synthetic generic connection error just because the generation job was deleted immediately.
 
 ## Public-Safe Implementation Notes
 
@@ -63,12 +71,13 @@ stream back to Telegram through the existing bridge.
   user and returns that route to the bot; the bot must treat Cartesia variants as voice IDs
   (Megan/Lyra), not as Sonic model names. Cartesia model selection is Sonic-3-only.
 - Telegram voice output preferences must stay aligned before and after generation:
-  - `VOICE_RESPONSES_ENABLED=false` disables both Telegram audio replies and voice-mode prompt
-    routing.
-  - A Telegram voice note requests LibreChat `voiceMode=true` and should receive an audio reply
-    when voice replies are enabled.
-  - `ALWAYS_VOICE_RESPONSE=true` requests LibreChat `voiceMode=true` even for text messages, so
-    the main agent receives the same voice-surface instructions before it generates the answer.
+  - `VOICE_RESPONSES_ENABLED=false` disables Telegram audio replies.
+  - Telegram always remains a text-mode LibreChat surface. A voice note sends
+    `voiceMode=false`, `viventiumSurface=telegram`, and `viventiumInputMode=voice_note`; it should
+    receive an audio reply when voice replies are enabled.
+  - `ALWAYS_VOICE_RESPONSE=true` sends `voiceMode=false`, `viventiumSurface=telegram`, and
+    `viventiumInputMode=text` for text messages; it only adds Telegram audio delivery after the
+    text-mode main answer is generated.
   - `input_mode` remains structural: only actual voice-note input is sent as `voice_note`; text
     messages with always-voice output still use `input_mode=text`.
 - When the resolved Speaking route is Cartesia, Telegram follows the same Sonic-3 voice markup
@@ -76,8 +85,8 @@ stream back to Telegram through the existing bridge.
   - the canonical Cartesia Sonic-3 capability contract is
     `viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json`; Telegram must not carry a
     separate emotion list or tag vocabulary
-  - the main agent may emit Cartesia SSML-like tags and bracket nonverbal markers only because the
-    voice-mode prompt instructed it to do so
+  - Telegram does not request the LiveKit voice-mode prompt; audio replies are synthesized from the
+    text-mode answer after speech-safe cleanup
   - runtime must not invent emotion tags or infer emotion from user intent
   - raw LLM text with Cartesia markup is preserved for TTS
   - Cartesia-supported nonverbal markers from the shared contract are preserved, while structural
@@ -158,8 +167,21 @@ stream back to Telegram through the existing bridge.
   checkout, terminal, launch helper, or stale supervised process must fail closed before polling
   begins, otherwise Telegram's `getUpdates` API alternates conflicts between the processes and
   voice replies can be delayed or split from the text reply.
+- Telegram startup/watchdog logic must reconcile the real scoped bot process list before launching:
+  a pidfile-free live bot from the same checkout must be adopted back into the PID contract, and
+  multiple same-checkout bot processes must be collapsed to one instead of starting an additional
+  poller.
 - The same-token lock must live in a durable Viventium runtime lock directory, not a temporary
   directory that the OS may clean while the process is still running.
+- The macOS status-bar helper must not report the stack as simply running when Telegram is enabled
+  but the live Telegram sidecar has a missing PID or a recent polling/auth runtime issue. Core web
+  health can remain usable, but the helper must surface that enabled sidecars need attention.
+- Telegram command/message handling must tolerate transient Bot API `getMe` timeouts without
+  crashing the user turn. Reply-context fallback is allowed only when the reply sender actually
+  exists; a non-reply message should continue through the normal LibreChat bridge path.
+- Telegram error logs must identify failures with non-secret structural metadata such as update ID
+  and message ID. They must not log raw Telegram update objects because those can include private
+  message text, chat IDs, usernames, or attachments.
 - Non-secret voice delivery timing logs must be available in normal runtime logs. Each voice-routed
   Telegram turn should log the gate decision, TTS start, TTS chunk duration/bytes, and Telegram audio
   send duration without logging bot tokens, API keys, raw private message text, or local paths.
@@ -177,6 +199,14 @@ stream back to Telegram through the existing bridge.
   row without creating a duplicate conversation message.
 - Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
   collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
+- Telegram SSE resume must tolerate the normal race where generation completes while the first
+  stream connection is interrupted. The configured stream services should retain completed
+  successful jobs for the store's short completion TTL and replay the cached final event to late
+  subscribers. Truly expired or missing streams may still return a clear missing/expired-stream
+  failure, but the normal completion path must not be reported as a generic connection problem.
+- Transport-level bridge fallbacks must remain text-mode diagnostics, not synthetic voice replies.
+  When Telegram always-voice output is enabled, the bot may voice assistant answers, but it must not
+  synthesize local transport/plumbing failures such as an exhausted expired-stream retry.
 - Telegram GlassHive delivery dispatcher tuning is operational only:
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S` controls the background delivery poll interval
     and defaults to 5 seconds.

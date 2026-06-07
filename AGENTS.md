@@ -3,6 +3,16 @@
 Lean repository-specific instructions for Codex. Keep this file short, concrete, and focused on
 Viventium-specific rules; deep feature truth belongs in the existing docs.
 
+## Core Outcome Metric
+
+**outcome = Quality (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable)**
+are the core metric of the viventium project that we must always evaluate in tests, QA, development, design.
+Never optimize Performance in isolation — a faster result that is less intelligent, relevant, useful, or
+aligned is a regression. Where multiple paths can serve the same request (e.g. an in-process hand-off agent
+vs a GlassHive worker), aim for **parity**: each path must meet this metric on its own AI. Do not hardcode a
+routing rubric ("which path for which request"); let the Main Agent and worker decide intelligently, and make
+every path truthful, complete, useful, and fast.
+
 ## Read Before Coding
 
 For any non-trivial task, read:
@@ -74,8 +84,11 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Trace the real owning path before editing: trigger -> config/compiler -> runtime -> user-visible
   output.
 - For local stable-runtime work, keep the modes distinct:
-  - local prod is the installed user-facing runtime started by the helper
-  - dev envs are optional side-by-side runtimes with separate app-facing ports/state
+  - local prod is the installed user-facing runtime started by the helper; its default
+    app-facing ports are API `3180`, LibreChat web `3190`, and modern playground `3300`
+  - dev envs are optional side-by-side runtimes with separate app-facing ports/state; the
+    default `dev` offset keeps them on API `4180`, LibreChat web `4190`, and modern playground
+    `4300`
   - heavy singleton services stay shared by default: recall/RAG, SearXNG, Firecrawl, Google Workspace MCP, and Microsoft 365 MCP
   - promoting a local checkout uses `bin/viventium dev-runtime activate-current --validate --restart`; do not copy source into install paths
 - For install/runtime/release fixes, classify the delivery surfaces separately:
@@ -93,6 +106,17 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Prefer shared structural fixes over one-off patches, hacks, or owner-machine workarounds.
 - Do not hardcode on agent names, prompt text, tool substrings, provider labels, user identity, or one machine's state unless a source-of-truth doc explicitly requires it.
 - CRITICAL RULE: do not add regex or keyword matching in runtime code to detect user intent, provider selection, email phrasing, or productivity scope. Activation prompts in `viventium_v0_4/LibreChat/viventium/source_of_truth/<env>.viventium-agents.yaml` own that behavior; classifier outages are solved with `activation.fallbacks`, not heuristics.
+- For GlassHive, remember that workers are general intelligent workers: less is more. The host
+  should broker real goals, constraints, files, MCP/tool capabilities, and tool results without
+  inventing plans, success criteria, provider lists, fake MCP usage, forced artifacts, or
+  prompt-specific workflows; harness/runtime owns reliable data in/out, prerequisite recovery, and
+  universal completion self-checks.
+- For GlassHive brokered MCP/tool work, the host is a faithful courier, not the planner. Pass the
+  user's ask through with factual available context and brokered capabilities, then go hands off so
+  the worker can decide the path. Do not predict which provider, account, tool, artifact, rubric, or
+  workflow the worker should use unless the user explicitly specified it or verified tool evidence
+  proves it. Add observability and QA around the handoff so drift is caught by logs/tests, not only
+  by trusting prompt wording.
 - If a proposed fix looks like the user's exact complaint turned into an `if` statement, widen the
   investigation first.
 - In the LibreChat fork, wrap upstream modifications with `VIVENTIUM START` / `VIVENTIUM END` plus

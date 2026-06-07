@@ -251,6 +251,8 @@ def test_preflight_checks_glasshive_host_worker_required_clis(monkeypatch, tmp_p
     monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
     monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
     monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex"})
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == "codex")
+    monkeypatch.setattr(module, "host_cli_exists", lambda command: command != "openclaw")
 
     items = module.build_preflight_items(
         {
@@ -270,12 +272,68 @@ def test_preflight_checks_glasshive_host_worker_required_clis(monkeypatch, tmp_p
     by_key = {item.key: item for item in items}
 
     assert by_key["glasshive_callback_secret"].status == "ok"
+    assert by_key["glasshive_host_worker_cli_auth"].status == "ok"
     assert by_key["glasshive_host_codex_cli"].status == "ok"
-    assert by_key["glasshive_host_claude_cli"].status == "missing"
-    assert by_key["glasshive_host_claude_cli"].install_kind == "manual"
-    assert by_key["glasshive_host_openclaw_cli"].status == "missing"
-    assert by_key["glasshive_host_openclaw_cli"].install_kind == "manual"
+    assert by_key["glasshive_host_claude_cli"].status == "optional"
+    assert by_key["glasshive_host_openclaw_cli"].status == "optional"
     assert by_key["glasshive_host_workspace_root"].status == "ok"
+
+
+def test_preflight_accepts_codex_app_bundle_for_host_workers(monkeypatch, tmp_path: Path) -> None:
+    module = load_preflight_module()
+    app_cli = tmp_path / "Codex.app" / "Contents" / "Resources" / "codex"
+    app_cli.parent.mkdir(parents=True)
+    app_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    app_cli.chmod(0o755)
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "CODEX_APP_CLI", app_cli)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security"})
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == "codex")
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "host_worker": {"enabled": True, "workspace_root": str(tmp_path / "workers")},
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_host_worker_cli_auth"].status == "ok"
+    assert by_key["glasshive_host_codex_cli"].status == "ok"
+    assert by_key["glasshive_host_codex_cli"].install_kind == "none"
+
+
+def test_preflight_accepts_codex_app_bundle_from_user_app_search_path(monkeypatch, tmp_path: Path) -> None:
+    module = load_preflight_module()
+    app_root = tmp_path / "Applications"
+    app_cli = app_root / "Codex.app" / "Contents" / "Resources" / "codex"
+    app_cli.parent.mkdir(parents=True)
+    app_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    app_cli.chmod(0o755)
+    monkeypatch.setenv("VIVENTIUM_CODEX_APP_DIRS", str(app_root))
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security"})
+
+    assert module.host_cli_exists("codex") is True
 
 
 def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
@@ -296,6 +354,9 @@ def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
     monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
     monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
     monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex", "claude"})
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == "codex")
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command in {"codex", "claude"})
+    monkeypatch.setattr(module, "host_cli_exists", lambda command: command != "openclaw")
 
     items = module.build_preflight_items(
         {
@@ -306,10 +367,90 @@ def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
     )
     by_key = {item.key: item for item in items}
 
+    assert by_key["glasshive_host_worker_cli_auth"].status == "ok"
     assert by_key["glasshive_host_codex_cli"].status == "ok"
     assert by_key["glasshive_host_claude_cli"].status == "ok"
-    assert by_key["glasshive_host_openclaw_cli"].status == "missing"
+    assert by_key["glasshive_host_openclaw_cli"].status == "optional"
     assert by_key["glasshive_host_workspace_root"].status == "ok"
+
+
+def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "claude"})
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == "claude")
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "host_worker": {"enabled": True, "workspace_root": str(tmp_path / "workers")},
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_host_worker_cli_auth"].status == "ok"
+    assert by_key["glasshive_host_codex_cli"].status == "optional"
+    assert by_key["glasshive_host_claude_cli"].status == "ok"
+    assert by_key["glasshive_host_worker_cli_auth"] not in module.missing_items(items)
+
+
+def test_preflight_blocks_glasshive_when_no_worker_cli_is_logged_in(monkeypatch, tmp_path: Path) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security"})
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda _command: False)
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "host_worker": {"enabled": True, "workspace_root": str(tmp_path / "workers")},
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+
+    assert by_key["glasshive_host_worker_cli_auth"].status == "missing"
+    assert "codex login" in by_key["glasshive_host_worker_cli_auth"].manual_command
+    assert by_key["glasshive_host_worker_cli_auth"] in module.manual_missing_items(items)
 
 
 def test_preflight_flags_missing_glasshive_callback_secret(monkeypatch) -> None:
@@ -330,6 +471,8 @@ def test_preflight_flags_missing_glasshive_callback_secret(monkeypatch) -> None:
     monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
     monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
     monkeypatch.setattr(module, "command_exists", lambda command: command in {"git", "security", "codex", "claude"})
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == "codex")
+    monkeypatch.setattr(module, "host_cli_auth_ready", lambda command: command == "codex")
     monkeypatch.delenv("VIVENTIUM_GLASSHIVE_CALLBACK_SECRET", raising=False)
     monkeypatch.delenv("VIVENTIUM_CALL_SESSION_SECRET", raising=False)
 

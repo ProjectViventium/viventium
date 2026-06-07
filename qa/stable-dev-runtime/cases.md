@@ -80,6 +80,22 @@
 - Evidence: dated report under `reports/`
 - Last Run: 2026-05-17 live runtime sanity - passed
 
+## SDR-008: Helper Steady-State Health Checks Stay Lightweight
+
+- Requirement: `50_Stable_Dev_Runtime.md`, `viventium_v0_4/docs/VOICE_CALLS.md`
+- Surfaces: macOS helper, modern playground, helper-launched logs
+- Preconditions: installed local-prod runtime is running with the modern playground enabled
+- Steps: inspect the helper source/test contract, load the modern playground health route, and compare
+  helper/start logs before and after a steady-state observation window
+- Expected Result: helper status refreshes share one health snapshot per tick, the playground probe
+  uses `/api/health` instead of `/`, steady-running checks back off, and helper-launched stack logs are
+  rotated on new starts when oversized
+- Forbidden Result: recurring helper `GET / 200` root-page probes, duplicated health probes per refresh
+  cycle, unbounded helper-start log growth, or any recommendation to stop local prod/Docker as the
+  durable product fix
+- Evidence: dated report under `reports/`
+- Last Run: 2026-05-27 implementation QA - passed with live helper refresh
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Stable Dev Runtime. Add narrower feature-specific
@@ -90,6 +106,7 @@ rows before claiming a pass when the feature behavior changes.
 | `STABLEDEV-UC-001` | Run the stable dev runtime status/start path and inspect generated runtime config, helper state, and web surface reachability. | `50_Stable_Dev_Runtime.md` / `SDR-001`-`SDR-007` | `bin/viventium status`, dev-runtime/dev-env CLI, helper status, and browser/health endpoints | Generated config summary, status output, helper state, logs, release tests, and dated QA report | Core services and optional services are classified truthfully, with helper status separate from runtime readiness. | 2026-05-17 live runtime sanity - passed for status classification |
 | `STABLEDEV-UC-002` | Run the same status path when optional services or helper surfaces are disabled/unreachable. | `50_Stable_Dev_Runtime.md` / `SDR-007` | CLI status, generated runtime config, helper state, and logs | Optional service health, stale lock checks, generated env/config, logs, and QA report | Status says needs attention/action required for unreachable enabled optional surfaces and never masks broken dependencies as ready. | 2026-05-17 live runtime sanity - passed |
 | `STABLEDEV-UC-003` | Start and stop Prompt Workbench from the CLI/helper path and verify it does not start or stop the main Viventium runtime. | `50_Stable_Dev_Runtime.md` / `SDR-006` | CLI prompt-workbench lifecycle, helper submenu, health endpoint, process state | PID/port metadata summary, `/api/health`, process state, helper install inspection, and QA report | Only the managed workbench process is affected; LibreChat/main Viventium stack state is preserved. | 2026-05-15 local CLI/helper integration QA - passed |
+| `STABLEDEV-UC-004` | Leave local prod running while developing and verify the helper does not continuously render user-facing root pages to decide health. | `50_Stable_Dev_Runtime.md` / `SDR-008` | macOS helper, modern playground `/api/health`, helper-launched logs, real browser route check | Helper source/test contract, Playwright health/root checks, sanitized log counts, live port/process snapshot | Local prod stays up, dev/server logs stop accumulating helper root-page probes, and no singleton service is stopped or duplicated. | 2026-05-27 implementation QA - passed with live helper refresh |
 
 ## Release Test Traceability
 

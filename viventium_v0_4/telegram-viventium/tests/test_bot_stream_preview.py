@@ -18,6 +18,11 @@ _fake_pil.Image = _fake_pil_image
 sys.modules.setdefault("PIL", _fake_pil)
 sys.modules.setdefault("PIL.Image", _fake_pil_image)
 
+# Some lightweight utility tests install a minimal `config` stub in sys.modules.
+# This module imports the real bot, so clear that stub before bot import.
+if "config" in sys.modules and not hasattr(sys.modules["config"], "__file__"):
+    sys.modules.pop("config", None)
+
 import bot as tg_bot  # noqa: E402
 from utils.librechat_bridge import TelegramLinkRequired  # noqa: E402
 
@@ -60,9 +65,29 @@ class _FakeTelegramBot:
         return None
 
 
+class _FailingGetMeBot(_FakeTelegramBot):
+    async def get_me(self, **_kwargs):
+        raise TimeoutError("synthetic get_me timeout")
+
+
 class _FakeContext:
     def __init__(self) -> None:
         self.bot = _FakeTelegramBot()
+
+
+class _FakeJobQueue:
+    def __init__(self) -> None:
+        self.jobs = []
+
+    def run_once(self, *args, **kwargs):
+        self.jobs.append((args, kwargs))
+
+
+class _FakeCommandContext:
+    def __init__(self) -> None:
+        self.bot = _FailingGetMeBot()
+        self.args = []
+        self.job_queue = _FakeJobQueue()
 
 
 def _make_message_info(*, voice_error_text=None):
@@ -309,10 +334,19 @@ class _FakeChat:
 
 class _FakeUpdateMessage:
     def __init__(self) -> None:
-        self.from_user = _FakeUser()
+        self.from_user = types.SimpleNamespace(
+            id=_FakeUser.id,
+            username=_FakeUser.username,
+            first_name="Sample",
+            is_bot=False,
+        )
         self.chat = _FakeChat()
         self.date = datetime.now(timezone.utc)
         self.reply_text_calls = []
+        self.reply_to_message = None
+        self.voice = None
+        self.video_note = None
+        self.audio = None
 
     async def reply_text(self, *args, **kwargs):
         self.reply_text_calls.append((args, kwargs))
@@ -339,6 +373,208 @@ class _LinkRequiredRobot:
 
     def reset(self, *args, **kwargs):
         _ = args, kwargs
+
+
+def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypatch):
+    class _CaptureRobot:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args
+            self.kwargs = kwargs
+            yield "Hello [laughter]"
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        return b"voice-bytes"
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(
+            get_config=lambda _convo_id, key: (
+                True if key in {"ALWAYS_VOICE_RESPONSE", "VOICE_RESPONSES_ENABLED"} else ""
+            ),
+        ),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+    monkeypatch.setattr(
+        tg_bot,
+        "resolve_tts_selection",
+        lambda *, voice_route=None: {"provider": "xai", "source": "test", "variant": "Eve"},
+    )
+
+    robot = _CaptureRobot()
+    context = _FakeContext()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="reply with audio",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-always-voice-text-mode",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert robot.kwargs["voice_mode"] is False
+    assert robot.kwargs["input_mode"] == "text"
+    assert len(context.bot.audios) == 1
+    rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
+    assert "[laughter]" not in rendered
+
+
+def test_get_viventium_response_does_not_voice_transport_bridge_errors(monkeypatch):
+    class _BridgeErrorRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield {
+                "type": "bridge_error",
+                "text": "Response stream expired during reconnect. Please send the message again.",
+                "speak": False,
+            }
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        return b"voice-bytes"
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(
+            get_config=lambda _convo_id, key: (
+                True if key in {"ALWAYS_VOICE_RESPONSE", "VOICE_RESPONSES_ENABLED"} else ""
+            ),
+        ),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+    monkeypatch.setattr(
+        tg_bot,
+        "resolve_tts_selection",
+        lambda *, voice_route=None: {"provider": "xai", "source": "test", "variant": "Eve"},
+    )
+
+    context = _FakeContext()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_BridgeErrorRobot(),
+            message="reply with audio",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-bridge-error-no-voice",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
+    assert "Response stream expired during reconnect" in rendered
+    assert context.bot.audios == []
+
+
+def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input(monkeypatch):
+    class _CaptureRobot:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args
+            self.kwargs = kwargs
+            yield "Voice note received."
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        return b"voice-bytes"
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(
+            get_config=lambda _convo_id, key: (
+                False if key == "ALWAYS_VOICE_RESPONSE" else True
+            ),
+        ),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+    monkeypatch.setattr(
+        tg_bot,
+        "resolve_tts_selection",
+        lambda *, voice_route=None: {"provider": "xai", "source": "test", "variant": "Eve"},
+    )
+
+    robot = _CaptureRobot()
+    context = _FakeContext()
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=robot,
+            message="transcribed voice note",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=True,
+            files=None,
+            trace_id="test-voice-note-text-mode",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert robot.kwargs["voice_mode"] is False
+    assert robot.kwargs["input_mode"] == "voice_note"
+    assert len(context.bot.audios) == 1
 
 
 def test_get_viventium_response_stream_preview_flush_no_unbound(monkeypatch):
@@ -665,3 +901,84 @@ def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
     assert len(context.bot.messages) == 1
     assert context.bot.messages[0]["text"] == "Temporarily unable to transcribe this video note. Please retry."
     assert "🎤 Transcription" not in context.bot.messages[0]["text"]
+
+
+def test_command_bot_get_me_timeout_without_reply_does_not_crash(monkeypatch):
+    update_message = _FakeUpdateMessage()
+    message_info = (
+        "hello",
+        "hello",
+        None,
+        "chat-1",
+        42,
+        None,
+        update_message,
+        None,
+        "chat-1:user-1",
+        None,
+        None,
+        None,
+        None,
+        [],
+    )
+    forwarded = []
+
+    async def _fake_get_message_info(*_args, **_kwargs):
+        return message_info
+
+    async def _fake_get_viventium_response(*args, **kwargs):
+        forwarded.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(tg_bot.decorators, "GetMesageInfo", _fake_get_message_info)
+    monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_get_message_info)
+    monkeypatch.setattr(tg_bot, "getViventiumResponse", _fake_get_viventium_response)
+    monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "whitelist", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "GROUP_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "ADMIN_LIST", None, raising=False)
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_args, **_kwargs: False),
+    )
+    monkeypatch.setattr(
+        tg_bot.config,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_args, **_kwargs: False),
+        raising=False,
+    )
+    monkeypatch.setattr(tg_bot, "get_robot", lambda _convo_id: (_FakeRobot(), None, None, None))
+    monkeypatch.setattr(tg_bot.config, "get_robot", lambda _convo_id: (_FakeRobot(), None, None, None), raising=False)
+    monkeypatch.setattr(tg_bot, "remove_job_if_exists", lambda *_args, **_kwargs: None)
+
+    update = types.SimpleNamespace(
+        update_id=99,
+        effective_user=types.SimpleNamespace(id="user-1", username="sampleuser"),
+        effective_chat=types.SimpleNamespace(id="chat-1"),
+    )
+    context = _FakeCommandContext()
+
+    asyncio.run(tg_bot.command_bot(update, context, has_command=False))
+
+    assert len(forwarded) == 1
+    assert context.job_queue.jobs
+
+
+def test_error_handler_does_not_log_raw_update_text(caplog):
+    class _PrivateUpdate:
+        update_id = 123
+        effective_message = types.SimpleNamespace(message_id=456)
+
+        def __str__(self):
+            return "PRIVATE MESSAGE TEXT SHOULD NOT BE LOGGED"
+
+    context = types.SimpleNamespace(error=RuntimeError("synthetic failure"))
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(tg_bot.error(_PrivateUpdate(), context))
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "PRIVATE MESSAGE TEXT" not in log_text
+    assert "update_id=123" in log_text
+    assert "message_id=456" in log_text

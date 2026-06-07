@@ -34,6 +34,29 @@ private struct CommandCaptureResult {
     let stdout: String
 }
 
+private struct StackHealthSnapshot {
+    let apiReady: Bool
+    let frontendReady: Bool
+    let playgroundReady: Bool
+    let optionalSurfacesReady: Bool
+
+    var coreHealthy: Bool {
+        self.apiReady && self.frontendReady && self.playgroundReady
+    }
+
+    var healthy: Bool {
+        self.coreHealthy && self.optionalSurfacesReady
+    }
+
+    var needsAttention: Bool {
+        self.coreHealthy && !self.optionalSurfacesReady
+    }
+
+    var preferredSurfaceIsPlaygroundOnly: Bool {
+        !self.coreHealthy && self.playgroundReady
+    }
+}
+
 private struct HealWorkflowSettings {
     let provider: String
     let reasoningEffort: String
@@ -55,6 +78,7 @@ private enum TranscriptIngestSourceStatus: Equatable {
 
 enum StackState: Equatable {
     case running
+    case needsAttention
     case stopped
     case starting
     case stopping
@@ -64,6 +88,8 @@ enum StackState: Equatable {
         switch self {
         case .running:
             return "Running"
+        case .needsAttention:
+            return "Needs Attention"
         case .stopped:
             return "Stopped"
         case .starting:
@@ -79,6 +105,8 @@ enum StackState: Equatable {
         switch self {
         case .running:
             return "Stop"
+        case .needsAttention:
+            return "Repair"
         case .stopped, .unavailable:
             return "Start"
         case .starting:
@@ -136,6 +164,8 @@ final class HelperController: ObservableObject {
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
     private var launchAtLoginRefreshTask: Task<Void, Never>?
+    private var steadyStateHealthSnapshot: (runtime: RuntimePorts, checkedAt: Date, snapshot: StackHealthSnapshot)?
+    private let steadyStateHealthRefreshInterval: TimeInterval = 30
     private let automaticTerminationReason = "Viventium status-bar helper keeps the local runtime available after login."
 
     init() {
@@ -294,7 +324,7 @@ final class HelperController: ObservableObject {
 
     func openViventium() {
         switch self.stackState {
-        case .running:
+        case .running, .needsAttention:
             self.openBrowser()
         case .starting, .stopping:
             return
@@ -316,7 +346,7 @@ final class HelperController: ObservableObject {
         switch self.stackState {
         case .running:
             self.stopStack()
-        case .stopped, .unavailable:
+        case .needsAttention, .stopped, .unavailable:
             self.startStack(openWhenReady: false)
         case .starting, .stopping:
             return
@@ -443,7 +473,19 @@ final class HelperController: ObservableObject {
             let runResult = Self.runMemoryHardeningCaptured(
                 repoRoot: config.repoRoot,
                 appSupportDir: config.appSupportDir,
-                arguments: ["ingest-transcripts", "--apply", "--until-caught-up", "--ignore-idle-gate", "--json"]
+                arguments: [
+                    "ingest-transcripts",
+                    "--apply",
+                    "--until-caught-up",
+                    "--max-batches",
+                    "1",
+                    "--transcript-max-files-per-run",
+                    "5",
+                    "--interactive-maintenance",
+                    "--ignore-idle-gate",
+                    "--skip-model-probe",
+                    "--json"
+                ]
             )
             let exitStatus = runResult.exitStatus
             let runSummary = Self.transcriptIngestRunSummary(stdout: runResult.stdout)
@@ -1151,12 +1193,21 @@ final class HelperController: ObservableObject {
 
         let allowBusyStateTransition = force
         Task {
-            let preferredOpenURLString = await Self.preferredOpenURLString(runtime: runtime, host: host)
-            let healthy = await Self.userFacingSurfaceHealthy(runtime: runtime)
+            let snapshot = await self.stackHealthSnapshot(
+                runtime: runtime,
+                force: force || self.stackState.actionBusy
+            )
+            let preferredOpenURLString = Self.preferredOpenURLString(
+                runtime: runtime,
+                host: host,
+                snapshot: snapshot
+            )
+            let healthy = snapshot.healthy
             let splitWorkspace = await Self.stackOwnedByDifferentRepo(
                 runtime: runtime,
                 appSupportDir: config.appSupportDir,
-                expectedRepoRoot: config.repoRoot
+                expectedRepoRoot: config.repoRoot,
+                knownSnapshot: snapshot
             )
             self.openURLString = preferredOpenURLString
             let inFlightState = Self.inFlightStackState(appSupportDir: config.appSupportDir)
@@ -1173,6 +1224,10 @@ final class HelperController: ObservableObject {
                 self.stackState = .running
                 return
             }
+            if snapshot.needsAttention {
+                self.stackState = .needsAttention
+                return
+            }
             if shouldPreserveBusyState {
                 return
             }
@@ -1182,6 +1237,23 @@ final class HelperController: ObservableObject {
             }
             self.stackState = .stopped
         }
+    }
+
+    private func stackHealthSnapshot(runtime: RuntimePorts, force: Bool = false) async -> StackHealthSnapshot {
+        if !force,
+           let cached = self.steadyStateHealthSnapshot,
+           cached.runtime == runtime,
+           Date().timeIntervalSince(cached.checkedAt) < self.steadyStateHealthRefreshInterval {
+            return cached.snapshot
+        }
+
+        let snapshot = await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: self.config?.appSupportDir)
+        if snapshot.healthy {
+            self.steadyStateHealthSnapshot = (runtime, Date(), snapshot)
+        } else {
+            self.steadyStateHealthSnapshot = nil
+        }
+        return snapshot
     }
 
     private func refreshLaunchAtLoginState(force: Bool = false) {
@@ -1393,10 +1465,19 @@ final class HelperController: ObservableObject {
                 }
                 return
             }
-            if await Self.userFacingSurfaceHealthy(runtime: runtime) {
+            let snapshot = await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: config.appSupportDir)
+            if snapshot.healthy {
                 await MainActor.run {
                     self.log("Auto-start skipped; stack already healthy (\(trigger))")
                     self.stackState = .running
+                    self.didAttemptLaunchAutostart = true
+                }
+                return
+            }
+            if snapshot.needsAttention {
+                await MainActor.run {
+                    self.log("Auto-start skipped; stack needs attention (\(trigger))")
+                    self.stackState = .needsAttention
                     self.didAttemptLaunchAutostart = true
                 }
                 return
@@ -1715,44 +1796,93 @@ final class HelperController: ObservableObject {
         return (200..<400).contains(status)
     }
 
+    private nonisolated static func playgroundHealthy(port: Int) async -> Bool {
+        guard let status = await self.firstHTTPStatus(urls: self.loopbackCandidateURLs(port: port, path: "/api/health")) else {
+            return false
+        }
+        return (200..<400).contains(status)
+    }
+
+    private nonisolated static func stackHealthSnapshot(
+        runtime: RuntimePorts,
+        appSupportDir: String? = nil
+    ) async -> StackHealthSnapshot {
+        let apiReady = await self.apiHealthy(port: runtime.apiPort)
+        let frontendReady = apiReady ? await self.frontendHealthy(port: runtime.frontendPort) : false
+        // Voice-call deep links land on the dedicated modern playground. Probe it separately so
+        // the helper can still prefer that surface when it is the only user-facing surface ready.
+        let playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)
+        let optionalSurfacesReady = self.optionalSurfacesReady(
+            runtime: runtime,
+            appSupportDir: appSupportDir
+        )
+        return StackHealthSnapshot(
+            apiReady: apiReady,
+            frontendReady: frontendReady,
+            playgroundReady: playgroundReady,
+            optionalSurfacesReady: optionalSurfacesReady
+        )
+    }
+
+    private nonisolated static func optionalSurfacesReady(runtime: RuntimePorts, appSupportDir: String?) -> Bool {
+        guard let appSupportDir else {
+            return true
+        }
+        if runtime.startTelegram {
+            if !self.telegramBridgeRunning(runtime: runtime, appSupportDir: appSupportDir) {
+                return false
+            }
+            if self.recentTelegramRuntimeIssue(
+                logURLs: self.telegramLogURLs(runtime: runtime, appSupportDir: appSupportDir, names: ["telegram_bot.log"])
+            ) {
+                return false
+            }
+        }
+        if runtime.startTelegramCodex && !self.telegramCodexRunning(runtime: runtime, appSupportDir: appSupportDir) {
+            return false
+        }
+        return true
+    }
+
     private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool {
-        let apiReady = await self.apiHealthy(port: apiPort)
-        guard apiReady else {
-            return false
-        }
-        let frontendReady = await self.frontendHealthy(port: frontendPort)
-        guard frontendReady else {
-            return false
-        }
-        // Voice-call deep links land on the dedicated modern playground, so the helper must
-        // require that surface too before it reports Viventium as healthy.
-        return await self.frontendHealthy(port: playgroundPort)
+        await self.stackHealthSnapshot(
+            runtime: RuntimePorts(
+                apiPort: apiPort,
+                frontendPort: frontendPort,
+                playgroundPort: playgroundPort,
+                runtimeProfile: "isolated",
+                startTelegram: false,
+                startTelegramCodex: false,
+                managedStopCheckURLs: []
+            )
+        ).healthy
     }
 
     private nonisolated static func frontendURLString(host: String, port: Int) -> String {
         "http://\(host):\(port)"
     }
 
-    private nonisolated static func preferredOpenURLString(runtime: RuntimePorts, host: String) async -> String {
-        if await self.stackHealthy(
-            apiPort: runtime.apiPort,
-            frontendPort: runtime.frontendPort,
-            playgroundPort: runtime.playgroundPort
-        ) {
+    private nonisolated static func preferredOpenURLString(
+        runtime: RuntimePorts,
+        host: String,
+        snapshot: StackHealthSnapshot
+    ) -> String {
+        if snapshot.healthy {
             return self.frontendURLString(host: host, port: runtime.frontendPort)
         }
-        if await self.frontendHealthy(port: runtime.playgroundPort) {
+        if snapshot.preferredSurfaceIsPlaygroundOnly {
             return self.frontendURLString(host: host, port: runtime.playgroundPort)
         }
         return self.frontendURLString(host: host, port: runtime.frontendPort)
     }
 
+    private nonisolated static func preferredOpenURLString(runtime: RuntimePorts, host: String) async -> String {
+        let snapshot = await self.stackHealthSnapshot(runtime: runtime)
+        return self.preferredOpenURLString(runtime: runtime, host: host, snapshot: snapshot)
+    }
+
     private nonisolated static func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool {
-        return await self.stackHealthy(
-            apiPort: runtime.apiPort,
-            frontendPort: runtime.frontendPort,
-            playgroundPort: runtime.playgroundPort
-        )
+        await self.stackHealthSnapshot(runtime: runtime).healthy
     }
 
     private nonisolated static func waitForHealthyStack(
@@ -1938,6 +2068,17 @@ final class HelperController: ObservableObject {
             return 0
         }
         return size.uint64Value
+    }
+
+    private nonisolated static func rotateHelperLogIfNeeded(_ url: URL, maxBytes: UInt64 = 25 * 1024 * 1024) {
+        guard self.fileSize(url) > maxBytes else {
+            return
+        }
+        let rotatedURL = url.deletingPathExtension()
+            .appendingPathExtension("previous")
+            .appendingPathExtension(url.pathExtension)
+        try? FileManager.default.removeItem(at: rotatedURL)
+        try? FileManager.default.moveItem(at: url, to: rotatedURL)
     }
 
     private nonisolated static func launchFailureMarkerSeen(startLogURL: URL?, startLogOffset: UInt64) -> Bool {
@@ -2323,7 +2464,9 @@ final class HelperController: ObservableObject {
         guard FileManager.default.isExecutableFile(atPath: binViventiumPath) else {
             return nil
         }
-        let logPath = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName).path
+        let logURL = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName)
+        self.rotateHelperLogIfNeeded(logURL)
+        let logPath = logURL.path
         let pidFileURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("runtime/\(pidFileName)")
         let runnerScriptURL = URL(fileURLWithPath: self.helperDetachedCommandScriptPath(
@@ -2831,11 +2974,13 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
     }
 }
 
-private struct RuntimePorts {
+private struct RuntimePorts: Equatable {
     let apiPort: Int
     let frontendPort: Int
     let playgroundPort: Int
     let runtimeProfile: String
+    let startTelegram: Bool
+    let startTelegramCodex: Bool
     let managedStopCheckURLs: [String]
 }
 
@@ -2851,6 +2996,8 @@ private struct RuntimeEnvParser {
             frontendPort: frontendPort,
             playgroundPort: playgroundPort,
             runtimeProfile: runtimeProfile,
+            startTelegram: self.boolValue(values["START_TELEGRAM"]),
+            startTelegramCodex: self.boolValue(values["START_TELEGRAM_CODEX"]),
             managedStopCheckURLs: self.managedStopCheckURLs(values: values)
         )
     }
@@ -2962,7 +3109,7 @@ private extension HelperController {
         if await self.managedServicesRunning(runtime: runtime) {
             return false
         }
-        return !self.telegramBridgeRunning(runtime: runtime, appSupportDir: appSupportDir)
+        return !self.anyTelegramBridgeRunning(runtime: runtime, appSupportDir: appSupportDir)
     }
 
     nonisolated static func managedServicesRunning(runtime: RuntimePorts) async -> Bool {
@@ -2994,7 +3141,8 @@ private extension HelperController {
     nonisolated static func stackOwnedByDifferentRepo(
         runtime: RuntimePorts,
         appSupportDir: String,
-        expectedRepoRoot: String
+        expectedRepoRoot: String,
+        knownSnapshot: StackHealthSnapshot? = nil
     ) async -> Bool {
         guard
             let ownerState = self.loadStackOwnerState(appSupportDir: appSupportDir, runtimeProfile: runtime.runtimeProfile)
@@ -3008,7 +3156,10 @@ private extension HelperController {
             return false
         }
 
-        if await self.userFacingSurfaceHealthy(runtime: runtime) {
+        if knownSnapshot?.healthy == true {
+            return true
+        }
+        if knownSnapshot == nil, await self.userFacingSurfaceHealthy(runtime: runtime) {
             return true
         }
         return await self.managedServicesRunning(runtime: runtime)
@@ -3027,16 +3178,98 @@ private extension HelperController {
     }
 
     nonisolated static func telegramBridgeRunning(runtime: RuntimePorts, appSupportDir: String) -> Bool {
+        self.telegramPidRunning(runtime: runtime, appSupportDir: appSupportDir, names: ["telegram_bot.pid"])
+    }
+
+    nonisolated static func telegramCodexRunning(runtime: RuntimePorts, appSupportDir: String) -> Bool {
+        self.telegramPidRunning(runtime: runtime, appSupportDir: appSupportDir, names: ["telegram_codex.pid"])
+    }
+
+    nonisolated static func anyTelegramBridgeRunning(runtime: RuntimePorts, appSupportDir: String) -> Bool {
+        self.telegramPidRunning(runtime: runtime, appSupportDir: appSupportDir, names: ["telegram_bot.pid", "telegram_codex.pid"])
+    }
+
+    nonisolated static func telegramPidRunning(runtime: RuntimePorts, appSupportDir: String, names: [String]) -> Bool {
         let runtimeRoot = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("state/runtime/\(runtime.runtimeProfile)", isDirectory: true)
         let legacyLogRoot = runtimeRoot.appendingPathComponent("logs", isDirectory: true)
-        let pidFiles = [
-            runtimeRoot.appendingPathComponent("telegram_bot.pid"),
-            runtimeRoot.appendingPathComponent("telegram_codex.pid"),
-            legacyLogRoot.appendingPathComponent("telegram_bot.pid"),
-            legacyLogRoot.appendingPathComponent("telegram_codex.pid"),
+        let knownPidFilesByName: [String: [URL]] = [
+            "telegram_bot.pid": [
+                runtimeRoot.appendingPathComponent("telegram_bot.pid"),
+                legacyLogRoot.appendingPathComponent("telegram_bot.pid"),
+            ],
+            "telegram_codex.pid": [
+                runtimeRoot.appendingPathComponent("telegram_codex.pid"),
+                legacyLogRoot.appendingPathComponent("telegram_codex.pid"),
+            ],
         ]
+        let pidFiles = names.flatMap { name -> [URL] in
+            knownPidFilesByName[name] ?? [
+                runtimeRoot.appendingPathComponent(name),
+                legacyLogRoot.appendingPathComponent(name),
+            ]
+        }
         return pidFiles.contains { self.pidFileProcessRunning($0) }
+    }
+
+    nonisolated static func telegramLogURLs(runtime: RuntimePorts, appSupportDir: String, names: [String]) -> [URL] {
+        let runtimeRoot = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+            .appendingPathComponent("state/runtime/\(runtime.runtimeProfile)", isDirectory: true)
+        let legacyLogRoot = runtimeRoot.appendingPathComponent("logs", isDirectory: true)
+        return names.flatMap { name -> [URL] in
+            [
+                runtimeRoot.appendingPathComponent(name),
+                legacyLogRoot.appendingPathComponent(name),
+            ]
+        }
+    }
+
+    nonisolated static func recentTelegramRuntimeIssue(logURLs: [URL]) -> Bool {
+        let issueNeedles = [
+            "terminated by other getupdates request",
+            "conflict:",
+            "only one bot instance",
+            "credentials rejected",
+            "connected-account refresh failed",
+            "invalid_api_key",
+            "authenticationerror",
+            "unauthorized",
+        ]
+        let recoveryMarkers = [
+            "starting polling mode",
+            "application started",
+            "telegram bot started",
+        ]
+        for url in logURLs {
+            guard var text = self.recentFileText(url, maxBytes: 65_536)?.lowercased(), !text.isEmpty else {
+                continue
+            }
+            let latestRecovery = recoveryMarkers
+                .compactMap { text.range(of: $0, options: .backwards)?.lowerBound }
+                .max()
+            if let latestRecovery {
+                text = String(text[latestRecovery...])
+            }
+            if issueNeedles.contains(where: { text.contains($0) }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    nonisolated static func recentFileText(_ url: URL, maxBytes: UInt64) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer {
+            try? handle.close()
+        }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > maxBytes ? size - maxBytes : 0)
+        guard let data = try? handle.readToEnd(), !data.isEmpty else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     nonisolated static func pidFileProcessRunning(_ url: URL) -> Bool {

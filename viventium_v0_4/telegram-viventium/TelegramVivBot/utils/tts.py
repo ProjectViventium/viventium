@@ -253,6 +253,8 @@ _HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s+")
 _PLAN_PREFIX_RE = re.compile(r"(?im)^\s*(?:structured\s+)?(?:plan|steps?)\s*:\s*")
 _LIST_PREFIX_RE = re.compile(r"(?m)^\s*(?:[-*+]|\d+[.)]|\u2022)\s+")
 _TABLE_ROW_RE = re.compile(r"(?m)^\s*[|:\\-\\s]+$")
+_WHITESPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,!?;:])")
+_SENTENCE_BOUNDARY_WITHOUT_SPACE_RE = re.compile(r"([.!?])([A-Z])")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _TOOL_DIRECTIVE_PREFIX_RE = re.compile(
     r"(?i)^(use|list|fetch|pull|query|find|locate|get|retrieve|search|open|check|"
@@ -681,6 +683,41 @@ def _debug_text(text: str, limit: int = 1200) -> str:
     if len(value) > limit:
         value = value[: limit - 3] + "..."
     return json.dumps(value, ensure_ascii=False)
+
+
+def _normalize_tts_surface_whitespace(text: str) -> str:
+    if not text:
+        return ""
+
+    def _strip_space_before_punctuation(match: re.Match[str]) -> str:
+        punct = match.group(1)
+        if punct == ".":
+            next_char = match.string[match.end() : match.end() + 1]
+            after_next = match.string[match.end() + 1 : match.end() + 2]
+            if next_char.isupper() and after_next.isupper():
+                return match.group(0)
+        return punct
+
+    def _space_sentence_boundary(match: re.Match[str]) -> str:
+        punct = match.group(1)
+        next_char = match.group(2)
+        if punct != ".":
+            return f"{punct} {next_char}"
+        previous = match.string[match.start() - 1 : match.start()]
+        after_next = match.string[match.end() : match.end() + 1]
+        if previous.isdigit():
+            return match.group(0)
+        if previous.isupper() and (not after_next or after_next.isupper() or after_next == "."):
+            return match.group(0)
+        if next_char.isupper() and after_next.isupper():
+            return match.group(0)
+        return f"{punct} {next_char}"
+
+    cleaned = re.sub(r"\s*[\r\n]+\s*", " ", text)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = _WHITESPACE_BEFORE_PUNCT_RE.sub(_strip_space_before_punctuation, cleaned)
+    cleaned = _SENTENCE_BOUNDARY_WITHOUT_SPACE_RE.sub(_space_sentence_boundary, cleaned)
+    return cleaned
 # === VIVENTIUM END ===
 
 
@@ -712,7 +749,6 @@ def prepare_tts_text(text: str) -> str:
     cleaned = cleaned.replace("`", "")
     cleaned = _EMAIL_RE.sub(" email available ", cleaned)
     cleaned = _URL_RE.sub(" link available ", cleaned)
-    cleaned = _BARE_DOMAIN_RE.sub(" link available ", cleaned)
     cleaned = _strip_unknown_angle_tags_for_tts(cleaned)
     cleaned = _HEADING_RE.sub("", cleaned)
     cleaned = re.sub(r"[\*_~]+", "", cleaned)
@@ -720,10 +756,7 @@ def prepare_tts_text(text: str) -> str:
     cleaned = _LIST_PREFIX_RE.sub("", cleaned)
     cleaned = _TABLE_ROW_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\(\s*\)", "", cleaned)
-    cleaned = re.sub(r"\s*[\r\n]+\s*", " ", cleaned)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r"\s+([.,!?;:])", r"\1", cleaned)
-    cleaned = re.sub(r"([.!?])([A-Z])", r"\1 \2", cleaned)
+    cleaned = _normalize_tts_surface_whitespace(cleaned)
     sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(cleaned) if s.strip()]
     if sentences:
         filtered: list[str] = []

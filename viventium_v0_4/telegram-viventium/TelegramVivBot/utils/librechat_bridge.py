@@ -156,6 +156,7 @@ _MARKDOWN_V2_UNESCAPE_RE = re.compile(r"\\([_*\[\]()~`>#+\-=|{}.!])")
 # Feature: Cortex part detection for DB-backed follow-up polling.
 _CORTEX_PART_TYPES = {"cortex_activation", "cortex_brewing", "cortex_insight"}
 _ACTIVE_CORTEX_STATUSES = {"activating", "brewing"}
+_TERMINAL_CORTEX_FOLLOWUP_DECISION_RESULTS = {"suppressed", "empty", "skipped"}
 _GLASSHIVE_MCP_SERVER = "glasshive-workers-projects"
 _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
     "run.completed",
@@ -167,6 +168,15 @@ _TERMINAL_GLASSHIVE_CALLBACK_EVENTS = {
     "artifact.created",
 }
 # === VIVENTIUM END ===
+
+
+def terminal_cortex_followup_decision(decision: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(decision, dict):
+        return None
+    result = str(decision.get("result") or "").strip().lower()
+    if result in _TERMINAL_CORTEX_FOLLOWUP_DECISION_RESULTS:
+        return decision
+    return None
 
 # === VIVENTIUM START ===
 # Feature: No-response tag ({NTA}) suppression for passive/background follow-ups.
@@ -776,6 +786,13 @@ def _stream_error_message(error: Optional[str]) -> str:
         return fallback
     if error:
         lowered = error.lower()
+        if (
+            "404 not found" in lowered
+            or "stream not found" in lowered
+            or "generation job does not exist or has expired" in lowered
+            or "failed to subscribe to stream" in lowered
+        ):
+            return "Response stream expired during reconnect. Please send the message again."
         if "credit balance is too low" in lowered or "plans & billing" in lowered:
             return "Provider billing issue. Please check Plans & Billing."
         if (
@@ -795,6 +812,40 @@ def _stream_error_message(error: Optional[str]) -> str:
         if "tool" in lowered or "mcp" in lowered or "oauth" in lowered:
             return "Tool connection error. Please retry."
     return "Connection error. Please retry."
+
+
+def _bridge_error_event(message: str, *, speak: bool = False) -> dict[str, Any]:
+    return {"type": "bridge_error", "text": message, "speak": speak}
+
+
+def _start_chat_error_safe_to_retry(error: Exception) -> bool:
+    return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+
+
+def _start_chat_error_message(error: Exception) -> str:
+    if _start_chat_error_safe_to_retry(error):
+        return "Viventium's local API is starting or unavailable. Please retry in a moment."
+
+    if isinstance(error, httpx.ReadTimeout):
+        return "Viventium's local API did not answer Telegram in time. Please retry."
+
+    if isinstance(error, httpx.TimeoutException):
+        return "Viventium's local API timed out while handling Telegram. Please retry."
+
+    if isinstance(error, httpx.HTTPStatusError):
+        status_code = getattr(error.response, "status_code", None)
+        if status_code in {401, 403}:
+            return "Telegram is not authorized to reach Viventium. Check the local Telegram bridge configuration."
+        if status_code == 404:
+            return "Viventium's Telegram route is unavailable. Restart or update Viventium, then retry."
+        if status_code in {502, 503, 504}:
+            return "Viventium's local API is starting or recovering. Please retry in a moment."
+        if isinstance(status_code, int) and status_code >= 500:
+            return "Viventium's local API reported a server error. Please retry."
+        if isinstance(status_code, int):
+            return f"Viventium's local API returned HTTP {status_code}. Please retry."
+
+    return "Viventium could not start this Telegram turn. Please retry."
 
 
 def _empty_response_message(error_context: Optional[str] = None) -> str:
@@ -1006,7 +1057,7 @@ class LibreChatBridge:
         get_agent_id: Optional[Callable[[str], str]] = None,
         set_agent_id: Optional[Callable[[str, str], None]] = None,
     ) -> None:
-        self.base_url = (os.getenv("VIVENTIUM_LIBRECHAT_ORIGIN", "http://localhost:3180") or "").strip().rstrip("/")
+        self.base_url = (os.getenv("VIVENTIUM_LIBRECHAT_ORIGIN", "http://127.0.0.1:3180") or "").strip().rstrip("/")
         self.secret = (
             os.getenv("VIVENTIUM_TELEGRAM_SECRET")
             or os.getenv("VIVENTIUM_CALL_SESSION_SECRET")
@@ -1024,6 +1075,14 @@ class LibreChatBridge:
         self.retry_delay_s = _parse_positive_float(
             (os.getenv("VIVENTIUM_TELEGRAM_SSE_RETRY_DELAY_S") or "").strip(),
             0.5,
+        )
+        self.start_chat_connect_retries = _parse_non_negative_int(
+            (os.getenv("VIVENTIUM_TELEGRAM_CHAT_START_CONNECT_RETRIES") or "").strip(),
+            1,
+        )
+        self.start_chat_connect_retry_delay_s = _parse_positive_float(
+            (os.getenv("VIVENTIUM_TELEGRAM_CHAT_START_CONNECT_RETRY_DELAY_S") or "").strip(),
+            0.75,
         )
         self.insight_grace_s = _parse_positive_float(
             (os.getenv("VIVENTIUM_TELEGRAM_INSIGHT_GRACE_S") or "").strip(),
@@ -1802,7 +1861,7 @@ class LibreChatBridge:
                 # === VIVENTIUM START ===
                 # Pass files for vision model support
                 chat_start_ts = time.monotonic()
-                session = await self._start_chat(
+                session = await self._start_chat_with_connect_retry(
                     text=text,
                     conversation_id=conversation_id,
                     agent_id=agent_id,
@@ -1825,8 +1884,12 @@ class LibreChatBridge:
             except TelegramLinkRequired:
                 raise
             except Exception as exc:
-                logger.error("LibreChatBridge failed to start chat: %s", exc)
-                yield "Failed to reach Viventium. Please retry."
+                logger.error(
+                    "LibreChatBridge failed to start chat: type=%s status=%s",
+                    type(exc).__name__,
+                    getattr(getattr(exc, "response", None), "status_code", ""),
+                )
+                yield _bridge_error_event(_start_chat_error_message(exc), speak=False)
                 return
             if not session:
                 return
@@ -1893,6 +1956,28 @@ class LibreChatBridge:
                     self._glasshive_seen_by_stream.discard(session.stream_id)
                     self._voice_route_by_stream.pop(session.stream_id, None)
                 # === VIVENTIUM END ===
+
+    async def _start_chat_with_connect_retry(self, **kwargs: Any) -> Optional[LibreChatSession]:
+        for attempt in range(self.start_chat_connect_retries + 1):
+            try:
+                return await self._start_chat(**kwargs)
+            except TelegramLinkRequired:
+                raise
+            except Exception as exc:
+                if (
+                    attempt >= self.start_chat_connect_retries
+                    or not _start_chat_error_safe_to_retry(exc)
+                ):
+                    raise
+                logger.warning(
+                    "LibreChatBridge retrying start chat after pre-ingress connection failure: type=%s attempt=%s/%s",
+                    type(exc).__name__,
+                    attempt + 1,
+                    self.start_chat_connect_retries + 1,
+                )
+                if self.start_chat_connect_retry_delay_s > 0:
+                    await asyncio.sleep(self.start_chat_connect_retry_delay_s)
+        return None
 
     async def _start_chat(
         self,
@@ -1987,7 +2072,12 @@ class LibreChatBridge:
                         link_payload.get("linkUrl", ""),
                         link_payload.get("message") or "Link your Viventium account to use Telegram.",
                     )
-                raise RuntimeError(f"LibreChat chat failed ({resp.status_code}): {resp.text}")
+                request = getattr(resp, "request", httpx.Request("POST", chat_url))
+                raise httpx.HTTPStatusError(
+                    f"LibreChat chat failed ({resp.status_code})",
+                    request=request,
+                    response=resp,
+                )
             data = resp.json()
 
         if isinstance(data, dict) and data.get("duplicate") is True:
@@ -2223,7 +2313,7 @@ class LibreChatBridge:
             except Exception as exc:
                 logger.warning("LibreChatBridge stream error (attempt %s/%s): %s", attempt + 1, self.max_retries + 1, exc)
                 if attempt >= self.max_retries:
-                    yield _stream_error_message(str(exc))
+                    yield _bridge_error_event(_stream_error_message(str(exc)), speak=False)
                     self._mark_stream_final(stream_id)
                     return
 
@@ -2431,8 +2521,25 @@ class LibreChatBridge:
                             self._cancel_insight_task(stream_id)
                         return
 
-                # A GlassHive worker callback can arrive without any cortex parts. Keep polling
-                # until the configured timeout instead of treating "no cortex" as terminal.
+                    followup_decision = terminal_cortex_followup_decision(
+                        state.get("followUpDecision")
+                    )
+                    if followup_decision is not None:
+                        self._trace(
+                            "LibreChatBridge follow-up decision terminal: chat_id=%s stream_id=%s result=%s reason=%s llm_result=%s strategy=%s",
+                            chat_id,
+                            stream_id,
+                            followup_decision.get("result") or "",
+                            followup_decision.get("suppressionReason") or "none",
+                            followup_decision.get("llmResult") or "",
+                            followup_decision.get("selectedStrategy") or "",
+                        )
+                        self._mark_followup_sent(stream_id)
+                        self._cancel_insight_task(stream_id)
+                        return
+
+                    # A GlassHive worker callback can arrive without any cortex parts. Keep polling
+                    # until the configured timeout instead of treating "no cortex" as terminal.
 
                 active = has_active_cortex(last_parts)
                 if active:
