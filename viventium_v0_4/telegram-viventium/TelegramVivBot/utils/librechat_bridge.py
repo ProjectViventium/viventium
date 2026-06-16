@@ -2660,16 +2660,12 @@ class LibreChatBridge:
                     sent = True
                 else:
                     logger.warning(
-                        "LibreChatBridge GlassHive callback %s had no durable delivery row before timeout; sending legacy fallback once",
+                        "LibreChatBridge GlassHive callback %s had no durable delivery row before timeout; leaving delivery to durable dispatcher/backlog",
                         pending_glasshive_callback.get("callbackId")
                         or pending_glasshive_callback.get("callback_id")
                         or "unknown",
                     )
-                    sent = await self._send_followup_text_once(
-                        chat_id,
-                        pending_glasshive_text,
-                        stream_id=stream_id,
-                    )
+                    return
                 if sent:
                     self._mark_followup_sent(stream_id)
                     self._cancel_insight_task(stream_id)

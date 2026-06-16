@@ -188,7 +188,10 @@ Use stable `TGAPI-NNN` IDs for telegram detached api stability cases.
      before sending any callback text.
   4. Verify a successful send marks the delivery row `sent`; a failed send marks a retryable failure
      class without falling back to an unclaimed legacy send.
-  5. In a rebuilt local runtime, send a synthetic GlassHive-delegated Telegram turn and verify the
+  5. Verify a callback-id-bearing worker result that has no claimable delivery row by the same-turn
+     poll timeout is not raw-sent as legacy text; delivery remains owned by the durable dispatcher,
+     backlog, or callback retry path.
+  6. In a rebuilt local runtime, send a synthetic GlassHive-delegated Telegram turn and verify the
      visible callback appears once, with DB/log evidence that only one delivery was sent.
 - Expected result: exactly one visible callback delivery per callback id; durable delivery state and
   same-turn poll state agree.
@@ -199,12 +202,14 @@ Use stable `TGAPI-NNN` IDs for telegram detached api stability cases.
   state, dispatcher log markers, visible Telegram result when available, and public-safety scan.
 - Automation: `viventium_v0_4/telegram-viventium/tests/test_librechat_bridge.py` plus LibreChat
   route tests for Telegram and voice callback polling.
-- Last run: PASS/PARTIAL (2026-06-15). Full Telegram bridge, Telegram route, and voice route
-  regressions prove the callback id is exposed to the authenticated bridge and claimed/marked before
-  bridge send while worker/run ids stay hidden. A restarted local runtime endpoint probe also returned
-  the callback id for an existing sanitized callback row. Sanitized live incident RCA found one
-  callback row and one durable delivery row, consistent with a same-turn poller plus dispatcher
-  duplication race. Live post-restart Telegram send/receive remains required for full acceptance.
+- Last run: PASS/PARTIAL (2026-06-16). Full Telegram bridge, Telegram route, and voice route
+  regressions prove the callback id is exposed to the authenticated bridge, claimed/marked before
+  bridge send, and never raw-sent as a legacy fallback when the callback-id-bearing delivery row is
+  not claimable by same-turn timeout. Worker/run ids stay hidden. A restarted local runtime endpoint
+  probe also returned the callback id for an existing sanitized callback row. Sanitized live incident
+  RCA found one callback row and one durable delivery row, consistent with a same-turn poller plus
+  dispatcher duplication race. Live post-restart Telegram send/receive remains required for full
+  acceptance.
 
 ## Natural User Use Case Checklist
 
@@ -220,4 +225,4 @@ rows before claiming a pass when the feature behavior changes.
 | `TGAPI-UC-005` | Send or simulate a Telegram turn whose stream completes before a retry/resume attaches. | owning requirement for `TGAPI-004` / `TGAPI-004` | Telegram bot, LibreChat stream manager, Telegram SSE endpoint, logs | Stream regression, active package build, sanitized logs, DB/state when available. | User receives the completed answer, not a generic connection error caused by immediate stream deletion. | NOT YET RUN (cataloged 2026-05-31; next feature run required) |
 | `TGAPI-UC-006` | Send or simulate a Telegram turn while the local LibreChat API is unavailable before ingress. | owning requirement for `TGAPI-005` / `TGAPI-005` | Telegram bot, LibreChat API watchdog, runtime logs, Mongo ingress ledger, Computer/real Telegram QA | Sanitized bridge logs, helper/watchdog timing, API health, Mongo ingress counts, bridge regression output, visible Telegram result. | User sees a class-specific text-only local-runtime/restart error, not a generic spoken fallback. | PASS (live outage/recovery QA run 2026-06-07) |
 | `TGAPI-UC-007` | Receive a Telegram answer for a GlassHive-delegated turn that internally used MCP/workspace tools. | owning requirement for `TGAPI-006` / `TGAPI-006` | Telegram bot text output, LibreChat bridge sanitizer, logs | Sanitizer tests, synthetic bridge output, live Telegram visible result after rebuild/restart, public-safety scan. | User sees the assistant answer without raw MCP/tool invocation code or workspace/run plumbing. | PASS/PARTIAL (2026-06-14 sanitizer regression tests; live Telegram QA pending) |
-| `TGAPI-UC-008` | Receive a Telegram GlassHive completion callback while both same-turn polling and background delivery are active. | owning requirement for `TGAPI-007` / `TGAPI-007` | Telegram bot callback poller, callback delivery dispatcher, LibreChat route, DB/logs | Callback-id route tests, bridge claim/mark regression, sanitized callback delivery ledger, visible Telegram result after restart. | User sees one callback completion, not duplicate copies of the same worker result. | PASS/PARTIAL (2026-06-15 full route/bridge regressions + live endpoint probe + sanitized RCA; live Telegram rerun pending) |
+| `TGAPI-UC-008` | Receive a Telegram GlassHive completion callback while both same-turn polling and background delivery are active. | owning requirement for `TGAPI-007` / `TGAPI-007` | Telegram bot callback poller, callback delivery dispatcher, LibreChat route, DB/logs | Callback-id route tests, bridge claim/mark/no-legacy-fallback regressions, sanitized callback delivery ledger, visible Telegram result after restart. | User sees one callback completion, not duplicate copies of the same worker result. | PASS/PARTIAL (2026-06-16 full route/bridge regressions + live endpoint probe + sanitized RCA; live Telegram rerun pending) |

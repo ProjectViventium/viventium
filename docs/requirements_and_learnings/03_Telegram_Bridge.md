@@ -202,6 +202,10 @@ stream back to Telegram through the existing bridge.
   the fast path can claim and mark the exact delivery row before sending. It must not legacy-send a
   callback that has a durable delivery row, because that creates one visible message from the poller
   and another from the dispatcher.
+- If a callback-id-bearing worker result has no claimable delivery row before the same-turn poller
+  timeout, the poller must stop without a visible legacy send and leave delivery to the durable
+  dispatcher/backlog or callback retry path. Untracked raw text fallback is allowed only for legacy
+  callback states that do not carry a callback id.
 - Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
   collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
   If a primary provider is rate-limited and the configured fallback provider then fails because its

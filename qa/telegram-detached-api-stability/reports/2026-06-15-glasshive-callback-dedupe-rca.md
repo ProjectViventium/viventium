@@ -34,9 +34,10 @@ it as pending.
   response.
 - Telegram bridge regression coverage now proves `_poll_for_followup()` claims the callback id
   before sending and marks the delivery row after a successful send.
-- The bridge waits for the durable ledger first, then falls back to one legacy same-turn send only
-  if a callback-id-bearing terminal callback still has no durable delivery row by timeout; this
-  prevents silent non-delivery without returning to the duplicate-by-default race.
+- The bridge waits for the durable ledger first. If a callback-id-bearing terminal callback still
+  has no claimable durable delivery row by same-turn timeout, the poller stops without a visible
+  legacy send so the durable dispatcher/backlog or callback retry path remains the single delivery
+  owner.
 - LibreChat route regressions now prove Telegram and voice callback polling include `callbackId`
   without exposing `workerId` or `runId`.
 - The owning Telegram requirements doc now states that same-turn polling and durable dispatch must
@@ -105,8 +106,9 @@ Codex probes to answer --version. Full target files were rerun afterward and pas
 ## Remaining Acceptance Gap
 
 This is `PASS/PARTIAL`, not full live acceptance yet. The deterministic regressions and sanitized
-incident state prove the root and fix, but a rebuilt/restarted local runtime still needs a real
-post-fix Telegram GlassHive turn to prove the user-visible duplicate is gone on the live surface.
+incident state prove the root and fix, including the no-legacy-fallback timeout hardening added on
+2026-06-16, but a rebuilt/restarted local runtime still needs a real post-fix Telegram GlassHive
+turn to prove the user-visible duplicate is gone on the live surface.
 That rerun should record:
 
 - one inbound Telegram turn;

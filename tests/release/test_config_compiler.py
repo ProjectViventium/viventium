@@ -2361,7 +2361,7 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
                 },
                 {
                     "name": "claude-opus-4-8",
-                    "label": "Claude Opus 4 7",
+                    "label": "Claude Opus 4.8",
                     "preset": {"endpoint": "anthropic", "model": "claude-opus-4-8"},
                 },
             ]
@@ -2377,7 +2377,7 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
         "claude-opus-4-8",
     ]
     assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Sonnet 4.5"
-    assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4 7"
+    assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4.8"
     assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-sonnet-4-5"
 
 

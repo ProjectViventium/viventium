@@ -2390,7 +2390,7 @@ async def test_poll_for_followup_claims_durable_glasshive_delivery_before_sendin
 
 
 @pytest.mark.asyncio
-async def test_poll_for_followup_falls_back_once_when_delivery_row_never_appears():
+async def test_poll_for_followup_waits_for_dispatcher_when_delivery_row_is_missing():
     bridge = _make_bridge()
     legacy_sends = []
     claim_attempts = []
@@ -2447,10 +2447,8 @@ async def test_poll_for_followup_falls_back_once_when_delivery_row_never_appears
     await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
 
     assert len(claim_attempts) > 1
-    assert len(legacy_sends) == 1
-    args, kwargs = legacy_sends[0]
-    assert args[:2] == ("313:999", "Worker finished.")
-    assert kwargs["stream_id"] == stream_id
+    assert legacy_sends == []
+    assert not bridge._has_followup_sent(stream_id)
 
 
 @pytest.mark.asyncio
