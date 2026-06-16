@@ -404,6 +404,7 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     destructive_confirmation = host_worker.get("destructive_confirmation") or {}
     advisory_reviewer = host_worker.get("advisory_reviewer") or {}
     prompt_visibility = host_worker.get("prompt_visibility") or {}
+    runtime_requirements = host_worker.get("runtime_requirements") or {}
     workspace_root = str(host_worker.get("workspace_root") or "~/viventium").strip() or "~/viventium"
     enabled = resolve_bool(host_worker.get("enabled"), True)
     # Config-driven default worker profile. Defaults to codex-cli (prior behavior, no
@@ -423,6 +424,49 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
     codex_cli_path = resolve_host_cli_path("codex", host_worker.get("codex_bin"))
     claude_cli_path = resolve_host_cli_path("claude", host_worker.get("claude_bin"))
     openclaw_cli_path = resolve_host_cli_path("openclaw", host_worker.get("openclaw_bin"))
+
+    def optional_csv(value: Any, label: str) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return ",".join(str(item).strip() for item in value if str(item).strip())
+        if isinstance(value, str):
+            return value.strip()
+        raise SystemExit(f"{label} must be a string or list of strings")
+
+    requirements_json = runtime_requirements.get("json")
+    if requirements_json is None:
+        requirements_json = host_worker.get("runtime_requirements_json")
+    if isinstance(requirements_json, (dict, list)):
+        requirements_json_env = json.dumps(requirements_json, sort_keys=True, separators=(",", ":"))
+    elif requirements_json is None:
+        requirements_json_env = ""
+    elif isinstance(requirements_json, str):
+        requirements_json_env = requirements_json.strip()
+    else:
+        raise SystemExit("integrations.glasshive.host_worker.runtime_requirements.json must be an object, list, or JSON string")
+
+    runtime_requirements_file = str(
+        runtime_requirements.get("file") or host_worker.get("runtime_requirements_file") or ""
+    ).strip()
+    codex_native_mcp_allowlist = optional_csv(
+        host_worker.get("codex_native_mcp_allowlist"),
+        "integrations.glasshive.host_worker.codex_native_mcp_allowlist",
+    )
+    codex_disable_features = optional_csv(
+        host_worker.get("codex_disable_features"),
+        "integrations.glasshive.host_worker.codex_disable_features",
+    )
+    claude_effort = str(host_worker.get("claude_effort") or "").strip().lower()
+    if claude_effort and claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
+        raise SystemExit("integrations.glasshive.host_worker.claude_effort must be low, medium, high, xhigh, or max")
+    codex_ignore_user_config = ""
+    if "codex_ignore_user_config" in host_worker:
+        codex_ignore_user_config = "true" if resolve_bool(host_worker.get("codex_ignore_user_config"), False) else "false"
+    claude_enable_chrome = ""
+    if "claude_enable_chrome" in host_worker:
+        claude_enable_chrome = "true" if resolve_bool(host_worker.get("claude_enable_chrome"), True) else "false"
+
     return {
         "enabled": enabled,
         "workspace_root": workspace_root,
@@ -440,6 +484,14 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "codex_cli_path": codex_cli_path,
         "claude_cli_path": claude_cli_path,
         "openclaw_cli_path": openclaw_cli_path,
+        "runtime_requirements_json": requirements_json_env,
+        "runtime_requirements_file": runtime_requirements_file,
+        "codex_native_mcp_allowlist": codex_native_mcp_allowlist,
+        "codex_plugin_cache": str(host_worker.get("codex_plugin_cache") or "").strip(),
+        "codex_ignore_user_config": codex_ignore_user_config,
+        "codex_disable_features": codex_disable_features,
+        "claude_enable_chrome": claude_enable_chrome,
+        "claude_effort": claude_effort,
         "codex_cli_available": bool(codex_cli_path),
         "claude_cli_available": bool(claude_cli_path),
         "openclaw_cli_available": bool(openclaw_cli_path),
@@ -468,16 +520,16 @@ MODEL_MAP = {
         "memory": "gpt-5.4",
     },
     "anthropic": {
-        "conscious": "claude-opus-4-7",
+        "conscious": "claude-opus-4-8",
         "background_analysis": "claude-sonnet-4-5",
         "confirmation_bias": "claude-sonnet-4-5",
-        "red_team": "claude-opus-4-7",
-        "deep_research": "claude-opus-4-7",
+        "red_team": "claude-opus-4-8",
+        "deep_research": "claude-opus-4-8",
         "productivity": "claude-sonnet-4-5",
         "parietal": "claude-sonnet-4-5",
         "pattern_recognition": "claude-sonnet-4-5",
         "emotional_resonance": "claude-sonnet-4-5",
-        "strategic_planning": "claude-opus-4-7",
+        "strategic_planning": "claude-opus-4-8",
         "support": "claude-sonnet-4-5",
         "memory": "claude-sonnet-4-5",
     },
@@ -512,7 +564,7 @@ AGENT_ASSIGNMENT_ROLES = {
 }
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
-    "anthropic": {"claude-opus-4-7"},
+    "anthropic": {"claude-opus-4-8"},
     "openai": {"gpt-5.5"},
 }
 DEFAULT_MEMORY_HARDENING = {
@@ -529,7 +581,7 @@ DEFAULT_MEMORY_HARDENING = {
     "dry_run_first": True,
     "min_apply_interval_seconds": 300,
     "provider_profile": "launch_ready_only",
-    "anthropic_model": "claude-opus-4-7",
+    "anthropic_model": "claude-opus-4-8",
     "anthropic_effort": "xhigh",
     "openai_model": "gpt-5.5",
     "openai_reasoning_effort": "xhigh",
@@ -2272,6 +2324,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     default_conversation_recall = conversation_recall_enabled(config)
     memory_hardening = resolve_memory_hardening_settings(config)
     memory_hardening_model = resolve_memory_hardening_model_tuple(config, memory_hardening)
+    global_settings = config.get("settings", {}) if isinstance(config.get("settings"), dict) else {}
+    configured_default_timezone = str(global_settings.get("timezone") or "").strip()
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
     openid_settings = auth_settings["openid"]
@@ -2508,6 +2562,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
     }
 
+    if configured_default_timezone:
+        env["VIVENTIUM_DEFAULT_TIMEZONE"] = configured_default_timezone
+
     if openid_settings["enabled"]:
         required_openid = {
             "runtime.auth.openid.client_id": openid_settings["client_id"],
@@ -2598,6 +2655,22 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             env["WPR_CLAUDE_CODE_BIN"] = str(glasshive_host_worker["claude_cli_path"])
         if glasshive_host_worker["openclaw_cli_path"]:
             env["WPR_OPENCLAW_BIN"] = str(glasshive_host_worker["openclaw_cli_path"])
+        if glasshive_host_worker["runtime_requirements_json"]:
+            env["GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_JSON"] = str(glasshive_host_worker["runtime_requirements_json"])
+        if glasshive_host_worker["runtime_requirements_file"]:
+            env["GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_FILE"] = str(glasshive_host_worker["runtime_requirements_file"])
+        if glasshive_host_worker["codex_native_mcp_allowlist"]:
+            env["GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST"] = str(glasshive_host_worker["codex_native_mcp_allowlist"])
+        if glasshive_host_worker["codex_plugin_cache"]:
+            env["GLASSHIVE_HOST_CODEX_PLUGIN_CACHE"] = str(glasshive_host_worker["codex_plugin_cache"])
+        if glasshive_host_worker["codex_ignore_user_config"]:
+            env["WPR_CODEX_CLI_IGNORE_USER_CONFIG"] = str(glasshive_host_worker["codex_ignore_user_config"])
+        if glasshive_host_worker["codex_disable_features"]:
+            env["WPR_CODEX_CLI_DISABLE_FEATURES"] = str(glasshive_host_worker["codex_disable_features"])
+        if glasshive_host_worker["claude_enable_chrome"]:
+            env["WPR_CLAUDE_CODE_ENABLE_CHROME"] = str(glasshive_host_worker["claude_enable_chrome"])
+        if glasshive_host_worker["claude_effort"]:
+            env["WPR_CLAUDE_CODE_EFFORT"] = str(glasshive_host_worker["claude_effort"])
         if not glasshive_enterprise["enabled"]:
             env["WPR_DB_PATH"] = str(
                 APP_SUPPORT_VIVENTIUM_DIR

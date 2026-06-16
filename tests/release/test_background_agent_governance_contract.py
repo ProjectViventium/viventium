@@ -39,12 +39,12 @@ BACKGROUND_CORTEX_SERVICE = (
 
 APPROVED_EXECUTION_FAMILIES = {
     ("anthropic", "claude-sonnet-4-5"),
-    ("anthropic", "claude-opus-4-7"),
+    ("anthropic", "claude-opus-4-8"),
     ("openAI", "gpt-5.4"),
 }
 APPROVED_ACTIVATION_FAMILY = ("groq", "meta-llama/llama-4-scout-17b-16e-instruct")
 APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.20-non-reasoning")
-APPROVED_MAIN_AGENT_FAMILY = ("anthropic", "claude-opus-4-7")
+APPROVED_MAIN_AGENT_FAMILY = ("anthropic", "claude-opus-4-8")
 
 
 def _load_source_of_truth() -> dict:
@@ -346,7 +346,7 @@ def test_red_team_activation_prompt_covers_explicit_pressure_test_requests() -> 
         assert phrase in prompt
 
 
-def test_local_source_of_truth_main_agent_stays_on_claude_opus_47() -> None:
+def test_local_source_of_truth_main_agent_stays_on_claude_opus_48() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
@@ -524,7 +524,7 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
         if spec.get("preset", {}).get("endpoint") == "anthropic"
     ]
 
-    assert anthropic_names == ["claude-sonnet-4-5", "claude-opus-4-7"]
+    assert anthropic_names == ["claude-sonnet-4-5", "claude-opus-4-8"]
     assert "claude-sonnet-4-7" not in {
         spec.get("name")
         for spec in model_specs

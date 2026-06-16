@@ -982,7 +982,7 @@ def test_workbench_startup_seeds_builtin_nightly_template(tmp_path: Path, monkey
     monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
     monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "startup-admin")
     monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_EMAIL", "startup-admin@example.test")
-    monkeypatch.delenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE", raising=False)
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_ACTIVE", "false")
     monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
     from fastapi.testclient import TestClient
     from prompt_workbench.app import app
@@ -997,6 +997,7 @@ def test_workbench_startup_seeds_builtin_nightly_template(tmp_path: Path, monkey
     task = scheduled_prompts.storage().get_task("startup-admin", seeded[0]["task_id"])
     assert task["executor"] == "glasshive_host"
     assert task["channel"] == "workbench"
+    assert task["metadata"]["misfire_policy"] == {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 
 
 def test_workbench_startup_seeds_active_glasshive_nightly_from_runtime_env(
@@ -1027,6 +1028,7 @@ def test_workbench_startup_seeds_active_glasshive_nightly_from_runtime_env(
     task = scheduled_prompts.storage().get_task("startup-admin", seeded[0]["task_id"])
     assert task["executor"] == "glasshive_host"
     assert task["metadata"]["workbench_scheduled_prompt"]["execution_profile"] == "claude-code"
+    assert task["metadata"]["misfire_policy"] == {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 
 
 def test_workbench_nightly_seed_logs_unresolved_admin_retry_window(

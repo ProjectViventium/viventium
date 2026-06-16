@@ -30,11 +30,19 @@ For the manager-readable handbook, start with:
   - when its execution family is `openAI / gpt-5.4`, its shipped `model_parameters` must use
     `reasoning_effort: xhigh`, not Anthropic/Google-only thinking fields such as `thinkingBudget`
 - Shipping a specialist background agent does not require the main Viventium agent to auto-activate
-  it. In the GlassHive broker-first local baseline, the main agent keeps `Deep Research`, `MS365`,
-  and `Google` background activation disabled. Live web/productivity execution should be handled by
-  the main/direct tool path, including GlassHive workers that receive connected-account capability
-  access through the broker. The specialist agents remain defined with their owned tools for direct
-  use, explicit future re-enablement, and regression coverage.
+  it. In the current local baseline, the main agent keeps `Deep Research`, `MS365`, and `Google`
+  background activation disabled. Live web/productivity execution should be handled by the
+  main/direct path: the Connected Accounts hand-off for immediate connected-account checks and
+  explicitly confirmed non-destructive email/calendar updates, and GlassHive workers with brokered
+  connected-account capability for delegated, longer, artifact, browser/computer, or co-work
+  requests. The specialist agents remain defined with their owned tools for direct use, explicit
+  future re-enablement, and regression coverage. Connected-account writes such as creating/updating
+  calendar events or sending/drafting email require explicit user confirmation and an available
+  write-capable connected-account path; Connected Accounts may handle them only when the required
+  non-destructive email/calendar write tool is present. Destructive or broad mutations such as
+  deleting/moving/archive/mark-read mail, deleting calendar events, sharing/permission changes, and
+  file writes require GlassHive or another explicitly confirmed write-capable path. If no
+  write-capable path is available, the user-visible answer must say so plainly.
 - Background agents must receive the same user memory context as the main agent when memories are
   enabled, so insights do not regress to fresh-chat behavior.
 - Output is merged as background insights and can influence a later voiced follow-up in playground
@@ -69,13 +77,13 @@ Authoritative execution matrix:
 | --- | --- | --- | --- | --- |
 | Background Analysis | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
 | Confirmation Bias | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
-| Red Team | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` |
-| Deep Research | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` |
+| Red Team | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.4` |
+| Deep Research | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.4` |
 | MS365 | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
 | Parietal Cortex | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
 | Pattern Recognition | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
 | Emotional Resonance | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
-| Strategic Planning | `anthropic / claude-opus-4-7` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-7` | `anthropic / claude-opus-4-7` |
+| Strategic Planning | `anthropic / claude-opus-4-8` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-8` | `anthropic / claude-opus-4-8` |
 | Viventium User Help | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
 | Google | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
 
@@ -84,12 +92,13 @@ Model inventory rule:
 - Do not configure a phantom Anthropic model to satisfy UI expectations. On the May 6, 2026 local
   inventory, `claude-sonnet-4-7` is not exposed by source-of-truth model specs or the local runtime;
   the launch-ready Sonnet family remains `claude-sonnet-4-5`.
-- Background agents that are latency-sensitive but still use Anthropic Sonnet must declare a
-  reachable execution fallback. The mixed local baseline uses `xai / grok-4.3` for Confirmation
-  Bias because OpenAI can be rate-limited on local QA, while other timeout-prone cortices may use
-  `openAI / gpt-5.4` with `reasoning_effort: high` when that provider is the intended backup.
-  Phase B runtime owns retrying the configured backup once for provider timeout/abort/recoverable
-  provider failures; prompt-only changes must not be used to hide those errors.
+- Source-owned agents that rely on Anthropic models must declare a reachable `openAI / gpt-5.4`
+  fallback so local QA and user turns do not stall on Anthropic rate limits or subscription resets.
+  The fallback initializer may bypass a stale user OpenAI connected-account OAuth refresh only for
+  that recovery route and only when the platform OpenAI key is available; ordinary OpenAI
+  connected-account use still surfaces reconnect guidance. Phase B runtime owns retrying the
+  configured backup once for provider timeout/abort/recoverable provider failures; prompt-only
+  changes must not be used to hide those errors.
 - Every built-in background cortex activation classifier uses
   `groq / meta-llama/llama-4-scout-17b-16e-instruct` as the primary Phase A detector. It must
   carry provider fallbacks: `xai / grok-4.20-non-reasoning` first, then `openai / gpt-5.4`, then
@@ -278,6 +287,13 @@ Requirements:
   onto that otherwise empty parent. This is the only parent-text promotion exception: it must not
   rewrite a valid authored Phase A answer, must not run after the conversation has moved on, must not
   apply to scheduled `{NTA}` holds, and must preserve structured cortex parts on the same parent.
+- If a user surface already received visible Phase A assistant text but the canonical text aggregator
+  did not advance, runtime must repair the canonical parent from the emitted visible delta before
+  Phase B adjudication. That repaired visible answer is treated as the authored Phase A answer; Phase B
+  must fail closed and record a silent terminal decision rather than using deterministic fallback text
+  that could contradict the already-delivered answer. This guard is structural and surface-neutral:
+  it keys on stream/canonical mismatch evidence, not user wording, provider labels, agent names, or
+  safety-policy text.
 - If the main model stream terminates after visible assistant text already exists, runtime must
   preserve the authored text and structured cortex parts without appending a generic fatal error
   card to the same message. The failure remains diagnostic/log evidence. Error-only turns and
@@ -513,11 +529,12 @@ proves:
 - paired legacy-background-agent vs broker-backed-worker evals meet the agreed numeric parity target
 - a server-side kill switch can disable broker projection without code changes
 
-This gate is the release/removal gate. The local broker-first baseline may disable automatic
-main-agent activation for `Deep Research`, `MS365`, and `Google` while keeping those specialist
-agents defined, testable, and re-enableable. That local soft-retirement proves the main agent no
-longer routes live connected-account work through less capable automatic background specialists; it
-does not by itself prove full broker parity, scheduled-grant renewal, or permanent removal readiness.
+This gate is the release/removal gate. The current local direct-execution baseline may disable
+automatic main-agent activation for `Deep Research`, `MS365`, and `Google` while keeping those
+specialist agents defined, testable, and re-enableable. That local soft-retirement proves the main
+agent no longer routes live connected-account work through less capable automatic background
+specialists; it does not by itself prove full broker parity, scheduled-grant renewal, or permanent
+removal readiness.
 
 ## 2026-05-30 Background Activation Detection — Two Independent Modes (CANONICAL)
 

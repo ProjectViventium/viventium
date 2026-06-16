@@ -48,6 +48,12 @@ installed CLIs, or OS/window control, GlassHive-facing prompts and schemas shoul
 agent to host mode unless the user explicitly asks for an isolated sandbox or the host-worker gate is
 disabled.
 
+Host-mode Claude Code `--chrome` therefore means the user's real Chrome/session by design. That is
+the point of host mode, not an isolated browser. Safety comes from structured host-mode selection,
+host-worker enablement gates, destructive-action checkpoints, and explicit opt-out
+(`WPR_CLAUDE_CODE_ENABLE_CHROME=0`) for locked-down deployments. Workspace/Docker mode owns isolated
+browser profiles and should not inherit host browser sessions.
+
 ### Host-Native Discoverability Contract
 
 - Users should not need to say "GlassHive", "Codex", "computer use", or "on this local machine" for
@@ -68,6 +74,18 @@ disabled.
 - Prefer `codex-cli` for available host browser, desktop, file, and code execution. Use
   `claude-code` when the user asks for Claude or when configured as the preferred local CLI. Use
   `openclaw-general` only when installed/configured or explicitly requested.
+- Worker launch is a capability contract, not task routing. Host-native and workstation workers must
+  start with the selected CLI's native capability surface available by default: Codex should not be
+  launched with blanket `browser_use` / `computer_use` disables or a config path that hides its
+  native MCPs, and Claude Code workers should enable the CLI's Chrome integration when available.
+  Locking down native capabilities is allowed only through explicit operator config plus preflight
+  and QA evidence.
+- Runtime configuration is mode-scoped. Host-native binary overrides such as `WPR_CODEX_BIN` and
+  `WPR_CLAUDE_CODE_BIN` are host-worker controls only; Docker/workstation workers must resolve the
+  selected CLI from the container image/PATH and must never inherit a host macOS/Linux binary path.
+  Conversely, workspace state paths are persistence/observability facts only. A projected
+  `state_dir` or `workspace_dir` must not be treated as evidence that a Docker container exists; the
+  runtime must verify container identity/state through Docker before reusing or execing into it.
 - Fresh one-off host/browser/desktop/local tasks should go through a high-level MCP delegation
   surface such as `worker_delegate_once`. The main agent should not have to manually list projects,
   create or resume workers, and queue runs for routine tasks; low-level tools remain available for
@@ -90,6 +108,11 @@ disabled.
   concrete output it produced, compare it with the user's request and success criteria, fix or
   continue when the output is incomplete, and report only remaining blockers. This is a general
   harness rule, not a prompt-specific list of file types, providers, UI surfaces, or QA phrases.
+- Deep research workers must preserve evidence without flooding the model/provider route with raw
+  source dumps. Bootstrap instructions should tell workers to keep useful citations, excerpts, and
+  research notes in files or concise summaries, not paste huge webpages, logs, or command outputs into
+  the conversational context. This is a universal reliability rule for long research/file work, not a
+  prompt-specific shortcut.
 - `AGENTS.md` is the canonical Codex project-instruction file. Compatibility files such as
   `CLAUDE.md` and `CODEX.md` may still be materialized for non-Codex workers and older clients, but
   they should import or mirror the same concise rules instead of growing separate product truth.
@@ -172,11 +195,59 @@ tools (xdotool, wmctrl, xterm).
 The Dockerfile is dynamically generated at runtime by `docker_sandbox.py`. Key layers on top of the
 Selenium base:
 
-- **System**: bash, curl, git, jq, ripgrep, screen, tmux, vim, wmctrl, xdotool, xterm, pcmanfm
+- **System**: bash, curl, file, git, jq, LibreOffice Writer/Impress/Calc, Pandoc, poppler-utils,
+  ripgrep, screen, tmux, vim, wmctrl, xdotool, xterm, pcmanfm
 - **Node.js 22.x** via nodesource
-- **npm globals**: `@openai/codex`, `@anthropic-ai/claude-code`, `openclaw@latest`
-- **Python**: selenium library
-- **Image tag**: `workers-projects-runtime-workstation:phase1-node22`
+- **npm globals**: pinned Codex and Claude Code specs (`@openai/codex@0.140.0`,
+  `@anthropic-ai/claude-code@2.1.178`) plus `openclaw@latest` by default. Operators may override
+  the package specs with `WPR_SANDBOX_CODEX_NPM_SPEC`, `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC`, and
+  `WPR_SANDBOX_OPENCLAW_NPM_SPEC` after updating QA evidence.
+- **Python**: selenium plus document/artifact libraries such as `python-docx`, `python-pptx`,
+  `reportlab`, `PyPDF2`, `PyMuPDF`, `pdf2image`, `openpyxl`, `xlsxwriter`, and rendering helpers
+- **Managed browser-extension policy**: Chromium and Google Chrome policy paths force-install the
+  Claude Code and Codex browser-use extensions by ID:
+  `fcoeoabgfenejglbffodgkkbkcdhcgfn` and `hehggadaopoacecdllhhajmbjkdcmajg`.
+- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs4`
+
+The workstation image must be capable of ordinary professional first-delivery work products. A
+worker should not need to hand-roll a minimal ZIP/DOCX or return Markdown/HTML only because the
+runtime image lacks document conversion and authoring tools. This is a universal worker substrate
+requirement, not a special case for one QA prompt.
+
+The image also installs a `glasshive-browser-extension-check` probe. QA must treat browser extension
+readiness as three separate facts:
+
+1. Managed policy exists in both Chromium and Google Chrome policy locations with the exact extension
+   IDs and Chrome Web Store update URL.
+2. The browser profile has installed/enabled the extensions after the browser has launched.
+3. The selected CLI/app bridge is connected and can actually use the browser/computer capability.
+
+Policy presence alone is not enough to claim full browser-use acceptance, and a missing profile or
+bridge state is a substrate/configuration blocker rather than evidence that the worker should be
+prompted away from native browser/computer use.
+
+### Native Skill And Capability Inventory
+
+As of 2026-06-15, GlassHive workers must receive a concise native capability inventory in their
+bootstrap project instructions and command-boundary prompts. The inventory makes the worker aware of
+available surfaces but does not force a workflow:
+
+- Claude Code workers should consider native browser/computer-use and skill/plugin families for
+  `anthropic document-skills`, `anthropic doc-coauthoring`, `anthropic theme-factory`,
+  `daymade deep-research`, `daymade fact-checker`, `daymade ppt-creator`,
+  `daymade excel-automation`, `daymade doc-to-markdown`, `academic-research-skills` for
+  academic/literature-review work, and `NVIDIA AI-Q` for enterprise/private deep research when
+  configured.
+- Codex workers should consider native browser/computer-use, MCP/plugin surfaces, and skill/plugin
+  families for `openai pdf`, `openai jupyter-notebook`, `openai screenshot`,
+  `openai notion-research-documentation`, `anthropic docx`, `anthropic pptx`, `anthropic xlsx`,
+  `anthropic pdf`, `daymade deep-research`, `daymade fact-checker`, `daymade excel-automation`, and
+  `daymade ppt-creator`.
+
+Provisioning these skill families is a runtime/image and license/supply-chain responsibility. The
+worker-facing prompt must say to inspect what is actually available, use the right capability when
+relevant, and self-review/fix the delivery. Runtime code must not branch on user prompt text or turn
+these lists into hardcoded routing.
 
 ### Container Configuration
 
@@ -193,6 +264,10 @@ Selenium base:
   `WPR_SANDBOX_SHM_SIZE`.
 - `--init` for proper signal handling
 - User: `seluser`, display: `:99.0`
+- Browser temp/cache/config paths are projected into the persistent mounted worker home
+  (`/workspace/.wpr-home/tmp`, `.cache`, `.config`) through `TMPDIR`, `XDG_CACHE_HOME`, and
+  `XDG_CONFIG_HOME`. This is required because browser extension install/profile materialization can
+  fail when the Docker overlay is full even though the worker's mounted home still has space.
 
 ### Volume Mounts
 
@@ -261,7 +336,10 @@ Host-worker UX and callback requirements:
 - The callback outbox must be bounded and observable, not an infinite retry sink. Permanent callback
   failures and exhausted transient failures terminate as retained `dead_lettered` audit rows with a
   non-secret failure class; stale `delivering` rows are reclaimed for replay; deterministic
-  non-recoverable rows such as missing callback URL or invalid payload JSON do not retry forever.
+  non-recoverable rows such as missing callback URL, invalid payload JSON, invalid signature,
+  missing/forbidden conversation ownership, or other terminal 4xx receiver rejections do not retry
+  forever. Retryable receiver states, such as "callback anchor not ready", remain pending for
+  bounded replay.
   Runtime health must expose active callback backlog, active max attempts, oldest pending age,
   delivering count, and dead-letter count so QA can distinguish a clean run from a silently rotting
   delivery substrate.
@@ -431,11 +509,24 @@ Host-worker UX and callback requirements:
   completed with an honest warning and signed artifact links. Arbitrary partial files outside the
   user-facing artifact locations remain failed and retryable; this avoids hiding real incomplete
   work while preventing a finished file delivery from being reported as "no artifacts" or failed.
+- Artifact discovery and signed-link publication must exclude runtime/browser scratch state such as
+  top-level `tmp/`, projected upload metadata, browser profile directories, extension internals, and
+  cookie/login stores. A Chrome extension `capture/index.html` or browser profile database is never a
+  user-facing deliverable just because it is an HTML/file inside the worker workspace.
 - Codex effort values are provider-route dependent. GlassHive accepts `none`, `minimal`, `low`,
   `medium`, `high`, and `xhigh`, but deployments must set
   `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` when the selected OpenAI-compatible route supports only
   a subset. Unsupported requested efforts must fall back through
-  `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` instead of failing the user task.
+  `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` instead of failing the user task, and the fallback must
+  be visible in runtime logs/telemetry so quality-sensitive downgrades are auditable.
+  Enterprise deep-work deployments should default Codex to `high` once the active route proves it;
+  `xhigh` must be available only when the same active route and a real worker run prove it, not
+  because another provider account or model catalog says the family supports it.
+- Claude effort is native substrate, not just prompt copy. `effort=max` from MCP, UI, or direct API
+  must be projected into the worker bootstrap env as `WPR_CLAUDE_CODE_EFFORT=max`, and both
+  workspace/Docker and host-native Claude Code commands must translate that to `--effort max`.
+  Claude Code workers should also preserve `--chrome` by default when the CLI supports it; disable it
+  only through an explicit locked-down configuration.
 
 - `worker_create` and `worker_find_or_resume` accept `execution_mode=host`.
 - `codex-cli` uses local Codex CLI full-access/no-approval execution. Host-native Codex defaults to
@@ -443,6 +534,9 @@ Host-worker UX and callback requirements:
   not silently inherit the server-side Docker/OpenAI-compatible provider model just because that
   model is configured for sandbox workers.
 - `claude-code` uses local Claude Code bypass-permission execution.
+- Host-native CLI binary overrides are allowed for local app-bundled or managed CLIs, but they must
+  be applied only by host-native runtimes. They are not workspace-worker defaults and must not be
+  written into Docker launch scripts.
 - `openclaw-general` requires `openclaw` on `PATH`; if missing, the capability must degrade with a
   clear operator-readable message.
 - v1 permits only one active host worker per CLI family unless explicit per-worker CLI auth
@@ -545,22 +639,26 @@ The harness prompt is materialized as `harness-prompt.md` for operator visibilit
 ### Speed, Warm Workers, and Cost Controls (User Options)
 
 GlassHive worker tasks are inherently heavier than a same-process agent hand-off (a worker is a real
-agent loop in its own sandbox). The same-process **Connected Accounts hand-off agent** was measured as
-a speed experiment, but it is not the product direction for connected-account work: it lets a less
-capable in-process agent choose the Google/MS365 tool path and bypasses the GlassHive worker broker.
-For interactive connected-account reads (the user's own Gmail / Outlook inbox, calendar, or file
-lookups), the supported path is still GlassHive broker-first. Improve speed by making the worker and
-broker better, not by routing around them. Every lever is config-driven and must not be hardcoded or
-overfitted to one profile, model, effort, or policy:
+agent loop in its own sandbox). Viventium supports both the same-process **Connected Accounts
+hand-off agent** and the GlassHive brokered worker path. They are complementary, not replacements:
+the hand-off is the direct path for immediate connected-account checks and explicitly confirmed
+non-destructive email/calendar updates, while GlassHive owns delegated, long-running,
+document/report, browser/computer, multi-step co-work, and autonomous worker tasks. Destructive or
+broad mutations such as deleting/moving/archive/mark-read mail, deleting calendar events,
+sharing/permission changes, and file writes require explicit user confirmation plus GlassHive or
+another available write-capable connected-account path. If no write-capable path is available, the
+user-visible answer must say so plainly. Every lever is config- or prompt-driven and must not be
+hardcoded or overfitted to one profile, model, effort, or policy:
 
 - **Where the time actually goes (measured).** A cold `codex-cli` host worker answering
   "any new emails today?" took **~5m01s wall-clock**, decomposed from the runtime events + codex
   rollout as: **queue→start 0.0s** (always-on runtime, instant host spawn) + **~301s agent loop** =
   ~30 sequential broker tool calls at ~6.5s each (~195s, fetching messages largely one-by-one) +
-  model reasoning turns (~80s) + final summarize (~15s). The rejected same-process hand-off answered
-  the same question faster mainly because it used just **3** tool calls including a *batched* content
-  fetch. That comparison is useful as a performance clue, not as an allowed routing shortcut. The gap
-  is the worker's granular autonomous loop + reasoning, **not** spawn/bootstrap.
+  model reasoning turns (~80s) + final summarize (~15s). The same-process hand-off answered the same
+  question faster mainly because it used just **3** tool calls including a *batched* content fetch.
+  That comparison is useful both as the product reason to keep the fast inline path and as a
+  performance clue for GlassHive. The worker gap is the granular autonomous loop + reasoning,
+  **not** spawn/bootstrap.
 - **Warm worker resume (favorite workspaces) — helps docker, not host.** A worker/workspace can be
   flagged `favorite` (`update_worker_metadata(favorite=...)`), and idle reaping is **off by default**
   (`GLASSHIVE_IDLE_TERMINATE_AFTER_S=0`), so workers stay warm and `Resume`/`Open workspace` reuses
@@ -569,9 +667,10 @@ overfitted to one profile, model, effort, or policy:
   container cold-start is a genuine cost, and continuity (preserved files/browser/login). Do not sell
   warm-resume as the host-mode speed lever.
 - **The host-mode speed levers are the agent loop, not the sandbox:** fewer/batched broker tool calls,
-  reasoning effort (`high` over `xhigh`), and a faster quality worker model (below). Interactive
-  connected-account reads must still use the GlassHive broker-first path; the fix is to make that
-  path reliable, scoped, and fast enough.
+  reasoning effort (`high` over `xhigh`), and a faster quality worker model (below). GlassHive still
+  needs to become reliable, scoped, and fast enough for delegated connected-account work; the
+  Connected Accounts hand-off handles the simpler immediate checks and confirmed non-destructive
+  email/calendar updates inline.
 
 ### Results Quality vs Speed — the metric that matters most (measured)
 
@@ -588,22 +687,24 @@ accurate, complete, and useful for the user's intent. For the same "any new emai
 | Precision on literal details | risk: compressed a meeting time across timezones — a synthesis/precision discrepancy | **higher** — read each message, so literal subjects/times were verbatim |
 | Usefulness for "a quick rundown" | **higher** — scannable, prioritized, actionable | lower for triage (a thorough dump), higher for an audit/full sweep |
 
-**Decision / value (do not re-litigate per session) — PARITY, not routing rubrics:**
+**Decision / value (do not re-litigate per session) — both paths, PARITY, not runtime rubrics:**
 - Both paths must independently meet the Core Outcome Metric (`01_Key_Principles.md` §0): Quality
-  (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable). Do **not**
-  hardcode "quick rundown → hand-off, full sweep → worker." Whether a result is turned into a rundown is
-  the Main Agent's and the user's call, not a runtime rubric. GlassHive's own job is **truth and
-  completeness**; the worker's intelligence decides the shape.
-- So the gap above is a **GlassHive quality+speed gap to close, not a reason to route around it.** Close
-  it by (a) running the worker on a capable model (**Claude Code CLI**; codex was both slower here and,
-  separately, weekly-credit-limited — see [[codex-credits-claude-fallback]]) and (b) giving the worker the
-  **same memory + conversation-recall context the Main Agent receives**, so its results are as relevant and
-  useful, not merely complete.
+  (Intelligence, Relevance, Usefulness, Alignment) + Performance (Fast, Smooth, Reliable). Do not
+  hardcode a runtime text/keyword rubric that bypasses model/tool judgment. The Main Agent should use
+  prompt-owned capability context and available tools/edges to choose: immediate connected
+  account checks can hand off inline; broader delegated or artifact-producing work should go through
+  GlassHive. Each path must be truthful, complete enough for its scope, useful, and fast.
+- The GlassHive gap above is still a **GlassHive quality+speed gap to close**. Keep improving it by
+  (a) running the worker on a capable model (**Claude Code CLI**; codex was both slower here and,
+  separately, weekly-credit-limited — see [[codex-credits-claude-fallback]]) and (b) giving the worker
+  the **same memory + conversation-recall context the Main Agent receives**, so its results are as
+  relevant and useful, not merely complete.
 - **Faster is not automatically better.** A faster, synthesized answer can drop/compress a literal detail
   (the meeting-time discrepancy above). When literal accuracy matters (times, amounts, names), verify the
   specific field against the source rather than trusting a synthesized summary.
-- Evaluate every speed change against the **full metric**, not just wall-clock. A latency win that degrades
-  Quality is a regression. QA the *result*, not only the clock (`qa/glasshive-mcp-capability-broker/`).
+- Evaluate every speed change against the **full metric**, not just wall-clock. A latency win that
+  degrades Quality is a regression. QA the *result*, not only the clock
+  (`qa/connected-accounts-handoff/` and `qa/glasshive-mcp-capability-broker/`).
 
 ### Closing the GlassHive usefulness gap (memory + recall context)
 
@@ -715,9 +816,9 @@ No cloud change was made; this records compatibility so the enterprise contract 
 - **Reasoning effort.** The codex worker's effort is config-driven via
   `WPR_CODEX_CLI_REASONING_EFFORT` (per-worker bootstrap env or global), constrained by
   `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` with `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK`
-  (default `medium`). Prefer `high` over `xhigh` for everyday tasks where the extra budget does not
-  change the outcome; reserve `xhigh` for genuinely hard work. A user/operator option, never a
-  hardcoded constant.
+  (route-specific). Prefer `high` as the enterprise deep-work default when the route supports it;
+  reserve `xhigh` for genuinely hard asynchronous work after direct route and worker-run proof. A
+  user/operator option, never a hardcoded constant.
 - **Worker model.** Config-driven via `WPR_MODEL_CODEX_CLI` (default `gpt-5.4`) and
   `WPR_MODEL_OPENCLAW_CLAUDE` (default `claude-sonnet-4-6`). Choose from a launch-ready quality family
   (model governance in `01_Key_Principles.md`); never use a low-tier model (GPT-mini / Haiku class)
@@ -730,10 +831,10 @@ No cloud change was made; this records compatibility so the enterprise contract 
   `favorite` flag, so the path of least resistance never silently incurs standing compute.
 
 The product surface should expose `favorite` and a "keep awake" toggle as simple, clearly-labeled
-per-workspace options (the runtime metadata and idle-reaper config already back them). Interactive
-connected-account answers go through the GlassHive broker-first worker path; tune that path for speed
-via broker batching, warm resume, and effort/model options rather than a hardcoded same-process
-shortcut.
+per-workspace options (the runtime metadata and idle-reaper config already back them). GlassHive
+connected-account work should be tuned for speed via broker batching, warm resume, and effort/model
+options, while immediate connected-account checks can use the Connected Accounts hand-off
+without pretending the worker path is the only supported product route.
 
 ---
 
@@ -759,8 +860,11 @@ shortcut.
 - `codex_config_append` -> worker-local `$CODEX_HOME/config.toml` and a workspace `.codex/config.toml`
   diagnostic mirror. Host-native Codex workers must run with `CODEX_HOME` pointed at that
   worker-local directory so Codex CLI loads the projected MCP config without leaking broker grants
-  into process arguments. Minimal Codex auth may be copied from the host Codex home into the
-  worker-local Codex home with owner-only permissions.
+  into process arguments. The worker-local config is an additive merge: preserve allowlisted native
+  Codex MCP definitions from the host Codex config or bundled plugin manifests, then append the
+  scoped broker MCP block. Minimal Codex auth may be copied from the host Codex home into the
+  worker-local Codex home with owner-only permissions. A broker-only Codex config is a capability
+  regression unless an explicit lockdown config requested it and preflight/QA verify that intent.
 - Run-scoped env and MCP/client config must be refreshed before each worker run, including reused
   workers. Broker grants can rotate between runs; stale Claude `.mcp.json` headers, stale Codex MCP
   blocks, or duplicate MCP server sections are security and reliability bugs.
@@ -816,8 +920,10 @@ follow-up message into the originating conversation. GlassHive first writes each
 SQLite outbox, dispatches the first delivery attempt off the user-facing request thread, retries
 delivery with the same callback id, treats duplicate `409` responses as delivered, and replays
 pending callbacks on service restart so a temporary parent outage does not silently drop the
-result. A periodic retry loop must also replay pending callbacks without requiring a GlassHive
-restart. Replay refreshes `callback_ts` and re-signs the payload while preserving `callback_id`.
+result. Terminal receiver rejections such as 401/403/404/410/422 dead-letter immediately instead of
+burning the replay budget; a periodic retry loop must replay only pending retryable callbacks
+without requiring a GlassHive restart. Replay refreshes `callback_ts` and re-signs the payload while
+preserving `callback_id`.
 First-attempt delivery and outbox replay must run in the background and must not block worker
 create/run APIs or GlassHive service startup if the callback receiver is slow or unavailable. The
 retry attempt count, base backoff, and periodic replay interval are runtime-configurable.
@@ -1020,6 +1126,23 @@ but it cannot replace real user-path evidence. Every case result must be marked 
 5. Wildcard: research current user patterns for tools like Codex, Claude, OpenClaw, agentic code
    interpreters, and browser/computer-use workers. Define three quick but representative tests and
    run them through GlassHive without hardcoded prompt or intent rules.
+   The first-delivery master wildcard is `qa/glasshive_standard_qa/cases.md` `GH-STD-024`: input is
+   wildcard, deep work is required, output type/count/format is wildcard, and document delivery may
+   be PDF, Microsoft Word, PowerPoint, text, or multiple files. This case exists so development and
+   tests do not overfit to one prompt, one input type, one provider, one document format, or one
+   artifact path; the worker must use its own intelligence and native capabilities to deliver work
+   comparable to a strong ChatGPT/Claude coworker result. Treat it as one master prompt family with
+   randomized variables and at least two first-delivery variants, not as one golden prompt. Evidence
+   must include in/out fidelity from user request through worker instruction to visible result,
+   truthful native capability projection for the selected worker type, document-open validation when
+   a file is produced, and a Quality + Performance assessment using `01_Key_Principles.md`. When a
+   variant may require browser/computer capability, evidence must distinguish extension policy,
+   installed/enabled browser profile state, and connected CLI/app bridge state.
+   When the wildcard asks for, or clearly implies, a document/report/deck/client deliverable and no
+   technical/source format is requested, the first-class deliverable should be a polished ordinary
+   end-user artifact such as PDF, Word, PowerPoint, spreadsheet, or an equivalently professional
+   format. Markdown/HTML may be produced as supporting source or preview artifacts, but should not be
+   the only default deliverable unless the worker reports a concrete runtime blocker.
 6. Security/access: prove enterprise auth fails closed, user/tenant scoping prevents cross-user
    listing/resume/watch/download/inference, signed links expire or reject tampering, raw local/VM
    internals are hidden from member users, provider secrets are not surfaced, and access logs do not
@@ -1092,11 +1215,36 @@ runtime intent classifier.
   artifacts, browser-visible result, command/test output, or researched facts when those are relevant
   to the task. The worker should continue or repair mismatches it can fix, and report a blocker only
   when the remaining blocker is real and specific.
+- For research/source-gathering work, the worker should avoid dumping very large raw webpages,
+  documentation pages, logs, or command outputs into the agent turn. It should save working notes or
+  excerpts as files when useful and return concise, cited summaries so the long job remains stable.
+- The self-check/completion contract must be present in the exact command instruction sent to every
+  runtime. It is not enough to write `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, or `harness-prompt.md`
+  if one CLI launch path still appends the raw user instruction.
+- File inputs should be exposed by path, not overengineered into tool-specific argument schemes.
+  When files are copied into a worker workspace, the worker prompt/bootstrap context must state the
+  accessible full path or workspace-relative path and the worker should use its native file tools to
+  inspect them.
+- If the requested result is a report, document, deck, client deliverable, or other shareable work
+  product and the user did not request a technical/source format, the worker should make a polished
+  ordinary end-user artifact the primary output. Markdown, HTML, or source files can accompany it,
+  but they should not be the sole default first delivery for that class of task unless the runtime
+  cannot create the professional artifact and says why.
+- Native browser/computer capability is not MCP-only. Claude Code's Chrome/computer-use surfaces and
+  Codex's Browser/Chrome/Computer Use app/plugin surfaces are part of the selected worker type's
+  capability contract when installed, enabled, and allowed. GlassHive must project/preflight these
+  surfaces truthfully instead of concluding that browser/computer use is absent merely because a
+  generic MCP list omitted it.
 - GlassHive harness/runtime recovery must happen below the worker intelligence when the worker cannot
   even start. Version mismatches, missing CLIs, broken sidecars, or unavailable managed dependencies
   are not user-facing project goals and must not be delegated as "fix this on your end" unless the
   configured managed/profile/sandbox recovery options have been exhausted or would require an unsafe
   global host mutation.
+- Host-native worker substrates must have built-in version and capability preflight, even when the
+  operator did not supply a custom requirements JSON. Current floors are Codex CLI `>=0.140.0`,
+  Claude Code `>=2.1.178` with `--effort` support and `--chrome` support when Chrome integration is
+  enabled, and OpenClaw `>=2026.6.6`. These floors may be raised with a dated QA note after checking
+  current official docs/npm metadata and running the worker smoke suite.
 - GlassHive MCP caller instructions must expose brokered MCP/tool capability as context, not as
   invented workspace goals. Unless the user explicitly specified them, callers must not manufacture
   success criteria, provider lists, output formats, artifacts, ranking rules, or workflow steps for
@@ -1128,6 +1276,11 @@ runtime intent classifier.
   effort settings (`high`/`xhigh` for Codex-style profiles, `max` for Claude-style profiles, or the
   configured equivalent) unless the user explicitly asks for a quick/cheap pass. The runtime must
   still treat effort as structured configuration, not prompt-string intent matching.
+- Deep-work route failures must preserve the problem statement. If the active model/tool route
+  rejects an effort value, rate-limits, or lacks enough quota for a legitimate first-delivery
+  document/research job, the owning fix is route capability/quota alignment plus a rerun of the same
+  QA path. Do not "fix" the failure by downgrading the requested depth, forbidding browser/computer
+  use, forcing Markdown-only output, or adding prompt-specific shortcuts.
 - Idle/cost controls are product requirements, not operator nice-to-haves. Default enterprise
   configuration must make the cost risk visible and configurable.
 - Paused/idle compute release must be idempotent. Once GlassHive has stopped worker compute while
@@ -1266,7 +1419,10 @@ persistent home and workspace mounts.
 | `GLASSHIVE_ENTERPRISE_MODE` | unset | Enables fail-closed enterprise request scoping |
 | `GLASSHIVE_AUTH_MODE` | `local` | `first_party_assertion` for v1 enterprise VM mode; OAuth modes are optional |
 | `GLASSHIVE_ENTERPRISE_TENANT_ID` | `local` | Single-tenant deployment identifier used when the request does not carry a tenant header |
-| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22` | Docker image |
+| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs4` | Docker image with native CLI, browser/computer substrate, managed Claude/Codex browser extensions, and professional document toolchain |
+| `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.140.0` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
+| `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.178` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
+| `WPR_SANDBOX_OPENCLAW_NPM_SPEC` | `openclaw@latest` | OpenClaw package spec for rebuilt workstation images |
 | `WPR_SANDBOX_MEMORY` | `3g` | Docker memory cap per worker container |
 | `WPR_SANDBOX_MEMORY_SWAP` | `3g` | Docker memory+swap cap per worker container |
 | `WPR_SANDBOX_CPUS` | `2` | Docker CPU cap per worker container |
@@ -1276,12 +1432,20 @@ persistent home and workspace mounts.
 | `WPR_CODEX_BIN` | `codex` | Host-native Codex executable path. Viventium local runtime config must compile an absolute app-bundled path when the helper/LaunchAgent service `PATH` cannot discover `codex`; app-bundle discovery checks `/Applications`, `~/Applications`, and `VIVENTIUM_CODEX_APP_DIRS`. |
 | `WPR_CLAUDE_CODE_BIN` | `claude` | Host-native Claude executable path when configured/discovered. |
 | `WPR_OPENCLAW_BIN` | `openclaw` | Host-native OpenClaw executable path when configured/discovered. |
+| `GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_JSON` / `GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_FILE` | unset | Optional fail-closed host-runtime preflight requirements. Supports binary/version checks plus native capability probes such as `required_help_flags: ["--chrome"]` for Claude Code and `required_mcp_servers: ["computer-use", "node_repl"]` for Codex. Claude Code `max` effort still requires native `--effort` support even when a custom requirements JSON omits that flag. |
 | `WPR_MODEL_HOST_CODEX_CLI` | unset | Optional host-native Codex model override when the logged-in local Codex account should use a deployment-specified model instead of its local Codex config |
 | `CODEX_MODEL` | unset | Optional generic host-native Codex CLI model override; honored when `WPR_MODEL_HOST_CODEX_CLI` is unset |
 | `GLASSHIVE_HOST_CODEX_INHERIT_PROVIDER_MODEL` | unset | Opt-in compatibility switch for host-native Codex to inherit `WPR_MODEL_CODEX_CLI`; leave unset so host workers use local Codex config by default |
+| `GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST` / `WPR_HOST_CODEX_NATIVE_MCP_ALLOWLIST` | `computer-use,node_repl` | Host-native Codex MCP sections/plugin manifests preserved into worker-local `CODEX_HOME` before appending the GlassHive broker; set to `off` only for an explicitly locked-down worker |
+| `GLASSHIVE_HOST_CODEX_PLUGIN_CACHE` / `WPR_HOST_CODEX_PLUGIN_CACHE` | host Codex plugin cache | Optional override for locating bundled native Codex MCP manifests such as computer-use |
 | `WPR_OPENCLAW_START_GATEWAY` | `false` | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention |
-| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,minimal,low,medium,high,xhigh` | Comma-separated Codex effort values supported by the configured Codex provider route; set this when a deployment route rejects a value such as `minimal` |
-| `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` |
+| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,minimal,low,medium,high,xhigh` | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route rejects a value such as `minimal` |
+| `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`; choose the closest supported value for the active route, for example `low` when `minimal` is rejected but `low` is accepted |
+| `WPR_CODEX_CLI_IGNORE_USER_CONFIG` | `false` | Workspace-mode Codex should load the worker-local config by default so projected broker/native MCPs work; set `true` only for an explicit locked-down provider route |
+| `WPR_CODEX_CLI_DISABLE_FEATURES` | unset | Optional comma-separated Codex feature disables for explicitly locked-down provider routes. The default must preserve native Codex app, multi-agent, plugin, browser/computer, workspace-dependency, and related capability surfaces; set this only with dated preflight/QA evidence that the lockdown is intentional. |
+| `WPR_CLAUDE_CODE_ENABLE_CHROME` | `true` | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode |
+| `WPR_CLAUDE_CODE_EFFORT` | unset | Optional Claude Code effort flag such as `max`; MCP/UI/direct API per-run effort must project this into the bootstrap bundle, and workspace plus host-native commands must translate it to `--effort max` |
+| Built-in host CLI floors | Codex CLI `>=0.140.0`, Claude Code `>=2.1.178`, OpenClaw `>=2026.6.6` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags |
 | `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
 | `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` | `1800` | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout; enterprise deployments that expect 25+ minute research/file jobs may raise this, for example to `2700` |

@@ -150,11 +150,25 @@
   actually loads (`$CODEX_HOME/config.toml`), not only a workspace-local diagnostic file. The worker
   process environment should point `CODEX_HOME` at a worker-local directory with owner-only
   permissions so the run can use the broker without exposing grants in command-line arguments.
-- The main Viventium agent should prefer this direct GlassHive/broker path over auto-activating
-  provider-specific productivity background cortices. In the local broker-first baseline, `MS365`,
-  `Google`, and `Deep Research` remain shipped specialist agents, but their main-agent background
-  activation is disabled so provider access is not mediated by a less capable background specialist
-  when the connected worker/direct-tool harness can own the work.
+  That worker-local config must be additive over the host Codex native capability surface: preserve
+  the allowlisted native MCP/tool definitions needed by Codex itself (for example bundled
+  computer-use / `node_repl` definitions when present), then append/refresh the scoped
+  `glasshive-user-capabilities` broker block. Do not replace the whole Codex config with only the
+  broker block unless an operator has explicitly configured a locked-down worker and QA/preflight
+  prove that this is intended.
+- The main Viventium agent should prefer direct, user-visible execution paths over auto-activating
+  provider-specific productivity background cortices. Immediate connected-account checks and
+  explicitly confirmed non-destructive email/calendar updates can use the same-process Connected
+  Accounts hand-off when the required tool is present; delegated, long-running, browser/computer,
+  artifact, report, document, or co-work requests use the GlassHive broker path. In the local
+  baseline, `MS365`, `Google`, and `Deep Research` remain shipped specialist agents, but their
+  main-agent background activation is disabled so provider access is not mediated by a background
+  specialist when the hand-off or connected worker/direct-tool harness can own the work.
+  Destructive or broad mutations such as deleting/moving/archive/mark-read mail, deleting calendar
+  events, sharing/permission changes, and file writes are outside the Connected Accounts hand-off
+  and must go through explicit user confirmation plus GlassHive or another available write-capable
+  connected-account path. If no write-capable path is available, the user-visible answer must say so
+  plainly.
 
 ### MCP-Owned Instruction Contract
 

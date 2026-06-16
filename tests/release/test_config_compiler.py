@@ -159,6 +159,23 @@ def test_prompt_workbench_sidecar_compiles_as_explicit_runtime_opt_in() -> None:
     assert enabled_env["VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_EXECUTOR"] == "glasshive_host"
 
 
+def test_config_compiler_exports_default_timezone_from_global_settings() -> None:
+    config = minimal_compile_config()
+    config["settings"] = {"timezone": "Europe/Amsterdam"}
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["VIVENTIUM_DEFAULT_TIMEZONE"] == "Europe/Amsterdam"
+
+
+def test_config_compiler_omits_default_timezone_when_unconfigured() -> None:
+    config = minimal_compile_config()
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert "VIVENTIUM_DEFAULT_TIMEZONE" not in env
+
+
 def test_memory_hardening_explicit_provider_controls_cli_provider() -> None:
     config = minimal_compile_config()
     config["runtime"]["memory_hardening"] = {"enabled": True, "provider": "anthropic"}
@@ -666,6 +683,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
     assert "PLAYGROUND_VARIANT=modern" in runtime_env
     assert "VIVENTIUM_PLAYGROUND_VARIANT=modern" in runtime_env
+    assert "VIVENTIUM_DEFAULT_TIMEZONE=" not in runtime_env
     assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-session-test" in runtime_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-session-test" in runtime_env
@@ -702,7 +720,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.5" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-4-7" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-4-8" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.5" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=xhigh" in runtime_env
@@ -910,6 +928,18 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
             "enabled": True,
             "workspace_root": "~/viventium-workers",
             "default_execution_mode": "host",
+            "runtime_requirements": {
+                "json": {
+                    "claude-code": {"required_help_flags": ["--chrome"]},
+                    "codex-cli": {"required_mcp_servers": ["computer-use", "node_repl"]},
+                },
+            },
+            "codex_native_mcp_allowlist": ["computer-use", "node_repl"],
+            "codex_plugin_cache": "codex-plugin-cache",
+            "codex_ignore_user_config": False,
+            "codex_disable_features": ["image_generation"],
+            "claude_enable_chrome": True,
+            "claude_effort": "max",
             "mentions": {"codex": "@codex", "claude": "@claude", "openclaw": "@openclaw"},
             "destructive_confirmation": {"enabled": True},
             "advisory_reviewer": {"enabled": False, "mode": "review_final"},
@@ -932,6 +962,16 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["WPR_CODEX_BIN"] == str(codex_bin)
     assert enabled_env["WPR_CLAUDE_CODE_BIN"] == str(claude_bin)
     assert "WPR_OPENCLAW_BIN" not in enabled_env
+    assert json.loads(enabled_env["GLASSHIVE_HOST_RUNTIME_REQUIREMENTS_JSON"]) == {
+        "claude-code": {"required_help_flags": ["--chrome"]},
+        "codex-cli": {"required_mcp_servers": ["computer-use", "node_repl"]},
+    }
+    assert enabled_env["GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST"] == "computer-use,node_repl"
+    assert enabled_env["GLASSHIVE_HOST_CODEX_PLUGIN_CACHE"] == "codex-plugin-cache"
+    assert enabled_env["WPR_CODEX_CLI_IGNORE_USER_CONFIG"] == "false"
+    assert enabled_env["WPR_CODEX_CLI_DISABLE_FEATURES"] == "image_generation"
+    assert enabled_env["WPR_CLAUDE_CODE_ENABLE_CHROME"] == "true"
+    assert enabled_env["WPR_CLAUDE_CODE_EFFORT"] == "max"
     assert enabled_env["WPR_DB_PATH"] == str(
         app_support_root / "state" / "runtime" / "isolated" / "glasshive" / "runtime_phase1.db"
     )
@@ -1686,13 +1726,13 @@ def test_build_agent_assignments_anthropic_only_uses_current_claude47_profile() 
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("anthropic", "claude-opus-4-7")
+    assert assignments["conscious"] == ("anthropic", "claude-opus-4-8")
     assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["red_team"] == ("anthropic", "claude-opus-4-7")
-    assert assignments["deep_research"] == ("anthropic", "claude-opus-4-7")
+    assert assignments["red_team"] == ("anthropic", "claude-opus-4-8")
+    assert assignments["deep_research"] == ("anthropic", "claude-opus-4-8")
     assert assignments["productivity"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-7")
+    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-8")
     assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
 
@@ -1963,7 +2003,7 @@ def test_build_agent_assignments_use_current_generation_models() -> None:
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("anthropic", "claude-opus-4-7")
+    assert assignments["conscious"] == ("anthropic", "claude-opus-4-8")
     assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["confirmation_bias"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["red_team"] == ("openai", "gpt-5.4")
@@ -1972,7 +2012,7 @@ def test_build_agent_assignments_use_current_generation_models() -> None:
     assert assignments["parietal"] == ("openai", "gpt-5.4")
     assert assignments["pattern_recognition"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-7")
+    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-8")
     assert assignments["support"] == ("anthropic", "claude-sonnet-4-5")
     assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
@@ -2054,7 +2094,7 @@ def test_build_agent_assignments_limits_anthropic_opus_background_usage() -> Non
     opus_roles = {
         role
         for role, assignment in assignments.items()
-        if assignment == ("anthropic", "claude-opus-4-7") and role != "conscious"
+        if assignment == ("anthropic", "claude-opus-4-8") and role != "conscious"
     }
 
     assert opus_roles == {"red_team", "deep_research", "strategic_planning"}
@@ -2320,9 +2360,9 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
                     "preset": {"endpoint": "anthropic", "model": "claude-sonnet-4-5"},
                 },
                 {
-                    "name": "claude-opus-4-7",
+                    "name": "claude-opus-4-8",
                     "label": "Claude Opus 4 7",
-                    "preset": {"endpoint": "anthropic", "model": "claude-opus-4-7"},
+                    "preset": {"endpoint": "anthropic", "model": "claude-opus-4-8"},
                 },
             ]
         },
@@ -2334,7 +2374,7 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
     )
     assert [entry["name"] for entry in normalized["modelSpecs"]["list"]] == [
         "claude-sonnet-4-5",
-        "claude-opus-4-7",
+        "claude-opus-4-8",
     ]
     assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Sonnet 4.5"
     assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4 7"
@@ -4290,7 +4330,7 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "OPENAI_MODELS=" not in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=anthropic" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=claude-opus-4-7" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=claude-opus-4-8" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
     assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"

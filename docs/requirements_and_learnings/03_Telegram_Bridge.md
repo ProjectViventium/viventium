@@ -197,8 +197,16 @@ stream back to Telegram through the existing bridge.
   already persisted but the Telegram/voice delivery row is missing after a restart or partial
   failure, a repeated signed callback with the same callback id must repair the missing delivery
   row without creating a duplicate conversation message.
+- The same-turn GlassHive poller and the durable dispatcher must share the same delivery ledger.
+  Authenticated Telegram/voice callback polling may expose an opaque callback id to the bridge so
+  the fast path can claim and mark the exact delivery row before sending. It must not legacy-send a
+  callback that has a durable delivery row, because that creates one visible message from the poller
+  and another from the dispatcher.
 - Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
   collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
+  If a primary provider is rate-limited and the configured fallback provider then fails because its
+  connected account needs reconnect, Telegram must preserve both facts and name the reconnect action
+  instead of showing a stale rate-limit message or generic connection failure.
 - Telegram SSE resume must tolerate the normal race where generation completes while the first
   stream connection is interrupted. The configured stream services should retain completed
   successful jobs for the store's short completion TTL and replay the cached final event to late
@@ -207,6 +215,9 @@ stream back to Telegram through the existing bridge.
 - Transport-level bridge fallbacks must remain text-mode diagnostics, not synthetic voice replies.
   When Telegram always-voice output is enabled, the bot may voice assistant answers, but it must not
   synthesize local transport/plumbing failures such as an exhausted expired-stream retry.
+- Proactive worker callbacks are one logical delivery. If Telegram voice output is enabled, text and
+  audio behavior must be governed by an explicit surface policy and must never make the same worker
+  completion look like two separate text completions.
 - Telegram GlassHive delivery dispatcher tuning is operational only:
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S` controls the background delivery poll interval
     and defaults to 5 seconds.

@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 HOST = os.environ.get("CURSOR_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CURSOR_BRIDGE_PORT", "18081"))
-CLAUDE_MODEL = os.environ.get("CURSOR_BRIDGE_CLAUDE_MODEL", "claude-opus-4-7")
+CLAUDE_MODEL = os.environ.get("CURSOR_BRIDGE_CLAUDE_MODEL", "claude-opus-4-8")
 CLAUDE_EFFORT = os.environ.get("CURSOR_BRIDGE_CLAUDE_EFFORT", "xhigh")
 CLAUDE_OPENAI_MODEL_ID = os.environ.get(
     "CURSOR_BRIDGE_CLAUDE_OPENAI_MODEL_ID",

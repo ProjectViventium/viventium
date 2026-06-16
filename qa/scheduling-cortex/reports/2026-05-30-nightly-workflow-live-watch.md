@@ -51,7 +51,7 @@ snapshot, local absolute App Support paths, and launch token.
 ## Watched Behavior
 
 - Trigger path: Workbench scheduled-prompt manual-run API for the built-in nightly prompt.
-- New run prefix: `sp_run_eb15d`.
+- New scheduled-prompt run id present.
 - Watch window: `2026-05-31T00:19:00Z` through `2026-05-31T00:20:11Z`.
 - Poll behavior:
   - `00:19:00Z`: run `queued`; rendered hash present; variable snapshot hash present; GlassHive run
@@ -79,18 +79,18 @@ snapshot, local absolute App Support paths, and launch token.
   - last delivery at `2026-05-31T00:20:07.535803Z`
   - next run remains `2026-05-31T10:00:00Z`
 - Latest `scheduled_prompt_runs` row:
-  - run prefix `sp_run_eb15d`
-  - task prefix `acffc387-e9e`
+  - scheduled-prompt run prefix present
+  - task prefix present
   - status `completed`
   - executor `glasshive_host`
   - rendered hash length `16`
   - variable snapshot hash length `16`
-  - GlassHive run prefix `run_f4c0f8e5`
+  - GlassHive run prefix present
   - callback payload present
   - private detail pointer present
   - error class empty
 - Latest GlassHive run row:
-  - run prefix `run_f4c0f8e5`
+  - run prefix present
   - state `completed`
   - queued at `2026-05-31T00:19:00.3432Z`
   - started at `2026-05-31T00:19:00.3591Z`

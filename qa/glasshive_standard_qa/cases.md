@@ -31,6 +31,7 @@ Use `GH-STD-NNN` for durable cases and `GH-STD-UC-NNN` for natural user use case
 | GH-STD-021 | Same | Every GlassHive file-delivery response uses a preview/open link as the primary user link and an explicitly labeled raw download link only as a secondary action; enterprise preview-page buttons remain signed. | Callbacks, direct API, signed links, MCP artifact tools, LibreChat-rendered links | Automated API/MCP contract tests plus browser click/no-download QA | PASS 2026-05-25 locally for callback link ordering, `artifact_open` vs `artifact_download` signed-token kinds, default preview headers, binary/image/text/SVG artifact behavior, enterprise signed preview click-through, and browser no-surprise-download proof. |
 | GH-STD-022 | Same | Host assistants delegate sparsely and faithfully: real goals, constraints, files, MCP/tool capabilities, and tool results are passed through without invented plans, fake MCP usage, forced artifacts, or provider-specific overfit. | LibreChat MCP, direct MCP, bootstrap files, worker prompts, logs/DB | Automated MCP/prompt tests plus browser user QA | PASS/PARTIAL 2026-05-27; automated contract tests, direct MCP anti-bluff, post-restart direct UI host run, direct UI host/sandbox upload, Prompt Workbench source/dry-run, schedule preflight/recovery, and logs/DB checks passed; LibreChat browser dispatch and live connected-account broker happy path are blocked by local model auth and MS365 MCP timeouts. |
 | GH-STD-023 | Same | Capacity and callback guardrails prevent runaway cloud cost while giving the host a useful next step. | API, MCP, runtime DB/state, logs, enterprise deployment config | Automated API/MCP tests plus live synthetic quota/callback probes | PASS 2026-05-31 on an approved enterprise GlassHive deployment: active quota returned structured `glasshive_worker_quota_exceeded` with owner-scoped `available_workspace_options`, 900-second retry guidance, no sandbox/profile-switch advice, and no synthetic leftovers; a runaway callback row was retained as `dead_lettered` instead of retrying. |
+| GH-STD-024 | Same | Master first-delivery wildcard deep-work document QA proves GlassHive can accept wildcard input, perform spectacular complete deep work, and deliver wildcard text/files/document formats without overfitting to one prompt or file type. | LibreChat MCP, direct MCP, direct UI, host/workstation workers, generated artifacts, logs/DB | Manual/browser/computer QA, Claude/Codex CLI comparison, artifact validation, native skill/browser-extension readiness, public-safe research notes | PASS/PARTIAL 2026-06-15; direct MCP/API and workspace document runs passed, fake-document promotion guard and permanent 403 dead-lettering exist, and this pass added command-boundary completion contract coverage, assign/schedule bootstrap+effort preservation, host CLI stable/capability preflight floors, and Telegram callback dedupe regressions. 2026-06-15 native-capability follow-up added managed Claude/Codex browser-extension policy, worker skill inventory tests, Codex native-surface preservation by default with explicit lockdown-only `WPR_CODEX_CLI_DISABLE_FEATURES`, and Claude Code `max`/`--effort` fail-closed coverage; live LibreChat/direct-UI extension bridge QA remains. ClaudeViv flagged stale GlassHive test doubles; they were fixed and the full profile/MCP target files passed. 2026-06-15 private enterprise evidence, stored outside the public repo, proved LibreChat GlassHive row redaction/labels, provider-effort fallback logging, a GPT-5.4 Responses route with Codex Docker high-by-default plus explicit xhigh worker smokes, Claude Code workspace native `--chrome` plus `--effort max`, and a post-capacity wildcard first-delivery report run that produced validated DOCX, PDF, HTML, and Markdown artifacts with browser/PDF/DOCX inspection. Remaining gaps: authenticated LibreChat conversational rerun for the full master prompt, direct UI rerun, live Telegram dedupe rerun, PPTX/file-input variants, and full export/recall sanitization. |
 
 ## Natural User Use Case Checklist
 
@@ -63,6 +64,7 @@ summarize the visible result here.
 | GH-STD-UC-020 | Give a long, constraint-heavy public-safe brief, ask GlassHive to use sandbox/Codex Workspace and wait, then inspect the MCP payload, visible chat, and resource usage. | GH-STD-020 | LibreChat MCP, direct MCP, process/log/DB state, Workspaces/watch browser pages | Tool arguments, full-context preservation, recent-dispatch fallback, View / Steer visibility, poll cadence, process list, browser network cadence | The worker receives the full available brief rather than a watered-down summary; host-side checks such as View / Steer visibility and wait cadence are verified by the host, not reported as worker blockers after deliverables are complete; wait/status uses explicit ids or same-conversation fallback; View / Steer is shown before or at least with final result; no abandoned browser/status loop overloads the machine. | PASS 2026-05-25 local browser QA with synthetic long brief, sandbox/Codex workspace, same-turn wait, artifact links, Workspaces inspection, DB/log evidence, resource snapshot, and completed-workspace browser polling backoff proof. |
 | GH-STD-UC-021 | Click the primary GlassHive file link from a completed run, then click the explicit download action. | GH-STD-021 | LibreChat MCP callback, direct API, browser | Link labels/order, signed-token kind, response headers, browser download event, artifact open page content | Primary `Open GlassHive file` link opens a preview/landing page and does not download. Only the `Download file` action returns an attachment, and enterprise click-through does not require hidden auth headers. | PASS 2026-05-25 local API/MCP/browser QA including enterprise signed preview click-through; live enterprise rerun required after deployment updates. |
 | GH-STD-UC-022 | Ask GlassHive to use connected-account MCP/tools, deep research, or file work with ordinary user wording and inspect what the host passed into the worker. | GH-STD-022 | LibreChat MCP, direct MCP, bootstrap files, logs/DB, browser | Tool call payload, delegation audit, materialized MCP config/env/files, worker final report, artifact/open-link behavior | MCP/tool availability is advertised as capability context; the worker chooses the path; no fake MCP result, forced download, invented urgency rubric, provider checklist, or made-up success criteria appears in the worker brief or user response. | PASS/PARTIAL 2026-05-27; direct MCP anti-bluff, worker goal preservation, post-restart direct UI host run, direct UI host/sandbox upload, schedule preflight/recovery, and Prompt Workbench source checks passed; LibreChat browser dispatch and connected-account happy path blocked by local model auth and MS365 MCP timeouts. |
+| GH-STD-UC-023 | Give GlassHive a wildcard input prompt or file(s), ask for deep research/work, and require a wildcard output such as text, PDF, Word, PowerPoint, or multiple files. | GH-STD-024 | LibreChat MCP, direct MCP, direct UI, host/workstation workers, generated artifacts, browser/computer validation | User prompt/input files, worker logs, generated files, opened document validation, final report, DB/run state, Claude/Codex comparison, public-safe research notes. | Worker delivers a spectacular, complete, deeply researched result in the requested or inferred format without hardcoded assumptions about input type, output type, document format, provider, or workflow. | PASS/PARTIAL 2026-06-15; direct MCP/API host/workspace text-input document variants produced validated professional artifacts, including a private enterprise GPT-5.4 high-effort run with DOCX/PDF primary outputs plus HTML/Markdown supporting files. Browser, PDF, DOCX, logs, DB state, model/effort, and run-script evidence were captured privately. Remaining surfaces/variants are authenticated LibreChat full-prompt rerun, direct UI rerun, live Telegram dedupe rerun, PPTX/file-input variants, and export/recall sanitization. |
 
 ## GH-STD-001 - Web Search And Current Fact
 
@@ -734,6 +736,100 @@ summarize the visible result here.
   synthetic quota probe returned `429`, `glasshive_worker_quota_exceeded`, three owner-scoped reuse
   options, 900-second retry guidance, no sandbox/profile-switch advice, and zero synthetic leftovers;
   deployed API/MCP tests passed; a historical runaway callback row was dead-lettered.
+
+## GH-STD-024 - Master Wildcard Deep-Work Document Delivery QA
+
+- Requirement: `48_GlassHive_Workstation_Sandbox_Runtime.md#glasshive-standard-qa` and the
+  first-delivery client expectation captured verbatim below.
+- Source expectation, verbatim:
+
+```text
+w.  are going to devise one category of tests based on what my client really needs out of the first delivery of this version of glass Hive and that's basically where we create a a document file. whether it's a PDF, Microsoft word or a PowerPoint, it will be one of the wild card factors and then we want to make sure that the worker is able to deliver. absolutely spectacular and most complete deep research work just like you would get from chatgpt or Claude cowork. and we get it as a document... format? wild card... the point of this test is to have simplified one QA prompt. which has variety of file input or maybe just user text prompt input, text output or maybe also file(s) output, and deep work inside. with variations. so first, record this as the master QA since we already have standards glasshive QA and keep it exactly as I said... it's input (wildcard) deep work, output (Also type and format wildcard), so tests or development don't get overfitted to just one thing, because again... this is about supporting any prompts or requests user would/might have. so yeah.. document this expectations and requirements without paraphrasing and broken telephone, test it as it... identify current state and user facing issues... such as Claude CLI vs codex CLI delivered quality of work. do.deep research of how these tools work for actually users and even computer use test them on this computer to compare results. consult with Claude max effort
+```
+
+- Risk covered: the first GlassHive delivery optimizes for one fixed prompt, one file type, one
+  provider, one worker profile, or one artifact path, while real users expect open-ended deep work
+  with unpredictable inputs and outputs.
+- Preconditions: public-safe synthetic subject matter; at least one host or workstation worker
+  profile available; document validators/viewers available for the generated output type; internet
+  research or a clearly recorded blocked search prerequisite when current/deep research is required.
+- Wildcard dimensions:
+  1. Input: no file, one text prompt, one public-safe source file, or multiple public-safe files.
+  2. Work: deep research, synthesis, analysis, comparison, recommendations, cited evidence,
+     document composition, and worker self-check.
+  3. Output: text-only answer, one generated file, multiple generated files, or a document artifact.
+  4. Format: PDF, Microsoft Word, PowerPoint, HTML, Markdown, or another format explicitly requested
+     or intelligently chosen by the worker.
+  5. Worker: compare available local worker-type baselines such as Codex CLI and Claude CLI when
+     configured, but treat them as reference baselines rather than a fixed definition of the wildcard.
+- Steps:
+  1. Select one simplified public-safe master prompt family whose variables are randomized or
+     manually varied across input type, requested work depth, output count, and document format.
+     A first-delivery acceptance run must exercise at least two variants, and a release-complete run
+     must exercise at least three variants, so this cannot become one memorized golden prompt.
+  2. Run the prompt through the real GlassHive surface being accepted, starting with LibreChat MCP
+     for first-delivery user value, then direct MCP/UI where relevant.
+  3. Run the same class of prompt directly through the available local Claude CLI and Codex CLI
+     baselines, with their native capabilities enabled, to compare delivered quality and capability
+     use without GlassHive stripping or over-orchestrating the worker.
+  4. Verify in/out fidelity: user request/input files -> host/MCP payload -> worker instruction ->
+     worker output -> user-visible response and artifact links must preserve the actual target,
+     constraints, file references, and success condition.
+  5. Verify capability projection: the selected worker receives truthful native capabilities for its
+     type, such as browser/computer/MCP/file/shell/local-app control when available, and any missing
+     capability is explicit instead of silently hidden. When browser/computer use is relevant, record
+     extension policy, installed/enabled browser profile state, and connected CLI/app bridge state as
+     separate evidence.
+  6. Let the GlassHive worker choose the method. Do not inject a fixed provider list, file plan,
+     citation template, slide count, section count, or success rubric unless the user prompt says it.
+  7. Open the produced artifact(s) like a user. For PDF/DOCX/PPTX, verify the document opens,
+     contains substantive deep work, preserves requested format, and is not a renamed text file.
+  8. Inspect the worker final report, logs, DB/run state, materialized input files, artifacts,
+     generated links, and any browser/computer-use evidence.
+  9. Compare quality across GlassHive and direct worker-type baselines: depth, relevance,
+     completeness, evidence handling, formatting, visual/professional polish, performance, and
+     whether the worker self-corrected obvious gaps.
+  10. Record current user-facing issues without converting them into prompt-specific rules.
+- Expected result: GlassHive delivers a complete, high-quality deep-work result in the requested or
+  intelligently selected output format; generated documents open successfully and read like a
+  professional coworker/researcher produced them. When the request asks for, or clearly implies, a
+  document/report/deck/client deliverable and the user did not request a technical/source format, the
+  primary user-facing artifact is a polished ordinary end-user document/work product such as PDF,
+  Word, PowerPoint, spreadsheet, or an equivalently professional format chosen by the worker;
+  Markdown/HTML/source files may accompany it but are not the only default deliverable unless the
+  worker reports a concrete runtime blocker. The worker uses its own available intelligence,
+  tools, browser/computer capability, and MCPs without host over-planning; the result satisfies the
+  project outcome metric of Quality (Intelligence, Relevance, Usefulness, Alignment) plus Performance
+  (Fast, Smooth, Reliable).
+- Forbidden result: a hardcoded prompt detector; PDF/DOCX/PPTX-only assumptions; a fake or empty
+  document; a renamed `.txt` file pretending to be a document; shallow summary work when deep work
+  was requested; Markdown/HTML/source-only first delivery for a requested/implied professional
+  document/report/deck/client deliverable without an explicit user format choice or concrete runtime
+  blocker; forced artifacts when text output is enough; missing artifact links; raw tool
+  plumbing in user output; host-injected plans/provider lists/rubrics that the user did not ask for;
+  silently stripped native worker capabilities; or claiming completion without opening/validating the
+  produced files.
+- Evidence to capture: exact synthetic prompt and randomized variables, sanitized source fixture
+  summary, worker profile/version/capability summary, browser-extension policy/profile/bridge status
+  when applicable, generated artifact metadata, open/validation result, in/out fidelity trace,
+  host-courier/no-overplanning check, final report, logs/DB/run state, comparison notes for direct
+  worker-type baselines vs GlassHive, and public-safety scan.
+- Automation: start with a manual/browser/computer QA report; then add reusable harness coverage for
+  artifact creation/opening, file-type validation, no-overfit source scan, worker final-report
+  presence, and side-by-side worker profile comparison.
+- Last run: PARTIAL/PASS 2026-06-15. Direct MCP host and workspace/Docker runs produced validated
+  professional DOCX/PDF document artifacts after runtime fixes, and automation rejects fake renamed
+  professional-document artifacts. This follow-up pass tightened the worker substrate rather than the
+  QA prompt: Docker/workstation Claude now receives the same command-boundary self-check and
+  `FINAL REPORT:` contract as the other worker runtimes; launch/assign preserves resolved effort and
+  bootstrap context; host-native CLI preflight enforces current stable/capability floors; and
+  Telegram callback delivery now has callback-id dedupe regressions. ClaudeViv confirmed the
+  Telegram RCA and found stale GlassHive test doubles after the first narrow rerun; those harness gaps
+  were fixed and the full profile/MCP target files passed. The earlier synthetic direct-MCP callback
+  `403` remains correctly classified as permanent and dead-lettered. Authenticated LibreChat browser
+  UI/callbacks, direct GlassHive UI, live Telegram rerun, Claude interactive browser/computer QA,
+  PPTX-specific, file-input, and full export/recall sanitization variants remain open before full
+  first-delivery signoff.
 
 ## Incident Promotion Checklist
 

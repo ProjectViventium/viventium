@@ -182,6 +182,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     or Claude CLI sign-in and fail with one clear action when neither worker can run
   - the built-in nightly flow is documented and tested as: scheduled prompt -> filled placeholders
     -> GlassHive run -> callback -> scheduler ledger -> Workbench shows completed
+  - the built-in nightly schedule must be active for the resolved first local admin and carry a
+    bounded catch-up policy so a late local scheduler tick does not permanently drop the reflection
   - memory hardening and nightly reflection must resolve the installing user's first local admin
     path without asking for a developer email, hardcoding an owner account, or leaking private data
   - user-owned or resource-heavy surfaces are guided setup, not fake-ready defaults: primary AI
@@ -229,6 +231,11 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - the installed macOS LaunchAgent command must invoke `scripts/viventium/memory_harden.py`
     directly with the generated runtime dir instead of routing scheduled hardening through
     `bin/viventium`; the user-facing launcher may be running when the 3am job fires
+  - the installed macOS LaunchAgent command passes an explicit scheduled trigger marker to the
+    wrapper. The wrapper writes a redacted trigger receipt before model work starts and finalizes it
+    with exit status after the run. Runtime QA should use that receipt plus the hardener summary to
+    prove scheduled delivery; it must not convert observed UTC differences from travel, DST,
+    wake-coalesced launchd fires, or audit-time timezone context into a false `PARTIAL`.
   - the LaunchAgent working directory must be App Support, not the repo checkout, so unattended
     jobs do not inherit macOS protected-folder working-directory failures when a developer checkout
     is under Documents/Desktop/Downloads
@@ -269,7 +276,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - non-macOS operators must wire an equivalent cron/systemd timer; the public CLI currently
     auto-installs schedules only through macOS LaunchAgents
   - `provider_profile` must stay `launch_ready_only`
-  - default Anthropic hardening tuple is `anthropic / claude-opus-4-7 / xhigh`; the root wrapper
+  - default Anthropic hardening tuple is `anthropic / claude-opus-4-8 / xhigh`; the root wrapper
     passes it to the Claude Code CLI path as the explicit provider/model plus
     `VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh`
   - default OpenAI hardening tuple is `openai / gpt-5.5 / xhigh`; the compiler emits
@@ -379,10 +386,19 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     user-scoped credentials explicitly
   - optional MCP/runtime surfaces such as GlassHive must compile out cleanly when they are not
     enabled for the install or not actually present in the checked-out component set
+  - the compiler must emit `VIVENTIUM_DEFAULT_TIMEZONE` only when the operator explicitly sets
+    `settings.timezone`; otherwise the launcher/runtime should detect the host browser or macOS
+    timezone. Feature-specific schedule timezone settings, such as memory hardening, must remain
+    scoped to their feature and must not become a global chat/runtime default.
   - GlassHive host-native workers compile from `integrations.glasshive.host_worker`; when GlassHive
     is enabled, host workers default on, the default execution mode is `host`, the default workspace
     root is user-scoped (`~/viventium`), and `/viventium` is valid only when doctor proves it is
     writable by the current user
+  - `integrations.glasshive.host_worker` also owns first-class optional native-capability controls
+    for host worker runtime requirements, Codex native MCP allowlist/plugin cache, Codex lockdown
+    flags, and Claude Chrome/effort launch flags. These compile into canonical runtime env so
+    operators do not need undocumented `runtime.extra_env` escape hatches for the capability
+    contract.
   - when `integrations.glasshive.host_worker.enabled=false`, the compiler must emit
     `GLASSHIVE_HOST_WORKERS_ENABLED=false`, force the generated default execution mode to `docker`,
     and generate MCP instructions that do not tell agents to create host-native workers

@@ -49,6 +49,73 @@ def test_glasshive_callback_url_uses_configured_scheduling_port(monkeypatch: pyt
     )
 
 
+def test_builtin_workbench_nightly_misfire_policy_catches_up_late_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timezone
+
+    from scheduling_cortex import scheduler
+    from scheduling_cortex.scheduler import SchedulerEngine
+    from scheduling_cortex.storage import ScheduleStorage, StorageConfig
+
+    storage = ScheduleStorage(StorageConfig(db_path=str(tmp_path / "schedules.db")))
+    storage.create_task(
+        {
+            "id": "task-1",
+            "user_id": "user-1",
+            "agent_id": "prompt-workbench",
+            "prompt": "Synthetic prompt",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "America/Los_Angeles"},
+            "channel": "workbench",
+            "executor": "glasshive_host",
+            "conversation_policy": "new",
+            "conversation_id": None,
+            "last_conversation_id": None,
+            "active": 1,
+            "created_by": "agent:prompt-workbench",
+            "created_source": "user",
+            "created_at": "2026-06-06T10:00:00Z",
+            "updated_at": "2026-06-06T10:00:00Z",
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "user",
+            "last_run_at": None,
+            "next_run_at": "2026-06-06T10:00:00Z",
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_outcome": None,
+            "last_delivery_reason": None,
+            "last_delivery_at": None,
+            "last_generated_text": None,
+            "last_delivery": None,
+            "metadata": {
+                "misfire_policy": {"mode": "catch_up", "max_late_s": 12 * 60 * 60},
+                "workbench_scheduled_prompt": {"definition_id": "def-1", "version_id": "ver-1"},
+            },
+        }
+    )
+
+    monkeypatch.setattr(
+        scheduler,
+        "dispatch_task",
+        lambda task: {"delivery": {"outcome": "queued", "reason": "synthetic_glasshive_queued"}},
+    )
+
+    engine = SchedulerEngine(storage, poll_interval_s=1, misfire_grace_s=1800, retry_delay_s=60)
+    engine._process_task(
+        storage.get_task("user-1", "task-1"),
+        datetime(2026, 6, 6, 13, 48, 17, tzinfo=timezone.utc),
+    )
+
+    updated = storage.get_task("user-1", "task-1")
+    assert updated["last_status"] == "success"
+    assert updated["last_delivery_outcome"] == "queued"
+    assert updated["last_delivery"]["late_delivery"]["due_at"] == "2026-06-06T10:00:00Z"
+    assert updated["last_delivery"]["late_delivery"]["late_minutes"] == 228
+    assert updated["last_delivery"]["reason"] == "synthetic_glasshive_queued"
+    assert updated["next_run_at"] == "2026-06-07T10:00:00Z"
+
+
 def test_glasshive_http_error_preserves_structured_blocker_payload() -> None:
     from scheduling_cortex import dispatch
 

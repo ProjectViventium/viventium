@@ -72,7 +72,7 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   not import facts from reference context into the meeting summary unless the transcript itself
   supports them; conflicts remain explicit uncertainty/caveats.
 - The summarizer/model route is configurable and fallback-aware. The default operator candidate
-  order is Claude Code `claude-opus-4-7` at `xhigh`, Claude Code `opus` alias at `xhigh`, then
+  order is Claude Code `claude-opus-4-8` at `xhigh`, Claude Code `opus` alias at `xhigh`, then
   Codex/OpenAI `gpt-5.5` at `high`, then Codex/OpenAI `gpt-5.4` at `high`;
   `VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS` can override that order with
   `provider:model:effort` entries. Failed candidate attempts must be logged as redacted
@@ -184,6 +184,14 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   redacted `summary.json`, `failure.redacted.json`, and `run-log.redacted.jsonl` with phase, reason,
   error class, timeout/status/signal when available, and message hash/preview without leaking
   private paths, account identifiers, secrets, or transcript text.
+- Scheduled hardening runs must also leave a small redacted trigger receipt under local App Support
+  state before model work starts. The LaunchAgent passes an explicit trigger marker to the wrapper;
+  the receipt records only public-safe schedule evidence such as trigger source, schedule label,
+  configured hour/minute, fired-at UTC/local timestamps, timezone at fire, status, exit code, and
+  optional run id. It must not store raw local paths, account emails, prompts, transcripts, memory
+  values, tokens, or database identifiers. QA uses this receipt to prove the macOS scheduled
+  maintenance lane without mistaking travel, DST, wake-coalesced launchd fires, or audit-time
+  timezone differences for product drift.
 - Memory-hardening locks are concurrency guards, not durable state. A lock with a live recorded PID
   must fail closed, but a stale lock whose PID no longer exists must be cleared before the next
   manual or scheduled run so recovery does not require hand-editing local state.
@@ -683,6 +691,11 @@ Product contract:
   memory-hardening wrapper directly from the plist so it is not blocked by a long-running
   user-facing CLI launcher lock. Non-macOS installs need an operator-managed cron/systemd
   equivalent.
+- Prompt Workbench / Scheduling Cortex does not own this memory-maintenance trigger. Workbench
+  scheduled prompts continue to use their separate documented chain:
+  scheduled prompt -> filled placeholders -> GlassHive run -> callback -> scheduler ledger ->
+  Workbench shows completed. Memory hardening is local maintenance and is judged by the LaunchAgent
+  trigger receipt plus memory/transcript/vector run evidence.
 - `runtime.memory_hardening.operator_user_email` optionally scopes scheduled/helper hardening to one
   local account; empty means all local users are eligible
 - a scheduled run that exits successfully with `user_count=0` is a healthy empty/skip result when
@@ -691,7 +704,7 @@ Product contract:
   `FAIL` for provider errors, inconclusive eligibility, unavailable runtime dependencies, stale
   transcript/vector work that should have run, or an unexpected empty selection.
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
-  auth, preferring Claude Code `claude-opus-4-7` at `xhigh` when Anthropic is available and falling
+  auth, preferring Claude Code `claude-opus-4-8` at `xhigh` when Anthropic is available and falling
   back through the Claude Code `opus` alias before Codex/OpenAI `gpt-5.5` at `high` and then
   `gpt-5.4` at `high` when OpenAI is the available foundation route
 - the OpenAI/Codex hardening path must pass a Codex/OpenAI-compatible structured output schema and

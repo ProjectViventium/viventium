@@ -1,3 +1,5 @@
+<!-- qa-evidence-exempt: legacy sanitized RCA/QA note retained for historical context; current acceptance must use cases plus a fresh v2 report. -->
+
 # 2026-06-07 Public Nested Repo Push QA
 
 ## Scope

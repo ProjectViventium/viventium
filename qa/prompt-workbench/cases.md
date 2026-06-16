@@ -307,16 +307,12 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: 2026-06-05, PASS with significant performance regression. The June 5 built-in `Subconscious Deep
-Thought` run completed through Scheduler -> GlassHive -> callback -> Workbench, and Playwright
-confirmed the enabled schedule row, detail panel, Jun 5 recent completed run, next Jun 6 local
-display, and private proposal summary listing were visible without triggering a run. The run started
-at `2026-06-05T10:00:09Z` and completed at `2026-06-05T13:07:10Z`, so the chain passed but took
-11,220 seconds versus recent 190-236 second runs. Scheduler, GlassHive, and callback outbox health
-were clean for the built-in chain; four recurring active user-level provider-reconnect rows were not
-due yet at audit time and remain account-action follow-up outside the built-in Workbench route. Raw
-prompt, account, path, memory, browser snapshot, and result details stayed private. See
-`qa/memory-hardening/reports/2026-06-05-nightly-routines-health-review.md`.
+Last Run: PASS-CORRECTNESS/LONG-DURATION 2026-06-11
+([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)).
+The Jun 11 built-in run completed through Scheduler, GlassHive, callback, and the visible Workbench
+recent-run list; browser scratch snapshots containing private prompt context were deleted and are
+not public evidence. Duration was a watch item at 9,833 seconds, far above recent healthy
+190-868-second completions and similar to earlier long-run outliers.
 
 ## PW-010 Eval Designer And Results
 
@@ -1019,9 +1015,13 @@ no raw prompt/result/private user identifier is written to public QA.
 Forbidden Result: A seeded schedule without GlassHive delivery, a callback success not reflected in
 Workbench, an owner-specific hardcoded account, or public evidence containing raw reflection text.
 
-Last Run: PARTIAL 2026-06-02; latest real nightly passed the owner-runtime delivery chain in about
-3 minutes and status/install coverage is tracked under `INST-004`, but the prior duration outlier
-and clean-machine first-admin proof remain release gates.
+Last Run: PASS-CORRECTNESS/LONG-DURATION 2026-06-11
+([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)).
+Owner-runtime proof again covered the full chain: scheduled prompt -> filled placeholders ->
+GlassHive run -> callback -> scheduler ledger -> Workbench shows completed. The Jun 11 due run
+completed at `2026-06-11T12:49:09Z`; Playwright verified the Workbench detail state showed the Jun
+11 completed run and the next Jun 12 due state. Clean-machine installer proof remains under
+installer release QA, not a known owner-runtime nightly blocker.
 
 ## Natural User Use Case Checklist
 
@@ -1038,7 +1038,7 @@ rows before claiming a pass when the feature behavior changes.
 | `PW-UC-006` | Search scheduling prompts and inspect prompt, config, evals, QA, and history together. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-016`, `PW-027` | Real browser against built local workbench plus prompt context API | Prompt registry rows, source YAML config summaries, eval-bank promptRefs, git metadata, browser DOM/screenshot evidence, and release tests | Scheduling continuity and MCP prompts show related direct-action owner config, main-agent tool exposure, MCP server config, linked evals, QA chips, and public-safe history. | 2026-05-22 scheduling config coverage QA - passed |
 | `PW-UC-007` | Open Prompt Workbench from the LibreChat account dropdown as an admin/operator. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-028` | Real browser against same-host local LibreChat plus `/api/viventium/prompt-workbench/start` and the managed workbench tab | Browser DOM/screenshot evidence, local API response, CLI status JSON, server logs, and route tests | The account dropdown shows Prompt Workbench directly below Connected Accounts for admins, selecting it opens the local managed workbench URL in a new tab, non-admin route access is blocked, and no cloud/provider account state changes. | 2026-05-22 LibreChat entry QA - passed |
 | `PW-UC-008` | Close the sync sidebar, reload, select diff baselines, and verify opt-in Workbench sidecar startup. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-031` | Real browser against built local Workbench plus `/api/prompts/:id/revisions/:revision`, compiler output, launcher smoke logs, and CLI status | Browser storage/DOM/screenshot evidence, prompt revision API, release tests, launcher pid/log state | Sidebar stays closed after reload, `Compare from` changes the actual diff baseline, the revision API is prompt-path/git based, and the local sidecar starts only when enabled without token leakage. | 2026-05-22 sidebar/diff/sidecar QA - passed |
-| `PW-UC-009` | Inspect the built-in nightly reflection schedule after Express install or upgrade, then verify a completed run. | `39_Installer_and_Config_Compiler.md` / `PW-033`, `INST-004` | Prompt Workbench UI, Scheduler ledger, GlassHive callbacks, install/status summary | Browser-visible schedule/completion, sanitized scheduler delivery fields, generated env keys, callback status counts, focused tests. | Nightly reflection is active for the resolved local admin, placeholders are filled at run time, callbacks complete, and Workbench shows completed without private data leakage. | PARTIAL 2026-06-03 ([nightly review](../memory-hardening/reports/2026-06-03-nightly-routines-health-review.md)); schedule was enabled and not yet due, so today's completed run needs a follow-up after `2026-06-03T10:00:00Z` |
+| `PW-UC-009` | Inspect the built-in nightly reflection schedule after Express install or upgrade, then verify a completed run. | `39_Installer_and_Config_Compiler.md` / `PW-033`, `INST-004` | Prompt Workbench UI, Scheduler ledger, GlassHive callbacks, install/status summary | Browser-visible schedule/completion, sanitized scheduler delivery fields, generated env keys, callback status counts, focused tests. | Nightly reflection is active for the resolved local admin, placeholders are filled at run time, callbacks complete, and Workbench shows completed without private data leakage. | PASS-CORRECTNESS/LONG-DURATION 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); live Workbench browser detail and scheduler DB show the Jun 11 completed built-in run and next Jun 12 due state |
 
 ## Release Test Traceability
 

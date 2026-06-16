@@ -54,10 +54,11 @@ to synthesize that transport failure as audio.
 | Generated runtime | `VIVENTIUM_LIBRECHAT_ORIGIN` is now `http://127.0.0.1:3180` in both runtime and Telegram service env output. |
 | API health | Both `http://127.0.0.1:3180/health` and `http://localhost:3180/health` returned HTTP 200 after restart. |
 | Status | `bin/viventium status` reported LibreChat API, LibreChat Frontend, Modern Playground, and Telegram Bridge running. Overall status still needed attention because unrelated sidecars were degraded. |
-| Logs | Telegram bot restarted cleanly after the runtime restart. Historical pre-fix failure/audio log entries remain in old log history, but no new pre-start failure was produced during this QA run. |
-| DB/state | Mongo ingress query returned zero recent Telegram ingress rows, expected because no live Telegram message was transmitted during QA. |
+| Live outage send | PASS: with the LibreChat API intentionally unavailable, a synthetic Telegram message returned the visible text `Viventium's local API is starting or unavailable. Please retry in a moment.` |
+| Logs | PASS: the outage turn logged a pre-ingress `ConnectError`, one safe retry attempt, then `TG_VOICE ... send=0`; the recovery retry logged normal TTS/audio only after the successful assistant response. |
+| DB/state | PASS: the failed pre-ingress outage turn created no successful Telegram ingress row; the post-recovery retry created one Telegram ingress row and a normal persisted message pair in the live LibreChat database. |
 | Browser | Playwright opened `http://localhost:3190/login`; page title was Viventium, visible login form rendered, and console had zero errors. Screenshot artifact: `output/playwright/telegram-api-outage-fix-post-restart-login-2026-06-07.png`. |
-| Computer | Computer Use inspected Telegram desktop and confirmed the Viventium bot chat was responsive after restart. No message was sent. |
+| Computer | Computer Use inspected Telegram desktop before and after the live run. Its click/type actions were unavailable in this session, so the confirmed synthetic Telegram messages were sent via local desktop automation; Computer visual inspection confirmed the outage response and the post-recovery retry response. |
 
 ## ClaudeViv Review
 
@@ -70,19 +71,18 @@ before final QA:
   event shape
 - added a watchdog test that verifies initial probe failure flows into restart and recovery probing
 
-ClaudeViv's remaining full-view gap is the same policy-bound gap below: no live Telegram send was
-transmitted during this run.
+ClaudeViv's remaining full-view gap was a live Telegram send under an induced API outage. That gap
+was closed after user confirmation by running the real Telegram outage and recovery path.
 
 ## Remaining Gap
 
-Live Telegram send/receive of a synthetic message was not run. Sending a message through Telegram
-would be representational communication through a third-party service and requires action-time
-confirmation under the Computer Use policy. This QA run therefore proves the implementation,
-generated runtime, restart, status, logs, DB non-ingress, browser surface, and desktop readiness,
-but not a post-fix live Telegram message delivery.
+No remaining Telegram-specific gap for `TGAPI-005`. The overall local runtime status still reported
+unrelated sidecar degradation outside this Telegram/API failure class. Computer Use visual
+inspection worked, but its direct click/type action channel was unavailable; local desktop
+automation was used only after user confirmation to send public-safe synthetic Telegram messages.
 
 ## Result
 
-`TGAPI-005` is `PARTIAL/PASS`: the product fix is implemented, compiled into the active local
-runtime, and covered by automated/runtime/browser/Desktop evidence. The only unproven leg is live
-Telegram send/receive under an intentionally induced API outage.
+`TGAPI-005` is `PASS`: the product fix is implemented, compiled into the active local runtime, and
+covered by automated tests, generated runtime checks, API/status health, logs, Mongo state,
+Playwright browser QA, Computer visual inspection, and real Telegram outage/recovery send/receive.

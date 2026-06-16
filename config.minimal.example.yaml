@@ -58,7 +58,7 @@ runtime:
     require_full_lookback: true
     dry_run_first: true
     provider_profile: launch_ready_only
-    anthropic_model: claude-opus-4-7
+    anthropic_model: claude-opus-4-8
     anthropic_effort: xhigh
     openai_model: gpt-5.5
     openai_reasoning_effort: xhigh

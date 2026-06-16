@@ -25,6 +25,7 @@ from scheduling_cortex.utils import to_utc_iso
 PLACEHOLDER_RE = re.compile(r"{{\s*([^{}]+?)\s*}}")
 BACKGROUND_AGENTS_FUNCTION = "viventium.background_agents.get_list(agent_name, system_prompt)"
 NIGHTLY_TEMPLATE_ID = "workbench_nightly_subconscious_thought_formation_v1"
+NIGHTLY_MISFIRE_POLICY = {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 MEMORY_WRITE_MODES = {"off", "propose", "apply_governed"}
 EXECUTORS = {"glasshive_host", "viventium_agent"}
 GLASSHIVE_WORKER_STRATEGIES = {"same_worker", "new_worker_each_run"}
@@ -386,7 +387,33 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
         "execution_profile": str(execution.get("execution_profile") or _default_glasshive_worker_profile()),
         "execution_mode": str(execution.get("execution_mode") or "host"),
     }
+    if definition.get("template_id") == NIGHTLY_TEMPLATE_ID:
+        metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
     return metadata
+
+
+def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> None:
+    if row.get("template_id") != NIGHTLY_TEMPLATE_ID or not row.get("task_id"):
+        return
+    store = storage()
+    task = store.get_task(str(row["user_id"]), str(row["task_id"]))
+    if not task:
+        return
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    if metadata.get("misfire_policy") == NIGHTLY_MISFIRE_POLICY:
+        return
+    patched_metadata = dict(metadata)
+    patched_metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
+    store.update_task(
+        str(row["user_id"]),
+        str(row["task_id"]),
+        {
+            "metadata": patched_metadata,
+            "updated_at": _utc_now(),
+            "updated_by": "agent:prompt-workbench",
+            "updated_source": "startup-reconcile",
+        },
+    )
 
 
 def _user_schedule_id(task_id: str) -> str:
@@ -1216,6 +1243,7 @@ def seed_nightly_prompt(
                 updates["executor"] = template["executor"]
             if updates:
                 return update_scheduled_prompt(str(row["id"]), updates, user_id=user_id, email=email)
+            _ensure_builtin_nightly_task_policy(row)
             return _public_definition(row)
     return create_scheduled_prompt(
         {**template, "templateId": NIGHTLY_TEMPLATE_ID, "active": active},

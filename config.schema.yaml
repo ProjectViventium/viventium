@@ -16,6 +16,11 @@ properties:
       mode:
         type: string
         enum: [docker, native]
+  settings:
+    type: object
+    properties:
+      timezone:
+        type: string
   runtime:
     type: object
     properties:
@@ -380,6 +385,38 @@ properties:
               default_execution_mode:
                 type: string
                 enum: [host, docker]
+              runtime_requirements:
+                type: object
+                properties:
+                  json:
+                    type: object
+                  file:
+                    type: string
+              runtime_requirements_json:
+                type: object
+              runtime_requirements_file:
+                type: string
+              codex_native_mcp_allowlist:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+              codex_plugin_cache:
+                type: string
+              codex_ignore_user_config:
+                type: boolean
+              codex_disable_features:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+              claude_enable_chrome:
+                type: boolean
+              claude_effort:
+                type: string
+                enum: [low, medium, high, xhigh, max]
               mentions:
                 type: object
                 properties:

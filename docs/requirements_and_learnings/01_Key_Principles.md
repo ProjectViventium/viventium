@@ -173,16 +173,75 @@ are the core metric of the viventium project that we must always evaluate in tes
   or workflow the worker should use unless the user explicitly specified that choice or current
   tool evidence proves it. The design assumption is that users and host applications can connect
   unpredictable MCPs, so GlassHive must expose capabilities and let the general worker decide.
+- GlassHive/MCP observability must be honest without being raw. Persisted MCP/tool-call rows should
+  remain visible and inspectable in user-facing chat surfaces as concise product-language rows with
+  safe task/status/artifact summaries. Hide raw invocation code, internal worker/run IDs, provider
+  plumbing, and acknowledgement guidance unless the user explicitly asks for diagnostics; do not
+  hide the fact that a tool or worker was used.
+- Worker substrate configuration must be verified against the actual provider route, not generic
+  model-family assumptions. If a CLI accepts a broad effort/capability vocabulary but the deployed
+  OpenAI-compatible route supports only a subset, the deployment must declare that subset and the
+  runtime must clamp through the configured fallback before launch with observable logs/telemetry.
+  Unsupported provider settings are infrastructure/configuration failures, not evidence that the
+  worker's intelligence should be reduced or that prompts should over-specify a workaround.
+- Hosted worker model rollout belongs to the route the worker process actually uses. A newer model
+  deployed in another account, resource group, subscription, provider project, or local config does
+  not help GlassHive unless the active worker endpoint and deployment name point at it. Before
+  changing defaults, prove the active route with a direct provider probe and at least one real
+  worker run that records the selected model and effort.
+- Provider quota/capacity is part of the worker substrate. If a long deep-research or document run
+  fails because the active route rate-limited tool/model calls, do not remove the deep-work
+  requirement or lower worker intelligence as the "fix." Classify it as capacity/config evidence,
+  adjust the active route or deployment quota responsibly, and rerun the same user-level QA path.
+- Worker effort is part of the native substrate, not a decorative prompt hint. When MCP, UI, or direct
+  API accepts a worker-type effort such as Codex `high`/`xhigh` or Claude `max`, the runtime must
+  project it through structured bootstrap/config and prove the generated worker command/provider
+  request actually used it. Prompt-only effort text is acceptable only for worker types that have no
+  native effort surface.
+- GlassHive worker capability projection is additive. Broker grants, scoped MCP files, worker-local
+  config, model-provider settings, and launch flags must not strip the selected worker type's native
+  skills/capabilities such as browser, computer/desktop, shell, file, MCP, and local app control.
+  If a deployment intentionally locks a worker down, that must be an explicit configuration decision
+  with preflight/QA coverage, not the default path. Because the host AI and user can ask for unknown
+  future work, the runtime gives the worker its full truthful capability surface and lets the worker
+  decide how to use it.
+- Browser/computer capability must be understood as the selected worker's native product surface, not
+  as only an MCP inventory item. Claude Code may expose Chrome and computer use through its own
+  interactive CLI surfaces; Codex may expose Browser, Chrome, and Computer Use through app/plugin
+  surfaces and worker-local config. GlassHive should project, preflight, and document those native
+  capabilities truthfully, and treat missing/disabled capabilities as runtime configuration evidence
+  rather than proof that the worker should never use a browser or computer.
+- GlassHive worker-native skills/plugins are capability inventory, not host-authored workflow.
+  Bootstrapped host and workspace workers must be told which native skill families and CLI/browser
+  surfaces are expected for their type, and the runtime/image must provision those capabilities
+  where license and mode allow. Claude Code and Codex browser-use extensions in workspace images are
+  part of the substrate expectation: managed policy, profile installation, and connected bridge
+  state must be tested separately. Workers should choose these skills/extensions when relevant and
+  should not be forced into any prompt-specific skill, provider, file format, or rubric.
 - GlassHive data in and data out must be exact. The host application must pass real uploads, file
   references, MCP grants/capabilities, retrieved context, and tool results without pretending they
   exist or were used. If data, auth, files, or MCP access are unavailable, the delegation should
   preserve that fact so the worker can choose a fallback or report a concrete blocker.
+- GlassHive file handoff should stay simple and literal. Materialize allowed files into the
+  worker-accessible workspace, mention the full accessible path in the prompt/bootstrap context, and
+  let the worker decide how to use it. Do not replace this basic path contract with prompt-specific
+  CLI arguments, hidden attachment heuristics, or guessed file access.
 - Delegated workers must receive a universal completion contract. Before reporting completion, the
   worker must compare the actual result against the user's request, success criteria, constraints,
   files/artifacts, visible state, or tool results when applicable; continue or remediate when the
   result does not satisfy the request; and report a specific blocker only when it cannot complete the
   task. This contract must stay capability-general and must not encode one QA prompt, one file type,
   one provider, or one host application as special runtime behavior.
+- The universal completion contract must be injected at the command/run boundary for every worker
+  runtime, not only written into project files. Docker/workstation Claude, host Claude, Docker/host
+  Codex, and OpenClaw must all receive the same self-check and `FINAL REPORT:` requirement in the
+  instruction actually sent to the CLI.
+- When the user's request calls for a document, report, deck, client deliverable, or other shareable
+  work product and no technical/source format was requested, the worker's primary user-facing output
+  should be a polished ordinary end-user artifact such as PDF, Word, PowerPoint, spreadsheet, or an
+  equivalently professional format chosen by the worker. Markdown, HTML, or source files can be
+  supporting artifacts, but they are not enough as the default primary deliverable for that class of
+  work unless the runtime cannot create the professional artifact and reports that blocker.
 - Keep host/application orchestration checks separate from worker deliverable gates. For GlassHive,
   requirements such as which MCP tool was selected, whether the chat surfaced the View / Steer link,
   callback delivery, wait/status polling cadence, and post-run inspection from the host UI belong to
@@ -196,6 +255,17 @@ are the core metric of the viventium project that we must always evaluate in tes
   does not contradict the user's request, and only then ask the user/operator for action with the
   exact blocker. Do not make "install a global tool on your machine" the first visible recovery when
   a managed or sandboxed path is available.
+- Host-native worker CLIs must be preflighted against current supported stable floors and required
+  native capability flags before a run is created. A stale or capability-stripped `claude`, `codex`,
+  or `openclaw` binary is a substrate issue, not evidence that the worker is unintelligent. When a
+  safe documented updater exists, use or surface that updater; when the mutation is global or unsafe,
+  fail closed with exact recovery guidance instead of launching a degraded worker.
+- GlassHive runtime facts must stay mode-scoped. Host-native binary overrides, desktop/browser
+  affordances, and local-app assumptions belong only to host workers; workspace/sandbox workers must
+  resolve their CLIs and tools inside their own container image and home/config. Likewise, projected
+  state/workspace paths are observability and persistence facts, not proof that a Docker container,
+  process, browser, or worker substrate exists. Verify the real substrate before reusing it, and make
+  missing substrate a classified runtime failure rather than a user-task failure.
 
 ### 2.6 Production QA Operating Discipline
 - `qa/README.md` is the QA operating contract. Every developer and AI agent must treat it as the
@@ -488,11 +558,11 @@ A developer referring to a single document about a respective feature **must per
 #### Model Governance Rule (Launch-Ready Baseline)
 - Out-of-the-box Viventium background agents must stay within the current launch-ready model families unless a newer documented evaluation replaces them:
   - `anthropic / claude-sonnet-4-5`
-  - `anthropic / claude-opus-4-7`
+  - `anthropic / claude-opus-4-8`
   - `openAI / gpt-5.4`
 - Do not add a model picker entry or built-in agent assignment for a model that the target provider
   inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
-  supported Anthropic model for Viventium; use `claude-sonnet-4-5` or `claude-opus-4-7` until a
+  supported Anthropic model for Viventium; use `claude-sonnet-4-5` or `claude-opus-4-8` until a
   verified provider catalog and model QA update replace this baseline.
 - Foundation provider rule:
   - Groq is the current launch-ready primary for activation detection under the shipped 2-second

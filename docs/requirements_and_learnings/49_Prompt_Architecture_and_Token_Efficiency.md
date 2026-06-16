@@ -38,6 +38,53 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### 2026-06-15 Scheduled Run Date Grounding
+
+Scheduling Cortex now provides deterministic scheduled-run context at the scheduler boundary rather
+than relying on a generic reusable prompt and prior same-conversation history. For every
+`viventium_agent` scheduled run, dispatch derives `run_started_at_utc`, `scheduled_due_at_utc`,
+`scheduled_due_local`, `scheduled_due_local_date`, `scheduled_due_local_date_iso`,
+`schedule_timezone`, and a local/UTC calendar day window from structured task fields and runtime
+clock state. This context is included in the scheduled prompt text for persistence/observability and
+in the LibreChat scheduler request body so `surface.time_context` appends it as system-level
+context.
+
+The live-data contract now explicitly covers calendar, email, tasks, current-day plans, and
+connected-account facts. Those facts must come from verified tool/cortex evidence or deterministic
+run context; otherwise the scheduled answer omits the unsupported section instead of guessing.
+Dispatch also validates a leading opening generated day/date label against the scheduled due local
+date before Telegram/web fan-out and records date-guard metadata in the delivery ledger. The guard
+corrects the current delivery only; it does not mutate older persisted conversation messages.
+
+This preserves the prompt-architecture ownership rules: runtime derives objective schedule facts,
+the model decides content from explicit context and verified tools, and no routing or capability
+choice branches on prompt text, schedule names, provider labels, or user identity.
+
+Incident learning and decision record:
+
+- Trigger: a recurring same-conversation morning briefing could label a due run with the wrong
+  day/date despite connected-account tooling being available somewhere in the runtime.
+- Transformation path: Scheduler held a structured due time, but dispatched a generic scheduled
+  self-prompt into LibreChat. LibreChat added generic current-time context, while the model lacked a
+  deterministic due-date tag/window tied to the schedule occurrence. Prior dated same-conversation
+  briefings could then compete with the current run's intended date.
+- User-visible failure: Telegram and LibreChat could show a morning briefing whose opening day/date
+  was stale, future-shifted, or inferred from the wrong context. This is a scheduler/model grounding
+  failure, not a Telegram formatting failure.
+- Owning fix: the scheduler boundary owns objective schedule facts. It now injects a deterministic
+  run-context packet and explicit ISO date tag into both the scheduled prompt context and the
+  scheduler request body; LibreChat repeats that context as system time-context. Connected-account
+  facts remain model/tool decisions, but must be backed by verified tool/cortex evidence.
+- Rejected fix: mutating older persisted assistant messages after generation was removed. That path
+  coupled the scheduler to LibreChat's message storage shape (`text` versus `content[]`) and created
+  brittle history surgery. Each new scheduled run must instead be grounded from the current
+  deterministic run-context tag.
+- Drift prevention: reusable tests cover the run-context packet, ISO date tag, schedule-timezone
+  anchoring, stream-final completion, current-delivery date-guard correction, and the false-positive
+  case where a first-line event date must not be rewritten. Public-safe QA evidence lives under
+  `qa/scheduling-cortex/`, and the next natural private daily run remains a required follow-up
+  before claiming the private briefing content path is fully closed.
+
 ### 2026-05-15 Prompt Workbench Two-Way Sync
 
 Added the first standalone local Prompt Workbench at
@@ -301,6 +348,11 @@ access.
 
 Plain-English happy path: scheduled prompt -> filled placeholders -> GlassHive run -> callback ->
 scheduler ledger -> Workbench shows completed.
+
+The built-in nightly reflection must also carry a bounded structured catch-up policy. Its schedule
+timezone controls the real due time, so QA must compare the Workbench `next_run_at` and configured
+timezone before declaring a miss; a safe late tick inside the catch-up window should still queue one
+GlassHive run and show the completed result in Workbench.
 
 Pre-assignment GlassHive failures must stay structured. If GlassHive reports host substrate failure
 such as `runtime_dependency_missing`, Scheduling Cortex records that failure class instead of
@@ -630,7 +682,7 @@ Known validation from that run:
 - Voice gateway follow-up scheduler tests: `7 passed`
 - Telegram bridge/NTA/voice preference tests: `111 passed`
 - Productivity activation eval: `24/24 passed`
-- Product-route probes passed for `openAI / gpt-5.4` and `anthropic / claude-opus-4-7`
+- Product-route probes passed for `openAI / gpt-5.4` and `anthropic / claude-opus-4-8`
 - Follow-up micro-evals passed for redundant voice, new web fact, and Telegram question-only cases
 
 Remaining validation gaps:

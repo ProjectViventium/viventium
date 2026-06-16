@@ -13,6 +13,7 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 | `GHWATCH-003` | Completed file deliverables are usable from Watch / Steer without surprising downloads or recursive workspace embeds. | User sees the delivered file preview, can explicitly download it, and can return to the workspace without nested watch pages. | Watch / Steer file preview iframe, artifact open route, download route, project workspace link | `runtime_phase1/tests/test_api.py::test_artifact_open_page_previews_text_without_forcing_download`, `runtime_phase1/tests/test_api.py::test_enterprise_signed_artifact_open_page_actions_remain_signed`, and browser QA | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
 | `GHWATCH-004` | Multiple file deliveries remain discoverable without forcing one hardcoded output format. | User can verify the latest delivered file and inspect/download each workspace artifact when more than one file exists. | Watch / Steer latest result, workspace artifact list, artifact open/download route | Browser QA plus artifact API/log evidence | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
 | `GHWATCH-005` | Non-file or no-file tasks do not invent downloadable artifacts. | User sees the final result/status without bogus `Open file`, `Download file`, or workspace-file actions. | Watch / Steer latest result panel, callback/status output | Browser QA plus live payload inspection | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
+| `GHWATCH-006` | Latest workspace output is visibly actionable from the watch ribbon and workspace overview. | User can immediately tell where to click to inspect the latest output/status, then close it without leaving the live surface. | Watch / Steer ribbon, result panel, workspace overview tile | `frontends/glass-drive-ui/tests/test_server.py::test_launcher_workspace_hive_static_controls` plus Playwright browser QA | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-latest-output-affordance.md`. |
 
 ## `GHWATCH-001` - Core User Flow
 
@@ -109,6 +110,34 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
   no-file worker result showed `NO_FILE_DELIVERY_OK` and did not display `Open file`, `Download file`,
   `Workspace files`, result actions, or artifact-list rows.
 
+## `GHWATCH-006` - Latest Workspace Output Affordance
+
+- Requirement: the latest workspace output/status entry point must be visibly actionable and
+  understandable without guessing which text is clickable.
+- Risk covered: users miss the result/status panel because the clickable area looks like passive
+  ribbon text or an inert workspace-tile status block.
+- Preconditions: GlassHive operator UI is running with a synthetic public-safe workspace payload or
+  an existing local workspace.
+- Steps:
+  1. Open the Watch / Steer page in a real browser.
+  2. Verify the ribbon contains a distinct `Latest workspace output` control with a current status,
+     summary, and visible `Open status` action.
+  3. Click or keyboard-activate the control.
+  4. Verify the result/status panel opens, the control changes to `Close status`, and the panel can
+     be closed without leaving the watch surface.
+  5. Open the workspace overview and verify each visible workspace tile shows the same latest-output
+     area as a clickable status control that opens the full watch/status surface.
+- Expected result: the latest-output affordance is visually distinct, keyboard accessible, and
+  responsive on desktop and mobile widths.
+- Forbidden result: the latest output appears as passive text, only a tiny unlabelled area is
+  clickable, the panel cannot be closed predictably, or mobile wrapping hides the action.
+- Evidence to capture: browser screenshot or DOM summary for desktop and mobile widths, static test
+  result, and no console errors.
+- Automation: `frontends/glass-drive-ui/tests/test_server.py::test_launcher_workspace_hive_static_controls`
+  plus Playwright browser QA.
+- Last run: PASS 2026-06-16 local static UI QA. See
+  `qa/glasshive_watch_desktop/reports/2026-06-16-latest-output-affordance.md`.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Glasshive Watch Desktop. Add narrower feature-specific
@@ -122,3 +151,4 @@ rows before claiming a pass when the feature behavior changes.
 | `GHWATCH-UC-004` | Create or open a completed single-file GlassHive task, then preview, download, and click `View workspace` from inside the preview. | artifact link semantics / `GHWATCH-003` | Watch / Steer, artifact preview, artifact download, project workspace | Source, route headers, live payload, logs, and downloaded marker content. | File preview and download work; `View workspace` does not recursively embed watch/project UI. | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
 | `GHWATCH-UC-005` | Create or open a completed multi-file GlassHive task and verify the latest result plus project workspace deliverables. | artifact discoverability / `GHWATCH-004` | Watch / Steer and project workspace | Workspace file list, artifact API, logs, and marker content for each file. | Multiple deliverables remain discoverable without hardcoded output assumptions. | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
 | `GHWATCH-UC-006` | Create or open a completed no-file task and verify the result does not invent file actions. | exact data in/out / `GHWATCH-005` | Watch / Steer latest result panel and live payload | Live payload deliverable state, final result text, logs. | Text-only/no-file work shows final output without fake artifact links. | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
+| `GHWATCH-UC-007` | Open Watch / Steer and the workspace overview, then find and activate the latest workspace output/status affordance. | latest-output affordance / `GHWATCH-006` | Watch / Steer ribbon, result panel, workspace overview tile | Static UI source, browser DOM/screenshot, console state, and responsive layout checks. | The user can clearly see where to open status/output, activate it by pointer or keyboard, and close it without leaving the live surface. | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-latest-output-affordance.md`. |

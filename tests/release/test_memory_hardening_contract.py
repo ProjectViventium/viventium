@@ -356,7 +356,7 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
     payload = json.loads(result.stdout)
 
     assert {candidate["provider"] for candidate in payload["defaultCandidates"]} == {"anthropic"}
-    assert any(candidate["model"] == "claude-opus-4-7" for candidate in payload["defaultCandidates"])
+    assert any(candidate["model"] == "claude-opus-4-8" for candidate in payload["defaultCandidates"])
     assert any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
     assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
 
@@ -751,7 +751,7 @@ def test_memory_hardening_wrapper_prefers_compiled_runtime_over_ambient_shell_en
         {
             "RAG_API_URL": "http://compiled-rag",
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
         },
     )
 
@@ -787,7 +787,7 @@ def test_memory_hardening_wrapper_uses_provider_specific_model_for_override() ->
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
             "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": "gpt-5.5",
         },
     )
@@ -824,7 +824,7 @@ def test_memory_hardening_cli_user_email_overrides_compiled_operator_scope() -> 
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
             "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL": "compiled@example.com",
         },
     )
@@ -869,7 +869,7 @@ def test_ingest_transcripts_defaults_to_zero_saved_memory_changes() -> None:
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
         },
     )
 
@@ -911,6 +911,7 @@ class MemoryHardenArgs:
     skip_model_probe = False
     allow_partial_lookback = False
     scheduled = False
+    trigger = None
     json = True
 
 
@@ -985,7 +986,7 @@ def test_memory_hardening_efficiency_override_is_separate_from_power_override() 
         args,
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
         },
     )
 
@@ -1293,8 +1294,158 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
     assert str(ROOT / "scripts" / "viventium" / "memory_harden.py") in program_arguments
     assert "--runtime-dir" in program_arguments
     assert program_arguments[program_arguments.index("--user-email") + 1] == "qa@example.com"
-    assert program_arguments[-4:] == ["apply", "--scheduled", "--user-email", "qa@example.com"]
+    assert program_arguments[-6:] == [
+        "apply",
+        "--scheduled",
+        "--trigger",
+        "launchd",
+        "--user-email",
+        "qa@example.com",
+    ]
     assert launchctl_calls[-1][0:2] == ["launchctl", "bootstrap"]
+
+
+def test_memory_hardening_scheduled_trigger_writes_public_safe_receipt(tmp_path, monkeypatch) -> None:
+    app_support_dir = tmp_path / "app-support"
+    runtime_dir = app_support_dir / "runtime"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=runtime_dir,
+        command="apply",
+        scheduled=True,
+        trigger="launchd",
+        json=False,
+    )
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: Completed())
+
+    status = memory_harden.run_node(
+        args,
+        {
+            "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "false",
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+        },
+    )
+
+    events = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
+    assert status == 0
+    assert len(events) == 1
+    payload = json.loads(events[0].read_text(encoding="utf-8"))
+    assert payload["schemaVersion"] == memory_harden.TRIGGER_EVENT_SCHEMA_VERSION
+    assert payload["status"] == "success"
+    assert payload["trigger_source"] == "launchd"
+    assert payload["scheduled_invocation"] is True
+    assert payload["schedule_label"] == memory_harden.LAUNCH_AGENT_LABEL
+    assert payload["schedule"]["hour"] == 3
+    assert payload["schedule"]["minute"] == 0
+    assert payload["timezone_at_fire"]
+    assert payload["exit_code"] == 0
+    assert "repo_root_hash" in payload
+    assert "runtime_dir_hash" in payload
+    public_blob = json.dumps(payload)
+    assert str(tmp_path) not in public_blob
+    assert "qa@example.com" not in public_blob
+
+
+def test_memory_hardening_manual_run_does_not_write_scheduled_trigger_receipt(tmp_path, monkeypatch) -> None:
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="apply",
+        scheduled=False,
+        trigger=None,
+        json=False,
+    )
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: Completed())
+
+    status = memory_harden.run_node(
+        args,
+        {"VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "false"},
+    )
+
+    assert status == 0
+    assert not memory_harden.trigger_events_dir(app_support_dir).exists()
+
+
+def test_memory_hardening_scheduled_power_skip_finalizes_trigger_receipt(tmp_path, monkeypatch) -> None:
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="apply",
+        scheduled=True,
+        trigger="launchd",
+        json=True,
+    )
+
+    calls = []
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: True)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+    monkeypatch.setattr(memory_harden.subprocess, "run", lambda *_args, **_kwargs: calls.append(1))
+
+    status = memory_harden.run_node(args, {})
+
+    events = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
+    assert status == 0
+    assert calls == []
+    assert len(events) == 1
+    payload = json.loads(events[0].read_text(encoding="utf-8"))
+    assert payload["status"] == "skipped"
+    assert payload["reason"] == "on_battery_power"
+    assert payload["trigger_source"] == "launchd"
+
+
+def test_memory_hardening_dry_run_first_receipt_records_executed_command(tmp_path, monkeypatch) -> None:
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="apply",
+        scheduled=True,
+        trigger="launchd",
+        json=False,
+    )
+
+    class Completed:
+        returncode = 0
+
+    calls = []
+    monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
+    monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return Completed()
+
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+
+    status = memory_harden.run_node(args, {"VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true"})
+
+    events = list(memory_harden.trigger_events_dir(app_support_dir).glob("*.json"))
+    assert status == 0
+    assert len(events) == 1
+    assert calls and "--mode" in calls[0]
+    assert calls[0][calls[0].index("--mode") + 1] == "dry-run"
+    payload = json.loads(events[0].read_text(encoding="utf-8"))
+    assert payload["command"] == "apply"
+    assert payload["executed_command"] == "dry-run"
 
 
 def test_memory_hardening_cli_reexecs_active_runtime_checkout() -> None:
@@ -1366,7 +1517,7 @@ def test_scheduled_transcript_ingest_honors_dry_run_first_marker(tmp_path, monke
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-7",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
             "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true",
         },
     )

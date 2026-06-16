@@ -117,6 +117,44 @@ names must not appear in the health payload or public QA evidence.
   schedules, and future scheduled prompt types must all use the same generated-text visibility path:
   canonical result -> `{NTA}`/empty suppression or visible content -> channel fan-out -> delivery
   ledger.
+- Scheduled agent generation must receive a deterministic run-context packet before every
+  `viventium_agent` run. The packet is derived from structured task fields and runtime clock state,
+  not prompt text or schedule names, and includes `run_started_at_utc`, `scheduled_due_at_utc`,
+  `scheduled_due_local`, `scheduled_due_local_date`, `scheduled_due_local_date_iso`,
+  `schedule_timezone`, and the local/UTC calendar-day window for the due date. The same context is
+  sent to LibreChat as scheduler request metadata so the system time-context layer and the persisted
+  scheduled prompt agree.
+- Calendar, email, task, current-day, and other connected-account facts in scheduled output require
+  verified tool/cortex evidence or the deterministic run-context packet. The model must not infer
+  day labels or current plans from prior same-conversation briefings.
+- The dispatch layer must validate the opening day/date claim in generated scheduled text against
+  `scheduled_due_local_date` before channel fan-out. If the model labels a due run with the wrong
+  opening date, dispatch corrects that visible opening label and records date-guard metadata in the
+  delivery detail so the ledger proves whether the guard passed, found no claim, or corrected a
+  mismatch. The guard is intentionally narrow: it only rewrites a leading opening date label and
+  leaves later first-line event dates unchanged. It corrects the current delivery/ledger output; it
+  does not mutate prior persisted conversation messages. This guard is output validation, not
+  user-intent routing, and must not branch on human schedule names or prompt wording.
+
+#### 2026-06-15 Scheduled Date-Grounding Learning
+
+- Trigger: a recurring same-conversation morning briefing could label a due run with the wrong
+  day/date even when connected-account tooling existed elsewhere in the runtime.
+- Causal chain: the scheduler persisted a structured due time, then dispatched a generic scheduled
+  self-prompt. LibreChat supplied generic current-time context, but not a deterministic due-date
+  tag/window tied to the specific scheduled occurrence. In same-conversation mode, earlier dated
+  briefings could compete with the current run's date.
+- User-visible failure: Telegram and LibreChat could show a stale or future-shifted opening date.
+  This is a scheduler/model grounding failure, not a Telegram formatting failure.
+- Decision: every scheduled `viventium_agent` run gets a structured run-context packet, including
+  the ISO tag `scheduled_due_local_date_iso`, before model generation. The model may use
+  calendar/email/task/current-day facts only when verified tool/cortex evidence supports them.
+- Rejected approach: do not mutate older persisted assistant messages to repair this class. That is
+  brittle history surgery and couples Scheduler to LibreChat message storage internals. Each new
+  run must be grounded from its deterministic run-context packet.
+- Drift prevention: regression coverage must keep the ISO date tag, schedule-timezone anchoring,
+  no-next-recurrence behavior, current-delivery date guard, first-line event-date false-positive
+  protection, and Telegram/web delivery ledger evidence intact.
 
 ### Workbench / GlassHive Channel
 - Plain-English happy path: scheduled prompt -> filled placeholders -> GlassHive run -> callback ->
@@ -125,7 +163,10 @@ names must not appear in the health payload or public QA evidence.
   upgrades. Prompt Workbench seeds the `Subconscious Deep Thought` schedule for the first resolved
   local admin user, renders placeholders privately, dispatches via the configured GlassHive host
   worker profile, and records the Scheduler/Workbench/GlassHive ledger without hardcoding a
-  developer account.
+  developer account. Because this is a built-in overnight maintenance routine, it must declare a
+  bounded structured catch-up policy rather than relying on the recurring-task strict default; a
+  late local scheduler tick inside the catch-up window should run once and record lateness instead
+  of silently losing the nightly reflection.
 - Workbench-private scheduled prompts use Scheduling Cortex for recurrence, due/misfire policy,
   run history, and the parent delivery ledger. Workbench owns authoring, variable preview, manual
   trigger, and the visible run-history surface.

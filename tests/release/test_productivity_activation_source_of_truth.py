@@ -94,6 +94,13 @@ SYNC_AGENTS_SCRIPT = (
     / "scripts"
     / "viventium-sync-agents.js"
 )
+CONNECTED_ACCOUNTS_HANDOFF_PROVISIONER = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "scripts"
+    / "viventium-provision-connected-accounts-agent.js"
+)
 CONFIG_COMPILER = REPO_ROOT / "scripts" / "viventium" / "config_compiler.py"
 LIBRECHAT_YAML = (
     REPO_ROOT / "viventium_v0_4" / "LibreChat" / "librechat.yaml"
@@ -280,16 +287,194 @@ def test_main_agent_does_not_ship_provider_productivity_mcp_tools() -> None:
     assert not any("_mcp_ms-365" in tool for tool in main_tools)
 
 
+def test_connected_accounts_handoff_provisioner_is_supported_confirmed_write_and_surgical() -> None:
+    source = CONNECTED_ACCOUNTS_HANDOFF_PROVISIONER.read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_ENABLE_RETIRED_CONNECTED_ACCOUNTS_HANDOFF" not in source
+    assert "Historical provisioner" not in source
+    assert "agent_viventium_connected_accounts_95aeb3" in source
+    assert "Main_To_ConnectedAccounts" in source
+    assert "const READ_TOOLS" in source
+    assert "const WRITE_TOOLS" in source
+    assert "const CONNECTED_ACCOUNT_TOOLS" in source
+    assert "getAgent" in source
+    assert "UPDATED', AGENT_ID" in source
+    assert "ACL_GRANTED" in source
+    assert "const existingEdges" in source
+    assert "existingEdges.filter" in source
+    assert "existingEdge?.promptKey !== edge.promptKey" in source
+    assert "updateAgent({ id: MAIN_ID }, { edges: mergedEdges })" in source
+    assert "const FALLBACK_LLM_PROVIDER = 'openAI'" in source
+    assert "const FALLBACK_LLM_MODEL = 'gpt-5.4'" in source
+    assert "fallback_llm_provider: FALLBACK_LLM_PROVIDER" in source
+    assert "fallback_llm_model: FALLBACK_LLM_MODEL" in source
+    assert "fallback_llm_model_parameters: FALLBACK_LLM_MODEL_PARAMETERS" in source
+    assert "Do not dump raw API fields, account email addresses, aliases" in source
+    assert "Do not expose account email addresses, aliases, OAuth details" in source
+    assert "Default to read-only inspection" in source
+    assert "act only when the user explicitly asked for that external action" in source
+    assert "Do not say this path is read-only if the relevant write tool is present" in source
+    assert "Ask for confirmation before any external write" in source
+
+    expected_read_tools = {
+        "sys__server__sys_mcp_google_workspace",
+        "search_gmail_messages_mcp_google_workspace",
+        "get_gmail_message_content_mcp_google_workspace",
+        "get_gmail_messages_content_batch_mcp_google_workspace",
+        "get_gmail_thread_content_mcp_google_workspace",
+        "list_calendars_mcp_google_workspace",
+        "get_events_mcp_google_workspace",
+        "search_drive_files_mcp_google_workspace",
+        "get_drive_file_content_mcp_google_workspace",
+        "search_docs_mcp_google_workspace",
+        "get_doc_content_mcp_google_workspace",
+        "read_sheet_values_mcp_google_workspace",
+        "sys__server__sys_mcp_ms-365",
+        "list-mail-messages_mcp_ms-365",
+        "get-mail-message_mcp_ms-365",
+        "list-mail-folder-messages_mcp_ms-365",
+        "list-calendar-events_mcp_ms-365",
+        "get-calendar-event_mcp_ms-365",
+        "list-folder-files_mcp_ms-365",
+        "download-onedrive-file-content_mcp_ms-365",
+        "get-excel-range_mcp_ms-365",
+        "search-query_mcp_ms-365",
+    }
+    expected_write_tools = {
+        "send_gmail_message_mcp_google_workspace",
+        "draft_gmail_message_mcp_google_workspace",
+        "create_event_mcp_google_workspace",
+        "modify_event_mcp_google_workspace",
+        "create-draft-email_mcp_ms-365",
+        "send-mail_mcp_ms-365",
+        "create-specific-calendar-event_mcp_ms-365",
+        "update-specific-calendar-event_mcp_ms-365",
+        "create-calendar-event_mcp_ms-365",
+        "update-calendar-event_mcp_ms-365",
+    }
+    forbidden_connected_accounts_tools = {
+        "create_drive_file_mcp_google_workspace",
+        "upload-file-content_mcp_ms-365",
+        "delete-onedrive-file_mcp_ms-365",
+        "delete_event_mcp_google_workspace",
+        "move-mail-message_mcp_ms-365",
+        "delete-mail-message_mcp_ms-365",
+        "delete-calendar-event_mcp_ms-365",
+        "delete-specific-calendar-event_mcp_ms-365",
+    }
+
+    for tool in expected_read_tools:
+        assert tool in source
+    for tool in expected_write_tools:
+        assert tool in source
+    for tool in forbidden_connected_accounts_tools:
+        assert tool not in source
+
+
+def test_connected_accounts_handoff_is_source_owned_with_confirmed_email_calendar_writes() -> None:
+    bundle = load_and_resolve_prompt_refs(
+        yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
+    )
+
+    connected_agent_id = "agent_viventium_connected_accounts_95aeb3"
+    edges = bundle["mainAgent"].get("edges", [])
+    edge = next(
+        (
+            candidate
+            for candidate in edges
+            if candidate.get("promptKey") == "Main_To_ConnectedAccounts"
+        ),
+        None,
+    )
+    assert edge is not None
+    assert edge["edgeType"] == "handoff"
+    assert edge["to"] == connected_agent_id
+    assert "Default to read-only inspection" in edge["prompt"]
+    assert "explicit user confirmation" in edge["prompt"]
+    assert "Do not claim this path is read-only" in edge["prompt"]
+
+    handoff_agents = {entry["id"]: entry for entry in bundle.get("handoffAgents", [])}
+    assert connected_agent_id in handoff_agents
+    connected = handoff_agents[connected_agent_id]
+
+    assert connected["name"] == "Connected Accounts"
+    assert connected["provider"] == "anthropic"
+    assert connected["model"] == "claude-opus-4-8"
+    assert connected["fallback_llm_provider"] == "openAI"
+    assert connected["fallback_llm_model"] == "gpt-5.4"
+    assert "Default to read-only inspection" in connected["instructions"]
+    assert "act only when the user explicitly asked for that external action" in connected[
+        "instructions"
+    ]
+    assert "Do not say this path is read-only if the relevant write tool is present" in connected[
+        "instructions"
+    ]
+
+    tools = set(connected["tools"])
+    assert {
+        "sys__server__sys_mcp_google_workspace",
+        "search_gmail_messages_mcp_google_workspace",
+        "get_gmail_messages_content_batch_mcp_google_workspace",
+        "sys__server__sys_mcp_ms-365",
+        "list-mail-messages_mcp_ms-365",
+        "list-calendar-events_mcp_ms-365",
+    } <= tools
+    assert {
+        "send_gmail_message_mcp_google_workspace",
+        "draft_gmail_message_mcp_google_workspace",
+        "create_event_mcp_google_workspace",
+        "modify_event_mcp_google_workspace",
+        "create-draft-email_mcp_ms-365",
+        "send-mail_mcp_ms-365",
+        "create-specific-calendar-event_mcp_ms-365",
+        "update-specific-calendar-event_mcp_ms-365",
+        "create-calendar-event_mcp_ms-365",
+        "update-calendar-event_mcp_ms-365",
+    } <= tools
+    assert not {
+        "upload-file-content_mcp_ms-365",
+        "delete-onedrive-file_mcp_ms-365",
+        "create_drive_file_mcp_google_workspace",
+        "delete_event_mcp_google_workspace",
+        "move-mail-message_mcp_ms-365",
+        "delete-mail-message_mcp_ms-365",
+        "delete-calendar-event_mcp_ms-365",
+        "delete-specific-calendar-event_mcp_ms-365",
+    } & tools
+
+
+def test_agent_sync_preserves_handoff_targets_and_canonical_acl_grants() -> None:
+    source = SYNC_AGENTS_SCRIPT.read_text(encoding="utf-8")
+
+    assert "handoffAgents" in source
+    assert "collectEdgeTargetAgentIds" in source
+    assert "Handoff agent missing" in source
+    assert "ResourceType.REMOTE_AGENT" in source
+    assert "AccessRoleIds.AGENT_OWNER" in source
+    assert "AccessRoleIds.REMOTE_AGENT_OWNER" in source
+    assert "grantPermission({" in source
+    assert "principalModel: PrincipalModel.USER" not in source
+
+
 def test_main_agent_does_not_defer_productivity_checks_to_background_cortices() -> None:
     bundle = load_and_resolve_prompt_refs(
         yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
     )
     instructions = bundle["mainAgent"]["instructions"].lower()
 
-    assert "do not promise that a background cortex/agent will check gmail" in instructions
-    assert "do not promise that a background cortex/agent will check outlook" in instructions
+    assert "do not promise that a background cortex will check gmail" in instructions
+    assert "do not promise that a background cortex will check outlook" in instructions
     assert "do not defer the check to background cortices" in instructions
-    assert "use a brokered worker when that is the available connected-account path" in instructions
+    assert "use the connected accounts handoff for immediate checks" in instructions
+    assert "first get explicit user confirmation" in instructions
+    assert "including the connected accounts handoff when it has the required write tool" in instructions
+    assert "write-capable connected-account path" in instructions
+    assert "glasshive host-signed broker path" in instructions
+    assert "if no write-capable path is available" in instructions
+    assert "creating/updating calendar events" in instructions
+    assert "deleting/moving/archive/mark-read mail" in instructions
+    assert "sharing/permission changes" in instructions
+    assert "use a brokered worker when the request needs delegated/long-running glasshive work" in instructions
     assert "memory is background" in instructions
     assert "verified current-run google connector/tool evidence" in instructions
     assert "verified current-run microsoft connector/tool evidence" in instructions
@@ -397,7 +582,7 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
         "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.4"),
         "agent_viventium_pattern_recognition_95aeb3": ("anthropic", "claude-sonnet-4-5"),
         "agent_viventium_emotional_resonance_95aeb3": ("anthropic", "claude-sonnet-4-5"),
-        "agent_viventium_strategic_planning_95aeb3": ("anthropic", "claude-opus-4-7"),
+        "agent_viventium_strategic_planning_95aeb3": ("anthropic", "claude-opus-4-8"),
         "agent_viventium_support_95aeb3": ("anthropic", "claude-sonnet-4-5"),
         "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.4"),
     }
@@ -423,7 +608,7 @@ def test_background_agent_execution_models_stay_within_launch_ready_families() -
 
     allowed = {
         ("anthropic", "claude-sonnet-4-5"),
-        ("anthropic", "claude-opus-4-7"),
+        ("anthropic", "claude-opus-4-8"),
         ("openAI", "gpt-5.4"),
     }
 
