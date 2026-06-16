@@ -40,7 +40,7 @@ Validates the local transcript memory lane:
     participants, and one-line context, and preserve the transcript caveat instead of answering from
     a few semantically lucky chunks.
 14. Transcript summarization and hardening use a configurable candidate list. The default order is
-    Claude Code `claude-opus-4-7` at `xhigh`, Claude Code `opus` alias at `xhigh`, Codex/OpenAI
+    Claude Code `claude-opus-4-8` at `xhigh`, Claude Code `opus` alias at `xhigh`, Codex/OpenAI
     `gpt-5.5` at `high`, then Codex/OpenAI `gpt-5.4` at `high`; failed candidates are reported
     with redacted reason telemetry and the next candidate is tried.
 15. Model probes are short, configurable, and advisory by default. Probe failure must not make an

@@ -161,7 +161,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 - Scenario: The preferred transcript summarization/hardening model is unavailable, overloaded, rate
   limited, or not present in the local CLI account.
 - Expected outcome: The hardener tries the configured ordered candidate list, defaults to Claude
-  Opus 4.7 `xhigh`, the Claude Code `opus` alias `xhigh`, OpenAI GPT-5.5 `high`, then OpenAI
+  Opus 4.8 `xhigh`, the Claude Code `opus` alias `xhigh`, OpenAI GPT-5.5 `high`, then OpenAI
   GPT-5.4 `high`, and records redacted attempt reason/status/timeout metadata.
 - Forbidden result: The run silently remaps to a different model, fails on the first unavailable
   model despite a configured fallback, or logs raw transcript/prompt text.

@@ -709,9 +709,9 @@ Remaining validation gaps:
 
 ## Model-Specific Prompting Requirements
 
-### Claude Opus 4.7
+### Claude Opus 4.8
 
-Current primary main model is Claude Opus 4.7. The prompt plan should follow these requirements:
+Current primary main model is Claude Opus 4.8. The prompt plan should follow these requirements:
 
 - Be clear, direct, and specific about desired output and constraints.
 - Use consistent sectioning for mixed instructions, context, examples, and variable inputs.
@@ -719,11 +719,11 @@ Current primary main model is Claude Opus 4.7. The prompt plan should follow the
 - Prefer model-visible structured context over hidden runtime heuristics.
 - For tool use, move detailed "what this tool does / when to use it / caveats / response shape"
   into tool and MCP definitions.
-- Verify Opus 4.7 runtime parameters:
+- Verify Opus 4.8 runtime parameters:
   - use the supported thinking/effort shape for the current API path
-  - do not carry removed sampling/tuning parameters into Opus 4.7 requests
+  - do not carry removed sampling/tuning parameters into Opus 4.8 requests
   - do not carry legacy `thinkingBudget`, `max_thinking_tokens`, `extended_thinking`, or old
-    extended-thinking budget fields into Opus 4.7 requests
+    extended-thinking budget fields into Opus 4.8 requests
 
 ### GPT-5.4
 
@@ -1123,7 +1123,7 @@ Acceptance:
 
 Build an eval runner that imports the real prompt builders and runs live selected routes:
 
-- main Viventium on Claude Opus 4.7
+- main Viventium on Claude Opus 4.8
 - voice route as actually selected live
 - GPT-5.4 background/productivity/research routes
 - fallback routes where configured
@@ -1249,7 +1249,7 @@ Prompt changes are not accepted unless QA can show:
 - OpenAI GPT-5.5 prompt guidance: `https://developers.openai.com/api/docs/guides/prompt-guidance?model=gpt-5.5`
 - OpenAI MCP/connectors guidance: `https://developers.openai.com/api/docs/guides/tools-connectors-mcp`
 - OpenAI eval best practices: `https://developers.openai.com/api/docs/guides/evaluation-best-practices`
-- Anthropic Claude Opus 4.7 docs: `https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7`
+- Anthropic Claude model overview: `https://platform.claude.com/docs/en/about-claude/models/overview`
 - Anthropic Claude prompting best practices: `https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices`
 - Anthropic tool definition guidance: `https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools`
 
