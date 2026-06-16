@@ -40,6 +40,13 @@ def _version(value: Any) -> int:
         return 0
 
 
+def _set_default(mapping: dict[str, Any], key: str, value: Any) -> bool:
+    if key in mapping:
+        return False
+    mapping[key] = value
+    return True
+
+
 def ensure_default_nightly_routines(config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     changed = False
     runtime = config.setdefault("runtime", {})
@@ -48,30 +55,30 @@ def ensure_default_nightly_routines(config: dict[str, Any]) -> tuple[dict[str, A
     prior_version = _version(routines.get("defaults_version"))
 
     if prior_version < DEFAULTS_VERSION:
-        routines["enabled"] = True
+        changed = _set_default(routines, "enabled", True) or changed
         routines["defaults_version"] = DEFAULTS_VERSION
-        routines["auto_worker_profile"] = True
         changed = True
+        changed = _set_default(routines, "auto_worker_profile", True) or changed
 
         prompt_workbench = runtime.setdefault("prompt_workbench", {})
-        prompt_workbench["enabled"] = True
+        changed = _set_default(prompt_workbench, "enabled", True) or changed
         seed = prompt_workbench.setdefault("seed_nightly", {})
-        seed["enabled"] = True
-        seed["active"] = True
-        seed["executor"] = "glasshive_host"
+        changed = _set_default(seed, "enabled", True) or changed
+        changed = _set_default(seed, "active", True) or changed
+        changed = _set_default(seed, "executor", "glasshive_host") or changed
 
         memory_hardening = runtime.setdefault("memory_hardening", {})
-        memory_hardening["enabled"] = True
-        memory_hardening.setdefault("schedule", "0 3 * * *")
-        memory_hardening.setdefault("operator_user_email", "")
-        memory_hardening.setdefault("dry_run_first", True)
+        changed = _set_default(memory_hardening, "enabled", True) or changed
+        changed = _set_default(memory_hardening, "schedule", "0 3 * * *") or changed
+        changed = _set_default(memory_hardening, "operator_user_email", "") or changed
+        changed = _set_default(memory_hardening, "dry_run_first", True) or changed
 
         glasshive = integrations.setdefault("glasshive", {})
-        glasshive["enabled"] = True
+        changed = _set_default(glasshive, "enabled", True) or changed
         host_worker = glasshive.setdefault("host_worker", {})
-        host_worker["enabled"] = True
-        host_worker.setdefault("workspace_root", "~/viventium")
-        host_worker.setdefault("default_execution_mode", "host")
+        changed = _set_default(host_worker, "enabled", True) or changed
+        changed = _set_default(host_worker, "workspace_root", "~/viventium") or changed
+        changed = _set_default(host_worker, "default_execution_mode", "host") or changed
 
     if resolve_bool(routines.get("auto_worker_profile"), False):
         profile = detect_worker_profile()
