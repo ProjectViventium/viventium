@@ -7,7 +7,7 @@
 - Runtime/artifact under test: generated runtime config, memory hardener LaunchAgent and trigger
   receipts, Scheduler, Prompt Workbench, GlassHive, callback outbox, transcript index state,
   RAG sidecar health, status output, and QA/eval artifacts.
-- Environment: local macOS runtime, system timezone `Europe/Amsterdam`, audit started at
+- Environment: local macOS runtime, system timezone `<observed-system-timezone>`, audit started at
   `2026-06-10T11:16:05Z`.
 - Tester: Codex automation `viventium-nightly-routines-qa`.
 - Related change: daily read-only overnight-routine QA audit after the memory-maintenance and
@@ -97,28 +97,28 @@
 
 | Field | Evidence |
 | --- | --- |
-| Audit start | `2026-06-10 13:16:05 CEST` / `2026-06-10T11:16:05Z` |
-| System timezone | `Europe/Amsterdam` from `/etc/localtime`; `date` reported `CEST +0200` |
+| Audit start | `2026-06-10 13:16:05 <local-tz-abbrev>` / `2026-06-10T11:16:05Z` |
+| System timezone | `<observed-system-timezone>` from `/etc/localtime`; `date` reported `<local-tz-abbrev> +0200` |
 | `systemsetup` timezone | Not available without administrator access |
-| Automation fire time | Intended `2026-06-10T11:15Z` / `13:15 CEST`; audit started about one minute later |
+| Automation fire time | Intended `2026-06-10T11:15Z` / `13:15 <local-tz-abbrev>`; audit started about one minute later |
 | Previous automation run from prompt | `2026-06-09T11:31:54.144Z` |
-| Automation cadence note | Codex Desktop RRULE is UTC in this local Desktop environment |
+| Automation cadence note | observer automation RRULE is UTC in this local observer environment |
 
 ## Due Windows Used
 
 | Routine | Source schedule | Due window local | Due window UTC | Grace used | Actual evidence | Judgment |
 | --- | --- | --- | --- | --- | --- | --- |
-| Memory hardening, generated context | `0 3 * * *`, timezone context `America/Toronto` | Jun 10 `09:00-09:45 CEST` | Jun 10 `07:00-07:45Z` | 45 minutes | Receipt fired `09:13 CEST` / `07:13Z`, skipped on battery, exit 0 | SKIPPED / PASS-SAFETY |
-| Memory hardening, LaunchAgent nominal local clock | `StartCalendarInterval` hour 3 minute 0 on current system timezone | Jun 10 `03:00-03:45 CEST` | Jun 10 `01:00-01:45Z` | 45 minutes | LaunchAgent receipt arrived later after travel/wake context | Timing note only; not a failure by itself |
-| Workbench nightly reflection | Workbench daily `03:00`, `America/Los_Angeles` | Jun 10 `12:00-12:45 CEST` | Jun 10 `10:00-10:45Z` | 45 minutes | Started `10:19:51Z`, completed `10:34:18Z` | PASS |
+| Memory hardening, generated context | `0 3 * * *`, timezone context `<configured-local-timezone>` | Jun 10 `09:00-09:45 <local-tz-abbrev>` | Jun 10 `07:00-07:45Z` | 45 minutes | Receipt fired `09:13 <local-tz-abbrev>` / `07:13Z`, skipped on battery, exit 0 | SKIPPED / PASS-SAFETY |
+| Memory hardening, LaunchAgent nominal local clock | `StartCalendarInterval` hour 3 minute 0 on current system timezone | Jun 10 `03:00-03:45 <local-tz-abbrev>` | Jun 10 `01:00-01:45Z` | 45 minutes | LaunchAgent receipt arrived later after timezone/wake context | Timing note only; not a failure by itself |
+| Workbench nightly reflection | Workbench daily `03:00`, `<workbench-schedule-timezone>` | Jun 10 `12:00-12:45 <local-tz-abbrev>` | Jun 10 `10:00-10:45Z` | 45 minutes | Started `10:19:51Z`, completed `10:34:18Z` | PASS |
 | Transcript ingest/vector maintenance | Memory-hardening scheduled run | Same as memory hardening | Same as memory hardening | 45 minutes | No model/vector run because power gate skipped before work | SKIPPED today; latest successful artifacts Jun 8 |
-| User-level morning schedules | User-level daily `08:00`, `America/Los_Angeles` | Jun 10 `17:00 CEST` | Jun 10 `15:00Z` | Not applied | Audit ran before due time | NOT DUE |
+| User-level morning schedules | User-level daily `08:00`, `<workbench-schedule-timezone>` | Jun 10 `17:00 <local-tz-abbrev>` | Jun 10 `15:00Z` | Not applied | Audit ran before due time | NOT DUE |
 | Prompt benchmark/eval routines | No separate due scheduled routine found | Not due | Not due | Not applied | Supporting evals were run manually | NOT DUE |
 
-Travel/timezone note: the generated memory-hardening timezone context remained `America/Toronto`,
-while the current system timezone was `Europe/Amsterdam`. Per the June 8 contract, QA used the
+Timezone note: the generated memory-hardening timezone context remained `<configured-local-timezone>`,
+while the current system timezone was `<observed-system-timezone>`. Per the June 8 contract, QA used the
 public-safe trigger receipt as the authoritative scheduled-delivery evidence and did not treat
-timezone travel, DST, or launchd wake coalescing as degradation when the receipt finalized cleanly.
+timezone timezone shifts, DST, or launchd wake coalescing as degradation when the receipt finalized cleanly.
 
 ## Routine Results
 
@@ -132,7 +132,7 @@ Evidence:
   `last exit code=0`, used the direct wrapper path with `--scheduled --trigger launchd`, and had
   `StartCalendarInterval` hour 3 minute 0.
 - Jun 10 schedule receipt: `trigger_source=launchd`, fired `2026-06-10T07:13:18Z`, timezone at
-  fire `Europe/Amsterdam`, schedule payload `0 3 * * *` with timezone context `America/Toronto`,
+  fire `<observed-system-timezone>`, schedule payload `0 3 * * *` with timezone context `<configured-local-timezone>`,
   `status=skipped`, `reason=on_battery_power`, `exit_code=0`, no run id.
 - Jun 9 schedule receipt also finalized as `skipped` / `on_battery_power` / exit 0.
 - Current audit power later showed AC charging, battery present, and no thermal/performance
@@ -193,7 +193,7 @@ Status: PASS for Jun 10, with a recovered Jun 9 failure noted.
 Evidence:
 
 - Built-in `Subconscious Deep Thought` definition was active, daily `03:00`
-  `America/Los_Angeles`, executor `glasshive_host`, memory mode `propose`, next run
+  `<workbench-schedule-timezone>`, executor `glasshive_host`, memory mode `propose`, next run
   `2026-06-11T10:00:00Z`.
 - Scheduler child run was due `2026-06-10T10:00:00Z`, started `10:19:51Z`, completed
   `10:34:18Z`, status `completed`, and included rendered/variable hashes plus private detail

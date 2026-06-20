@@ -6,7 +6,7 @@
 - Build/source under test: local Viventium checkout and active installed local-prod runtime.
 - Runtime/artifact under test: generated App Support runtime config, memory hardener LaunchAgent,
   Scheduler, Prompt Workbench, GlassHive, RAG sidecar, transcript index state, and QA reports.
-- Environment: local macOS runtime, system timezone `America/Toronto`, audit at
+- Environment: local macOS runtime, system timezone `<configured-local-timezone>`, audit at
   `2026-06-08T11:16:21Z`.
 - Tester: Codex automation `viventium-nightly-routines-qa`.
 - Related change: daily read-only overnight-routine QA audit after the observed `10:00Z` cadence.
@@ -15,7 +15,7 @@
 
 | Case ID | Result | Evidence | Notes |
 | --- | --- | --- | --- |
-| `MEMHARD-001` | PARTIAL | Latest hardener run succeeded; trigger authority unresolved | Generated/LaunchAgent `03:00 America/Toronto` schedule was not proven as the source of the observed `10:00Z` run |
+| `MEMHARD-001` | PARTIAL | Latest hardener run succeeded; trigger authority unresolved | Generated/LaunchAgent `03:00 <configured-local-timezone>` schedule was not proven as the source of the observed `10:00Z` run |
 | `MEMHARD-002` | PASS | This public-safe report plus public-safety test | Private prompt, transcript, memory, token, account, and path evidence omitted |
 | `MEMHARD-003` | PASS | AC power, no thermal/performance warning | No power or idle override used |
 | `MEMHARD-005` | PARTIAL | LaunchAgent loaded and successful, but schedule truth unresolved | Needs trigger-source proof before release signoff |
@@ -58,7 +58,7 @@
   artifact maintenance succeeded, Scheduler/GlassHive/callback state matched, automated checks
   passed, and continuity/dedupe were clean.
 - Remaining gap or fix: Memory hardening trigger authority is unresolved because generated config
-  and the LaunchAgent declare `03:00 America/Toronto`, while the observed successful run occurred at
+  and the LaunchAgent declare `03:00 <configured-local-timezone>`, while the observed successful run occurred at
   `10:00Z`.
 
 ## Full-View Evidence Checklist
@@ -148,35 +148,35 @@ Overall status: **PARTIAL**.
 
 The built-in overnight work completed successfully at the observed `10:00Z` cadence, but memory
 hardening still has an unresolved trigger-authority gap: generated config and the loaded LaunchAgent
-declare a local `03:00 America/Toronto` schedule, while the only observed June 8 hardener run started
-at `10:00Z` (`06:00 America/Toronto`). This did not cause a user-visible miss today, so it is not a
+declare a local `03:00 <configured-local-timezone>` schedule, while the only observed June 8 hardener run started
+at `10:00Z` (`06:00 <configured-local-timezone>`). This did not cause a user-visible miss today, so it is not a
 nightly execution failure. It is a schedule-truth gap that needs follow-up before release signoff.
 
 ## Timing Anchor
 
 | Field | Evidence |
 | --- | --- |
-| Audit start | `2026-06-08 07:16:21 EDT` / `2026-06-08T11:16:21Z` |
-| Later anchor | `2026-06-08 07:17:40 EDT` / `2026-06-08T11:17:40Z` |
-| System timezone | `America/Toronto` from `/etc/localtime`; `date` reported `EDT` |
-| Automation fire time | Intended `2026-06-08 07:15 EDT` / `2026-06-08T11:15Z` |
-| Automation cadence note | Codex Desktop RRULE is UTC in this local Desktop environment |
+| Audit start | `2026-06-08 07:16:21 <local-tz-abbrev>` / `2026-06-08T11:16:21Z` |
+| Later anchor | `2026-06-08 07:17:40 <local-tz-abbrev>` / `2026-06-08T11:17:40Z` |
+| System timezone | `<configured-local-timezone>` from `/etc/localtime`; `date` reported `<local-tz-abbrev>` |
+| Automation fire time | Intended `2026-06-08 07:15 <local-tz-abbrev>` / `2026-06-08T11:15Z` |
+| Automation cadence note | observer automation RRULE is UTC in this local observer environment |
 
 ## Due Windows Used
 
 | Routine | Source schedule | Due window local | Due window UTC | Grace used | Judgment |
 | --- | --- | --- | --- | --- | --- |
-| Memory hardening, configured | `0 3 * * *`, `America/Toronto`; LaunchAgent Hour `3`, Minute `0` | Jun 8 `03:00-03:45 EDT` | Jun 8 `07:00-07:45Z` | 45 minutes | **PARTIAL evidence**: no distinct `07:00Z` run was proven |
-| Memory hardening, observed cadence | Recent successful run cadence and automation memory | Jun 8 `06:00-06:45 EDT` | Jun 8 `10:00-10:45Z` | 45 minutes | **PASS execution**: run `20260608T100005Z` finished at `10:03:37Z` |
-| Workbench nightly reflection | Workbench definition daily `03:00`, `America/Los_Angeles` | Jun 8 `06:00-06:45 EDT` | Jun 8 `10:00-10:45Z` | 45 minutes | **PASS** |
-| Transcript ingest/vector maintenance | Memory-hardening run | Jun 8 `06:00-06:45 EDT` | Jun 8 `10:00-10:45Z` | 45 minutes | **PASS for nightly artifact maintenance** |
-| User-level provider reconnect rows | Scheduler DB rows | Jun 8 `11:00 EDT` | Jun 8 `15:00Z` | Not applicable | **NOT DUE** at audit time |
+| Memory hardening, configured | `0 3 * * *`, `<configured-local-timezone>`; LaunchAgent Hour `3`, Minute `0` | Jun 8 `03:00-03:45 <local-tz-abbrev>` | Jun 8 `07:00-07:45Z` | 45 minutes | **PARTIAL evidence**: no distinct `07:00Z` run was proven |
+| Memory hardening, observed cadence | Recent successful run cadence and automation memory | Jun 8 `06:00-06:45 <local-tz-abbrev>` | Jun 8 `10:00-10:45Z` | 45 minutes | **PASS execution**: run `20260608T100005Z` finished at `10:03:37Z` |
+| Workbench nightly reflection | Workbench definition daily `03:00`, `<workbench-schedule-timezone>` | Jun 8 `06:00-06:45 <local-tz-abbrev>` | Jun 8 `10:00-10:45Z` | 45 minutes | **PASS** |
+| Transcript ingest/vector maintenance | Memory-hardening run | Jun 8 `06:00-06:45 <local-tz-abbrev>` | Jun 8 `10:00-10:45Z` | 45 minutes | **PASS for nightly artifact maintenance** |
+| User-level provider reconnect rows | Scheduler DB rows | Jun 8 `11:00 <local-tz-abbrev>` | Jun 8 `15:00Z` | Not applicable | **NOT DUE** at audit time |
 | Prompt benchmark/eval routines | No separate due scheduled routine found | Not due | Not due | Not applicable | **NOT DUE**; supporting evals were run manually |
 
 ## Runtime And Schedule Evidence
 
 - Generated runtime still had memory hardening enabled with provider `openai`, model `gpt-5.5`,
-  effort `xhigh`, schedule `0 3 * * *`, and timezone `America/Toronto`.
+  effort `xhigh`, schedule `0 3 * * *`, and timezone `<configured-local-timezone>`.
 - The loaded `ai.viventium.memory-harden` LaunchAgent existed, was not running at audit time,
   reported `runs=1`, `last exit code=0`, and invoked the supported memory hardening wrapper with
   generated runtime state. Its `StartCalendarInterval` was Hour `3`, Minute `0`.
@@ -184,7 +184,7 @@ nightly execution failure. It is a schedule-truth gap that needs follow-up befor
 - Recent hardener run directories showed the observed successful `10:00Z` cadence on Jun 2, Jun 3,
   Jun 4, and Jun 8. No useful launchd timestamp was available from the read-only log pass.
 - Workbench scheduled prompt definition was active, titled `Subconscious Deep Thought`, timezone
-  `America/Los_Angeles`, daily `03:00`, memory write mode `propose`, template
+  `<workbench-schedule-timezone>`, daily `03:00`, memory write mode `propose`, template
   `workbench_nightly_subconscious_thought_formation_v1`.
 
 ## Routine Results
@@ -288,7 +288,7 @@ Status: **NOT DUE / separate account action**.
 Evidence:
 
 - Active user-level reconnect rows had next due time `2026-06-08T15:00:00Z`
-  (`11:00 America/Toronto`), after this audit window.
+  (`11:00 <configured-local-timezone>`), after this audit window.
 - These rows did not block the built-in Workbench or memory-hardening evidence inspected here.
 
 ## Commands And Checks

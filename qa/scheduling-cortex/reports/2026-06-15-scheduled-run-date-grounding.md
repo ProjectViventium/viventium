@@ -64,8 +64,8 @@ Live scheduler QA:
 
 - PASS: Post-simplification live date-tag run on 2026-06-16.
   - Generated text: `2026-06-15 simplified date tag grounding check passed.`
-  - The run fired while the host date was 2026-06-16 in Europe/Amsterdam, but the schedule timezone
-    was America/Los_Angeles, so the correct schedule-local ISO tag was `2026-06-15`.
+  - The run fired while the host date was 2026-06-16 in <observed-system-timezone>, but the schedule timezone
+    was <workbench-schedule-timezone>, so the correct schedule-local ISO tag was `2026-06-15`.
   - Ledger: `last_status=success`, `last_delivery_outcome=sent`, both `librechat` and `telegram`
     channel outcomes `sent`.
   - Date guard: `no_opening_date_claim` with expected human label `Monday, June 15, 2026`, because
@@ -102,7 +102,7 @@ The original failure mode is addressed structurally rather than with prompt keyw
 ## Remaining Gaps
 
 - The next natural daily private briefing after the change has not yet occurred. The same owning path was invoked live with public-safe content, including the real same conversation, but a natural full-content daily run should still be watched on its next scheduled occurrence.
-- Existing live daily schedule timezone remains `America/Los_Angeles`. The code now anchors to the configured schedule timezone; it does not silently migrate live user-managed schedule state.
+- Existing live daily schedule timezone remains `<workbench-schedule-timezone>`. The code now anchors to the configured schedule timezone; it does not silently migrate live user-managed schedule state.
 - Office-backed content quality still depends on Microsoft/Google MCP auth and connected-account
   health. The fix prevents unsupported live-fact claims, but it does not repair expired OAuth or
   degraded recall services.

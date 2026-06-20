@@ -12,11 +12,11 @@ Workbench detail text.
 
 ## Timing Anchor
 
-- Audit anchor: 2026-06-07 03:16 EDT / 2026-06-07T07:16:16Z.
-- Later sanity clock during evidence capture: 2026-06-07 03:31 EDT / 2026-06-07T07:31:49Z.
-- System timezone: America/Toronto (`/etc/localtime` -> `America/Toronto`).
+- Audit anchor: 2026-06-07 03:16 <local-tz-abbrev> / 2026-06-07T07:16:16Z.
+- Later sanity clock during evidence capture: 2026-06-07 03:31 <local-tz-abbrev> / 2026-06-07T07:31:49Z.
+- System timezone: <configured-local-timezone> (`/etc/localtime` -> `<configured-local-timezone>`).
 - Automation previous fire time from prompt: 2026-06-06T13:48:17.766Z.
-- Generated memory-hardening timezone/config: enabled, `0 3 * * *`, America/Toronto,
+- Generated memory-hardening timezone/config: enabled, `0 3 * * *`, <configured-local-timezone>,
   OpenAI `gpt-5.5` `xhigh`, dry-run-first on, transcript source configured,
   transcript RAG mode `detailed_summary_only`.
 - LaunchAgent: loaded label `ai.viventium.memory-harden`, `StartCalendarInterval` hour 3 minute 0,
@@ -27,28 +27,28 @@ Workbench detail text.
   clock was one minute after that configured grace window, while the observed 10:00Z cadence was
   still not due.
 - Prompt Workbench schedule: built-in `Subconscious Deep Thought` active, daily 03:00
-  America/Los_Angeles, next run `2026-06-07T10:00:00Z`.
+  <workbench-schedule-timezone>, next run `2026-06-07T10:00:00Z`.
 
 ## Due-Window Table
 
-| Routine | Configured / observed due | Due local | Due UTC | Grace used | Audit classification at 03:16 EDT |
+| Routine | Configured / observed due | Due local | Due UTC | Grace used | Audit classification at 03:16 <local-tz-abbrev> |
 | --- | --- | --- | --- | --- | --- |
-| Memory hardening, configured LaunchAgent | `0 3 * * *` America/Toronto | 2026-06-07 03:00 EDT | 2026-06-07T07:00Z | 30 min, to 03:30 EDT / 07:30Z | WAITING / IN GRACE |
-| Memory hardening, observed recent cadence | recent successful runs at about 10:00Z | 2026-06-07 06:00 EDT | 2026-06-07T10:00Z | 30 min, to 06:30 EDT / 10:30Z | NOT DUE |
-| Prompt Workbench nightly reflection | 03:00 America/Los_Angeles | 2026-06-07 06:00 EDT | 2026-06-07T10:00Z | 30 min, to 06:30 EDT / 10:30Z | NOT DUE |
-| User-level provider reconnect schedules | 08:00 America/Los_Angeles | 2026-06-07 11:00 EDT | 2026-06-07T15:00Z | 15 min, to 11:15 EDT / 15:15Z | NOT DUE |
+| Memory hardening, configured LaunchAgent | `0 3 * * *` <configured-local-timezone> | 2026-06-07 03:00 <local-tz-abbrev> | 2026-06-07T07:00Z | 30 min, to 03:30 <local-tz-abbrev> / 07:30Z | WAITING / IN GRACE |
+| Memory hardening, observed recent cadence | recent successful runs at about 10:00Z | 2026-06-07 06:00 <local-tz-abbrev> | 2026-06-07T10:00Z | 30 min, to 06:30 <local-tz-abbrev> / 10:30Z | NOT DUE |
+| Prompt Workbench nightly reflection | 03:00 <workbench-schedule-timezone> | 2026-06-07 06:00 <local-tz-abbrev> | 2026-06-07T10:00Z | 30 min, to 06:30 <local-tz-abbrev> / 10:30Z | NOT DUE |
+| User-level provider reconnect schedules | 08:00 <workbench-schedule-timezone> | 2026-06-07 11:00 <local-tz-abbrev> | 2026-06-07T15:00Z | 15 min, to 11:15 <local-tz-abbrev> / 15:15Z | NOT DUE |
 
 Timing verdict: the June 7 audit fired too early for the observed 10:00Z nightly cadence. The
 configured 03:00 memory-hardening window was still in grace at the initial anchor and barely past
 grace at the later sanity clock; because the loaded LaunchAgent itself is drifted, this is a
 schedule-delivery risk rather than proof of a completed June 7 product failure. Today should not be
-marked failed merely because no June 7 hardener or Workbench run had completed by 03:16 EDT.
+marked failed merely because no June 7 hardener or Workbench run had completed by 03:16 <local-tz-abbrev>.
 
 ## Findings
 
 | Surface | Expected | Evidence | Status |
 | --- | --- | --- | --- |
-| Memory hardener scheduled run | June 7 run should be judged only after due plus grace. | No `20260607*` current-runtime run directory by 03:27 EDT. Audit was still in configured grace and before observed 10:00Z cadence. | NOT DUE / WAITING |
+| Memory hardener scheduled run | June 7 run should be judged only after due plus grace. | No `20260607*` current-runtime run directory by 03:27 <local-tz-abbrev>. Audit was still in configured grace and before observed 10:00Z cadence. | NOT DUE / WAITING |
 | Memory hardener latest actual run | Recent runs should use configured OpenAI path without fallback or provider/schema failure. | Latest current-runtime run `20260606T135011Z` succeeded 2026-06-06T13:50:11Z to 13:53:59Z via OpenAI `gpt-5.5` `xhigh`; model probe ok; one hardener attempt, zero hardener failures/fallback; transcript summarizer attempts clean. | PASS for model/provider path |
 | Transcript ingest | Configured transcript lane should catch up bounded files and keep vector lifecycle honest. | Latest run saw 30 files, ignored 4 by config, 23 unchanged, 3 pending, zero vector-presence errors, zero requeued missing vectors, and no summary failures. Current indexes show 47 processed entries across three private indexes. | PARTIAL |
 | Transcript vector/RAG | RAG sidecar should be reachable when transcript summary artifacts need vector-backed recall. | Generated runtime has `START_RAG_API=true`, `RAG_API_URL=http://localhost:8110`, Ollama embeddings configured. Health probes to `8110` failed and no listener was present. Latest hardener deferred transcript vectors once with `vector_runtime_unavailable`. | FAIL |
