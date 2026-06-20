@@ -18,8 +18,16 @@ Viventium/LibreChat but architecturally independent.
 | **Sandbox** | A Docker-backed workstation container with desktop, browser, terminal, and filesystem |
 | **Host Worker** | A no-sandbox worker that runs local CLIs directly on the user's main computer |
 | **Worker** | The AI runtime operating inside a sandbox or on the host (profiles: `codex-cli`, `claude-code`, `openclaw-general`) |
+| **Worker Profile** | The meaningful runtime selector. `profile` plus `execution_mode` chooses Codex CLI, Claude Code, or OpenClaw in host or Docker mode. |
 | **Project** | An operator-defined mission with goal, success criteria, and continuity wrapper |
 | **Bootstrap Bundle** | A portable preset containing auth, MCP config, instructions, env, and files that seeds a worker |
+
+Do not treat `backend=openclaw` as the product backend selector. That field is legacy control-plane
+compatibility plumbing for older API/MCP callers. The user-visible and runtime-owning selection is
+`profile` plus `execution_mode`: `codex-cli` launches Codex CLI, `claude-code` launches Claude Code,
+and `openclaw-general` launches the OpenClaw worker profile. This is separate from the optional
+Viventium `integrations.openclaw` lab integration and separate from configured `@openclaw` mention
+syntax for host-worker selection.
 
 ---
 
@@ -53,6 +61,13 @@ the point of host mode, not an isolated browser. Safety comes from structured ho
 host-worker enablement gates, destructive-action checkpoints, and explicit opt-out
 (`WPR_CLAUDE_CODE_ENABLE_CHROME=0`) for locked-down deployments. Workspace/Docker mode owns isolated
 browser profiles and should not inherit host browser sessions.
+
+When host-native workers are disabled by deployment config, every host-facing surface must say so:
+the MCP server instructions, parameter descriptions, tool descriptions, and host UI labels must all
+steer to the configured default instead of still suggesting `execution_mode=host`. Otherwise the
+host model can correctly follow a stale schema and trigger a permanent host-disabled rejection before
+falling back to Docker/workspace. Fix that at the schema/config boundary, then restart or reconnect
+the host MCP client so it reloads the updated tool contract.
 
 ### Host-Native Discoverability Contract
 
@@ -201,7 +216,9 @@ Selenium base:
 - **npm globals**: pinned Codex and Claude Code specs (`@openai/codex@0.140.0`,
   `@anthropic-ai/claude-code@2.1.178`) plus `openclaw@latest` by default. Operators may override
   the package specs with `WPR_SANDBOX_CODEX_NPM_SPEC`, `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC`, and
-  `WPR_SANDBOX_OPENCLAW_NPM_SPEC` after updating QA evidence.
+  `WPR_SANDBOX_OPENCLAW_NPM_SPEC` after updating QA evidence. Global npm install must use a
+  disposable build cache and remove `/tmp`, root, and `seluser` npm caches before image export so
+  the worker image stays reproducible and does not fail on Docker Desktop overlay storage.
 - **Python**: selenium plus document/artifact libraries such as `python-docx`, `python-pptx`,
   `reportlab`, `PyPDF2`, `PyMuPDF`, `pdf2image`, `openpyxl`, `xlsxwriter`, and rendering helpers
 - **Managed browser-extension policy**: Chromium and Google Chrome policy paths force-install the
@@ -264,10 +281,12 @@ these lists into hardcoded routing.
   `WPR_SANDBOX_SHM_SIZE`.
 - `--init` for proper signal handling
 - User: `seluser`, display: `:99.0`
-- Browser temp/cache/config paths are projected into the persistent mounted worker home
-  (`/workspace/.wpr-home/tmp`, `.cache`, `.config`) through `TMPDIR`, `XDG_CACHE_HOME`, and
-  `XDG_CONFIG_HOME`. This is required because browser extension install/profile materialization can
-  fail when the Docker overlay is full even though the worker's mounted home still has space.
+- Worker/browser commands receive persistent mounted temp/cache/config paths
+  (`/workspace/.wpr-home/tmp`, `.cache`, `.config`) through their launch environment so browser
+  profile and extension materialization can survive overlay pressure. Container supervisor services
+  such as noVNC/websockify must start with service-local `TMPDIR=/tmp` (or
+  `WPR_SANDBOX_SERVICE_TMPDIR`) because websockify uses temporary Unix sockets and can reset live
+  desktop connections when `TMPDIR` points at the mounted worker home.
 
 ### Volume Mounts
 
@@ -390,6 +409,10 @@ Host-worker UX and callback requirements:
   predates the user request. If the web stack creates a blank assistant anchor before the user row
   is timestamped, callback persistence must repair the callback message timestamp so chronological
   and tree views both show the user request before the worker result.
+- Visible callback persistence must also touch the owning conversation's message list and
+  `updatedAt`/tip metadata after writing the callback message. A GlassHive outbox row marked
+  delivered is not sufficient if the chat UI can miss the result after refresh or list-state
+  reconciliation.
 - Worker delegation must preserve the user's stated success condition and response-format
   constraints. If the user asks for a short/exact result or asks to leave the local computer in a
   specific visible state, that requirement must be passed into the worker instruction and into the
@@ -522,9 +545,19 @@ Host-worker UX and callback requirements:
   Enterprise deep-work deployments should default Codex to `high` once the active route proves it;
   `xhigh` must be available only when the same active route and a real worker run prove it, not
   because another provider account or model catalog says the family supports it.
-- Claude effort is native substrate, not just prompt copy. `effort=max` from MCP, UI, or direct API
-  must be projected into the worker bootstrap env as `WPR_CLAUDE_CODE_EFFORT=max`, and both
-  workspace/Docker and host-native Claude Code commands must translate that to `--effort max`.
+- GlassHive host prompts and MCP descriptions must not override that deployment/user default with
+  `medium` just because a task is simple. For ordinary bounded work, omit the per-run `effort` field
+  unless the user explicitly asks for a cheaper/faster pass. For deep research, critical analysis,
+  coding, comparison, large file transformation, or executive-quality deliverables, explicitly select
+  the higher native effort (`high`/`xhigh` for Codex-style workers, `max` for Claude-style workers, or
+  the configured equivalent).
+  2026-06-16 approved enterprise QA proved this through an authenticated LibreChat/Chrome launch where an
+  ordinary bounded file request omitted `effort`, created a fresh Docker `codex-cli` worker on
+  `gpt-5.4`, and the runtime DB showed `BOOTSTRAP_CODEX_EFFORT=high`.
+- Claude effort is native substrate, not just prompt copy. When deployment defaults, MCP, UI, or
+  direct API request `effort=max`, it must be projected into the worker bootstrap env as
+  `WPR_CLAUDE_CODE_EFFORT=max`, and both workspace/Docker and host-native Claude Code commands must
+  translate that to `--effort max`.
   Claude Code workers should also preserve `--chrome` by default when the CLI supports it; disable it
   only through an explicit locked-down configuration.
 
@@ -600,7 +633,24 @@ The harness prompt is materialized as `harness-prompt.md` for operator visibilit
 - Same named worker = same browser identity (cookies, sessions, login state)
 - Parent systems should use **stable worker aliases** for browser-authenticated work
   (e.g. `demo-browser-primary`, `demo-mail-browser`)
-- Chromium launched with: `--no-sandbox`, `--disable-dev-shm-usage`, `--start-maximized`
+- Worker Chromium launches must be clean and confidence-building by default:
+  - do **not** launch with `--no-sandbox` in the normal sandboxed workstation path; an unsupported
+    command-line-flag infobar is a substrate bug, not acceptable default UX
+  - in the Selenium-derived workstation image, do not launch the user-visible browser through the
+    Selenium `/usr/bin/chromium` wrapper because that wrapper force-adds `--no-sandbox`; launch the
+    Debian Chromium launcher that preserves the browser's real sandbox posture
+  - Docker workstation containers must allow Chromium's user-namespace sandbox to initialize. The
+    current least-resistance Docker Desktop path uses `--security-opt seccomp=unconfined` so
+    `unshare -U` succeeds inside the worker; a narrower future seccomp profile is acceptable only if
+    it is proven by the same QA.
+  - hide the bookmark bar in the default worker profile unless the user explicitly enables it
+  - keep first-run/default-browser/crash-restore prompts out of the worker view
+  - use worker-home profile, cache, and temp paths so browser state persists with the workspace
+  - keep `--disable-dev-shm-usage` only as a container compatibility flag; it must not be paired
+    with `--no-sandbox` as the default browser launch posture
+- If a deployment truly cannot run Chromium sandboxed, treat that as a workstation prerequisite or
+  explicit fallback decision with preflight, docs, and QA evidence. Do not silently normalize a
+  scary browser warning in the user-visible worker desktop.
 
 ## User-Facing Workspace Model
 
@@ -1025,6 +1075,9 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
 ## Operator UX and Takeover
 
 - **noVNC desktop view**: Live X11 display in the browser; operator sees exactly what the worker sees
+- **noVNC health**: `view_available` is true only when the noVNC asset path is reachable. If the
+  proxy is unhealthy, runtime should self-heal the service and report the desktop unavailable until
+  the asset path succeeds.
 - **Desktop interaction**: Mouse and keyboard via VNC
 - **Terminal takeover**: WebSocket bridge to `screen` multiplexer sessions
 - **Desktop surfaces**: `terminal`, `files` (PCManFM), `browser`, `focus_browser`, `codex`,
@@ -1046,10 +1099,11 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
 - **Canonical operator URL**: user-facing watch, steer, and takeover requests must surface the
   configured GlassHive operator `/watch/{worker}` URL. Raw noVNC desktop URLs are diagnostic-only
   implementation details and must not be the primary chat-visible view.
-- **Signed operator links**: enterprise Workspaces, watch, project, desktop, and artifact links must
-  use short-lived, worker-scoped signed URLs or a trusted proxy user assertion. A full watch link
-  that falls back to `GlassHive enterprise UI requires an authenticated user assertion` is a failed
-  UX/security integration because the user was given a link that cannot carry its own authorization.
+- **Operator links**: enterprise Workspaces, watch, project, desktop, and artifact links must use
+  authenticated short refs (`/r/{ref}` or `/v1/link-refs/{ref}`) as the user-visible contract.
+  Short refs are durable by default and must resolve only for the authenticated owner. Opening a
+  View / Steer short ref mints a fresh bounded worker-scoped session token; raw signed URLs remain
+  server-side or legacy compatibility details.
 - **Artifact link semantics**: the default user-facing file-delivery link must open a GlassHive
   file preview/landing page, not trigger a surprise raw browser download. Raw artifact downloads
   remain supported, but they must be labeled explicitly as `Download file`; chat callbacks and MCP
@@ -1066,6 +1120,10 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
   loading another watch page inside the preview frame. When a worker creates multiple user-facing
   files, Watch / Steer must expose the artifact inventory with explicit open/download actions for
   each file instead of stranding everything except the latest promoted artifact.
+- **Watch surface fidelity**: a `surface=desktop` Watch URL must keep the live workstation desktop
+  as the primary frame even after a file deliverable is ready. Completed artifacts may be promoted
+  in the latest-output/status panel and exposed through explicit `Open file`/`Download file` actions;
+  they must not replace the desktop iframe or be mislabeled as the current desktop.
 - **Completed deliverable promotion**: for Docker workers with structured webpage deliverables,
   GlassHive must open the deliverable in the sandbox browser once the run completes. Host-native
   workers must not auto-open the user's real browser without explicit consent and must not place
@@ -1144,9 +1202,10 @@ but it cannot replace real user-path evidence. Every case result must be marked 
    format. Markdown/HTML may be produced as supporting source or preview artifacts, but should not be
    the only default deliverable unless the worker reports a concrete runtime blocker.
 6. Security/access: prove enterprise auth fails closed, user/tenant scoping prevents cross-user
-   listing/resume/watch/download/inference, signed links expire or reject tampering, raw local/VM
-   internals are hidden from member users, provider secrets are not surfaced, and access logs do not
-   retain raw `gh_token`, bearer/service-token values, or opaque artifact signed-link paths.
+   listing/resume/watch/download/inference, durable short refs require the authenticated owner,
+   raw signed tokens expire or reject tampering, raw local/VM internals are hidden from member
+   users, provider secrets are not surfaced, and access logs do not retain raw `gh_token`,
+   bearer/service-token values, or opaque artifact signed-link paths.
 7. Efficiency/performance: prove idle workspaces automatically release compute while preserving
    workspace data, active/queued/checkpoint work is not killed, quotas are enforced, and spawn/resume
    paths are measured against the documented responsiveness target. When a quota is hit, API and MCP
@@ -1293,6 +1352,31 @@ runtime intent classifier.
   leave the VM. Signed View / Steer links and artifact signed-link paths are credentials until they
   expire, so journald, reverse-proxy logs, Azure diagnostics, and QA reports must never preserve
   them verbatim.
+- User-visible GlassHive tool payloads and callbacks should expose only short link references such
+  as `/r/{ref}` and `/v1/link-refs/{ref}`. Raw `gh_token` URLs and opaque signed-link tokens may
+  exist only as server-side ref targets or legacy inbound compatibility. `/r/{ref}` should set the
+  worker-scoped cookie and redirect to a tokenless watch/project/desktop URL so the browser address
+  bar and follow-up UI/API polling do not retain `gh_token`; UI/API/WebSocket logs must redact
+  `gh_token`, `gh_sig`, `gh_exp`, `gh_kind`, and `/v1/signed-links/{token}` before handlers emit
+  them.
+- Short link references are durable authenticated pointers by default. `GLASSHIVE_LINK_REF_TTL_SECONDS`
+  (or legacy alias `WPR_LINK_REF_TTL_SECONDS`) defaults to `0`, meaning `/r/{ref}` and
+  `/v1/link-refs/{ref}` do not expire only because the underlying signed token expired. Values
+  `0`, `never`, `none`, `disabled`, `off`, `false`, and `no` mean no short-ref expiry; a positive
+  integer expires the short ref after that many seconds. Enterprise `/r/{ref}` and
+  `/v1/link-refs/{ref}` resolution must still pass through the authentication wall and match the
+  ref's tenant/user before minting a fresh bounded worker-view session or returning an artifact.
+  Raw `/v1/signed-links/{token}` compatibility URLs remain signed-token URLs and are not the
+  durable user-facing contract.
+- Runtime-created View / Steer refs that point at the separate GlassHive UI service require shared
+  link-ref state. Co-located runtime/UI processes should use the same
+  `GLASSHIVE_LINK_REF_STATE_PATH` SQLite file; split deployments must provide supported shared local
+  storage or route `/r/{ref}` to the process that created the ref. SQLite WAL must not be placed on
+  unsafe network filesystems.
+- `workspace_launch`, `workspace_wait`, and `workspace_status` default outputs are compact by
+  design: they return user-actionable state, result tools, View / Steer/file short links, and
+  output/error text, while raw project/worker/run ids and live diagnostic snapshots require an
+  explicit diagnostics flag.
 
 The durable QA owner is [`../../qa/glasshive_standard_qa/README.md`](../../qa/glasshive_standard_qa/README.md).
 
@@ -1341,11 +1425,19 @@ Default enterprise auth is `first_party_assertion`:
   `workspace_continue`, `workspace_artifacts`, and `workspace_artifact_download`) must re-check
   tenant and owner scope before returning run text, View / Steer links, artifact listings, or signed
   download links. A guessed run or worker id is not sufficient authorization.
-- Enterprise callbacks emit opaque, short-lived signed links for artifact download and View / Steer
-  access instead of putting raw project/worker ids in user-visible text. The signed-link/member worker UI
-  hides VM paths, session keys, container names, and live command diagnostics while preserving the
-  useful state, controls, output, workspace file list, live refresh, and takeover/action controls
-  for the signed link's lifetime.
+- Enterprise callbacks emit opaque, authenticated short-link references for artifact download and
+  View / Steer access instead of putting raw project/worker ids or raw signed-token URLs in
+  user-visible text. By default those short refs are durable (`GLASSHIVE_LINK_REF_TTL_SECONDS=0`),
+  so an authenticated owner can open yesterday's result or workspace link without seeing an
+  expired-token error. Opening a View / Steer short ref mints a fresh bounded worker-view session;
+  it does not make the durable ref itself a compute lease. Idle, paused, max-run, quota, and
+  optional watch-session limits still own compute release so forgotten tabs do not become the
+  product's cost model. The signed-link/member worker UI hides VM paths, session keys, container
+  names, and live command diagnostics while preserving the useful state, controls, output,
+  workspace file list, live refresh, and takeover/action controls for the active session lifetime.
+- Signed-link QA must inspect visible chat, link `href`s, and hidden accessibility/copy text. A
+  visually clean Markdown link can still leave raw signed URLs in offscreen serialized Markdown
+  nodes; renderer and bridge fixes must treat that as a user-facing leakage surface.
 - `/health` is the only intentionally unauthenticated cloud route. UI, docs, OpenAPI, takeover,
   artifacts, terminal websocket, metrics, admin, and MCP/control-plane routes require service auth
   plus a user assertion.
@@ -1414,8 +1506,10 @@ persistent home and workspace mounts.
 | Variable | Default | Purpose |
 |---|---|---|
 | `WPR_DB_PATH` | `{base}/runtime_phase1.db` | SQLite database |
-| `WPR_RUNTIME_BACKEND` | `openclaw` | Worker runtime type |
+| `WPR_RUNTIME_BACKEND` | `openclaw` | Legacy bootstrap selector for the profiled runtime implementation; not the worker backend selector |
 | `WPR_API_TOKEN` | (none) | Optional bearer auth |
+| `GLASSHIVE_DEFAULT_WORKER_PROFILE` | `codex-cli` | Deployment default profile when caller/user preference omits a worker profile |
+| `GLASSHIVE_DEFAULT_EXECUTION_MODE` / `WPR_DEFAULT_EXECUTION_MODE` | `docker` standalone, Viventium host-worker config may set `host` | Deployment default execution substrate when caller omits `execution_mode`; `GLASSHIVE_DEFAULT_EXECUTION_MODE` is the native alias and `WPR_DEFAULT_EXECUTION_MODE` remains compatibility |
 | `GLASSHIVE_ENTERPRISE_MODE` | unset | Enables fail-closed enterprise request scoping |
 | `GLASSHIVE_AUTH_MODE` | `local` | `first_party_assertion` for v1 enterprise VM mode; OAuth modes are optional |
 | `GLASSHIVE_ENTERPRISE_TENANT_ID` | `local` | Single-tenant deployment identifier used when the request does not carry a tenant header |
@@ -1444,10 +1538,14 @@ persistent home and workspace mounts.
 | `WPR_CODEX_CLI_IGNORE_USER_CONFIG` | `false` | Workspace-mode Codex should load the worker-local config by default so projected broker/native MCPs work; set `true` only for an explicit locked-down provider route |
 | `WPR_CODEX_CLI_DISABLE_FEATURES` | unset | Optional comma-separated Codex feature disables for explicitly locked-down provider routes. The default must preserve native Codex app, multi-agent, plugin, browser/computer, workspace-dependency, and related capability surfaces; set this only with dated preflight/QA evidence that the lockdown is intentional. |
 | `WPR_CLAUDE_CODE_ENABLE_CHROME` | `true` | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode |
-| `WPR_CLAUDE_CODE_EFFORT` | unset | Optional Claude Code effort flag such as `max`; MCP/UI/direct API per-run effort must project this into the bootstrap bundle, and workspace plus host-native commands must translate it to `--effort max` |
+| `WPR_CLAUDE_CODE_EFFORT` | unset | Optional Claude Code effort. MCP/UI/direct API per-run effort must project `max` into the bootstrap bundle, and workspace plus host-native commands must translate it to `--effort max` |
 | Built-in host CLI floors | Codex CLI `>=0.140.0`, Claude Code `>=2.1.178`, OpenClaw `>=2026.6.6` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags |
 | `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
+| `WPR_SANDBOX_SERVICE_TMPDIR` | `/tmp` | Temp path for container supervisor services such as noVNC/websockify; keep separate from mounted worker-home `TMPDIR` to avoid live desktop socket reset failures |
+| `WPR_SANDBOX_NOVNC_SELF_HEAL` | `true` | Runtime may repair an unhealthy noVNC proxy before reporting the live desktop available |
+| `WPR_SANDBOX_NOVNC_HEALTH_TIMEOUT_SEC` | `1.5` | Timeout for noVNC asset-path health checks |
+| `WPR_SANDBOX_NOVNC_HEALTH_CACHE_TTL_SEC` | `10` | Short cache for noVNC health checks to keep watch polling responsive |
 | `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` | `1800` | Default MCP `workspace_wait` completion wait when the model/user asks to wait for results and omits an explicit timeout; enterprise deployments that expect 25+ minute research/file jobs may raise this, for example to `2700` |
 | `WPR_MCP_BLOCKING_WAIT_MAX_SEC` | `1800` | Hard cap on MCP blocking wait duration; prevents a chat request from blocking longer than policy while the worker continues in the background; enterprise deployments may raise this with a matching LibreChat MCP `timeout` cushion, for example to `3600` |
 | `WPR_MCP_BLOCKING_WAIT_POLL_INTERVAL_SEC` | `5` | Initial efficient polling cadence and floor for `workspace_wait`; models should omit per-call poll intervals for normal long work, and the runtime keeps early checks responsive before backing off toward the 30s cap |

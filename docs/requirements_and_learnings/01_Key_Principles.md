@@ -178,6 +178,16 @@ are the core metric of the viventium project that we must always evaluate in tes
   safe task/status/artifact summaries. Hide raw invocation code, internal worker/run IDs, provider
   plumbing, and acknowledgement guidance unless the user explicitly asks for diagnostics; do not
   hide the fact that a tool or worker was used.
+- GlassHive chat rendering must treat hidden/accessibility/copy text as user-facing for privacy and
+  polish. Visible link labels can look clean while offscreen live regions or serialized Markdown
+  still contain signed artifact/watch URLs, tokens, raw IDs, or stripped filename text. QA must
+  inspect DOM/accessibility text in addition to the visual bubble, and renderers/bridges must avoid
+  exposing signed URLs or raw Markdown source unless diagnostics are explicitly requested.
+- MCP tool schemas and descriptions are capability contracts too. Runtime-aware server instructions
+  are not enough if the callable parameter descriptions still advertise a disabled or unavailable
+  substrate. When host-native workers, worker profiles, browser/computer capability, model effort,
+  or file-access modes are enabled/disabled by config, the generated MCP schema/descriptions and
+  server instructions must agree with the same live config before a host app reconnects.
 - Worker substrate configuration must be verified against the actual provider route, not generic
   model-family assumptions. If a CLI accepts a broad effort/capability vocabulary but the deployed
   OpenAI-compatible route supports only a subset, the deployment must declare that subset and the
@@ -198,6 +208,11 @@ are the core metric of the viventium project that we must always evaluate in tes
   project it through structured bootstrap/config and prove the generated worker command/provider
   request actually used it. Prompt-only effort text is acceptable only for worker types that have no
   native effort surface.
+- Host prompts must not downshift GlassHive's ordinary work by habit. If the user did not ask for a
+  cheaper/faster pass, omit the per-run `effort` field for normal bounded tasks and let the saved user
+  preference or deployment default own the baseline. Explicitly choose Codex `high`/`xhigh`, Claude
+  `max`, or the configured equivalent for deep research, critical analysis, coding, comparison,
+  large transformations, or executive-quality deliverables.
 - GlassHive worker capability projection is additive. Broker grants, scoped MCP files, worker-local
   config, model-provider settings, and launch flags must not strip the selected worker type's native
   skills/capabilities such as browser, computer/desktop, shell, file, MCP, and local app control.
@@ -218,6 +233,11 @@ are the core metric of the viventium project that we must always evaluate in tes
   part of the substrate expectation: managed policy, profile installation, and connected bridge
   state must be tested separately. Workers should choose these skills/extensions when relevant and
   should not be forced into any prompt-specific skill, provider, file format, or rubric.
+- Deploy UI/client assets only with their matching backend/shared-package contract unless the
+  compatibility boundary is explicitly proven. A client-dist-only overlay can be valid for a narrow
+  static fix only after a real browser smoke proves the composer, model selector, MCP/tools row,
+  message send, tool result, and artifact/file path still work. If an overlay breaks the visible app,
+  roll it back immediately and classify the full-image build/publish blocker separately.
 - GlassHive data in and data out must be exact. The host application must pass real uploads, file
   references, MCP grants/capabilities, retrieved context, and tool results without pretending they
   exist or were used. If data, auth, files, or MCP access are unavailable, the delegation should
@@ -226,6 +246,12 @@ are the core metric of the viventium project that we must always evaluate in tes
   worker-accessible workspace, mention the full accessible path in the prompt/bootstrap context, and
   let the worker decide how to use it. Do not replace this basic path contract with prompt-specific
   CLI arguments, hidden attachment heuristics, or guessed file access.
+- GlassHive live surfaces must be truthful, not just link-shaped. A `/watch/{worker}?surface=desktop`
+  URL means the primary surface remains the live workstation desktop; completed files are explicit
+  result actions/status, not replacements for the requested desktop frame. `view_available` means
+  the noVNC/browser substrate is actually reachable, and callback delivery means the user-facing
+  chat conversation was updated so the result can surface after refresh, not merely that an outbox
+  row was marked delivered.
 - Delegated workers must receive a universal completion contract. Before reporting completion, the
   worker must compare the actual result against the user's request, success criteria, constraints,
   files/artifacts, visible state, or tool results when applicable; continue or remediate when the

@@ -195,6 +195,10 @@ integrations:
     host_worker:
       enabled: true
       workspace_root: ~/viventium
+      # Worker profile is the meaningful runtime selector: codex-cli,
+      # claude-code, or openclaw-general. It is separate from the
+      # optional integrations.openclaw lab integration below.
+      default_worker_profile: codex-cli
       default_execution_mode: host
       # Optional native-capability controls. Leave unset for the default full-capability path.
       # runtime_requirements:
@@ -262,6 +266,7 @@ integrations:
     base_url: http://localhost:8200
   openclaw:
     # Advanced/Lab only. Keep off by default unless the operator explicitly enables it.
+    # This does not change the default GlassHive worker profile above.
     enabled: false
 feature_requests:
   pr:

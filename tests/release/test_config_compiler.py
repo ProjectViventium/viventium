@@ -902,6 +902,8 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     )
     assert default_host_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
     assert default_host_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium"
+    assert default_host_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
+    assert default_host_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
     assert default_host_env["WPR_DEFAULT_EXECUTION_MODE"] == "host"
 
     disabled_host_config = copy.deepcopy(base_config)
@@ -917,6 +919,8 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
         config_compiler.build_agent_assignments(disabled_host_config),
     )
     assert disabled_host_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "false"
+    assert disabled_host_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
+    assert disabled_host_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "docker"
     assert disabled_host_env["WPR_DEFAULT_EXECUTION_MODE"] == "docker"
     disabled_host_mcp = config_compiler.build_mcp_servers(disabled_host_config, {"lc_api_port": 3080}, "agent-main")
     assert disabled_host_mcp["glasshive-workers-projects"]["serverInstructions"] is True
@@ -952,6 +956,8 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] == "true"
     assert enabled_env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] == "true"
     assert enabled_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    assert enabled_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
+    assert enabled_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
     assert enabled_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium-workers"
     assert enabled_env["WPR_DEFAULT_EXECUTION_MODE"] == "host"
     assert enabled_env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] == "true"
@@ -995,6 +1001,24 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert glasshive_headers["X-Viventium-Telegram-Message-Id"] == "{{LIBRECHAT_BODY_VIVENTIUMTELEGRAMMESSAGEID}}"
     assert glasshive_headers["X-Viventium-Request-Files"] == "{{LIBRECHAT_BODY_FILES_JSON_B64}}"
     assert glasshive_headers["X-Viventium-Tool-Resources"] == "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}"
+
+
+def test_config_compiler_rejects_invalid_glasshive_default_worker_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "runtime_phase1"
+    runtime_dir.mkdir(parents=True)
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "host_worker": {"default_worker_profile": "not-a-worker"},
+    }
+
+    with pytest.raises(SystemExit, match="default_worker_profile must be one of"):
+        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
 
 
 def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(

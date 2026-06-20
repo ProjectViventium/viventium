@@ -12,11 +12,13 @@ Key directories:
 - `viventium_v0_4/LibreChat/` (Node API + client + packages)
 - `viventium_v0_4/voice-gateway/` (Python voice worker)
 - `viventium_v0_4/telegram-viventium/` (Telegram bridge)
+- `viventium_v0_4/GlassHive/` (standalone workspace/worker runtime)
 - `viventium_v0_4/agents-playground/` (legacy playground)
 - `viventium_v0_4/agent-starter-react/` (modern playground)
 - `viventium_v0_4/livekit/` (LiveKit server repo)
 
 Nested git repos inside v0.4:
+- `viventium_v0_4/GlassHive/`
 - `viventium_v0_4/LibreChat/`
 - `viventium_v0_4/agents-playground/`
 - `viventium_v0_4/agent-starter-react/`

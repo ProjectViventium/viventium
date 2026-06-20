@@ -202,10 +202,14 @@ stream back to Telegram through the existing bridge.
   the fast path can claim and mark the exact delivery row before sending. It must not legacy-send a
   callback that has a durable delivery row, because that creates one visible message from the poller
   and another from the dispatcher.
-- If a callback-id-bearing worker result has no claimable delivery row before the same-turn poller
-  timeout, the poller must stop without a visible legacy send and leave delivery to the durable
-  dispatcher/backlog or callback retry path. Untracked raw text fallback is allowed only for legacy
-  callback states that do not carry a callback id.
+- GlassHive callback dedupe must also compare against the main streamed Telegram answer for the
+  same stream, using the same Telegram-visible sanitation on both sides. If the final assistant text
+  already delivered the same user-visible worker result, the callback is still a valid system event,
+  but the bridge must claim and mark the delivery row as suppressed with an observability reason such
+  as `already_streamed` instead of sending the same text again. If the delivery row is not visible
+  yet, the bridge must wait for the row and avoid the legacy fallback for that same-text callback.
+  This suppression is stream-scoped only: a different callback result, or the same words in a later
+  unrelated turn, must still deliver normally.
 - Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
   collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
   If a primary provider is rate-limited and the configured fallback provider then fails because its

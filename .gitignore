@@ -152,3 +152,5 @@ qa/glasshive_azure_enterprise/reports/*
 qa/glasshive_standard_qa/reports/*
 !qa/glasshive_standard_qa/reports/
 !qa/glasshive_standard_qa/reports/README.md
+qa/glasshive_watch_desktop/evidence/
+qa/glasshive_watch_desktop/reports/*.html

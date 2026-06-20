@@ -382,6 +382,7 @@ properties:
                 type: string
               default_worker_profile:
                 type: string
+                enum: [codex-cli, claude-code, openclaw-general]
               default_execution_mode:
                 type: string
                 enum: [host, docker]

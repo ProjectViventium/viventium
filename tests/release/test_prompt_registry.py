@@ -387,6 +387,7 @@ def _load_glasshive_instruction_namespace():
         "_host_workers_enabled",
         "_host_worker_mentions",
         "_worker_capability_summary",
+        "_worker_execution_instruction",
         "glasshive_workers_server_instructions",
     }
     selected_nodes = [
@@ -429,10 +430,32 @@ def test_glasshive_fastmcp_default_instructions_match_registry_prompt(monkeypatc
         registry,
         variables={
             "glasshive_worker_capability_summary": namespace["_worker_capability_summary"](),
+            "glasshive_worker_execution_instruction": namespace["_worker_execution_instruction"](),
         },
     ).strip()
 
     assert registry_instructions == server_instructions
+
+
+def test_glasshive_prompt_reflects_disabled_host_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GLASSHIVE_HOST_WORKERS_ENABLED", "false")
+    monkeypatch.setenv("WPR_DEFAULT_EXECUTION_MODE", "host")
+
+    namespace = _load_glasshive_instruction_namespace()
+    registry = load_prompt_registry(PROMPT_ROOT)
+    rendered = render_prompt(
+        "mcp.glasshive_workers.server",
+        registry,
+        variables={
+            "glasshive_worker_capability_summary": namespace["_worker_capability_summary"](),
+            "glasshive_worker_execution_instruction": namespace["_worker_execution_instruction"](),
+        },
+    )
+
+    assert "Host-native workers are disabled by GlassHive config" in rendered
+    assert "configured default 'docker'" in rendered
+    assert "do not request execution_mode='host'" in rendered
+    assert "Default to host-native execution" not in rendered
 
 
 def test_live_data_prompt_uses_non_important_best_judgment_for_connected_inbox() -> None:
@@ -467,6 +490,7 @@ def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected
         registry,
         variables={
             "glasshive_worker_capability_summary": namespace["_worker_capability_summary"](),
+            "glasshive_worker_execution_instruction": namespace["_worker_execution_instruction"](),
         },
     )
 

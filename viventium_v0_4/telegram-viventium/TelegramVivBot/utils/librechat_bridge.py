@@ -793,6 +793,12 @@ def _normalize_followup_compare_text(text: Any) -> str:
     return _WHITESPACE_RE.sub(" ", cleaned)
 
 
+def _normalize_stream_delivery_compare_text(text: Any) -> str:
+    if not isinstance(text, str):
+        return ""
+    return _normalize_followup_compare_text(sanitize_telegram_text(text))
+
+
 def _prepare_followup_delivery_text(text: Any) -> str:
     if not isinstance(text, str):
         return ""
@@ -1499,7 +1505,7 @@ class LibreChatBridge:
         return stream_id in self._followup_sent
 
     def _remember_stream_text(self, stream_id: str, text: str, *, brief_main_reply: bool) -> None:
-        normalized = _normalize_followup_compare_text(text)
+        normalized = _normalize_stream_delivery_compare_text(text)
         if normalized:
             self._stream_text_by_stream[stream_id] = normalized
         else:
@@ -1510,7 +1516,7 @@ class LibreChatBridge:
             self._brief_main_reply_by_stream.pop(stream_id, None)
 
     def _should_send_canonical_text(self, stream_id: str, canonical_text: Any) -> bool:
-        canonical = _normalize_followup_compare_text(canonical_text)
+        canonical = _normalize_stream_delivery_compare_text(canonical_text)
         if not canonical or is_no_response_only(canonical):
             return False
 
@@ -1522,6 +1528,12 @@ class LibreChatBridge:
             return True
 
         return self._brief_main_reply_by_stream.get(stream_id, False)
+
+    def _matches_streamed_text(self, stream_id: str, text: Any) -> bool:
+        candidate = _normalize_stream_delivery_compare_text(text)
+        if not candidate:
+            return False
+        return candidate == self._stream_text_by_stream.get(stream_id, "")
 
     async def _emit_followup_once(
         self,
@@ -2503,6 +2515,7 @@ class LibreChatBridge:
         last_parts: list[dict[str, Any]] = []
         pending_glasshive_callback: Optional[dict[str, Any]] = None
         pending_glasshive_text = ""
+        pending_glasshive_duplicate = False
 
         try:
             if not self.on_message_callback:
@@ -2526,16 +2539,42 @@ class LibreChatBridge:
                         if isinstance(latest, dict):
                             text = latest.get("text")
                             if isinstance(text, str) and text.strip() and glasshive_callback_is_terminal(latest):
+                                callback_id = str(
+                                    latest.get("callbackId") or latest.get("callback_id") or ""
+                                ).strip()
+                                if self._matches_streamed_text(stream_id, text):
+                                    delivery = await self._claim_glasshive_delivery_for_callback(latest)
+                                    if delivery:
+                                        await self._mark_glasshive_delivery_status(
+                                            delivery,
+                                            "suppressed",
+                                            reason="already_streamed",
+                                        )
+                                        self._mark_followup_sent(stream_id)
+                                        self._cancel_insight_task(stream_id)
+                                        return
+                                    if callback_id:
+                                        pending_glasshive_callback = latest
+                                        pending_glasshive_text = text
+                                        pending_glasshive_duplicate = True
+                                        await asyncio.sleep(self.followup_interval_s)
+                                        continue
+                                    self._trace(
+                                        "LibreChatBridge GlassHive callback suppressed as already streamed without durable callback id: chat_id=%s stream_id=%s",
+                                        chat_id,
+                                        stream_id,
+                                    )
+                                    self._mark_followup_sent(stream_id)
+                                    self._cancel_insight_task(stream_id)
+                                    return
                                 delivery = await self._claim_glasshive_delivery_for_callback(latest)
                                 if delivery:
                                     sent = await self._deliver_glasshive_delivery(delivery)
                                 else:
-                                    callback_id = str(
-                                        latest.get("callbackId") or latest.get("callback_id") or ""
-                                    ).strip()
                                     if callback_id:
                                         pending_glasshive_callback = latest
                                         pending_glasshive_text = text
+                                        pending_glasshive_duplicate = False
                                         # The callback message can become visible milliseconds
                                         # before the durable surface-delivery row is committed.
                                         # For callback-id-bearing worker results, wait for the
@@ -2654,18 +2693,30 @@ class LibreChatBridge:
                 and not self._has_followup_sent(stream_id)
             ):
                 delivery = await self._claim_glasshive_delivery_for_callback(pending_glasshive_callback)
-                if delivery:
+                if pending_glasshive_duplicate:
+                    if delivery:
+                        await self._mark_glasshive_delivery_status(
+                            delivery,
+                            "suppressed",
+                            reason="already_streamed",
+                        )
+                    sent = True
+                elif delivery:
                     sent = await self._deliver_glasshive_delivery(delivery)
                 elif is_no_response_only(pending_glasshive_text):
                     sent = True
                 else:
                     logger.warning(
-                        "LibreChatBridge GlassHive callback %s had no durable delivery row before timeout; leaving delivery to durable dispatcher/backlog",
+                        "LibreChatBridge GlassHive callback %s had no durable delivery row before timeout; sending legacy fallback once",
                         pending_glasshive_callback.get("callbackId")
                         or pending_glasshive_callback.get("callback_id")
                         or "unknown",
                     )
-                    return
+                    sent = await self._send_followup_text_once(
+                        chat_id,
+                        pending_glasshive_text,
+                        stream_id=stream_id,
+                    )
                 if sent:
                     self._mark_followup_sent(stream_id)
                     self._cancel_insight_task(stream_id)
