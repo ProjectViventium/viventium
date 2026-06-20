@@ -24,7 +24,7 @@ def test_upgrade_defaults_enable_glasshive_workbench_memory_without_private_user
     config = {
         "version": 1,
         "runtime": {"personalization": {"default_conversation_recall": False}},
-        "integrations": {"glasshive": {"enabled": False}},
+        "integrations": {},
     }
 
     updated, changed = module.ensure_default_nightly_routines(config)
@@ -43,6 +43,39 @@ def test_upgrade_defaults_enable_glasshive_workbench_memory_without_private_user
     assert "owner-specific-name" not in str(updated).lower()
     assert updated["integrations"]["glasshive"]["enabled"] is True
     assert updated["integrations"]["glasshive"]["host_worker"]["enabled"] is True
+
+
+def test_upgrade_defaults_preserve_explicit_disables_without_marker(monkeypatch) -> None:
+    module = load_module()
+    monkeypatch.setattr(module, "detect_worker_profile", lambda: "")
+
+    config = {
+        "version": 1,
+        "runtime": {
+            "nightly_routines": {"enabled": False, "auto_worker_profile": False},
+            "prompt_workbench": {
+                "enabled": False,
+                "seed_nightly": {"enabled": False, "active": False},
+            },
+            "memory_hardening": {"enabled": False},
+        },
+        "integrations": {"glasshive": {"enabled": False, "host_worker": {"enabled": False}}},
+    }
+
+    updated, changed = module.ensure_default_nightly_routines(config)
+
+    assert changed is True
+    runtime = updated["runtime"]
+    assert runtime["nightly_routines"]["defaults_version"] == 1
+    assert runtime["nightly_routines"]["enabled"] is False
+    assert runtime["nightly_routines"]["auto_worker_profile"] is False
+    assert runtime["prompt_workbench"]["enabled"] is False
+    assert runtime["prompt_workbench"]["seed_nightly"]["enabled"] is False
+    assert runtime["prompt_workbench"]["seed_nightly"]["active"] is False
+    assert runtime["memory_hardening"]["enabled"] is False
+    assert updated["integrations"]["glasshive"]["enabled"] is False
+    assert updated["integrations"]["glasshive"]["host_worker"]["enabled"] is False
+    assert updated["integrations"]["glasshive"]["host_worker"]["workspace_root"] == "~/viventium"
 
 
 def test_auto_worker_profile_uses_logged_in_claude_when_codex_is_not_ready(monkeypatch) -> None:

@@ -12,7 +12,9 @@ Use stable `TGAPI-NNN` IDs for telegram detached api stability cases.
 | `TGAPI-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `TGAPI-003` | Status-bar helper and Telegram handler failures are truthful and privacy-safe. | User does not see a simple "Running" helper state while enabled Telegram is unhealthy; transient Bot API metadata failures do not crash normal turns. | macOS helper status menu, Telegram bot process/logs, handler tests | Swift helper build, Telegram pytest slice, live status/menu QA | NOT YET RUN (cataloged 2026-05-31; next feature run required) |
 | `TGAPI-004` | Telegram stream resume preserves completed responses across brief reconnect races. | User receives the completed answer instead of a generic connection error when the stream reconnects after successful completion. | Telegram bot, LibreChat stream manager, Telegram SSE endpoint, logs | packages/api stream regression plus real Telegram send/receive QA | NOT YET RUN (cataloged 2026-05-31; next feature run required) |
-| `TGAPI-005` | Telegram pre-start LibreChat API outages surface as class-specific, text-only transport errors and recover quickly. | User sees an honest local-runtime-unavailable/restarting message instead of a generic assistant-style reply or spoken fallback when the API is unavailable before ingress. | Telegram bot, LibreChat API watchdog, runtime logs, Mongo ingress ledger, Computer/real Telegram QA | Telegram bridge transport regression, watchdog regression, status/health checks, real Telegram send/receive after live runtime proof | PARTIAL (RCA run 2026-06-06; live send blocked pending user confirmation) |
+| `TGAPI-005` | Telegram pre-start LibreChat API outages surface as class-specific, text-only transport errors and recover quickly. | User sees an honest local-runtime-unavailable/restarting message instead of a generic assistant-style reply or spoken fallback when the API is unavailable before ingress. | Telegram bot, LibreChat API watchdog, runtime logs, Mongo ingress ledger, Computer/real Telegram QA | Telegram bridge transport regression, watchdog regression, status/health checks, real Telegram send/receive after live runtime proof | PASS (implementation + live Telegram outage/recovery QA run 2026-06-07) |
+| `TGAPI-006` | Telegram display text strips leaked GlassHive/tool transcript plumbing without hiding the real answer. | User receives the assistant answer, not raw MCP/tool invocation code. | Telegram bot text output, LibreChat bridge sanitizer, logs | Telegram pytest sanitizer cases, synthetic public-safe bridge output, live Telegram visual QA when runtime is rebuilt | PASS/PARTIAL (2026-06-14 sanitizer regression tests; live Telegram post-change send/receive pending) |
+| `TGAPI-007` | Same-turn Telegram GlassHive polling and durable dispatcher share one callback delivery ledger, and same-stream same-visible-text callbacks are suppressed when the main stream already delivered that result. | User receives one visible GlassHive completion callback, not duplicate copies of the same worker result. | Telegram bot poller, LibreChat callback polling API, callback delivery ledger, dispatcher logs/DB | Telegram bridge callback-id claim regression, stream-scoped visible-text duplicate suppression regressions, LibreChat callback route regressions, sanitized DB/log RCA, live Telegram rerun when available | PASS/PARTIAL (2026-06-16 bridge/source regressions passed; live post-restart Telegram rerun pending) |
 
 ## `TGAPI-001` - Core User Flow
 
@@ -137,9 +139,84 @@ Use stable `TGAPI-NNN` IDs for telegram detached api stability cases.
   Playwright/user-path proof, and public-safety scan.
 - Automation: add a Telegram bridge regression that raises a pre-start connect error and asserts a
   non-spoken class-specific event; add a watchdog regression for mid-outage restarted watchdogs.
-- Last run: PARTIAL (implementation QA run 2026-06-07; bridge/release/runtime/browser/Computer
-  evidence captured, live Telegram send/receive not transmitted under Computer Use confirmation
-  policy).
+- Last run: PASS (implementation + live Telegram outage/recovery QA run 2026-06-07; bridge,
+  release, runtime, browser, Computer visual inspection, Mongo, logs, and live Telegram
+  send/receive evidence captured).
+
+## `TGAPI-006` - GlassHive Tool Transcript Display Hygiene
+
+- Requirement: Telegram-visible assistant text must be useful and privacy-safe; internal
+  GlassHive/MCP tool invocation plumbing belongs in logs/debug surfaces, not the user's Telegram
+  message.
+- Risk covered: streamed or stored LibreChat content includes raw `Tool:` lines, MCP tool names,
+  XML invocation blocks, fenced tool-call JSON, or run/workspace plumbing that Telegram forwards
+  verbatim.
+- Preconditions: use synthetic public-safe assistant text; do not include private chats or real
+  connected-account payloads in public evidence.
+- Steps:
+  1. Feed the bridge sanitizer synthetic content containing an MCP `Tool:` transcript line.
+  2. Repeat with bare GlassHive workspace/worker tool names, XML invocation blocks, and fenced
+     tool-call JSON.
+  3. Verify ordinary assistant answer text before/after the structural transcript remains visible.
+  4. In a rebuilt local runtime, send a synthetic Telegram turn that triggers GlassHive delegation
+     and verify the visible Telegram message has no raw tool plumbing.
+- Expected result: structural tool-call transcript fragments are removed; the real assistant answer
+  remains.
+- Forbidden result: Telegram shows `workspace_status`, `worker_*_mcp_*`, `<invoke>`,
+  `<parameter>`, fenced tool-call JSON, raw run/workspace IDs, or other orchestration code as the
+  answer.
+- Evidence to capture: sanitizer pytest output, synthetic input/output summary, live Telegram
+  visible result when available, sanitized logs, and public-safety scan.
+- Automation: `viventium_v0_4/telegram-viventium/tests/test_librechat_bridge.py`.
+- Last run: PASS/PARTIAL (2026-06-14 sanitizer regression tests; live Telegram post-change
+  send/receive pending).
+
+## `TGAPI-007` - GlassHive Callback Delivery Dedupe
+
+- Requirement: Telegram same-turn callback polling and the durable GlassHive callback dispatcher
+  must claim and mark the same delivery ledger row before either path sends a user-visible callback.
+- Risk covered: the fast same-turn poller sees a completed GlassHive callback, sends it without a
+  durable callback id, and the background dispatcher later sends the same callback again because the
+  delivery row still appears pending. Also covers the newer same-stream case where the main assistant
+  answer already streamed the worker result and the terminal GlassHive callback carries the same
+  Telegram-visible text after display sanitation.
+- Preconditions: use a synthetic public-safe GlassHive callback id and conversation anchor; do not
+  include private chat text, account identifiers, or raw database rows in public evidence.
+- Steps:
+  1. Persist or synthesize a GlassHive callback message whose metadata includes an opaque callback id.
+  2. Poll the authenticated Telegram GlassHive callback endpoint and verify it returns that callback
+     id without exposing internal worker/run ids.
+  3. In the Telegram bridge, simulate same-turn polling and verify it claims the exact callback id
+     before sending any callback text.
+  4. Verify a successful send marks the delivery row `sent`; a failed send marks a retryable failure
+     class without falling back to an unclaimed legacy send.
+  5. Simulate a terminal GlassHive callback whose Telegram-visible text matches the stream text
+     already delivered by the main answer; verify the bridge sends no second Telegram message and
+     marks the durable delivery row `suppressed` with reason `already_streamed`.
+  6. Simulate the same duplicate callback while the durable row is not visible yet; verify the bridge
+     does not use legacy fallback delivery for that same-text callback.
+  7. Simulate a different terminal callback after a streamed answer and verify it still delivers.
+  8. Simulate the same words in a different stream and verify suppression does not leak across
+     turns.
+  9. In a rebuilt local runtime, send a synthetic GlassHive-delegated Telegram turn and verify the
+     visible callback appears once, with DB/log evidence that only one delivery was sent.
+- Expected result: exactly one visible callback delivery per callback id; durable delivery state and
+  same-turn poll state agree.
+- Forbidden result: the endpoint omits `callbackId`; the Telegram poller sends a callback that has a
+  durable delivery row without claiming it; the dispatcher later sends the same callback again; or
+  the bridge sends a terminal callback whose normalized text already matches the main streamed answer
+  for the same stream after Telegram display sanitation. Dedupe must be stream-scoped and
+  ledger-backed; it must not rely on prompt text, worker names, provider labels, or global text
+  suppression across unrelated turns.
+- Evidence to capture: route regression output, bridge regression output, sanitized callback ledger
+  state, dispatcher log markers, visible Telegram result when available, and public-safety scan.
+- Automation: `viventium_v0_4/telegram-viventium/tests/test_librechat_bridge.py` plus LibreChat
+  route tests for Telegram and voice callback polling.
+- Last run: PASS/PARTIAL (2026-06-16). Telegram bridge regressions prove callback-id claim/marking,
+  stream-scoped already-delivered callback suppression after Telegram-visible sanitation, no legacy
+  fallback for same-text callbacks while the durable row is late, delivery of different callback
+  text, and no cross-turn suppression leakage. Full `telegram-viventium/tests` passed locally. Live
+  post-restart Telegram send/receive remains required for full acceptance.
 
 ## Natural User Use Case Checklist
 
@@ -153,4 +230,6 @@ rows before claiming a pass when the feature behavior changes.
 | `TGAPI-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `TGAPI-002` / `TGAPI-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGAPI-002. | TGAPI-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `TGAPI-UC-004` | With Telegram enabled and unhealthy, inspect the status-bar helper and Telegram handler behavior. | owning requirement for `TGAPI-003` / `TGAPI-003` | macOS helper menu, Telegram bot process/logs, handler tests | CLI status, helper build/install proof, sanitized logs, source, pytest output, and runtime process state. | Helper surfaces needs-attention instead of simple running; handler failures are recoverable and privacy-safe. | NOT YET RUN (cataloged 2026-05-31; next feature run required) |
 | `TGAPI-UC-005` | Send or simulate a Telegram turn whose stream completes before a retry/resume attaches. | owning requirement for `TGAPI-004` / `TGAPI-004` | Telegram bot, LibreChat stream manager, Telegram SSE endpoint, logs | Stream regression, active package build, sanitized logs, DB/state when available. | User receives the completed answer, not a generic connection error caused by immediate stream deletion. | NOT YET RUN (cataloged 2026-05-31; next feature run required) |
-| `TGAPI-UC-006` | Send or simulate a Telegram turn while the local LibreChat API is unavailable before ingress. | owning requirement for `TGAPI-005` / `TGAPI-005` | Telegram bot, LibreChat API watchdog, runtime logs, Mongo ingress ledger, Computer/real Telegram QA | Sanitized bridge logs, helper/watchdog timing, API health, Mongo ingress counts, bridge regression output, visible Telegram result. | User sees a class-specific text-only local-runtime/restart error, not a generic spoken fallback. | PARTIAL (RCA run 2026-06-06; live send blocked pending user confirmation) |
+| `TGAPI-UC-006` | Send or simulate a Telegram turn while the local LibreChat API is unavailable before ingress. | owning requirement for `TGAPI-005` / `TGAPI-005` | Telegram bot, LibreChat API watchdog, runtime logs, Mongo ingress ledger, Computer/real Telegram QA | Sanitized bridge logs, helper/watchdog timing, API health, Mongo ingress counts, bridge regression output, visible Telegram result. | User sees a class-specific text-only local-runtime/restart error, not a generic spoken fallback. | PASS (live outage/recovery QA run 2026-06-07) |
+| `TGAPI-UC-007` | Receive a Telegram answer for a GlassHive-delegated turn that internally used MCP/workspace tools. | owning requirement for `TGAPI-006` / `TGAPI-006` | Telegram bot text output, LibreChat bridge sanitizer, logs | Sanitizer tests, synthetic bridge output, live Telegram visible result after rebuild/restart, public-safety scan. | User sees the assistant answer without raw MCP/tool invocation code or workspace/run plumbing. | PASS/PARTIAL (2026-06-14 sanitizer regression tests; live Telegram QA pending) |
+| `TGAPI-UC-008` | Receive a Telegram GlassHive completion callback while both same-turn polling and background delivery are active. | owning requirement for `TGAPI-007` / `TGAPI-007` | Telegram bot callback poller, callback delivery dispatcher, LibreChat route, DB/logs | Callback-id route tests, stream-scoped visible-text duplicate suppression regression, bridge claim/mark regression, sanitized callback delivery ledger, visible Telegram result after restart. | User sees one callback completion, not duplicate copies of the same worker result. | PASS/PARTIAL (2026-06-16 bridge/source regressions passed; live Telegram rerun pending) |

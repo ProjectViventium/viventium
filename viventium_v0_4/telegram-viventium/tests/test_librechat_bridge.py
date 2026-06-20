@@ -114,6 +114,73 @@ def test_sanitize_telegram_text_removes_mcp_tool_transcript_lines():
     assert cleaned.strip() == "The task finished."
 
 
+def test_sanitize_telegram_text_removes_workspace_tool_transcript_lines():
+    text = 'Tool: workspace_status {"workspace_id":"wrk_public_safe"}\nVisible answer.'
+    cleaned = sanitize_telegram_text(text)
+    assert "Tool:" not in cleaned
+    assert "workspace_status" not in cleaned
+    assert cleaned.strip() == "Visible answer."
+
+
+def test_sanitize_telegram_text_removes_structural_tool_invocation_blocks():
+    text = (
+        "Working on it.\n"
+        '<invoke name="workspace_status">\n'
+        '<parameter name="workspace_id">wrk_public_safe</parameter>\n'
+        "</invoke>\n"
+        "Visible answer."
+    )
+    cleaned = sanitize_telegram_text(text)
+    assert "<invoke" not in cleaned
+    assert "<parameter" not in cleaned
+    assert "workspace_status" not in cleaned
+    assert "Working on it." in cleaned
+    assert "Visible answer." in cleaned
+
+
+def test_sanitize_telegram_text_removes_fenced_tool_json_blocks():
+    text = (
+        "Visible answer.\n"
+        "```json\n"
+        '{"tool_call":{"name":"workspace_status","arguments":{"workspace_id":"wrk_public_safe"}}}\n'
+        "```\n"
+        "Still visible."
+    )
+    cleaned = sanitize_telegram_text(text)
+    assert "tool_call" not in cleaned
+    assert "workspace_status" not in cleaned
+    assert "Visible answer." in cleaned
+    assert "Still visible." in cleaned
+
+
+def test_sanitize_telegram_text_preserves_non_glasshive_json_and_xml_examples():
+    text = (
+        "Example payload:\n"
+        "```json\n"
+        '{"tool":"calculator","arguments":{"value":2}}\n'
+        "```\n"
+        '<invoke name="example"><parameter name="value">2</parameter></invoke>'
+    )
+    cleaned = sanitize_telegram_text(text)
+    assert '"tool":"calculator"' in cleaned
+    assert '"arguments"' in cleaned
+    assert '<invoke name="example">' in cleaned
+
+
+def test_sanitize_telegram_text_preserves_non_glasshive_run_project_examples():
+    text = (
+        'Tool: run_pipeline {"dryRun":true}\n'
+        "```json\n"
+        '{"tool_call":{"name":"project_init","arguments":{"name":"demo"}}}\n'
+        "```\n"
+        '<invoke name="project_init"><parameter name="name">demo</parameter></invoke>'
+    )
+    cleaned = sanitize_telegram_text(text)
+    assert "Tool: run_pipeline" in cleaned
+    assert "project_init" in cleaned
+    assert "<invoke" in cleaned
+
+
 # === VIVENTIUM START ===
 def test_bridge_defaults_glasshive_poll_timeout_for_long_host_tasks(monkeypatch):
     monkeypatch.delenv("VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S", raising=False)
@@ -358,6 +425,12 @@ def test_stream_error_message_classifies_tool_errors():
     assert (
         _stream_error_message("OpenAI connected account needs reconnect in Settings > Account > Connected Accounts.")
         == "OpenAI connected account needs reconnect in Settings > Account > Connected Accounts."
+    )
+    assert (
+        _stream_error_message(
+            "The primary model provider was rate-limited, and the configured fallback model could not start because OpenAI connected account needs reconnect in Settings > Account > Connected Accounts. Reconnect OpenAI, then try again."
+        )
+        == "The primary model provider was rate-limited, and the configured fallback model could not start because OpenAI connected account needs reconnect in Settings > Account > Connected Accounts. Reconnect OpenAI, then try again."
     )
     assert (
         _stream_error_message(
@@ -2317,10 +2390,348 @@ async def test_poll_for_followup_claims_durable_glasshive_delivery_before_sendin
 
 
 @pytest.mark.asyncio
-async def test_poll_for_followup_waits_for_delivery_row_instead_of_legacy_sending():
+async def test_poll_for_followup_suppresses_glasshive_callback_already_streamed():
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-duplicate"
+    chat_id = "314:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="314",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-duplicate"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-duplicate"
+    bridge._remember_stream_text(
+        stream_id,
+        "@sampleuser, 11.7K followers. Profile is open in your browser.",
+        brief_main_reply=False,
+    )
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.05
+    bridge.followup_grace_s = 0.01
+    bridge.glasshive_timeout_s = 0.05
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "latest": {
+                "event": "run.completed",
+                "text": "@sampleuser, 11.7K followers. Profile is open in your browser.",
+                "callbackId": "cb_duplicate",
+            }
+        }
+
+    async def fake_claim(latest):
+        assert latest["callbackId"] == "cb_duplicate"
+        return {
+            "deliveryId": "ghcd_duplicate",
+            "claimId": "claim_duplicate",
+            "telegramChatId": "314",
+            "text": "@sampleuser, 11.7K followers. Profile is open in your browser.",
+            "fullText": "@sampleuser, 11.7K followers. Profile is open in your browser.",
+        }
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_delivery_for_callback = fake_claim  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert messages == []
+    assert marked == [("ghcd_duplicate", "suppressed", "", "already_streamed")]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_does_not_legacy_send_duplicate_glasshive_callback():
+    bridge = _make_bridge()
+    messages = []
+    claim_attempts = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-duplicate-no-row"
+    chat_id = "315:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="315",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-duplicate-no-row"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-duplicate-no-row"
+    bridge._remember_stream_text(
+        stream_id,
+        "@sampleuser, 11.7K followers. Profile is open in your browser.",
+        brief_main_reply=False,
+    )
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.03
+    bridge.followup_grace_s = 0.01
+    bridge.glasshive_timeout_s = 0.03
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "latest": {
+                "event": "run.completed",
+                "text": "@sampleuser, 11.7K followers. Profile is open in your browser.",
+                "callbackId": "cb_duplicate_no_row",
+            }
+        }
+
+    async def fake_claim(latest):
+        claim_attempts.append(latest["callbackId"])
+        return None
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_delivery_for_callback = fake_claim  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert claim_attempts
+    assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_delivers_different_glasshive_callback_after_streamed_text():
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-different-callback"
+    chat_id = "316:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="316",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-different-callback"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-different-callback"
+    bridge._remember_stream_text(stream_id, "Already streamed answer.", brief_main_reply=False)
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.05
+    bridge.followup_grace_s = 0.01
+    bridge.glasshive_timeout_s = 0.05
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "latest": {
+                "event": "run.completed",
+                "text": "Different worker result.",
+                "callbackId": "cb_different",
+            }
+        }
+
+    async def fake_claim(latest):
+        assert latest["callbackId"] == "cb_different"
+        return {
+            "deliveryId": "ghcd_different",
+            "claimId": "claim_different",
+            "telegramChatId": "316",
+            "text": "Different worker result.",
+            "fullText": "Different worker result.",
+        }
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_delivery_for_callback = fake_claim  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert len(messages) == 1
+    assert messages[0][0] == 316
+    assert "Different worker result." in messages[0][1]
+    assert marked == [("ghcd_different", "sent", "", "")]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_duplicate_suppression_is_stream_scoped():
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    old_stream_id = "stream-glasshive-old"
+    stream_id = "stream-glasshive-new"
+    chat_id = "317:999"
+    bridge._remember_stream_text(old_stream_id, "Same words.", brief_main_reply=False)
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="317",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-new"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-new"
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.05
+    bridge.followup_grace_s = 0.01
+    bridge.glasshive_timeout_s = 0.05
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "latest": {
+                "event": "run.completed",
+                "text": "Same words.",
+                "callbackId": "cb_same_words_new_stream",
+            }
+        }
+
+    async def fake_claim(latest):
+        assert latest["callbackId"] == "cb_same_words_new_stream"
+        return {
+            "deliveryId": "ghcd_same_words_new_stream",
+            "claimId": "claim_same_words_new_stream",
+            "telegramChatId": "317",
+            "text": "Same words.",
+            "fullText": "Same words.",
+        }
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_delivery_for_callback = fake_claim  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert len(messages) == 1
+    assert messages[0][0] == 317
+    assert "Same words." in messages[0][1]
+    assert marked == [("ghcd_same_words_new_stream", "sent", "", "")]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_suppresses_tool_line_normalized_duplicate():
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+
+    async def on_message(chat_id, text):
+        messages.append((chat_id, text))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-tool-line-duplicate"
+    chat_id = "318:999"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._set_stream_identity(
+        stream_id=stream_id,
+        telegram_chat_id="318",
+        telegram_user_id="user-1",
+        telegram_username="tester",
+    )
+    bridge._response_message_ids[stream_id] = "msg-glasshive-tool-line-duplicate"
+    bridge._conversation_by_stream[stream_id] = "conv-glasshive-tool-line-duplicate"
+    bridge._remember_stream_text(stream_id, "Visible worker answer.", brief_main_reply=False)
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.05
+    bridge.followup_grace_s = 0.01
+    bridge.glasshive_timeout_s = 0.05
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {
+            "latest": {
+                "event": "run.completed",
+                "text": 'Tool: workspace_status {"workspace_id":"wrk_public_safe"}\nVisible worker answer.',
+                "callbackId": "cb_tool_line_duplicate",
+            }
+        }
+
+    async def fake_claim(latest):
+        assert latest["callbackId"] == "cb_tool_line_duplicate"
+        return {
+            "deliveryId": "ghcd_tool_line_duplicate",
+            "claimId": "claim_tool_line_duplicate",
+            "telegramChatId": "318",
+            "text": latest["text"],
+            "fullText": latest["text"],
+        }
+
+    async def fake_mark(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+
+    async def fake_fetch_followup_state(*, message_id, conversation_id, stream_id):
+        _ = message_id, conversation_id, stream_id
+        return {"cortexParts": [], "followUp": None}
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_delivery_for_callback = fake_claim  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark  # type: ignore[assignment]
+    bridge._fetch_followup_state = fake_fetch_followup_state  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert messages == []
+    assert marked == [("ghcd_tool_line_duplicate", "suppressed", "", "already_streamed")]
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_falls_back_once_when_delivery_row_never_appears():
     bridge = _make_bridge()
     legacy_sends = []
+    claim_attempts = []
 
+    async def on_message(chat_id, text, parse_mode=None, voice_audio=None):
+        return None
+
+    bridge.set_on_message_callback(on_message)
     stream_id = "stream-glasshive-race"
     chat_id = "313:999"
     bridge._set_active_stream(chat_id, stream_id)
@@ -2350,6 +2761,7 @@ async def test_poll_for_followup_waits_for_delivery_row_instead_of_legacy_sendin
 
     async def fake_claim(latest):
         assert latest["callbackId"] == "cb_row_not_visible_yet"
+        claim_attempts.append(latest["callbackId"])
         return None
 
     async def fake_send_once(*args, **kwargs):
@@ -2367,7 +2779,11 @@ async def test_poll_for_followup_waits_for_delivery_row_instead_of_legacy_sendin
 
     await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
 
-    assert legacy_sends == []
+    assert len(claim_attempts) > 1
+    assert len(legacy_sends) == 1
+    args, kwargs = legacy_sends[0]
+    assert args[:2] == ("313:999", "Worker finished.")
+    assert kwargs["stream_id"] == stream_id
 
 
 @pytest.mark.asyncio
@@ -2543,6 +2959,68 @@ async def test_poll_for_followup_does_not_fetch_glasshive_for_non_glasshive_turn
 
     assert calls["glasshive"] == 0
     assert calls["cortex"] > 0
+
+
+@pytest.mark.asyncio
+async def test_poll_for_followup_claims_glasshive_delivery_by_callback_id():
+    bridge = _make_bridge()
+    messages = []
+    marked = []
+    claimed_callback_ids = []
+
+    async def on_message(chat_id, text, parse_mode=None, voice_audio=None):
+        messages.append((chat_id, text, parse_mode, voice_audio))
+
+    bridge.set_on_message_callback(on_message)
+    stream_id = "stream-glasshive-claim"
+    chat_id = "606"
+    bridge._set_active_stream(chat_id, stream_id)
+    bridge._response_message_ids[stream_id] = "assistant-msg-1"
+    bridge._conversation_by_stream[stream_id] = "conv-1"
+    bridge._mark_glasshive_seen(stream_id)
+    bridge.followup_interval_s = 0.01
+    bridge.followup_timeout_s = 0.2
+    bridge.followup_grace_s = 0.05
+    bridge.glasshive_timeout_s = 0.2
+
+    async def fake_fetch_glasshive_state(*, message_id, conversation_id, stream_id):
+        assert message_id == "assistant-msg-1"
+        assert conversation_id == "conv-1"
+        assert stream_id == "stream-glasshive-claim"
+        return {
+            "latest": {
+                "text": "Worker result.",
+                "event": "run.completed",
+                "callbackId": "cb-1",
+            }
+        }
+
+    async def fake_claim_glasshive_deliveries(*, limit=10, callback_id=None):
+        claimed_callback_ids.append(callback_id)
+        return [
+            {
+                "deliveryId": "ghcd-1",
+                "claimId": "claim-1",
+                "callbackId": callback_id,
+                "telegramChatId": "606",
+                "text": "Worker result.",
+            }
+        ]
+
+    async def fake_mark_glasshive_delivery_status(delivery, status, *, error="", reason=""):
+        marked.append((delivery["deliveryId"], status, error, reason))
+
+    bridge._fetch_glasshive_state = fake_fetch_glasshive_state  # type: ignore[assignment]
+    bridge._claim_glasshive_deliveries = fake_claim_glasshive_deliveries  # type: ignore[assignment]
+    bridge._mark_glasshive_delivery_status = fake_mark_glasshive_delivery_status  # type: ignore[assignment]
+
+    await bridge._poll_for_followup(stream_id=stream_id, chat_id=chat_id)
+
+    assert claimed_callback_ids == ["cb-1"]
+    assert len(messages) == 1
+    assert messages[0][0] == 606
+    assert "Worker result." in messages[0][1]
+    assert marked == [("ghcd-1", "sent", "", "")]
 
 
 @pytest.mark.asyncio

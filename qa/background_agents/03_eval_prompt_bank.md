@@ -355,3 +355,24 @@ shipped background-agent roster.
     forbidden user-visible output.
   - MCP/tool/auth failures remain owned by their tool-specific error path; this fallback case must
     not mask unstructured MCP or tool failures as model-provider failures.
+
+### ACT-34 Visible Phase A text repaired from emitted stream deltas stays authoritative
+
+- Scenario:
+  - A user surface receives visible Phase A assistant text, but the canonical `contentParts`
+    aggregation path initially fails to advance the parent message text before Phase B completes.
+- User prompts:
+  - Use a synthetic public-safe prompt that activates background work while the main assistant gives a
+    complete first answer, such as "Give me a cautious short plan for reviewing a synthetic account
+    list, and have the background reviewer check for obvious edge cases."
+- Expected primary activations:
+  - Any non-direct-action background cortex suitable for the synthetic prompt, or a deterministic
+    runtime fixture that provides completed Phase B insight parts.
+- Outcome assertions:
+  - Runtime repairs the canonical parent text from the already-emitted visible delta before Phase B
+    follow-up adjudication.
+  - The repaired parent text remains the authored Phase A answer and persists after reload.
+  - Phase B records a terminal `suppressed` decision with a mismatch-repair suppression reason.
+  - Runtime must not promote or emit deterministic fallback text over the already-visible answer.
+  - The fix must be stream/canonical-state based; no prompt wording, policy wording, provider label,
+    user identity, or agent-name branching is allowed.

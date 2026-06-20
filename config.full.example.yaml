@@ -84,7 +84,7 @@ runtime:
     require_full_lookback: true
     dry_run_first: true
     provider_profile: launch_ready_only
-    anthropic_model: claude-opus-4-7
+    anthropic_model: claude-opus-4-8
     anthropic_effort: xhigh
     openai_model: gpt-5.5
     openai_reasoning_effort: xhigh
@@ -195,7 +195,24 @@ integrations:
     host_worker:
       enabled: true
       workspace_root: ~/viventium
+      # Worker profile is the meaningful runtime selector: codex-cli,
+      # claude-code, or openclaw-general. It is separate from the
+      # optional integrations.openclaw lab integration below.
+      default_worker_profile: codex-cli
       default_execution_mode: host
+      # Optional native-capability controls. Leave unset for the default full-capability path.
+      # runtime_requirements:
+      #   json:
+      #     claude-code:
+      #       required_help_flags: ["--chrome"]
+      #     codex-cli:
+      #       required_mcp_servers: ["computer-use", "node_repl"]
+      # codex_native_mcp_allowlist: ["computer-use", "node_repl"]
+      # codex_plugin_cache: ""
+      # codex_ignore_user_config: false
+      # codex_disable_features: ""
+      # claude_enable_chrome: true
+      # claude_effort: max
   code_interpreter:
     enabled: false
   telegram:
@@ -249,6 +266,7 @@ integrations:
     base_url: http://localhost:8200
   openclaw:
     # Advanced/Lab only. Keep off by default unless the operator explicitly enables it.
+    # This does not change the default GlassHive worker profile above.
     enabled: false
 feature_requests:
   pr:

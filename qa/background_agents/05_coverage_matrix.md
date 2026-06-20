@@ -19,7 +19,7 @@
 ## Interpretation
 
 - Coverage in this matrix is activation coverage, not full execution QA.
-- Cases with outcome assertions (`ACT-13`, `ACT-14`, `ACT-15`, `ACT-16`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-21`, `ACT-22`, `ACT-23`, `ACT-24`, `ACT-25`, `ACT-26`, `ACT-27`, `ACT-33`) are promoted incident regressions. They
+- Cases with outcome assertions (`ACT-13`, `ACT-14`, `ACT-15`, `ACT-16`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-21`, `ACT-22`, `ACT-23`, `ACT-24`, `ACT-25`, `ACT-26`, `ACT-27`, `ACT-33`, `ACT-34`) are promoted incident regressions. They
   are not satisfied by an activation-only pass; QA must verify user-visible quality, named cortex
   visibility, durable `messages.content` persistence, first-response speed, and preservation of the
   original Phase A parent answer when background cards attach.
@@ -42,6 +42,9 @@
 - `ACT-33` protects the first visible main-agent answer from raw provider plumbing: recoverable
   provider failures before visible text must use a configured fallback once or show a classified
   blocker instead of an opaque LangChain/model-rate-limit bubble.
+- `ACT-34` protects the first visible main-agent answer from stream/canonical mismatch: if a user
+  surface already saw Phase A text, canonical persistence must be repaired before Phase B and Phase B
+  must record a silent suppressed decision rather than deterministic fallback over the visible answer.
 - Productivity agents require separate execution and connected-account verification after activation.
 - Provider and real-browser evidence for the current shipped activation family is recorded in:
   - `qa/background_agents/visible_cards_browser_qa_2026-05-10.md`

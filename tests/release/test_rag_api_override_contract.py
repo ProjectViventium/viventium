@@ -14,6 +14,7 @@ OVERRIDE_PATH = (
     / "routes"
     / "document_routes.py"
 )
+LAUNCHER_PATH = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
 
 
 def test_rag_override_uses_config_compatibility_fallback_for_embedding_chunk_size() -> None:
@@ -35,3 +36,12 @@ def test_rag_override_caps_ollama_embedding_keep_alive() -> None:
     assert "configure_ollama_embedding_keep_alive()" in source
     assert "embedding_function.keep_alive = keep_alive_seconds" in source
     assert "Negative %s=%s would keep Ollama models resident indefinitely" in source
+
+
+def test_launcher_recreates_rag_sidecar_when_host_port_binding_is_missing() -> None:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+
+    assert "rag_api_container_needs_recreate()" in source
+    assert 'docker port "$container_id" "${port}/tcp"' in source
+    assert "Local RAG API container is missing the expected localhost:${rag_port} port binding" in source
+    assert "rag_compose_args+=(--force-recreate rag_api)" in source

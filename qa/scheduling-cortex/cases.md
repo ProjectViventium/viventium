@@ -9,16 +9,18 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 | Case ID | Requirement | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- |
 | `SCHED-001` | Create/update existing schedule | Browser/Telegram scheduling, Scheduling Cortex MCP | test_scheduling_mcp_supervision.py plus user-surface QA | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
-| `SCHED-002` | Trigger and delivery ledger | Scheduler trigger, delivery ledger, visible notification/chat | test_scheduling_mcp_supervision.py plus synthetic/live scheduled run | PASS/PARTIAL 2026-06-05 for scheduler health and the Jun 5 built-in Workbench completion ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); four recurring active user-level provider-reconnect rows were not due yet and remain account-action follow-up |
+| `SCHED-002` | Trigger and delivery ledger | Scheduler trigger, delivery ledger, visible notification/chat | test_scheduling_mcp_supervision.py plus synthetic/live scheduled run | PASS-CORRECTNESS/LONG-DURATION 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); built-in Workbench task carried bounded `catch_up` misfire policy, Jun 11 delivery ledger completed through GlassHive/callback/Workbench, and focused regressions passed |
 | `SCHED-003` | Auth/runtime failure copy | CLI/status, chat/tool failure copy | test_preflight.py or focused scheduler check | NOT YET RUN (cataloged 2026-05-17; run when feature changes) |
 | `SCHED-004` | Runtime identity and port ownership | Launcher, `/health`, generated config, dev-env runtime | test_scheduling_mcp_supervision.py; test_stable_dev_runtime_workflows.py | PASS 2026-05-25 ([report](reports/2026-05-25-scheduler-runtime-identity-repair.md)); health identity and dev-env scheduler port isolation verified |
 | `SCHED-005` | GlassHive host overlap/backpressure | Scheduler due run, manual run, GlassHive host worker, callback ledger | Synthetic live scheduled run plus DB/API evidence | PARTIAL 2026-05-27 ([real-account follow-up](reports/2026-05-27-real-account-glasshive-backpressure-ledger-qa.md)); source/runtime regressions now requeue retryable host-busy runs instead of terminal failure, but a live overlapping host-worker stress run is still outstanding |
-| `SCHED-006` | Terminal callback updates parent task ledger | Scheduling Cortex callback, scheduled_prompt_runs, scheduled_tasks, Workbench status | Synthetic live scheduled run plus DB/API evidence | PASS with significant performance regression 2026-06-05 ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); Jun 5 Workbench terminal callback, child run, parent ledger, GlassHive run, and visible Workbench state agreed, but the run took 11,220 seconds |
+| `SCHED-006` | Terminal callback updates parent task ledger | Scheduling Cortex callback, scheduled_prompt_runs, scheduled_tasks, Workbench status | Synthetic live scheduled run plus DB/API evidence | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); latest due built-in run had matching child run, GlassHive run, terminal callback, parent ledger success/sent, and visible Workbench completed row |
 | `SCHED-007` | Stale GlassHive project cache recovery | Scheduler, GlassHive projects API, scheduled prompt metadata | test_scheduled_glasshive_prompts.py plus next live scheduled run | PASS 2026-05-27 ([RCA report](reports/2026-05-27-glasshive-stale-project-rag-rca.md)); active-runtime stale task/definition project caches were replaced, the run completed, and Workbench visibly showed the completed run |
 | `SCHED-008` | GlassHive host runtime dependency surfacing and safe recovery | Scheduler dispatch, GlassHive runtime preflight, generated env | test_scheduled_glasshive_prompts.py, test_config_compiler.py, test_preflight.py, live no-run host preflight | PASS 2026-05-30 ([RCA report](reports/2026-05-30-glasshive-host-runtime-dependency-rca.md), [nightly gaps follow-up](reports/2026-05-30-nightly-gaps-repair-followup.md)); structured `runtime_dependency_missing` is preserved, generated env emits the Codex binary path and GlassHive DB path, Codex.app discovery covers system/user app roots plus override, and safe scheduler recovery to docker is regression-covered |
-| `SCHED-009` | Callback outbox bounded termination and health gate | GlassHive callback outbox, scheduler delivery ledger, metrics | GlassHive callback regressions plus nightly DB/API outbox-health probe | PASS 2026-06-05 ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); metrics showed no queued/active runs, no pending/delivering callback backlog, newest built-in callback delivered in one attempt, and only bounded historical dead-letter rows |
-| `SCHED-010` | Built-in nightly reflection is seeded for the installing local admin without personal identity drift. | Prompt Workbench first-admin seed, Scheduler task row, GlassHive executor metadata | `test_prompt_workbench.py`, `test_default_nightly_routines.py`, install/upgrade generated-env QA | PASS 2026-05-31 ([installer report](../installer-resilience/reports/2026-05-31-default-nightly-workflow-install-upgrade-qa.md)); synthetic first-admin Workbench seed and generated env proved active `glasshive_host` defaults without hardcoded user identity; separate-Mac live due run remains a release gate |
+| `SCHED-009` | Callback outbox bounded termination and health gate | GlassHive callback outbox, scheduler delivery ledger, metrics | GlassHive callback regressions plus nightly DB/API outbox-health probe | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); GlassHive had 0 pending/delivering callbacks, latest Jun 11 callbacks delivered in one attempt, and only 2 historical May dead-letter rows |
+| `SCHED-010` | Built-in nightly reflection is seeded for the installing local admin without personal identity drift. | Prompt Workbench first-admin seed, Scheduler task row, GlassHive executor metadata | `test_prompt_workbench.py`, `test_default_nightly_routines.py`, install/upgrade generated-env QA | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); generated/runtime defaults, focused regressions, active Scheduler row, and Workbench browser evidence show the built-in nightly is active through `glasshive_host` without hardcoded user identity |
 | `SCHED-011` | Orphaned user schedules stop retrying forever | Scheduler failure ledger, active flag, user ownership | `viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/tests/test_scheduler.py` plus sanitized DB audit | PASS 2026-06-02; regression proves structured `scheduler/chat` `user_not_found` deactivates the task, preserves failed ledger evidence, and leaves transient/account-repair failures active; live cleanup retired three pre-fix active orphan rows |
+| `SCHED-012` | Built-in nightly catch-up after a late scheduler tick | Scheduler misfire policy, Workbench task metadata, GlassHive callback, visible Workbench run history | `test_scheduled_glasshive_prompts.py::test_builtin_workbench_nightly_misfire_policy_catches_up_late_run` plus a future live delayed-tick proof | PASS/PARTIAL 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); synthetic regression passed and Jun 11 live due run started inside grace, while delayed-tick proof beyond normal grace remains a separate future proof |
+| `SCHED-013` | Scheduled agent runs use deterministic due-date context and do not drift day labels from prior same-conversation briefings | Scheduler dispatch, LibreChat scheduler gateway, Telegram/web delivery ledger | `test_dispatch.py`, `surfacePrompts.spec.js`, `test_config_compiler.py`, synthetic live scheduled run with Telegram/computer-use evidence | ADDED 2026-06-15; run with the scheduled-date-grounding fix |
 
 ## `SCHED-001` - Create/update existing schedule
 
@@ -48,13 +50,12 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 - Forbidden result: mocks, backend logs, source inspection, or model output are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, state/log summary, and public-safety review.
 - Automation: test_scheduling_mcp_supervision.py.
-- Last run: PASS/PARTIAL 2026-06-05
-  ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); the
-  June 5 built-in `Subconscious Deep Thought` Workbench prompt completed and Scheduler health, DB
-  due state, Workbench UI, GlassHive metrics, and callback outbox health agreed for the built-in
-  chain. The run took 11,220 seconds, so performance needs follow-up if it repeats. Four recurring
-  active user-level provider-reconnect rows were not due yet and remain account-action follow-up
-  rather than built-in nightly delivery failure.
+- Last run: PASS/REPAIRED 2026-06-07
+  ([repair follow-up](../memory-hardening/reports/2026-06-07-nightly-repair-follow-up.md)); the
+  built-in `Subconscious Deep Thought` task is active, due next at `2026-06-08T10:00:00Z`, and now
+  carries bounded catch-up metadata so a late scheduler tick within 12 hours queues delivery instead
+  of losing the run as `misfire_grace_exceeded`. The Jun 7 run completed through Scheduler,
+  GlassHive, callback, and Workbench visible run history.
 
 ## `SCHED-003` - Auth/runtime failure copy
 
@@ -278,8 +279,11 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
   summary, visible Workbench completion, and focused test results.
 - Automation: `tests/release/test_install_summary.py`,
   `tests/release/test_scheduled_glasshive_prompts.py`, `tests/release/test_prompt_workbench.py`.
-- Last run: PARTIAL 2026-05-31; install-summary ledger coverage added, clean-machine visible
-  release proof remains under `INST-004`.
+- Last run: PASS/REPAIRED 2026-06-07
+  ([repair follow-up](../memory-hardening/reports/2026-06-07-nightly-repair-follow-up.md));
+  install/status, live Scheduler ledger, and Workbench browser inspection agree for the built-in
+  nightly reflection. Separate clean-machine installer proof remains an installer release gate, not
+  a blocker for the repaired owner-runtime nightly workflow.
 
 ## `SCHED-011` - Orphaned User Schedule Retirement
 
@@ -311,6 +315,75 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
   three pre-fix orphan rows were then retired in local state with `orphaned_user_not_found` ledger
   evidence, reducing active scheduler rows from 11 to 8 without touching the built-in Workbench row.
 
+## `SCHED-012` - Built-In Nightly Late Catch-Up
+
+- Requirement: the built-in nightly Workbench reflection must not be permanently lost when the local
+  Scheduler loop first processes the due row after the normal misfire grace but still inside the
+  documented catch-up window.
+- Risk covered: Mac sleep, scheduler restart, or delayed local processing marks the built-in
+  maintenance routine `misfire_grace_exceeded`, creating no child run, GlassHive run, callback, or
+  visible Workbench result.
+- Preconditions: the built-in `Subconscious Deep Thought` task is active, has structured
+  `metadata.misfire_policy.mode=catch_up`, and GlassHive/Workbench are healthy.
+- Steps:
+  1. Run the synthetic regression that processes the built-in due row after the normal misfire grace
+     and before the catch-up window expires.
+  2. For future live QA, safely observe or deliberately simulate a late Scheduler tick on a
+     public-safe built-in-shaped task.
+  3. Verify child run, GlassHive run, callback, parent ledger, and visible Workbench run history all
+     complete once.
+  4. Verify `next_run_at` advances to the next period without accumulating missed days.
+- Expected result: a single late but bounded built-in run is queued, records lateness, completes
+  through GlassHive, and remains visible in Workbench.
+- Forbidden result: missing the run without a child ledger, dispatching multiple catch-up runs for
+  every missed period, relying on prompt/title/user matching, or hiding a failed GlassHive callback
+  behind parent-task success.
+- Evidence to capture: sanitized due/processed timestamps, late seconds/minutes, task metadata,
+  child run status, parent delivery fields, GlassHive run/callback summary, visible Workbench row,
+  and public-safety scan.
+- Automation:
+  `tests/release/test_scheduled_glasshive_prompts.py::test_builtin_workbench_nightly_misfire_policy_catches_up_late_run`.
+- Last run: PASS/PARTIAL 2026-06-11
+  ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md));
+  regression covers the escaped Jun 6 late timing and Jun 11 live due run started inside normal
+  grace and completed through the normal chain, but live delayed-tick catch-up beyond normal grace
+  remains a future QA gate.
+
+## `SCHED-013` - Scheduled Run Date Grounding
+
+- Requirement: Scheduled `viventium_agent` generation receives deterministic due-date context and
+  validates the opening generated date before Telegram/web fan-out.
+- Risk covered: A recurring same-conversation morning briefing labels a due run as yesterday,
+  tomorrow, or another stale date despite connected-account tools being available somewhere in the
+  runtime.
+- Preconditions: local runtime or focused harness is available with synthetic public-safe data.
+- Steps:
+  1. Compose or trigger a synthetic daily scheduled run with `schedule.timezone`, `next_run_at`, and
+     existing same-conversation history containing older dated briefings.
+  2. Verify the scheduler prompt and LibreChat scheduler request carry `schedulerRunContext`,
+     `clientTimestamp`, `scheduledDueAt`, the due local date, the ISO due-date tag, and the local/UTC
+     calendar-day window.
+  3. Verify generated delivery either has no opening date claim, has an opening date matching
+     `scheduled_due_local_date`, or records `date_guard.status=corrected` before channel fan-out.
+  4. For a Telegram-targeting task, verify the Telegram-visible text and Scheduler ledger agree with
+     the corrected/passed date guard.
+  5. Verify the guard does not rewrite first-line event dates that are not the leading opening date
+     label.
+- Expected result: visible delivery never labels the scheduled due run with the wrong day/date;
+  calendar/email/task/current-day claims are grounded in verified tool/cortex evidence or omitted.
+- Forbidden result: the model uses the next recurrence, server timezone fallback, prior briefing
+  history, unverified Office availability, or an event-date false positive to assert or corrupt the
+  day/date or calendar facts.
+- Evidence to capture: sanitized prompt/run-context fields, focused test output, delivery ledger
+  date-guard status, sanitized Telegram/computer-use observation, false-positive guard regression
+  proof when applicable, and relevant log lines without raw
+  private chat content.
+- Automation:
+  `viventium_v0_4/LibreChat/viventium/MCPs/scheduling-cortex/tests/test_dispatch.py`;
+  `viventium_v0_4/LibreChat/api/server/services/viventium/__tests__/surfacePrompts.spec.js`;
+  `tests/release/test_config_compiler.py`.
+- Last run: ADDED 2026-06-15; execute with the implementation QA run.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Scheduling Cortex. Add narrower feature-specific
@@ -319,13 +392,15 @@ rows before claiming a pass when the feature behavior changes.
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
 | `SCHED-UC-001` | On Browser/Telegram scheduling, Scheduling Cortex MCP, verify that create/update existing schedule. | owning requirement for `SCHED-001` / `SCHED-001` | Browser/Telegram scheduling, Scheduling Cortex MCP | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-001. | The visible result for SCHED-001 matches the documented requirement. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `SCHED-UC-002` | On Scheduler trigger, delivery ledger, visible notification/chat, try trigger and delivery ledger with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `SCHED-002` / `SCHED-002` | Scheduler trigger, delivery ledger, visible notification/chat | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-002. | The user sees an honest setup, retry, or degraded-state result for SCHED-002; no fake success is accepted. | PASS/PARTIAL 2026-06-05 ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); Jun 5 built-in Workbench run completed, while recurring user-level provider reconnect rows were not due yet and remain separate account-action follow-up |
+| `SCHED-UC-002` | On Scheduler trigger, delivery ledger, visible notification/chat, try trigger and delivery ledger with missing setup, missing auth/config, empty state, or a degraded dependency. | owning requirement for `SCHED-002` / `SCHED-002` | Scheduler trigger, delivery ledger, visible notification/chat | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-002. | The user sees an honest setup, retry, or degraded-state result for SCHED-002; no fake success is accepted. | PASS-CORRECTNESS/LONG-DURATION 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); Jun 11 built-in Workbench run completed and duration remains a watch item |
 | `SCHED-UC-003` | After auth/runtime failure copy, refresh, restart, retry, or switch linked surfaces and verify persistence/parity. | owning requirement for `SCHED-003` / `SCHED-003` | CLI/status, chat/tool failure copy | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to SCHED-003. | SCHED-003 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `SCHED-UC-004` | Start local prod while another runtime has or had a scheduler on the default port. | owning requirement for `SCHED-004` / `SCHED-004` | Launcher, generated config, `/health`, status | Source, owning requirement doc, focused tests, compiled config, live health, and runtime status evidence that apply to SCHED-004. | The launcher accepts only the scheduler with matching public-safe runtime identity and fails loud on foreign/legacy ownership. | PASS 2026-05-25 ([report](reports/2026-05-25-scheduler-runtime-identity-repair.md)) |
 | `SCHED-UC-005` | Let a Workbench/GlassHive schedule become due while another host-native Codex worker is active. | owning requirement for `SCHED-005` / `SCHED-005` | Scheduler, GlassHive host worker, Workbench run history | Sanitized callback, run-row, parent task ledger, and browser-visible run history evidence. | The user sees a queued/retry/degraded state rather than a terminal failed run with no retry. | PARTIAL 2026-05-27 ([real-account follow-up](reports/2026-05-27-real-account-glasshive-backpressure-ledger-qa.md)); source/runtime regressions passed, live overlap stress remains |
-| `SCHED-UC-006` | Compare terminal GlassHive callback status with the parent task ledger after a run completes or fails. | owning requirement for `SCHED-006` / `SCHED-006` | Callback endpoint, DB, Workbench | Sanitized scheduled_prompt_runs and scheduled_tasks fields plus browser-visible run row. | Parent task status and delivery fields agree with the terminal run status. | PASS with significant performance regression 2026-06-05 ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); Jun 5 terminal callback, child run, parent ledger, GlassHive run, and visible Workbench state matched, but completion took 11,220 seconds |
+| `SCHED-UC-006` | Compare terminal GlassHive callback status with the parent task ledger after a run completes or fails. | owning requirement for `SCHED-006` / `SCHED-006` | Callback endpoint, DB, Workbench | Sanitized scheduled_prompt_runs and scheduled_tasks fields plus browser-visible run row. | Parent task status and delivery fields agree with the terminal run status. | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); Jun 11 terminal callback, child run, parent ledger, GlassHive run, and visible Workbench state matched |
 | `SCHED-UC-007` | Let a Workbench scheduled prompt with a stale GlassHive project cache run. | owning requirement for `SCHED-007` / `SCHED-007` | Scheduler, GlassHive projects API, Workbench run history | Sanitized project-cache validation, task/definition metadata summary, Scheduler ledger, and visible Workbench run row. | Scheduler replaces the missing cached project and the user sees an honest queued/completed/failed result tied to the new project. | PASS 2026-05-27 ([RCA report](reports/2026-05-27-glasshive-stale-project-rag-rca.md)); source regression and active-runtime stale-cache manual proof both passed |
 | `SCHED-UC-008` | Let a Workbench/GlassHive scheduled dispatch encounter a host runtime dependency blocker before `/assign`. | owning requirement for `SCHED-008` / `SCHED-008` | Scheduler, generated env, GlassHive host preflight | Sanitized structured error class, generated env key summary, safe recovery branch result, and no-run host preflight DB proof. | The user/admin sees the real dependency class, the fixed runtime accepts host `codex-cli` without creating a run, or the same task safely recovers to sandbox/workstation mode before terminal failure. | PASS 2026-05-30 ([RCA report](reports/2026-05-30-glasshive-host-runtime-dependency-rca.md), [nightly gaps follow-up](reports/2026-05-30-nightly-gaps-repair-followup.md)); structured error preservation, safe recovery regression, and live no-run host preflight passed |
-| `SCHED-UC-009` | Inspect callback outbox health after scheduled Workbench/GlassHive delivery. | owning requirement for `SCHED-009` / `SCHED-009` | GlassHive metrics, callback outbox DB, Workbench run history | Sanitized callback status counts, before/after dead-letter delta, oldest pending age, active max attempts, terminal dead-letter count, and latest scheduled run ledger. | Latest delivery can succeed only if the delivery substrate also has no unexplained stale/high-attempt pending callback rows and no fresh dead-letter delta. | PASS 2026-06-05 ([nightly review](../memory-hardening/reports/2026-06-05-nightly-routines-health-review.md)); callback outbox had no active backlog or fresh high-attempt pending rows, and latest built-in callback delivered in one attempt |
-| `SCHED-UC-010` | Inspect Scheduler readiness immediately after Express install or upgrade. | `39_Installer_and_Config_Compiler.md` / `SCHED-010`, `INST-004` | `bin/viventium status`, scheduler health endpoint, scheduler SQLite ledger, Workbench run history | Sanitized endpoint result, DB count/status/outcome/next-run summary, generated env keys, focused tests. | Scheduler is visible as installed/configured/running/degraded with a concrete next action and no private schedule data in public output. | PARTIAL 2026-05-31; automated status coverage added, clean-machine visible proof remains |
+| `SCHED-UC-009` | Inspect callback outbox health after scheduled Workbench/GlassHive delivery. | owning requirement for `SCHED-009` / `SCHED-009` | GlassHive metrics, callback outbox DB, Workbench run history | Sanitized callback status counts, before/after dead-letter delta, oldest pending age, active max attempts, terminal dead-letter count, and latest scheduled run ledger. | Latest delivery can succeed only if the delivery substrate also has no unexplained stale/high-attempt pending callback rows and no fresh dead-letter delta. | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); callback outbox had no active backlog or fresh high-attempt pending rows, latest built-in callbacks delivered in one attempt, and 2 historical May dead-letter rows remain watch-only |
+| `SCHED-UC-010` | Inspect Scheduler readiness immediately after Express install or upgrade. | `39_Installer_and_Config_Compiler.md` / `SCHED-010`, `INST-004` | `bin/viventium status`, scheduler health endpoint, scheduler SQLite ledger, Workbench run history | Sanitized endpoint result, DB count/status/outcome/next-run summary, generated env keys, focused tests. | Scheduler is visible as installed/configured/running/degraded with a concrete next action and no private schedule data in public output. | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); built-in scheduler ledger/browser evidence agree, while broader status needs user-level Anthropic reconnect for later non-overnight rows |
 | `SCHED-UC-011` | Let a recurring task fail because its owner user no longer exists. | `11_Scheduling_Cortex.md` / `SCHED-011` | Scheduler failure ledger, active flag, sanitized DB audit | Focused scheduler regression plus hash/truncated live DB evidence. | The orphaned task becomes inactive with `orphaned_user_not_found` ledger evidence; non-orphan auth/provider failures are not hidden. | PASS 2026-06-02; focused regression passed, live audit classified orphan rows separately from provider reconnect rows, and three pre-fix orphan rows were retired from active state |
+| `SCHED-UC-012` | Let the built-in nightly Workbench reflection be processed late but inside the catch-up window. | `11_Scheduling_Cortex.md` / `SCHED-012`, `PW-029` | Scheduler loop, GlassHive, Workbench run history | Sanitized late timing, child/parent ledger fields, GlassHive callback, visible Workbench row. | The late built-in routine runs once, records lateness, advances to the next period, and Workbench shows completed. | PASS/PARTIAL 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); synthetic regression passed and Jun 11 live run started inside grace, while delayed-tick proof beyond normal grace remains outstanding |
+| `SCHED-UC-013` | Receive a scheduled morning-style briefing through Telegram/web after prior same-conversation dated briefings exist. | `11_Scheduling_Cortex.md` / `SCHED-013` | Scheduler, Telegram/computer-use, delivery ledger, Mongo/tool-call state | Sanitized scheduled run context, opening date label, date-guard status, tool/cortex evidence count/classification, logs, and persisted message summary. | The visible briefing is anchored to the due local date and does not assert unverified calendar/email/task facts. | ADDED 2026-06-15; run with SCHED-013 implementation QA |

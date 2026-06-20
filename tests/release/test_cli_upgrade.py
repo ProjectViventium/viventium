@@ -2144,6 +2144,13 @@ ensure_python_module() { return 0; }
     lock_dir.mkdir(parents=True, exist_ok=True)
     (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
     (lock_dir / "command").write_text("upgrade", encoding="utf-8")
+    current_command = subprocess.run(
+        ["ps", "-p", str(os.getpid()), "-o", "command="],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    (lock_dir / "process_command").write_text(current_command, encoding="utf-8")
 
     completed = subprocess.run(
         [
@@ -2160,6 +2167,55 @@ ensure_python_module() { return 0; }
 
     assert completed.returncode != 0
     assert "Another Viventium CLI operation is already running (upgrade, pid" in completed.stderr
+
+
+def test_cli_clears_reused_pid_operation_lock_before_running(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "bin").mkdir(parents=True, exist_ok=True)
+
+    copy_cli_fixture(repo_root)
+
+    common_sh = """#!/usr/bin/env bash
+set -euo pipefail
+
+ensure_brew_paths_on_path() { :; }
+ensure_app_support_layout() {
+  local dir="$1"
+  mkdir -p "$dir/runtime" "$dir/state"
+}
+python_has_module() { return 0; }
+resolve_repo_python() { printf 'python3\n'; }
+ensure_python_module() { return 0; }
+"""
+    write_executable(repo_root / "scripts" / "viventium" / "common.sh", common_sh)
+    write_executable(repo_root / "scripts" / "viventium" / "preflight.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
+
+    config_path = tmp_path / "app-support" / "config.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("version: 1\ninstall:\n  mode: native\n", encoding="utf-8")
+
+    lock_dir = config_path.parent / "state" / "cli-operation.lock"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+    (lock_dir / "command").write_text("install", encoding="utf-8")
+    (lock_dir / "process_command").write_text("stale-viventium-process-fingerprint", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            str(repo_root / "bin" / "viventium"),
+            "--app-support-dir",
+            str(config_path.parent),
+            "preflight",
+        ],
+        cwd=repo_root,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0
+    assert not lock_dir.exists()
 
 
 def test_cli_clears_stale_operation_lock_before_running(tmp_path: Path) -> None:

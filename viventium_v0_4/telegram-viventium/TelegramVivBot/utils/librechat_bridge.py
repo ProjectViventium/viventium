@@ -141,9 +141,50 @@ _VOICE_XAI_WRAPPER_RE = re.compile(
 _VOICE_XAI_ANGLE_TAG_RE = re.compile(r"</?(?:%s)\s*>" % _XAI_TAG_PATTERN, re.IGNORECASE)
 _VOICE_XAI_BRACKET_TAG_RE = re.compile(r"\[\s*/?\s*(?:%s)\s*\]" % _XAI_TAG_PATTERN, re.IGNORECASE)
 _TOOL_TRANSCRIPT_LINE_RE = re.compile(
-    r"^\s*Tool:\s+.*_mcp_[A-Za-z0-9_.-]+.*(?:\r?\n|$)",
-    re.IGNORECASE | re.MULTILINE,
+    r"^\s*Tool:\s+(?P<body>.*)$",
+    re.IGNORECASE,
 )
+_TOOL_XML_INVOKE_BLOCK_RE = re.compile(
+    r"<(?:invoke|tool_call)\b[^>]*>[\s\S]*?</(?:invoke|tool_call)>",
+    re.IGNORECASE,
+)
+_TOOL_JSON_FENCE_RE = re.compile(
+    r"```(?:json|tool|tool_call)?\s*\n\s*\{[\s\S]*?\"(?:tool_call|tool|arguments|args)\"[\s\S]*?\}\s*```",
+    re.IGNORECASE,
+)
+_GLASSHIVE_MCP_SERVER_TOKEN = "_mcp_glasshive-workers-projects"
+_GLASSHIVE_RAW_TOOL_NAMES = {
+    "metrics_summary",
+    "projects_list",
+    "run_get",
+    "worker_create",
+    "worker_delegate_once",
+    "worker_desktop_action",
+    "worker_find_or_resume",
+    "worker_get",
+    "worker_interrupt",
+    "worker_live",
+    "worker_message",
+    "worker_pause",
+    "worker_resume",
+    "worker_run",
+    "worker_takeover",
+    "worker_terminate",
+    "workers_list",
+    "workspace_artifact_download",
+    "workspace_artifacts",
+    "workspace_continue",
+    "workspace_launch",
+    "workspace_pause",
+    "workspace_preferences_get",
+    "workspace_preferences_set",
+    "workspace_resume",
+    "workspace_schedule",
+    "workspace_status",
+    "workspace_terminate",
+    "workspace_wait",
+}
+_GLASSHIVE_RAW_TOOL_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_.-]+\b")
 # === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
@@ -259,7 +300,15 @@ except Exception:
 def sanitize_telegram_text(text: str) -> str:
     if not text:
         return ""
-    cleaned = _TOOL_TRANSCRIPT_LINE_RE.sub("", text)
+    cleaned = _strip_tool_transcript_lines(text)
+    cleaned = _TOOL_XML_INVOKE_BLOCK_RE.sub(
+        lambda match: "" if _contains_glasshive_raw_tool_name(match.group(0)) else match.group(0),
+        cleaned,
+    )
+    cleaned = _TOOL_JSON_FENCE_RE.sub(
+        lambda match: "" if _contains_glasshive_raw_tool_name(match.group(0)) else match.group(0),
+        cleaned,
+    )
     cleaned = _CITATION_COMPOSITE_RE.sub(" ", cleaned)
     cleaned = _CITATION_STANDALONE_RE.sub(" ", cleaned)
     cleaned = _CITATION_CLEANUP_RE.sub(" ", cleaned)
@@ -267,6 +316,29 @@ def sanitize_telegram_text(text: str) -> str:
     cleaned = _apply_outside_markdown_code(cleaned, _normalize_em_dashes_for_telegram)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned
+
+
+def _contains_glasshive_raw_tool_name(text: str) -> bool:
+    lowered = text.lower()
+    if _GLASSHIVE_MCP_SERVER_TOKEN in lowered:
+        return True
+    return any(
+        match.group(0).lower() in _GLASSHIVE_RAW_TOOL_NAMES
+        for match in _GLASSHIVE_RAW_TOOL_TOKEN_RE.finditer(text)
+    )
+
+
+def _strip_tool_transcript_lines(text: str) -> str:
+    kept: list[str] = []
+    for line in text.splitlines(keepends=True):
+        body = line[:-1] if line.endswith("\n") else line
+        if body.endswith("\r"):
+            body = body[:-1]
+        match = _TOOL_TRANSCRIPT_LINE_RE.match(body)
+        if match and _contains_glasshive_raw_tool_name(match.group("body")):
+            continue
+        kept.append(line)
+    return "".join(kept)
 
 
 def strip_voice_control_tags_for_display(text: str) -> str:
@@ -721,6 +793,12 @@ def _normalize_followup_compare_text(text: Any) -> str:
     return _WHITESPACE_RE.sub(" ", cleaned)
 
 
+def _normalize_stream_delivery_compare_text(text: Any) -> str:
+    if not isinstance(text, str):
+        return ""
+    return _normalize_followup_compare_text(sanitize_telegram_text(text))
+
+
 def _prepare_followup_delivery_text(text: Any) -> str:
     if not isinstance(text, str):
         return ""
@@ -796,6 +874,16 @@ def _stream_error_message(error: Optional[str]) -> str:
         if "credit balance is too low" in lowered or "plans & billing" in lowered:
             return "Provider billing issue. Please check Plans & Billing."
         if (
+            "connected account needs reconnect" in lowered
+            or "connected-account needs reconnect" in lowered
+            or "provider_connected_account_reconnect_required" in lowered
+            or (
+                "configured fallback model could not start" in lowered
+                and "reconnect" in lowered
+            )
+        ):
+            return sanitize_telegram_text(error)
+        if (
             "token_expired" in lowered
             or "provided authentication token is expired" in lowered
             or "model_authentication" in lowered
@@ -807,8 +895,6 @@ def _stream_error_message(error: Optional[str]) -> str:
             or "unauthorized provider credentials" in lowered
         ):
             return "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
-        if "connected account needs reconnect" in lowered:
-            return sanitize_telegram_text(error)
         if "tool" in lowered or "mcp" in lowered or "oauth" in lowered:
             return "Tool connection error. Please retry."
     return "Connection error. Please retry."
@@ -1419,7 +1505,7 @@ class LibreChatBridge:
         return stream_id in self._followup_sent
 
     def _remember_stream_text(self, stream_id: str, text: str, *, brief_main_reply: bool) -> None:
-        normalized = _normalize_followup_compare_text(text)
+        normalized = _normalize_stream_delivery_compare_text(text)
         if normalized:
             self._stream_text_by_stream[stream_id] = normalized
         else:
@@ -1430,7 +1516,7 @@ class LibreChatBridge:
             self._brief_main_reply_by_stream.pop(stream_id, None)
 
     def _should_send_canonical_text(self, stream_id: str, canonical_text: Any) -> bool:
-        canonical = _normalize_followup_compare_text(canonical_text)
+        canonical = _normalize_stream_delivery_compare_text(canonical_text)
         if not canonical or is_no_response_only(canonical):
             return False
 
@@ -1442,6 +1528,12 @@ class LibreChatBridge:
             return True
 
         return self._brief_main_reply_by_stream.get(stream_id, False)
+
+    def _matches_streamed_text(self, stream_id: str, text: Any) -> bool:
+        candidate = _normalize_stream_delivery_compare_text(text)
+        if not candidate:
+            return False
+        return candidate == self._stream_text_by_stream.get(stream_id, "")
 
     async def _emit_followup_once(
         self,
@@ -2421,6 +2513,9 @@ class LibreChatBridge:
         grace_start: Optional[float] = None
         saw_active = False
         last_parts: list[dict[str, Any]] = []
+        pending_glasshive_callback: Optional[dict[str, Any]] = None
+        pending_glasshive_text = ""
+        pending_glasshive_duplicate = False
 
         try:
             if not self.on_message_callback:
@@ -2444,14 +2539,42 @@ class LibreChatBridge:
                         if isinstance(latest, dict):
                             text = latest.get("text")
                             if isinstance(text, str) and text.strip() and glasshive_callback_is_terminal(latest):
+                                callback_id = str(
+                                    latest.get("callbackId") or latest.get("callback_id") or ""
+                                ).strip()
+                                if self._matches_streamed_text(stream_id, text):
+                                    delivery = await self._claim_glasshive_delivery_for_callback(latest)
+                                    if delivery:
+                                        await self._mark_glasshive_delivery_status(
+                                            delivery,
+                                            "suppressed",
+                                            reason="already_streamed",
+                                        )
+                                        self._mark_followup_sent(stream_id)
+                                        self._cancel_insight_task(stream_id)
+                                        return
+                                    if callback_id:
+                                        pending_glasshive_callback = latest
+                                        pending_glasshive_text = text
+                                        pending_glasshive_duplicate = True
+                                        await asyncio.sleep(self.followup_interval_s)
+                                        continue
+                                    self._trace(
+                                        "LibreChatBridge GlassHive callback suppressed as already streamed without durable callback id: chat_id=%s stream_id=%s",
+                                        chat_id,
+                                        stream_id,
+                                    )
+                                    self._mark_followup_sent(stream_id)
+                                    self._cancel_insight_task(stream_id)
+                                    return
                                 delivery = await self._claim_glasshive_delivery_for_callback(latest)
                                 if delivery:
                                     sent = await self._deliver_glasshive_delivery(delivery)
                                 else:
-                                    callback_id = str(
-                                        latest.get("callbackId") or latest.get("callback_id") or ""
-                                    ).strip()
                                     if callback_id:
+                                        pending_glasshive_callback = latest
+                                        pending_glasshive_text = text
+                                        pending_glasshive_duplicate = False
                                         # The callback message can become visible milliseconds
                                         # before the durable surface-delivery row is committed.
                                         # For callback-id-bearing worker results, wait for the
@@ -2563,6 +2686,41 @@ class LibreChatBridge:
                             return
 
                 await asyncio.sleep(interval_s)
+
+            if (
+                pending_glasshive_callback
+                and pending_glasshive_text.strip()
+                and not self._has_followup_sent(stream_id)
+            ):
+                delivery = await self._claim_glasshive_delivery_for_callback(pending_glasshive_callback)
+                if pending_glasshive_duplicate:
+                    if delivery:
+                        await self._mark_glasshive_delivery_status(
+                            delivery,
+                            "suppressed",
+                            reason="already_streamed",
+                        )
+                    sent = True
+                elif delivery:
+                    sent = await self._deliver_glasshive_delivery(delivery)
+                elif is_no_response_only(pending_glasshive_text):
+                    sent = True
+                else:
+                    logger.warning(
+                        "LibreChatBridge GlassHive callback %s had no durable delivery row before timeout; sending legacy fallback once",
+                        pending_glasshive_callback.get("callbackId")
+                        or pending_glasshive_callback.get("callback_id")
+                        or "unknown",
+                    )
+                    sent = await self._send_followup_text_once(
+                        chat_id,
+                        pending_glasshive_text,
+                        stream_id=stream_id,
+                    )
+                if sent:
+                    self._mark_followup_sent(stream_id)
+                    self._cancel_insight_task(stream_id)
+                    return
 
             if self.allow_insight_fallback:
                 insights = extract_completed_cortex_insights(last_parts)

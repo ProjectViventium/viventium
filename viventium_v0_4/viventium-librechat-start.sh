@@ -8159,6 +8159,27 @@ rag_api_http_ping() {
   curl -fsS --max-time 3 "http://localhost:${port}/health" >/dev/null 2>&1
 }
 
+rag_api_container_needs_recreate() {
+  local compose_file="${1:-$LIBRECHAT_DIR/rag.yml}"
+  local port="${2:-$VIVENTIUM_RAG_API_PORT}"
+  local container_id=""
+  local published_port=""
+
+  if [[ ! -f "$compose_file" ]] || ! command -v docker >/dev/null 2>&1; then
+    return 1
+  fi
+
+  container_id="$(
+    cd "$LIBRECHAT_DIR" && docker compose -f "$compose_file" ps -q rag_api 2>/dev/null | head -n 1
+  )"
+  if [[ -z "$container_id" ]]; then
+    return 1
+  fi
+
+  published_port="$(docker port "$container_id" "${port}/tcp" 2>/dev/null || true)"
+  [[ "$published_port" != *"127.0.0.1:${port}"* && "$published_port" != *"0.0.0.0:${port}"* && "$published_port" != *"[::]:${port}"* ]]
+}
+
 # === VIVENTIUM START ===
 # Feature: Ollama embeddings runtime readiness for local RAG.
 # Purpose:
@@ -8379,11 +8400,16 @@ start_rag_api() {
 
   log_info "Starting local RAG API (Docker)..."
   local rag_compose_status=0
+  local rag_compose_args=(up -d)
+  if rag_api_container_needs_recreate "$compose_file" "$rag_port"; then
+    log_warn "Local RAG API container is missing the expected localhost:${rag_port} port binding; recreating sidecar"
+    rag_compose_args+=(--force-recreate rag_api)
+  fi
   (
     cd "$LIBRECHAT_DIR"
     VIVENTIUM_DOCKER_COMPOSE_UP_TIMEOUT_SECONDS="$rag_compose_up_timeout" \
       RAG_PORT="$rag_port" \
-      docker compose -f "$compose_file" up -d
+      docker compose -f "$compose_file" "${rag_compose_args[@]}"
   ) || rag_compose_status=$?
   RAG_API_STARTED_BY_SCRIPT=true
 

@@ -215,6 +215,10 @@ def test_build_service_rows_marks_started_mcp_starting_while_cli_lock_is_active(
     lock_dir = tmp_path / "state" / "cli-operation.lock"
     lock_dir.mkdir(parents=True)
     (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+    (lock_dir / "process_command").write_text(
+        install_summary.process_command_line(os.getpid()),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(
         install_summary,
@@ -1063,6 +1067,10 @@ def test_stale_non_start_cli_lock_still_counts_as_running(
     command_path = lock_dir / "command"
     pid_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
     command_path.write_text("upgrade\n", encoding="utf-8")
+    (lock_dir / "process_command").write_text(
+        install_summary.process_command_line(os.getpid()),
+        encoding="utf-8",
+    )
     old_time = 1_700_000_000
     os.utime(pid_path, (old_time, old_time))
     os.utime(command_path, (old_time, old_time))
@@ -1070,6 +1078,20 @@ def test_stale_non_start_cli_lock_still_counts_as_running(
     monkeypatch.setenv("VIVENTIUM_CLI_STARTUP_WINDOW_SECONDS", "60")
 
     assert install_summary.cli_operation_running(runtime_dir) is True
+
+
+def test_cli_operation_running_rejects_reused_pid_with_mismatched_fingerprint(tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    lock_dir = tmp_path / "state" / "cli-operation.lock"
+    lock_dir.mkdir(parents=True)
+    (lock_dir / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    (lock_dir / "command").write_text("install\n", encoding="utf-8")
+    (lock_dir / "process_command").write_text("stale-viventium-process-fingerprint\n", encoding="utf-8")
+
+    assert install_summary.cli_operation_running(runtime_dir) is False
 
 
 def test_build_service_rows_marks_conversation_recall_running_from_health_endpoint(

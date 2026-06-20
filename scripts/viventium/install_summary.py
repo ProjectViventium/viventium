@@ -582,13 +582,59 @@ def pid_file_process_running(path: Path) -> bool:
         return False
 
 
+def process_command_line(pid: int) -> str:
+    try:
+        completed = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    except Exception:
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
+
+
+def cli_lock_owner_running(lock_dir: Path) -> bool:
+    try:
+        raw = (lock_dir / "pid").read_text(encoding="utf-8").strip()
+        pid = int(raw)
+        if pid <= 0:
+            return False
+    except Exception:
+        return False
+    if not pid_file_process_running(lock_dir / "pid"):
+        return False
+
+    current_command = process_command_line(pid)
+
+    process_command_file = lock_dir / "process_command"
+    if process_command_file.is_file():
+        try:
+            recorded_command = process_command_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            recorded_command = ""
+        if not current_command:
+            return bool(recorded_command)
+        return bool(recorded_command and current_command == recorded_command)
+
+    if not current_command:
+        return True
+
+    # Legacy locks stored only a PID. Avoid treating a reused PID from an unrelated
+    # macOS process as a live Viventium operation.
+    return "bin/viventium" in current_command
+
+
 def cli_operation_running(runtime_dir: Path | None) -> bool:
     if runtime_dir is None:
         return False
     lock_dir = runtime_dir.parent / "state" / "cli-operation.lock"
     if not lock_dir.is_dir():
         return False
-    if not pid_file_process_running(lock_dir / "pid"):
+    if not cli_lock_owner_running(lock_dir):
         return False
 
     command = ""

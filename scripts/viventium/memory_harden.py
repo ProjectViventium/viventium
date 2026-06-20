@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -23,6 +26,7 @@ DEFAULT_SCHEDULE = "0 3 * * *"
 DEFAULT_TIMEZONE = "America/Toronto"
 LAUNCH_AGENT_LABEL = "ai.viventium.memory-harden"
 PARTIAL_BACKFILL_EXIT = 2
+TRIGGER_EVENT_SCHEMA_VERSION = 1
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -81,6 +85,158 @@ def cron_to_launchd_time(schedule: str) -> tuple[int, int]:
     return hour_i, minute_i
 
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def local_timezone_name() -> str:
+    tz = os.environ.get("TZ", "").strip()
+    if tz:
+        return tz
+    try:
+        localtime = os.path.realpath("/etc/localtime")
+        marker = "/zoneinfo/"
+        if marker in localtime:
+            return localtime.split(marker, 1)[1]
+    except OSError:
+        pass
+    return time.tzname[time.localtime().tm_isdst > 0] or "local"
+
+
+def public_hash(value: object, length: int = 16) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:length]
+
+
+def trigger_events_dir(app_support_dir: Path) -> Path:
+    return app_support_dir / "state" / "memory-hardening" / "schedule-events"
+
+
+def trigger_source_for_args(args: argparse.Namespace) -> str:
+    explicit = str(getattr(args, "trigger", "") or "").strip().lower()
+    if explicit:
+        return explicit
+    if getattr(args, "scheduled", False):
+        return "scheduled_legacy"
+    return ""
+
+
+def trigger_schedule_payload(env: dict[str, str]) -> dict[str, object]:
+    schedule = env.get("VIVENTIUM_MEMORY_HARDENING_SCHEDULE") or DEFAULT_SCHEDULE
+    payload: dict[str, object] = {
+        "kind": "StartCalendarInterval",
+        "cron": schedule,
+        "timezone_context": env.get("VIVENTIUM_MEMORY_HARDENING_TIMEZONE") or DEFAULT_TIMEZONE,
+    }
+    try:
+        hour, minute = cron_to_launchd_time(schedule)
+    except SystemExit:
+        payload["valid"] = False
+    else:
+        payload.update({"valid": True, "hour": hour, "minute": minute})
+    return payload
+
+
+def find_latest_run_summary_after(app_support_dir: Path, started_at: datetime) -> dict[str, object] | None:
+    runs_dir = app_support_dir / "state" / "memory-hardening" / "runs"
+    if not runs_dir.is_dir():
+        return None
+    candidates: list[tuple[float, dict[str, object]]] = []
+    cutoff = started_at.timestamp() - 60
+    for summary_path in runs_dir.glob("*/summary.json"):
+        try:
+            stat = summary_path.stat()
+        except OSError:
+            continue
+        if stat.st_mtime < cutoff:
+            continue
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(summary, dict):
+            candidates.append((stat.st_mtime, summary))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def write_json_private(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def start_trigger_event(args: argparse.Namespace, env: dict[str, str]) -> tuple[Path, datetime] | None:
+    trigger_source = trigger_source_for_args(args)
+    if not trigger_source:
+        return None
+    fired_at = utc_now()
+    local_fired_at = fired_at.astimezone()
+    event_id = f"{trigger_source}-{fired_at.strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}"
+    payload: dict[str, object] = {
+        "schemaVersion": TRIGGER_EVENT_SCHEMA_VERSION,
+        "event_id": event_id,
+        "status": "started",
+        "trigger_source": trigger_source,
+        "scheduled_invocation": bool(getattr(args, "scheduled", False)),
+        "schedule_label": LAUNCH_AGENT_LABEL if trigger_source == "launchd" else "",
+        "schedule": trigger_schedule_payload(env),
+        "fired_at_utc": iso_z(fired_at),
+        "fired_at_local": local_fired_at.isoformat(timespec="milliseconds"),
+        "timezone_at_fire": local_timezone_name(),
+        "command": str(getattr(args, "command", "") or ""),
+        "pid": os.getpid(),
+        "repo_root_hash": public_hash(getattr(args, "repo_root", "")),
+        "runtime_dir_hash": public_hash(getattr(args, "runtime_dir", "")),
+    }
+    path = trigger_events_dir(args.app_support_dir) / f"{event_id}.json"
+    write_json_private(path, payload)
+    return path, fired_at
+
+
+def finish_trigger_event(
+    event: tuple[Path, datetime] | None,
+    args: argparse.Namespace,
+    exit_code: int,
+    *,
+    status: str | None = None,
+    reason: str | None = None,
+) -> int:
+    if event is None:
+        return exit_code
+    path, started_at = event
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    finished_at = utc_now()
+    final_status = status or ("success" if exit_code == 0 else "failed")
+    payload.update(
+        {
+            "status": final_status,
+            "exit_code": exit_code,
+            "finished_at_utc": iso_z(finished_at),
+            "duration_ms": int((finished_at - started_at).total_seconds() * 1000),
+            "executed_command": str(getattr(args, "command", "") or ""),
+        }
+    )
+    if reason:
+        payload["reason"] = reason
+    latest_summary = find_latest_run_summary_after(args.app_support_dir, started_at)
+    if latest_summary:
+        payload["run_id"] = latest_summary.get("run_id")
+        payload["run_status"] = latest_summary.get("status")
+    write_json_private(path, payload)
+    return exit_code
+
+
 def launch_agent_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 
@@ -128,6 +284,8 @@ def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> d
         str(args.runtime_dir),
         "apply",
         "--scheduled",
+        "--trigger",
+        "launchd",
     ]
     operator_user_email = args.user_email or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_USER_EMAIL")
     if operator_user_email:
@@ -440,9 +598,16 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_EFFORT", "xhigh")
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
+    trigger_event = start_trigger_event(args, env)
     skip_reason = power_gate_skip_reason(args, env)
     if skip_reason:
-        return emit_resource_gate_skip(args, skip_reason)
+        return finish_trigger_event(
+            trigger_event,
+            args,
+            emit_resource_gate_skip(args, skip_reason),
+            status="skipped",
+            reason=skip_reason,
+        )
     scheduled_apply = args.command == "apply" or (
         args.command == "ingest-transcripts" and getattr(args, "apply", False)
     )
@@ -467,9 +632,13 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
             if result.returncode == 0:
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.write_text("completed\n", encoding="utf-8")
-            return int(result.returncode)
+            return finish_trigger_event(trigger_event, args, int(result.returncode))
     if args.command == "ingest-transcripts" and getattr(args, "until_caught_up", False):
-        return run_transcript_backfill_until_caught_up(args, runtime_env, env)
+        return finish_trigger_event(
+            trigger_event,
+            args,
+            run_transcript_backfill_until_caught_up(args, runtime_env, env),
+        )
     command = node_command(args, runtime_env)
     process = subprocess.run(
         command,
@@ -477,7 +646,7 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
         env=env,
         **model_subprocess_kwargs(capture_output=False),
     )
-    return int(process.returncode)
+    return finish_trigger_event(trigger_event, args, int(process.returncode))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -515,6 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--skip-model-probe", action="store_true")
         sub.add_argument("--allow-partial-lookback", action="store_true")
         sub.add_argument("--scheduled", action="store_true")
+        sub.add_argument("--trigger")
         sub.add_argument("--json", action="store_true")
     ingest = subparsers.add_parser("ingest-transcripts")
     ingest_mode = ingest.add_mutually_exclusive_group()
@@ -547,6 +717,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--skip-model-probe", action="store_true")
     ingest.add_argument("--allow-partial-lookback", action="store_true")
     ingest.add_argument("--scheduled", action="store_true")
+    ingest.add_argument("--trigger")
     ingest.add_argument("--json", action="store_true")
     install = subparsers.add_parser("install-schedule")
     install.add_argument("--schedule")
