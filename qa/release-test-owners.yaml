@@ -78,6 +78,8 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_qa_operating_contract.py:
     qa_owner: qa/qa-system-audit/cases.md
+  tests/release/test_qa_results_public_safety.py:
+    qa_owner: qa/qa-system-audit/cases.md
   tests/release/test_rag_api_override_contract.py:
     qa_owner: qa/conversation-recall-rag/cases.md
   tests/release/test_rag_compose_resource_guardrails.py:
