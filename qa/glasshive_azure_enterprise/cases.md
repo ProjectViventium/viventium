@@ -113,6 +113,38 @@
   IMDS connect test.
 - Last run: PASS on 2026-05-23 live approved enterprise dev deployment and local regression suite.
 
+## GH-AZ-008: Durable Short Links And Direct View / Steer Bootstrap
+
+- Requirement: user-visible GlassHive payloads expose opaque short refs, not raw signed query
+  strings. Workspace `/r/{ref}` links are durable by default and must open from chat by minting a
+  fresh bounded worker-view session without exposing `gh_token`. Artifact `/v1/link-refs/{ref}`
+  routes remain owner-scoped routes through either trusted proxy owner assertion or the active
+  worker-view cookie minted for the same worker.
+- Expected: a fresh View / Steer `/r/{ref}` redirects to a tokenless workspace URL and sets an
+  HttpOnly worker cookie; the same ref still works after the original signed token expires when
+  `GLASSHIVE_LINK_REF_TTL_SECONDS=0`; a mismatched asserted owner receives `404`; artifact refs
+  without owner context receive `401`; artifact refs opened from the active Watch / Steer session
+  return the preview/download surface; active watch polling refreshes the bounded worker-view cookie
+  instead of aging into repeated `401`; visible text, link hrefs, copy text, API logs, UI logs, and
+  websocket logs do not retain raw signed URLs or raw short-ref capabilities; repeated live polling
+  reuses artifact refs instead of growing unbounded rows; worker-view opens are audited; worker
+  termination revokes outstanding refs for that worker.
+- Forbidden: chat-visible `gh_token`, expired-token error on a durable workspace ref, direct
+  unauthenticated artifact download, cross-owner workspace access when identity is asserted, or
+  durable refs/open tabs becoming compute leases that keep idle workers running, durable refs
+  surviving explicit worker termination, or short-ref paths appearing verbatim in application logs.
+- Evidence: runtime/UI short-link regression tests, browser-opened chat link, hidden copy/accessibility
+  text inspection, VM/UI/API log redaction check, DB/runtime state showing idle/pause controls still
+  own compute release, link-ref DB row-count/revocation checks, and `worker.view_opened` event
+  evidence.
+- Last run: PASS on 2026-06-20 live approved enterprise dev QA with public-safe evidence kept in the
+  private enterprise deployment archive: `/r/{ref}` redirected without `gh_token`, artifact ref
+  opened from the active worker-view cookie, missing/unauthenticated refs failed closed, active
+  `/api/worker/{id}/live` polling refreshed the cookie, Playwright opened the final artifact with no
+  console/page errors, service logs had zero `gh_token` matches in the final deploy window, and a
+  follow-up hardening smoke confirmed short-ref log redaction, view-open audit, and ref revocation
+  on worker termination.
+
 ## GH-AZ-009: Enterprise Launcher, Watch, And Managed Workspace UI
 
 - Requirement: the authenticated enterprise GlassHive entrypoint must be usable like a real user
@@ -159,6 +191,7 @@
 | GH-AZ-UC-006B | Enterprise worker starts without copying VM host Codex, Claude, or git identity files. | Bootstrap regression test. | `tests/test_bootstrap.py` verifies no host auth/identity file copy callbacks are invoked in enterprise mode. | Workers receive only explicit bootstrap content and allowlisted provider env. | PASS 2026-05-22 automated. |
 | GH-AZ-UC-007 | Operator compiles the enterprise configuration for LibreChat MCP without application code changes. | Config compiler tests and generated MCP/runtime settings. | `test_config_compiler.py`, docs/runbook sample config. | Non-localhost GlassHive URLs, service auth headers, user assertion headers, idle/provider env settings, and optional OAuth config are emitted. | PASS 2026-05-22 automated. |
 | GH-AZ-UC-008 | Operator validates approved enterprise/Viventium cloud readiness without mutating cloud. | Azure CLI read-only checks plus local enterprise browser QA. | Local backup manifest/checksums outside public repo, config snapshots without secret values, public health/auth checks, provider route probes, no mutation. | Approved resources are reachable and scoped; blocked auth/config gaps are explicit; no cloud overwrite occurs. | PARTIAL 2026-05-22 approved-cloud dry run; no Azure deployment performed. |
+| GH-AZ-UC-008B | User opens a chat-returned GlassHive View / Steer short link the next day or after the original signed token expired. | Browser chat link plus direct API/UI regression tests. | `/r/{ref}` redirect without raw token, HttpOnly worker cookie, artifact ref opens from the active worker-view cookie, unauthenticated ref/link probes fail closed, live poll refreshes the bounded view cookie, redacted logs/copy text, worker idle state unchanged by merely retaining the ref. | The workspace opens through a clean durable short link, artifacts remain owner-scoped, active watching does not age into `401`, and forgotten tabs/refs do not keep compute running. | PASS 2026-06-20 live approved enterprise dev QA; public-safe summary only, detailed evidence in private enterprise deployment archive. |
 | GH-AZ-UC-013 | Operator deploys the approved enterprise dev VM after a local/private backup, then validates live MCP, OAuth gate, worker execution, upload/download, and cleanup. | Azure VM/Caddy/OAuth/LibreChat logs, direct MCP/API, Playwright post-auth UI tunnel, VM filesystem. | Private backup completed; health `200`; MCP initialized with 25 tools; LibreChat logs registered GlassHive MCP; Codex/OpenClaw marker artifacts downloaded; upload projection passed; cross-user access `404`; traversal `400`; UI pause/resume passed; extra QA workers terminated. | Live dev deployment works for direct MCP and post-auth GlassHive UX without cross-user contamination; public browser traffic is OAuth-gated; cost controls are configured. | PASS/PARTIAL 2026-05-23 live approved enterprise dev QA; logged-in LibreChat chat turn, Claude, and Portkey remain blocked/partial. |
 | GH-AZ-UC-014 | Operator verifies post-review enterprise hardening before calling the live dev deployment reviewable. | Runtime/UI tests, live API/MCP, VM firewall, worker container. | Full API tests pass; UI server tests pass; direct MCP lists 25 tools; disabled admin endpoint returns `404`; signed-link startup validation is covered in runtime and UI; IMDS connect from active worker returns refused; health remains `200`. | Service-token blast radius is narrowed, maintenance routes are off by default, and worker containers cannot reach Azure IMDS. | PASS 2026-05-23 live approved enterprise dev hardening pass. |
 | GH-AZ-UC-015 | Plain LibreChat user launches GlassHive work without Viventium callbacks, checks status, waits for completion, and opens the signed View / Steer page. | Live GlassHive MCP and Playwright signed watch page. | MCP tool list with `workspace_launch`, `workspace_status`, and `workspace_wait`; synthetic upload marker in worker output; DB/log confirmation; signed watch screenshot with no identity-provider redirect and zero console errors; forged public identity headers on signed-link routes return `401`. | GlassHive works standalone with neutral headers, optional callbacks, upload projection, no-callback status/wait, a real operator desktop page, and signed-link routes that do not trust spoofed browser identity headers. | PASS 2026-05-23 live standalone MCP QA; logged-in upgraded chat UI remains PARTIAL during concurrent client upgrade. |

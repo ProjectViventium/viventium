@@ -2,6 +2,10 @@
 
 Date: 2026-04-16
 
+Status note, 2026-06-22: this file is historical context. The current acceptance statuses live in
+`cases.md`; legacy local media evidence is not public acceptance evidence and must remain outside
+the public repo.
+
 ## Scope
 
 Validate the GlassHive launch/watch fixes for:
@@ -74,7 +78,7 @@ Observed after launching a new `codex-cli` worker project:
 Public repo note:
 
 - local visual evidence was captured during QA but is intentionally not tracked here because live
-  screenshots are machine-local artifacts
+  media captures are machine-local artifacts
 
 Observed while the run was active:
 

@@ -34,10 +34,9 @@ it as pending.
   response.
 - Telegram bridge regression coverage now proves `_poll_for_followup()` claims the callback id
   before sending and marks the delivery row after a successful send.
-- The bridge waits for the durable ledger first. If a callback-id-bearing terminal callback still
-  has no claimable durable delivery row by same-turn timeout, the poller stops without a visible
-  legacy send so the durable dispatcher/backlog or callback retry path remains the single delivery
-  owner.
+- The bridge waits for the durable ledger first, then falls back to one legacy same-turn send only
+  if a callback-id-bearing terminal callback still has no durable delivery row by timeout; this
+  prevents silent non-delivery without returning to the duplicate-by-default race.
 - LibreChat route regressions now prove Telegram and voice callback polling include `callbackId`
   without exposing `workerId` or `runId`.
 - The owning Telegram requirements doc now states that same-turn polling and durable dispatch must
@@ -103,12 +102,58 @@ Follow-up fix: updated stale MCP test doubles to accept bootstrap_bundle/effort 
 Codex probes to answer --version. Full target files were rerun afterward and passed.
 ```
 
+## 2026-06-16 Addendum - Same-Text Stream/Callback Duplicate
+
+Follow-up QA found a second duplicate mode: the main Telegram stream can already deliver the exact
+worker result as the assistant's final answer, and then a terminal GlassHive callback can arrive with
+the same user-visible text. That callback is valid, but sending it again creates the duplicate
+visible response.
+
+Fix:
+
+- `LibreChatBridge._poll_for_followup()` now compares terminal GlassHive callback text against the
+  normalized text already streamed for the same stream.
+- If the text already streamed and the durable delivery row is available, the bridge claims the row
+  and marks it `suppressed` with reason `already_streamed`.
+- If the row is not visible yet, the bridge waits for it and avoids the legacy fallback for that
+  same-text callback, so the already-delivered answer is not sent a second time.
+
+ClaudeViv review then identified a subtle correctness edge: the stream text and callback text must be
+compared after the same Telegram-visible sanitation, otherwise hidden GlassHive tool transcript
+plumbing can make the same visible answer look different to the dedupe guard. The comparison now uses
+the same display sanitation on both sides. Additional regressions prove the guard remains exact and
+stream-scoped:
+
+- a different callback result after a streamed answer still delivers;
+- the same words in another stream still deliver;
+- a callback that only differs by hidden GlassHive tool transcript lines is suppressed as
+  `already_streamed`.
+
+Regression evidence:
+
+```text
+cd viventium_v0_4/telegram-viventium
+TelegramVivBot/.venv/bin/python -m pytest tests/test_librechat_bridge.py -q
+114 passed
+
+TelegramVivBot/.venv/bin/python -m pytest tests -q
+316 passed
+```
+
+The public-safe synthetic duplicate text used in the regression was
+`@sampleuser, 11.7K followers. Profile is open in your browser.` No private Telegram chat content,
+account ids, tokens, or raw database rows are required to reproduce this case.
+
 ## Remaining Acceptance Gap
 
 This is `PASS/PARTIAL`, not full live acceptance yet. The deterministic regressions and sanitized
-incident state prove the root and fix, including the no-legacy-fallback timeout hardening added on
-2026-06-16, but a rebuilt/restarted local runtime still needs a real post-fix Telegram GlassHive
-turn to prove the user-visible duplicate is gone on the live surface.
+incident state prove the root and fix, but a rebuilt/restarted local runtime still needs a real
+post-fix Telegram GlassHive turn to prove the user-visible duplicate is gone on the live surface.
+One additional edge remains explicitly tracked: the background durable dispatcher has no stream-local
+text context if it claims a late row after the in-turn poll window. Full live acceptance should prove
+that the row was suppressed or sent by the polling path before the dispatcher sees it, or add a
+server-side stream/result correlation field if real logs show the row can arrive after the poll
+window.
 That rerun should record:
 
 - one inbound Telegram turn;

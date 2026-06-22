@@ -97,7 +97,7 @@ Result: PASS.
 ## Public-Safety Review
 
 - [x] No secrets, tokens, passwords, cookies, or credential-bearing command lines.
-- [x] No private chats, prompts, attachments, screenshots with private content, personal emails, account identifiers, or customer data.
+- [x] No private chats, prompts, attachments, visual media with private content, personal emails, account identifiers, or customer data.
 - [x] No conversation IDs, message IDs, session/call IDs, Telegram chat IDs, Mongo `_id` values, or raw provider request/response IDs.
 - [x] No local absolute paths, hostnames, machine names, stack traces with private paths, DB exports, App Support state, or raw runtime dumps.
 - [x] Private evidence is summarized with sanitized counts, hashes, timestamps, and conclusions only.

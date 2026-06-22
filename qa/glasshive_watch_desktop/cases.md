@@ -10,14 +10,14 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 | --- | --- | --- | --- | --- | --- |
 | `GHWATCH-001` | Live desktop/watch flows expose enough state for takeover without leaking private screen data into public artifacts. | User-visible behavior matches source, docs, persisted state, and logs | GlassHive desktop/watch surface, worker status, callback evidence | `tests/release/test_prompt_registry.py` plus user-grade QA when visible | PASS 2026-05-23 local enterprise watch UI; see `qa/glasshive_azure_enterprise/reports/2026-05-23-launcher-watch-enterprise-qa.md`. |
 | `GHWATCH-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-05-23 for sanitized report; see `qa/glasshive_azure_enterprise/reports/2026-05-23-launcher-watch-enterprise-qa.md`. |
-| `GHWATCH-003` | Completed file deliverables are usable from Watch / Steer without surprising downloads or recursive workspace embeds. | User sees the delivered file preview, can explicitly download it, and can return to the workspace without nested watch pages. | Watch / Steer file preview iframe, artifact open route, download route, project workspace link | `runtime_phase1/tests/test_api.py::test_artifact_open_page_previews_text_without_forcing_download`, `runtime_phase1/tests/test_api.py::test_enterprise_signed_artifact_open_page_actions_remain_signed`, and browser QA | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
-| `GHWATCH-004` | Multiple file deliveries remain discoverable without forcing one hardcoded output format. | User can verify the latest delivered file and inspect/download each workspace artifact when more than one file exists. | Watch / Steer latest result, workspace artifact list, artifact open/download route | Browser QA plus artifact API/log evidence | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
+| `GHWATCH-003` | Completed file deliverables are usable from Watch / Steer without surprising downloads or recursive workspace embeds. | User sees the delivered file preview, can explicitly download it, and can return to the workspace without nested watch pages. | Watch / Steer file preview iframe, artifact open route, download route, project workspace link | `runtime_phase1/tests/test_api.py::test_artifact_open_page_previews_text_without_forcing_download`, `runtime_phase1/tests/test_api.py::test_enterprise_signed_artifact_open_page_actions_remain_signed`, and browser QA | PASS 2026-06-22; local fixture additionally proved artifact preview/download, `View workspace`, `/w/{ref}` refresh persistence, and seven artifact types. |
+| `GHWATCH-004` | Multiple file deliveries remain discoverable without forcing one hardcoded output format. | User can verify the latest delivered file and inspect/download each workspace artifact when more than one file exists. | Watch / Steer latest result, workspace artifact list, artifact open/download route | Browser QA plus artifact API/log evidence | PASS 2026-06-22; local fixture proved Markdown, CSV, HTML, PDF, XLSX, DOCX, and PPTX artifacts remained discoverable and downloadable. |
 | `GHWATCH-005` | Non-file or no-file tasks do not invent downloadable artifacts. | User sees the final result/status without bogus `Open file`, `Download file`, or workspace-file actions. | Watch / Steer latest result panel, callback/status output | Browser QA plus live payload inspection | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
-| `GHWATCH-006` | Latest workspace output is visibly actionable from the watch ribbon and workspace overview. | User can immediately tell where to click to inspect the latest output/status, then close it without leaving the live surface. | Watch / Steer ribbon, result panel, workspace overview tile | `frontends/glass-drive-ui/tests/test_server.py::test_launcher_workspace_hive_static_controls` plus Playwright browser QA | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-latest-output-affordance.md`. |
-| `GHWATCH-007` | A Watch URL with `surface=desktop` keeps the live workstation desktop primary after file delivery. | User can still inspect/control the live worker while file actions remain explicit. | Watch / Steer, embedded desktop, latest-output file actions | Static UI tests plus Playwright/Chrome browser QA | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`. |
-| `GHWATCH-008` | `view_available` means the noVNC desktop asset path is reachable. | User is not sent to a broken or endlessly reconnecting desktop view. | Runtime describe API, noVNC proxy/assets, Watch / Steer desktop iframe | `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets` plus browser QA | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`. |
-| `GHWATCH-009` | LibreChat callback result persists into visible conversation state without raw tool plumbing. | User sees the final worker result after refresh/reopen. | LibreChat web conversation, callback outbox, message store | `LibreChat/api/server/routes/viventium/__tests__/glasshive.spec.js` plus authenticated browser QA | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`. |
-| `GHWATCH-010` | Worker desktop browser starts with clean browser chrome by default. | User sees the worker browser without a bookmark bar or unsupported `--no-sandbox` warning. | Docker workstation container, worker browser process, noVNC desktop view | `runtime_phase1/tests/test_docker_sandbox.py` plus disposable Docker worker and Playwright noVNC QA | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-clean-browser-chrome.md`. |
+| `GHWATCH-006` | Latest workspace output is visibly actionable from the watch ribbon and workspace overview. | User can immediately tell where to click to inspect the latest output/status, then close it without leaving the live surface. | Watch / Steer ribbon, result panel, workspace overview tile | `frontends/glass-drive-ui/tests/test_server.py::test_launcher_workspace_hive_static_controls` plus Playwright browser QA | PARTIAL 2026-06-22 docs audit: 2026-06-16 evidence is static/synthetic and explicitly partial for full release; rerun against a real worker before claiming full Watch / Steer release coverage. |
+| `GHWATCH-007` | A Watch URL with `surface=desktop` keeps the live workstation desktop primary after file delivery. | User can still inspect/control the live worker while file actions remain explicit. | Watch / Steer, embedded desktop, latest-output file actions | Static UI tests plus Playwright/Chrome browser QA | PARTIAL 2026-06-22 docs audit: 2026-06-16 story report is legacy/exempt historical RCA evidence; current acceptance needs fresh text/DOM evidence from a real worker. |
+| `GHWATCH-008` | `view_available` means the noVNC desktop asset path is reachable. | User is not sent to a broken or endlessly reconnecting desktop view. | Runtime describe API, noVNC proxy/assets, Watch / Steer desktop iframe | `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets` plus browser QA | PARTIAL 2026-06-22 docs audit: regression coverage remains valid, but legacy media evidence is not current public acceptance evidence. |
+| `GHWATCH-009` | LibreChat callback result persists into visible conversation state without raw tool plumbing. | User sees the final worker result after refresh/reopen. | LibreChat web conversation, callback outbox, message store | `LibreChat/api/server/routes/viventium/__tests__/glasshive.spec.js` plus authenticated browser QA | PARTIAL 2026-06-22 docs audit: legacy authenticated-browser evidence is not cited as public acceptance; rerun with text-only public summary before full release coverage. |
+| `GHWATCH-010` | Worker desktop browser starts with clean browser chrome by default. | User sees the worker browser without a bookmark bar or unsupported `--no-sandbox` warning. | Docker workstation container, worker browser process, noVNC desktop view | `runtime_phase1/tests/test_docker_sandbox.py` plus disposable Docker worker and Playwright noVNC QA | PARTIAL 2026-06-22 docs audit: clean-browser RCA and tests are useful, but current acceptance needs a fresh text/DOM/process summary without public visual media. |
 
 ## `GHWATCH-001` - Core User Flow
 
@@ -38,11 +38,11 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 
 ## `GHWATCH-002` - Public-Safe Evidence Record
 
-- Requirement: public QA artifacts must be reproducible and free of secrets, personal data, local paths, raw IDs, and private screenshots.
+- Requirement: public QA artifacts must be reproducible and free of secrets, personal data, local paths, raw IDs, and private visual media.
 - Risk covered: a useful local QA run cannot be safely reviewed or published.
 - Preconditions: a dated QA report is created for this feature.
 - Steps:
-  1. Review the report and related diffs for local absolute paths, account identifiers, tokens, raw logs, raw DB rows, private chats, and screenshots with private content.
+  1. Review the report and related diffs for local absolute paths, account identifiers, tokens, raw logs, raw DB rows, private chats, and visual media with private content.
   2. Keep raw/private evidence outside the public repo and summarize only public-safe counts, statuses, hashes, and conclusions.
   3. Link the report back to this case and the owning requirement doc.
 - Expected result: the public report proves the behavior without leaking private/local data.
@@ -67,13 +67,12 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
   7. Verify the browser navigates the top-level page or project/workspace surface and does not render another Watch / Steer page inside the preview iframe.
 - Expected result: the preview is readable, the download is explicit and correct, and workspace navigation does not create nested GlassHive headers/footers or repeated steer controls.
 - Forbidden result: clicking `View workspace` inside a preview recursively embeds watch/project UI inside the artifact preview frame, artifact access requires hidden proxy headers after opening from a signed link, or an incidental external URL in worker output is promoted ahead of the actual generated file.
-- Evidence to capture: sanitized screenshot/DOM summary showing one top-level watch/workspace surface, download status/content hash or marker, artifact route headers, live payload summary, and relevant logs.
+- Evidence to capture: sanitized DOM/text summary showing one top-level watch/workspace surface, download status/content hash or marker, artifact route headers, live payload summary, and relevant logs.
 - Automation: artifact route tests plus browser QA on the real Watch / Steer surface.
-- Last run: PASS 2026-05-31 on the approved enterprise GlassHive deployment. Browser QA verified
-  one top-level watch frame, zero nested preview frames, `target="_top"` on `View workspace`, exact
-  synthetic marker preview/download, explicit attachment headers, healthy runtime services, and no
-  temporary deployment key left behind. See
-  `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`.
+- Last run: PASS 2026-06-22 for local fixture scope. Browser QA verified tokenless artifact
+  preview/download links, `View workspace` to `/w/{ref}`, refresh persistence, exact synthetic
+  marker preview/download, and no signed-query leakage. The previous enterprise run remains recorded
+  in `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`.
 
 ## `GHWATCH-004` - Multiple File Delivery Discoverability
 
@@ -89,12 +88,10 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 - Forbidden result: the UI claims the work completed but only exposes a stale or unrelated file, or workspace navigation cannot be used to find additional deliverables.
 - Evidence to capture: sanitized file list/counts, marker verification, and visible navigation state.
 - Automation: artifact listing/download API tests plus browser QA.
-- Last run: PASS 2026-05-31 on the approved enterprise GlassHive deployment. The first run exposed
-  a gap: the latest file preview worked, but additional files were discoverable only through API
-  evidence, not the user surface. The fix added a general Watch / Steer workspace-file list sourced
-  from the runtime artifact inventory. Browser QA then verified `first.txt` and `second.txt` were
-  both visible with explicit `Open` and `Download` actions, and both downloads returned the expected
-  marker content with attachment and `nosniff` headers.
+- Last run: PASS 2026-06-22 for local fixture scope. Browser QA opened/downloaded Markdown, CSV,
+  HTML, PDF, XLSX, DOCX, and PPTX artifacts and verified they remained discoverable from the worker
+  and workspace surfaces. The earlier enterprise multi-file regression remains recorded in the
+  2026-05-31 artifact-preview report.
 
 ## `GHWATCH-005` - No-File Result Does Not Invent Artifacts
 
@@ -135,7 +132,7 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
   responsive on desktop and mobile widths.
 - Forbidden result: the latest output appears as passive text, only a tiny unlabelled area is
   clickable, the panel cannot be closed predictably, or mobile wrapping hides the action.
-- Evidence to capture: browser screenshot or DOM summary for desktop and mobile widths, static test
+- Evidence to capture: browser DOM/text summary for desktop and mobile widths, static test
   result, and no console errors.
 - Automation: `frontends/glass-drive-ui/tests/test_server.py::test_launcher_workspace_hive_static_controls`
   plus Playwright browser QA.
@@ -159,13 +156,12 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 - Expected result: live desktop is primary; deliverable actions are visible and intentional.
 - Forbidden result: the desktop tab/frame displays a PDF/file preview as the main surface, or the
   menu labels the delivered file as the current desktop.
-- Evidence to capture: browser screenshot, frame URL, noVNC asset status, latest-output actions,
+- Evidence to capture: browser DOM/frame summary, frame URL, noVNC asset status, latest-output actions,
   console state.
 - Automation: `frontends/glass-drive-ui/tests/test_server.py::test_launcher_workspace_hive_static_controls`
   plus Playwright/Chrome browser QA.
-- Last run: PASS 2026-06-16 local browser QA. Public-safe summary:
-  `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`;
-  screenshot evidence remains local/private unless explicitly reviewed for publication.
+- Last run: PARTIAL 2026-06-22 docs audit. The 2026-06-16 legacy visual evidence is not
+  current public acceptance evidence; rerun with text/DOM evidence before full release coverage.
 
 ## `GHWATCH-008` - noVNC Health Is Required For `view_available`
 
@@ -184,12 +180,11 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
   uses service-local `/tmp` and does not rely on mounted worker-home `TMPDIR`.
 - Forbidden result: reset/502 noVNC asset path with `view_available=true`, or a worker that remains
   visually black/reconnecting while status says the desktop is ready.
-- Evidence to capture: noVNC stderr/stdout summary, asset status, browser screenshot/canvas count,
+- Evidence to capture: noVNC stderr/stdout summary, asset status, browser DOM/canvas count,
   targeted regression test output.
 - Automation: `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets`.
-- Last run: PASS 2026-06-16 local browser/runtime QA. Public-safe summary:
-  `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`;
-  screenshot evidence remains local/private unless explicitly reviewed for publication.
+- Last run: PARTIAL 2026-06-22 docs audit. Runtime regression coverage remains valid, but the
+  public case needs fresh text/DOM noVNC evidence before full release coverage.
 
 ## `GHWATCH-009` - LibreChat Callback Result Surfaces After Persistence
 
@@ -210,12 +205,11 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
   link after refresh/reopen; no raw callback IDs, HMAC fields, or tool-call code appear.
 - Forbidden result: delivered callback row with a hidden/stale chat result, duplicate final callback
   branches, or raw GlassHive plumbing shown to the user.
-- Evidence to capture: sanitized DB/outbox summary, authenticated browser screenshot, callback
+- Evidence to capture: sanitized DB/outbox summary, authenticated browser DOM/text summary, callback
   receiver test output.
 - Automation: `LibreChat/api/server/routes/viventium/__tests__/glasshive.spec.js`.
-- Last run: PASS 2026-06-16 local Chrome QA and callback receiver test. Public-safe summary:
-  `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`;
-  screenshot evidence remains local/private unless explicitly reviewed for publication.
+- Last run: PARTIAL 2026-06-22 docs audit. Callback receiver tests remain useful; legacy
+  authenticated-browser media is not current public acceptance evidence.
 
 ## `GHWATCH-010` - Clean Worker Browser Chrome
 
@@ -234,14 +228,14 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
   4. Inspect the Chromium process tree and verify no command line contains `--no-sandbox`.
   5. Inspect the worker Chromium profile preferences and verify
      `bookmark_bar.show_on_all_tabs` is `false`.
-  6. Open the noVNC desktop in a real browser and capture a screenshot showing the worker browser
+  6. Open the noVNC desktop in a real browser and capture a public-safe DOM/process summary showing the worker browser
      has no bookmark bar and no unsupported command-line warning banner.
 - Expected result: the browser displays the requested page/workspace with no bookmarks row and no
-  unsupported flag banner; process/profile evidence agrees with the screenshot.
+  unsupported flag banner; process/profile evidence agrees with the visible browser summary.
 - Forbidden result: a Debian bookmarks row is visible, Chromium shows the unsupported
   `--no-sandbox` warning, or source tests pass while the live worker process still carries
   `--no-sandbox`.
-- Evidence to capture: sanitized screenshot, Docker security option summary, `unshare -U` result,
+- Evidence to capture: sanitized DOM/text summary, Docker security option summary, `unshare -U` result,
   Chromium process-argument summary, profile preference summary, and regression test output.
 - Automation:
   `runtime_phase1/tests/test_docker_sandbox.py::test_create_container_adds_host_gateway_alias_for_broker_reachability`,
@@ -264,7 +258,7 @@ rows before claiming a pass when the feature behavior changes.
 | `GHWATCH-UC-004` | Create or open a completed single-file GlassHive task, then preview, download, and click `View workspace` from inside the preview. | artifact link semantics / `GHWATCH-003` | Watch / Steer, artifact preview, artifact download, project workspace | Source, route headers, live payload, logs, and downloaded marker content. | File preview and download work; `View workspace` does not recursively embed watch/project UI. | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
 | `GHWATCH-UC-005` | Create or open a completed multi-file GlassHive task and verify the latest result plus project workspace deliverables. | artifact discoverability / `GHWATCH-004` | Watch / Steer and project workspace | Workspace file list, artifact API, logs, and marker content for each file. | Multiple deliverables remain discoverable without hardcoded output assumptions. | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
 | `GHWATCH-UC-006` | Create or open a completed no-file task and verify the result does not invent file actions. | exact data in/out / `GHWATCH-005` | Watch / Steer latest result panel and live payload | Live payload deliverable state, final result text, logs. | Text-only/no-file work shows final output without fake artifact links. | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
-| `GHWATCH-UC-007` | Open Watch / Steer and the workspace overview, then find and activate the latest workspace output/status affordance. | latest-output affordance / `GHWATCH-006` | Watch / Steer ribbon, result panel, workspace overview tile | Static UI source, browser DOM/screenshot, console state, and responsive layout checks. | The user can clearly see where to open status/output, activate it by pointer or keyboard, and close it without leaving the live surface. | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-latest-output-affordance.md`. |
-| `GHWATCH-UC-008` | Open a completed file-producing worker through `surface=desktop` and inspect both the live desktop and file actions. | desktop fidelity / `GHWATCH-007` | Watch / Steer, embedded desktop, latest-output file actions | Frame URL, noVNC canvas, asset proxy status, screenshot, console state. | The live desktop remains primary and file actions are explicit. | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`. |
-| `GHWATCH-UC-009` | Reopen a GlassHive-backed LibreChat conversation after completion and verify the final result appears. | callback visibility / `GHWATCH-009` | Authenticated LibreChat web conversation, callback outbox, Mongo/message store | Outbox delivered row, message/conversation metadata, browser screenshot, callback test. | The final callback result is visible after refresh/reopen and no raw tool plumbing leaks. | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md`. |
-| `GHWATCH-UC-010` | Open the live worker desktop browser and inspect the browser chrome before doing work. | clean worker browser chrome / `GHWATCH-010` | Docker workstation browser through noVNC | Docker security option, Chromium process args, profile preferences, screenshot, console/network state. | The browser has no bookmark bar and no unsupported `--no-sandbox` warning banner. | PASS 2026-06-16; see `qa/glasshive_watch_desktop/reports/2026-06-16-clean-browser-chrome.md`. |
+| `GHWATCH-UC-007` | Open Watch / Steer and the workspace overview, then find and activate the latest workspace output/status affordance. | latest-output affordance / `GHWATCH-006` | Watch / Steer ribbon, result panel, workspace overview tile | Static UI source, browser DOM/text summary, console state, and responsive layout checks. | The user can clearly see where to open status/output, activate it by pointer or keyboard, and close it without leaving the live surface. | PARTIAL 2026-06-22 docs audit; legacy static/synthetic evidence remains useful, but fresh real-worker DOM evidence is required before full Watch / Steer release coverage. |
+| `GHWATCH-UC-008` | Open a completed file-producing worker through `surface=desktop` and inspect both the live desktop and file actions. | desktop fidelity / `GHWATCH-007` | Watch / Steer, embedded desktop, latest-output file actions | Frame URL, noVNC canvas count, asset proxy status, DOM/text summary, console state. | The live desktop remains primary and file actions are explicit. | PARTIAL 2026-06-22 docs audit; legacy media-backed evidence is not current public acceptance evidence. |
+| `GHWATCH-UC-009` | Reopen a GlassHive-backed LibreChat conversation after completion and verify the final result appears. | callback visibility / `GHWATCH-009` | Authenticated LibreChat web conversation, callback outbox, Mongo/message store | Outbox delivered row, message/conversation metadata, browser DOM/text summary, callback test. | The final callback result is visible after refresh/reopen and no raw tool plumbing leaks. | PARTIAL 2026-06-22 docs audit; legacy authenticated-browser media is not current public acceptance evidence. |
+| `GHWATCH-UC-010` | Open the live worker desktop browser and inspect the browser chrome before doing work. | clean worker browser chrome / `GHWATCH-010` | Docker workstation browser through noVNC | Docker security option, Chromium process args, profile preferences, DOM/text summary, console/network state. | The browser has no bookmark bar and no unsupported `--no-sandbox` warning banner. | PARTIAL 2026-06-22 docs audit; legacy media-backed evidence is not current public acceptance evidence. |

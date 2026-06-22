@@ -160,7 +160,7 @@ nightly execution failure. It is a schedule-truth gap that needs follow-up befor
 | Later anchor | `2026-06-08 07:17:40 <local-tz-abbrev>` / `2026-06-08T11:17:40Z` |
 | System timezone | `<configured-local-timezone>` from `/etc/localtime`; `date` reported `<local-tz-abbrev>` |
 | Automation fire time | Intended `2026-06-08 07:15 <local-tz-abbrev>` / `2026-06-08T11:15Z` |
-| Automation cadence note | observer automation RRULE is UTC in this local observer environment |
+| Automation cadence note | Codex Desktop RRULE is UTC in this local Desktop environment |
 
 ## Due Windows Used
 

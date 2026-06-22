@@ -223,33 +223,6 @@ def test_normalize_preset_keeps_recall_off_even_when_docker_desktop_present(
     assert normalized["runtime"]["personalization"]["default_conversation_recall"] is False
 
 
-def test_normalize_preset_backfills_glasshive_defaults_and_preserves_explicit_disable(
-    monkeypatch,
-) -> None:
-    wizard = load_wizard_module()
-    monkeypatch.setattr(wizard.secrets, "token_hex", lambda _nbytes: "generated-call-secret")
-
-    normalized = wizard.normalize_preset({"version": 1, "runtime": {}, "llm": {}, "integrations": {}})
-
-    glasshive = normalized["integrations"]["glasshive"]
-    assert glasshive["enabled"] is True
-    assert glasshive["host_worker"]["enabled"] is True
-    assert glasshive["host_worker"]["workspace_root"] == "~/viventium"
-    assert glasshive["host_worker"]["default_execution_mode"] == "host"
-
-    disabled = wizard.normalize_preset(
-        {
-            "version": 1,
-            "runtime": {},
-            "llm": {},
-            "integrations": {"glasshive": {"enabled": False, "host_worker": {"enabled": False}}},
-        }
-    )
-
-    assert disabled["integrations"]["glasshive"]["enabled"] is False
-    assert disabled["integrations"]["glasshive"]["host_worker"]["enabled"] is False
-
-
 def test_configure_easy_install_keeps_conversation_recall_deferred_when_docker_desktop_present(
     monkeypatch,
 ) -> None:

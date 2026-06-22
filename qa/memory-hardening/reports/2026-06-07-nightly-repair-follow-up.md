@@ -21,7 +21,7 @@ future QA hardening gate.
 
 ## Root Causes
 
-1. **Audit fired before the real due window.** The observer automation RRULE is interpreted as UTC in this
+1. **Audit fired before the real due window.** The Codex Desktop RRULE is interpreted as UTC in this
    environment. The earlier 07:15 RRULE fired at 07:15Z / 03:15 <configured-local-timezone>, before the
    Workbench schedule's 10:00Z due time.
 2. **Workbench Jun 6 miss was strict misfire behavior.** The built-in Workbench task had no bounded
@@ -39,7 +39,7 @@ future QA hardening gate.
 ## Fixes
 
 - Automation timing context:
-  - Observer automation RRULE remains set to 11:15Z so the audit runs after the current 10:00Z
+  - Private automation RRULE remains set to 11:15Z so the audit runs after the current 10:00Z
     Workbench cadence during <local-tz-abbrev>.
   - Automation memory now says to judge by runtime/DB/LaunchAgent due windows, not by a single
     assumed local time.
@@ -124,7 +124,7 @@ documented principles:
 ClaudeViv also flagged these residual risks:
 
 - The live late-catch-up path is not yet observed end-to-end; Jun 7 was an in-grace normal run.
-- The observer automation RRULE timing is environment-specific; the durable guard is the due-window
+- The private automation RRULE timing is environment-specific; the durable guard is the due-window
   table and NOT-DUE classification.
 - The broader working tree contains many unrelated changes, so any commit/release should keep this
   nightly repair scoped and avoid claiming unrelated diffs as part of the fix.
