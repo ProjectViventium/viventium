@@ -386,10 +386,6 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     user-scoped credentials explicitly
   - optional MCP/runtime surfaces such as GlassHive must compile out cleanly when they are not
     enabled for the install or not actually present in the checked-out component set
-  - the compiler must emit `VIVENTIUM_DEFAULT_TIMEZONE` only when the operator explicitly sets
-    `settings.timezone`; otherwise the launcher/runtime should detect the host browser or macOS
-    timezone. Feature-specific schedule timezone settings, such as memory hardening, must remain
-    scoped to their feature and must not become a global chat/runtime default.
   - GlassHive host-native workers compile from `integrations.glasshive.host_worker`; when GlassHive
     is enabled, host workers default on, the default execution mode is `host`, the default workspace
     root is user-scoped (`~/viventium`), and `/viventium` is valid only when doctor proves it is

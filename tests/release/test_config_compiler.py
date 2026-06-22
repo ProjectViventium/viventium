@@ -168,12 +168,12 @@ def test_config_compiler_exports_default_timezone_from_global_settings() -> None
     assert env["VIVENTIUM_DEFAULT_TIMEZONE"] == "Europe/Amsterdam"
 
 
-def test_config_compiler_omits_default_timezone_when_unconfigured() -> None:
+def test_config_compiler_default_timezone_falls_back_to_product_default() -> None:
     config = minimal_compile_config()
 
     env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
 
-    assert "VIVENTIUM_DEFAULT_TIMEZONE" not in env
+    assert env["VIVENTIUM_DEFAULT_TIMEZONE"] == "America/Toronto"
 
 
 def test_memory_hardening_explicit_provider_controls_cli_provider() -> None:
@@ -683,7 +683,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
     assert "PLAYGROUND_VARIANT=modern" in runtime_env
     assert "VIVENTIUM_PLAYGROUND_VARIANT=modern" in runtime_env
-    assert "VIVENTIUM_DEFAULT_TIMEZONE=" not in runtime_env
+    assert "VIVENTIUM_DEFAULT_TIMEZONE=America/Toronto" in runtime_env
     assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-session-test" in runtime_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-session-test" in runtime_env
@@ -956,9 +956,9 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP"] == "true"
     assert enabled_env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] == "true"
     assert enabled_env["GLASSHIVE_HOST_WORKERS_ENABLED"] == "true"
+    assert enabled_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium-workers"
     assert enabled_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
     assert enabled_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
-    assert enabled_env["WPR_HOST_WORKSPACE_ROOT"] == "~/viventium-workers"
     assert enabled_env["WPR_DEFAULT_EXECUTION_MODE"] == "host"
     assert enabled_env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] == "true"
     assert enabled_env["WPR_HOST_MENTION_CODEX"] == "@codex"
@@ -1003,22 +1003,18 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert glasshive_headers["X-Viventium-Tool-Resources"] == "{{LIBRECHAT_BODY_TOOL_RESOURCES_JSON_B64}}"
 
 
-def test_config_compiler_rejects_invalid_glasshive_default_worker_profile(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
-
+def test_config_compiler_rejects_invalid_glasshive_default_worker_profile() -> None:
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
         "enabled": True,
-        "host_worker": {"default_worker_profile": "not-a-worker"},
+        "host_worker": {
+            "enabled": True,
+            "default_worker_profile": "openclaw",
+        },
     }
 
     with pytest.raises(SystemExit, match="default_worker_profile must be one of"):
-        config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+        config_compiler.resolve_glasshive_host_worker_settings(config)
 
 
 def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(
@@ -2385,7 +2381,7 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
                 },
                 {
                     "name": "claude-opus-4-8",
-                    "label": "Claude Opus 4.8",
+                    "label": "Claude Opus 4 7",
                     "preset": {"endpoint": "anthropic", "model": "claude-opus-4-8"},
                 },
             ]
@@ -2401,7 +2397,7 @@ def test_prune_unavailable_source_defaults_preserves_current_explicit_anthropic_
         "claude-opus-4-8",
     ]
     assert normalized["modelSpecs"]["list"][0]["label"] == "Claude Sonnet 4.5"
-    assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4.8"
+    assert normalized["modelSpecs"]["list"][1]["label"] == "Claude Opus 4 7"
     assert normalized["endpoints"]["anthropic"]["summaryModel"] == "claude-sonnet-4-5"
 
 

@@ -116,7 +116,7 @@
 | Generated memory schedule context | Schedule `0 3 * * *`, exported timezone context `<configured-local-timezone>` |
 | Loaded LaunchAgent schedule | `StartCalendarInterval` hour `3`, minute `0`; direct wrapper with `--scheduled --trigger launchd` |
 | Workbench scheduled-prompt timezone | `<workbench-schedule-timezone>`, daily `03:00`, next run `2026-06-12T10:00:00Z` |
-| Automation cadence note | observer automation RRULE is UTC in this local observer environment; this checker is only a read-only observer |
+| Automation cadence note | Codex Desktop RRULE is UTC in this local Desktop environment; this checker is only a read-only observer |
 
 ## Due Windows Used
 

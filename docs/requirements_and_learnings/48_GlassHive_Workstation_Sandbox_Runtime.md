@@ -123,6 +123,48 @@ the host MCP client so it reloads the updated tool contract.
   concrete output it produced, compare it with the user's request and success criteria, fix or
   continue when the output is incomplete, and report only remaining blockers. This is a general
   harness rule, not a prompt-specific list of file types, providers, UI surfaces, or QA phrases.
+- When `glasshive-run/constraint-ledger.json` exists, workers must treat it as a canonical run
+  reminder before planning, delegation, source collection, and final delivery. Plans, specs, subagent
+  prompts, and delegation notes must carry source/date/auth/scope constraints forward literally; if
+  they conflict with the ledger, the worker should correct them before continuing. This protects the
+  user's explicit constraints without adding prompt-specific runtime rules.
+- Source/date/auth/scope constraints are evidence boundaries, not just labels to mention in the
+  final report. If a constraint excludes a source, date, account, scope, or item, the worker must not
+  use it to support facts, scoring, or deliverables; it may record the item only as rejected or
+  out-of-scope evidence when useful. Source publication/evidence dates are distinct from
+  retrieval/access timestamps: an access date may be recorded as metadata, but it must not widen or
+  replace a user-limited source window.
+- Run evidence must verify constraint survival across more than loose Markdown notes. The verifier
+  scans the captured final output, user-deliverable/support text files, and extracted generated
+  document text where local tooling is available for XLSX, DOCX, PPTX, and PDF artifacts. Strict
+  source/date constraints that disappear from planning/spec/delegation files are failures, not
+  advisory warnings, unless the file clearly references the constraint ledger or restates the
+  constraint. A line-anchored `FINAL REPORT:` marker is required; progress text or instructions that
+  merely mention the marker must not count as completion.
+- If a user gives a generic coverage expectation such as a requested count/range of rows, targets,
+  entities, firms, companies, or records, evidence should extract it conservatively and compare it
+  against produced deliverable tables. This is a universal completeness check, not domain-specific
+  scoring logic, and it should report exact coverage gaps instead of silently accepting too-small
+  outputs.
+- Long-running research and document-generation work should checkpoint durable workspace files and
+  prioritize a usable core result before optional expansion. A worker that hits time, tool, auth, or
+  dependency limits should leave an honest partial artifact/report and exact blocker rather than
+  spending the entire run on private notes.
+- Active-run status must make long quiet runs diagnosable without exposing raw transcript content.
+  `active-run.json` should include heartbeat sequence, transcript file existence/byte counts,
+  modification time, tail hash, last-output timestamp, quiet duration, timeout policy, exit source,
+  and stop reason where applicable. This lets Watch/Steer/status surfaces distinguish silent work,
+  stuck foreground preview servers, timeouts, and genuine completion gaps.
+- CLI worker launch must not expose private user instructions in process argv. For CLIs that support
+  stdin prompts, such as Codex `exec` and Claude Code `--print`, GlassHive should pass the contracted
+  instruction over stdin and keep argv to command/config/session identifiers. For CLIs that only
+  expose message-argv entrypoints, GlassHive should pass a generic pointer to a private per-run
+  instruction file rather than the raw instruction itself. Evidence/audit logs should still record
+  redacted argv and the constraint ledger path, and active-session metadata should record that an
+  instruction was redacted instead of storing the raw text. Raw prompts must not appear in local
+  process listings, parent-visible logs, public QA reports, or user-visible payloads. Parent-visible
+  audit/log text should also scrub local filesystem paths to a redacted marker instead of preserving
+  a user's home, client, workspace, or artifact path.
 - Deep research workers must preserve evidence without flooding the model/provider route with raw
   source dumps. Bootstrap instructions should tell workers to keep useful citations, excerpts, and
   research notes in files or concise summaries, not paste huge webpages, logs, or command outputs into
@@ -152,6 +194,7 @@ CRITICAL OPERATING INSTRUCTIONS (FOLLOW STRICTLY):
 3. SELF-TEST AND VERIFY:
    - After creating code, RUN IT
    - After starting a server, CURL IT to confirm it responds
+   - If a server is only for QA/preview, run it with a bounded timeout or background it with explicit cleanup; never leave a foreground server blocking final delivery or wasting compute
    - After researching or creating files, open them and deliver them
    - NEVER report success without verification
    - Debate with yourself on gaps, issues, mistakes, misalignments in your delivery and work on them. Do not stop early. Do not just tell the user what you missed. Actually take action and address them so that the delivery to the user is complete and reliable.
@@ -219,8 +262,9 @@ Selenium base:
   `WPR_SANDBOX_OPENCLAW_NPM_SPEC` after updating QA evidence. Global npm install must use a
   disposable build cache and remove `/tmp`, root, and `seluser` npm caches before image export so
   the worker image stays reproducible and does not fail on Docker Desktop overlay storage.
-- **Python**: selenium plus document/artifact libraries such as `python-docx`, `python-pptx`,
-  `reportlab`, `PyPDF2`, `PyMuPDF`, `pdf2image`, `openpyxl`, `xlsxwriter`, and rendering helpers
+- **Python**: selenium plus research/document/artifact libraries such as `requests`,
+  `python-docx`, `python-pptx`, `reportlab`, `PyPDF2`, `PyMuPDF`, `pdf2image`, `openpyxl`,
+  `xlsxwriter`, and rendering helpers
 - **Managed browser-extension policy**: Chromium and Google Chrome policy paths force-install the
   Claude Code and Codex browser-use extensions by ID:
   `fcoeoabgfenejglbffodgkkbkcdhcgfn` and `hehggadaopoacecdllhhajmbjkdcmajg`.
@@ -243,28 +287,112 @@ Policy presence alone is not enough to claim full browser-use acceptance, and a 
 bridge state is a substrate/configuration blocker rather than evidence that the worker should be
 prompted away from native browser/computer use.
 
-### Native Skill And Capability Inventory
+### Native Capability Discovery
 
-As of 2026-06-15, GlassHive workers must receive a concise native capability inventory in their
-bootstrap project instructions and command-boundary prompts. The inventory makes the worker aware of
-available surfaces but does not force a workflow:
+GlassHive workers must receive concise, discovery-first capability guidance in bootstrap project
+instructions and command-boundary prompts. The inventory makes the worker aware of available native
+surfaces but does not guarantee every named tool is installed and must not force a workflow:
 
-- Claude Code workers should consider native browser/computer-use and skill/plugin families for
-  `anthropic document-skills`, `anthropic doc-coauthoring`, `anthropic theme-factory`,
-  `daymade deep-research`, `daymade fact-checker`, `daymade ppt-creator`,
-  `daymade excel-automation`, `daymade doc-to-markdown`, `academic-research-skills` for
-  academic/literature-review work, and `NVIDIA AI-Q` for enterprise/private deep research when
-  configured.
-- Codex workers should consider native browser/computer-use, MCP/plugin surfaces, and skill/plugin
-  families for `openai pdf`, `openai jupyter-notebook`, `openai screenshot`,
-  `openai notion-research-documentation`, `anthropic docx`, `anthropic pptx`, `anthropic xlsx`,
-  `anthropic pdf`, `daymade deep-research`, `daymade fact-checker`, `daymade excel-automation`, and
-  `daymade ppt-creator`.
+- Inspect what is actually available in the selected runtime: CLI help/version, native
+  browser/computer support, MCP/plugin configuration, installed document/PDF/spreadsheet/deck
+  libraries, local OS tools, and workspace files.
+- Use relevant capabilities on demand for the user's goal. Do not preselect a provider, skill,
+  browser path, artifact format, or research workflow unless the user requested it or verified tool
+  evidence proves it.
+- Treat unavailable tools as runtime facts. Report or route around concrete blockers; do not pretend
+  a stale skill/plugin is present because it appeared in older docs.
+- Preflight host and Docker modes separately. Host-native binary overrides apply only to host
+  workers; Docker/workstation workers must use the image/PATH and must preserve the selected CLI's
+  native config unless explicit operator lockdown says otherwise.
 
-Provisioning these skill families is a runtime/image and license/supply-chain responsibility. The
-worker-facing prompt must say to inspect what is actually available, use the right capability when
-relevant, and self-review/fix the delivery. Runtime code must not branch on user prompt text or turn
-these lists into hardcoded routing.
+Provisioning named skill/plugin families is a runtime/image and license/supply-chain
+responsibility. Runtime code must not branch on user prompt text or turn any capability inventory
+into hardcoded routing. QA must prove the actual available surfaces with command/version evidence,
+worker prompt files, and user-grade runs before claiming capability coverage.
+
+### Run Constraint Ledger And Evidence
+
+Each worker run materializes a generic `glasshive-run/constraint-ledger.json` inside the workspace
+and mirrors it under `glasshive-run/runs/<run_id>/constraint-ledger.json`. The ledger is a
+conservative reminder extracted from structured tool inputs and the user's text. It captures the
+original request, explicit date/source/auth/scope constraints, required or forbidden outputs, seed
+entities or files, exclusion/flag-only rules, output-format expectations, and markers that the
+worker must not widen or soften. It is not a domain-specific planner and must not contain
+benchmark-specific rules.
+
+Each run also produces `glasshive-run/evidence.json` and a per-run mirror. Evidence includes run
+metadata, selected profile and execution mode, model/effort when known, redacted command argv,
+safe environment key names, timeout/process-exit provenance, transcript tails, artifact inventory,
+document validation, content-hygiene findings, ledger-compliance findings, completion-compliance
+findings, final-output status, and a sanitized CLI/provider failure classification when structured
+stdout/stderr events expose one. Completion compliance compares explicit requested output formats
+against actual workspace artifacts, flags "support notes only" runs, and reports conservative seed
+entity/file coverage from scanned outputs. The failure classification preserves classes such as
+provider rate limit, provider overload/response failure, auth/config missing, content filter, and
+runtime dependency issues alongside retryability and recovery guidance, so a quota-limited run is not
+misreported as only "missing final report." It is evidence for QA and recovery, not a domain rubric,
+planner, or prompt-specific acceptance rule. The `glasshive-run/` directory is internal harness
+evidence and must never be promoted as a user-facing artifact.
+
+The evidence harness produces a top-level `evidence_result` summary. Missing final reports,
+constraint-compliance failures, completion-compliance failures, and invalid professional artifacts
+are blocking failures; advisory content hygiene remains a warning unless the broad fixture corpus
+later proves it is safe to make blocking. Host-native runtimes must surface a blocking
+`evidence_result` as `glasshive_evidence_check_failed`, leave the run state truthful, and guide the
+user toward inspecting or continuing the same workspace instead of silently reporting success.
+
+While a host-native run is active, the runtime also writes
+`glasshive-run/runs/<run_id>/active-run.json`. This file is a small heartbeat/status pointer for
+Watch/Steer, wait/status tooling, and QA. It records the run id, selected profile/execution mode,
+runtime, known model, process pid while active, timeout policy, transcript paths, stop reason, exit
+code, evidence path when finalized, and `last_heartbeat_at`. It must stay truthful: a quiet process
+with zero stdout/stderr is still `running` when the process is alive, not a fabricated completion.
+
+The verifier is an evidence harness, not a new planner. It recursively inventories root,
+`output/`, `artifacts/`, and `reports/` deliverables while excluding scaffold, browser profile,
+upload, and harness evidence files. It validates professional artifacts structurally and records
+available deeper checks such as `pdfinfo`, rendered PDF samples, and OOXML library probes. Content
+hygiene stays generic and advisory until broad false-positive testing proves a stricter gate: it may
+warn on JavaScript, cookie/paywall/bot-wall/nav/entity contamination, but must not flag normal prose
+such as `VAR`/`VaR` unless it is an actual JavaScript assignment.
+
+Completion-compliance evidence must stay generic. It may fail a run that promised files such as PDF,
+XLSX, CSV, DOCX, PPTX, HTML, or text but produced no matching deliverable, or that only left
+research/planning/spec/notes files without a final result. It may warn when explicit seed inputs
+cannot be found in scanned outputs. It must not encode benchmark names, industries, companies,
+ranking rules, or private QA prompt semantics.
+It also must stay conservative about what counts as a promised output. File formats named as
+attached/uploaded/input/source files are not required output formats unless the same format is
+explicitly requested as an output deliverable, and explicitly forbidden output formats must be
+subtracted from required formats. Source/date-window checks must distinguish out-of-window evidence
+or citations from ordinary in-scope prose about future events; a future date alone is not evidence
+that the worker widened the allowed source window.
+Final-answer-only requests such as "answer in chat", "inline", or "report back in the final answer"
+must not be treated as file-deliverable intent unless the user also requested an explicit file,
+artifact, export, or professional document format. Internal notes may exist, but a valid final chat
+answer should pass when no file deliverable was requested. Conversely, internal notes still fail when
+the user asked for a real report/table/workbook/artifact and the worker only left support material.
+Coverage expectations are generic evidence, not artifact-only evidence: when the user asks for a
+counted final answer, structured final-output lists or Markdown tables may satisfy the count; when
+the user asks for a counted file/table/workbook, the relevant artifact counts remain the stronger
+evidence. If a valid professional artifact or prose answer does not expose an extractable count,
+coverage should warn rather than hard-fail solely because the count cannot be verified.
+
+Timeout and provider-failure evidence must stay truthful. A timed-out or terminated run is recorded
+as timeout/process termination unless a future positive worker-written completion sentinel proves a
+distinct completion-capture failure class. A structured provider failure is recorded separately from
+completion compliance; it may make the run recoverable by `workspace_continue`, but it is still a
+failed terminal run until a later continuation completes the user's objective. Do not add a new
+failure semantic merely because one transcript was ambiguous.
+Provider-failure classification must come from structured failure signals such as failure event
+types or fields (`api_error_status`, `status_code`, `error`, `error_code`, `is_error`), not from
+arbitrary assistant result text that merely discusses provider errors, rate limits, or content
+filters as domain facts.
+If a retryable provider/runtime capture failure happens after a fresh completed-looking user
+deliverable was written, completion recovery must apply the same user-deliverable rules as artifact
+discovery. Fresh completed deliverables in standard `artifacts/`, `reports/`, `output/`, or root
+user-deliverable paths may be promoted; partial/draft/scratch files, scaffold, browser profile,
+upload, and `glasshive-run/` harness paths must not be promoted.
 
 ### Container Configuration
 
@@ -335,6 +463,9 @@ Host-worker UX and callback requirements:
   voice. The tool may return acknowledgement guidance, but not a literal phrase that the assistant
   must quote. Do not expose internal provider/tool/runtime labels such as Codex, worker, run, host
   mode, queue, or terminal unless the user asks for diagnostics.
+- Normal worker UI/live payloads must recursively redact nested path-like runtime details such as
+  prompt paths, home/state/workspace dirs, log paths, and local `file://` values. Explicit
+  diagnostics mode may expose them to authorized operators for debugging.
 - Delegation results should include a sanitized `delegation_audit` preview so the assistant can
   self-check the target, success condition, and response constraints it sent to the worker. The full
   submitted instruction is diagnostics-only and should appear only when diagnostics were explicitly
@@ -543,8 +674,10 @@ Host-worker UX and callback requirements:
   `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` instead of failing the user task, and the fallback must
   be visible in runtime logs/telemetry so quality-sensitive downgrades are auditable.
   Enterprise deep-work deployments should default Codex to `high` once the active route proves it;
-  `xhigh` must be available only when the same active route and a real worker run prove it, not
-  because another provider account or model catalog says the family supports it.
+  `xhigh` must be available only when the same active route and a real worker run prove it. The
+  built-in default allowlist excludes `xhigh` until `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN=true` or
+  `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN=true` is set, or until an explicit deployment allowlist
+  includes `xhigh`; another provider account or model catalog is not enough proof.
 - GlassHive host prompts and MCP descriptions must not override that deployment/user default with
   `medium` just because a task is simple. For ordinary bounded work, omit the per-run `effort` field
   unless the user explicitly asks for a cheaper/faster pass. For deep research, critical analysis,
@@ -554,6 +687,10 @@ Host-worker UX and callback requirements:
   2026-06-16 approved enterprise QA proved this through an authenticated LibreChat/Chrome launch where an
   ordinary bounded file request omitted `effort`, created a fresh Docker `codex-cli` worker on
   `gpt-5.4`, and the runtime DB showed `BOOTSTRAP_CODEX_EFFORT=high`.
+- Codex effort projection is independent of provider wiring. Docker/workspace Codex must append
+  `model_reasoning_effort` for the effective per-run/default effort whether the worker uses copied
+  local Codex auth, a custom OpenAI-compatible provider, or another configured route. A custom
+  provider branch must not be the only place effort is applied or recorded.
 - Claude effort is native substrate, not just prompt copy. When deployment defaults, MCP, UI, or
   direct API request `effort=max`, it must be projected into the worker bootstrap env as
   `WPR_CLAUDE_CODE_EFFORT=max`, and both workspace/Docker and host-native Claude Code commands must
@@ -575,7 +712,8 @@ Host-worker UX and callback requirements:
 - v1 permits only one active host worker per CLI family unless explicit per-worker CLI auth
   isolation is later proven.
 - Host process lifecycle uses a per-run process group with terminate/kill cleanup.
-- Parent-visible logs are redacted; raw per-run logs are local files with restrictive permissions.
+- Parent-visible logs are redacted, including local filesystem paths; raw per-run logs are local
+  files with restrictive permissions.
 - Host child processes receive a minimal runtime environment. Provider keys, callback secrets,
   LibreChat secrets, and broad parent process env are not inherited by default.
 - Host and sandbox workers may receive a run-scoped GlassHive capability broker grant through
@@ -700,8 +838,9 @@ another available write-capable connected-account path. If no write-capable path
 user-visible answer must say so plainly. Every lever is config- or prompt-driven and must not be
 hardcoded or overfitted to one profile, model, effort, or policy:
 
-- **Where the time actually goes (measured).** A cold `codex-cli` host worker answering
-  "any new emails today?" took **~5m01s wall-clock**, decomposed from the runtime events + codex
+- **Where the time actually goes (measured in a synthetic connected-account fixture).** A cold
+  `codex-cli` host worker answering a daily two-provider inbox-summary prompt took **~5m01s
+  wall-clock**, decomposed from the runtime events + codex
   rollout as: **queue→start 0.0s** (always-on runtime, instant host spawn) + **~301s agent loop** =
   ~30 sequential broker tool calls at ~6.5s each (~195s, fetching messages largely one-by-one) +
   model reasoning turns (~80s) + final summarize (~15s). The same-process hand-off answered the same
@@ -725,15 +864,15 @@ hardcoded or overfitted to one profile, model, effort, or policy:
 ### Results Quality vs Speed — the metric that matters most (measured)
 
 Speed is necessary but **not** the deciding metric — the deciding metric is whether the *answer* is
-accurate, complete, and useful for the user's intent. For the same "any new emails today?" query
-(2026-05-28, both inboxes):
+accurate, complete, and useful for the user's intent. For the same synthetic daily-summary fixture
+(two mock inbox providers, public-safe fixture data):
 
 | | Hand-off agent (claude-opus, in-process) | GlassHive worker (gpt-5.4 codex, autonomous loop) |
 | --- | --- | --- |
 | Latency | ~40s | ~5m01s |
 | Output | 1316 chars, 12 bullets | 3036 chars, 27 bullets |
-| Shape | prioritized: "Worth your attention" / "Calendar churn" / "Noise", with synthesized context (for example, related actions merged into one bullet) + an explicit "main thing to action" | exhaustive: "Important/Time-Sensitive" + "Other New Mail", every item source-labeled (Gmail/Outlook) + subject + gist, including duplicate-thread notes |
-| Completeness | selective (newsletters grouped, not all enumerated) | **higher** — enumerated ~26 items including every newsletter, caught a second relevant opportunity + a repository migration the hand-off folded into "noise" |
+| Shape | prioritized: "Needs attention" / "Calendar churn" / "Low priority", with synthesized context (for example, related actions merged into one bullet) + an explicit main action | exhaustive: "Important/Time-Sensitive" + "Other New Mail", every item source-labeled by mock provider + subject + gist, including duplicate-thread notes |
+| Completeness | selective (low-priority messages grouped, not all enumerated) | **higher** — enumerated the full synthetic inbox, caught a second relevant opportunity + a low-priority migration notice the hand-off folded into "noise" |
 | Precision on literal details | risk: compressed a meeting time across timezones — a synthesis/precision discrepancy | **higher** — read each message, so literal subjects/times were verbatim |
 | Usefulness for "a quick rundown" | **higher** — scannable, prioritized, actionable | lower for triage (a thorough dump), higher for an audit/full sweep |
 
@@ -794,12 +933,12 @@ tool arg → per-user preference (`default_worker_profile`) → env `GLASSHIVE_D
 non-enterprise) flips the worker to claude-code with **no restart** and no broker-secret risk, because
 the Main Agent omits the profile arg. The env var is the alternative (needs a restart).
 
-**Measured ("any new emails today?", host workers, both inboxes; runs table timing):**
+**Measured (synthetic daily-summary fixture, host workers, two mock providers; runs table timing):**
 
 | | Hand-off (claude-opus) | GlassHive worker — codex gpt-5.4 | GlassHive worker — claude-code sonnet-4-6 |
 | --- | --- | --- | --- |
 | Worker duration | ~40s (in-process) | 301s (5m01s) | **88–144s (~2 min; 3 runs)** |
-| Providers read | Gmail + Outlook | Gmail + Outlook | Gmail + Outlook *(after fix #2)* |
+| Providers read | Mock Provider A + Mock Provider B | Mock Provider A + Mock Provider B | Mock Provider A + Mock Provider B *(after fix #2)* |
 | Quality | prioritized, occasionally compresses a detail | complete + verbatim, verbose | complete, prioritized, action-items surfaced, **honest about gaps** |
 | Speed vs codex | — | baseline | **~2.5–3.4× faster** |
 
@@ -1353,21 +1492,54 @@ runtime intent classifier.
   expire, so journald, reverse-proxy logs, Azure diagnostics, and QA reports must never preserve
   them verbatim.
 - User-visible GlassHive tool payloads and callbacks should expose only short link references such
-  as `/r/{ref}` and `/v1/link-refs/{ref}`. Raw `gh_token` URLs and opaque signed-link tokens may
+  as `/w/{ref}`, `/r/{ref}`, and `/v1/link-refs/{ref}`. Raw `gh_token` URLs and opaque signed-link tokens may
   exist only as server-side ref targets or legacy inbound compatibility. `/r/{ref}` should set the
-  worker-scoped cookie and redirect to a tokenless watch/project/desktop URL so the browser address
-  bar and follow-up UI/API polling do not retain `gh_token`; UI/API/WebSocket logs must redact
-  `gh_token`, `gh_sig`, `gh_exp`, `gh_kind`, and `/v1/signed-links/{token}` before handlers emit
-  them.
-- Short link references are durable authenticated pointers by default. `GLASSHIVE_LINK_REF_TTL_SECONDS`
-  (or legacy alias `WPR_LINK_REF_TTL_SECONDS`) defaults to `0`, meaning `/r/{ref}` and
+  worker-scoped cookie and redirect to a tokenless watch/project/desktop URL; standalone runtime
+  artifact pages may link directly to `/w/{ref}` so the browser address bar, link hrefs, and
+  follow-up workspace controls do not retain raw project/worker ids or `gh_token`. UI/API/WebSocket
+  logs must redact `gh_token`, `gh_sig`, `gh_exp`, `gh_kind`, `/v1/signed-links/{token}`,
+  `/w/{ref}`, `/r/{ref}`, and `/v1/link-refs/{ref}` before handlers emit them, including when a
+  sensitive query field is the first text in a log value rather than preceded by `?` or `&`. Legacy
+  inbound URLs that still arrive with signed query parameters may authenticate the current request,
+  but rendered HTML, links, JavaScript helpers, copy text, and follow-up API calls must drop those
+  signed query strings. Worker-view cookie names must be opaque/hash-derived and must not embed raw
+  worker ids.
+- Short-ref redirects are not open redirects. A `/r/{ref}` target may be relative, same-origin, or
+  on the configured GlassHive operator/runtime/artifact origins. Extra deployment-specific redirect
+  origins require an explicit `GLASSHIVE_ALLOWED_REDIRECT_HOSTS` or `WPR_ALLOWED_REDIRECT_HOSTS`
+  allowlist entry. The redirect still strips signed query parameters before returning the `Location`
+  header. Relative targets must reject browser-normalized external-redirect shapes such as leading
+  `//` and backslash-containing paths.
+- Short link references are durable opaque pointers by default. `GLASSHIVE_LINK_REF_TTL_SECONDS`
+  (or legacy alias `WPR_LINK_REF_TTL_SECONDS`) defaults to `0`, meaning `/w/{ref}`, `/r/{ref}` and
   `/v1/link-refs/{ref}` do not expire only because the underlying signed token expired. Values
   `0`, `never`, `none`, `disabled`, `off`, `false`, and `no` mean no short-ref expiry; a positive
-  integer expires the short ref after that many seconds. Enterprise `/r/{ref}` and
-  `/v1/link-refs/{ref}` resolution must still pass through the authentication wall and match the
-  ref's tenant/user before minting a fresh bounded worker-view session or returning an artifact.
+  integer expires the short ref after that many seconds. Enterprise artifact refs
+  (`/v1/link-refs/{ref}`) remain owner-scoped routes. They may be opened through a trusted proxy
+  assertion or through the active worker-view session cookie minted by `/r/{ref}` for the same
+  worker; without either proof, they fail closed. Enterprise workspace refs (`/r/{ref}`) are the
+  browser bootstrap path: if a trusted proxy supplies tenant/user identity, the ref must match that
+  owner; if no browser identity assertion exists on the GlassHive origin, a valid opaque ref may
+  mint a fresh bounded worker-view session cookie and redirect to a tokenless workspace URL. This
+  keeps chat-returned View / Steer links usable without exposing raw `gh_token` URLs. A wrong
+  asserted owner must still receive `404`.
   Raw `/v1/signed-links/{token}` compatibility URLs remain signed-token URLs and are not the
   durable user-facing contract.
+- Link-ref storage must be bounded by behavior, not only by disk capacity. Repeated live polling
+  should reuse an existing artifact ref for the same worker/path/action instead of minting a new
+  permanent row each time. Worker-view refs may be refreshed when the bounded session token expires,
+  but artifact refs should be stable. Resolving a durable ref must still verify the stored signed
+  token against the current signing secret, so secret rotation invalidates outstanding refs.
+- Opening a workspace ref is an auditable event. `/r/{ref}` opens should record a
+  `worker.view_opened` lifecycle event for the worker, just as artifact preview/download records
+  artifact open/download events. Terminating a worker must revoke outstanding refs for that worker
+  so View / Steer and artifact links do not remain live after an explicit cleanup.
+- Active watch/API/file requests must rotate the worker-view cookie forward while the user is
+  actively looking at the workspace. A long-running run should not degrade into repeated `401`
+  polling or an abort-shaped UI merely because the original bootstrap token aged out during an open
+  watch session. Closing or forgetting the tab still must not keep compute alive; idle/paused
+  lifecycle controls own compute release independently of durable short refs and refreshed view
+  cookies.
 - Runtime-created View / Steer refs that point at the separate GlassHive UI service require shared
   link-ref state. Co-located runtime/UI processes should use the same
   `GLASSHIVE_LINK_REF_STATE_PATH` SQLite file; split deployments must provide supported shared local
@@ -1429,12 +1601,16 @@ Default enterprise auth is `first_party_assertion`:
   View / Steer access instead of putting raw project/worker ids or raw signed-token URLs in
   user-visible text. By default those short refs are durable (`GLASSHIVE_LINK_REF_TTL_SECONDS=0`),
   so an authenticated owner can open yesterday's result or workspace link without seeing an
-  expired-token error. Opening a View / Steer short ref mints a fresh bounded worker-view session;
-  it does not make the durable ref itself a compute lease. Idle, paused, max-run, quota, and
+  expired-token error. Opening a View / Steer short ref mints a fresh bounded worker-view session
+  from the opaque ref and strips raw signed query parameters before redirecting; it does not make
+  the durable ref itself a compute lease. Idle, paused, max-run, quota, and
   optional watch-session limits still own compute release so forgotten tabs do not become the
   product's cost model. The signed-link/member worker UI hides VM paths, session keys, container
   names, and live command diagnostics while preserving the useful state, controls, output,
   workspace file list, live refresh, and takeover/action controls for the active session lifetime.
+  Internal diagnostic API/UI routes may still use project and worker ids for operator workflows,
+  but chat, MCP/tool outputs, callback text, member-facing links, DOM/copy text, and public QA
+  evidence should prefer opaque short refs and must not expose signed-token URLs.
 - Signed-link QA must inspect visible chat, link `href`s, and hidden accessibility/copy text. A
   visually clean Markdown link can still leave raw signed URLs in offscreen serialized Markdown
   nodes; renderer and bridge fixes must treat that as a user-facing leakage surface.
@@ -1532,13 +1708,22 @@ persistent home and workspace mounts.
 | `GLASSHIVE_HOST_CODEX_INHERIT_PROVIDER_MODEL` | unset | Opt-in compatibility switch for host-native Codex to inherit `WPR_MODEL_CODEX_CLI`; leave unset so host workers use local Codex config by default |
 | `GLASSHIVE_HOST_CODEX_NATIVE_MCP_ALLOWLIST` / `WPR_HOST_CODEX_NATIVE_MCP_ALLOWLIST` | `computer-use,node_repl` | Host-native Codex MCP sections/plugin manifests preserved into worker-local `CODEX_HOME` before appending the GlassHive broker; set to `off` only for an explicitly locked-down worker |
 | `GLASSHIVE_HOST_CODEX_PLUGIN_CACHE` / `WPR_HOST_CODEX_PLUGIN_CACHE` | host Codex plugin cache | Optional override for locating bundled native Codex MCP manifests such as computer-use |
+| `GLASSHIVE_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS` / `WPR_AUTO_DISCOVER_CODEX_WORKSPACE_DEPS` | `true` | Host-native workers may auto-discover the local Codex desktop bundled dependency runtime and project verified document/tooling paths into the worker environment. Set to `false` for an explicitly locked-down worker. |
+| `GLASSHIVE_CODEX_WORKSPACE_DEPS_ROOT` / `WPR_CODEX_WORKSPACE_DEPS_ROOT` | auto-discovered Codex desktop dependency root when present | Optional override for the bundled dependency root containing `node/`, `python/`, and `bin/` subdirectories. |
+| `GLASSHIVE_WORKSPACE_NODE_MODULES` / `WPR_WORKSPACE_NODE_MODULES` | unset | Optional path-list of verified Node module directories appended to worker `NODE_PATH`; use this for local document/artifact tooling that must be discoverable by host Codex/Claude workers. |
+| `GLASSHIVE_WORKSPACE_NODE_BIN` / `WPR_WORKSPACE_NODE_BIN` | unset | Optional path-list of Node binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_NODE_BIN`. |
+| `GLASSHIVE_WORKSPACE_PYTHON_BIN` / `WPR_WORKSPACE_PYTHON_BIN` | unset | Optional path-list of Python binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_PYTHON_BIN`; Python package paths are not blindly injected, so host workers must verify optional imports before relying on them. |
+| `GLASSHIVE_WORKSPACE_BIN_DIRS` / `WPR_WORKSPACE_BIN_DIRS` | unset | Optional path-list of native binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_BIN_DIRS`. |
+| `GLASSHIVE_UI_SHOW_LEGACY_OPENCLAW_PROFILE` | unset / false | Opt-in visibility for the legacy OpenClaw profile choice in the old built-in UI. The option remains visible when `openclaw-general` is the selected/default profile, but Codex/Claude-first deployments should not advertise OpenClaw as a routine create option. This is UI visibility only; runtime selection still uses `profile + execution_mode`. |
 | `WPR_OPENCLAW_START_GATEWAY` | `false` | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention |
-| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,minimal,low,medium,high,xhigh` | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route rejects a value such as `minimal` |
+| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,minimal,low,medium,high` plus `xhigh` only after route proof | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route rejects a value such as `minimal`; if unset, xhigh is not allowed until route proof is enabled |
+| `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN` / `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN` | `false` | Enables built-in xhigh acceptance only after the active Codex route has been proven by a real worker run; explicit allowlists can still override when deployment QA owns the proof |
 | `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`; choose the closest supported value for the active route, for example `low` when `minimal` is rejected but `low` is accepted |
 | `WPR_CODEX_CLI_IGNORE_USER_CONFIG` | `false` | Workspace-mode Codex should load the worker-local config by default so projected broker/native MCPs work; set `true` only for an explicit locked-down provider route |
 | `WPR_CODEX_CLI_DISABLE_FEATURES` | unset | Optional comma-separated Codex feature disables for explicitly locked-down provider routes. The default must preserve native Codex app, multi-agent, plugin, browser/computer, workspace-dependency, and related capability surfaces; set this only with dated preflight/QA evidence that the lockdown is intentional. |
 | `WPR_CLAUDE_CODE_ENABLE_CHROME` | `true` | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode |
 | `WPR_CLAUDE_CODE_EFFORT` | unset | Optional Claude Code effort. MCP/UI/direct API per-run effort must project `max` into the bootstrap bundle, and workspace plus host-native commands must translate it to `--effort max` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | unset | Optional Claude Code headless OAuth token from `claude setup-token`; supported for Docker/workspace and host workers through the bootstrap/env allowlist. In enterprise/run-only mode it is written only to secret runtime env, not the interactive shell env. |
 | Built-in host CLI floors | Codex CLI `>=0.140.0`, Claude Code `>=2.1.178`, OpenClaw `>=2026.6.6` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags |
 | `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
@@ -1556,6 +1741,7 @@ persistent home and workspace mounts.
 | `WPR_MCP_PORT` | `8767` | MCP server port |
 | `WPR_MCP_BASE_URL` | `http://127.0.0.1:8766` | Control plane URL |
 | `GLASSHIVE_OPERATOR_BASE_URL` | `http://127.0.0.1:8780` | User-facing GlassHive operator UI origin used for `/watch/{worker}` links |
+| `GLASSHIVE_ALLOWED_REDIRECT_HOSTS` / `WPR_ALLOWED_REDIRECT_HOSTS` | unset | Optional comma-separated host/origin allowlist for `/r/{ref}` redirects when the tokenless Watch/Steer target is not same-origin or one of the configured GlassHive operator/runtime/artifact origins |
 | `GLASSHIVE_DEFAULT_LAUNCH_SURFACE` | `desktop` | Project-first UI default initial watch surface (`desktop`, `terminal`, `auto`) |
 | `GLASSHIVE_SHOW_LIVE_TERMINAL_IN_DESKTOP` | `true` | When desktop-first watch is used, auto-open the active live run terminal inside the desktop |
 | `WPR_IDLE_DESKTOP_PRIME_BROWSER` | `true` | Prime fresh worker desktops with the GlassHive placeholder browser page instead of the inherited base-image splash |

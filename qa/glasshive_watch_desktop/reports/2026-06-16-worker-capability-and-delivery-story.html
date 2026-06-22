@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GlassHive Worker Capability And Delivery Story - 2026-06-16</title>
+<style>
+:root { --bg:#f7f8fa; --paper:#fff; --ink:#17202a; --muted:#667085; --line:#d9dee7; --accent:#0f766e; --bad:#b42318; --good:#067647; --warn:#b45309; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; line-height:1.5; }
+main { max-width:1160px; margin:0 auto; padding:28px 20px 56px; }
+header { display:flex; justify-content:space-between; align-items:flex-end; gap:18px; border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:20px; }
+h1 { margin:0; font-size:30px; line-height:1.15; letter-spacing:0; }
+h2 { margin:0 0 12px; font-size:18px; }
+p { margin:8px 0; }
+ul { margin:8px 0 0 19px; padding:0; }
+li { margin:5px 0; }
+code { background:#f1f3f6; border:1px solid #e4e7ec; border-radius:4px; padding:1px 4px; font-family:"SFMono-Regular",Consolas,monospace; font-size:.92em; }
+a { color:#0b5cab; text-decoration:none; }
+a:hover { text-decoration:underline; }
+.kicker { margin:0 0 6px; color:var(--accent); font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.date { color:var(--muted); white-space:nowrap; font-size:14px; }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.card { background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:18px; }
+.full { grid-column:1 / -1; }
+.flow { display:grid; gap:8px; }
+.node { border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:6px; padding:10px 12px; background:#fbfcfd; font-weight:650; }
+.arrow { text-align:center; color:var(--muted); font-size:16px; line-height:1; }
+.badge { display:inline-block; border-radius:999px; padding:3px 9px; font-size:12px; font-weight:800; margin-right:6px; }
+.good { color:var(--good); background:#ecfdf3; }
+.bad { color:var(--bad); background:#fef3f2; }
+.warn { color:var(--warn); background:#fffaeb; }
+.checks { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.check { border:1px solid var(--line); border-radius:6px; padding:10px; background:#fbfcfd; }
+figure { margin:0; }
+figure img { display:block; width:100%; border:1px solid var(--line); border-radius:8px; background:#000; }
+figcaption { margin-top:7px; color:var(--muted); font-size:13px; }
+@media (max-width: 860px) { header { display:block; } .date { margin-top:8px; } .grid, .checks { grid-template-columns:1fr; } .full { grid-column:auto; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+<div><p class="kicker">GlassHive QA Story</p><h1>Worker capabilities, live workspace, and callback delivery</h1></div>
+<div class="date">2026-06-16</div>
+</header>
+<section class="grid">
+<div class="card">
+<h2>1. Flow</h2>
+<div class="flow">
+<div class="node">User or Host AI prompt</div><div class="arrow">↓</div>
+<div class="node">LibreChat / GlassHive MCP / GlassHive UI</div><div class="arrow">↓</div>
+<div class="node">GlassHive bootstrap gives files, context, native capability awareness, callback</div><div class="arrow">↓</div>
+<div class="node">Selected worker CLI: Codex or Claude</div><div class="arrow">↓</div>
+<div class="node">Worker chooses native skills/tools when relevant</div><div class="arrow">↓</div>
+<div class="node">Watch / Steer, file actions, chat callback</div>
+</div>
+</div>
+<div class="card">
+<h2>2. RCA</h2>
+<p><span class="badge bad">A</span><strong>Watch desktop was not trustworthy.</strong> A completed file could take over the desktop frame, and noVNC was resetting because websockify inherited a mounted worker-home <code>TMPDIR</code>.</p>
+<p><span class="badge bad">B</span><strong>LibreChat result visibility was unreliable.</strong> Callback delivery and message persistence worked, but the owning conversation message list / <code>updatedAt</code> was stale.</p>
+<p><span class="badge warn">Important</span>The worker produced useful output. The broken layer was the delivery and live-surface substrate around the worker.</p>
+</div>
+<div class="card full">
+<h2>3. Capability Injection References</h2>
+<ul>
+<li><a href="../../../viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/bootstrap.py">bootstrap.py</a> lines 29-89: operating instructions, native capability inventory, completion/self-review contract.</li>
+<li><a href="../../../viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/bootstrap.py">bootstrap.py</a> lines 168-188: writes <code>AGENTS.md</code>, <code>CLAUDE.md</code>, and <code>CODEX.md</code> into the worker workspace.</li>
+<li><a href="../../../viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/docker_sandbox.py">docker_sandbox.py</a> lines 142-179 and 625-689: service temp path, noVNC health, self-heal.</li>
+<li><a href="../../../viventium_v0_4/GlassHive/frontends/glass-drive-ui/src/glass_drive_ui/static/watch.js">watch.js</a> lines 188-193 and 520-539: desktop stays desktop; file deliverables stay explicit actions.</li>
+<li><a href="../../../viventium_v0_4/LibreChat/api/server/routes/viventium/glasshive.js">glasshive.js</a> lines 593-610: visible callback persistence touches conversation metadata.</li>
+</ul>
+</div>
+<div class="card full">
+<h2>4. Fixes</h2>
+<div class="checks">
+<div class="check"><span class="badge good">Fixed</span><br><strong>Desktop surface fidelity</strong><br><code>surface=desktop</code> keeps the workstation desktop as the primary frame.</div>
+<div class="check"><span class="badge good">Fixed</span><br><strong>noVNC health</strong><br>New containers use service-local <code>/tmp</code>; runtime checks <code>/core/rfb.js</code> and repairs noVNC before declaring the view available.</div>
+<div class="check"><span class="badge good">Fixed</span><br><strong>Callback visibility</strong><br>Visible callbacks update the conversation so refresh/reopen surfaces the result.</div>
+</div>
+</div>
+<div class="card">
+<h2>5. Watch Proof</h2>
+<p><strong>Legacy media evidence removed from public-safe acceptance copy.</strong> Text QA found the final result visible with file/workspace links and no callback IDs, HMAC fields, or raw tool-call code.</p>
+</div>
+<div class="card">
+<h2>6. LibreChat Proof</h2>
+<p><strong>Legacy media evidence removed from public-safe acceptance copy.</strong> Text QA found the final result visible with file/workspace links and no callback IDs, HMAC fields, or raw tool-call code.</p>
+</div>
+<div class="card full">
+<h2>7. Verification</h2>
+<ul>
+<li><code>uv run --group dev pytest tests/test_docker_sandbox.py</code> → 30 passed.</li>
+<li><code>uv run --group dev pytest tests/test_server.py::test_launcher_workspace_hive_static_controls</code> → 1 passed.</li>
+<li><code>npm test -- server/routes/viventium/__tests__/glasshive.spec.js --runInBand</code> → 44 passed.</li>
+<li>Browser QA: <code>/core/rfb.js</code> returned 200, desktop frame had one noVNC canvas, file actions were visible, and LibreChat showed the final callback result.</li>
+<li>Post-restart authenticated Chrome QA: final result was visible; raw leak terms found: none.</li>
+</ul>
+</div>
+<div class="card full">
+<h2>8. Operational Reload</h2>
+<p>The local GlassHive and LibreChat stack was restarted after the source/test pass. Health endpoints, worker live payload, noVNC proxy, Watch / Steer, and the LibreChat conversation were rechecked against the freshly loaded code.</p>
+</div>
+<div class="card full">
+<h2>9. Requirement Updates</h2>
+<ul>
+<li><a href="../../../docs/requirements_and_learnings/01_Key_Principles.md">01_Key_Principles.md</a>: live surfaces must be truthful; callback delivery means chat-surfaced, not just outbox-delivered.</li>
+<li><a href="../../../docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md">48_GlassHive_Workstation_Sandbox_Runtime.md</a>: service-local noVNC temp path, health/self-heal, callback conversation touch, Watch surface fidelity.</li>
+<li><a href="../cases.md">qa/glasshive_watch_desktop/cases.md</a>: reusable regression cases <code>GHWATCH-007</code>, <code>GHWATCH-008</code>, <code>GHWATCH-009</code>.</li>
+</ul>
+</div>
+</section>
+</main>
+</body>
+</html>

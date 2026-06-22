@@ -44,7 +44,7 @@ sarcasm, denial, and recent-context carryover.
 - Deep Research on `openAI / gpt-5.4` must ship `model_parameters.reasoning_effort: xhigh` and must
   not drift onto Anthropic/Google-only `thinkingBudget`.
 - When Anthropic is the execution family, only `Red Team`, `Deep Research`, and `Strategic
-  Planning` may use `claude-opus-4-8`; other background agents must stay on
+  Planning` may use `claude-opus-4-7`; other background agents must stay on
   `claude-sonnet-4-5`.
 - Built-in background-agent provider rewrites must replace provider-specific `model_parameters`
   with the canonical bag for the final provider family instead of blindly merging stale keys.
@@ -60,7 +60,7 @@ sarcasm, denial, and recent-context carryover.
 ## Test Cases
 
 1. Anthropic endpoint tests verify Sonnet 4.5 removes `temperature` when enabled thinking becomes
-   active, and Opus 4.8 removes `temperature` for adaptive thinking.
+   active, and Opus 4.7 removes `temperature` for adaptive thinking.
 2. Memory-agent tests verify Anthropic adaptive thinking also strips `temperature`, while disabled
    thinking does not.
 3. Background-cortex service tests verify both:

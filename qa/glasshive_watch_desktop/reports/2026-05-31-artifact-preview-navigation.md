@@ -112,7 +112,7 @@ Browser evidence:
 - Downloading from the visible workspace-file rows returned `FIRST_OK` and `SECOND_OK`, with
   attachment and `nosniff` headers.
 - The loaded UI assets used `watch.js?v=20260531b` and `styles.css?v=20260531b`.
-- A browser screenshot was captured showing the expanded panel with both files and their actions.
+- Browser DOM/text QA captured the expanded panel with both files and their actions.
 - Final smoke after the breadth-first runtime deploy repeated the visible multi-file check and exact
   marker downloads.
 
@@ -142,7 +142,7 @@ Browser evidence:
 - Artifact list was hidden.
 - Visible text did not include `Open file`, `Download file`, or `Workspace files`.
 - The loaded UI asset used `watch.js?v=20260531b`.
-- A browser screenshot was captured showing the text-only result with no file actions.
+- Browser DOM/text QA captured the text-only result with no file actions.
 - Final smoke after the breadth-first runtime deploy repeated the no-file check.
 
 Observed result:

@@ -74,6 +74,7 @@ DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
 ) * 1000
 SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
+DEFAULT_VIVENTIUM_TIMEZONE = "America/Toronto"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 DEFAULT_ASSEMBLYAI_STT_MODEL = "u3-rt-pro"
@@ -418,7 +419,7 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         allowed_profiles = ", ".join(sorted(SUPPORTED_GLASSHIVE_WORKER_PROFILES))
         raise SystemExit(
             "integrations.glasshive.host_worker.default_worker_profile must be one of "
-            f"{allowed_profiles}; got {default_worker_profile!r}"
+            f"{allowed_profiles}"
         )
     default_execution_mode = str(host_worker.get("default_execution_mode") or "host").strip().lower()
     if default_execution_mode not in {"host", "docker"}:
@@ -2332,7 +2333,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     memory_hardening = resolve_memory_hardening_settings(config)
     memory_hardening_model = resolve_memory_hardening_model_tuple(config, memory_hardening)
     global_settings = config.get("settings", {}) if isinstance(config.get("settings"), dict) else {}
-    configured_default_timezone = str(global_settings.get("timezone") or "").strip()
+    default_timezone = str(
+        global_settings.get("timezone")
+        or memory_hardening.get("timezone")
+        or DEFAULT_VIVENTIUM_TIMEZONE
+    ).strip() or DEFAULT_VIVENTIUM_TIMEZONE
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
     openid_settings = auth_settings["openid"]
@@ -2388,6 +2393,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_PLAYGROUND_VARIANT": playground_variant,
         "PLAYGROUND_VARIANT": playground_variant,
         "VIVENTIUM_LOG_LEVEL": runtime.get("log_level", "info"),
+        "VIVENTIUM_DEFAULT_TIMEZONE": default_timezone,
         "VIVENTIUM_USE_GENERATED_LIBRECHAT_YAML": "1",
         "VIVENTIUM_LC_API_PORT": str(profile["lc_api_port"]),
         "VIVENTIUM_LC_FRONTEND_PORT": str(profile["lc_frontend_port"]),
@@ -2569,9 +2575,6 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
     }
 
-    if configured_default_timezone:
-        env["VIVENTIUM_DEFAULT_TIMEZONE"] = configured_default_timezone
-
     if openid_settings["enabled"]:
         required_openid = {
             "runtime.auth.openid.client_id": openid_settings["client_id"],
@@ -2644,8 +2647,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["WPR_IDLE_DESKTOP_PRIME_BROWSER"] = "true"
         env["GLASSHIVE_HOST_WORKERS_ENABLED"] = "true" if glasshive_host_worker["enabled"] else "false"
         env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] = str(glasshive_host_worker["default_worker_profile"])
-        env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_HOST_WORKSPACE_ROOT"] = str(glasshive_host_worker["workspace_root"])
+        env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_DEFAULT_EXECUTION_MODE"] = str(glasshive_host_worker["default_execution_mode"])
         env["WPR_HOST_DESTRUCTIVE_CONFIRMATION"] = "true" if glasshive_host_worker["destructive_confirmation_enabled"] else "false"
         env["WPR_HOST_ADVISORY_REVIEWER_ENABLED"] = "true" if glasshive_host_worker["advisory_reviewer_enabled"] else "false"

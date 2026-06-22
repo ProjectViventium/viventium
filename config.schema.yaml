@@ -390,17 +390,11 @@ properties:
                 type: object
                 properties:
                   json:
-                    oneOf:
-                      - type: object
-                      - type: array
-                      - type: string
+                    type: object
                   file:
                     type: string
               runtime_requirements_json:
-                oneOf:
-                  - type: object
-                  - type: array
-                  - type: string
+                type: object
               runtime_requirements_file:
                 type: string
               codex_native_mcp_allowlist:

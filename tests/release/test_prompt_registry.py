@@ -103,9 +103,9 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert "{{current_user}}" in agents["mainAgent"]["instructions"]
     assert "For important actions, If unsure which service the user means, ask." in agents["mainAgent"]["instructions"]
     assert "configured/available connected email providers" in agents["mainAgent"]["instructions"]
-    assert "Connected Accounts handoff for immediate checks" in agents["mainAgent"]["instructions"]
-    assert "explicitly confirmed quick email/calendar updates" in agents["mainAgent"]["instructions"]
-    assert "Do not use GlassHive when the Connected Accounts handoff is the direct, sufficient path" in (
+    assert "read-only Connected Accounts handoff" in agents["mainAgent"]["instructions"]
+    assert "immediate checks and quick updates" in agents["mainAgent"]["instructions"]
+    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff" in (
         agents["mainAgent"]["instructions"]
     )
     assert "For immediate read-only connected-account checks or quick updates" in (
@@ -406,7 +406,6 @@ def _load_glasshive_instruction_namespace():
     ]
     namespace: dict[str, object] = {"os": os, "shutil": shutil}
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(GLASSHIVE_MCP_SERVER), "exec"), namespace)
-    namespace["_host_profile_available"] = lambda profile: True
     return namespace
 
 
@@ -468,13 +467,12 @@ def test_live_data_prompt_uses_non_important_best_judgment_for_connected_inbox()
     ) in rendered
     assert "configured/available connected email providers" in rendered
     assert "do not defer the check to background cortices" in rendered
-    assert "Connected Accounts handoff for immediate checks" in rendered
-    assert "explicitly confirmed quick email/calendar updates" in rendered
+    assert "read-only Connected Accounts handoff for immediate checks and quick updates" in rendered
     assert "pass broker/MCP/tool availability as context" in rendered
     assert "memory-derived priorities" in rendered
     assert "For vague user adjectives like urgent or important, pass the adjective through" in rendered
     assert "trust the GlassHive worker to choose the best path" in rendered
-    assert "Do not use GlassHive when the Connected Accounts handoff is the direct, sufficient path" in rendered
+    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff" in rendered
 
 
 def test_glasshive_worker_prompt_prefers_broker_tools_over_browser_for_connected_accounts(

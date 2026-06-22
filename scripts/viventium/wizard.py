@@ -306,12 +306,6 @@ def normalize_preset(config: dict[str, Any]) -> dict[str, Any]:
     if voice_mode == "local" and "wing_mode" not in voice and "shadow_mode" not in voice:
         voice["wing_mode"] = {"default_enabled": False}
     integrations = config.setdefault("integrations", {})
-    glasshive = integrations.setdefault("glasshive", {})
-    glasshive.setdefault("enabled", True)
-    glasshive_host_worker = glasshive.setdefault("host_worker", {})
-    glasshive_host_worker.setdefault("enabled", True)
-    glasshive_host_worker.setdefault("workspace_root", "~/viventium")
-    glasshive_host_worker.setdefault("default_execution_mode", "host")
     integrations.setdefault("code_interpreter", {}).setdefault("enabled", False)
     web_search = integrations.setdefault("web_search", {})
     web_search.setdefault("enabled", False)

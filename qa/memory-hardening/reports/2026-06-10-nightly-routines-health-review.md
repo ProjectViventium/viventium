@@ -102,7 +102,7 @@
 | `systemsetup` timezone | Not available without administrator access |
 | Automation fire time | Intended `2026-06-10T11:15Z` / `13:15 <local-tz-abbrev>`; audit started about one minute later |
 | Previous automation run from prompt | `2026-06-09T11:31:54.144Z` |
-| Automation cadence note | observer automation RRULE is UTC in this local observer environment |
+| Automation cadence note | Codex Desktop RRULE is UTC in this local Desktop environment |
 
 ## Due Windows Used
 
@@ -118,7 +118,7 @@
 Timezone note: the generated memory-hardening timezone context remained `<configured-local-timezone>`,
 while the current system timezone was `<observed-system-timezone>`. Per the June 8 contract, QA used the
 public-safe trigger receipt as the authoritative scheduled-delivery evidence and did not treat
-timezone timezone shifts, DST, or launchd wake coalescing as degradation when the receipt finalized cleanly.
+timezone shifts, DST, or launchd wake coalescing as degradation when the receipt finalized cleanly.
 
 ## Routine Results
 
