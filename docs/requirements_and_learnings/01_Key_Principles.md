@@ -233,6 +233,11 @@ are the core metric of the viventium project that we must always evaluate in tes
   part of the substrate expectation: managed policy, profile installation, and connected bridge
   state must be tested separately. Workers should choose these skills/extensions when relevant and
   should not be forced into any prompt-specific skill, provider, file format, or rubric.
+- GlassHive workspace native browser/computer work follows **The Golden GlassHive Rules**, the named
+  `GH-WNBC-001` through `GH-WNBC-007` rules in
+  `48_GlassHive_Workstation_Sandbox_Runtime.md`: less-is-more delegation, faithful capability
+  context, additive native projection, browser/computer as native worker surface, isolated workspace
+  bootstrap, no residual warning UX, and user-grade native capability QA.
 - Deploy UI/client assets only with their matching backend/shared-package contract unless the
   compatibility boundary is explicitly proven. A client-dist-only overlay can be valid for a narrow
   static fix only after a real browser smoke proves the composer, model selector, MCP/tools row,

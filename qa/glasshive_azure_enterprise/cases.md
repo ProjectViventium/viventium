@@ -120,19 +120,26 @@
   fresh bounded worker-view session without exposing `gh_token`. Artifact `/v1/link-refs/{ref}`
   routes remain owner-scoped routes through either trusted proxy owner assertion or the active
   worker-view cookie minted for the same worker.
-- Expected: a fresh View / Steer `/r/{ref}` redirects to a tokenless workspace URL and sets an
-  HttpOnly worker cookie; the same ref still works after the original signed token expires when
-  `GLASSHIVE_LINK_REF_TTL_SECONDS=0`; a mismatched asserted owner receives `404`; artifact refs
-  without owner context receive `401`; artifact refs opened from the active Watch / Steer session
-  return the preview/download surface; active watch polling refreshes the bounded worker-view cookie
-  instead of aging into repeated `401`; visible text, link hrefs, copy text, API logs, UI logs, and
-  websocket logs do not retain raw signed URLs or raw short-ref capabilities; repeated live polling
-  reuses artifact refs instead of growing unbounded rows; worker-view opens are audited; worker
-  termination revokes outstanding refs for that worker.
+- Expected: a fresh owner-matched View / Steer `/r/{ref}` redirects to a tokenless workspace URL and
+  sets an HttpOnly worker cookie; the same ref still works after the original signed token expires
+  when `GLASSHIVE_LINK_REF_TTL_SECONDS=0`; a missing trusted browser identity assertion receives
+  `401`; a mismatched asserted owner receives `404`; artifact refs without owner context receive
+  `401`; artifact refs opened from the active Watch / Steer session return the preview/download
+  surface; active watch polling refreshes the bounded worker-view cookie instead of aging into
+  repeated `401`; visible text, link hrefs, copy text, API logs, UI logs, and websocket logs do not
+  retain raw signed URLs or raw short-ref capabilities; repeated live polling reuses artifact refs
+  instead of growing unbounded rows; owner matching defaults to strict `user_id` but explicit
+  `GLASSHIVE_OWNER_IDENTITY_CLAIMS` or per-owner aliases can authorize known non-SSO identity
+  bridges; worker-view opens are audited; if
+  `GLASSHIVE_WORKSPACE_LINK_AUTO_RESUME=true`, a workspace `/r/{ref}` requests resume before
+  redirect while idle/watch caps still release forgotten compute; worker termination revokes
+  outstanding refs for that worker.
 - Forbidden: chat-visible `gh_token`, expired-token error on a durable workspace ref, direct
-  unauthenticated artifact download, cross-owner workspace access when identity is asserted, or
-  durable refs/open tabs becoming compute leases that keep idle workers running, durable refs
-  surviving explicit worker termination, or short-ref paths appearing verbatim in application logs.
+  unauthenticated workspace redirect/cookie mint/auto-resume, direct unauthenticated artifact
+  download, cross-owner workspace access when identity is asserted, or durable refs/open tabs
+  becoming compute leases that keep idle workers running, durable refs surviving explicit worker
+  termination, broad/wildcard owner aliases, owner email/alias matching enabled by default, or
+  short-ref paths appearing verbatim in application logs.
 - Evidence: runtime/UI short-link regression tests, browser-opened chat link, hidden copy/accessibility
   text inspection, VM/UI/API log redaction check, DB/runtime state showing idle/pause controls still
   own compute release, link-ref DB row-count/revocation checks, and `worker.view_opened` event

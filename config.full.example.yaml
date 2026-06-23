@@ -213,6 +213,18 @@ integrations:
       # codex_ignore_user_config: false
       # codex_disable_features: ""
       # claude_enable_chrome: true
+    # Enterprise-only owner identity bridging. Defaults are strict user_id matching and no aliases.
+    # Use explicit aliases only when browser auth identity and MCP/chat owner identity are known to
+    # represent the same user in a non-SSO deployment.
+    # enterprise:
+    #   workspace_links:
+    #     # Default false. When true, authenticated /r/{ref} workspace links request a lifecycle
+    #     # resume before redirecting. Pair with idle/watch caps so forgotten tabs release compute.
+    #     auto_resume_on_open: false
+    #   owner_identity:
+    #     claims: [user_id]
+    #     aliases:
+    #       worker-owner@example.com: [browser-login-alias@example.com]
   code_interpreter:
     enabled: false
   telegram:

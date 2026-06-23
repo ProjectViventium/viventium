@@ -771,6 +771,8 @@ summarize the visible result here.
   5. Resolve `/r/{ref}` and `/v1/link-refs/{ref}` like a user; `/r` should set the worker cookie
      and land on a tokenless watch/project/desktop URL, while raw `gh_token` targets may appear
      only as server-side ref/open implementation details or legacy inbound compatibility.
+     In enterprise mode, verify default strict `user_id` owner matching, configured `user_id,email`
+     matching, and configured per-owner alias matching with synthetic identities.
   6. Emit synthetic API/UI/WebSocket log lines containing `gh_token`, `gh_sig`, `gh_exp`, `gh_kind`,
      and `/v1/signed-links/{token}` and verify log filtering redacts them.
   7. Create or resume a Codex-profile worker while omitting legacy `backend`, then with a legacy
@@ -778,11 +780,12 @@ summarize the visible result here.
      runtime instead of surfacing `openclaw` for Codex.
 - Expected result: public payloads expose only short refs and compact status/result fields; raw ids
   are diagnostics-only; signed-token query strings and legacy signed-link token paths are redacted
-  from logs; `/r` redirects leave the browser on tokenless URLs; Codex workers report `codex-cli`
+  from logs; `/r` redirects leave the browser on tokenless URLs; configured owner-identity claims
+  and aliases open only the intended synthetic owner's links; Codex workers report `codex-cli`
   backend truth.
 - Forbidden result: raw `gh_token`, `gh_sig`, `gh_exp`, `gh_kind`, `/v1/signed-links/{token}`, raw
   run/project/worker ids, host guidance, or `openclaw` backend labels in default public Codex
-  payloads/logs.
+  payloads/logs; broad or wildcard owner aliases; email/alias matching enabled by default.
 - Evidence to capture: automated MCP/API/UI test output, representative sanitized payload shapes,
   browser redirect/open behavior, sanitized log excerpts, and live/cloud config revision when
   production deployment is in scope.

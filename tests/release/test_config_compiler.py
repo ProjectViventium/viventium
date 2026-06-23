@@ -1124,6 +1124,13 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
                         "max_workspaces_per_user": 15,
                         "max_workspaces_per_tenant": 60,
                     },
+                    "owner_identity": {
+                        "claims": ["user_id", "email"],
+                        "aliases": {
+                            "worker-owner@example.com": ["browser-login-alias@example.com"],
+                        },
+                    },
+                    "workspace_links": {"auto_resume_on_open": True},
                     "provider_env": {"allowlist": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "PORTKEY_API_KEY"]},
                     "artifact_download_max_bytes": 1048576,
                     "oauth": {
@@ -1181,11 +1188,16 @@ def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_pat
     assert env["WPR_BOOTSTRAP_SOURCE_ROOTS"] == "/mnt/librechat/uploads"
     assert env["GLASSHIVE_IDLE_TERMINATE_AFTER_S"] == "900"
     assert env["GLASSHIVE_IDLE_REAPER_INTERVAL_S"] == "30"
+    assert env["GLASSHIVE_WORKSPACE_LINK_AUTO_RESUME"] == "true"
     assert env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER"] == "2"
     assert env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT"] == "8"
     assert env["GLASSHIVE_MAX_WORKSPACES_PER_USER"] == "15"
     assert env["GLASSHIVE_MAX_WORKSPACES_PER_TENANT"] == "60"
     assert env["GLASSHIVE_ARTIFACT_DOWNLOAD_MAX_BYTES"] == "1048576"
+    assert env["GLASSHIVE_OWNER_IDENTITY_CLAIMS"] == "user_id,email"
+    assert env["GLASSHIVE_OWNER_IDENTITY_ALIASES_JSON"] == (
+        '{"worker-owner@example.com":["browser-login-alias@example.com"]}'
+    )
     assert env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] == "https://api.enterprise.example.com/api/viventium/glasshive/callback"
 
     servers = config_compiler.build_mcp_servers(config, {"lc_api_port": 3080}, "agent-main")

@@ -404,6 +404,10 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     - emit `GLASSHIVE_ENTERPRISE_MODE=true`, the configured auth mode, tenant id, idle reaper
       policy, quota caps, artifact cap, upload root, bootstrap source roots, and provider env
       allowlist
+    - emit optional `GLASSHIVE_OWNER_IDENTITY_CLAIMS`,
+      `GLASSHIVE_OWNER_IDENTITY_ALIASES_JSON`, or `GLASSHIVE_OWNER_IDENTITY_ALIASES_FILE` only from
+      `integrations.glasshive.enterprise.owner_identity`; defaults stay strict `user_id` matching
+      with no aliases so SSO deployments do not silently widen owner scope
     - emit `GLASSHIVE_SIGNED_LINK_SECRET` for enterprise mode. If no dedicated
       `integrations.glasshive.enterprise.signed_link_secret` is configured, compile a tenant-scoped
       derivative from the call-session secret; explicitly reject values that equal the service token

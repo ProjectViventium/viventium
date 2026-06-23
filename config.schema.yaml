@@ -444,6 +444,34 @@ properties:
                 properties:
                   enabled:
                     type: boolean
+          enterprise:
+            type: object
+            properties:
+              workspace_links:
+                type: object
+                properties:
+                  auto_resume_on_open:
+                    type: boolean
+              owner_identity:
+                type: object
+                properties:
+                  claims:
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+                          enum: [user_id, email]
+                  aliases:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - type: string
+                        - type: array
+                          items:
+                            type: string
+                  aliases_file:
+                    type: string
       skyvern:
         type: object
       openclaw:

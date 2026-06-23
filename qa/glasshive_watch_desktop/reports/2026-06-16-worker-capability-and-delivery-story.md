@@ -84,7 +84,7 @@ live-surface truthfulness around the worker.
   - desktop frame contained a noVNC canvas.
   - delivered file actions were visible.
   - authenticated Chrome LibreChat showed the final callback result.
-  - post-restart authenticated Chrome QA: final result was visible; raw leak terms found: none.
+  - post-restart browser QA: `hasFinalResult=true`; raw leak terms found: none.
 
 ## Updated Requirements / QA Gates
 
