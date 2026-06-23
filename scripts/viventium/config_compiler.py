@@ -251,6 +251,12 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
     oauth = enterprise.get("oauth") or {}
     if not isinstance(oauth, dict):
         oauth = {}
+    owner_identity = enterprise.get("owner_identity") or auth.get("owner_identity") or {}
+    if not isinstance(owner_identity, dict):
+        owner_identity = {}
+    workspace_links = enterprise.get("workspace_links") or {}
+    if not isinstance(workspace_links, dict):
+        workspace_links = {}
     oauth_enabled = resolve_bool(oauth.get("enabled"), False)
     if enabled and oauth_enabled:
         for key in ("authorization_url", "token_url", "redirect_uri"):
@@ -297,6 +303,39 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
         worker_env_allowlist_value = ",".join(str(item).strip() for item in worker_env_allowlist if str(item).strip())
     else:
         worker_env_allowlist_value = str(worker_env_allowlist or "").strip()
+    owner_identity_claims = owner_identity.get("claims")
+    if isinstance(owner_identity_claims, list):
+        owner_identity_claims_value = ",".join(str(item).strip() for item in owner_identity_claims if str(item).strip())
+    else:
+        owner_identity_claims_value = str(owner_identity_claims or "").strip()
+    if owner_identity_claims_value:
+        claim_names = {item.strip() for item in owner_identity_claims_value.split(",") if item.strip()}
+        invalid_claims = claim_names - {"user_id", "email"}
+        if invalid_claims:
+            raise SystemExit(
+                "integrations.glasshive.enterprise.owner_identity.claims may include only user_id and email"
+            )
+    owner_identity_aliases = owner_identity.get("aliases") or {}
+    owner_identity_aliases_json = ""
+    if owner_identity_aliases:
+        if not isinstance(owner_identity_aliases, dict):
+            raise SystemExit("integrations.glasshive.enterprise.owner_identity.aliases must be a mapping")
+        cleaned_aliases: dict[str, list[str]] = {}
+        for owner, aliases in owner_identity_aliases.items():
+            owner_id = str(owner or "").strip()
+            if not owner_id:
+                continue
+            raw_aliases = [aliases] if isinstance(aliases, str) else aliases
+            if not isinstance(raw_aliases, list):
+                raise SystemExit(
+                    "integrations.glasshive.enterprise.owner_identity.aliases values must be strings or lists"
+                )
+            clean_values = [str(item).strip() for item in raw_aliases if str(item).strip()]
+            if clean_values:
+                cleaned_aliases[owner_id] = clean_values
+        if cleaned_aliases:
+            owner_identity_aliases_json = json.dumps(cleaned_aliases, sort_keys=True, separators=(",", ":"))
+    owner_identity_aliases_file = str(owner_identity.get("aliases_file") or "").strip()
     return {
         "enabled": enabled,
         "mcp_url": mcp_url,
@@ -338,6 +377,10 @@ def resolve_glasshive_enterprise_settings(config: dict[str, Any]) -> dict[str, A
             "integrations.glasshive.enterprise.artifact_download_max_bytes",
         ),
         "worker_env_allowlist": worker_env_allowlist_value,
+        "workspace_link_auto_resume": resolve_bool(workspace_links.get("auto_resume_on_open"), False),
+        "owner_identity_claims": owner_identity_claims_value,
+        "owner_identity_aliases_json": owner_identity_aliases_json,
+        "owner_identity_aliases_file": owner_identity_aliases_file,
         "oauth_enabled": oauth_enabled,
         "oauth": oauth,
     }
@@ -2717,11 +2760,20 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             env["GLASSHIVE_PROJECT_PROVIDER_ENV"] = "true"
             env["GLASSHIVE_IDLE_TERMINATE_AFTER_S"] = str(glasshive_enterprise["idle_terminate_after_s"])
             env["GLASSHIVE_IDLE_REAPER_INTERVAL_S"] = str(glasshive_enterprise["idle_reaper_interval_s"])
+            env["GLASSHIVE_WORKSPACE_LINK_AUTO_RESUME"] = (
+                "true" if glasshive_enterprise["workspace_link_auto_resume"] else "false"
+            )
             env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER"] = str(glasshive_enterprise["max_active_workers_per_user"])
             env["GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT"] = str(glasshive_enterprise["max_active_workers_per_tenant"])
             env["GLASSHIVE_MAX_WORKSPACES_PER_USER"] = str(glasshive_enterprise["max_workspaces_per_user"])
             env["GLASSHIVE_MAX_WORKSPACES_PER_TENANT"] = str(glasshive_enterprise["max_workspaces_per_tenant"])
             env["GLASSHIVE_ARTIFACT_DOWNLOAD_MAX_BYTES"] = str(glasshive_enterprise["artifact_download_max_bytes"])
+            if glasshive_enterprise["owner_identity_claims"]:
+                env["GLASSHIVE_OWNER_IDENTITY_CLAIMS"] = str(glasshive_enterprise["owner_identity_claims"])
+            if glasshive_enterprise["owner_identity_aliases_json"]:
+                env["GLASSHIVE_OWNER_IDENTITY_ALIASES_JSON"] = str(glasshive_enterprise["owner_identity_aliases_json"])
+            if glasshive_enterprise["owner_identity_aliases_file"]:
+                env["GLASSHIVE_OWNER_IDENTITY_ALIASES_FILE"] = str(glasshive_enterprise["owner_identity_aliases_file"])
             if env.get("OPENAI_BASE_URL"):
                 env.setdefault("WPR_OPENCLAW_USE_CUSTOM_PROVIDER", "1")
                 env.setdefault("WPR_OPENCLAW_WIRE_API", "openai-completions")

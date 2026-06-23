@@ -20,7 +20,7 @@
 | `MEMHARD-001` | SKIPPED / PASS-SAFETY | Jun 10 launchd trigger receipt finalized with `status=skipped`, `reason=on_battery_power`, `exit_code=0` | No model-backed apply or transcript vector work should be forced on battery |
 | `MEMHARD-002` | PASS | This public-safe report plus public-safety regression test | Private prompt, transcript, memory, token, account, path, callback payload, and screenshot evidence omitted |
 | `MEMHARD-003` | PASS / SKIPPED | Power receipt recorded on-battery skip; current audit power later showed AC charging and no thermal/performance warning | Power gate behaved correctly at fire time |
-| `MEMHARD-005` | PASS-SAFETY | Loaded LaunchAgent uses direct wrapper with explicit scheduled trigger marker and `StartCalendarInterval` hour 3 minute 0 | Generated timezone context still needs careful interpretation during travel |
+| `MEMHARD-005` | PASS-SAFETY | Loaded LaunchAgent uses direct wrapper with explicit scheduled trigger marker and `StartCalendarInterval` hour 3 minute 0 | Generated timezone context still needs careful interpretation during timezone-shift |
 | `MEMHARD-010` | PASS | Jun 9 and Jun 10 schedule trigger receipts exist and are public-safe | Both recent receipts finalized as power skips with no run id, as expected |
 | `MTM-006` | PARTIAL / DEGRADED | Transcript indexes total 50 processed and 0 pending/deferred/skipped, but RAG health failed | Browser recall/source-card proof blocked by RAG/Docker unavailable |
 | `RAG-001` | FAIL / DEGRADED | Generated config expects local RAG API, but health/metrics connection failed and Docker socket was unavailable | This is a live prerequisite failure, not just an unrun proof gap |
@@ -97,10 +97,10 @@
 
 | Field | Evidence |
 | --- | --- |
-| Audit start | `2026-06-10 13:16:05 <local-tz-abbrev>` / `2026-06-10T11:16:05Z` |
-| System timezone | `<observed-system-timezone>` from `/etc/localtime`; `date` reported `<local-tz-abbrev> +0200` |
+| Audit start | `2026-06-10 13:16:05 <observed-local-tz-abbrev>` / `2026-06-10T11:16:05Z` |
+| System timezone | `<observed-system-timezone>` from `/etc/localtime`; `date` reported `<observed-local-tz-abbrev> +0200` |
 | `systemsetup` timezone | Not available without administrator access |
-| Automation fire time | Intended `2026-06-10T11:15Z` / `13:15 <local-tz-abbrev>`; audit started about one minute later |
+| Automation fire time | Intended `2026-06-10T11:15Z` / `13:15 <observed-local-tz-abbrev>`; audit started about one minute later |
 | Previous automation run from prompt | `2026-06-09T11:31:54.144Z` |
 | Automation cadence note | Codex Desktop RRULE is UTC in this local Desktop environment |
 
@@ -108,17 +108,17 @@
 
 | Routine | Source schedule | Due window local | Due window UTC | Grace used | Actual evidence | Judgment |
 | --- | --- | --- | --- | --- | --- | --- |
-| Memory hardening, generated context | `0 3 * * *`, timezone context `<configured-local-timezone>` | Jun 10 `09:00-09:45 <local-tz-abbrev>` | Jun 10 `07:00-07:45Z` | 45 minutes | Receipt fired `09:13 <local-tz-abbrev>` / `07:13Z`, skipped on battery, exit 0 | SKIPPED / PASS-SAFETY |
-| Memory hardening, LaunchAgent nominal local clock | `StartCalendarInterval` hour 3 minute 0 on current system timezone | Jun 10 `03:00-03:45 <local-tz-abbrev>` | Jun 10 `01:00-01:45Z` | 45 minutes | LaunchAgent receipt arrived later after timezone/wake context | Timing note only; not a failure by itself |
-| Workbench nightly reflection | Workbench daily `03:00`, `<workbench-schedule-timezone>` | Jun 10 `12:00-12:45 <local-tz-abbrev>` | Jun 10 `10:00-10:45Z` | 45 minutes | Started `10:19:51Z`, completed `10:34:18Z` | PASS |
+| Memory hardening, generated context | `0 3 * * *`, timezone context `<configured-local-timezone>` | Jun 10 `09:00-09:45 <observed-local-tz-abbrev>` | Jun 10 `07:00-07:45Z` | 45 minutes | Receipt fired `09:13 <observed-local-tz-abbrev>` / `07:13Z`, skipped on battery, exit 0 | SKIPPED / PASS-SAFETY |
+| Memory hardening, LaunchAgent nominal local clock | `StartCalendarInterval` hour 3 minute 0 on current system timezone | Jun 10 `03:00-03:45 <observed-local-tz-abbrev>` | Jun 10 `01:00-01:45Z` | 45 minutes | LaunchAgent receipt arrived later after timezone-shift/wake context | Timing note only; not a failure by itself |
+| Workbench nightly reflection | Workbench daily `03:00`, `<workbench-schedule-timezone>` | Jun 10 `12:00-12:45 <observed-local-tz-abbrev>` | Jun 10 `10:00-10:45Z` | 45 minutes | Started `10:19:51Z`, completed `10:34:18Z` | PASS |
 | Transcript ingest/vector maintenance | Memory-hardening scheduled run | Same as memory hardening | Same as memory hardening | 45 minutes | No model/vector run because power gate skipped before work | SKIPPED today; latest successful artifacts Jun 8 |
-| User-level morning schedules | User-level daily `08:00`, `<workbench-schedule-timezone>` | Jun 10 `17:00 <local-tz-abbrev>` | Jun 10 `15:00Z` | Not applied | Audit ran before due time | NOT DUE |
+| User-level morning schedules | User-level daily `08:00`, `<workbench-schedule-timezone>` | Jun 10 `17:00 <observed-local-tz-abbrev>` | Jun 10 `15:00Z` | Not applied | Audit ran before due time | NOT DUE |
 | Prompt benchmark/eval routines | No separate due scheduled routine found | Not due | Not due | Not applied | Supporting evals were run manually | NOT DUE |
 
-Timezone note: the generated memory-hardening timezone context remained `<configured-local-timezone>`,
+Timezone-shift/timezone note: the generated memory-hardening timezone context remained `<configured-local-timezone>`,
 while the current system timezone was `<observed-system-timezone>`. Per the June 8 contract, QA used the
 public-safe trigger receipt as the authoritative scheduled-delivery evidence and did not treat
-timezone shifts, DST, or launchd wake coalescing as degradation when the receipt finalized cleanly.
+timezone-shift, DST, or launchd wake coalescing as degradation when the receipt finalized cleanly.
 
 ## Routine Results
 

@@ -13,7 +13,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 | `GHHOST-003` | One-shot delegation preserves instruction precision without forced canned status | Assistant can self-check the delegated instruction and acknowledges in its own voice | MCP tool result, web chat, callback result | GlassHive `test_mcp_server.py` plus browser callback QA | PARTIAL (2026-05-18 MCP/runtime QA; browser callback run pending) |
 | `GHHOST-004` | Artifact discovery excludes runtime/browser scratch state and only promotes user-facing deliverables. | Users receive the actual worker output, not Chrome extension capture pages, browser profile data, uploaded-source metadata, or temporary scratch files. | GlassHive API/MCP artifacts, live payload, artifact open/download links, browser preview | GlassHive `test_api.py`, `test_mcp_server.py`, and real-browser artifact-open QA | PASS/PARTIAL 2026-06-22: local artifact-scope/browser preview coverage passed for synthetic scratch exclusions and seven deliverable types; provider-backed live callback path remains. |
 | `GHHOST-005` | Host and workstation workers preserve native CLI/browser/computer capability while adding broker MCP grants. | A user can ask unknown future work and the selected worker can decide using its full native capability surface plus brokered tools. | Host Codex/Claude launch, worker-local config, workspace Codex path, runtime preflight, logs | `test_profile_runtime.py`, real `codex mcp list` capability probe, Claude help/launch probe, worker config inspection | PASS/PARTIAL (2026-06-14 source/runtime probes and targeted tests; live post-change worker launch still required after runtime rebuild/restart) |
-| `GHHOST-006` | Bootstrapped workspace images include AI-worker browser extensions and native skill awareness without forcing workflows. | A new user's workspace worker starts with truthful Claude/Codex browser-extension substrate and worker-visible skill inventory. | Docker/workstation image, Chromium/Chrome profile, Codex/Claude worker prompts, worker logs | `test_docker_sandbox.py`, `test_bootstrap.py`, `test_profile_runtime.py`, `glasshive-browser-extension-check`, real browser/Computer Use bridge QA | PARTIAL/PASS (2026-06-16 `docs4` cold build passed after npm-cache cleanup; image smoke proved Claude 2.1.178, Codex 0.140.0, document tooling, extension policy; product-managed disposable worker reached both extension IDs `profile-installed`; connected CLI/app bridge QA still pending) |
+| `GHHOST-006` | Bootstrapped workspace images include AI-worker browser extensions, native messaging hosts, and native skill awareness without forcing workflows. | A new user's workspace worker starts with truthful Claude/Codex browser-extension substrate and worker-visible skill inventory. | Docker/workstation image, Chromium/Chrome profile, Codex/Claude worker prompts, worker logs | `test_docker_sandbox.py`, `test_bootstrap.py`, `test_profile_runtime.py`, `glasshive-browser-extension-check`, real browser/Computer Use bridge QA | PASS/PARTIAL 2026-06-23: `docs6` build and managed-worker QA proved both CRXs installed, Claude native host installed and invoked, and Codex visibly reproduced disconnected when the first-party Linux native-host bundle plus node-repl provisioning were absent. |
 
 ## `GHHOST-001` - Core User Flow
 
@@ -154,17 +154,18 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   image is present; use only synthetic public-safe browser/computer tasks.
 - Steps:
   1. Inspect/generated-build the workstation Dockerfile and verify the default image tag is
-     `workers-projects-runtime-workstation:phase1-node22-docs4`.
+     `workers-projects-runtime-workstation:phase1-node22-docs6`.
   2. Verify Codex and Claude Code package specs are pinned to dated, QA-checked stable versions, or
      that any override has matching version and capability evidence.
   3. Verify managed policy exists for both Chromium and Google Chrome locations and includes
      `fcoeoabgfenejglbffodgkkbkcdhcgfn;https://clients2.google.com/service/update2/crx` and
      `hehggadaopoacecdllhhajmbjkdcmajg;https://clients2.google.com/service/update2/crx`.
   4. Run `glasshive-browser-extension-check` inside the image/container. For full acceptance after
-     launching the browser, rerun with profile-required validation and record whether profile install
-     is complete or still pending.
+     launching the browser, rerun profile and native-host validation and record whether profile
+     install is complete, native messaging is installed, or a vendor bundle is still pending.
   5. Open the workspace browser/desktop like a user and verify the browser-use extension bridge is
-     connected for the selected worker type, or record the exact auth/bridge blocker.
+     connected or truthfully record the exact auth/bridge/provisioning blocker. Do not add user-facing
+     warning UX to compensate for a substrate provisioning issue.
   6. Inspect generated worker `AGENTS.md`, host harness prompts, and Codex/Claude compatibility files
      to verify the native skill inventory is present and framed as optional capability selection.
   7. Verify workstation Codex compatible-provider launch does not disable `plugins`,
@@ -182,12 +183,13 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 - Automation: `viventium_v0_4/GlassHive/runtime_phase1/tests/test_docker_sandbox.py`,
   `viventium_v0_4/GlassHive/runtime_phase1/tests/test_bootstrap.py`, and
   `viventium_v0_4/GlassHive/runtime_phase1/tests/test_profile_runtime.py`.
-- Last run: PARTIAL/PASS (2026-06-16 targeted policy/prompt/command regression tests passed after
-  source update; `docs4` cold image build passed after Docker prune and npm-cache cleanup; image
-  smoke proved Claude Code `2.1.178`, Codex CLI `0.140.0`, LibreOffice, Pandoc, Python document
-  libraries, and `glasshive-browser-extension-check`; a product-managed disposable worker container
-  `wpr-wrk-docs4-profile-qa-20260616` used the `docs4` image and reported both extension IDs
-  `profile-installed`. Live CLI/app bridge connection QA remains required before release-complete).
+- Last run: PASS/PARTIAL 2026-06-23. `docs6` source, image, and managed-worker QA proved Codex
+  CLI `0.142.0`, Claude Code `2.1.186`, both Chrome Web Store extension IDs `profile-installed`,
+  Claude native-host manifest/wrapper installation, and an active `claude --chrome-native-host`
+  process spawned by Chromium. Codex remains partial in Linux workstation mode until a real
+  first-party Codex Chrome native-host bundle and reachable node-repl executable are provisioned
+  through the documented worker-local config; the Codex popup visibly reproduced `Disconnected`
+  without those prerequisites. See `reports/2026-06-23-workspace-native-browser-connectors.md`.
 
 ## Natural User Use Case Checklist
 
@@ -202,4 +204,4 @@ rows before claiming a pass when the feature behavior changes.
 | `GHHOST-UC-004` | Delegate a precise one-shot lookup/action and inspect the returned audit before the callback arrives. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-003` | Web chat or MCP harness with `worker_delegate_once` | Tool result `acknowledgement_guidance`, sanitized `delegation_audit`, diagnostics-only `submitted_instruction`, callback final result, logs/state | Assistant writes its own short acknowledgement, does not quote a canned template, and the audit preserves the specific target/success condition enough to catch wrong-worker/wrong-scope dispatch. | PARTIAL (2026-05-18 MCP/runtime QA; browser callback run pending) |
 | `GHHOST-UC-005` | Open a generated artifact after browser automation created local Chrome profile/capture files. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-004` | GlassHive artifact API/MCP plus browser artifact preview | Live payload, artifact list, open/download status, MCP signed-link payload, browser preview, logs/events | The preview opens the legitimate worker deliverable; runtime/browser scratch paths are rejected and never surfaced as artifact links. | PASS/PARTIAL 2026-06-22: local browser fixture and artifact regressions passed; provider-backed callback artifact path pending. |
 | `GHHOST-UC-006` | Ask a host/workstation worker to perform an open-ended task that may need browser/computer/file capabilities. | `docs/requirements_and_learnings/01_Key_Principles.md` / `GHHOST-005` | LibreChat/GlassHive MCP, host Codex/Claude or workstation Codex, logs, worker-local config | CLI capability probes, worker config, launch argv summary, run DB status, visible final result, public-safety scan. | The worker decides the path using native capability plus broker access; no launch-time stripping or raw plumbing appears as the user result. | PASS/PARTIAL (2026-06-14 source/runtime probes and targeted tests; live post-change worker launch pending) |
-| `GHHOST-UC-007` | Start a fresh workstation worker image and verify Claude/Codex browser extensions plus skill awareness before a browser-capable task. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-006` | Docker/workstation image, noVNC browser, worker prompt files, CLI capability probes | Dockerfile policy, extension-check output, browser profile install, bridge connection, AGENTS/CLAUDE/CODEX prompt files, targeted tests | New workspace workers have the expected native extension substrate and know their skill families, while choosing tools themselves based on the user request. | PARTIAL/PASS (2026-06-16 `docs4` image build/smoke/profile-install and targeted tests pass; connected worker bridge QA pending) |
+| `GHHOST-UC-007` | Start a fresh workstation worker image and verify Claude/Codex browser extensions plus skill awareness before a browser-capable task. | `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md` / `GHHOST-006` | Docker/workstation image, noVNC browser, worker prompt files, CLI capability probes | Dockerfile policy, extension-check output, browser profile install, bridge connection, AGENTS/CLAUDE/CODEX prompt files, targeted tests | New workspace workers have the expected native extension substrate and know their skill families, while choosing tools themselves based on the user request. | PASS/PARTIAL 2026-06-23: `docs6` image/worker/browser QA passed for profile install and Claude bridge; Codex bridge awaits first-party Linux native-host bundle plus node-repl provisioning. |

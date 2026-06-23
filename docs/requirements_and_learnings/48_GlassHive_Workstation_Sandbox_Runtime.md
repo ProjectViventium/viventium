@@ -95,6 +95,28 @@ the host MCP client so it reloads the updated tool contract.
   native MCPs, and Claude Code workers should enable the CLI's Chrome integration when available.
   Locking down native capabilities is allowed only through explicit operator config plus preflight
   and QA evidence.
+- The workspace native browser/computer contract is named so future work can refer to it directly.
+  The human nickname for `GH-WNBC-001` through `GH-WNBC-007` is **The Golden GlassHive Rules**:
+  - `GH-WNBC-001 Less-Is-More Worker Delegation`: pass the user's goal, constraints, files,
+    capability context, and success condition without inventing a workflow, rubric, or forced
+    artifact.
+  - `GH-WNBC-002 Faithful Courier Capability Context`: the host reports factual capabilities and
+    blockers; the worker decides how to use tools, providers, browser, computer, shell, files, MCPs,
+    and skills.
+  - `GH-WNBC-003 Additive Native Capability Projection`: broker/config projection must preserve the
+    selected worker's native browser, computer, MCP, shell, file, and app-control surfaces unless an
+    explicit operator lockdown is configured and tested.
+  - `GH-WNBC-004 Browser/Computer Is Native Worker Surface`: Chrome/browser/computer support is part
+    of the selected worker substrate, not merely a decorative MCP inventory row or prompt hint.
+  - `GH-WNBC-005 Isolated Workspace Bootstrap`: Docker/workstation bootstrap owns worker-local home,
+    browser profile, native host manifests, CLI config, scoped grants, and owner-only files without
+    leaking host machine paths or binaries into the sandbox.
+  - `GH-WNBC-006 No Residual Warning UX`: do not solve connector/bootstrap issues by adding noisy
+    user-facing warnings, banners, or workaround copy. Fix the bootstrap/config substrate and keep
+    the worker desktop clean.
+  - `GH-WNBC-007 User-Grade Native Capability QA`: acceptance requires real user-path proof through
+    the worker desktop/browser plus CLI/config/native-bridge evidence, logs/state, and QA case
+    results. Source inspection alone is not sufficient.
 - Runtime configuration is mode-scoped. Host-native binary overrides such as `WPR_CODEX_BIN` and
   `WPR_CLAUDE_CODE_BIN` are host-worker controls only; Docker/workstation workers must resolve the
   selected CLI from the container image/PATH and must never inherit a host macOS/Linux binary path.
@@ -256,8 +278,8 @@ Selenium base:
 - **System**: bash, curl, file, git, jq, LibreOffice Writer/Impress/Calc, Pandoc, poppler-utils,
   ripgrep, screen, tmux, vim, wmctrl, xdotool, xterm, pcmanfm
 - **Node.js 22.x** via nodesource
-- **npm globals**: pinned Codex and Claude Code specs (`@openai/codex@0.140.0`,
-  `@anthropic-ai/claude-code@2.1.178`) plus `openclaw@latest` by default. Operators may override
+- **npm globals**: pinned Codex and Claude Code specs (`@openai/codex@0.142.0`,
+  `@anthropic-ai/claude-code@2.1.186`) plus `openclaw@latest` by default. Operators may override
   the package specs with `WPR_SANDBOX_CODEX_NPM_SPEC`, `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC`, and
   `WPR_SANDBOX_OPENCLAW_NPM_SPEC` after updating QA evidence. Global npm install must use a
   disposable build cache and remove `/tmp`, root, and `seluser` npm caches before image export so
@@ -265,10 +287,19 @@ Selenium base:
 - **Python**: selenium plus research/document/artifact libraries such as `requests`,
   `python-docx`, `python-pptx`, `reportlab`, `PyPDF2`, `PyMuPDF`, `pdf2image`, `openpyxl`,
   `xlsxwriter`, and rendering helpers
-- **Managed browser-extension policy**: Chromium and Google Chrome policy paths force-install the
-  Claude Code and Codex browser-use extensions by ID:
-  `fcoeoabgfenejglbffodgkkbkcdhcgfn` and `hehggadaopoacecdllhhajmbjkdcmajg`.
-- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs4`
+- **Optional managed browser-extension policy**: Chromium and Google Chrome policy paths are written
+  by default with an empty `ExtensionInstallForcelist`. Operators may opt in to `claude`, `codex`, or
+  `all` through `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS` only
+  after a compatible browser/native-host/auth path has real user-grade QA evidence. Policy/profile
+  install alone must never be treated as a connected bridge.
+- **Native browser-host bootstrap**: `glasshive-browser-native-host-bootstrap` runs before worker
+  Chromium launches and materializes worker-local native messaging hosts. Claude Code gets a
+  `com.anthropic.claude_code_browser_extension` manifest and wrapper that execs the selected
+  `claude --chrome-native-host` inside the sandbox. Codex gets a `com.openai.codexextension`
+  manifest only when the matching Linux `extension-host` bundle is present in a worker-local or
+  operator-provided Chrome plugin root; the runtime must not point Codex at a host macOS binary or a
+  non-native-protocol proxy.
+- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs6`
 
 The workstation image must be capable of ordinary professional first-delivery work products. A
 worker should not need to hand-roll a minimal ZIP/DOCX or return Markdown/HTML only because the
@@ -278,9 +309,10 @@ requirement, not a special case for one QA prompt.
 The image also installs a `glasshive-browser-extension-check` probe. QA must treat browser extension
 readiness as three separate facts:
 
-1. Managed policy exists in both Chromium and Google Chrome policy locations with the exact extension
-   IDs and Chrome Web Store update URL.
-2. The browser profile has installed/enabled the extensions after the browser has launched.
+1. Managed policy exists in both Chromium and Google Chrome policy locations with the exact configured
+   extension IDs and Chrome Web Store update URL, or intentionally has an empty force-install list.
+2. When extensions are configured, the browser profile has installed/enabled them after the browser
+   has launched.
 3. The selected CLI/app bridge is connected and can actually use the browser/computer capability.
 
 Policy presence alone is not enough to claim full browser-use acceptance, and a missing profile or
@@ -1439,8 +1471,8 @@ runtime intent classifier.
   configured managed/profile/sandbox recovery options have been exhausted or would require an unsafe
   global host mutation.
 - Host-native worker substrates must have built-in version and capability preflight, even when the
-  operator did not supply a custom requirements JSON. Current floors are Codex CLI `>=0.140.0`,
-  Claude Code `>=2.1.178` with `--effort` support and `--chrome` support when Chrome integration is
+  operator did not supply a custom requirements JSON. Current floors are Codex CLI `>=0.142.0`,
+  Claude Code `>=2.1.186` with `--effort` support and `--chrome` support when Chrome integration is
   enabled, and OpenClaw `>=2026.6.6`. These floors may be raised with a dated QA note after checking
   current official docs/npm metadata and running the worker smoke suite.
 - GlassHive MCP caller instructions must expose brokered MCP/tool capability as context, not as
@@ -1518,13 +1550,29 @@ runtime intent classifier.
   (`/v1/link-refs/{ref}`) remain owner-scoped routes. They may be opened through a trusted proxy
   assertion or through the active worker-view session cookie minted by `/r/{ref}` for the same
   worker; without either proof, they fail closed. Enterprise workspace refs (`/r/{ref}`) are the
-  browser bootstrap path: if a trusted proxy supplies tenant/user identity, the ref must match that
-  owner; if no browser identity assertion exists on the GlassHive origin, a valid opaque ref may
-  mint a fresh bounded worker-view session cookie and redirect to a tokenless workspace URL. This
-  keeps chat-returned View / Steer links usable without exposing raw `gh_token` URLs. A wrong
-  asserted owner must still receive `404`.
+  browser bootstrap path: a trusted proxy must supply tenant/user identity and the ref must match
+  that owner before GlassHive mints a fresh bounded worker-view session cookie, redirects to a
+  tokenless workspace URL, or requests auto-resume. Missing browser identity assertions fail closed
+  with `401`; a wrong asserted owner receives `404`. This keeps chat-returned View / Steer links
+  usable without exposing raw `gh_token` URLs while avoiding ref-only access if an edge proxy is
+  misconfigured.
   Raw `/v1/signed-links/{token}` compatibility URLs remain signed-token URLs and are not the
   durable user-facing contract.
+- Enterprise owner matching is configurable but strict by default. `GLASSHIVE_OWNER_IDENTITY_CLAIMS`
+  defaults to `user_id`, so SSO deployments continue to compare the stored GlassHive owner against
+  the trusted user assertion. Deployments whose browser auth and MCP/chat owner use different trusted
+  claims may set `GLASSHIVE_OWNER_IDENTITY_CLAIMS=user_id,email`; email comparisons are
+  case-insensitive only for email-shaped values. If both trusted browser claims are populated from
+  the same login email while the stored MCP/chat owner is a different canonical identity, enabling
+  the `email` claim is not enough; the deployment must use an explicit per-owner alias map through
+  `GLASSHIVE_OWNER_IDENTITY_ALIASES_JSON` or `GLASSHIVE_OWNER_IDENTITY_ALIASES_FILE`, for example
+  `{"worker-owner@example.com":["browser-login-alias@example.com"]}`. Alias values are compared only
+  against the enabled claims and only after tenant equality has already passed. Alias maps must be
+  explicit, tenant-local, and operator-maintained; do not use broad domains, wildcard users, or
+  prompt-derived identity rules. If `GLASSHIVE_OWNER_IDENTITY_ALIASES_FILE` is configured, it must
+  live at a path readable by the runtime/UI service users, not only by the systemd environment-file
+  loader; unreadable configured alias files fail startup. The defaults are no aliases and strict
+  `user_id` matching.
 - Link-ref storage must be bounded by behavior, not only by disk capacity. Repeated live polling
   should reuse an existing artifact ref for the same worker/path/action instead of minting a new
   permanent row each time. Worker-view refs may be refreshed when the bounded session token expires,
@@ -1539,7 +1587,19 @@ runtime intent classifier.
   polling or an abort-shaped UI merely because the original bootstrap token aged out during an open
   watch session. Closing or forgetting the tab still must not keep compute alive; idle/paused
   lifecycle controls own compute release independently of durable short refs and refreshed view
-  cookies.
+  cookies. Deployments that set non-expiring short refs must also set bounded
+  `GLASSHIVE_IDLE_TERMINATE_AFTER_S`, `GLASSHIVE_PAUSED_TERMINATE_AFTER_S`, and
+  `GLASSHIVE_MAX_RUN_DURATION_S` values appropriate to their workload, then prove by QA that an old
+  View / Steer link can reopen saved state without keeping forgotten compute alive.
+- Workspace short-link open behavior is configurable. By default, opening `/r/{ref}` only
+  authenticates the user, mints a bounded worker-view cookie, records `worker.view_opened`, and
+  redirects to a tokenless workspace URL with an explicit `Resume` control if compute is paused.
+  Enterprise deployments that want a "look for it and it comes alive" experience may set
+  `GLASSHIVE_WORKSPACE_LINK_AUTO_RESUME=true` (compiled from
+  `integrations.glasshive.enterprise.workspace_links.auto_resume_on_open: true`). In that mode,
+  authenticated workspace refs request `resume` before redirecting, while still failing soft to the
+  workspace page if resume cannot be applied. Auto-resume must be paired with watch/session and
+  idle-reaper caps so forgotten tabs do not run compute forever.
 - Runtime-created View / Steer refs that point at the separate GlassHive UI service require shared
   link-ref state. Co-located runtime/UI processes should use the same
   `GLASSHIVE_LINK_REF_STATE_PATH` SQLite file; split deployments must provide supported shared local
@@ -1689,10 +1749,13 @@ persistent home and workspace mounts.
 | `GLASSHIVE_ENTERPRISE_MODE` | unset | Enables fail-closed enterprise request scoping |
 | `GLASSHIVE_AUTH_MODE` | `local` | `first_party_assertion` for v1 enterprise VM mode; OAuth modes are optional |
 | `GLASSHIVE_ENTERPRISE_TENANT_ID` | `local` | Single-tenant deployment identifier used when the request does not carry a tenant header |
-| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs4` | Docker image with native CLI, browser/computer substrate, managed Claude/Codex browser extensions, and professional document toolchain |
-| `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.140.0` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
-| `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.178` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
+| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs6` | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, and professional document toolchain |
+| `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS` | `none` | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence. |
+| `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.142.0` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
+| `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.186` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
 | `WPR_SANDBOX_OPENCLAW_NPM_SPEC` | `openclaw@latest` | OpenClaw package spec for rebuilt workstation images |
+| `WPR_CODEX_CHROME_PLUGIN_ROOT` / `CODEX_CHROME_PLUGIN_ROOT` | unset | Optional worker-local first-party Codex Chrome plugin root containing `extension-host/linux/<arch>/extension-host`; when present with a reachable node-repl executable, bootstrap writes the Codex native messaging manifest and config |
+| `WPR_CODEX_NODE_REPL_PATH` / `CODEX_NODE_REPL_PATH` | unset | Optional worker-local node-repl executable used by the Codex Chrome native host config. If unset, bootstrap tries `node_repl` on the container `PATH`; the base workstation image does not claim Codex Chrome readiness unless this path or a PATH-provided node-repl is actually present. |
 | `WPR_SANDBOX_MEMORY` | `3g` | Docker memory cap per worker container |
 | `WPR_SANDBOX_MEMORY_SWAP` | `3g` | Docker memory+swap cap per worker container |
 | `WPR_SANDBOX_CPUS` | `2` | Docker CPU cap per worker container |
@@ -1724,7 +1787,7 @@ persistent home and workspace mounts.
 | `WPR_CLAUDE_CODE_ENABLE_CHROME` | `true` | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode |
 | `WPR_CLAUDE_CODE_EFFORT` | unset | Optional Claude Code effort. MCP/UI/direct API per-run effort must project `max` into the bootstrap bundle, and workspace plus host-native commands must translate it to `--effort max` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | Optional Claude Code headless OAuth token from `claude setup-token`; supported for Docker/workspace and host workers through the bootstrap/env allowlist. In enterprise/run-only mode it is written only to secret runtime env, not the interactive shell env. |
-| Built-in host CLI floors | Codex CLI `>=0.140.0`, Claude Code `>=2.1.178`, OpenClaw `>=2026.6.6` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags |
+| Built-in host CLI floors | Codex CLI `>=0.142.0`, Claude Code `>=2.1.186`, OpenClaw `>=2026.6.6` | Host-native workers fail closed before run creation when the configured CLI is too old or missing required capability flags |
 | `WPR_SANDBOX_VNC_PASSWORD` | `secret` | VNC access password |
 | `WPR_SANDBOX_VNC_NO_PASSWORD` | `1` | Disable VNC password |
 | `WPR_SANDBOX_SERVICE_TMPDIR` | `/tmp` | Temp path for container supervisor services such as noVNC/websockify; keep separate from mounted worker-home `TMPDIR` to avoid live desktop socket reset failures |
