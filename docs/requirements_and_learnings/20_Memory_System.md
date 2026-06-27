@@ -246,6 +246,23 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   working summaries, that should be designed as its own bounded layer with TTL/audit rules, not by
   overloading saved-memory semantics.
 
+### Viventium Periphery And Health-Pressure Boundary
+
+Viventium Periphery and nightly insight routines are specified in
+[`53_Viventium_Periphery_Nightly_Insights.md`](53_Viventium_Periphery_Nightly_Insights.md).
+
+The key memory rule is simple:
+
+- private risk/blind-spot/opportunity scratchpads are not saved memory
+- generated periphery indexes must not be stuffed into `drafts`
+- do not add a saved-memory `periphery` key for risk radar as the first implementation
+- durable facts that emerge from periphery work must go through governed memory proposals
+
+The health-pressure gauge is a separate decision. It may eventually need a compact, always-available
+state because it can affect response posture in ordinary conversations. That state must remain
+bounded, evidence-cited, medically humble, and explicitly approved before being added to the
+chat-time read profile.
+
 ---
 
 ## Part 1: v0_3 Memory System (Python Stack)

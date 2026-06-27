@@ -394,6 +394,21 @@ def scheduled_prompt_memory_proposals(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/scheduled-prompts/{scheduled_prompt_id}/periphery-artifacts")
+def scheduled_prompt_periphery_artifacts(
+    scheduled_prompt_id: str,
+    context: auth.AuthContext = Depends(auth.require_admin),
+) -> dict[str, Any]:
+    try:
+        return scheduled_prompts.list_periphery_artifacts(scheduled_prompt_id, user_id=_auth_user_id(context))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown scheduled prompt: {scheduled_prompt_id}") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/scheduled-prompts/{scheduled_prompt_id}/memory-proposals/{proposal_id}/apply")
 def scheduled_prompt_memory_proposal_apply(
     scheduled_prompt_id: str,

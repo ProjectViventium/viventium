@@ -413,6 +413,18 @@ properties:
                   - type: array
                     items:
                       type: string
+              codex_allowed_reasoning_efforts:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+                      enum: [none, minimal, low, medium, high, xhigh]
+              codex_reasoning_effort_fallback:
+                type: string
+                enum: [none, minimal, low, medium, high, xhigh]
+              codex_xhigh_route_proven:
+                type: boolean
               claude_enable_chrome:
                 type: boolean
               claude_effort:

@@ -127,6 +127,10 @@ the host MCP client so it reloads the updated tool contract.
   surface such as `worker_delegate_once`. The main agent should not have to manually list projects,
   create or resume workers, and queue runs for routine tasks; low-level tools remain available for
   explicit status, resume, steering, diagnostics, and multi-worker orchestration.
+- Fresh `worker_delegate_once` calls create a new worker alias by default, even when the caller
+  supplies a convenient alias or an existing project id. Stable alias reuse requires
+  `reuse_existing_workspace=true` and should be reserved for explicit user/operator resume flows;
+  otherwise stale worker state can distort one-off research, file, browser, or report tasks.
 - When `worker_delegate_once` reports callback readiness, the main agent should write one short
   outcome-focused acknowledgement in its own voice, include the returned View / Steer link when the
   surface supports web links, and stop the turn. The runtime must not force a literal canned status
@@ -163,6 +167,16 @@ the host MCP client so it reloads the updated tool contract.
   advisory warnings, unless the file clearly references the constraint ledger or restates the
   constraint. A line-anchored `FINAL REPORT:` marker is required; progress text or instructions that
   merely mention the marker must not count as completion.
+- User-facing root, `output/`, `artifacts/`, or `reports/` deliverables must not be subjected to the
+  internal planning/spec/delegation "must reference the constraint ledger" propagation rule merely
+  because their filename contains words such as `plan` or `spec`. Those final deliverables still stay
+  inside source/date drift and strict-constraint-softening scans, but the ledger-reference
+  propagation rule applies to internal support paths such as `planning/`, `specs/`, `research/`,
+  `notes/`, prompts, subagent instructions, delegation notes, and ledger files.
+- Missing `FINAL REPORT:` remains a completion defect, but it may be downgraded to a warning only
+  when the verifier has positive evidence that the requested user deliverables exist, the required
+  output formats are present, seed/constraint checks pass, and there are no missing artifact types.
+  Notes-only, partial, interrupted, or wrong-format runs must still fail honestly.
 - If a user gives a generic coverage expectation such as a requested count/range of rows, targets,
   entities, firms, companies, or records, evidence should extract it conservatively and compare it
   against produced deliverable tables. This is a universal completeness check, not domain-specific
@@ -198,6 +212,27 @@ the host MCP client so it reloads the updated tool contract.
 - CLI output parsing must treat intermediate assistant messages as progress. For Codex/Claude-style
   workers, GlassHive should publish the explicit `FINAL REPORT:` section when present, otherwise the
   latest assistant result, not a concatenation of every progress message.
+- Failure classification must not treat arbitrary browser/computer accessibility-tree node numbers as
+  provider HTTP status codes. Numeric codes such as `401`, `403`, or `429` count as provider evidence
+  only when they appear with structured/status/auth/rate-limit context; visible browser labels like
+  `403 close button` are ordinary UI evidence.
+- Successful runs with a captured `FINAL REPORT:` must not be reclassified as provider failures merely
+  because browser/computer output contains page labels or accessibility text that resemble HTTP
+  statuses. Provider-failure recovery belongs to failed/error runs with contextual status evidence.
+- Low-level steering/message tools and API-client paths must validate required identifiers before making
+  HTTP calls. Blank, traversal-shaped, or slash-containing ids should fail at the MCP/tool boundary with
+  an actionable validation error, never as a downstream `/workers//message` or sibling empty-segment 404.
+- User-visible callback receivers must resolve their own pending chat placeholders in place. If LibreChat has
+  an unfinished `Generation in progress.` assistant placeholder that is the originating callback anchor or
+  already carries same-run GlassHive callback metadata when a terminal GlassHive callback arrives, the
+  callback should replace that placeholder, set `unfinished=false`, and keep the conversation tree on the
+  current branch instead of adding a completed child under a spinner. If the active leaf is an unrelated
+  in-progress assistant placeholder, the callback receiver must not overwrite it; it should return retryable
+  `425` so GlassHive can deliver after the unrelated generation is persisted.
+- Failed evidence gates with available user deliverables are a distinct user-visible state. The run must
+  remain failed and carry machine-readable failure metadata, but callbacks should say that worker output
+  exists and final verification failed. Generic "I got stuck" wording is reserved for total/provider
+  failures where no trustworthy output was produced.
 
 ### Core GlassHive Worker Operating Instructions
 
@@ -299,7 +334,7 @@ Selenium base:
   manifest only when the matching Linux `extension-host` bundle is present in a worker-local or
   operator-provided Chrome plugin root; the runtime must not point Codex at a host macOS binary or a
   non-native-protocol proxy.
-- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs6`
+- **Image tag**: `workers-projects-runtime-workstation:phase1-node22-docs7`
 
 The workstation image must be capable of ordinary professional first-delivery work products. A
 worker should not need to hand-roll a minimal ZIP/DOCX or return Markdown/HTML only because the
@@ -700,16 +735,18 @@ Host-worker UX and callback requirements:
   cookie/login stores. A Chrome extension `capture/index.html` or browser profile database is never a
   user-facing deliverable just because it is an HTML/file inside the worker workspace.
 - Codex effort values are provider-route dependent. GlassHive accepts `none`, `minimal`, `low`,
-  `medium`, `high`, and `xhigh`, but deployments must set
-  `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` when the selected OpenAI-compatible route supports only
-  a subset. Unsupported requested efforts must fall back through
+  `medium`, `high`, and `xhigh`, but the built-in safe allowlist is `none`, `low`, `medium`, and
+  `high`. Deployments must set `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` when the selected
+  OpenAI-compatible route supports a different subset. `minimal` and `xhigh` are opt-in route
+  capabilities, not routine defaults. Unsupported requested efforts must fall back through
   `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` instead of failing the user task, and the fallback must
   be visible in runtime logs/telemetry so quality-sensitive downgrades are auditable.
   Enterprise deep-work deployments should default Codex to `high` once the active route proves it;
   `xhigh` must be available only when the same active route and a real worker run prove it. The
-  built-in default allowlist excludes `xhigh` until `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN=true` or
-  `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN=true` is set, or until an explicit deployment allowlist
-  includes `xhigh`; another provider account or model catalog is not enough proof.
+  built-in default allowlist excludes `minimal` and `xhigh`; `xhigh` remains disabled until
+  `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN=true` or `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN=true` is set, or
+  until an explicit deployment allowlist includes `xhigh`; another provider account or model catalog
+  is not enough proof.
 - GlassHive host prompts and MCP descriptions must not override that deployment/user default with
   `medium` just because a task is simple. For ordinary bounded work, omit the per-run `effort` field
   unless the user explicitly asks for a cheaper/faster pass. For deep research, critical analysis,
@@ -1111,6 +1148,30 @@ the local uploads root and then still applies the trusted-source allowlist befor
 the worker workspace. If only extracted text is present, GlassHive materializes that text; if only
 metadata is available, it writes an attachment metadata manifest under `uploads/`.
 
+Legacy hosts that can pass user/conversation/message headers but cannot pass request-file headers
+may opt into `GLASSHIVE_LIBRECHAT_UPLOAD_COMPAT_FALLBACK=true`. This is a compatibility bridge, not
+the normal architecture. It requires enterprise mode, a storage user id distinct from the
+authenticated owner when needed, conversation and message ids, `WPR_LIBRECHAT_UPLOADS_ROOT`, a recent
+mtime window (`GLASSHIVE_LIBRECHAT_UPLOAD_COMPAT_RECENT_SECONDS`, default `900`), and a max file cap
+(`GLASSHIVE_LIBRECHAT_UPLOAD_COMPAT_MAX_FILES`, default `8`). It must only scan the exact storage
+owner's upload directory and must remain disabled where proper `files`/`attachments` metadata
+projection is available. Deployments should keep the recent-file window close to expected
+upload-to-dispatch latency; broad windows can materialize unrelated recent files from the same
+storage owner and are not acceptable as a default. The fallback must emit an operator-visible log
+when it fires so missing request-file projection does not become silent runtime drift.
+
+Run evidence must distinguish input formats from requested output formats. Phrases such as
+`attached PDF`, `%PDF first-byte check`, `uploaded csv source`, and `original pdf` describe inputs
+unless the user explicitly asks for that format as a deliverable. Common deliverable phrasings such
+as `HTML summary`, `xlsx workbook`, `docx summary`, and `save as dashboard.html` must remain output
+requirements.
+
+Every live deployment or mounted MCP configuration change that can affect file projection must rerun
+the Standard QA upload/download case. Passing upload QA means the current deployment proves the
+original uploaded bytes reached the worker workspace under `uploads/` and that the generated artifact
+opens/downloads correctly. Filename metadata, extracted text, prior-environment evidence, or a worker
+message saying the file was unavailable is a failure for binary-preserving tasks, not a partial pass.
+
 If the GlassHive MCP server config is DB-sourced, request-context placeholders are resolved only
 when the reviewed Viventium-managed server config carries `viventiumRequestContext: true`.
 Arbitrary DB-sourced MCP servers must not receive user/body placeholder expansion, env secrets, or
@@ -1157,13 +1218,14 @@ verification with `401 Unauthorized`.
 Callback persistence must be branch-safe in LibreChat's message tree. GlassHive callback payloads
 carry both the original parent context and the assistant response `message_id` for the turn that
 started the worker. The callback receiver requires the assistant response id as the tree anchor for
-visible callbacks. If that anchor is still the active leaf and is a blank assistant placeholder, the
-receiver may update it. If an existing GlassHive status message for the same run is the active leaf,
-later visible callbacks for that run update the same status message. If the conversation has moved
-on, the callback must append under the current conversation leaf and keep the original request parent
-and anchor in metadata. Distinct later worker runs append linearly rather than overwriting an earlier
-run result. If the current moved-on leaf is a user message, the receiver returns retryable `425` so
-GlassHive can deliver after the assistant reply is persisted. Metadata must distinguish
+visible callbacks. If that anchor is still the active leaf and is a blank or same-run unfinished
+assistant placeholder, the receiver may update it. If an existing GlassHive status message for the
+same run is the active leaf, later visible callbacks for that run update the same status message. If
+the conversation has moved on, the callback must append under the current conversation leaf and keep
+the original request parent and anchor in metadata. Distinct later worker runs append linearly rather
+than overwriting an earlier run result. If the current moved-on leaf is a user message or an unrelated
+unfinished assistant placeholder, the receiver returns retryable `425` so GlassHive can deliver after
+the assistant reply is persisted. Metadata must distinguish
 `parentMessageId` (original semantic request parent), `treeParentMessageId` (actual persisted chat
 parent), and `anchorMessageId` (assistant response anchor). This prevents worker callbacks from
 rendering as sibling branches under older messages while preserving the original execution lineage.
@@ -1195,6 +1257,19 @@ must not silently inherit the shorter background-follow-up grace window.
 - **High-level launch**: `workspace_launch` for normal user-facing delegation with `description`,
   optional `success_criteria`, and optional `context`; `worker_delegate_once` for lower-level
   one-call delegation when the caller already has a precise title/instruction.
+- **Fresh vs reused workspace launch**: `workspace_launch` and `worker_delegate_once` treat
+  ordinary calls as fresh one-off work even if a host suggests `workspace_alias`/`alias` or an
+  existing project id. Stable alias reuse requires `reuse_existing_workspace=true` and should be
+  used only when the user explicitly asked to resume or reuse an existing workspace. This prevents
+  stale worker history from slowing or distorting new user requests.
+- **Long waits and deliverable readiness**: `workspace_wait` must stay below chat/Redis/proxy idle
+  windows. When a bounded wait reaches its deadline while the worker is still running but
+  user-facing files already exist in delivery locations such as `output/`, `deliverables/`,
+  `reports/`, `artifacts/`, or `out/report`/`out/data`, it may return `status=deliverable_ready`
+  with signed file links. This is not a claim that the process state is completed; it is a
+  user-delivery state that prevents chat UIs from holding long streams open after files are ready.
+  MCP progress notifications are best-effort telemetry and must be bounded; a broken or stale
+  progress/SSE channel must never prevent `workspace_wait` from returning the actual status payload.
 - **Project**: `projects_list`, `project_create`, `project_get`, `project_runs`, `project_events`
 - **Worker**: `workers_list`, `worker_create`, `worker_get`, `worker_live`
 - **Worker reuse**: `worker_find_or_resume` for stable aliases
@@ -1219,6 +1294,11 @@ GlassHive upload route. The first-party GlassHive MCP configuration passes reque
 `attachments`, `tool_resources`, and `file_ids` metadata in request-scoped headers. GlassHive folds
 local `filepath`/`source_path` references or extracted text into `bootstrap_bundle.files`, then
 materializes them under `uploads/` in the worker workspace.
+
+For old hosts that cannot emit those metadata headers, the same bounded compatibility fallback above
+can materialize recent storage-owner uploads. QA must record whether a run used request metadata or
+legacy recent-owner fallback, because the latter is deployment compatibility evidence, not a reason
+to remove the primary metadata projection contract.
 
 ### Callback Reporting
 
@@ -1275,10 +1355,11 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
   Short refs are durable by default and must resolve only for the authenticated owner. Opening a
   View / Steer short ref mints a fresh bounded worker-scoped session token; raw signed URLs remain
   server-side or legacy compatibility details.
-- **Artifact link semantics**: the default user-facing file-delivery link must open a GlassHive
-  file preview/landing page, not trigger a surprise raw browser download. Raw artifact downloads
-  remain supported, but they must be labeled explicitly as `Download file`; chat callbacks and MCP
-  guidance should prefer the scoped open/preview URL and expose raw download as a secondary action.
+- **Artifact link semantics**: the default user-facing file-delivery link must be the scoped
+  `signed_download_url`, labeled explicitly as `Download file`, so ordinary chat Markdown can act as
+  a direct file download without requiring a detour through the GlassHive page. GlassHive must still
+  provide a scoped `signed_open_url` preview/landing link or View / Steer workspace link so the user
+  can inspect the file and see all workspace deliveries.
   The preview route must work universally for text, image, and binary artifacts: text is safely
   escaped and previewed, supported small images are shown inline, and every other file type gets a
   clear "File is ready" landing page with a separate explicit download action. This page is a
@@ -1287,8 +1368,10 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
   buttons inside that preview page must also be self-authorizing signed actions: opening the
   preview through a signed link and then clicking `Download file` or `View workspace` must not fall
   back to an unsigned raw route that requires hidden proxy headers. When the preview is embedded in
-  the watch/steer frame, `View workspace` must navigate the top-level page instead of recursively
-  loading another watch page inside the preview frame. When a worker creates multiple user-facing
+  the watch/steer frame, `View workspace` must use the same `/r/{ref}` short-ref contract as chat
+  View / Steer links, mint a fresh bounded session, strip raw `gh_token` from the browser URL, and
+  navigate the top-level page instead of recursively loading another watch page inside the preview
+  frame. When a worker creates multiple user-facing
   files, Watch / Steer must expose the artifact inventory with explicit open/download actions for
   each file instead of stranding everything except the latest promoted artifact.
 - **Watch surface fidelity**: a `surface=desktop` Watch URL must keep the live workstation desktop
@@ -1342,10 +1425,13 @@ but it cannot replace real user-path evidence. Every case result must be marked 
    prerequisite unavailable.
 2. File upload/download: upload a public-safe PDF or workbook, ask the worker to tastefully redesign
    it into a PowerPoint or HTML file, then download, open, and validate the produced files as a
-   user. The default artifact link must open a GlassHive file preview/landing page first, while a
-   separately labeled `Download file` action downloads the raw artifact. The worker must use a
+   user. The default artifact link must be a scoped `Download file` link that downloads the raw
+   artifact directly, while a separately labeled preview/open link or View / Steer workspace link
+   remains available for inspection and all-deliveries access. The worker must use a
    universal self-check harness through its bootstrap instructions and success criteria; do not
-   overfit `AGENTS.md` to these exact QA prompts.
+   overfit `AGENTS.md` to these exact QA prompts. This case is deployment-specific evidence: after
+   any live MCP/config/runtime change, the current environment must prove upload byte materialization
+   again before anyone calls the file path production-ready.
 3. Scheduling: create a natural-language scheduled GlassHive task such as "in 20 minutes do X" or
    "on Mondays do X". This must work for raw LibreChat/MCP paths without relying on Scheduling
    Cortex-only behavior.
@@ -1749,7 +1835,7 @@ persistent home and workspace mounts.
 | `GLASSHIVE_ENTERPRISE_MODE` | unset | Enables fail-closed enterprise request scoping |
 | `GLASSHIVE_AUTH_MODE` | `local` | `first_party_assertion` for v1 enterprise VM mode; OAuth modes are optional |
 | `GLASSHIVE_ENTERPRISE_TENANT_ID` | `local` | Single-tenant deployment identifier used when the request does not carry a tenant header |
-| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs6` | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, and professional document toolchain |
+| `WPR_SANDBOX_IMAGE` | `workers-projects-runtime-workstation:phase1-node22-docs7` | Docker image with native CLI, browser/computer substrate, optional managed AI-worker browser extensions, worker-local native-host bootstrap, stale disabled-extension cleanup, and professional document toolchain |
 | `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS` | `none` | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence. |
 | `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.142.0` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
 | `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.186` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
@@ -1779,9 +1865,9 @@ persistent home and workspace mounts.
 | `GLASSHIVE_WORKSPACE_BIN_DIRS` / `WPR_WORKSPACE_BIN_DIRS` | unset | Optional path-list of native binary directories appended to worker `PATH` and surfaced as `GLASSHIVE_WORKSPACE_BIN_DIRS`. |
 | `GLASSHIVE_UI_SHOW_LEGACY_OPENCLAW_PROFILE` | unset / false | Opt-in visibility for the legacy OpenClaw profile choice in the old built-in UI. The option remains visible when `openclaw-general` is the selected/default profile, but Codex/Claude-first deployments should not advertise OpenClaw as a routine create option. This is UI visibility only; runtime selection still uses `profile + execution_mode`. |
 | `WPR_OPENCLAW_START_GATEWAY` | `false` | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention |
-| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,minimal,low,medium,high` plus `xhigh` only after route proof | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route rejects a value such as `minimal`; if unset, xhigh is not allowed until route proof is enabled |
+| `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,low,medium,high` plus `minimal`/`xhigh` only by explicit route proof or allowlist | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route supports or rejects values such as `minimal`; if unset, minimal and xhigh are not sent to the provider |
 | `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN` / `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN` | `false` | Enables built-in xhigh acceptance only after the active Codex route has been proven by a real worker run; explicit allowlists can still override when deployment QA owns the proof |
-| `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`; choose the closest supported value for the active route, for example `low` when `minimal` is rejected but `low` is accepted |
+| `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`; keep `medium` as the quality floor unless active-route QA proves a different supported value is the right product tradeoff |
 | `WPR_CODEX_CLI_IGNORE_USER_CONFIG` | `false` | Workspace-mode Codex should load the worker-local config by default so projected broker/native MCPs work; set `true` only for an explicit locked-down provider route |
 | `WPR_CODEX_CLI_DISABLE_FEATURES` | unset | Optional comma-separated Codex feature disables for explicitly locked-down provider routes. The default must preserve native Codex app, multi-agent, plugin, browser/computer, workspace-dependency, and related capability surfaces; set this only with dated preflight/QA evidence that the lockdown is intentional. |
 | `WPR_CLAUDE_CODE_ENABLE_CHROME` | `true` | Claude Code workers launch with `--chrome` when available so Claude can use its native Chrome integration; set `0` only for an explicit locked-down mode |
@@ -1823,6 +1909,12 @@ For long enterprise research/file jobs, the wait defaults should be treated as a
 policy, not a worker-kill policy. Raising `WPR_MCP_BLOCKING_WAIT_DEFAULT_SEC` to 2700 and
 `WPR_MCP_BLOCKING_WAIT_MAX_SEC` to 3600 is valid when the LibreChat MCP transport timeout has a
 larger cushion; the worker continues in the background if the chat wait exits early.
+
+`workspace_wait` and `workspace_status` must also reconcile resume handoffs. If the run id supplied
+by the host is an older `interrupted` run but the same worker has already advanced to a newer active
+run, GlassHive follows the newer run instead of reporting the older interruption as final. Real
+failed/cancelled runs are still surfaced unless a newer same-worker run has actually completed, so
+users are not told that a resumed workspace failed while Watch/Steer is visibly still working.
 | `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_USER` | `0` | When positive, cap active workers per authenticated user |
 | `GLASSHIVE_MAX_ACTIVE_WORKERS_PER_TENANT` | `0` | When positive, cap active workers across the tenant deployment |
 | `GLASSHIVE_MAX_WORKSPACES_PER_USER` | `0` | When positive, cap retained non-terminated workspaces per authenticated user |

@@ -26,6 +26,7 @@ pip-wheel-metadata/
 .codex/
 .codex-artifacts/
 .codex_worktrees/
+html_explain/
 # Jupyter / temp
 .ipynb_checkpoints/
 *.tmp

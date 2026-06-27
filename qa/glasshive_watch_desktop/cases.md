@@ -15,7 +15,7 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 | `GHWATCH-005` | Non-file or no-file tasks do not invent downloadable artifacts. | User sees the final result/status without bogus `Open file`, `Download file`, or workspace-file actions. | Watch / Steer latest result panel, callback/status output | Browser QA plus live payload inspection | PASS 2026-05-31; see `qa/glasshive_watch_desktop/reports/2026-05-31-artifact-preview-navigation.md`. |
 | `GHWATCH-006` | Latest workspace output is visibly actionable from the watch ribbon and workspace overview. | User can immediately tell where to click to inspect the latest output/status, then close it without leaving the live surface. | Watch / Steer ribbon, result panel, workspace overview tile | `frontends/glass-drive-ui/tests/test_server.py::test_launcher_workspace_hive_static_controls` plus Playwright browser QA | PARTIAL 2026-06-22 docs audit: 2026-06-16 evidence is static/synthetic and explicitly partial for full release; rerun against a real worker before claiming full Watch / Steer release coverage. |
 | `GHWATCH-007` | A Watch URL with `surface=desktop` keeps the live workstation desktop primary after file delivery. | User can still inspect/control the live worker while file actions remain explicit. | Watch / Steer, embedded desktop, latest-output file actions | Static UI tests plus Playwright/Chrome browser QA | PARTIAL 2026-06-22 docs audit: 2026-06-16 story report is legacy/exempt historical RCA evidence; current acceptance needs fresh text/DOM evidence from a real worker. |
-| `GHWATCH-008` | `view_available` means the noVNC desktop asset path is reachable. | User is not sent to a broken or endlessly reconnecting desktop view. | Runtime describe API, noVNC proxy/assets, Watch / Steer desktop iframe | `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets` plus browser QA | PARTIAL 2026-06-22 docs audit: regression coverage remains valid, but legacy media evidence is not current public acceptance evidence. |
+| `GHWATCH-008` | `view_available` means the noVNC desktop asset path is reachable, and completed/parked workspaces do not imply active compute. | User is not sent to a broken or endlessly reconnecting desktop view; completed files stay available while compute is stopped. | Runtime describe API, noVNC proxy/assets, Watch / Steer desktop iframe | `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets`, `frontends/glass-drive-ui/tests/test_server.py`, completed desktop browser fixture | PASS 2026-06-25 for completed-workspace scope; see `qa/glasshive_watch_desktop/reports/2026-06-25-completed-desktop-resume-ux.md`. |
 | `GHWATCH-009` | LibreChat callback result persists into visible conversation state without raw tool plumbing. | User sees the final worker result after refresh/reopen. | LibreChat web conversation, callback outbox, message store | `LibreChat/api/server/routes/viventium/__tests__/glasshive.spec.js` plus authenticated browser QA | PARTIAL 2026-06-22 docs audit: legacy authenticated-browser evidence is not cited as public acceptance; rerun with text-only public summary before full release coverage. |
 | `GHWATCH-010` | Worker desktop browser starts with clean browser chrome by default. | User sees the worker browser without a bookmark bar or unsupported `--no-sandbox` warning. | Docker workstation container, worker browser process, noVNC desktop view | `runtime_phase1/tests/test_docker_sandbox.py` plus disposable Docker worker and Playwright noVNC QA | PARTIAL 2026-06-22 docs audit: clean-browser RCA and tests are useful, but current acceptance needs a fresh text/DOM/process summary without public visual media. |
 
@@ -163,28 +163,36 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 - Last run: PARTIAL 2026-06-22 docs audit. The 2026-06-16 legacy visual evidence is not
   current public acceptance evidence; rerun with text/DOM evidence before full release coverage.
 
-## `GHWATCH-008` - noVNC Health Is Required For `view_available`
+## `GHWATCH-008` - noVNC Health And Settled Workspace UX
 
-- Requirement: `view_available` means the noVNC desktop asset path is reachable, not merely that a
-  Docker port is mapped.
+- Requirement: `view_available` means the noVNC desktop asset path is reachable for active compute,
+  and a completed/parked workspace must not look like a broken live desktop.
 - Risk covered: Watch says the desktop is available but the browser shows `Desktop reconnecting`
-  forever because websockify is resetting connections.
-- Preconditions: a Docker workstation worker has a mapped noVNC port.
+  forever because websockify is resetting connections, or because the worker has already completed
+  and compute was intentionally stopped.
+- Preconditions: a Docker workstation worker has a mapped noVNC port, or a completed synthetic
+  worker payload is available for settled-workspace browser QA.
 - Steps:
   1. Query worker live/runtime details and open `/desktop/{worker_id}`.
   2. Fetch `/novnc/{worker_id}/core/rfb.js` through the operator UI proxy.
   3. Simulate or detect a failed noVNC asset path and verify runtime self-heals before advertising
      the desktop as available.
-  4. Verify the browser attaches to a noVNC canvas after recovery.
-- Expected result: noVNC health succeeds or the UI reports desktop unavailable truthfully; self-heal
-  uses service-local `/tmp` and does not rely on mounted worker-home `TMPDIR`.
+  4. For completed/parked workers, verify the desktop frame reports the settled state and points the
+     user to status/files instead of reconnecting forever.
+  5. For active workers, verify the browser attaches to a noVNC canvas after recovery.
+- Expected result: noVNC health succeeds or the UI reports desktop unavailable truthfully; completed
+  and parked workspaces show the latest result/files without implying compute is still running.
 - Forbidden result: reset/502 noVNC asset path with `view_available=true`, or a worker that remains
-  visually black/reconnecting while status says the desktop is ready.
-- Evidence to capture: noVNC stderr/stdout summary, asset status, browser DOM/canvas count,
-  targeted regression test output.
-- Automation: `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets`.
-- Last run: PARTIAL 2026-06-22 docs audit. Runtime regression coverage remains valid, but the
-  public case needs fresh text/DOM noVNC evidence before full release coverage.
+  visually black/reconnecting while status says the desktop is ready, or a completed worker whose
+  artifact/status actions are hidden behind a reconnect loop.
+- Evidence to capture: noVNC stderr/stdout summary, asset status, browser DOM/canvas or settled-state
+  text, artifact/status availability, targeted regression test output.
+- Automation: `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets`
+  plus the completed desktop fixture in `qa/glasshive_watch_desktop/scripts/`.
+- Last run: PASS 2026-06-25 for completed-workspace scope. Browser fixture covered completed
+  workers with no advertised desktop, broken noVNC import, and post-import disconnect. The UI showed
+  `Workspace complete`, artifact links stayed available from the status panel, the broken-import case
+  produced one noVNC probe only, and targeted UI/runtime tests passed.
 
 ## `GHWATCH-009` - LibreChat Callback Result Surfaces After Persistence
 

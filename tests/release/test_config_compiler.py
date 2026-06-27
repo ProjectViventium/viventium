@@ -942,6 +942,9 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
             "codex_plugin_cache": "codex-plugin-cache",
             "codex_ignore_user_config": False,
             "codex_disable_features": ["image_generation"],
+            "codex_allowed_reasoning_efforts": ["none", "low", "medium", "high", "xhigh"],
+            "codex_reasoning_effort_fallback": "medium",
+            "codex_xhigh_route_proven": True,
             "claude_enable_chrome": True,
             "claude_effort": "max",
             "mentions": {"codex": "@codex", "claude": "@claude", "openclaw": "@openclaw"},
@@ -976,6 +979,9 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["GLASSHIVE_HOST_CODEX_PLUGIN_CACHE"] == "codex-plugin-cache"
     assert enabled_env["WPR_CODEX_CLI_IGNORE_USER_CONFIG"] == "false"
     assert enabled_env["WPR_CODEX_CLI_DISABLE_FEATURES"] == "image_generation"
+    assert enabled_env["WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS"] == "none,low,medium,high,xhigh"
+    assert enabled_env["WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK"] == "medium"
+    assert enabled_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
     assert enabled_env["WPR_CLAUDE_CODE_ENABLE_CHROME"] == "true"
     assert enabled_env["WPR_CLAUDE_CODE_EFFORT"] == "max"
     assert enabled_env["WPR_DB_PATH"] == str(
@@ -990,6 +996,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] != enabled_env["VIVENTIUM_CALL_SESSION_SECRET"]
     mcp_servers = config_compiler.build_mcp_servers(enabled_config, {"lc_api_port": 3080}, "agent-main")
     glasshive_headers = mcp_servers["glasshive-workers-projects"]["headers"]
+    assert glasshive_headers["X-Viventium-Storage-User-Id"] == "{{LIBRECHAT_USER_ID}}"
     assert glasshive_headers["X-Viventium-Conversation-Id"] == "{{LIBRECHAT_BODY_CONVERSATIONID}}"
     assert glasshive_headers["X-Viventium-Parent-Message-Id"] == "{{LIBRECHAT_BODY_PARENTMESSAGEID}}"
     assert glasshive_headers["X-Viventium-Message-Id"] == "{{LIBRECHAT_BODY_MESSAGEID}}"

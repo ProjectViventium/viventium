@@ -508,6 +508,31 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         host_worker.get("codex_disable_features"),
         "integrations.glasshive.host_worker.codex_disable_features",
     )
+    valid_codex_efforts = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    codex_allowed_reasoning_efforts = optional_csv(
+        host_worker.get("codex_allowed_reasoning_efforts"),
+        "integrations.glasshive.host_worker.codex_allowed_reasoning_efforts",
+    ).lower()
+    if codex_allowed_reasoning_efforts:
+        invalid = [
+            item.strip()
+            for item in codex_allowed_reasoning_efforts.split(",")
+            if item.strip() and item.strip() not in valid_codex_efforts
+        ]
+        if invalid:
+            raise SystemExit(
+                "integrations.glasshive.host_worker.codex_allowed_reasoning_efforts "
+                "may include only none, minimal, low, medium, high, or xhigh"
+            )
+    codex_reasoning_effort_fallback = str(host_worker.get("codex_reasoning_effort_fallback") or "").strip().lower()
+    if codex_reasoning_effort_fallback and codex_reasoning_effort_fallback not in valid_codex_efforts:
+        raise SystemExit(
+            "integrations.glasshive.host_worker.codex_reasoning_effort_fallback "
+            "must be none, minimal, low, medium, high, or xhigh"
+        )
+    codex_xhigh_route_proven = ""
+    if "codex_xhigh_route_proven" in host_worker:
+        codex_xhigh_route_proven = "true" if resolve_bool(host_worker.get("codex_xhigh_route_proven"), False) else "false"
     claude_effort = str(host_worker.get("claude_effort") or "").strip().lower()
     if claude_effort and claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
         raise SystemExit("integrations.glasshive.host_worker.claude_effort must be low, medium, high, xhigh, or max")
@@ -541,6 +566,9 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "codex_plugin_cache": str(host_worker.get("codex_plugin_cache") or "").strip(),
         "codex_ignore_user_config": codex_ignore_user_config,
         "codex_disable_features": codex_disable_features,
+        "codex_allowed_reasoning_efforts": codex_allowed_reasoning_efforts,
+        "codex_reasoning_effort_fallback": codex_reasoning_effort_fallback,
+        "codex_xhigh_route_proven": codex_xhigh_route_proven,
         "claude_enable_chrome": claude_enable_chrome,
         "claude_effort": claude_effort,
         "codex_cli_available": bool(codex_cli_path),
@@ -2721,6 +2749,16 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
             env["WPR_CODEX_CLI_IGNORE_USER_CONFIG"] = str(glasshive_host_worker["codex_ignore_user_config"])
         if glasshive_host_worker["codex_disable_features"]:
             env["WPR_CODEX_CLI_DISABLE_FEATURES"] = str(glasshive_host_worker["codex_disable_features"])
+        if glasshive_host_worker["codex_allowed_reasoning_efforts"]:
+            env["WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS"] = str(
+                glasshive_host_worker["codex_allowed_reasoning_efforts"]
+            )
+        if glasshive_host_worker["codex_reasoning_effort_fallback"]:
+            env["WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK"] = str(
+                glasshive_host_worker["codex_reasoning_effort_fallback"]
+            )
+        if glasshive_host_worker["codex_xhigh_route_proven"]:
+            env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] = str(glasshive_host_worker["codex_xhigh_route_proven"])
         if glasshive_host_worker["claude_enable_chrome"]:
             env["WPR_CLAUDE_CODE_ENABLE_CHROME"] = str(glasshive_host_worker["claude_enable_chrome"])
         if glasshive_host_worker["claude_effort"]:
@@ -3491,6 +3529,7 @@ def build_mcp_servers(
         glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
         glasshive_headers = {
             "X-Viventium-User-Id": "{{LIBRECHAT_USER_ID}}",
+            "X-Viventium-Storage-User-Id": "{{LIBRECHAT_USER_ID}}",
             "X-Viventium-Agent-Id": default_main_agent_id,
             "X-Viventium-Conversation-Id": "{{LIBRECHAT_BODY_CONVERSATIONID}}",
             "X-Viventium-Parent-Message-Id": "{{LIBRECHAT_BODY_PARENTMESSAGEID}}",

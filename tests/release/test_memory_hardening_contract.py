@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import plistlib
 import re
 import subprocess
@@ -490,6 +491,88 @@ assert(!logText.includes('private-user-hash'));
 assert(privateText.includes('private-user-hash'));
 """
     subprocess.run(["node", "-e", script, str(run_dir), str(state_dir)], cwd=ROOT, check=True)
+
+
+def test_memory_hardening_status_reports_scheduled_trigger_health(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state" / "memory-hardening"
+    events_dir = state_dir / "schedule-events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "launchd-old.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "status": "success",
+                "trigger_source": "launchd",
+                "scheduled_invocation": True,
+                "fired_at_utc": "2020-01-01T08:00:00.000Z",
+                "fired_at_local": "2020-01-01T03:00:00.000-05:00",
+                "finished_at_utc": "2020-01-01T08:01:00.000Z",
+                "exit_code": 0,
+                "run_id": "old-run",
+                "run_status": "success",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const status = hardener.status({stateDir: process.argv[1]});
+assert.strictEqual(status.schedule_health.schedule, '0 3 * * *');
+assert.strictEqual(status.schedule_health.timezone, 'America/Toronto');
+assert.strictEqual(status.schedule_health.latest_scheduled_trigger.run_id, 'old-run');
+assert.strictEqual(status.schedule_health.missed_expected_window, true);
+assert(!JSON.stringify(status.schedule_health).includes(process.argv[2]));
+"""
+    subprocess.run(
+        ["node", "-e", script, str(state_dir), str(tmp_path)],
+        cwd=ROOT,
+        check=True,
+        env={
+            **os.environ,
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+        },
+    )
+
+
+def test_memory_hardening_status_does_not_flag_fresh_scheduled_trigger_as_missed(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state" / "memory-hardening"
+    events_dir = state_dir / "schedule-events"
+    events_dir.mkdir(parents=True)
+    script = """
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const stateDir = process.argv[1];
+const eventsDir = path.join(stateDir, 'schedule-events');
+fs.writeFileSync(path.join(eventsDir, 'launchd-now.json'), JSON.stringify({
+  schemaVersion: 1,
+  status: 'success',
+  trigger_source: 'launchd',
+  scheduled_invocation: true,
+  fired_at_utc: new Date().toISOString(),
+  fired_at_local: new Date().toISOString(),
+  exit_code: 0,
+  run_id: 'fresh-run',
+  run_status: 'success',
+}) + '\\n');
+const status = hardener.status({stateDir});
+assert.strictEqual(status.schedule_health.latest_scheduled_trigger.run_id, 'fresh-run');
+assert.strictEqual(status.schedule_health.missed_expected_window, false);
+"""
+    subprocess.run(
+        ["node", "-e", script, str(state_dir)],
+        cwd=ROOT,
+        check=True,
+        env={
+            **os.environ,
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+        },
+    )
 
 
 def test_memory_hardening_runtime_uses_registry_prompts_when_available(tmp_path: Path) -> None:
