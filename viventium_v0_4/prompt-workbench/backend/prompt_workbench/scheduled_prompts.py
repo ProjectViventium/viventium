@@ -30,6 +30,38 @@ MEMORY_WRITE_MODES = {"off", "propose", "apply_governed"}
 EXECUTORS = {"glasshive_host", "viventium_agent"}
 GLASSHIVE_WORKER_STRATEGIES = {"same_worker", "new_worker_each_run"}
 USER_SCHEDULE_PREFIX = "user_schedule:"
+PERIPHERY_REQUIRED_FIELDS = (
+    "schemaVersion",
+    "moduleId",
+    "generatedAt",
+    "scheduledRunRef",
+    "sourceRefs",
+    "confidence",
+    "severity",
+    "timeSensitivity",
+    "ttl",
+    "staleAfter",
+    "observations",
+    "risks",
+    "blindSpots",
+    "opportunityCosts",
+    "opportunities",
+    "whatWouldMakeThisWrong",
+    "whenToSurface",
+    "proposedActions",
+    "memoryProposalRefs",
+)
+PERIPHERY_CONTENT_FIELDS = (
+    "observations",
+    "risks",
+    "blindSpots",
+    "opportunityCosts",
+    "opportunities",
+    "whatWouldMakeThisWrong",
+    "whenToSurface",
+    "proposedActions",
+    "memoryProposalRefs",
+)
 _MANUAL_RUN_LOCKS: dict[str, threading.Lock] = {}
 _MANUAL_RUN_LOCKS_GUARD = threading.Lock()
 
@@ -38,6 +70,13 @@ NIGHTLY_PROMPT_TEMPLATE = """study {{user}} memories from the perspective of eac
 You may follow {{memory_agent.system_prompt}} and prepare governed memory proposals for {{user.memories}} to help Viventium's brain naturally become aware of anything important. Do not directly edit MongoDB or memory database tables. If this scheduled prompt is configured for apply_governed memory mode, route memory changes only through Viventium/LibreChat governed memory methods and policy.
 
 You may also just use your own personal / private scratchpad as yyyymmddHHmm.md file in {{local.viventium.my_folder}}
+
+Private periphery artifact: write one risk_radar artifact for this run. Use the folder shown in {{local.viventium.my_folder}} and write paired .md and .json files under:
+periphery/risk_radar/YYYY/MM/YYYYMMDDTHHMMSSZ.risk_radar.md
+periphery/risk_radar/YYYY/MM/YYYYMMDDTHHMMSSZ.risk_radar.json
+
+The JSON sidecar must include: schemaVersion, moduleId, generatedAt, scheduledRunRef, sourceRefs, confidence, severity, timeSensitivity, ttl, staleAfter, observations, risks, blindSpots, opportunityCosts, opportunities, whatWouldMakeThisWrong, whenToSurface, proposedActions, memoryProposalRefs.
+Use moduleId "risk_radar". Keep it concise and evidence-first; mark hypotheses as hypotheses and unsupported thoughts as unsupported. If there is no strong evidence, write a short no-result artifact with empty arrays and one observation explaining the low signal or missing prerequisite. Do not add a saved-memory key for periphery, do not inject this artifact into the main chat prompt, and do not copy raw private conversations into the sidecar.
 
 
 # user = {{user}}
@@ -275,15 +314,28 @@ def variable_registry() -> dict[str, Any]:
 
 
 def nightly_prompt_template() -> dict[str, Any]:
+    default_timezone = (
+        os.getenv("VIVENTIUM_DEFAULT_TIMEZONE")
+        or os.getenv("TZ")
+        or "America/Toronto"
+    )
     return {
         "id": NIGHTLY_TEMPLATE_ID,
         "title": "Subconscious Deep Thought",
         "subtitle": "Nightly subconscious thought formation",
         "promptText": NIGHTLY_PROMPT_TEMPLATE,
-        "schedule": {"type": "daily", "time": "03:00", "timezone": os.getenv("TZ") or "America/Los_Angeles"},
+        "schedule": {"type": "daily", "time": "03:00", "timezone": default_timezone},
         "active": False,
         "memoryWriteMode": "propose",
     }
+
+
+def _should_reconcile_builtin_nightly_schedule(current: Any, desired: dict[str, Any]) -> bool:
+    if not isinstance(current, dict):
+        return True
+    if current == desired:
+        return False
+    return current.get("type") == "daily" and current.get("time") == "03:00"
 
 
 def _format_value(value: Any, kind: str) -> str:
@@ -1090,6 +1142,160 @@ def list_runs(definition_id: str, *, user_id: str) -> dict[str, Any]:
     return {"runs": [_public_run(run) for run in runs]}
 
 
+def _definition_for_periphery(definition_id: str, user_id: str) -> dict[str, Any]:
+    if _is_user_schedule_id(definition_id):
+        raise ValueError("User-level schedules do not use Workbench periphery artifact files")
+    definition = storage().get_scheduled_prompt_definition(definition_id)
+    if not definition:
+        raise KeyError(definition_id)
+    if definition.get("user_id") != user_id:
+        raise PermissionError("scheduled prompt belongs to another user")
+    return definition
+
+
+def _periphery_root(my_folder: str | None) -> Path | None:
+    if not my_folder:
+        return None
+    root = Path(my_folder).expanduser() / "periphery"
+    return root if root.is_dir() else None
+
+
+def _relative_posix(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return path.name
+
+
+def _periphery_files(my_folder: str | None) -> tuple[Path | None, list[Path]]:
+    root = _periphery_root(my_folder)
+    if not root:
+        return None, []
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        return root, []
+    paths: list[Path] = []
+    for path in root.glob("*/*/*/*.json"):
+        try:
+            if not path.is_file():
+                continue
+            path.resolve().relative_to(resolved_root)
+        except (OSError, ValueError):
+            continue
+        paths.append(path)
+    return root, sorted(paths, key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)[:100]
+
+
+def _periphery_invalid(path: Path, root: Path, reason: str, *, missing_fields: list[str] | None = None) -> dict[str, Any]:
+    result = {
+        "fileName": path.name,
+        "relativePath": _relative_posix(path, root),
+        "reason": reason,
+    }
+    if missing_fields:
+        result["missingFields"] = missing_fields[:12]
+    return result
+
+
+def _periphery_content_counts(payload: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for field in PERIPHERY_CONTENT_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, list):
+            counts[field] = len(value)
+        elif value:
+            counts[field] = 1
+        else:
+            counts[field] = 0
+    return counts
+
+
+def _periphery_artifact_id(path: Path, root: Path) -> str:
+    return _sha(_relative_posix(path, root), length=24)
+
+
+def _load_periphery_artifact(path: Path, root: Path) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    try:
+        relative_parts = path.resolve().relative_to(root.resolve()).parts
+    except (OSError, ValueError):
+        return None, _periphery_invalid(path, root, "outside_periphery_root")
+    if len(relative_parts) < 4:
+        return None, _periphery_invalid(path, root, "invalid_path_shape")
+    module_from_path = str(relative_parts[0])
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None, _periphery_invalid(path, root, "unreadable")
+    except json.JSONDecodeError:
+        return None, _periphery_invalid(path, root, "invalid_json")
+    if not isinstance(payload, dict):
+        return None, _periphery_invalid(path, root, "invalid_payload")
+
+    missing = [field for field in PERIPHERY_REQUIRED_FIELDS if field not in payload]
+    if missing:
+        return None, _periphery_invalid(path, root, "missing_required_fields", missing_fields=missing)
+    module_id = str(payload.get("moduleId") or "").strip()
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{1,63}", module_id):
+        return None, _periphery_invalid(path, root, "invalid_module_id")
+    if module_id != module_from_path:
+        return None, _periphery_invalid(path, root, "module_path_mismatch")
+
+    markdown_path = path.with_suffix(".md")
+    try:
+        stat = path.stat()
+        modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
+    except OSError:
+        modified = None
+    scheduled_run_ref = payload.get("scheduledRunRef")
+    scheduled_run_ref_hash = None
+    if scheduled_run_ref:
+        scheduled_run_ref_hash = _sha(json.dumps(scheduled_run_ref, sort_keys=True, default=str), length=24)
+    source_refs = payload.get("sourceRefs")
+    return {
+        "artifactId": _periphery_artifact_id(path, root),
+        "moduleId": module_id,
+        "sidecarFileName": path.name,
+        "markdownFileName": markdown_path.name,
+        "relativePath": _relative_posix(path, root),
+        "markdownRelativePath": _relative_posix(markdown_path, root),
+        "markdownExists": markdown_path.is_file(),
+        "generatedAt": str(payload.get("generatedAt") or ""),
+        "updatedAt": modified,
+        "confidence": _safe_summary(str(payload.get("confidence") or ""), limit=80),
+        "severity": _safe_summary(str(payload.get("severity") or ""), limit=80),
+        "timeSensitivity": _safe_summary(str(payload.get("timeSensitivity") or ""), limit=80),
+        "ttl": _safe_summary(str(payload.get("ttl") or ""), limit=80),
+        "staleAfter": str(payload.get("staleAfter") or ""),
+        "sourceRefCount": len(source_refs) if isinstance(source_refs, list) else 0,
+        "scheduledRunRefHash": scheduled_run_ref_hash,
+        "contentCounts": _periphery_content_counts(payload),
+    }, None
+
+
+def list_periphery_artifacts(definition_id: str, *, user_id: str) -> dict[str, Any]:
+    definition = _definition_for_periphery(definition_id, user_id)
+    root, paths = _periphery_files(definition.get("my_folder"))
+    artifacts: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
+    if root:
+        for path in paths:
+            artifact, error = _load_periphery_artifact(path, root)
+            if artifact:
+                artifacts.append(artifact)
+            if error:
+                invalid.append(error)
+    return {
+        "artifacts": artifacts,
+        "invalidArtifacts": invalid,
+        "contract": (
+            "Write private periphery artifacts as paired .md/.json files under "
+            "my_folder/periphery/<moduleId>/YYYY/MM/. The API returns metadata only; "
+            "markdown bodies, source refs, and raw insight text stay private."
+        ),
+    }
+
+
 def _proposal_files(my_folder: str | None) -> list[Path]:
     if not my_folder:
         return []
@@ -1237,6 +1443,8 @@ def seed_nightly_prompt(
                 updates["title"] = template["title"]
             if str(row.get("prompt_text") or "").strip() != NIGHTLY_PROMPT_TEMPLATE.strip():
                 updates["promptText"] = NIGHTLY_PROMPT_TEMPLATE
+            if _should_reconcile_builtin_nightly_schedule(row.get("schedule"), template["schedule"]):
+                updates["schedule"] = template["schedule"]
             if active and not row.get("active"):
                 updates["active"] = True
             if executor and _public_definition(row).get("executor") != template["executor"]:

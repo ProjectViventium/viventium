@@ -38,6 +38,25 @@ ClaudeViv review conclusion:
 
 ## Implementation Log
 
+### 2026-06-24 Viventium Periphery And Nightly Insight Vision
+
+Viventium's prediction, blind-spot, risk, opportunity-cost, emotional mirroring, empathy, and
+health-pressure ambitions are now captured as a first-class product direction in
+[`53_Viventium_Periphery_Nightly_Insights.md`](53_Viventium_Periphery_Nightly_Insights.md).
+
+Prompt architecture rule:
+
+- do not solve this by stuffing more obligations into the main chat prompt
+- do not make the conscious agent sound constrained by contradictory hidden pressure
+- keep private nightly thought formation in Workbench/Scheduler/GlassHive
+- give the conscious agent a small awareness instruction and an on-demand read path
+- keep risk/opportunity artifacts out of saved memory unless governed memory proposals are approved
+- evaluate health-pressure persistence separately because it may need always-on posture context
+
+This preserves the prompt-architecture direction: the main prompt remains conscious identity and
+decision policy, while capability-specific cognition lives in the owning scheduled prompt, tool,
+memory, recall, cortex, or private artifact layer.
+
 ### 2026-06-15 Scheduled Run Date Grounding
 
 Scheduling Cortex now provides deterministic scheduled-run context at the scheduler boundary rather

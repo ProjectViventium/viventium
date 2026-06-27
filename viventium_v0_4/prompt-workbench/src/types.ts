@@ -321,3 +321,30 @@ export interface ScheduledPromptMemoryProposal {
     reason?: string;
   }>;
 }
+
+export interface ScheduledPromptPeripheryArtifact {
+  artifactId: string;
+  moduleId: string;
+  sidecarFileName: string;
+  markdownFileName: string;
+  relativePath: string;
+  markdownRelativePath: string;
+  markdownExists: boolean;
+  generatedAt: string;
+  updatedAt?: string | null;
+  confidence: string;
+  severity: string;
+  timeSensitivity: string;
+  ttl: string;
+  staleAfter: string;
+  sourceRefCount: number;
+  scheduledRunRefHash?: string | null;
+  contentCounts: Record<string, number>;
+}
+
+export interface ScheduledPromptInvalidPeripheryArtifact {
+  fileName: string;
+  relativePath: string;
+  reason: string;
+  missingFields?: string[];
+}

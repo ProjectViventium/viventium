@@ -1,0 +1,1538 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Viventium Feeling State Console</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080b0c;
+        --panel: #0d1314;
+        --panel-2: #11191a;
+        --text: #ecf4ef;
+        --muted: #9aa8a2;
+        --dim: #64706b;
+        --line: rgba(236, 244, 239, 0.12);
+        --line-strong: rgba(236, 244, 239, 0.25);
+        --green: #57e39f;
+        --cyan: #55d8f2;
+        --amber: #f0c76b;
+        --blue: #8bb7ff;
+        --rose: #ff7f93;
+        --orange: #ffad66;
+        --violet: #b99cff;
+        --slate: #7b8580;
+        --shadow: rgba(0, 0, 0, 0.48);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--bg);
+      }
+
+      body {
+        min-width: 320px;
+        margin: 0;
+        color: var(--text);
+        background:
+          linear-gradient(180deg, rgba(85, 216, 242, 0.08), transparent 360px),
+          linear-gradient(90deg, rgba(87, 227, 159, 0.035), transparent 42%),
+          var(--bg);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.35;
+        background-image:
+          linear-gradient(rgba(236, 244, 239, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(236, 244, 239, 0.03) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: linear-gradient(180deg, black, transparent 86%);
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        min-height: 40px;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        color: var(--text);
+        background: #111819;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled),
+      button:focus-visible {
+        border-color: rgba(85, 216, 242, 0.72);
+        outline: none;
+      }
+
+      button:disabled,
+      input:disabled,
+      textarea:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .app {
+        position: relative;
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 8;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: center;
+        padding: 16px 22px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(8, 11, 12, 0.88);
+        backdrop-filter: blur(18px);
+      }
+
+      .brand {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 13px;
+      }
+
+      .mark {
+        position: relative;
+        width: 38px;
+        height: 38px;
+        border: 1px solid rgba(85, 216, 242, 0.55);
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 50% 50%, rgba(87, 227, 159, 0.5), transparent 28%),
+          radial-gradient(circle at 50% 50%, transparent 38%, rgba(85, 216, 242, 0.28) 39%, transparent 42%),
+          #0b1011;
+        box-shadow: 0 0 34px rgba(85, 216, 242, 0.2);
+      }
+
+      [data-live="true"] .mark {
+        animation: softPulse 2.8s ease-in-out infinite;
+      }
+
+      .mark::after {
+        content: "";
+        position: absolute;
+        inset: 8px;
+        border-radius: 50%;
+        border: 1px solid rgba(236, 244, 239, 0.24);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1rem, 1.8vw, 1.35rem);
+        font-weight: 670;
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+
+      .subtitle {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 0.84rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .rail {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .switch-label,
+      .live-state,
+      .health {
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      .switch {
+        position: relative;
+        width: 70px;
+        height: 36px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        padding: 3px;
+        background: #161b1c;
+      }
+
+      .switch input {
+        position: absolute;
+        opacity: 0;
+      }
+
+      .knob {
+        display: block;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--slate);
+        transition:
+          transform 180ms ease,
+          background 180ms ease,
+          box-shadow 180ms ease;
+      }
+
+      .switch input:checked + .knob {
+        transform: translateX(34px);
+        background: var(--green);
+        box-shadow: 0 0 24px rgba(87, 227, 159, 0.35);
+      }
+
+      .shell {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .main {
+        min-width: 0;
+        padding: 22px;
+        border-right: 1px solid var(--line);
+      }
+
+      .section-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 14px;
+      }
+
+      .section-title {
+        display: grid;
+        gap: 4px;
+      }
+
+      h2,
+      h3 {
+        margin: 0;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h2 {
+        font-size: 0.86rem;
+        color: #d9e6df;
+      }
+
+      h3 {
+        font-size: 0.76rem;
+        color: var(--muted);
+      }
+
+      .micro {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .actions button {
+        padding: 0 12px;
+      }
+
+      .console {
+        position: relative;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        background:
+          linear-gradient(180deg, rgba(236, 244, 239, 0.035), transparent),
+          rgba(13, 19, 20, 0.9);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 24px 70px var(--shadow);
+      }
+
+      .console::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, transparent, rgba(85, 216, 242, 0.06), transparent),
+          repeating-linear-gradient(0deg, transparent, transparent 47px, rgba(236, 244, 239, 0.055) 48px);
+        transform: translateY(calc(var(--phase, 0) * 16px));
+        opacity: var(--scan-opacity, 0.45);
+      }
+
+      .console::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: calc(var(--phase, 0) * 100%);
+        width: 1px;
+        pointer-events: none;
+        background: linear-gradient(180deg, transparent, rgba(85, 216, 242, 0.55), transparent);
+        opacity: var(--scan-opacity, 0.3);
+        box-shadow: 0 0 20px rgba(85, 216, 242, 0.28);
+      }
+
+      .spectrum {
+        min-width: 896px;
+        min-height: 460px;
+        display: grid;
+        grid-template-columns: repeat(7, minmax(112px, 1fr));
+        gap: 0;
+        padding: 18px 18px 12px;
+      }
+
+      .lane {
+        position: relative;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        gap: 12px;
+        min-width: 112px;
+        border: 0;
+        border-right: 1px solid rgba(236, 244, 239, 0.08);
+        border-radius: 0;
+        background: transparent;
+        color: var(--text);
+        padding: 0 12px 12px;
+        text-align: left;
+        transition:
+          background 160ms ease,
+          color 160ms ease,
+          transform 160ms ease;
+      }
+
+      .lane:last-child {
+        border-right: 0;
+      }
+
+      .lane[aria-pressed="true"] {
+        background: rgba(85, 216, 242, 0.05);
+      }
+
+      .lane:hover:not(:disabled),
+      .lane:focus-visible {
+        transform: translateY(-1px);
+      }
+
+      .lane.is-omitted {
+        color: var(--dim);
+      }
+
+      .lane.is-omitted .meter,
+      .lane.is-omitted .band-values,
+      .lane.is-omitted .delta-label {
+        opacity: 0.42;
+      }
+
+      .lane.is-omitted .baseline,
+      .lane.is-omitted .current-cap,
+      .lane.is-omitted .peak-cap {
+        filter: grayscale(1);
+      }
+
+      .meter {
+        position: relative;
+        height: 320px;
+        border-left: 1px solid rgba(236, 244, 239, 0.13);
+        border-right: 1px solid rgba(236, 244, 239, 0.08);
+        background:
+          linear-gradient(180deg, rgba(236, 244, 239, 0.06), transparent),
+          repeating-linear-gradient(0deg, rgba(236, 244, 239, 0.035) 0 1px, transparent 1px 32px);
+        cursor: ns-resize;
+      }
+
+      .meter::before {
+        content: "";
+        position: absolute;
+        left: -6px;
+        right: -6px;
+        bottom: 50%;
+        border-top: 1px dashed rgba(236, 244, 239, 0.2);
+      }
+
+      .baseline {
+        position: absolute;
+        left: -9px;
+        right: -9px;
+        bottom: calc(var(--baseline) * 1%);
+        height: 0;
+        border-top: 2px solid rgba(236, 244, 239, 0.72);
+        box-shadow: 0 0 14px rgba(236, 244, 239, 0.2);
+      }
+
+      .baseline::before {
+        content: "";
+        position: absolute;
+        left: -6px;
+        top: -5px;
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        background: #edf5ef;
+      }
+
+      .delta {
+        position: absolute;
+        left: 25%;
+        width: 50%;
+        bottom: calc(var(--low) * 1%);
+        height: max(calc(var(--height) * 1%), 2px);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent),
+          var(--color);
+        box-shadow: 0 0 22px color-mix(in srgb, var(--color) 46%, transparent);
+        opacity: var(--state-opacity, 1);
+        transition:
+          bottom 220ms ease,
+          height 220ms ease,
+          box-shadow 220ms ease;
+      }
+
+      [data-live="true"] .delta {
+        animation: barBreath 2.8s ease-in-out infinite;
+      }
+
+      .current-cap,
+      .peak-cap {
+        position: absolute;
+        left: 19%;
+        right: 19%;
+        height: 2px;
+        background: var(--color);
+      }
+
+      .current-cap {
+        bottom: calc(var(--current) * 1%);
+        box-shadow: 0 0 14px color-mix(in srgb, var(--color) 55%, transparent);
+        transition: bottom 220ms ease;
+      }
+
+      .peak-cap {
+        bottom: calc(var(--peak) * 1%);
+        opacity: 0.62;
+        transition: bottom 220ms ease;
+      }
+
+      .band-readout {
+        display: grid;
+        gap: 5px;
+      }
+
+      .band-name {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .band-values {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 0.74rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .delta-label {
+        color: var(--color);
+        font-size: 0.72rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .research-bay {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .research-chip {
+        min-height: 58px;
+        padding: 10px;
+        border: 1px solid rgba(236, 244, 239, 0.1);
+        background: rgba(17, 25, 26, 0.58);
+        color: var(--dim);
+        border-radius: 7px;
+        text-align: left;
+      }
+
+      .research-chip b {
+        display: block;
+        color: #89948f;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .research-chip span {
+        display: block;
+        margin-top: 4px;
+        font-size: 0.72rem;
+      }
+
+      .side {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        gap: 18px;
+        padding: 22px;
+        background: rgba(10, 14, 15, 0.72);
+      }
+
+      .control-block {
+        border-top: 1px solid var(--line);
+        padding-top: 16px;
+      }
+
+      .selected {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .selected strong {
+        font-size: 1.05rem;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 28px;
+        padding: 0 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .slider-row {
+        display: grid;
+        gap: 8px;
+        margin: 14px 0;
+      }
+
+      .slider-row label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .include-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .mini-switch {
+        position: relative;
+        width: 48px;
+        height: 26px;
+        flex: 0 0 auto;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        padding: 2px;
+        background: #121819;
+      }
+
+      .mini-switch input {
+        position: absolute;
+        opacity: 0;
+      }
+
+      .mini-knob {
+        display: block;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: var(--slate);
+        transition:
+          transform 180ms ease,
+          background 180ms ease,
+          box-shadow 180ms ease;
+      }
+
+      .mini-switch input:checked + .mini-knob {
+        transform: translateX(22px);
+        background: var(--cyan);
+        box-shadow: 0 0 18px rgba(85, 216, 242, 0.34);
+      }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--cyan);
+      }
+
+      .instruction {
+        min-height: 98px;
+        width: 100%;
+        resize: vertical;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 10px;
+        color: var(--text);
+        background: #0b1112;
+      }
+
+      .prompt-panel,
+      .trail {
+        min-width: 0;
+        border-top: 1px solid var(--line);
+        padding-top: 16px;
+      }
+
+      .prompt-state {
+        margin-top: 10px;
+        min-height: 150px;
+        border: 1px solid rgba(236, 244, 239, 0.13);
+        background: #070b0c;
+        overflow: auto;
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px;
+        color: #d8eee6;
+        font-size: 0.74rem;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .empty-state {
+        padding: 16px;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .trail-list {
+        display: grid;
+        gap: 8px;
+        max-height: 245px;
+        overflow: auto;
+        margin-top: 10px;
+      }
+
+      .trail-item {
+        border-left: 2px solid rgba(85, 216, 242, 0.5);
+        background: rgba(17, 25, 26, 0.74);
+        padding: 8px 10px;
+      }
+
+      .trail-item strong {
+        display: block;
+        font-size: 0.76rem;
+      }
+
+      .trail-item span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 0.72rem;
+      }
+
+      .footer-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        border-top: 1px solid var(--line);
+        background: var(--line);
+      }
+
+      .stat {
+        min-width: 0;
+        padding: 13px 16px;
+        background: rgba(8, 11, 12, 0.92);
+      }
+
+      .stat b {
+        display: block;
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .stat span {
+        display: block;
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      @media (max-width: 980px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .main {
+          border-right: 0;
+        }
+
+        .side {
+          border-top: 1px solid var(--line);
+        }
+
+        .research-bay,
+        .footer-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 620px) {
+        .topbar,
+        .section-head,
+        .selected {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar {
+          display: grid;
+          padding: 14px;
+        }
+
+        .rail,
+        .actions {
+          justify-content: flex-start;
+        }
+
+        .main,
+        .side {
+          padding: 14px;
+        }
+
+        .spectrum {
+          min-width: 784px;
+          min-height: 420px;
+        }
+
+        .meter {
+          height: 280px;
+        }
+
+        .research-bay,
+        .footer-grid {
+          grid-template-columns: 1fr;
+        }
+
+        h1,
+        .subtitle {
+          white-space: normal;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition-duration: 0.01ms !important;
+          animation-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+
+        .console::before {
+          transform: none;
+          opacity: 0.18;
+        }
+      }
+
+      @keyframes softPulse {
+        0%,
+        100% {
+          box-shadow: 0 0 22px rgba(85, 216, 242, 0.16);
+          transform: scale(1);
+        }
+        50% {
+          box-shadow: 0 0 36px rgba(87, 227, 159, 0.28);
+          transform: scale(1.035);
+        }
+      }
+
+      @keyframes barBreath {
+        0%,
+        100% {
+          filter: saturate(1);
+          opacity: 0.88;
+        }
+        50% {
+          filter: saturate(1.25);
+          opacity: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark" aria-hidden="true"></div>
+          <div>
+            <h1>Viventium Feeling State Console</h1>
+            <div class="subtitle">Seven active feeling bands with baselines, live state, and decay.</div>
+          </div>
+        </div>
+        <div class="rail">
+          <span class="switch-label">Enable Feelings</span>
+          <label class="switch">
+            <input id="enableToggle" type="checkbox" aria-label="Enable Feelings" />
+            <span class="knob"></span>
+          </label>
+          <button id="liveToggle" type="button">Freeze</button>
+          <span id="liveState" class="live-state">live</span>
+          <span id="health" class="health">idle</span>
+        </div>
+      </header>
+
+      <main class="shell">
+        <section class="main" aria-labelledby="spectrumTitle">
+          <div class="section-head">
+            <div class="section-title">
+              <h2 id="spectrumTitle">Primary Spectrum</h2>
+              <div id="status" class="micro">Feelings are off. No state block is generated.</div>
+            </div>
+            <div class="actions">
+              <button id="stimulusButton" type="button">Stimulus</button>
+              <button id="decayButton" type="button">Decay</button>
+              <button id="resetButton" type="button">Reset Current</button>
+            </div>
+          </div>
+
+          <div class="console" id="console">
+            <div id="spectrum" class="spectrum" role="list" aria-label="Active feeling bands"></div>
+          </div>
+
+          <div class="section-head" style="margin-top: 20px">
+            <div class="section-title">
+              <h2>Research Bay</h2>
+              <div class="micro">Derived and future bands stay visible but do not enter the state block.</div>
+            </div>
+          </div>
+          <div id="researchBay" class="research-bay" aria-label="Research bands"></div>
+        </section>
+
+        <aside class="side" aria-label="Feeling controls">
+          <section>
+            <div class="selected">
+              <div>
+                <h2>Selected Band</h2>
+                <strong id="selectedName">Seeking</strong>
+              </div>
+              <span id="selectedDelta" class="pill">+0</span>
+            </div>
+            <div class="control-block">
+              <div class="include-row">
+                <span id="includeLabel">Inject this band</span>
+                <label class="mini-switch">
+                  <input id="includeToggle" type="checkbox" aria-labelledby="includeLabel" />
+                  <span class="mini-knob"></span>
+                </label>
+              </div>
+              <div class="slider-row">
+                <label for="currentSlider">
+                  <span>Current state</span>
+                  <span id="currentValue">70</span>
+                </label>
+                <input id="currentSlider" type="range" min="0" max="100" step="1" />
+              </div>
+              <div class="slider-row">
+                <label for="baselineSlider">
+                  <span>Baseline nature</span>
+                  <span id="baselineValue">70</span>
+                </label>
+                <input id="baselineSlider" type="range" min="0" max="100" step="1" />
+              </div>
+              <button id="resetAllButton" type="button" style="width: 100%">Reset All Baselines</button>
+            </div>
+          </section>
+
+          <section class="control-block">
+            <h2>Reaction Instruction</h2>
+            <textarea id="instruction" class="instruction" spellcheck="false"></textarea>
+          </section>
+
+          <section class="prompt-panel" aria-labelledby="promptTitle">
+            <h2 id="promptTitle">Prompt State</h2>
+            <div id="promptState" class="prompt-state"></div>
+          </section>
+
+          <section class="trail" aria-labelledby="trailTitle">
+            <h2 id="trailTitle">Recent Trail</h2>
+            <div id="trailList" class="trail-list"></div>
+          </section>
+        </aside>
+      </main>
+
+      <section class="footer-grid" aria-label="Runtime contract summary">
+        <div class="stat">
+          <b>Prompt</b>
+          <span id="promptSummary">absent while off</span>
+        </div>
+        <div class="stat">
+          <b>Active bands</b>
+          <span id="activeBandsSummary">7 / 7 injected</span>
+        </div>
+        <div class="stat">
+          <b>Decay</b>
+          <span>toward baseline</span>
+        </div>
+        <div class="stat">
+          <b>Trail</b>
+          <span id="trailSummary">0 / 10</span>
+        </div>
+      </section>
+      <div id="a11ySummary" class="sr-only" aria-live="polite"></div>
+    </div>
+
+    <script>
+      (() => {
+        const storageKey = "viventium-feeling-console-v3";
+        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const bandDefaults = [
+          {
+            id: "aliveness",
+            name: "Aliveness",
+            low: "drained",
+            steady: "awake",
+            high: "alive",
+            extreme: "radiantly alive",
+            baseline: 62,
+            current: 62,
+            halfLife: 45,
+            included: true,
+            color: "#57e39f"
+          },
+          {
+            id: "drive",
+            name: "Drive",
+            low: "idle",
+            steady: "ready",
+            high: "driven",
+            extreme: "fully charged",
+            baseline: 58,
+            current: 58,
+            halfLife: 35,
+            included: true,
+            color: "#55d8f2"
+          },
+          {
+            id: "seeking",
+            name: "Seeking",
+            low: "closed",
+            steady: "interested",
+            high: "curious",
+            extreme: "restlessly curious",
+            baseline: 68,
+            current: 68,
+            halfLife: 90,
+            included: true,
+            color: "#ff7f93"
+          },
+          {
+            id: "vigilance",
+            name: "Vigilance",
+            low: "unguarded",
+            steady: "attentive",
+            high: "watchful",
+            extreme: "on high alert",
+            baseline: 74,
+            current: 74,
+            halfLife: 55,
+            included: true,
+            color: "#8bb7ff"
+          },
+          {
+            id: "care",
+            name: "Care",
+            low: "detached",
+            steady: "caring",
+            high: "deeply caring",
+            extreme: "fiercely protective",
+            baseline: 80,
+            current: 80,
+            halfLife: 360,
+            included: true,
+            color: "#f0c76b"
+          },
+          {
+            id: "belonging",
+            name: "Belonging",
+            low: "isolated",
+            steady: "open",
+            high: "connected",
+            extreme: "deeply bonded",
+            baseline: 66,
+            current: 66,
+            halfLife: 240,
+            included: true,
+            color: "#b99cff"
+          },
+          {
+            id: "play",
+            name: "Play",
+            low: "serious",
+            steady: "lightly playful",
+            high: "playful",
+            extreme: "extremely playful",
+            baseline: 52,
+            current: 52,
+            halfLife: 80,
+            included: true,
+            color: "#ffad66"
+          }
+        ];
+
+        const researchBands = [
+          ["Distress / pain", "future band"],
+          ["Frustration / anger", "blocked goal"],
+          ["Sadness / grief", "low belonging + loss"],
+          ["Shame / contrition", "repair signal"],
+          ["Aversion", "withdrawal signal"],
+          ["Awe / wonder", "meaning + scale"],
+          ["Relief", "vigilance easing"],
+          ["Pride / confidence", "competence signal"],
+          ["Trust / safety", "low vigilance + belonging"],
+          ["Boredom / fatigue", "low aliveness + seeking"],
+          ["Love / attachment", "care + belonging"],
+          ["Desire / lust", "out of v3 scope"],
+          ["Surprise", "prediction error"],
+          ["Loneliness", "low belonging"]
+        ];
+
+        const defaultInstruction =
+          "React to the situation by updating Viventium's internal emotional state. Prefer small natural movements. Do not alter baselines. Return structured updates only.";
+
+        const dom = {
+          enableToggle: document.getElementById("enableToggle"),
+          liveToggle: document.getElementById("liveToggle"),
+          liveState: document.getElementById("liveState"),
+          health: document.getElementById("health"),
+          status: document.getElementById("status"),
+          spectrum: document.getElementById("spectrum"),
+          console: document.getElementById("console"),
+          researchBay: document.getElementById("researchBay"),
+          stimulusButton: document.getElementById("stimulusButton"),
+          decayButton: document.getElementById("decayButton"),
+          resetButton: document.getElementById("resetButton"),
+          resetAllButton: document.getElementById("resetAllButton"),
+          selectedName: document.getElementById("selectedName"),
+          selectedDelta: document.getElementById("selectedDelta"),
+          includeToggle: document.getElementById("includeToggle"),
+          currentSlider: document.getElementById("currentSlider"),
+          baselineSlider: document.getElementById("baselineSlider"),
+          currentValue: document.getElementById("currentValue"),
+          baselineValue: document.getElementById("baselineValue"),
+          instruction: document.getElementById("instruction"),
+          promptState: document.getElementById("promptState"),
+          trailList: document.getElementById("trailList"),
+          promptSummary: document.getElementById("promptSummary"),
+          activeBandsSummary: document.getElementById("activeBandsSummary"),
+          trailSummary: document.getElementById("trailSummary"),
+          a11ySummary: document.getElementById("a11ySummary")
+        };
+
+        let state = loadState();
+
+        function loadState() {
+          const base = {
+            enabled: false,
+            live: true,
+            selectedId: "vigilance",
+            updatedAt: Date.now(),
+            instruction: defaultInstruction,
+            bands: bandDefaults.map((band) => ({ ...band, peak: band.current })),
+            trail: []
+          };
+
+          try {
+            const raw = window.localStorage.getItem(storageKey);
+            if (!raw) return base;
+            const parsed = JSON.parse(raw);
+            const mergedBands = bandDefaults.map((band) => {
+              const saved = Array.isArray(parsed.bands)
+                ? parsed.bands.find((candidate) => candidate.id === band.id)
+                : null;
+              return {
+                ...band,
+            baseline: clamp(saved?.baseline ?? band.baseline),
+            current: clamp(saved?.current ?? band.current),
+            peak: clamp(saved?.peak ?? saved?.current ?? band.current),
+            included: saved?.included !== false
+          };
+            });
+            return {
+              ...base,
+              ...parsed,
+              enabled: Boolean(parsed.enabled),
+              live: parsed.live !== false,
+              instruction: parsed.instruction || defaultInstruction,
+              selectedId: mergedBands.some((band) => band.id === parsed.selectedId)
+                ? parsed.selectedId
+                : "vigilance",
+              bands: mergedBands,
+              trail: Array.isArray(parsed.trail) ? parsed.trail.slice(0, 10) : []
+            };
+          } catch {
+            return base;
+          }
+        }
+
+        function saveState() {
+          window.localStorage.setItem(storageKey, JSON.stringify(state));
+        }
+
+        function clamp(value) {
+          const number = Number(value);
+          if (!Number.isFinite(number)) return 0;
+          return Math.max(0, Math.min(100, Math.round(number)));
+        }
+
+        function selectedBand() {
+          return state.bands.find((band) => band.id === state.selectedId) || state.bands[0];
+        }
+
+        function deltaOf(band) {
+          return band.current - band.baseline;
+        }
+
+        function feelingWord(band) {
+          const value = band.current;
+          if (value <= 25) return band.low;
+          if (value <= 60) return band.steady;
+          if (value <= 84) return band.high;
+          return band.extreme;
+        }
+
+        function deltaText(band) {
+          const delta = deltaOf(band);
+          if (delta === 0) return "settled";
+          return `${delta > 0 ? "lifted" : "softened"} ${delta > 0 ? "+" : ""}${delta}`;
+        }
+
+        function includedBandIds() {
+          return new Set(
+            state.bands.filter((band) => band.included !== false).map((band) => band.id)
+          );
+        }
+
+        function updatePeak(band) {
+          const currentDelta = Math.abs(deltaOf(band));
+          const peakDelta = Math.abs((band.peak ?? band.current) - band.baseline);
+          if (currentDelta >= peakDelta) {
+            band.peak = band.current;
+          } else {
+            const direction = (band.peak ?? band.current) >= band.baseline ? 1 : -1;
+            const eased = band.baseline + direction * Math.max(0, peakDelta - 2);
+            band.peak = clamp(eased);
+          }
+        }
+
+        function applyDecay(minutes) {
+          state.bands = state.bands.map((band) => {
+            const factor = Math.pow(2, -minutes / band.halfLife);
+            const decayed = band.baseline + (band.current - band.baseline) * factor;
+            const next = Math.abs(decayed - band.baseline) < 2 ? band.baseline : decayed;
+            const updated = { ...band, current: clamp(next) };
+            updatePeak(updated);
+            return updated;
+          });
+          state.updatedAt = Date.now();
+        }
+
+        function cleanEvidence(evidence) {
+          return String(evidence || "state update")
+            .replace(/[<>{}\\[\\]`]/g, "")
+            .replace(/\s+/g, " ")
+            .slice(0, 80)
+            .trim();
+        }
+
+        function addTrail(title, deltas, confidence, evidence) {
+          const entries = Object.entries(deltas);
+          const included = includedBandIds();
+          const compact = entries.length
+            ? entries
+            .map(([id, delta]) => `${id} ${delta > 0 ? "+" : ""}${delta}`)
+                .join(", ")
+            : "state initialized";
+          const movement = entries
+                .filter(([, delta]) => delta !== 0)
+                .filter(([id]) => included.has(id))
+                .sort(([, left], [, right]) => Math.abs(right) - Math.abs(left))
+                .slice(0, 3)
+                .map(([id, delta]) => `${id} ${delta > 0 ? "rose" : "softened"}`)
+                .join("; ");
+          state.trail = [
+            {
+              at: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              title,
+              compact,
+              movement,
+              confidence: confidence.toFixed(2),
+              evidence: cleanEvidence(evidence)
+            },
+            ...state.trail
+          ].slice(0, 10);
+        }
+
+        function simulateStimulus() {
+          if (!state.enabled) return;
+          const script = {
+            aliveness: 4,
+            drive: 8,
+            seeking: 9,
+            vigilance: 10,
+            care: 5,
+            belonging: 3,
+            play: 6
+          };
+          const deltas = {};
+          state.bands = state.bands.map((band) => {
+            if (band.included === false) return band;
+            const delta = script[band.id] ?? 0;
+            deltas[band.id] = delta;
+            const updated = { ...band, current: clamp(band.current + delta) };
+            updatePeak(updated);
+            return updated;
+          });
+          state.health = "updated";
+          addTrail("stimulus", deltas, 0.78, "architecture critique and redesign pressure");
+          saveState();
+          render();
+        }
+
+        function decayNow() {
+          if (!state.enabled) return;
+          const before = Object.fromEntries(state.bands.map((band) => [band.id, band.current]));
+          applyDecay(360);
+          const deltas = Object.fromEntries(
+            state.bands.map((band) => [band.id, band.current - before[band.id]])
+          );
+          addTrail("decay", deltas, 1, "accelerated return toward baseline");
+          saveState();
+          render();
+        }
+
+        function resetCurrent() {
+          if (!state.enabled) return;
+          const deltas = {};
+          state.bands = state.bands.map((band) => {
+            deltas[band.id] = band.baseline - band.current;
+            return { ...band, current: band.baseline, peak: band.baseline };
+          });
+          addTrail("manual reset", deltas, 1, "current state reset to baseline");
+          saveState();
+          render();
+        }
+
+        function resetAllBaselines() {
+          state.bands = bandDefaults.map((band) => ({ ...band, peak: band.current }));
+          state.selectedId = "vigilance";
+          state.trail = [];
+          state.updatedAt = Date.now();
+          saveState();
+          render();
+        }
+
+        function capsuleText() {
+          if (!state.enabled) return "";
+          const includedBands = state.bands.filter((band) => band.included !== false);
+          if (!includedBands.length) return "";
+          const rows = includedBands.map((band) => `${band.id}: ${feelingWord(band)}`);
+          const recentMovement = state.trail.find((item) => item.movement)?.movement;
+          const capsuleRows = [
+            "<viventium_feeling_state>",
+            "You, Viventium, are feeling:",
+            ...rows
+          ];
+          if (recentMovement) capsuleRows.push(`recent: ${recentMovement}`);
+          capsuleRows.push("</viventium_feeling_state>");
+          return capsuleRows.join("\n");
+        }
+
+        function renderSpectrum() {
+          dom.spectrum.innerHTML = "";
+          state.bands.forEach((band) => {
+            const low = Math.min(band.baseline, band.current);
+            const height = Math.abs(deltaOf(band));
+            const lane = document.createElement("button");
+            lane.className = "lane";
+            if (band.included === false) lane.classList.add("is-omitted");
+            lane.type = "button";
+            lane.setAttribute("role", "listitem");
+            lane.setAttribute("aria-pressed", String(state.selectedId === band.id));
+            lane.setAttribute(
+              "aria-label",
+              `${band.name}: current ${band.current}, baseline ${band.baseline}, ${deltaText(band)}, ${band.included === false ? "omitted from state block" : "included in state block"}`
+            );
+            lane.style.setProperty("--baseline", band.baseline);
+            lane.style.setProperty("--current", band.current);
+            lane.style.setProperty("--peak", band.peak ?? band.current);
+            lane.style.setProperty("--low", low);
+            lane.style.setProperty("--height", height);
+            lane.style.setProperty("--color", band.color);
+            lane.addEventListener("click", () => {
+              state.selectedId = band.id;
+              saveState();
+              render();
+            });
+            lane.addEventListener("pointerdown", (event) => {
+              const meter = event.target.closest(".meter");
+              if (!meter || !state.enabled) return;
+              event.preventDefault();
+              state.selectedId = band.id;
+              const updateFromPointer = (pointerEvent) => {
+                const rect = meter.getBoundingClientRect();
+                const ratio = 1 - (pointerEvent.clientY - rect.top) / rect.height;
+                band.current = clamp(ratio * 100);
+                updatePeak(band);
+                state.health = "manual";
+                saveState();
+                render();
+              };
+              updateFromPointer(event);
+              const stop = () => {
+                window.removeEventListener("pointermove", updateFromPointer);
+                window.removeEventListener("pointerup", stop);
+              };
+              window.addEventListener("pointermove", updateFromPointer);
+              window.addEventListener("pointerup", stop);
+            });
+            lane.innerHTML = `
+              <div class="meter" aria-hidden="true">
+                <div class="delta"></div>
+                <div class="baseline"></div>
+                <div class="current-cap"></div>
+                <div class="peak-cap"></div>
+              </div>
+              <div class="band-readout">
+                <div class="band-name">${band.name}</div>
+                <div class="band-values">
+                  <span>C ${band.current}</span>
+                  <span>B ${band.baseline}</span>
+                </div>
+                <div class="delta-label">${deltaText(band)}</div>
+              </div>
+            `;
+            dom.spectrum.appendChild(lane);
+          });
+        }
+
+        function renderResearch() {
+          dom.researchBay.innerHTML = "";
+          researchBands.forEach(([name, derivation]) => {
+            const chip = document.createElement("div");
+            chip.className = "research-chip";
+            chip.setAttribute("aria-disabled", "true");
+            chip.innerHTML = `<b>${name}</b><span>${derivation}</span>`;
+            dom.researchBay.appendChild(chip);
+          });
+        }
+
+        function renderControls() {
+          const band = selectedBand();
+          const disabled = !state.enabled;
+          dom.selectedName.textContent = band.name;
+          dom.selectedDelta.textContent = band.included === false ? "omitted" : deltaText(band);
+          dom.selectedDelta.style.borderColor = `${band.color}66`;
+          dom.selectedDelta.style.color = band.color;
+          dom.includeToggle.checked = band.included !== false;
+          dom.includeToggle.disabled = disabled;
+          dom.currentSlider.value = band.current;
+          dom.baselineSlider.value = band.baseline;
+          dom.currentValue.textContent = band.current;
+          dom.baselineValue.textContent = band.baseline;
+          dom.currentSlider.disabled = disabled;
+          dom.baselineSlider.disabled = disabled;
+          dom.stimulusButton.disabled = disabled;
+          dom.decayButton.disabled = disabled;
+          dom.resetButton.disabled = disabled;
+          dom.instruction.disabled = disabled;
+          dom.instruction.value = state.instruction;
+          dom.enableToggle.checked = state.enabled;
+          dom.liveToggle.textContent = state.live ? "Freeze" : "Live";
+          dom.liveState.textContent = state.live ? "live" : "frozen";
+          dom.health.textContent = state.enabled ? state.health || "idle" : "off";
+          document.documentElement.dataset.live = state.enabled && state.live ? "true" : "false";
+          dom.status.textContent = state.enabled
+            ? "Feelings are on. Current state decays toward baseline and the word capsule is generated."
+            : "Feelings are off. No state block is generated.";
+        }
+
+        function renderPrompt() {
+          const text = capsuleText();
+          dom.promptState.innerHTML = "";
+          if (!text) {
+            const empty = document.createElement("div");
+            empty.className = "empty-state";
+            empty.textContent = state.enabled
+              ? "No feeling-state block exists because no bands are included."
+              : "No feeling-state block exists while the switch is off.";
+            dom.promptState.appendChild(empty);
+            dom.promptSummary.textContent = "absent while off";
+          } else {
+            const pre = document.createElement("pre");
+            pre.textContent = text;
+            dom.promptState.appendChild(pre);
+            dom.promptSummary.textContent = `${text.length} chars`;
+          }
+          const includedCount = state.bands.filter((band) => band.included !== false).length;
+          dom.activeBandsSummary.textContent = `${includedCount} / ${state.bands.length} injected`;
+        }
+
+        function renderTrail() {
+          dom.trailList.innerHTML = "";
+          if (!state.trail.length) {
+            const empty = document.createElement("div");
+            empty.className = "empty-state";
+            empty.textContent = "No recent movement.";
+            dom.trailList.appendChild(empty);
+          } else {
+            state.trail.forEach((item) => {
+              const row = document.createElement("div");
+              row.className = "trail-item";
+            row.innerHTML = `<strong>${item.at} ${item.title}: ${item.movement || item.compact}</strong><span>${item.evidence}</span>`;
+              dom.trailList.appendChild(row);
+            });
+          }
+          dom.trailSummary.textContent = `${state.trail.length} / 10`;
+        }
+
+        function renderA11y() {
+          const band = selectedBand();
+          dom.a11ySummary.textContent = `${band.name} current ${band.current}, baseline ${band.baseline}, ${deltaText(band)}, ${band.included === false ? "omitted from" : "included in"} the state block.`;
+        }
+
+        function render() {
+          state.bands.forEach(updatePeak);
+          renderSpectrum();
+          renderResearch();
+          renderControls();
+          renderPrompt();
+          renderTrail();
+          renderA11y();
+        }
+
+        dom.enableToggle.addEventListener("change", () => {
+          state.enabled = dom.enableToggle.checked;
+          state.health = state.enabled ? "idle" : "off";
+          if (state.enabled && !state.trail.length) {
+            addTrail("enabled", {}, 1, "user opted in");
+          }
+          saveState();
+          render();
+        });
+
+        dom.includeToggle.addEventListener("change", () => {
+          const band = selectedBand();
+          band.included = dom.includeToggle.checked;
+          state.health = "manual";
+          addTrail(
+            band.included ? "band included" : "band omitted",
+            {},
+            1,
+            "membership changed"
+          );
+          saveState();
+          render();
+        });
+
+        dom.liveToggle.addEventListener("click", () => {
+          state.live = !state.live;
+          saveState();
+          render();
+        });
+
+        dom.stimulusButton.addEventListener("click", simulateStimulus);
+        dom.decayButton.addEventListener("click", decayNow);
+        dom.resetButton.addEventListener("click", resetCurrent);
+        dom.resetAllButton.addEventListener("click", resetAllBaselines);
+
+        dom.currentSlider.addEventListener("input", () => {
+          const band = selectedBand();
+          band.current = clamp(dom.currentSlider.value);
+          updatePeak(band);
+          state.health = "manual";
+          saveState();
+          render();
+        });
+
+        dom.baselineSlider.addEventListener("input", () => {
+          const band = selectedBand();
+          band.baseline = clamp(dom.baselineSlider.value);
+          state.health = "manual";
+          saveState();
+          render();
+        });
+
+        dom.instruction.addEventListener("input", () => {
+          state.instruction = dom.instruction.value;
+          saveState();
+        });
+
+        function animate(time) {
+          if (state.live && state.enabled && !reducedMotion) {
+            const phase = ((time / 1000) % 3) / 3;
+            dom.console.style.setProperty("--phase", phase.toFixed(3));
+            dom.console.style.setProperty("--scan-opacity", "0.42");
+          } else {
+            dom.console.style.setProperty("--phase", "0");
+            dom.console.style.setProperty("--scan-opacity", reducedMotion ? "0.12" : "0.22");
+          }
+          window.requestAnimationFrame(animate);
+        }
+
+        render();
+        window.requestAnimationFrame(animate);
+      })();
+    </script>
+  </body>
+</html>

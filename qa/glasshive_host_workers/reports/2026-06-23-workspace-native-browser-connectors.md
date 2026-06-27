@@ -25,7 +25,7 @@ the runtime should record that provisioning blocker truthfully instead of faking
 
 ## Implementation Evidence
 
-- Workstation default image moved to `workers-projects-runtime-workstation:phase1-node22-docs6`.
+- Workstation default image moved to `workers-projects-runtime-workstation:phase1-node22-docs7`.
 - Default worker CLIs moved to Codex CLI `0.142.0` and Claude Code `2.1.186`.
 - `glasshive-browser-native-host-bootstrap` now runs before worker Chromium launch.
 - Claude native messaging host is created in the worker home and executes `claude --chrome-native-host`.

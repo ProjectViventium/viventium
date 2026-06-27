@@ -559,6 +559,11 @@ def test_scheduled_prompt_object_has_drafts_preview_and_execution_config_ui() ->
     assert "workspaceRoot" in schedule_source
     assert "executionProfile" in schedule_source
     assert "getScheduledPromptMemoryProposals" in schedule_source
+    assert "getScheduledPromptPeripheryArtifacts" in api_source
+    assert "getScheduledPromptPeripheryArtifacts" in schedule_source
+    assert "Periphery Artifacts" in schedule_source
+    assert "Content counts for" in schedule_source
+    assert "invalidArtifacts" in schedule_source
     assert "Apply governed" in schedule_source
     assert "same_worker" in schedule_source
     assert "new_worker_each_run" in schedule_source
@@ -622,6 +627,98 @@ def test_scheduled_prompt_template_endpoint_and_user_scoping(tmp_path: Path, mon
     titles = {item["title"] for item in listed.json()["scheduledPrompts"]}
     assert titles == {"Owned prompt"}
     assert client.patch(f"/api/scheduled-prompts/{other['id']}", json={"active": True}).status_code == 403
+
+
+def test_nightly_prompt_template_prefers_configured_default_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.setenv("VIVENTIUM_DEFAULT_TIMEZONE", "America/Toronto")
+
+    template = scheduled_prompts.nightly_prompt_template()
+
+    assert template["schedule"] == {
+        "type": "daily",
+        "time": "03:00",
+        "timezone": "America/Toronto",
+    }
+
+
+def test_nightly_prompt_template_requests_private_risk_radar_sidecar() -> None:
+    prompt_text = scheduled_prompts.nightly_prompt_template()["promptText"]
+
+    assert "{{local.viventium.my_folder}}" in prompt_text
+    assert "periphery/risk_radar/YYYY/MM" in prompt_text
+    assert "paired .md and .json" in prompt_text
+    assert "If there is no strong evidence" in prompt_text
+    assert "Do not add a saved-memory key" in prompt_text
+    for field in scheduled_prompts.PERIPHERY_REQUIRED_FIELDS:
+        assert field in prompt_text
+
+
+def test_nightly_seed_reconciles_existing_builtin_schedule_timezone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_DEFAULT_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    template = scheduled_prompts.nightly_prompt_template()
+    existing = scheduled_prompts.create_scheduled_prompt(
+        {
+            **template,
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "America/Los_Angeles"},
+            "active": False,
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    reseeded = scheduled_prompts.seed_nightly_prompt(
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    expected_schedule = {"type": "daily", "time": "03:00", "timezone": "America/Toronto"}
+    assert reseeded["id"] == existing["id"]
+    assert reseeded["schedule"] == expected_schedule
+    stored = scheduled_prompts.storage().get_scheduled_prompt_definition(existing["id"])
+    task = scheduled_prompts.storage().get_task("startup-admin", stored["task_id"])
+    assert stored["schedule"] == expected_schedule
+    assert task["schedule"] == expected_schedule
+
+
+def test_nightly_seed_reconciles_existing_builtin_prompt_into_scheduler_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    template = scheduled_prompts.nightly_prompt_template()
+    existing = scheduled_prompts.create_scheduled_prompt(
+        {
+            **template,
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+            "promptText": "legacy scratchpad-only nightly prompt\n",
+            "active": False,
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    reseeded = scheduled_prompts.seed_nightly_prompt(
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    stored = scheduled_prompts.storage().get_scheduled_prompt_definition(existing["id"])
+    task = scheduled_prompts.storage().get_task("startup-admin", stored["task_id"])
+    assert reseeded["id"] == existing["id"]
+    assert "periphery/risk_radar/YYYY/MM" in stored["prompt_text"]
+    assert "periphery/risk_radar/YYYY/MM" in task["prompt"]
 
 
 def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -803,6 +900,258 @@ def test_scheduled_prompt_memory_proposal_review_and_governed_apply(
     )
     assert applied.status_code == 200
     assert applied.json()["applied"] is True
+
+
+def test_scheduled_prompt_periphery_artifact_metadata_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "periphery-user")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Periphery prompt",
+            "promptText": "Write private periphery notes",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "propose",
+        },
+    ).json()
+    artifact_dir = Path(created["myFolder"]) / "periphery" / "risk_radar" / "2026" / "06"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "20260625T030000Z.risk_radar.md").write_text(
+        "Private synthetic insight body that must never appear in metadata.",
+        encoding="utf-8",
+    )
+    (artifact_dir / "20260625T030000Z.risk_radar.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "risk_radar",
+                "generatedAt": "2026-06-25T07:00:00Z",
+                "scheduledRunRef": {"runId": "sp_run_private_1", "definitionId": created["id"]},
+                "sourceRefs": [{"kind": "conversation", "id": "private-conversation-id"}],
+                "confidence": "medium",
+                "severity": "low",
+                "timeSensitivity": "low",
+                "ttl": "P7D",
+                "staleAfter": "2026-07-02T07:00:00Z",
+                "observations": [{"summary": "Private observation text should not leak."}],
+                "risks": [],
+                "blindSpots": [{"summary": "Private blind spot text should not leak."}],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": ["on_demand"],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/scheduled-prompts/{created['id']}/periphery-artifacts")
+
+    assert response.status_code == 200
+    payload = response.json()
+    [artifact] = payload["artifacts"]
+    assert artifact["moduleId"] == "risk_radar"
+    assert artifact["generatedAt"] == "2026-06-25T07:00:00Z"
+    assert artifact["markdownExists"] is True
+    assert artifact["contentCounts"]["observations"] == 1
+    assert artifact["contentCounts"]["blindSpots"] == 1
+    assert artifact["sourceRefCount"] == 1
+    assert artifact["scheduledRunRefHash"]
+    assert payload["invalidArtifacts"] == []
+    assert "periphery/<moduleId>/YYYY/MM" in payload["contract"]
+    encoded = json.dumps(payload)
+    assert "Private synthetic insight body" not in encoded
+    assert "Private observation text" not in encoded
+    assert "private-conversation-id" not in encoded
+    assert str(tmp_path) not in encoded
+
+
+def test_scheduled_prompt_periphery_artifacts_reject_invalid_and_foreign_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "periphery-user")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Periphery prompt",
+            "promptText": "Write private periphery notes",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "propose",
+        },
+    ).json()
+    other = scheduled_prompts.create_scheduled_prompt(
+        {
+            "title": "Other periphery prompt",
+            "promptText": "Write private periphery notes",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "propose",
+        },
+        user_id="other-user",
+    )
+    artifact_dir = Path(created["myFolder"]) / "periphery" / "risk_radar" / "2026" / "06"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "invalid_json.risk_radar.json").write_text("{", encoding="utf-8")
+    (artifact_dir / "mismatch.risk_radar.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "health_pressure",
+                "generatedAt": "2026-06-25T07:00:00Z",
+                "scheduledRunRef": {},
+                "sourceRefs": [],
+                "confidence": "low",
+                "severity": "low",
+                "timeSensitivity": "low",
+                "ttl": "P7D",
+                "staleAfter": "2026-07-02T07:00:00Z",
+                "observations": [],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    missing_required = {
+        "schemaVersion": 1,
+        "moduleId": "risk_radar",
+        "generatedAt": "2026-06-25T07:00:00Z",
+        "scheduledRunRef": {},
+        "sourceRefs": [],
+        "severity": "low",
+        "timeSensitivity": "low",
+        "ttl": "P7D",
+        "staleAfter": "2026-07-02T07:00:00Z",
+        "observations": [],
+        "risks": [],
+        "blindSpots": [],
+        "opportunityCosts": [],
+        "opportunities": [],
+        "whatWouldMakeThisWrong": [],
+        "whenToSurface": [],
+        "proposedActions": [],
+        "memoryProposalRefs": [],
+    }
+    (artifact_dir / "missing_required.risk_radar.json").write_text(
+        json.dumps(missing_required),
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/scheduled-prompts/{created['id']}/periphery-artifacts")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["artifacts"] == []
+    assert {item["reason"] for item in payload["invalidArtifacts"]} == {
+        "invalid_json",
+        "missing_required_fields",
+        "module_path_mismatch",
+    }
+    [missing] = [item for item in payload["invalidArtifacts"] if item["reason"] == "missing_required_fields"]
+    assert missing["missingFields"] == ["confidence"]
+    assert str(tmp_path) not in json.dumps(payload)
+    assert client.get(f"/api/scheduled-prompts/{other['id']}/periphery-artifacts").status_code == 403
+
+
+def test_scheduled_prompt_periphery_artifacts_report_missing_markdown_and_user_schedule_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "periphery-user")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Periphery prompt",
+            "promptText": "Write private periphery notes",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "propose",
+        },
+    ).json()
+    artifact_dir = Path(created["myFolder"]) / "periphery" / "risk_radar" / "2026" / "06"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "20260625T031500Z.risk_radar.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "risk_radar",
+                "generatedAt": "2026-06-25T07:15:00Z",
+                "scheduledRunRef": {},
+                "sourceRefs": [],
+                "confidence": "low",
+                "severity": "low",
+                "timeSensitivity": "low",
+                "ttl": "P7D",
+                "staleAfter": "2026-07-02T07:15:00Z",
+                "observations": [],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/api/scheduled-prompts/{created['id']}/periphery-artifacts")
+
+    assert response.status_code == 200
+    [artifact] = response.json()["artifacts"]
+    assert artifact["markdownExists"] is False
+
+    user_schedule = client.get("/api/scheduled-prompts/user_schedule:task-1/periphery-artifacts")
+    assert user_schedule.status_code == 400
+    assert "User-level schedules" in user_schedule.json()["detail"]
 
 
 def test_scheduled_prompt_manual_run_uses_workbench_storage_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

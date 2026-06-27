@@ -308,6 +308,25 @@ query-intent classifier.
 - If vector recall is unavailable, stale, or missing, runtime may still attach a source-only recall
   resource so the normal `file_search` path can degrade honestly.
 
+## Viventium Periphery Retrieval Boundary
+
+Viventium Periphery and nightly insight routines are owned by
+[`53_Viventium_Periphery_Nightly_Insights.md`](53_Viventium_Periphery_Nightly_Insights.md).
+
+The first periphery pilot should not require a new file-search ingestion lane. Private scratchpad
+artifacts can initially be inspected through the existing local worker/GlassHive path when the model
+decides they are relevant.
+
+If periphery volume later justifies semantic retrieval, a future file-search inventory lane must
+follow the same principles as transcript inventory:
+
+- compact inventory first, detailed artifacts on demand
+- no proactive runtime snippet injection
+- model chooses when to search
+- no runtime keyword or phrase-based query-intent classifier
+- explicit stale/vector-degraded behavior
+- public-safe inventory text only
+
 ## Explicit Forgetting Boundary
 
 - Saved-memory forgetting and conversation recall are separate product surfaces.

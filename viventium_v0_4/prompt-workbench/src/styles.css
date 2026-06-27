@@ -2463,6 +2463,109 @@ kbd {
   gap: 8px;
   padding: 0 9px 9px;
 }
+.periphery-artifact-panel {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.periphery-artifact-panel strong {
+  color: var(--text-strong);
+}
+.periphery-artifact-card,
+.periphery-invalid-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.periphery-artifact-card summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  padding: 9px;
+  color: var(--text-strong);
+}
+.periphery-artifact-card summary span,
+.periphery-artifact-card summary code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.periphery-artifact-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 9px 9px;
+}
+.periphery-artifact-meta div {
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 7px;
+  min-width: 0;
+}
+.periphery-artifact-meta span,
+.periphery-artifact-meta code {
+  display: block;
+}
+.periphery-artifact-meta span {
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+.periphery-artifact-meta code {
+  color: var(--code-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.periphery-artifact-paths {
+  display: grid;
+  gap: 4px;
+  padding: 0 9px 9px;
+}
+.periphery-artifact-paths span {
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  padding: 6px 7px;
+  overflow-wrap: anywhere;
+}
+.periphery-content-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 9px 9px;
+}
+.periphery-content-counts span {
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  padding: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.periphery-content-counts strong {
+  display: block;
+  color: var(--text-strong);
+  font-size: 14px;
+}
+.periphery-invalid-card {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, var(--surface));
+  padding: 9px;
+  display: grid;
+  gap: 3px;
+}
+.periphery-invalid-card span {
+  color: var(--red);
+}
 
 @media (max-width: 980px) {
   .app-shell {

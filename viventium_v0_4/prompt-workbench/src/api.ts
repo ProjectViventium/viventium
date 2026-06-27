@@ -10,7 +10,9 @@ import type {
   PromptRow,
   PromptWorkbenchContext,
   ScheduledPrompt,
+  ScheduledPromptInvalidPeripheryArtifact,
   ScheduledPromptMemoryProposal,
+  ScheduledPromptPeripheryArtifact,
   ScheduledPromptTemplate,
   ScheduledPromptRun,
   SyncStatus,
@@ -124,6 +126,14 @@ export function getScheduledPromptMemoryProposals(id: string) {
   return api<{ proposals: ScheduledPromptMemoryProposal[]; contract: string }>(
     `/api/scheduled-prompts/${encodeURIComponent(id)}/memory-proposals`,
   );
+}
+
+export function getScheduledPromptPeripheryArtifacts(id: string) {
+  return api<{
+    artifacts: ScheduledPromptPeripheryArtifact[];
+    invalidArtifacts: ScheduledPromptInvalidPeripheryArtifact[];
+    contract: string;
+  }>(`/api/scheduled-prompts/${encodeURIComponent(id)}/periphery-artifacts`);
 }
 
 export function applyScheduledPromptMemoryProposal(id: string, proposalId: string, apply = false) {

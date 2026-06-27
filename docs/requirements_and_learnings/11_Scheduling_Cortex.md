@@ -186,6 +186,26 @@ names must not appear in the health payload or public QA evidence.
   before/after `dead_lettered` delta. A fresh dead-letter delta or stale active backlog is a
   degraded delivery substrate even when the newest run row says `success`.
 
+### Viventium Periphery And Nightly Insight Modules
+
+Private nightly insight routines such as risk radar, blind-spot review, opportunity-cost sensing,
+and health-pressure inference are governed by
+[`53_Viventium_Periphery_Nightly_Insights.md`](53_Viventium_Periphery_Nightly_Insights.md).
+
+Scheduling Cortex owns their recurrence, due/misfire policy, parent delivery ledger, and
+Workbench/GlassHive callback reconciliation. The insight module owns its prompt, evidence contract,
+artifact schema, surfacing policy, and evals.
+
+Rules:
+
+- Do not add a new insight routine until the current nightly executor path is classified and healthy
+  or the failure is explicitly bounded.
+- Do not branch on human-facing schedule names, prompt text, or module titles. Use structured task
+  metadata.
+- Keep first pilots private, Workbench-routed, and `memoryWriteMode=propose`.
+- A completed private insight run is not the same as a user-visible alert. Surfacing remains a
+  separate model/policy decision.
+
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.
 - Do not start a second agent run through the Telegram chat route just for scheduled tasks.

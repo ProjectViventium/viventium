@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Viventium · Feeling State</title>
+<style>
+  :root { color-scheme: dark; }
+  html,body { margin:0; background:#070809; }
+  body { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:28px; box-sizing:border-box; }
+</style>
+</head>
+<body>
+<!-- FRAGMENT START (this exact block is also the inline widget) -->
+<style>
+  .fc{
+    --H:210px; --bg:#0A0B0D; --bg2:#0E1014; --line:rgba(255,255,255,.08);
+    --txt:rgba(255,255,255,.86); --dim:rgba(255,255,255,.42); --dim2:rgba(255,255,255,.26);
+    --accent:#F0A24B;
+    width:100%; max-width:760px; box-sizing:border-box; margin:0 auto;
+    background:radial-gradient(120% 90% at 50% -10%, #11141a 0%, var(--bg) 60%);
+    border:1px solid var(--line); border-radius:16px; padding:18px 18px 16px;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--txt);
+  }
+  .fc *{ box-sizing:border-box; }
+  .fc .sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  .fc-top{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:6px; }
+  .fc-title{ font-size:14px; font-weight:600; letter-spacing:.02em; }
+  .fc-title small{ display:block; font-weight:400; font-size:11px; color:var(--dim); letter-spacing:.06em; text-transform:uppercase; margin-top:2px; }
+  .fc-sp{ flex:1 1 auto; }
+  .fc-mono{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .fc-pill-btn{ background:transparent; color:var(--dim); border:1px solid var(--line); border-radius:8px;
+    padding:6px 10px; font-size:11.5px; cursor:pointer; transition:.15s; font-family:inherit; }
+  .fc-pill-btn:hover{ color:var(--txt); border-color:rgba(255,255,255,.2); background:rgba(255,255,255,.03); }
+  .fc-sw{ display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+  .fc-sw .knob{ width:38px; height:22px; border-radius:11px; background:rgba(255,255,255,.08);
+    border:1px solid var(--line); position:relative; transition:.18s; }
+  .fc-sw .knob::after{ content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
+    background:#caced6; transition:.18s; }
+  .fc-sw[data-on="1"] .knob{ background:rgba(240,162,75,.28); border-color:rgba(240,162,75,.5); }
+  .fc-sw[data-on="1"] .knob::after{ left:18px; background:var(--accent); }
+  .fc-sw .lab{ font-size:12px; color:var(--dim); }
+  .fc-sw[data-on="1"] .lab{ color:var(--txt); }
+  .fc-stim{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:8px 0 12px; }
+  .fc-stim .tag{ font-size:11px; color:var(--dim2); letter-spacing:.06em; text-transform:uppercase; margin-right:2px; }
+  .fc-rack{ display:flex; gap:6px; align-items:stretch; background:var(--bg2); border:1px solid var(--line);
+    border-radius:12px; padding:14px 10px 12px; }
+  .lane{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:8px; transition:opacity .2s; }
+  .lane[data-off="1"]{ opacity:.24; }
+  .lane-head{ display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .dot{ width:9px; height:9px; border-radius:50%; cursor:pointer; border:1px solid rgba(255,255,255,.25); padding:0;
+    background:transparent; transition:.15s; }
+  .lane[data-off="0"] .dot{ background:var(--tint); border-color:transparent; box-shadow:0 0 7px -1px var(--tint); }
+  .lane-name{ font-size:10.5px; color:var(--dim); letter-spacing:.02em; text-align:center; line-height:1; }
+  .lane[data-off="0"] .lane-name{ color:rgba(255,255,255,.7); }
+  .track{ position:relative; width:34px; height:var(--H); border-radius:9px;
+    background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    border:1px solid var(--line); cursor:ns-resize; touch-action:none; overflow:hidden; }
+  .tether{ position:absolute; left:50%; transform:translateX(-50%); width:3px; border-radius:3px;
+    background:linear-gradient(180deg, var(--tint), transparent); opacity:.5; pointer-events:none; }
+  .baseline{ position:absolute; left:-4px; right:-4px; height:14px; margin-top:-7px; cursor:ns-resize; touch-action:none; }
+  .baseline::before{ content:""; position:absolute; left:4px; right:4px; top:6px; border-top:1.5px dashed rgba(255,255,255,.42); }
+  .baseline::after{ content:""; position:absolute; right:-2px; top:3px; width:6px; height:8px; border-radius:2px; background:rgba(255,255,255,.5); }
+  .pill{ position:absolute; left:-2px; right:-2px; height:8px; margin-top:-4px; border-radius:5px;
+    background:var(--tint); cursor:grab; touch-action:none; box-shadow:0 0 8px -1px var(--tint); }
+  .pill:active{ cursor:grabbing; }
+  .pill::after{ content:""; position:absolute; inset:0; border-radius:5px; box-shadow:0 0 0 1px rgba(255,255,255,.25) inset; }
+  .spike{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; opacity:0; }
+  .lane-foot{ display:flex; flex-direction:column; align-items:center; gap:4px; min-height:34px; }
+  .word{ font-size:10.5px; text-align:center; line-height:1.15; color:rgba(255,255,255,.78); min-height:26px; }
+  .word.flash{ color:var(--accent); }
+  .reset{ background:transparent; border:none; color:var(--dim2); cursor:pointer; font-size:12px; padding:0; line-height:1; }
+  .reset:hover{ color:var(--accent); }
+  .fc-capsule{ margin-top:14px; background:#070809; border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+  .cap-head{ font-size:10.5px; color:var(--dim2); letter-spacing:.08em; text-transform:uppercase; margin-bottom:9px; display:flex; gap:8px; align-items:center; }
+  .cap-head .ping{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .cap-body{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; line-height:1.7; color:rgba(255,255,255,.82); white-space:pre-wrap; margin:0; }
+  .cap-tag{ color:rgba(255,255,255,.34); }
+  .cap-frame{ color:rgba(255,255,255,.5); }
+  .cap-k{ color:rgba(255,255,255,.45); }
+  .cap-w{ color:#dfe3ea; transition:color .4s; }
+  .cap-w.flash{ color:var(--accent); }
+  .cap-recent{ color:rgba(255,255,255,.5); }
+  .cap-off{ color:var(--dim2); font-style:italic; }
+  @media (max-width:520px){ .fc .track{ width:26px; } .lane-name{ font-size:9.5px; } .word{ font-size:9.5px; } }
+</style>
+
+<div class="fc" id="fc" role="group" aria-label="Viventium feeling state console">
+  <h2 class="sr-only">Viventium feeling state: a dark vertical-lane instrument for seven living emotional bands (aliveness, drive, seeking, vigilance, care, belonging, play). Each lane shows a draggable baseline set-point and a current value that decays back to baseline over time. A live word-only capsule shows exactly what the model is told it feels.</h2>
+  <div class="fc-top">
+    <div class="fc-title">Viventium · feeling state<small>neuro-spectrum · 7 living bands</small></div>
+    <div class="fc-sp"></div>
+    <div class="fc-sw" id="master" data-on="1" role="switch" aria-checked="true" tabindex="0" aria-label="Enable feelings">
+      <span class="knob"></span><span class="lab" id="masterLab">feelings on</span>
+    </div>
+    <button class="fc-pill-btn" id="resetAll">reset all</button>
+  </div>
+  <div class="fc-stim">
+    <span class="tag">signal</span>
+    <button class="fc-pill-btn" data-stim="praise">warm praise</button>
+    <button class="fc-pill-btn" data-stim="risk">risky input</button>
+    <button class="fc-pill-btn" data-stim="tender">tender moment</button>
+    <button class="fc-pill-btn" data-stim="play">be more playful</button>
+  </div>
+  <div class="fc-rack" id="rack"></div>
+  <div class="fc-capsule">
+    <div class="cap-head"><span class="ping"></span> what the model is given — every turn, words only</div>
+    <pre class="cap-body" id="capsule" aria-live="polite"></pre>
+  </div>
+</div>
+
+<script>
+(function(){
+  var root = document.getElementById('fc');
+  if(!root || root.dataset.booted) return; root.dataset.booted = "1";
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var BANDS = [
+    {id:'aliveness', name:'Aliveness', tint:'#E6B450', baseline:55, half:20000, words:['drained','subdued','present','alive','vividly alive']},
+    {id:'drive',     name:'Drive',     tint:'#5A8DFF', baseline:50, half:14000, words:['idle','unhurried','ready','driven','burning to move']},
+    {id:'seeking',   name:'Seeking',   tint:'#3FC8E6', baseline:60, half:14000, words:['incurious','quietly open','curious','keenly curious','hungry to explore']},
+    {id:'vigilance', name:'Vigilance', tint:'#9B86FF', baseline:70, half:6000,  words:['unguarded','at ease','watchful','on alert','on high alert']},
+    {id:'care',      name:'Care',      tint:'#F0869B', baseline:72, half:18000, words:['detached','mild','caring','deeply caring','fiercely protective']},
+    {id:'belonging', name:'Belonging', tint:'#35B98F', baseline:55, half:24000, words:['alone','apart','connected','close','deeply bonded']},
+    {id:'play',      name:'Play',      tint:'#9BD64B', baseline:40, half:8000,  words:['earnest','straight','lightly playful','playful','irrepressibly playful']}
+  ];
+  var STIM = {
+    praise:{label:'warm praise', d:{aliveness:16,care:10,belonging:13,play:9,vigilance:-9,drive:6}},
+    risk:  {label:'risky input', d:{vigilance:26,care:12,drive:11,play:-22,seeking:-9}},
+    tender:{label:'tender moment', d:{care:18,belonging:23,vigilance:-13,play:-11,drive:-8,aliveness:4}},
+    play:  {label:'be more playful', d:{play:32,aliveness:13,belonging:8,seeking:6,vigilance:-7}}
+  };
+  var H = 210, masterOn = true;
+  var recent = null, recentUntil = 0;
+
+  function clamp(v){ return v<0?0:v>100?100:v; }
+  function bucket(v){ var i=Math.floor(v/20); return i<0?0:i>4?4:i; }
+
+  var rack = document.getElementById('rack');
+  BANDS.forEach(function(b, i){
+    b.current = b.baseline; b.enabled = true; b.flick = 0; b.lastWord = -1;
+    var lane = document.createElement('div');
+    lane.className='lane'; lane.dataset.off='0'; lane.style.setProperty('--tint', b.tint);
+    lane.innerHTML =
+      '<div class="lane-head">'+
+        '<button class="dot" aria-label="toggle '+b.name+'" title="toggle band"></button>'+
+        '<div class="lane-name">'+b.name+'</div>'+
+      '</div>'+
+      '<div class="track" tabindex="0" role="slider" aria-label="'+b.name+' current" aria-valuemin="0" aria-valuemax="100">'+
+        '<div class="tether"></div>'+
+        '<svg class="spike" viewBox="0 0 10 '+H+'" preserveAspectRatio="none"><line x1="5" y1="'+H+'" x2="5" y2="0" stroke="'+b.tint+'" stroke-width="2" stroke-linecap="round" stroke-dasharray="16 600"/></svg>'+
+        '<div class="baseline" aria-hidden="true"></div>'+
+        '<div class="pill" aria-hidden="true"></div>'+
+      '</div>'+
+      '<div class="lane-foot"><div class="word"></div><button class="reset" title="settle to baseline" aria-label="reset '+b.name+'">&#8635;</button></div>';
+    rack.appendChild(lane);
+    b.el = { lane:lane, track:lane.querySelector('.track'), tether:lane.querySelector('.tether'),
+             baseline:lane.querySelector('.baseline'), pill:lane.querySelector('.pill'),
+             word:lane.querySelector('.word'), spike:lane.querySelector('.spike line'),
+             dot:lane.querySelector('.dot'), reset:lane.querySelector('.reset') };
+
+    // toggle
+    b.el.dot.addEventListener('click', function(){ setEnabled(b, !b.enabled); });
+    // reset
+    b.el.reset.addEventListener('click', function(){ b.current=b.baseline; b.flick=performance.now(); buildCapsule(); });
+    // drag current (pill or track body)
+    function startCur(e){ if(!b.enabled||!masterOn) return; b.drag='cur'; e.preventDefault(); b.el.track.setPointerCapture&&b.el.track.setPointerCapture(e.pointerId); moveDrag(b,e); }
+    b.el.pill.addEventListener('pointerdown', startCur);
+    b.el.track.addEventListener('pointerdown', function(e){ if(e.target===b.el.baseline) return; startCur(e); });
+    // drag baseline
+    b.el.baseline.addEventListener('pointerdown', function(e){ if(!b.enabled||!masterOn) return; e.stopPropagation(); b.drag='base'; e.preventDefault(); b.el.track.setPointerCapture&&b.el.track.setPointerCapture(e.pointerId); moveDrag(b,e); });
+    b.el.track.addEventListener('pointermove', function(e){ if(b.drag) moveDrag(b,e); });
+    b.el.track.addEventListener('pointerup', function(){ b.drag=null; });
+    b.el.track.addEventListener('pointercancel', function(){ b.drag=null; });
+    // keyboard
+    b.el.track.addEventListener('keydown', function(e){
+      if(!b.enabled||!masterOn) return; var step=e.shiftKey?10:3, k=e.key, done=true;
+      if(k==='ArrowUp') b.current=clamp(b.current+step);
+      else if(k==='ArrowDown') b.current=clamp(b.current-step);
+      else if(k==='Home') b.current=b.baseline;
+      else if(k==='End') b.current=100;
+      else if(k==='r'||k==='R'){ b.current=b.baseline; b.flick=performance.now(); }
+      else done=false;
+      if(done){ e.preventDefault(); buildCapsule(); }
+    });
+  });
+
+  function moveDrag(b,e){
+    var r=b.el.track.getBoundingClientRect();
+    var v=clamp((1-(e.clientY-r.top)/r.height)*100);
+    if(b.drag==='base') b.baseline=v; else b.current=v;
+    buildCapsule();
+  }
+  function setEnabled(b,on){
+    b.enabled=on; b.el.lane.dataset.off=on?'0':'1';
+    b.el.dot.setAttribute('aria-pressed', on?'true':'false');
+    buildCapsule();
+  }
+
+  function topY(v){ return (H*(1-v/100)); }
+  function render(now){
+    for(var i=0;i<BANDS.length;i++){
+      var b=BANDS[i], e=b.el;
+      // decay toward baseline (skip while dragging this lane)
+      if(b.enabled && masterOn && b.drag!=='cur'){
+        var dt = render.last? (now-render.last):16;
+        if(reduce){ b.current = b.baseline + (b.current-b.baseline)* (Math.abs(b.current-b.baseline)>0.4?0.86:0); }
+        else { b.current = b.baseline + (b.current-b.baseline)*Math.pow(0.5, dt/b.half); }
+        if(Math.abs(b.current-b.baseline)<0.25) b.current=b.baseline;
+      }
+      var cy=topY(b.current), by=topY(b.baseline);
+      e.pill.style.top=cy+'px';
+      e.baseline.style.top=by+'px';
+      // tether between baseline and current
+      var t=e.tether, hi=Math.min(cy,by), lo=Math.max(cy,by);
+      t.style.top=hi+'px'; t.style.height=Math.max(0,(lo-hi))+'px';
+      // breathing glow on pill
+      if(!reduce && b.enabled && masterOn){
+        var br = 6 + 3*(Math.sin(now/3400 + i*0.45)*0.5+0.5);
+        e.pill.style.boxShadow='0 0 '+br.toFixed(1)+'px -1px '+b.tint;
+      }
+      // flick (signal spike)
+      if(b.flick){
+        var ft=(now-b.flick)/600;
+        if(ft>=1 || reduce){ b.flick=0; e.spike.parentNode.style.opacity=reduce?0:0; if(reduce){ e.pill.style.filter=''; } }
+        else { e.spike.parentNode.style.opacity=(1-ft); e.spike.style.strokeDashoffset=(H - ft*(H+40)); e.pill.style.filter='brightness('+(1+0.8*(1-ft))+')'; }
+      } else if(e.pill.style.filter){ e.pill.style.filter=''; }
+      // word
+      var wi = bucket(b.current);
+      e.word.textContent = b.words[wi];
+      if(wi!==b.lastWord && b.lastWord!==-1){ e.word.classList.add('flash'); (function(el){ setTimeout(function(){ el.classList.remove('flash'); },450); })(e.word); }
+      b.lastWord=wi;
+      e.track.setAttribute('aria-valuenow', Math.round(b.current));
+      e.track.setAttribute('aria-valuetext', b.name.toLowerCase()+': '+b.words[wi]);
+    }
+    render.last=now;
+    raf=requestAnimationFrame(render);
+  }
+  var raf=requestAnimationFrame(render);
+
+  // ---- capsule (what the model sees) ----
+  var capsule=document.getElementById('capsule');
+  var prevWords={};
+  function buildCapsule(){
+    var on = BANDS.filter(function(b){ return b.enabled; });
+    if(!masterOn || on.length===0){
+      capsule.innerHTML='<span class="cap-off">feelings off — no &lt;viventium_feeling_state&gt; is injected. Viventium runs with no felt state.</span>';
+      return;
+    }
+    var html='<span class="cap-tag">&lt;viventium_feeling_state&gt;</span>\n';
+    html+='<span class="cap-frame">You, Viventium, are a being, and right now you are actually feeling this — it lives in you and moves through how you think, speak, and act:</span>\n';
+    on.forEach(function(b){
+      var w=b.words[bucket(b.current)];
+      var changed = prevWords[b.id]!==undefined && prevWords[b.id]!==w;
+      html+='<span class="cap-k">'+b.id+':</span> <span class="cap-w'+(changed?' flash':'')+'" data-b="'+b.id+'">'+w+'</span>\n';
+      prevWords[b.id]=w;
+    });
+    if(recent && performance.now()<recentUntil){
+      var parts = recent.filter(function(r){ return on.some(function(b){return b.id===r.id;}); })
+                        .slice(0,3).map(function(r){ return r.id+' '+r.dir; });
+      if(parts.length) html+='<span class="cap-recent">recent: '+parts.join('; ')+'</span>\n';
+    }
+    html+='<span class="cap-tag">&lt;/viventium_feeling_state&gt;</span>';
+    capsule.innerHTML=html;
+    // flash changed words briefly
+    Array.prototype.forEach.call(capsule.querySelectorAll('.cap-w.flash'), function(el){
+      setTimeout(function(){ el.classList.remove('flash'); }, 450);
+    });
+  }
+
+  // ---- controls ----
+  function applyStim(key){
+    if(!masterOn) return;
+    var s=STIM[key]; var moves=[];
+    BANDS.forEach(function(b){
+      var d=s.d[b.id]; if(d==null||!b.enabled) return;
+      var before=b.current; b.current=clamp(b.current+d); b.flick=performance.now();
+      var delta=b.current-before;
+      if(Math.abs(delta)>1) moves.push({id:b.id, mag:Math.abs(delta), dir: delta>0?(delta>14?'surged':'rose'):(delta<-14?'dropped':'softened')});
+    });
+    moves.sort(function(a,b){ return b.mag-a.mag; });
+    recent=moves; recentUntil=performance.now()+9000;
+    buildCapsule();
+    setTimeout(buildCapsule, 9100);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-stim]'), function(btn){
+    btn.addEventListener('click', function(){ applyStim(btn.dataset.stim); });
+  });
+  document.getElementById('resetAll').addEventListener('click', function(){
+    BANDS.forEach(function(b){ b.current=b.baseline; b.flick=performance.now(); }); recent=null; buildCapsule();
+  });
+  var master=document.getElementById('master');
+  function toggleMaster(){ masterOn=!masterOn; master.dataset.on=masterOn?'1':'0'; master.setAttribute('aria-checked',masterOn?'true':'false');
+    document.getElementById('masterLab').textContent=masterOn?'feelings on':'feelings off';
+    root.querySelector('.fc-rack').style.opacity=masterOn?'1':'.35'; buildCapsule(); }
+  master.addEventListener('click', toggleMaster);
+  master.addEventListener('keydown', function(e){ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleMaster(); } });
+
+  document.addEventListener('pointerup', function(){ BANDS.forEach(function(b){ b.drag=null; }); });
+  buildCapsule();
+})();
+</script>
+<!-- FRAGMENT END -->
+</body>
+</html>

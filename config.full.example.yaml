@@ -212,6 +212,11 @@ integrations:
       # codex_plugin_cache: ""
       # codex_ignore_user_config: false
       # codex_disable_features: ""
+      # Route-specific Codex effort support. Leave unset for the safe built-in default:
+      # none,low,medium,high, with minimal/xhigh opt-in only after route proof.
+      # codex_allowed_reasoning_efforts: ["none", "low", "medium", "high"]
+      # codex_reasoning_effort_fallback: medium
+      # codex_xhigh_route_proven: false
       # claude_enable_chrome: true
     # Enterprise-only owner identity bridging. Defaults are strict user_id matching and no aliases.
     # Use explicit aliases only when browser auth identity and MCP/chat owner identity are known to

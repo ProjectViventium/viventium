@@ -8,6 +8,7 @@ import {
   getAuthStatus,
   getNightlyScheduledPromptTemplate,
   getScheduledPromptMemoryProposals,
+  getScheduledPromptPeripheryArtifacts,
   getScheduledPrompts,
   getVariables,
   manualRunScheduledPrompt,
@@ -113,6 +114,12 @@ export function ScheduledPromptsPanel({
     enabled: Boolean(authQuery.data?.admin && selected?.id && selected?.sourceKind === 'workbench_definition'),
     refetchInterval: 10_000,
   });
+  const peripheryQuery = useQuery({
+    queryKey: ['scheduledPromptPeripheryArtifacts', selected?.id],
+    queryFn: () => getScheduledPromptPeripheryArtifacts(selected!.id),
+    enabled: Boolean(authQuery.data?.admin && selected?.id && selected?.sourceKind === 'workbench_definition'),
+    refetchInterval: 10_000,
+  });
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -139,6 +146,7 @@ export function ScheduledPromptsPanel({
     onSuccess: (item) => {
       onLog(`${item.title} is now ${item.active ? 'enabled' : 'disabled'}.`);
       queryClient.invalidateQueries({ queryKey: ['scheduledPrompts'] });
+      queryClient.invalidateQueries({ queryKey: ['scheduledPromptPeripheryArtifacts'] });
     },
     onError: (error) => onLog(String(error)),
   });
@@ -490,6 +498,47 @@ export function ScheduledPromptsPanel({
           ))}
         </div>
         {selected?.sourceKind === 'workbench_definition' && (
+          <>
+          <div className="periphery-artifact-panel">
+            <strong>Periphery Artifacts</strong>
+            <span>{peripheryQuery.data?.contract ?? 'Private risk, blind-spot, and opportunity artifacts appear here after runs.'}</span>
+            {peripheryQuery.isLoading && <p>Loading periphery artifacts...</p>}
+            {peripheryQuery.error instanceof Error && <p>{peripheryQuery.error.message}</p>}
+            {!peripheryQuery.isLoading && !peripheryQuery.data?.artifacts.length && !peripheryQuery.data?.invalidArtifacts.length && (
+              <p>No private periphery artifacts found yet.</p>
+            )}
+            {(peripheryQuery.data?.artifacts ?? []).map((artifact) => (
+              <details key={artifact.artifactId} className="periphery-artifact-card" open>
+                <summary>
+                  <span>{artifact.moduleId}</span>
+                  <code>{artifact.sidecarFileName}</code>
+                </summary>
+                <div className="periphery-artifact-meta">
+                  <div><span>Generated</span><code>{formatDate(artifact.generatedAt)}</code></div>
+                  <div><span>Confidence</span><code>{artifact.confidence || 'unknown'}</code></div>
+                  <div><span>Severity</span><code>{artifact.severity || 'unknown'}</code></div>
+                  <div><span>Sources</span><code>{artifact.sourceRefCount}</code></div>
+                  <div><span>Markdown</span><code>{artifact.markdownExists ? 'present' : 'missing'}</code></div>
+                  <div><span>Stale after</span><code>{formatDate(artifact.staleAfter)}</code></div>
+                </div>
+                <div className="periphery-artifact-paths">
+                  <span>{artifact.relativePath}</span>
+                  <span>{artifact.markdownRelativePath}</span>
+                </div>
+                <div className="periphery-content-counts" aria-label={`Content counts for ${artifact.moduleId}`}>
+                  {Object.entries(artifact.contentCounts).map(([key, value]) => (
+                    <span key={key}><strong>{value}</strong>{labelize(key)}</span>
+                  ))}
+                </div>
+              </details>
+            ))}
+            {(peripheryQuery.data?.invalidArtifacts ?? []).map((artifact) => (
+              <div key={`${artifact.relativePath}-${artifact.reason}`} className="periphery-invalid-card">
+                <strong>{artifact.fileName}</strong>
+                <span>{artifact.reason}{artifact.missingFields?.length ? `: ${artifact.missingFields.join(', ')}` : ''}</span>
+              </div>
+            ))}
+          </div>
           <div className="memory-proposal-panel">
             <strong>Memory Proposals</strong>
             <span>{proposalsQuery.data?.contract ?? 'Structured proposal files appear here after runs.'}</span>
@@ -525,6 +574,7 @@ export function ScheduledPromptsPanel({
               </details>
             ))}
           </div>
+          </>
         )}
       </div>
     </div>
@@ -597,6 +647,10 @@ function formatDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function labelize(value: string) {
+  return value.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').toLowerCase();
 }
 
 function executionLabel(prompt: ScheduledPrompt) {
