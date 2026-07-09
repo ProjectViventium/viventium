@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from md2tgmd.src.md2tgmd import escape
 
 # REMOVED: i18n - Using hardcoded English strings for simplicity
-from utils.scripts import GetMesageInfo, get_update_ids
+from utils.scripts import get_update_ids
 
 def ban_message(update, convo_id):
     message = (

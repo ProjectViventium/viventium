@@ -232,7 +232,6 @@ def test_info_schedules_cleanup_without_blocking_or_deleting_menu(monkeypatch):
         return None
 
     monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_get_message_info)
-    monkeypatch.setattr(tg_bot.decorators, "GetMesageInfo", _fake_get_message_info)
     monkeypatch.setattr(tg_bot.config, "ADMIN_LIST", None)
     monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None)
     monkeypatch.setattr(tg_bot.config, "GROUP_LIST", None)
@@ -930,9 +929,6 @@ def test_get_viventium_response_xai_tts_does_not_split_wrapped_text(monkeypatch)
 def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
     forwarded_calls = []
 
-    async def _fake_wrapper_get_message_info(*_args, **_kwargs):
-        return _make_message_info(voice_error_text=None)
-
     async def _fake_handle_get_message_info(*_args, **_kwargs):
         return _make_message_info(
             voice_error_text="Temporarily unable to transcribe this video note. Please retry."
@@ -942,7 +938,6 @@ def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
         forwarded_calls.append((args, kwargs))
         return None
 
-    monkeypatch.setattr(tg_bot.decorators, "GetMesageInfo", _fake_wrapper_get_message_info)
     monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_handle_get_message_info)
     monkeypatch.setattr(tg_bot, "getViventiumResponse", _fake_get_viventium_response)
     monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None, raising=False)
@@ -1144,7 +1139,6 @@ def test_command_bot_get_me_timeout_without_reply_does_not_crash(monkeypatch):
         forwarded.append((args, kwargs))
         return None
 
-    monkeypatch.setattr(tg_bot.decorators, "GetMesageInfo", _fake_get_message_info)
     monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_get_message_info)
     monkeypatch.setattr(tg_bot, "getViventiumResponse", _fake_get_viventium_response)
     monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None, raising=False)
