@@ -17,6 +17,9 @@ stream back to Telegram through the existing bridge.
 - Telegram text responses should use robust Telegram HTML generated from standard Markdown. Telegram
   voice-note and always-voice audio replies are still text-mode responses with an audio attachment
   on top; they must not switch the LibreChat turn into LiveKit voice-call mode.
+- Telegram's Markdown-to-HTML renderer must gracefully degrade markdown tables into readable
+  Telegram rows because Telegram does not support table rendering and workers may still return
+  compact tabular summaries.
 - Background follow-ups must preserve the same formatting rules as the main response.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
@@ -80,6 +83,10 @@ stream back to Telegram through the existing bridge.
     text-mode main answer is generated.
   - `input_mode` remains structural: only actual voice-note input is sent as `voice_note`; text
     messages with always-voice output still use `input_mode=text`.
+  - When a Telegram text-mode turn will also synthesize audio, the bot sends
+    `telegramAudioRequested=true`. The LibreChat Telegram route still keeps `voiceMode=false`, but
+    it injects the resolved Speaking route's `voiceProvider` so prompt layers can expose the
+    selected provider's speech-control contract to the model.
 - When the resolved Speaking route is Cartesia, Telegram follows the same Sonic-3 voice markup
   contract as modern calls:
   - the canonical Cartesia Sonic-3 capability contract is
@@ -112,6 +119,9 @@ stream back to Telegram through the existing bridge.
   - Telegram calls `POST https://api.x.ai/v1/tts` with `text`, `voice_id`, `language`, and a
     structured `output_format`
   - xAI inline and wrapping speech tags from the shared contract are preserved for xAI synthesis
+  - Telegram audio-output prompting must expose the documented xAI inline and wrapping tags on
+    text-mode Telegram turns that request audio, especially when the user asks for more emotional
+    voice-note delivery
   - Telegram must not split xAI text into generic 800-character fallback chunks because that can
     break xAI wrapping tags and create invalid concatenated MP3 output
   - user-visible Telegram text must strip xAI tags even when the model emits malformed wrapper
@@ -212,9 +222,13 @@ stream back to Telegram through the existing bridge.
   unrelated turn, must still deliver normally.
 - Provider authentication failures must surface as reconnect guidance on Telegram. They must not be
   collapsed into a generic connection error that implies Telegram or GlassHive transport is broken.
-  If a primary provider is rate-limited and the configured fallback provider then fails because its
-  connected account needs reconnect, Telegram must preserve both facts and name the reconnect action
-  instead of showing a stale rate-limit message or generic connection failure.
+  Primary provider rate limits before visible assistant text must first pass through the main-agent
+  fallback LLM contract from `06_Voice_Calls.md`. Telegram may receive a provider-rate-limit blocker
+  only after no configured valid fallback is available, the fallback cannot start, or the fallback is
+  exhausted. Bridge/provider errors must not be synthesized into Telegram voice notes. If a primary
+  provider is rate-limited and the configured fallback provider then fails because its connected
+  account needs reconnect, Telegram must preserve both facts and name the reconnect action instead
+  of showing a stale rate-limit message or generic connection failure.
 - Telegram SSE resume must tolerate the normal race where generation completes while the first
   stream connection is interrupted. The configured stream services should retain completed
   successful jobs for the store's short completion TTL and replay the cached final event to late

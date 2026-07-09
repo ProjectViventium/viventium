@@ -1203,6 +1203,7 @@ async def getViventiumResponse(
             telegram_update_id=telegram_update_id,
             voice_mode=voice_mode,
             input_mode=input_mode,
+            audio_requested=telegram_audio_requested,
             files=files if files else None,  # File data for vision models
             message_timestamp=message_timestamp,  # Time context for scheduling
             client_timezone=client_timezone,  # Timezone for time context formatting

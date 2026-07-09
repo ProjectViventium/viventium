@@ -1,3 +1,7 @@
+// LEGACY (v3): targets the prior-reference prototype emotion-mixer.html and asserts the
+// superseded v3 capsule line "You, Viventium, are feeling:". Kept for history only — the
+// current v4 prototype is feeling-spectrum.html and the active script is
+// feeling_spectrum_nature_qa.cjs. Do not cite this script as current capsule coverage.
 async (page) => {
   const url = "http://127.0.0.1:8876/emotion-mixer.html";
   const artifactBase = "qa/emotional-cortex/artifacts";

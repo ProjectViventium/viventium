@@ -18,6 +18,7 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 | `GHWATCH-008` | `view_available` means the noVNC desktop asset path is reachable, and completed/parked workspaces do not imply active compute. | User is not sent to a broken or endlessly reconnecting desktop view; completed files stay available while compute is stopped. | Runtime describe API, noVNC proxy/assets, Watch / Steer desktop iframe | `runtime_phase1/tests/test_docker_sandbox.py::test_describe_self_heals_novnc_when_service_port_resets`, `frontends/glass-drive-ui/tests/test_server.py`, completed desktop browser fixture | PASS 2026-06-25 for completed-workspace scope; see `qa/glasshive_watch_desktop/reports/2026-06-25-completed-desktop-resume-ux.md`. |
 | `GHWATCH-009` | LibreChat callback result persists into visible conversation state without raw tool plumbing. | User sees the final worker result after refresh/reopen. | LibreChat web conversation, callback outbox, message store | `LibreChat/api/server/routes/viventium/__tests__/glasshive.spec.js` plus authenticated browser QA | PARTIAL 2026-06-22 docs audit: legacy authenticated-browser evidence is not cited as public acceptance; rerun with text-only public summary before full release coverage. |
 | `GHWATCH-010` | Worker desktop browser starts with clean browser chrome by default. | User sees the worker browser without a bookmark bar or unsupported `--no-sandbox` warning. | Docker workstation container, worker browser process, noVNC desktop view | `runtime_phase1/tests/test_docker_sandbox.py` plus disposable Docker worker and Playwright noVNC QA | PARTIAL 2026-06-22 docs audit: clean-browser RCA and tests are useful, but current acceptance needs a fresh text/DOM/process summary without public visual media. |
+| `GHWATCH-011` | Docker/workstation runs expose active-run heartbeat and desktop-prime evidence without noisy warning UX. | User/operator can tell whether a quiet worker is still running, finished, timed out, or missing visible desktop priming evidence. | Docker CLI runtime, Watch/Steer status, worker runtime description, run evidence | `runtime_phase1/tests/test_profile_runtime.py`, `test_docker_sandbox.py`, `test_run_evidence.py`, focused API tests, local Docker smoke, and Playwright Watch UI QA | PASS 2026-06-27 local: active-run heartbeat/final status, timeout status, desktop-prime marker, runtime description pass-through, evidence result, Watch UI running/completed states, artifact preview/download route evidence, and cleanup passed; see `reports/2026-06-27-docker-heartbeat-prime-local-qa.md`. |
 
 ## `GHWATCH-001` - Core User Flow
 
@@ -253,6 +254,38 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 - Last run: PASS 2026-06-16 local disposable Docker worker and Playwright noVNC QA. See
   `qa/glasshive_watch_desktop/reports/2026-06-16-clean-browser-chrome.md`.
 
+## `GHWATCH-011` - Docker Active-Run Heartbeat And Desktop Prime Evidence
+
+- Requirement: Docker/workstation runs must provide the same truthful active-run evidence operators
+  use for host-native runs, and fresh desktop priming must be observable in private runtime state
+  without adding user-facing warning clutter.
+- Risk covered: a long-running worker appears idle or unfriendly to watch because the browser is
+  quiet and the runtime lacks heartbeat/transcript/prime evidence.
+- Preconditions: local Docker is available and the workstation image exists or can be built.
+- Steps:
+  1. Launch a Docker/workstation CLI run with synthetic public-safe output.
+  2. Verify `glasshive-run/runs/<run_id>/active-run.json` exists while/following the run and records
+     state, heartbeat sequence, transcript paths, transcript existence/bytes/mtime/tail hash, quiet
+     duration, timeout policy, stop reason, exit code, and evidence path.
+  3. Verify timeout and operator-stop paths write truthful terminal states instead of only a late
+     generic failure.
+  4. Verify fresh container desktop priming writes private `desktop-prime.json` state and the runtime
+     description exposes it for status/QA.
+  5. Verify user-facing Watch/Steer/API paths continue to avoid raw ids/tokens and noisy warning UX.
+- Expected result: heartbeat/status/evidence agree with manual artifact inspection; the desktop
+  prime marker is available for diagnostics; completed containers can be terminated without losing
+  files/evidence.
+- Forbidden result: Docker runs lack active-run evidence, report fabricated completion while still
+  running, hide a missing prime marker from status tooling, or add residual warning banners instead
+  of fixing runtime evidence.
+- Evidence to capture: targeted regression tests, local Docker smoke summary, evidence result,
+  artifact marker, runtime description summary, and cleanup state.
+- Automation: `runtime_phase1/tests/test_profile_runtime.py`,
+  `runtime_phase1/tests/test_docker_sandbox.py`, `runtime_phase1/tests/test_run_evidence.py`, and
+  focused `runtime_phase1/tests/test_api.py`.
+- Last run: PASS 2026-06-27 local. See
+  `qa/glasshive_watch_desktop/reports/2026-06-27-docker-heartbeat-prime-local-qa.md`.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Glasshive Watch Desktop. Add narrower feature-specific
@@ -270,3 +303,4 @@ rows before claiming a pass when the feature behavior changes.
 | `GHWATCH-UC-008` | Open a completed file-producing worker through `surface=desktop` and inspect both the live desktop and file actions. | desktop fidelity / `GHWATCH-007` | Watch / Steer, embedded desktop, latest-output file actions | Frame URL, noVNC canvas count, asset proxy status, DOM/text summary, console state. | The live desktop remains primary and file actions are explicit. | PARTIAL 2026-06-22 docs audit; legacy media-backed evidence is not current public acceptance evidence. |
 | `GHWATCH-UC-009` | Reopen a GlassHive-backed LibreChat conversation after completion and verify the final result appears. | callback visibility / `GHWATCH-009` | Authenticated LibreChat web conversation, callback outbox, Mongo/message store | Outbox delivered row, message/conversation metadata, browser DOM/text summary, callback test. | The final callback result is visible after refresh/reopen and no raw tool plumbing leaks. | PARTIAL 2026-06-22 docs audit; legacy authenticated-browser media is not current public acceptance evidence. |
 | `GHWATCH-UC-010` | Open the live worker desktop browser and inspect the browser chrome before doing work. | clean worker browser chrome / `GHWATCH-010` | Docker workstation browser through noVNC | Docker security option, Chromium process args, profile preferences, DOM/text summary, console/network state. | The browser has no bookmark bar and no unsupported `--no-sandbox` warning banner. | PARTIAL 2026-06-22 docs audit; legacy media-backed evidence is not current public acceptance evidence. |
+| `GHWATCH-UC-011` | Start a Docker/workstation worker run, then inspect status/evidence while it is quiet or complete. | active-run heartbeat and prime evidence / `GHWATCH-011` | Docker CLI runtime, Watch/Steer status, runtime description | `active-run.json`, transcript progress, evidence result, desktop-prime marker, artifact marker, Playwright Watch UI DOM text, artifact route headers/content, cleanup state. | The operator can tell whether the worker is running, completed, timed out, or lacking prime evidence without raw-token leaks or warning clutter. | PASS 2026-06-27 local; see `qa/glasshive_watch_desktop/reports/2026-06-27-docker-heartbeat-prime-local-qa.md`. |

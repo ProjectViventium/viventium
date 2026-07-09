@@ -34,6 +34,7 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 _BLOCKQUOTE_RE = re.compile(r"^>\s?(.*)$", re.MULTILINE)
 _BULLET_RE = re.compile(r"^(\s*)[-*]\s+", re.MULTILINE)
 _HR_RE = re.compile(r"^---+$", re.MULTILINE)
+_TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
 
 
 def _escape_html(text: str) -> str:
@@ -42,6 +43,65 @@ def _escape_html(text: str) -> str:
 
 def _escape_html_attr(text: str) -> str:
     return _escape_html(text).replace('"', "&quot;")
+
+
+def _split_table_row(line: str) -> list[str]:
+    stripped = line.strip()
+    if "|" not in stripped:
+        return []
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    cells = [cell.strip() for cell in stripped.split("|")]
+    return cells if any(cells) else []
+
+
+def _is_table_separator(line: str) -> bool:
+    cells = _split_table_row(line)
+    if not cells:
+        return False
+    return all(_TABLE_SEPARATOR_CELL_RE.fullmatch(cell.replace(" ", "")) for cell in cells)
+
+
+def _format_table_row(headers: list[str], row: list[str]) -> str:
+    parts: list[str] = []
+    for index, cell in enumerate(row):
+        if not cell:
+            continue
+        header = headers[index] if index < len(headers) and headers[index] else f"Column {index + 1}"
+        parts.append(f"**{header}:** {cell}")
+    if not parts:
+        return ""
+    return "- " + "; ".join(parts)
+
+
+def _convert_markdown_tables(text: str) -> str:
+    lines = text.split("\n")
+    out: list[str] = []
+    index = 0
+    while index < len(lines):
+        if index + 1 < len(lines):
+            headers = _split_table_row(lines[index])
+            if headers and _is_table_separator(lines[index + 1]):
+                rows: list[str] = []
+                row_index = index + 2
+                while row_index < len(lines):
+                    row = _split_table_row(lines[row_index])
+                    if not row:
+                        break
+                    if not _is_table_separator(lines[row_index]):
+                        formatted = _format_table_row(headers, row)
+                        if formatted:
+                            rows.append(formatted)
+                    row_index += 1
+                if rows:
+                    out.extend(rows)
+                    index = row_index
+                    continue
+        out.append(lines[index])
+        index += 1
+    return "\n".join(out)
 
 
 def markdown_to_html(text: str) -> str:
@@ -82,6 +142,7 @@ def markdown_to_html(text: str) -> str:
     result = _FENCED_CODE_RE.sub(_replace_fenced_code, result)
     result = _INLINE_CODE_RE.sub(_replace_inline_code, result)
     result = _LINK_RE.sub(_replace_link, result)
+    result = _convert_markdown_tables(result)
 
     result = _BOLD_ASTERISK_RE.sub(lambda m: _store(f"<b>{_escape_html(m.group(1))}</b>"), result)
     result = _BOLD_UNDERSCORE_RE.sub(lambda m: _store(f"<b>{_escape_html(m.group(1))}</b>"), result)

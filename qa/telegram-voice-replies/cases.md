@@ -12,6 +12,7 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 | `TGVOICE-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `TGVOICE-003` | Telegram voice replies must sanitize TTS artifacts in parity with the Modern LiveKit voice path while preserving selected-provider voice controls. | Telegram audio does not speak raw citation ids, source labels, links/domains/emails, unknown tags, or unsupported provider markup. | Telegram voice note/reply, always-voice text reply, proactive callback audio, selected TTS provider payload | `tests/test_tts.py`, `tests/test_bot_stream_preview.py`, `tests/test_librechat_bridge.py`, `tests/test_voice_preferences.py` | 2026-05-22 PASS for automated provider-payload and sanitizer parity; live Telegram send remains user-path follow-up |
 | `TGVOICE-004` | Telegram voice-note and always-voice replies are text-mode turns with optional audio delivery, not LiveKit voice-call turns. | The user gets the main text-mode answer plus audio when enabled, while LibreChat receives `voiceMode=false` and no Voice Call LLM override is applied. | Telegram voice note/reply, always-voice text reply, LibreChat Telegram route payload/logs | `tests/test_bot_stream_preview.py`, `tests/test_voice_preferences.py`, `tests/test_librechat_bridge.py`, `surfacePrompts.spec.js` | 2026-05-30 PASS for automated payload/prompt-mode regression coverage; live Telegram post-change send remains follow-up |
+| `TGVOICE-005` | Telegram text-mode audio turns expose the selected TTS provider speech-control contract without switching to LiveKit voice mode. | xAI Telegram voice replies can use documented xAI speech tags when the user asks for emotional delivery, while visible Telegram text strips the tags. | Telegram voice-note/reply, always-voice text reply, LibreChat Telegram route payload/logs, prompt layers | `surfacePrompts.spec.js`, `telegram.spec.js`, `tests/test_librechat_bridge.py`, `tests/test_tts.py` | 2026-06-28 PASS automated; live Telegram send/listen and audible xAI playback remain PARTIAL |
 
 ## `TGVOICE-001` - Core User Flow
 
@@ -97,6 +98,29 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 - Last run: 2026-05-30 PASS for automated regression coverage; live Telegram post-change send
   remains a user-path follow-up.
 
+## `TGVOICE-005` - Text Mode Audio Provider Prompt Parity
+
+- Requirement: `docs/requirements_and_learnings/03_Telegram_Bridge.md`
+- Risk covered: Telegram requests an audio attachment but the LLM never sees the selected TTS
+  provider's supported speech markers because `voiceMode=false` bypasses the voice prompt.
+- Preconditions: Telegram bot bridge and LibreChat Telegram route tests can run with synthetic
+  payloads; live Telegram send/listen can be used when an external bot message is acceptable.
+- Steps:
+  1. Simulate a Telegram voice-note or always-voice text turn with `telegramAudioRequested=true`.
+  2. Verify the bridge request carries `voiceMode=false`, `viventiumSurface=telegram`,
+     `viventiumInputMode=text` or `voice_note`, and `telegramAudioRequested=true`.
+  3. Verify the LibreChat Telegram route injects the saved Speaking route `voiceProvider`.
+  4. Verify the Telegram audio-output prompt exposes the documented xAI inline and wrapping tags
+     when the saved route is xAI.
+  5. Verify visible Telegram display still strips provider-control markup.
+- Expected result: Telegram stays in text mode, gets audio delivery, and the model receives the
+  selected TTS provider speech-control contract for the audio output path.
+- Forbidden result: Telegram sets `voiceMode=true`, omits the saved `voiceProvider` on audio turns,
+  asks the model to use unsupported tags, or shows xAI tags in visible Telegram text.
+- Evidence: `qa/telegram-runtime/reports/2026-06-28-telegram-fallback-audio-table-qa-rerun.md`
+- Last run: 2026-06-28 PASS automated; live Telegram send/listen and audible xAI playback remain
+  PARTIAL.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Voice Replies. Add narrower feature-specific
@@ -109,3 +133,4 @@ rows before claiming a pass when the feature behavior changes.
 | `TGVOICE-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `TGVOICE-002` / `TGVOICE-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGVOICE-002. | TGVOICE-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `TGVOICE-UC-004` | Hear a Telegram voice reply or always-voice text reply that includes synthetic citations, source labels, links, emails, unknown tags, provider controls, and bracket stage directions in the assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `TGVOICE-003` | Telegram bot audio plus provider-payload test harness | TTS payload captures, voice route cache, Telegram display text, runtime logs, sanitized QA report | Telegram audio receives speech-safe provider-appropriate text with no raw artifacts; visible text hides voice-control markup; capable providers keep only their documented controls. | 2026-05-22 PARTIAL/PASS: automated provider-payload parity passed; live Telegram audio send/listen not rerun |
 | `TGVOICE-UC-005` | Send a Telegram always-voice text message and a Telegram voice note, then confirm the answer uses Telegram text mode while still sending audio. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-004` | Telegram bot plus LibreChat Telegram route logs/payload | Bot kwargs, route request metadata, Telegram visible text/audio, persisted assistant message | LibreChat sees `voiceMode=false`; input mode is `text` or `voice_note` as appropriate; Telegram audio is delivered when enabled. | 2026-05-30 PASS automated; live Telegram post-change send remains follow-up |
+| `TGVOICE-UC-006` | Ask for a Telegram voice reply with more emotion while xAI is the saved TTS route. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-005` | Telegram bot plus LibreChat Telegram route logs/payload and rendered Telegram visible text | Bot kwargs, route request metadata, prompt helper test, TTS sanitizer tests, runtime log class | The model receives documented xAI speech-tag guidance, Telegram visible text strips tags, and bridge/provider errors are not spoken. | 2026-06-28 PASS automated; live Telegram send/listen remains PARTIAL |

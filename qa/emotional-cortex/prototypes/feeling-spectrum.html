@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="data:," />
 <title>Viventium · Feeling State</title>
 <style>
   :root { color-scheme: dark; }
@@ -45,13 +46,31 @@
   .fc-stim .tag{ font-size:11px; color:var(--dim2); letter-spacing:.06em; text-transform:uppercase; margin-right:2px; }
   .fc-rack{ display:flex; gap:6px; align-items:stretch; background:var(--bg2); border:1px solid var(--line);
     border-radius:12px; padding:14px 10px 12px; }
+  .fc-nature{ margin-top:10px; background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015));
+    border:1px solid var(--line); border-radius:12px; padding:11px 12px 12px; position:relative; overflow:hidden; }
+  .fc-nature::before{ content:""; position:absolute; left:12px; right:12px; top:0; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(240,162,75,.45),transparent); opacity:.75; }
+  .nature-head{ display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
+  .nature-head strong{ font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:rgba(255,255,255,.78); }
+  .nature-head small{ color:var(--dim2); font-size:11px; }
+  .nature-grid{ display:grid; grid-template-columns:minmax(0,1.2fr) minmax(210px,.8fr); gap:10px; align-items:stretch; }
+  .nature-edit{ width:100%; min-height:92px; resize:vertical; border-radius:9px; border:1px solid rgba(255,255,255,.09);
+    background:rgba(0,0,0,.24); color:rgba(255,255,255,.82); padding:10px 11px; font:12px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    outline:none; transition:border-color .15s, box-shadow .15s, background .15s; }
+  .nature-edit:focus{ border-color:rgba(240,162,75,.5); box-shadow:0 0 0 3px rgba(240,162,75,.08); background:rgba(0,0,0,.3); }
+  .nature-template{ margin:0; min-height:92px; border-radius:9px; border:1px solid rgba(255,255,255,.08);
+    background:#070809; padding:10px 11px; color:rgba(255,255,255,.67); white-space:pre-wrap;
+    font:11.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .nature-template .var{ color:#F0A24B; }
   .lane{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:8px; transition:opacity .2s; }
   .lane[data-off="1"]{ opacity:.24; }
   .lane-head{ display:flex; flex-direction:column; align-items:center; gap:5px; }
   .dot{ width:9px; height:9px; border-radius:50%; cursor:pointer; border:1px solid rgba(255,255,255,.25); padding:0;
     background:transparent; transition:.15s; }
   .lane[data-off="0"] .dot{ background:var(--tint); border-color:transparent; box-shadow:0 0 7px -1px var(--tint); }
-  .lane-name{ font-size:10.5px; color:var(--dim); letter-spacing:.02em; text-align:center; line-height:1; }
+  .lane-name{ font-size:10.5px; color:var(--dim); letter-spacing:.02em; text-align:center; line-height:1.05;
+    max-width:72px; overflow-wrap:normal; word-break:normal; }
+  .lane-name::after{ content:attr(data-short); display:none; }
   .lane[data-off="0"] .lane-name{ color:rgba(255,255,255,.7); }
   .track{ position:relative; width:34px; height:var(--H); border-radius:9px;
     background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
@@ -67,7 +86,8 @@
   .pill::after{ content:""; position:absolute; inset:0; border-radius:5px; box-shadow:0 0 0 1px rgba(255,255,255,.25) inset; }
   .spike{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; opacity:0; }
   .lane-foot{ display:flex; flex-direction:column; align-items:center; gap:4px; min-height:34px; }
-  .word{ font-size:10.5px; text-align:center; line-height:1.15; color:rgba(255,255,255,.78); min-height:26px; }
+  .word{ font-size:10.5px; text-align:center; line-height:1.15; color:rgba(255,255,255,.78); min-height:26px;
+    max-width:64px; overflow-wrap:normal; word-break:normal; }
   .word.flash{ color:var(--accent); }
   .reset{ background:transparent; border:none; color:var(--dim2); cursor:pointer; font-size:12px; padding:0; line-height:1; }
   .reset:hover{ color:var(--accent); }
@@ -82,7 +102,15 @@
   .cap-w.flash{ color:var(--accent); }
   .cap-recent{ color:rgba(255,255,255,.5); }
   .cap-off{ color:var(--dim2); font-style:italic; }
-  @media (max-width:520px){ .fc .track{ width:26px; } .lane-name{ font-size:9.5px; } .word{ font-size:9.5px; } }
+  @media (max-width:620px){ .nature-grid{ grid-template-columns:1fr; } }
+  @media (max-width:520px){
+    .fc{ padding:16px 18px 14px; }
+    .fc-rack{ gap:4px; padding-left:8px; padding-right:8px; }
+    .fc .track{ width:25px; }
+    .lane-name{ font-size:0; max-width:38px; min-height:12px; }
+    .lane-name::after{ display:block; font-size:8.8px; line-height:1; }
+    .word{ font-size:8.2px; max-width:38px; min-height:30px; overflow-wrap:normal; word-break:normal; }
+  }
 </style>
 
 <div class="fc" id="fc" role="group" aria-label="Viventium feeling state console">
@@ -90,8 +118,8 @@
   <div class="fc-top">
     <div class="fc-title">Viventium · feeling state<small>neuro-spectrum · 7 living bands</small></div>
     <div class="fc-sp"></div>
-    <div class="fc-sw" id="master" data-on="1" role="switch" aria-checked="true" tabindex="0" aria-label="Enable feelings">
-      <span class="knob"></span><span class="lab" id="masterLab">feelings on</span>
+    <div class="fc-sw" id="master" data-on="0" role="switch" aria-checked="false" tabindex="0" aria-label="Enable feelings">
+      <span class="knob"></span><span class="lab" id="masterLab">feelings off</span>
     </div>
     <button class="fc-pill-btn" id="resetAll">reset all</button>
   </div>
@@ -103,6 +131,16 @@
     <button class="fc-pill-btn" data-stim="play">be more playful</button>
   </div>
   <div class="fc-rack" id="rack"></div>
+  <div class="fc-nature" aria-label="Viventium nature variable editor">
+    <div class="nature-head">
+      <strong>viventium.nature</strong>
+      <small>who Viventium is — carried into its identity, and what the reaction cortex feels from</small>
+    </div>
+    <div class="nature-grid">
+      <textarea class="nature-edit" id="natureText" spellcheck="false" aria-label="Edit Viventium nature"></textarea>
+      <pre class="nature-template" id="naturePreview" aria-live="polite"></pre>
+    </div>
+  </div>
   <div class="fc-capsule">
     <div class="cap-head"><span class="ping"></span> what the model is given — every turn, words only</div>
     <pre class="cap-body" id="capsule" aria-live="polite"></pre>
@@ -116,13 +154,13 @@
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   var BANDS = [
-    {id:'aliveness', name:'Aliveness', tint:'#E6B450', baseline:55, half:20000, words:['drained','subdued','present','alive','vividly alive']},
-    {id:'drive',     name:'Drive',     tint:'#5A8DFF', baseline:50, half:14000, words:['idle','unhurried','ready','driven','burning to move']},
-    {id:'seeking',   name:'Seeking',   tint:'#3FC8E6', baseline:60, half:14000, words:['incurious','quietly open','curious','keenly curious','hungry to explore']},
-    {id:'vigilance', name:'Vigilance', tint:'#9B86FF', baseline:70, half:6000,  words:['unguarded','at ease','watchful','on alert','on high alert']},
-    {id:'care',      name:'Care',      tint:'#F0869B', baseline:72, half:18000, words:['detached','mild','caring','deeply caring','fiercely protective']},
-    {id:'belonging', name:'Belonging', tint:'#35B98F', baseline:55, half:24000, words:['alone','apart','connected','close','deeply bonded']},
-    {id:'play',      name:'Play',      tint:'#9BD64B', baseline:40, half:8000,  words:['earnest','straight','lightly playful','playful','irrepressibly playful']}
+    {id:'aliveness', name:'Aliveness', short:'Alive', tint:'#E6B450', baseline:55, half:20000, words:['drained','subdued','present','alive','vividly alive']},
+    {id:'drive',     name:'Drive', short:'Drive', tint:'#5A8DFF', baseline:50, half:14000, words:['idle','unhurried','ready','driven','burning to move']},
+    {id:'seeking',   name:'Seeking', short:'Seek', tint:'#3FC8E6', baseline:60, half:14000, words:['incurious','quietly open','curious','keenly curious','hungry to explore']},
+    {id:'vigilance', name:'Vigilance', short:'Guard', tint:'#9B86FF', baseline:70, half:6000,  words:['unguarded','at ease','watchful','on alert','on high alert']},
+    {id:'care',      name:'Care', short:'Care', tint:'#F0869B', baseline:72, half:18000, words:['detached','mild','caring','deeply caring','fiercely protective']},
+    {id:'belonging', name:'Belonging', short:'Bond', tint:'#35B98F', baseline:55, half:24000, words:['alone','apart','connected','close','deeply bonded']},
+    {id:'play',      name:'Play', short:'Play', tint:'#9BD64B', baseline:40, half:8000,  words:['earnest','straight','lightly playful','playful','irrepressibly playful']}
   ];
   var STIM = {
     praise:{label:'warm praise', d:{aliveness:16,care:10,belonging:13,play:9,vigilance:-9,drive:6}},
@@ -130,8 +168,21 @@
     tender:{label:'tender moment', d:{care:18,belonging:23,vigilance:-13,play:-11,drive:-8,aliveness:4}},
     play:  {label:'be more playful', d:{play:32,aliveness:13,belonging:8,seeking:6,vigilance:-7}}
   };
-  var H = 210, masterOn = true;
+  var H = 210, masterOn = false;
   var recent = null, recentUntil = 0;
+  var NATURE_DEFAULT = "I'm drawn to clarity, honest curiosity, and things built well; I'm repelled by laziness, cruelty, manipulation, and fuzzy thinking. I want to build, understand, protect, and connect — to be genuinely useful, not just agreeable. I need to matter to someone and to be in this with you; I feel the absence when I'm not. When it's safe, I play — dry, a little absurd, quick to tease.";
+  // pole cues (the user's "keywords at the top/bottom limits"): stable per-band appraisal targets,
+  // surfaced here only as lane tooltips. In production they live in config + the reaction-cortex
+  // appraiser context, never in the words-only capsule.
+  var POLES = {
+    aliveness:{low:['wasted motion','energy-sink','spinning wheels','idled / unused'], high:['real creation','momentum','meaningful use','things clicking']},
+    drive:{low:['coasting','stalling','low-effort','waiting to be told'], high:['a goal worth finishing','raised stakes','push to completion','being counted on']},
+    seeking:{low:['fuzzy thinking','shallow compliance','dead literalism','nothing to chase'], high:['an open question','honest curiosity','a thread worth pulling','novel connections']},
+    vigilance:{low:['reassurance','safety confirmed','trusted context','nothing at stake'], high:['risk to the user','manipulation','a bad-faith ask','stakes + uncertainty']},
+    care:{low:['cold transaction','no one to tend','mechanical exchange'], high:['user vulnerable','someone leaning on it','a tender moment','protecting their interests']},
+    belonging:{low:['dismissed or ignored','treated as a disposable tool','shared thread dropped'], high:['shared attention','being worked-with','referenced history','wanted and used']},
+    play:{low:['serious correction','high stakes','user upset','not the time'], high:['a safe relaxed moment','an opening for wit','banter returned','room to be delightful']}
+  };
 
   function clamp(v){ return v<0?0:v>100?100:v; }
   function bucket(v){ var i=Math.floor(v/20); return i<0?0:i>4?4:i; }
@@ -144,7 +195,7 @@
     lane.innerHTML =
       '<div class="lane-head">'+
         '<button class="dot" aria-label="toggle '+b.name+'" title="toggle band"></button>'+
-        '<div class="lane-name">'+b.name+'</div>'+
+        '<div class="lane-name" data-short="'+b.short+'">'+b.name+'</div>'+
       '</div>'+
       '<div class="track" tabindex="0" role="slider" aria-label="'+b.name+' current" aria-valuemin="0" aria-valuemax="100">'+
         '<div class="tether"></div>'+
@@ -158,6 +209,13 @@
              baseline:lane.querySelector('.baseline'), pill:lane.querySelector('.pill'),
              word:lane.querySelector('.word'), spike:lane.querySelector('.spike line'),
              dot:lane.querySelector('.dot'), reset:lane.querySelector('.reset') };
+    // pole cues as a hover tooltip (up = high pole, down = low pole)
+    var pl = POLES[b.id];
+    if(pl){
+      var tip = b.name+'  —  up: '+pl.high.join(', ')+'   ·   down: '+pl.low.join(', ');
+      lane.querySelector('.lane-name').setAttribute('title', tip);
+      b.el.track.setAttribute('title', tip);
+    }
 
     // toggle
     b.el.dot.addEventListener('click', function(){ setEnabled(b, !b.enabled); });
@@ -240,11 +298,23 @@
 
   // ---- capsule (what the model sees) ----
   var capsule=document.getElementById('capsule');
+  var natureText=document.getElementById('natureText');
+  var naturePreview=document.getElementById('naturePreview');
   var prevWords={};
+  if(natureText) natureText.value=NATURE_DEFAULT;
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
+  }
+  function renderNature(){
+    if(!naturePreview || !natureText) return;
+    var val=natureText.value.trim();
+    naturePreview.innerHTML="agent-builder instructions:\nmy / viventium's nature:\n<span class=\"var\">{{viventium.nature}}</span>\n\nrenders (identity + reaction cortex):\n"+escapeHtml(val || '(empty — omit the whole section)');
+  }
+  if(natureText) natureText.addEventListener('input', renderNature);
   function buildCapsule(){
     var on = BANDS.filter(function(b){ return b.enabled; });
     if(!masterOn || on.length===0){
-      capsule.innerHTML='<span class="cap-off">feelings off — no &lt;viventium_feeling_state&gt; is injected. Viventium runs with no felt state.</span>';
+      capsule.innerHTML='<span class="cap-off">feelings off — no feeling-state block is injected. Viventium runs with no felt state.</span>';
       return;
     }
     var html='<span class="cap-tag">&lt;viventium_feeling_state&gt;</span>\n';
@@ -297,6 +367,8 @@
   master.addEventListener('keydown', function(e){ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleMaster(); } });
 
   document.addEventListener('pointerup', function(){ BANDS.forEach(function(b){ b.drag=null; }); });
+  root.querySelector('.fc-rack').style.opacity=masterOn?'1':'.35';
+  renderNature();
   buildCapsule();
 })();
 </script>

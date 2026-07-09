@@ -13,7 +13,7 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 | `GHHOST-003` | One-shot delegation preserves instruction precision without forced canned status | Assistant can self-check the delegated instruction and acknowledges in its own voice | MCP tool result, web chat, callback result | GlassHive `test_mcp_server.py` plus browser callback QA | PASS/PARTIAL 2026-06-25: live MCP one-shot delegation created a project/worker/run, preserved diagnostics, completed, and returned artifacts; browser chat callback run remains a separate gate. |
 | `GHHOST-004` | Artifact discovery excludes runtime/browser scratch state and only promotes user-facing deliverables. | Users receive the actual worker output, not Chrome extension capture pages, browser profile data, uploaded-source metadata, or temporary scratch files. | GlassHive API/MCP artifacts, live payload, artifact open/download links, browser preview | GlassHive `test_api.py`, `test_mcp_server.py`, and real-browser artifact-open QA | PASS/PARTIAL 2026-06-25: provider-backed live worker produced, served, downloaded, and browser-previewed the expected Markdown artifact; callback artifact parity remains a separate gate. |
 | `GHHOST-005` | Host and workstation workers preserve native CLI/browser/computer capability while adding broker MCP grants. | A user can ask unknown future work and the selected worker can decide using its full native capability surface plus brokered tools. | Host Codex/Claude launch, worker-local config, workspace Codex path, runtime preflight, logs | `test_profile_runtime.py`, real `codex mcp list` capability probe, Claude help/launch probe, worker config inspection | PASS/PARTIAL (2026-06-14 source/runtime probes and targeted tests; live post-change worker launch still required after runtime rebuild/restart) |
-| `GHHOST-006` | Bootstrapped workspace images include AI-worker browser extensions, native messaging hosts, and native skill awareness without forcing workflows. | A new user's workspace worker starts with truthful Claude/Codex browser-extension substrate and worker-visible skill inventory. | Docker/workstation image, Chromium/Chrome profile, Codex/Claude worker prompts, worker logs | `test_docker_sandbox.py`, `test_bootstrap.py`, `test_profile_runtime.py`, `glasshive-browser-extension-check`, real browser/Computer Use bridge QA | PASS/PARTIAL 2026-06-23: `docs6` build and managed-worker QA proved both CRXs installed, Claude native host installed and invoked, and Codex visibly reproduced disconnected when the first-party Linux native-host bundle plus node-repl provisioning were absent. |
+| `GHHOST-006` | Bootstrapped workspace images include AI-worker browser extensions, native messaging hosts, native skill awareness, and truthful workstation capability context without forcing workflows. | A new user's workspace worker starts with truthful browser/computer/document substrate awareness and diagnostic evidence without warning clutter. | Docker/workstation image, Chromium/Chrome profile, Codex/Claude worker prompts, worker logs | `test_docker_sandbox.py`, `test_profile_runtime.py`, `test_run_evidence.py`, `glasshive-browser-extension-check`, real local Docker smoke, real browser/Computer Use bridge QA | PASS/PARTIAL 2026-06-27: docs7 source/tests and local Docker smoke proved current image contract, worker capability guidance, active-run heartbeat, desktop-prime marker, and artifact/evidence pass; provider-backed browser bridge connectivity remains separate acceptance when configured. |
 | `GHHOST-007` | Callback copy distinguishes a failed evidence gate with available artifacts from a total worker failure. | The user can tell whether a usable partial/delivered file exists and what still failed, without misleading success wording. | Telegram/web callbacks, callback outbox, artifact open/download links, run evidence | LibreChat `glasshive.spec.js`, GlassHive `test_api.py`, and real callback QA | PASS/PARTIAL 2026-06-25: automated coverage, live web callback/browser QA, and live Telegram/voice delivery-ledger claim/mark parity pass; real external Telegram send/audible voice delivery for this exact failed-evidence artifact case remains a side-effectful gate. |
 | `GHHOST-008` | Codex effort values are clamped before launch when a host model supplies an unsupported per-run effort. | A bad `effort=minimal` from voice/chat cannot make the worker fail before it starts acting. | Voice/chat MCP launch, host Codex command, config compiler, run evidence | `tests/test_profile_runtime.py::test_codex_cli_provider_config_clamps_minimal_without_route_allowlist`; `tests/test_mcp_server.py::test_worker_tool_schemas_advertise_host_native_execution`; `tests/release/test_config_compiler.py::test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled`; real local GlassHive launch QA | PASS 2026-06-25: automated tests, live marker smoke, live Yahoo Finance browser smoke, DB/log/evidence checks, and Playwright UI checks passed; see `reports/2026-06-25-codex-minimal-effort-clamp-qa.md`. Full doctor validation remains blocked by local disk-space prerequisite. |
 | `GHHOST-009` | Browser/computer evidence, worker steering, and chat callbacks stay truthful after host-worker completion. | A successful browser task is not mislabeled as provider failure, blank steering fails before HTTP, own finished callbacks replace pending chat placeholders, and unrelated in-progress replies are not clobbered. | GlassHive run evidence, MCP `worker_message`, LibreChat callback receiver, real Chrome/LibreChat UI | `test_run_evidence.py`, `test_mcp_server.py`, LibreChat `glasshive.spec.js`, live MCP/callback/Chrome QA | PASS 2026-06-25: targeted and broader affected tests passed, live runtime rejected blank `worker_message`, synthetic signed callback updated its own unfinished placeholder, unrelated active placeholder returned retryable `425`, and real Chrome showed the completed callback without the placeholder. |
@@ -161,12 +161,13 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
   image is present; use only synthetic public-safe browser/computer tasks.
 - Steps:
   1. Inspect/generated-build the workstation Dockerfile and verify the default image tag is
-     `workers-projects-runtime-workstation:phase1-node22-docs6`.
+     `workers-projects-runtime-workstation:phase1-node22-docs7`.
   2. Verify Codex and Claude Code package specs are pinned to dated, QA-checked stable versions, or
      that any override has matching version and capability evidence.
-  3. Verify managed policy exists for both Chromium and Google Chrome locations and includes
-     `fcoeoabgfenejglbffodgkkbkcdhcgfn;https://clients2.google.com/service/update2/crx` and
-     `hehggadaopoacecdllhhajmbjkdcmajg;https://clients2.google.com/service/update2/crx`.
+  3. Verify managed policy exists for both Chromium and Google Chrome locations. By default it must
+     use an empty `ExtensionInstallForcelist`; when `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` or
+     `WPR_AI_WORKER_BROWSER_EXTENSIONS` opts in to `claude`, `codex`, or `all`, verify the exact
+     configured extension IDs and Chrome Web Store update URL are present.
   4. Run `glasshive-browser-extension-check` inside the image/container. For full acceptance after
      launching the browser, rerun profile and native-host validation and record whether profile
      install is complete, native messaging is installed, or a vendor bundle is still pending.
@@ -190,13 +191,14 @@ Use stable `GHHOST-NNN` IDs for glasshive host workers cases.
 - Automation: `viventium_v0_4/GlassHive/runtime_phase1/tests/test_docker_sandbox.py`,
   `viventium_v0_4/GlassHive/runtime_phase1/tests/test_bootstrap.py`, and
   `viventium_v0_4/GlassHive/runtime_phase1/tests/test_profile_runtime.py`.
-- Last run: PASS/PARTIAL 2026-06-23. `docs6` source, image, and managed-worker QA proved Codex
-  CLI `0.142.0`, Claude Code `2.1.186`, both Chrome Web Store extension IDs `profile-installed`,
-  Claude native-host manifest/wrapper installation, and an active `claude --chrome-native-host`
-  process spawned by Chromium. Codex remains partial in Linux workstation mode until a real
-  first-party Codex Chrome native-host bundle and reachable node-repl executable are provisioned
-  through the documented worker-local config; the Codex popup visibly reproduced `Disconnected`
-  without those prerequisites. See `reports/2026-06-23-workspace-native-browser-connectors.md`.
+- Last run: PASS/PARTIAL 2026-06-27. The docs7 source/tests and local Docker smoke proved the
+  current image contract, worker capability guidance, active-run heartbeat, desktop-prime marker,
+  artifact/evidence pass, and compute cleanup. The 2026-06-23 managed-worker QA remains the browser
+  extension bridge reference: Claude native-host installation was proven, while Codex remains
+  partial in Linux workstation mode until a real first-party Codex Chrome native-host bundle and
+  reachable node-repl executable are provisioned through the documented worker-local config. See
+  `reports/2026-06-23-workspace-native-browser-connectors.md` and
+  `../glasshive_watch_desktop/reports/2026-06-27-docker-heartbeat-prime-local-qa.md`.
 
 ## `GHHOST-007` - Failed Evidence Gate With Deliverable Copy
 

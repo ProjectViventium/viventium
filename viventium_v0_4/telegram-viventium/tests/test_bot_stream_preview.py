@@ -11,6 +11,8 @@ BOT_DIR = ROOT / "TelegramVivBot"
 
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
+MD2TGMD_SRC_DIR = str(BOT_DIR / "md2tgmd" / "src")
+sys.path[:] = [path for path in sys.path if path != MD2TGMD_SRC_DIR]
 
 _fake_pil = types.ModuleType("PIL")
 _fake_pil_image = types.ModuleType("PIL.Image")
@@ -22,6 +24,8 @@ sys.modules.setdefault("PIL.Image", _fake_pil_image)
 # This module imports the real bot, so clear that stub before bot import.
 if "config" in sys.modules and not hasattr(sys.modules["config"], "__file__"):
     sys.modules.pop("config", None)
+if "md2tgmd" in sys.modules and not hasattr(sys.modules["md2tgmd"], "__path__"):
+    sys.modules.pop("md2tgmd", None)
 
 import bot as tg_bot  # noqa: E402
 from utils.librechat_bridge import TelegramLinkRequired  # noqa: E402

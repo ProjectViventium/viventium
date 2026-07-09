@@ -55,6 +55,21 @@ def test_markdown_to_html_converts_links():
     assert "<a href=\"https://chat.viventium.ai\">Open site</a>" in rendered
 
 
+def test_markdown_to_html_converts_pipe_tables_to_bullet_rows():
+    text = (
+        "Read-only audit completed.\n\n"
+        "| Name | Title | Company | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| Example Person | Researcher | Example Lab | Connected on June 25, 2026 |\n"
+    )
+    rendered = markdown_to_html(text)
+    assert "|---" not in rendered
+    assert "| Name |" not in rendered
+    assert "• <b>Name:</b> Example Person" in rendered
+    assert "<b>Title:</b> Researcher" in rendered
+    assert "<b>Evidence:</b> Connected on June 25, 2026" in rendered
+
+
 def test_markdown_to_html_escapes_html_special_chars():
     text = "5 < 7 & 8 > 3"
     rendered = markdown_to_html(text)
