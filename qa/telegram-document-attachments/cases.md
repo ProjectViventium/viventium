@@ -8,13 +8,13 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `TGDOC-001` | Telegram document uploads become usable attachments or honest failures with no private raw evidence in public reports. | User-visible behavior matches source, docs, persisted state, and logs | Telegram send/receive, attachment storage, model-visible file context | `tests/release/test_telegram_codex_runtime_paths.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `TGDOC-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
-| `TGDOC-003` | Captioned Office/OpenDocument uploads must enter the shared Telegram attachment contract. | Sending a presentation, spreadsheet, or document never results in silence; it becomes readable/provider-native context or an explicit attachment-processing error. | Telegram document upload, LibreChat Telegram route, document parser/provider upload | `tests/test_telegram_file_upload.py`, `tests/test_voice_preferences.py::test_get_message_returns_attachment_capture_errors`, LibreChat `telegram.spec.js` | AUTOMATED PASS 2026-07-09; real Telegram QA required for release signoff |
-| `TGDOC-004` | Unsupported binary/archive files must fail visibly rather than becoming inert attachments. | User receives one clear Telegram error and no caption-only assistant turn is submitted. | Telegram document upload, LibreChat attachment upload failure, Python bridge error text | `tests/test_librechat_bridge.py::test_start_chat_error_message_surfaces_attachment_processing_reason`, LibreChat `telegram.spec.js` | AUTOMATED PASS 2026-07-09; real Telegram QA required for release signoff |
-| `TGDOC-005` | Telegram grouped media/files are one user turn. | An album/grouped message is coalesced and forwarded once with all files in Telegram order, using the caption-bearing item as primary. | Telegram media group, bot handler, LibreChat bridge call | `tests/test_bot_stream_preview.py::test_media_group_coalesces_files_into_one_viventium_call` | AUTOMATED PASS 2026-07-09; real Telegram QA required for release signoff |
-| `TGDOC-006` | Authorization/API-key decorators must not download, parse, or transcribe attachments. | Each Telegram attachment is captured once by the real handler, avoiding duplicate downloads and split album turns. | Telegram auth decorators, bot logs, media download path | Source inspection plus full Telegram pytest suite | AUTOMATED PASS 2026-07-09; real Telegram log correlation required for release signoff |
-| `TGDOC-007` | Audio and regular video uploads are attachments; voice notes and video notes are STT inputs. | Uploaded audio/video files do not produce empty turns or accidental transcription errors; they follow the file contract. | Telegram audio/video upload, bot parser, LibreChat bridge call | `tests/test_bot_stream_preview.py::test_telegram_attachment_filters_accept_broad_documents_and_audio`, `tests/test_voice_preferences.py::test_get_message_treats_regular_video_as_file_attachment` | AUTOMATED PASS 2026-07-09; real Telegram QA required for release signoff |
+| `TGDOC-001` | Telegram document uploads become usable attachments or honest failures with no private raw evidence in public reports. | User-visible behavior matches source, docs, persisted state, and logs | Telegram send/receive, attachment storage, model-visible file context | `tests/release/test_telegram_codex_runtime_paths.py` plus user-grade QA when visible | PASS 2026-07-09; see `reports/2026-07-09-telegram-file-ingress-parity.md` |
+| `TGDOC-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-07-09; see `reports/2026-07-09-telegram-file-ingress-parity.md` |
+| `TGDOC-003` | Captioned Office/OpenDocument uploads must enter the shared Telegram attachment contract. | Sending a presentation, spreadsheet, or document never results in silence; it becomes readable/provider-native context or an explicit attachment-processing error. | Telegram document upload, LibreChat Telegram route, document parser/provider upload | `tests/test_telegram_file_upload.py`, `tests/test_voice_preferences.py::test_get_message_returns_attachment_capture_errors`, LibreChat `telegram.spec.js` | PASS 2026-07-09; synthetic PPTX produced clear Telegram error, not silence |
+| `TGDOC-004` | Unsupported binary/archive files must fail visibly rather than becoming inert attachments. | User receives one clear Telegram error and no caption-only assistant turn is submitted. | Telegram document upload, LibreChat attachment upload failure, Python bridge error text | `tests/test_librechat_bridge.py::test_start_chat_error_message_surfaces_attachment_processing_reason`, LibreChat `telegram.spec.js` | PASS 2026-07-09; synthetic ZIP produced visible typed error |
+| `TGDOC-005` | Telegram grouped media/files are one user turn. | An album/grouped message is coalesced and forwarded once with all files in Telegram order, using the caption-bearing item as primary. | Telegram media group, bot handler, LibreChat bridge call | `tests/test_bot_stream_preview.py::test_media_group_coalesces_files_into_one_viventium_call` | PASS 2026-07-09; synthetic album and two-file group each bridged once with two files |
+| `TGDOC-006` | Authorization/API-key decorators must not download, parse, or transcribe attachments. | Each Telegram attachment is captured once by the real handler, avoiding duplicate downloads and split album turns. | Telegram auth decorators, bot logs, media download path | Source inspection plus full Telegram pytest suite | PASS 2026-07-09; post-restart grouped logs show one coalesced handler bridge call |
+| `TGDOC-007` | Audio and regular video uploads are attachments; voice notes and video notes are STT inputs. | Uploaded audio/video files do not produce empty turns or accidental transcription errors; they follow the file contract. | Telegram audio/video upload, bot parser, LibreChat bridge call | `tests/test_bot_stream_preview.py::test_telegram_attachment_filters_accept_broad_documents_and_audio`, `tests/test_voice_preferences.py::test_get_message_treats_regular_video_as_file_attachment` | PASS 2026-07-09; synthetic WAV/MP4 produced file-contract errors and zero voice-ingress records |
 
 ## `TGDOC-001` - Core User Flow
 
@@ -29,7 +29,7 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_telegram_codex_runtime_paths.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: PASS 2026-07-09; see `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
 ## `TGDOC-002` - Public-Safe Evidence Record
 
@@ -44,7 +44,7 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Forbidden result: a report includes private transcripts, account identifiers, raw runtime dumps, local home paths, tokens, or secret-bearing command lines.
 - Evidence to capture: public-safety scan result and link to the sanitized report.
 - Automation: public-safety pattern scan plus relevant release tests.
-- Last run: NOT YET RUN (cataloged 2026-05-17; run on each new public report).
+- Last run: PASS 2026-07-09; see `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
 ## `TGDOC-003` - Captioned Office/OpenDocument Uploads
 
@@ -67,7 +67,8 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Automation: `tests/test_telegram_file_upload.py`,
   `tests/test_voice_preferences.py::test_get_message_returns_attachment_capture_errors`, LibreChat
   `telegram.spec.js`.
-- Last run: AUTOMATED PASS 2026-07-09; real Telegram QA pending in this run.
+- Last run: PASS 2026-07-09; synthetic Telegram PPTX produced a clear attachment-processing error
+  rather than silence. See `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
 ## `TGDOC-004` - Unsupported File Fails Clearly
 
@@ -85,7 +86,8 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Evidence to capture: visible Telegram result summary, sanitized logs, and route/bridge test output.
 - Automation: `tests/test_librechat_bridge.py::test_start_chat_error_message_surfaces_attachment_processing_reason`,
   LibreChat `telegram.spec.js`.
-- Last run: AUTOMATED PASS 2026-07-09; real Telegram QA pending in this run.
+- Last run: PASS 2026-07-09; synthetic Telegram ZIP produced one clear typed error. See
+  `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
 ## `TGDOC-005` - Grouped Media/File Coalescing
 
@@ -105,7 +107,8 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Evidence to capture: visible Telegram result summary, sanitized coalescing log count, and
   automated regression output.
 - Automation: `tests/test_bot_stream_preview.py::test_media_group_coalesces_files_into_one_viventium_call`.
-- Last run: AUTOMATED PASS 2026-07-09; real Telegram QA pending in this run.
+- Last run: PASS 2026-07-09; synthetic Telegram album and grouped docs each produced one
+  coalesced two-file bridge call. See `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
 ## `TGDOC-006` - Lightweight Auth Before Attachment Capture
 
@@ -123,7 +126,9 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
 - Forbidden result: repeated capture/download attempts before the handler or decorator-triggered STT.
 - Evidence to capture: sanitized log counts and source/test evidence for `get_update_ids`.
 - Automation: full Telegram pytest suite plus source inspection.
-- Last run: AUTOMATED PASS 2026-07-09; real Telegram log correlation pending in this run.
+- Last run: PASS 2026-07-09; post-restart grouped Telegram logs show one coalesced handler bridge
+  call and no decorator-side duplicate bridge calls. See
+  `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
 ## `TGDOC-007` - Audio And Regular Video As Attachments
 
@@ -143,7 +148,8 @@ Use stable `TGDOC-NNN` IDs for telegram document attachments cases.
   output.
 - Automation: `tests/test_bot_stream_preview.py::test_telegram_attachment_filters_accept_broad_documents_and_audio`,
   `tests/test_voice_preferences.py::test_get_message_treats_regular_video_as_file_attachment`.
-- Last run: AUTOMATED PASS 2026-07-09; real Telegram QA pending in this run.
+- Last run: PASS 2026-07-09; synthetic Telegram WAV and MP4 followed the attachment contract and
+  did not create voice-ingress records. See `reports/2026-07-09-telegram-file-ingress-parity.md`.
 
 ## Natural User Use Case Checklist
 
@@ -152,10 +158,10 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `TGDOC-UC-001` | On Telegram send/receive, attachment storage, model-visible file context, verify that telegram document uploads become usable attachments or honest failures with no private raw evidence in public reports. | owning requirement for `TGDOC-001` / `TGDOC-001` | Telegram send/receive, attachment storage, model-visible file context | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGDOC-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `TGDOC-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `TGDOC-002` / `TGDOC-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGDOC-002. | The user sees an honest setup, retry, or degraded-state result for TGDOC-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `TGDOC-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `TGDOC-002` / `TGDOC-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGDOC-002. | TGDOC-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
-| `TGDOC-UC-004` | Send a captioned synthetic Office presentation in Telegram. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-003` | Telegram desktop/mobile bot chat | Source, bot logs, LibreChat route logs, DB/state, and automated tests. | Content-aware answer or one clear attachment-processing error; never no response. | AUTOMATED PASS 2026-07-09; real Telegram QA pending |
-| `TGDOC-UC-005` | Send a grouped Telegram album/file set with one caption. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-005` | Telegram desktop/mobile bot chat | Coalescing log count, one LibreChat bridge call, stored assistant turn, automated test. | One assistant response for the group with all files forwarded in order. | AUTOMATED PASS 2026-07-09; real Telegram QA pending |
-| `TGDOC-UC-006` | Send an unsupported synthetic archive with a caption. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-004` | Telegram desktop/mobile bot chat | LibreChat 422 route response, Python bridge error text, no generated caption-only answer. | One clear failure message and no silent turn. | AUTOMATED PASS 2026-07-09; real Telegram QA pending |
-| `TGDOC-UC-007` | Send synthetic audio and regular video file uploads. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-007` | Telegram desktop/mobile bot chat | Bot handler selection, file capture logs, automated parser/filter tests. | Files follow attachment contract; only voice-note/video-note inputs use STT. | AUTOMATED PASS 2026-07-09; real Telegram QA pending |
+| `TGDOC-UC-001` | On Telegram send/receive, attachment storage, model-visible file context, verify that telegram document uploads become usable attachments or honest failures with no private raw evidence in public reports. | owning requirement for `TGDOC-001` / `TGDOC-001` | Telegram send/receive, attachment storage, model-visible file context | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGDOC-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS 2026-07-09; report saved |
+| `TGDOC-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `TGDOC-002` / `TGDOC-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGDOC-002. | The user sees an honest setup, retry, or degraded-state result for TGDOC-002; no fake success is accepted. | PASS 2026-07-09; public-safe report saved |
+| `TGDOC-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `TGDOC-002` / `TGDOC-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to TGDOC-002. | TGDOC-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-07-09; public-safety scan passed |
+| `TGDOC-UC-004` | Send a captioned synthetic Office presentation in Telegram. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-003` | Telegram desktop/mobile bot chat | Source, bot logs, LibreChat route logs, DB/state, and automated tests. | Content-aware answer or one clear attachment-processing error; never no response. | PASS 2026-07-09; synthetic PPTX fail-loud |
+| `TGDOC-UC-005` | Send a grouped Telegram album/file set with one caption. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-005` | Telegram desktop/mobile bot chat | Coalescing log count, one LibreChat bridge call, stored assistant turn, automated test. | One assistant response for the group with all files forwarded in order. | PASS 2026-07-09; album and grouped docs coalesced |
+| `TGDOC-UC-006` | Send an unsupported synthetic archive with a caption. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-004` | Telegram desktop/mobile bot chat | LibreChat 422 route response, Python bridge error text, no generated caption-only answer. | One clear failure message and no silent turn. | PASS 2026-07-09; synthetic ZIP fail-loud |
+| `TGDOC-UC-007` | Send synthetic audio and regular video file uploads. | `03_Telegram_Bridge.md` Telegram Attachments / `TGDOC-007` | Telegram desktop/mobile bot chat | Bot handler selection, file capture logs, automated parser/filter tests. | Files follow attachment contract; only voice-note/video-note inputs use STT. | PASS 2026-07-09; WAV/MP4 file-contract errors and no voice ingress |

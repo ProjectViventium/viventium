@@ -206,60 +206,6 @@ def _acquire_telegram_singleton_or_exit() -> None:
 # === VIVENTIUM END ===
 
 
-# === VIVENTIUM START ===
-# Feature: Broader Telegram file routing for public-safe document/audio attachment support.
-def _telegram_supported_document_filter():
-    document_extensions = (
-        "jpg",
-        "jpeg",
-        "png",
-        "md",
-        "py",
-        "yml",
-        "yaml",
-        "csv",
-        "json",
-        "doc",
-        "docx",
-        "ppt",
-        "pptx",
-        "xls",
-        "xlsx",
-        "odt",
-        "odp",
-        "ods",
-        "odg",
-        "zip",
-        "wav",
-        "mp3",
-        "m4a",
-        "ogg",
-        "opus",
-        "mp4",
-        "mov",
-        "avi",
-        "mkv",
-        "webm",
-    )
-    document_filter = filters.Document.PDF | filters.Document.TXT | filters.Document.DOC
-    for extension in document_extensions:
-        document_filter = document_filter | filters.Document.FileExtension(extension)
-    return document_filter
-
-
-def _telegram_attachment_media_filter():
-    return (filters.PHOTO & ~filters.COMMAND) | filters.AUDIO | _telegram_supported_document_filter()
-
-
-def _telegram_captioned_attachment_filter():
-    return filters.CAPTION & _telegram_attachment_media_filter()
-
-
-def _telegram_uncaptioned_attachment_filter():
-    return ~filters.CAPTION & _telegram_attachment_media_filter()
-# === VIVENTIUM END ===
-
-
 async def _resolve_voice_input_message(
     context,
     *,
