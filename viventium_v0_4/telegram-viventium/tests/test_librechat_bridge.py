@@ -823,6 +823,29 @@ def test_start_chat_error_messages_are_class_specific_and_non_spoken():
     }
 
 
+def test_start_chat_error_message_surfaces_attachment_processing_reason():
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    request = bridge_module.httpx.Request(
+        "POST",
+        "http://127.0.0.1:3180/api/viventium/telegram/chat",
+    )
+    response = bridge_module.httpx.Response(
+        422,
+        json={
+            "attachmentProcessingError": True,
+            "error": 'Telegram attachment upload failed for "archive.zip": unsupported type',
+        },
+        request=request,
+    )
+    error = bridge_module.httpx.HTTPStatusError("status", request=request, response=response)
+
+    assert (
+        _start_chat_error_message(error)
+        == 'Telegram attachment upload failed for "archive.zip": unsupported type'
+    )
+
+
 @pytest.mark.asyncio
 async def test_ask_stream_async_reports_prestart_connect_error_as_non_spoken_bridge_error():
     bridge = _make_bridge()

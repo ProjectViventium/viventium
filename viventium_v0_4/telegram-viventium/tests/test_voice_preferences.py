@@ -225,6 +225,78 @@ def test_get_message_override_user_id_applies_to_convo_id():
     assert convo_id == "chat-1:user-42"
 
 
+def test_get_message_returns_attachment_capture_errors(monkeypatch):
+    message = _DummyMessage(chat_id="chat-1", user_id="user-1")
+    message.document = types.SimpleNamespace(
+        file_id="doc-file",
+        file_name="deck.pptx",
+        mime_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+    async def _fake_download(*_args, **_kwargs):
+        return scripts.TelegramDownloadResult(
+            filename="deck.pptx",
+            mime_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            error_code="download_timeout",
+        )
+
+    monkeypatch.setattr(scripts, "download_telegram_file_result", _fake_download)
+
+    result = asyncio.run(
+        scripts.GetMesage(
+            message,
+            context=types.SimpleNamespace(bot=object()),
+            voice=False,
+        )
+    )
+
+    file_data_list = result[-2]
+    file_error_list = result[-1]
+    assert file_data_list == []
+    assert file_error_list == [
+        {
+            "filename": "deck.pptx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "error_code": "download_timeout",
+            "media_kind": "document",
+        }
+    ]
+
+
+def test_get_message_treats_regular_video_as_file_attachment(monkeypatch):
+    message = _DummyMessage(chat_id="chat-1", user_id="user-1")
+    message.video = types.SimpleNamespace(
+        file_id="video-file",
+        file_name="clip.mp4",
+        mime_type="video/mp4",
+    )
+
+    async def _fake_download(*_args, **_kwargs):
+        return scripts.TelegramDownloadResult(
+            file_bytes=b"video-bytes",
+            filename="clip.mp4",
+            mime_type="video/mp4",
+        )
+
+    async def _fail_transcribe_video(*_args, **_kwargs):
+        raise AssertionError("regular video uploads should not be transcribed")
+
+    monkeypatch.setattr(scripts, "download_telegram_file_result", _fake_download)
+    monkeypatch.setattr(scripts, "transcribe_video", _fail_transcribe_video)
+
+    result = asyncio.run(
+        scripts.GetMesage(
+            message,
+            context=types.SimpleNamespace(bot=object()),
+            voice=True,
+        )
+    )
+
+    assert result[-1] == []
+    assert result[-2][0]["filename"] == "clip.mp4"
+    assert result[11] is None
+
+
 def test_get_voice_surfaces_oversize_as_structured_error(monkeypatch):
     async def _fake_download(*_args, **_kwargs):
         return scripts.TelegramDownloadResult(error_code="file_too_large")
