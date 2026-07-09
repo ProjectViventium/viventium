@@ -2391,7 +2391,7 @@ reset_mess_id = 9999
 @decorators.Authorization
 async def reset_chat(update, context):
     global target_convo_id, reset_mess_id
-    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context)
+    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _, _ = _unpack_message_info(await GetMesageInfo(update, context))
     reset_mess_id = user_message_id
     target_convo_id = convo_id
     stop_event.set()
@@ -2415,7 +2415,7 @@ async def reset_chat(update, context):
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def info(update, context):
-    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, voice_text, _, _ = await GetMesageInfo(update, context)
+    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, voice_text, _, _, _ = _unpack_message_info(await GetMesageInfo(update, context))
     info_message = update_info_message(convo_id)
     message = await context.bot.send_message(
         chat_id=chatid,
@@ -2445,9 +2445,9 @@ async def info(update, context):
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def call(update, context):
-    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(
+    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _, _, _, _ = _unpack_message_info(await GetMesageInfo(
         update, context
-    )
+    ))
     call_link = get_telegram_call_link_result(convo_id)
     call_url = str(call_link.get("url") or "").strip()
 
@@ -2502,7 +2502,7 @@ async def start(update, context):
     # Feature: Route /start through getViventiumResponse for dynamic agent-driven onboarding.
     # Preserves legacy API key arg handling for residual features.
     # === VIVENTIUM NOTE ===
-    _, _, _, chatid, messageid, _, update_message, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context)
+    _, _, _, chatid, messageid, _, update_message, message_thread_id, convo_id, _, _, _, _, _, _ = _unpack_message_info(await GetMesageInfo(update, context))
 
     if len(context.args) == 2 and context.args[1].startswith("sk-"):
         api_url = context.args[0]
@@ -2702,7 +2702,7 @@ if __name__ == '__main__':
     # REMOVED: MCP command handlers - MCP integration handled by Viventium agent directly
     # REMOVED: InlineQueryHandler - Inline queries disabled, all messages route through LiveKit Bridge
     application.add_handler(CallbackQueryHandler(button_press, block=False))
-    application.add_handler(MessageHandler((filters.TEXT | filters.VOICE | filters.VIDEO_NOTE | filters.VIDEO) & ~filters.COMMAND, lambda update, context: command_bot(update, context, has_command=False), block = False))
+    application.add_handler(MessageHandler((filters.TEXT | filters.VOICE | filters.VIDEO_NOTE) & ~filters.COMMAND, lambda update, context: command_bot(update, context, has_command=False), block = False))
     application.add_handler(MessageHandler(
         _telegram_captioned_attachment_filter(),
         lambda update, context: command_bot(update, context, has_command=False),
