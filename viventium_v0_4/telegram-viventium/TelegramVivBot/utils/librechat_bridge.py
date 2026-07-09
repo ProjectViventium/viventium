@@ -895,6 +895,14 @@ def _stream_error_message(error: Optional[str]) -> str:
             or "unauthorized provider credentials" in lowered
         ):
             return "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+        if (
+            "rate-limited" in lowered
+            or "rate limited" in lowered
+            or "rate_limit" in lowered
+            or "rate limit" in lowered
+            or "429" in lowered
+        ):
+            return "The model provider rate-limited this request. Please try again shortly."
         if "tool" in lowered or "mcp" in lowered or "oauth" in lowered:
             return "Tool connection error. Please retry."
     return "Connection error. Please retry."
@@ -1920,6 +1928,11 @@ class LibreChatBridge:
         if voice_mode is None:
             voice_mode = kwargs.get("voiceMode")
         input_mode = kwargs.get("input_mode") or kwargs.get("inputMode") or ""
+        audio_requested = kwargs.get("audio_requested")
+        if audio_requested is None:
+            audio_requested = kwargs.get("telegramAudioRequested")
+        if audio_requested is None:
+            audio_requested = kwargs.get("audioRequested")
         # Feature: File upload support for vision models.
         files = kwargs.get("files") or None
         # Feature: Time context - pass message timestamp for scheduling awareness.
@@ -1953,23 +1966,26 @@ class LibreChatBridge:
                 # === VIVENTIUM START ===
                 # Pass files for vision model support
                 chat_start_ts = time.monotonic()
-                session = await self._start_chat_with_connect_retry(
-                    text=text,
-                    conversation_id=conversation_id,
-                    agent_id=agent_id,
-                    telegram_chat_id=str(telegram_chat_id),
-                    telegram_user_id=str(telegram_user_id),
-                    telegram_username=str(telegram_username),
-                    telegram_message_id=str(telegram_message_id) if telegram_message_id is not None else "",
-                    telegram_update_id=str(telegram_update_id) if telegram_update_id is not None else "",
-                    preference_convo_id=chat_id,
-                    voice_mode=voice_mode,
-                    input_mode=input_mode,
-                    files=files,
-                    message_timestamp=message_timestamp,
-                    client_timezone=client_timezone,
-                    trace_id=trace_id,
-                )
+                start_kwargs = {
+                    "text": text,
+                    "conversation_id": conversation_id,
+                    "agent_id": agent_id,
+                    "telegram_chat_id": str(telegram_chat_id),
+                    "telegram_user_id": str(telegram_user_id),
+                    "telegram_username": str(telegram_username),
+                    "telegram_message_id": str(telegram_message_id) if telegram_message_id is not None else "",
+                    "telegram_update_id": str(telegram_update_id) if telegram_update_id is not None else "",
+                    "preference_convo_id": chat_id,
+                    "voice_mode": voice_mode,
+                    "input_mode": input_mode,
+                    "files": files,
+                    "message_timestamp": message_timestamp,
+                    "client_timezone": client_timezone,
+                    "trace_id": trace_id,
+                }
+                if audio_requested is not None:
+                    start_kwargs["audio_requested"] = audio_requested
+                session = await self._start_chat_with_connect_retry(**start_kwargs)
                 if trace_id:
                     self._timing_log(trace_id, "lc_chat_http", chat_start_ts)
                 # === VIVENTIUM END ===
@@ -2085,6 +2101,7 @@ class LibreChatBridge:
         preference_convo_id: Optional[str],
         voice_mode: Optional[bool],
         input_mode: str,
+        audio_requested: Optional[bool] = None,
         files: Optional[list] = None,  # === VIVENTIUM: File upload support ===
         message_timestamp: Optional[str] = None,  # === VIVENTIUM: Time context support ===
         client_timezone: Optional[str] = None,  # === VIVENTIUM: Timezone context support ===
@@ -2130,6 +2147,8 @@ class LibreChatBridge:
         # only needs to pass the voice-mode flag and other surface metadata here.
         if voice_mode is not None:
             payload["voiceMode"] = bool(voice_mode)
+        if audio_requested is not None:
+            payload["telegramAudioRequested"] = bool(audio_requested)
         if input_mode:
             payload["viventiumInputMode"] = input_mode
         # Feature: File upload for vision model support.
@@ -2253,7 +2272,10 @@ class LibreChatBridge:
                                     err,
                                 )
                                 self._mark_stream_final(stream_id)
-                                yield _stream_error_message(str(err) if err else None)
+                                yield _bridge_error_event(
+                                    _stream_error_message(str(err) if err else None),
+                                    speak=False,
+                                )
                                 return
 
                             # === VIVENTIUM START ===
@@ -2305,7 +2327,10 @@ class LibreChatBridge:
                                         stream_id,
                                         final_error,
                                     )
-                                    yield _stream_error_message(final_error)
+                                    yield _bridge_error_event(
+                                        _stream_error_message(final_error),
+                                        speak=False,
+                                    )
                                     return
                                 # === VIVENTIUM END ===
 

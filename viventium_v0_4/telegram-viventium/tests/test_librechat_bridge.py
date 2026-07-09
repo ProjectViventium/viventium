@@ -460,6 +460,18 @@ def test_stream_error_message_classifies_tool_errors():
         _stream_error_message("The generation job does not exist or has expired.")
         == "Response stream expired during reconnect. Please send the message again."
     )
+    assert (
+        _stream_error_message("The model provider rate-limited this request. Please try again shortly.")
+        == "The model provider rate-limited this request. Please try again shortly."
+    )
+    assert (
+        _stream_error_message("429 Too Many Requests from upstream provider")
+        == "The model provider rate-limited this request. Please try again shortly."
+    )
+    assert (
+        _stream_error_message("Provider returned rate_limit_exceeded before streaming")
+        == "The model provider rate-limited this request. Please try again shortly."
+    )
     assert _stream_error_message("plain timeout") == "Connection error. Please retry."
 
 
@@ -1667,7 +1679,11 @@ async def test_stream_response_provider_credentials_error_is_actionable(monkeypa
     chunks = [chunk async for chunk in bridge._stream_response("stream-auth", "555")]
 
     assert chunks == [
-        "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry."
+        {
+            "type": "bridge_error",
+            "text": "Model connection needs reconnect. Open Viventium in the browser and reconnect the AI provider, then retry.",
+            "speak": False,
+        }
     ]
 
 
@@ -2032,6 +2048,7 @@ async def test_start_chat_parses_voice_route_from_response(monkeypatch):
 
         async def post(self, _url, json=None, headers=None):
             assert json["voiceMode"] is False
+            assert json["telegramAudioRequested"] is True
             assert headers["X-VIVENTIUM-TELEGRAM-SECRET"] == "test-secret"
             return _FakeResponse()
 
@@ -2051,6 +2068,7 @@ async def test_start_chat_parses_voice_route_from_response(monkeypatch):
         preference_convo_id="chat-1",
         voice_mode=False,
         input_mode="voice_note",
+        audio_requested=True,
     )
 
     assert session is not None

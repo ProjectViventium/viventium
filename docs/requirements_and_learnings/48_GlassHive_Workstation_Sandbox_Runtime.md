@@ -408,12 +408,14 @@ later proves it is safe to make blocking. Host-native runtimes must surface a bl
 `evidence_result` as `glasshive_evidence_check_failed`, leave the run state truthful, and guide the
 user toward inspecting or continuing the same workspace instead of silently reporting success.
 
-While a host-native run is active, the runtime also writes
+While a CLI run is active, host-native and Docker/workstation runtimes both write
 `glasshive-run/runs/<run_id>/active-run.json`. This file is a small heartbeat/status pointer for
 Watch/Steer, wait/status tooling, and QA. It records the run id, selected profile/execution mode,
-runtime, known model, process pid while active, timeout policy, transcript paths, stop reason, exit
-code, evidence path when finalized, and `last_heartbeat_at`. It must stay truthful: a quiet process
-with zero stdout/stderr is still `running` when the process is alive, not a fabricated completion.
+runtime, known model, process pid when the runtime has a direct process handle, timeout policy,
+transcript paths, transcript file existence/byte counts/mtime/tail hash, quiet duration, stop
+reason, exit code, evidence path when finalized, and `last_heartbeat_at`. It must stay truthful: a
+quiet process with zero stdout/stderr is still `running` while the process or Docker screen session
+is alive, not a fabricated completion.
 
 The verifier is an evidence harness, not a new planner. It recursively inventories root,
 `output/`, `artifacts/`, and `reports/` deliverables while excluding scaffold, browser profile,
@@ -1335,7 +1337,7 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
   `claude`, `openclaw`
 - **Default project launch handoff**: the GlassHive project-first UI now defaults to the desktop watch surface
 - **Live terminal inside desktop**: when the desktop-first default is on, GlassHive opens an xterm attached to the active `screen` run session so the operator can watch the real live run without leaving the desktop
-- **Idle desktop priming**: fresh worker desktops are primed with a GlassHive-owned placeholder page so operators do not land on the inherited Selenium splash as the default visible surface
+- **Idle desktop priming**: fresh worker desktops are primed with a GlassHive-owned placeholder page so operators do not land on the inherited Selenium splash as the default visible surface. The runtime records a private `desktop-prime.json` marker under worker state and exposes it through runtime description for RCA/QA evidence; this must not become noisy user-facing warning UX.
 - **Launch failure audit trail**: if a project launch fails after worker creation but before the first run is queued, the worker is marked failed and a `worker.launch_failed` event is recorded instead of leaving an orphaned ready worker
 - **Orphan active-run cleanup**: startup/admin reconcile marks a `running` run as interrupted when the associated worker process is no longer alive, so stale runtime rows do not appear as current active work
 - **User-facing naming**: the glossy/operator UI should present persistent personal environments as `Workspaces` rather than exposing raw worker IDs or `sandbox` terminology in the primary flow
