@@ -598,14 +598,6 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
                 context,
                 media_label="video note",
             )
-        elif update_message.video:
-            video_file_id = update_message.video.file_id
-            voice_result = await transcribe_video(
-                video_file_id,
-                context,
-                media_label="video",
-            )
-
         if voice_result is not None:
             voice_text = voice_result.text
             voice_error_text = voice_result.error_text
@@ -710,15 +702,15 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
     # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
-    # Return file_data_list for LibreChat agent file upload support
-    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list
+    # Return file_data_list and structured capture errors for LibreChat agent file upload support.
+    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list
     # === VIVENTIUM END ===
 
 async def GetMesageInfo(update, context, voice=True):
     # === VIVENTIUM START ===
-    # Updated to include file_data_list return value
+    # Updated to include file_data_list and file_error_list return values.
     if update.edited_message:
-        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesage(update.edited_message, context, voice)
+        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list = await GetMesage(update.edited_message, context, voice)
         update_message = update.edited_message
     elif update.callback_query:
         # === VIVENTIUM START ===
@@ -728,7 +720,7 @@ async def GetMesageInfo(update, context, voice=True):
             if update.callback_query and update.callback_query.from_user
             else None
         )
-        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesage(
+        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list = await GetMesage(
             update.callback_query.message,
             context,
             voice,
@@ -737,11 +729,11 @@ async def GetMesageInfo(update, context, voice=True):
         # === VIVENTIUM END ===
         update_message = update.callback_query.message
     elif update.message:
-        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesage(update.message, context, voice)
+        message, rawtext, image_url, chatid, messageid, reply_to_message_text, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list = await GetMesage(update.message, context, voice)
         update_message = update.message
     else:
-        return None, None, None, None, None, None, None, None, None, None, None, None, None, []
-    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list
+        return None, None, None, None, None, None, None, None, None, None, None, None, None, [], []
+    return message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list
     # === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
