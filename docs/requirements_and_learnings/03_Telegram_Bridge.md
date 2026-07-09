@@ -264,6 +264,26 @@ an opaque upload the agent cannot read. If neither provider-native upload nor re
 context-extraction can handle the file on that surface, Telegram must fail the turn with a clear
 attachment-processing error rather than silently dropping to caption-only behavior.
 
+Inbound Telegram file handling is surface-parity work, not a narrow extension allowlist. The bot
+must accept photos, Telegram `Document` uploads, audio uploads, and regular video uploads into the
+same attachment contract before the LibreChat turn starts. Voice notes and video notes remain STT
+inputs; regular audio/video files are attachments unless the user explicitly sends them through the
+voice-note affordance.
+
+Telegram media groups/albums are one user turn. The bridge must coalesce updates with the same
+`media_group_id` for the same chat/thread/user, preserve the Telegram order, choose the
+caption-bearing item as the primary message when present, and forward all captured files in a single
+LibreChat call. It must not dedupe files by content hash or filename, because repeated images/files
+can be intentional user context. Authorization and API-key decorators must use lightweight identity
+extraction only; they must not download, transcribe, or parse attachments before the real handler.
+
+Attachment capture and downstream processing failures must be visible. Telegram Bot API download
+failures, size-limit failures, unsupported binaries, and document-parser/provider upload failures
+must send one clear Telegram error and stop the turn before caption-only submission. The LibreChat
+Telegram route returns a typed attachment-processing failure (`422` with
+`attachmentProcessingError`) so the Python bridge can show the actual reason instead of a generic
+server error.
+
 ### Major file-type rule
 
 - Text-like files must extract into readable context:
