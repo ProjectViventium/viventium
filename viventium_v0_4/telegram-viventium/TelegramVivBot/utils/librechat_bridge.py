@@ -928,6 +928,17 @@ def _start_chat_error_message(error: Exception) -> str:
 
     if isinstance(error, httpx.HTTPStatusError):
         status_code = getattr(error.response, "status_code", None)
+        try:
+            payload = error.response.json()
+        except Exception:
+            payload = None
+        if (
+            isinstance(payload, dict)
+            and payload.get("attachmentProcessingError") is True
+            and isinstance(payload.get("error"), str)
+            and payload["error"].strip()
+        ):
+            return sanitize_telegram_text(payload["error"].strip())
         if status_code in {401, 403}:
             return "Telegram is not authorized to reach Viventium. Check the local Telegram bridge configuration."
         if status_code == 404:
