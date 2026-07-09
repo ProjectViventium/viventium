@@ -970,6 +970,153 @@ def test_handle_file_does_not_forward_failed_transcription(monkeypatch):
     assert "🎤 Transcription" not in context.bot.messages[0]["text"]
 
 
+def test_handle_file_reports_attachment_capture_error(monkeypatch):
+    forwarded_calls = []
+
+    async def _fake_get_message_info(*_args, **_kwargs):
+        return (
+            "review this",
+            "review this",
+            None,
+            "chat-1",
+            123,
+            None,
+            types.SimpleNamespace(chat=types.SimpleNamespace(type="private")),
+            None,
+            "chat-1:user-1",
+            None,
+            None,
+            None,
+            None,
+            [],
+            [
+                {
+                    "filename": "deck.pptx",
+                    "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "error_code": "download_timeout",
+                    "media_kind": "document",
+                }
+            ],
+        )
+
+    async def _fake_get_viventium_response(*args, **kwargs):
+        forwarded_calls.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_get_message_info)
+    monkeypatch.setattr(tg_bot, "getViventiumResponse", _fake_get_viventium_response)
+    monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "whitelist", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "GROUP_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "ADMIN_LIST", None, raising=False)
+
+    update = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id="user-1", username="user"),
+        effective_chat=None,
+    )
+    context = _FakeContext()
+
+    asyncio.run(tg_bot.handle_file(update, context))
+
+    assert forwarded_calls == []
+    assert len(context.bot.messages) == 1
+    assert "deck.pptx" in context.bot.messages[0]["text"]
+    assert "timed out" in context.bot.messages[0]["text"]
+
+
+def test_media_group_coalesces_files_into_one_viventium_call(monkeypatch):
+    forwarded_calls = []
+
+    def _message(mid, *, caption=None):
+        return types.SimpleNamespace(
+            message_id=mid,
+            chat_id="chat-1",
+            chat=types.SimpleNamespace(type="private"),
+            from_user=types.SimpleNamespace(id="user-1", first_name="User", username="user"),
+            media_group_id="album-1",
+            is_topic_message=False,
+            message_thread_id=None,
+            caption=caption,
+            text=None,
+            voice=None,
+            video_note=None,
+            audio=None,
+            document=types.SimpleNamespace(file_name=f"file-{mid}.jpg", mime_type="image/jpeg"),
+            photo=None,
+            video=None,
+            date=datetime.now(timezone.utc),
+        )
+
+    update1 = types.SimpleNamespace(
+        update_id=1001,
+        effective_user=types.SimpleNamespace(id="user-1", username="user"),
+        effective_chat=types.SimpleNamespace(id="chat-1"),
+        effective_message=_message(1),
+    )
+    update2 = types.SimpleNamespace(
+        update_id=1002,
+        effective_user=types.SimpleNamespace(id="user-1", username="user"),
+        effective_chat=types.SimpleNamespace(id="chat-1"),
+        effective_message=_message(2, caption="review album"),
+    )
+
+    async def _fake_get_message_info(update, *_args, **_kwargs):
+        msg = update.effective_message
+        text = msg.caption
+        return (
+            text,
+            text,
+            None,
+            "chat-1",
+            msg.message_id,
+            None,
+            msg,
+            None,
+            "chat-1:user-1",
+            None,
+            None,
+            None,
+            None,
+            [{"filename": f"file-{msg.message_id}.jpg", "mime_type": "image/jpeg", "data": "ZmFrZQ=="}],
+            [],
+        )
+
+    async def _fake_get_viventium_response(*args, **kwargs):
+        forwarded_calls.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_MEDIA_GROUP_WAIT_S", 0.01, raising=False)
+    monkeypatch.setattr(tg_bot, "GetMesageInfo", _fake_get_message_info)
+    monkeypatch.setattr(tg_bot, "getViventiumResponse", _fake_get_viventium_response)
+    monkeypatch.setattr(tg_bot, "get_robot", lambda _convo_id: (_FakeRobot(), None, None, None))
+    monkeypatch.setattr(tg_bot.config, "BLACK_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "whitelist", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "GROUP_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "ADMIN_LIST", None, raising=False)
+    monkeypatch.setattr(tg_bot.config, "get_robot", lambda _convo_id: (_FakeRobot(), None, None, None), raising=False)
+
+    async def _run():
+        tg_bot._MEDIA_GROUP_BUFFERS.clear()
+        for task in list(tg_bot._MEDIA_GROUP_TASKS.values()):
+            task.cancel()
+        tg_bot._MEDIA_GROUP_TASKS.clear()
+        await tg_bot.command_bot(update1, _FakeCommandContext(), has_command=False)
+        await tg_bot.command_bot(update2, _FakeCommandContext(), has_command=False)
+        tasks = list(tg_bot._MEDIA_GROUP_TASKS.values())
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            failures = [result for result in results if isinstance(result, Exception)]
+            assert failures == []
+
+    asyncio.run(_run())
+
+    assert len(forwarded_calls) == 1
+    args, kwargs = forwarded_calls[0]
+    assert args[4] == "review album"
+    assert kwargs["telegram_message_id"] == 2
+    assert [file["filename"] for file in kwargs["files"]] == ["file-1.jpg", "file-2.jpg"]
+
+
 def test_command_bot_get_me_timeout_without_reply_does_not_crash(monkeypatch):
     update_message = _FakeUpdateMessage()
     message_info = (
