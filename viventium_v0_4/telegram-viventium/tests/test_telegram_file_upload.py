@@ -124,6 +124,16 @@ class TestExtensionToMimeMapping:
         assert ".pdf" in EXTENSION_TO_MIME
         assert ".txt" in EXTENSION_TO_MIME
         assert ".md" in EXTENSION_TO_MIME
+        assert detect_mime_from_path("deck.pptx") == (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        )
+        assert detect_mime_from_path("sheet.xlsx") == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert detect_mime_from_path("doc.docx") == (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        assert detect_mime_from_path("slides.odp") == "application/vnd.oasis.opendocument.presentation"
 
     def test_code_extensions(self):
         assert ".py" in EXTENSION_TO_MIME

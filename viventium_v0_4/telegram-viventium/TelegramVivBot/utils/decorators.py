@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from md2tgmd.src.md2tgmd import escape
 
 # REMOVED: i18n - Using hardcoded English strings for simplicity
-from utils.scripts import GetMesageInfo
+from utils.scripts import GetMesageInfo, get_update_ids
 
 def ban_message(update, convo_id):
     message = (
@@ -20,7 +20,9 @@ def ban_message(update, convo_id):
 def Authorization(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        chatid, convo_id, message_thread_id = get_update_ids(update)
+        if chatid is None:
+            return await func(*args, **kwargs)
         if config.BLACK_LIST and chatid in config.BLACK_LIST:
             message = ban_message(update, convo_id)
             await context.bot.send_message(chat_id=chatid, message_thread_id=message_thread_id, text=message, parse_mode='MarkdownV2')
@@ -38,7 +40,9 @@ def Authorization(func):
 def GroupAuthorization(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        chatid, convo_id, message_thread_id = get_update_ids(update)
+        if chatid is None:
+            return await func(*args, **kwargs)
         if config.GROUP_LIST == None:
             return await func(*args, **kwargs)
         if update.effective_chat == None or chatid[0] != "-":
@@ -56,7 +60,9 @@ def GroupAuthorization(func):
 def AdminAuthorization(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        chatid, convo_id, message_thread_id = get_update_ids(update)
+        if chatid is None:
+            return await func(*args, **kwargs)
         if config.ADMIN_LIST == None:
             return await func(*args, **kwargs)
         if (str(update.effective_user.id) not in config.ADMIN_LIST):
@@ -69,7 +75,9 @@ def AdminAuthorization(func):
 def APICheck(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
-        _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _, _, _ = await GetMesageInfo(update, context, voice=False)
+        chatid, convo_id, message_thread_id = get_update_ids(update)
+        if chatid is None:
+            return await func(*args, **kwargs)
         from config import (
             Users,
             get_robot,

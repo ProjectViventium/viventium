@@ -113,6 +113,69 @@ def _make_message_info(*, voice_error_text=None):
     )
 
 
+def _telegram_update_for_filter(message):
+    return types.SimpleNamespace(
+        message=message,
+        effective_message=message,
+        edited_message=None,
+        channel_post=None,
+        edited_channel_post=None,
+        callback_query=None,
+    )
+
+
+def test_telegram_attachment_filters_accept_broad_documents_and_audio():
+    pptx_message = types.SimpleNamespace(
+        text=None,
+        caption="review this",
+        document=types.SimpleNamespace(
+            file_name="deck.pptx",
+            mime_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ),
+        photo=None,
+        audio=None,
+        video=None,
+        voice=None,
+        video_note=None,
+        entities=None,
+        caption_entities=None,
+    )
+    zip_message = types.SimpleNamespace(
+        text=None,
+        caption=None,
+        document=types.SimpleNamespace(file_name="archive.zip", mime_type="application/zip"),
+        photo=None,
+        audio=None,
+        video=None,
+        voice=None,
+        video_note=None,
+        entities=None,
+        caption_entities=None,
+    )
+    audio_message = types.SimpleNamespace(
+        text=None,
+        caption=None,
+        document=None,
+        photo=None,
+        audio=types.SimpleNamespace(file_name="voiceover.mp3", mime_type="audio/mpeg"),
+        video=None,
+        voice=None,
+        video_note=None,
+        entities=None,
+        caption_entities=None,
+    )
+
+    assert tg_bot._telegram_captioned_attachment_filter().check_update(
+        _telegram_update_for_filter(pptx_message)
+    )
+    assert tg_bot._telegram_uncaptioned_attachment_filter().check_update(
+        _telegram_update_for_filter(zip_message)
+    )
+    assert tg_bot._telegram_uncaptioned_attachment_filter().check_update(
+        _telegram_update_for_filter(audio_message)
+    )
+
+
 class _FakeEffectiveChat:
     id = "chat-1"
 
