@@ -206,6 +206,60 @@ def _acquire_telegram_singleton_or_exit() -> None:
 # === VIVENTIUM END ===
 
 
+# === VIVENTIUM START ===
+# Feature: Broader Telegram file routing for public-safe document/audio attachment support.
+def _telegram_supported_document_filter():
+    document_extensions = (
+        "jpg",
+        "jpeg",
+        "png",
+        "md",
+        "py",
+        "yml",
+        "yaml",
+        "csv",
+        "json",
+        "doc",
+        "docx",
+        "ppt",
+        "pptx",
+        "xls",
+        "xlsx",
+        "odt",
+        "odp",
+        "ods",
+        "odg",
+        "zip",
+        "wav",
+        "mp3",
+        "m4a",
+        "ogg",
+        "opus",
+        "mp4",
+        "mov",
+        "avi",
+        "mkv",
+        "webm",
+    )
+    document_filter = filters.Document.PDF | filters.Document.TXT | filters.Document.DOC
+    for extension in document_extensions:
+        document_filter = document_filter | filters.Document.FileExtension(extension)
+    return document_filter
+
+
+def _telegram_attachment_media_filter():
+    return (filters.PHOTO & ~filters.COMMAND) | filters.AUDIO | _telegram_supported_document_filter()
+
+
+def _telegram_captioned_attachment_filter():
+    return filters.CAPTION & _telegram_attachment_media_filter()
+
+
+def _telegram_uncaptioned_attachment_filter():
+    return ~filters.CAPTION & _telegram_attachment_media_filter()
+# === VIVENTIUM END ===
+
+
 async def _resolve_voice_input_message(
     context,
     *,
@@ -470,18 +524,254 @@ from collections import defaultdict
 message_cache = defaultdict(lambda: [])
 time_stamps = defaultdict(lambda: [])
 
+
+# === VIVENTIUM START ===
+# Feature: Telegram attachment ingress parity.
+# Purpose: Keep media groups and broad file messages on one shared path before
+# forwarding to LibreChat's message-file contract.
+_MEDIA_GROUP_BUFFERS: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+_MEDIA_GROUP_TASKS: dict[tuple[str, str, str, str], asyncio.Task] = {}
+_MEDIA_GROUP_LOCK = asyncio.Lock()
+
+
+def _unpack_message_info(message_info):
+    values = tuple(message_info or ())
+    if len(values) == 14:
+        return (*values, [])
+    if len(values) == 15:
+        return values
+    raise ValueError(f"Unexpected Telegram message info shape: {len(values)}")
+
+
+def _telegram_update_message(update):
+    return (
+        getattr(update, "effective_message", None)
+        or getattr(update, "message", None)
+        or getattr(update, "edited_message", None)
+        or getattr(update, "channel_post", None)
+        or getattr(update, "edited_channel_post", None)
+    )
+
+
+def _telegram_media_group_key(update_message):
+    media_group_id = getattr(update_message, "media_group_id", None)
+    if not media_group_id:
+        return None
+    chat_id = str(getattr(update_message, "chat_id", "") or getattr(getattr(update_message, "chat", None), "id", "") or "")
+    if not chat_id:
+        return None
+    thread_id = str(getattr(update_message, "message_thread_id", "") or "")
+    user_id = str(getattr(getattr(update_message, "from_user", None), "id", "") or "")
+    return (chat_id, thread_id, user_id, str(media_group_id))
+
+
+def _media_group_wait_s() -> float:
+    wait_s = getattr(config, "VIVENTIUM_TELEGRAM_MEDIA_GROUP_WAIT_S", 0.65) or 0.65
+    try:
+        wait_s = float(wait_s)
+    except Exception:
+        wait_s = 0.65
+    return max(0.1, min(wait_s, 3.0))
+
+
+def _attachment_error_reason(error_code: str) -> str:
+    if error_code == "file_too_large":
+        return "is too large for the current Telegram bridge limit"
+    if error_code == "download_timeout":
+        return "timed out while downloading from Telegram"
+    if error_code == "missing_file_path":
+        return "could not be resolved by Telegram"
+    if error_code == "empty_file":
+        return "downloaded as an empty file"
+    return "could not be downloaded from Telegram"
+
+
+def _telegram_attachment_error_text(file_errors) -> str:
+    errors = [error for error in (file_errors or []) if isinstance(error, dict)]
+    if not errors:
+        return "I couldn't process that Telegram attachment. Please retry."
+    first = errors[0]
+    filename = str(first.get("filename") or first.get("media_kind") or "attachment")
+    reason = _attachment_error_reason(str(first.get("error_code") or "download_failed"))
+    if len(errors) == 1:
+        return f"I couldn't process {filename}: it {reason}. Please retry or send a smaller/supported file."
+    return (
+        f"I couldn't process {len(errors)} Telegram attachments. The first one, {filename}, "
+        f"{reason}. Please retry or send smaller/supported files."
+    )
+
+
+async def _send_telegram_attachment_error(context, chatid, message_thread_id, messageid, file_errors) -> None:
+    await context.bot.send_message(
+        chat_id=chatid,
+        message_thread_id=message_thread_id,
+        text=_telegram_attachment_error_text(file_errors),
+        reply_to_message_id=messageid,
+    )
+
+
+def _telegram_attachment_filter():
+    return (filters.PHOTO | filters.Document.ALL | filters.AUDIO | filters.VIDEO) & ~filters.COMMAND
+
+
+def _telegram_captioned_attachment_filter():
+    return filters.CAPTION & _telegram_attachment_filter()
+
+
+def _telegram_uncaptioned_attachment_filter():
+    return ~filters.CAPTION & _telegram_attachment_filter()
+
+
+async def _process_media_group_entries(key, entries):
+    ordered = sorted(
+        entries,
+        key=lambda entry: getattr(_telegram_update_message(entry["update"]), "message_id", 0) or 0,
+    )
+    parsed = []
+    for entry in ordered:
+        parsed.append((entry, _unpack_message_info(await GetMesageInfo(entry["update"], entry["context"]))))
+
+    primary = None
+    for entry, info in parsed:
+        message = info[0]
+        rawtext = info[1]
+        if message or rawtext:
+            primary = (entry, info)
+            break
+    if primary is None and parsed:
+        primary = parsed[0]
+    if primary is None:
+        return
+
+    primary_entry, primary_info = primary
+    (
+        message,
+        rawtext,
+        _image_url,
+        chatid,
+        messageid,
+        _reply_to_message_text,
+        update_message,
+        message_thread_id,
+        convo_id,
+        _file_url,
+        _reply_to_message_file_content,
+        voice_text,
+        voice_error_text,
+        _file_data_list,
+        _file_error_list,
+    ) = primary_info
+
+    all_files = []
+    all_errors = []
+    for _entry, info in parsed:
+        all_files.extend(info[13] or [])
+        all_errors.extend(info[14] or [])
+
+    logger.info(
+        "[VIVENTIUM] Coalesced Telegram media group: key=%s messages=%d files=%d errors=%d",
+        ":".join(key),
+        len(parsed),
+        len(all_files),
+        len(all_errors),
+    )
+
+    if voice_error_text:
+        await _resolve_voice_input_message(
+            primary_entry["context"],
+            chatid=chatid,
+            messageid=messageid,
+            message_thread_id=message_thread_id,
+            message=message,
+            voice_text=voice_text,
+            voice_error_text=voice_error_text,
+            show_transcription=False,
+        )
+        return
+
+    if all_errors:
+        await _send_telegram_attachment_error(
+            primary_entry["context"],
+            chatid,
+            message_thread_id,
+            messageid,
+            all_errors,
+        )
+        return
+
+    text = message or rawtext or voice_text or ""
+    if update_message and update_message.chat.type in ['group', 'supergroup'] and text:
+        sender_name = update_message.from_user.first_name
+        text = f"{sender_name}: {text}"
+
+    robot, _, _api_key, _api_url = get_robot(convo_id)
+    trace_id = f"tg-{chatid}-{messageid}-{uuid.uuid4().hex[:6]}"
+    await getViventiumResponse(
+        update_message,
+        primary_entry["context"],
+        primary_entry.get("title", ""),
+        robot,
+        text,
+        chatid,
+        messageid,
+        convo_id,
+        message_thread_id,
+        voice_note_detected=False,
+        files=all_files,
+        trace_id=trace_id,
+        telegram_message_id=messageid,
+        telegram_update_id=getattr(primary_entry["update"], "update_id", None),
+    )
+
+
+async def _flush_media_group_after_delay(key):
+    try:
+        await asyncio.sleep(_media_group_wait_s())
+        async with _MEDIA_GROUP_LOCK:
+            entries = _MEDIA_GROUP_BUFFERS.pop(key, [])
+            _MEDIA_GROUP_TASKS.pop(key, None)
+        if entries:
+            await _process_media_group_entries(key, entries)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Failed to process Telegram media group")
+
+
+async def _queue_media_group_update(update, context, *, title="", has_command=False, source="message") -> bool:
+    update_message = _telegram_update_message(update)
+    key = _telegram_media_group_key(update_message) if update_message is not None else None
+    if key is None:
+        return False
+    async with _MEDIA_GROUP_LOCK:
+        _MEDIA_GROUP_BUFFERS.setdefault(key, []).append({
+            "update": update,
+            "context": context,
+            "title": title,
+            "has_command": has_command,
+            "source": source,
+        })
+        existing_task = _MEDIA_GROUP_TASKS.get(key)
+        if existing_task and not existing_task.done():
+            existing_task.cancel()
+        _MEDIA_GROUP_TASKS[key] = asyncio.create_task(_flush_media_group_after_delay(key))
+    return True
+# === VIVENTIUM END ===
+
 @decorators.GroupAuthorization
 @decorators.Authorization
 @decorators.APICheck
 async def command_bot(update, context, title="", has_command=True):
     stop_event.clear()
+    if await _queue_media_group_update(update, context, title=title, has_command=has_command, source="command"):
+        return
     # === VIVENTIUM START ===
     # Feature: Timing hooks for Telegram request lifecycle.
     request_start_ts = time.monotonic()
     # === VIVENTIUM END ===
     # === VIVENTIUM START ===
     # Updated to capture file_data_list for LibreChat agent file upload
-    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesageInfo(update, context)
+    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list = _unpack_message_info(await GetMesageInfo(update, context))
     # === VIVENTIUM END ===
     # === VIVENTIUM START ===
     trace_id = f"tg-{chatid}-{messageid}-{uuid.uuid4().hex[:6]}"
@@ -509,13 +799,23 @@ async def command_bot(update, context, title="", has_command=True):
         request_start_ts,
         base_ts=request_start_ts,
         extra=(
-            f"voice_note={int(bool(update_message and (update_message.voice or update_message.video_note or update_message.audio)))} "
+            f"voice_note={int(bool(update_message and (update_message.voice or update_message.video_note)))} "
             f"files={len(file_data_list) if file_data_list else 0}"
         ),
     )
     # === VIVENTIUM END ===
     # === VIVENTIUM END ===
-    voice_note_detected = bool(update_message and (update_message.voice or update_message.video_note or update_message.audio))
+    voice_note_detected = bool(update_message and (update_message.voice or update_message.video_note))
+
+    if file_error_list:
+        await _send_telegram_attachment_error(
+            context,
+            chatid,
+            message_thread_id,
+            messageid,
+            file_error_list,
+        )
+        return
 
     if has_command == False or len(context.args) > 0:
         if has_command:
@@ -1984,7 +2284,9 @@ async def button_press(update, context):
 async def handle_file(update, context):
     # === VIVENTIUM START ===
     # Handle file-only messages by sending attachments to LibreChat agent.
-    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list = await GetMesageInfo(update, context)
+    if await _queue_media_group_update(update, context, source="file"):
+        return
+    message, rawtext, image_url, chatid, messageid, reply_to_message_text, update_message, message_thread_id, convo_id, file_url, reply_to_message_file_content, voice_text, voice_error_text, file_data_list, file_error_list = _unpack_message_info(await GetMesageInfo(update, context))
     if voice_error_text:
         await _resolve_voice_input_message(
             context,
@@ -1995,6 +2297,15 @@ async def handle_file(update, context):
             voice_text=voice_text,
             voice_error_text=voice_error_text,
             show_transcription=False,
+        )
+        return
+    if file_error_list:
+        await _send_telegram_attachment_error(
+            context,
+            chatid,
+            message_thread_id,
+            messageid,
+            file_error_list,
         )
         return
     robot, _, api_key, api_url = get_robot(convo_id)  # api_key/api_url only for document extraction
@@ -2033,6 +2344,8 @@ async def handle_file(update, context):
         message_thread_id=message_thread_id,
         voice_note_detected=False,
         files=file_data_list,
+        telegram_message_id=messageid,
+        telegram_update_id=getattr(update, "update_id", None),
     )
     # === VIVENTIUM END ===
 
@@ -2391,49 +2704,10 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(button_press, block=False))
     application.add_handler(MessageHandler((filters.TEXT | filters.VOICE | filters.VIDEO_NOTE | filters.VIDEO) & ~filters.COMMAND, lambda update, context: command_bot(update, context, has_command=False), block = False))
     application.add_handler(MessageHandler(
-        filters.CAPTION &
-        (
-            (filters.PHOTO & ~filters.COMMAND) |
-            (
-                filters.Document.PDF |
-                filters.Document.TXT |
-                filters.Document.DOC |
-                filters.Document.FileExtension("jpg") |
-                filters.Document.FileExtension("jpeg") |
-                filters.Document.FileExtension("png") |
-                filters.Document.FileExtension("md") |
-                filters.Document.FileExtension("py") |
-                filters.Document.FileExtension("yml") |
-                filters.Document.FileExtension("mp4") |
-                filters.Document.FileExtension("mov") |
-                filters.Document.FileExtension("avi") |
-                filters.Document.FileExtension("mkv") |
-                filters.Document.FileExtension("webm")
-            )
-        ), lambda update, context: command_bot(update, context, has_command=False)))
-    application.add_handler(MessageHandler(
-        ~filters.CAPTION &
-        (
-            (filters.PHOTO & ~filters.COMMAND) |
-            (
-                filters.Document.PDF |
-                filters.Document.TXT |
-                filters.Document.DOC |
-                filters.Document.FileExtension("jpg") |
-                filters.Document.FileExtension("jpeg") |
-                filters.Document.FileExtension("png") |
-                filters.Document.FileExtension("md") |
-                filters.Document.FileExtension("py") |
-                filters.Document.FileExtension("yml") |
-                filters.AUDIO |
-                filters.Document.FileExtension("wav") |
-                filters.Document.FileExtension("mp4") |
-                filters.Document.FileExtension("mov") |
-                filters.Document.FileExtension("avi") |
-                filters.Document.FileExtension("mkv") |
-                filters.Document.FileExtension("webm")
-            )
-        ), handle_file))
+        _telegram_captioned_attachment_filter(),
+        lambda update, context: command_bot(update, context, has_command=False),
+    ))
+    application.add_handler(MessageHandler(_telegram_uncaptioned_attachment_filter(), handle_file))
     # REMOVED: unknown handler - Function removed, does nothing
     application.add_error_handler(error)
 

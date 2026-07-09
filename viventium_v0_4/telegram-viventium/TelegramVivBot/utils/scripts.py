@@ -64,6 +64,27 @@ EXTENSION_TO_MIME = {
     ".csv": "text/csv",
     ".html": "text/html",
     ".xml": "application/xml",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odg": "application/vnd.oasis.opendocument.graphics",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+    ".webm": "video/webm",
 }
 
 # Supported image MIME types for vision models
@@ -78,6 +99,7 @@ class TelegramDownloadResult:
     file_bytes: Optional[bytes] = None
     mime_type: str = ""
     filename: str = ""
+    file_path: str = ""
     error_code: Optional[str] = None
 
 
@@ -236,6 +258,7 @@ async def download_telegram_file_result(
             file_bytes=bytes(file_bytes),
             mime_type=mime_type,
             filename=filename,
+            file_path=file_path,
         )
 
     except asyncio.TimeoutError:
@@ -294,6 +317,21 @@ def encode_file_for_agent(
 def is_image_mime(mime_type: str) -> bool:
     """Check if MIME type is a supported image type."""
     return mime_type in SUPPORTED_IMAGE_MIMES or mime_type.startswith("image/")
+
+
+def build_telegram_file_error(
+    *,
+    filename: str = "",
+    mime_type: str = "",
+    error_code: Optional[str] = None,
+    media_kind: str = "attachment",
+) -> Dict[str, str]:
+    return {
+        "filename": filename or media_kind,
+        "mime_type": mime_type or "application/octet-stream",
+        "error_code": error_code or "download_failed",
+        "media_kind": media_kind,
+    }
 # === VIVENTIUM END ===
 
 logger = logging.getLogger(__name__)
@@ -462,6 +500,7 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
     # === VIVENTIUM START ===
     # Feature: File upload to LibreChat agent - track file data for vision models
     file_data_list: List[Dict[str, str]] = []  # List of encoded files for agent
+    file_error_list: List[Dict[str, str]] = []  # Structured capture failures to surface to users
     # === VIVENTIUM END ===
 
     chatid = str(update_message.chat_id)
@@ -518,26 +557,30 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
     if update_message.photo:
         photo = update_message.photo[-1]
 
-        image_url = await get_file_url(photo, context)
-
         # === VIVENTIUM START ===
         # Download photo bytes for vision model support
         if getattr(config, "VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED", True):
             logger.info(f"[VIVENTIUM] Attempting to download photo: file_id={photo.file_id}")
-            try:
-                file_bytes, mime_type, filename = await download_telegram_file(
-                    context.bot,
-                    photo.file_id,
-                    max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
-                )
-                logger.info(f"[VIVENTIUM] Photo download result: bytes={len(file_bytes) if file_bytes else 0}, mime={mime_type}, name={filename}")
-                if file_bytes and is_image_mime(mime_type):
-                    file_data_list.append(encode_file_for_agent(file_bytes, mime_type, filename))
-                    logger.info(f"[VIVENTIUM] Captured photo for agent: {filename}, {mime_type}, size={len(file_bytes)}")
-                else:
-                    logger.warning(f"[VIVENTIUM] Photo not captured: bytes={bool(file_bytes)}, is_image={is_image_mime(mime_type) if mime_type else False}")
-            except Exception as e:
-                logger.warning(f"[VIVENTIUM] Failed to capture photo bytes: {e}")
+            download_result = await download_telegram_file_result(
+                context.bot,
+                photo.file_id,
+                max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
+                filename_hint="photo.jpg",
+                mime_type_hint="image/jpeg",
+            )
+            image_url = download_result.file_path or image_url
+            logger.info(f"[VIVENTIUM] Photo download result: bytes={len(download_result.file_bytes) if download_result.file_bytes else 0}, mime={download_result.mime_type}, name={download_result.filename}")
+            if download_result.file_bytes and is_image_mime(download_result.mime_type):
+                file_data_list.append(encode_file_for_agent(download_result.file_bytes, download_result.mime_type, download_result.filename))
+                logger.info(f"[VIVENTIUM] Captured photo for agent: {download_result.filename}, {download_result.mime_type}, size={len(download_result.file_bytes)}")
+            else:
+                file_error_list.append(build_telegram_file_error(
+                    filename=download_result.filename or "photo.jpg",
+                    mime_type=download_result.mime_type or "image/jpeg",
+                    error_code=download_result.error_code,
+                    media_kind="photo",
+                ))
+                logger.warning(f"[VIVENTIUM] Photo not captured: error={download_result.error_code}")
         # === VIVENTIUM END ===
 
         if update_message.caption:
@@ -573,29 +616,32 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
     if update_message.document:
         file = update_message.document
 
-        file_url = await get_file_url(file, context)
-
-        if image_url == None and file_url and (file_url[-3:] == "jpg" or file_url[-3:] == "png" or file_url[-4:] == "jpeg"):
-            image_url = file_url
-
         # === VIVENTIUM START ===
-        # Download document bytes for agent (images, PDFs, text files)
+        # Download document bytes for the shared LibreChat message-file contract.
         if getattr(config, "VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED", True):
-            try:
-                file_bytes, mime_type, filename = await download_telegram_file(
-                    context.bot,
-                    file.file_id,
-                    max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
-                    filename_hint=file.file_name,
-                    mime_type_hint=getattr(file, "mime_type", None),
-                )
-                if file_bytes:
-                    # Use document's original filename if available
-                    doc_filename = file.file_name or filename
-                    file_data_list.append(encode_file_for_agent(file_bytes, mime_type, doc_filename))
-                    logger.debug(f"Captured document for agent: {doc_filename}, {mime_type}")
-            except Exception as e:
-                logger.warning(f"Failed to capture document bytes: {e}")
+            download_result = await download_telegram_file_result(
+                context.bot,
+                file.file_id,
+                max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
+                filename_hint=file.file_name,
+                mime_type_hint=getattr(file, "mime_type", None),
+            )
+            file_url = download_result.file_path or file_url
+            if image_url == None and file_url and (file_url[-3:] == "jpg" or file_url[-3:] == "png" or file_url[-4:] == "jpeg"):
+                image_url = file_url
+            if download_result.file_bytes:
+                # Use document's original filename if available
+                doc_filename = file.file_name or download_result.filename
+                file_data_list.append(encode_file_for_agent(download_result.file_bytes, download_result.mime_type, doc_filename))
+                logger.debug(f"Captured document for agent: {doc_filename}, {download_result.mime_type}")
+            else:
+                file_error_list.append(build_telegram_file_error(
+                    filename=file.file_name or download_result.filename,
+                    mime_type=getattr(file, "mime_type", None) or download_result.mime_type,
+                    error_code=download_result.error_code,
+                    media_kind="document",
+                ))
+                logger.warning(f"Failed to capture document bytes: error={download_result.error_code}")
         # === VIVENTIUM END ===
 
         if update_message.caption:
@@ -604,13 +650,64 @@ async def GetMesage(update_message, context, voice=True, *, override_user_id: Op
     if update_message.audio:
         file = update_message.audio
 
-        file_url = await get_file_url(file, context)
-
-        if image_url == None and file_url and (file_url[-3:] == "jpg" or file_url[-3:] == "png" or file_url[-4:] == "jpeg"):
-            image_url = file_url
+        # === VIVENTIUM START ===
+        # Feature: Treat Telegram audio files as attachments, not ignored empty turns.
+        if getattr(config, "VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED", True):
+            download_result = await download_telegram_file_result(
+                context.bot,
+                file.file_id,
+                max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
+                filename_hint=getattr(file, "file_name", None) or "audio.mp3",
+                mime_type_hint=getattr(file, "mime_type", None) or "audio/mpeg",
+            )
+            file_url = download_result.file_path or file_url
+            if download_result.file_bytes:
+                file_data_list.append(encode_file_for_agent(
+                    download_result.file_bytes,
+                    download_result.mime_type,
+                    getattr(file, "file_name", None) or download_result.filename,
+                ))
+            else:
+                file_error_list.append(build_telegram_file_error(
+                    filename=getattr(file, "file_name", None) or download_result.filename,
+                    mime_type=getattr(file, "mime_type", None) or download_result.mime_type,
+                    error_code=download_result.error_code,
+                    media_kind="audio",
+                ))
+        # === VIVENTIUM END ===
 
         if update_message.caption:
             message = rawtext = CutNICK(update_message.caption, update_message)
+
+    # === VIVENTIUM START ===
+    # Feature: Treat regular Telegram video uploads as attachments. Video notes
+    # remain voice-style inputs above; regular videos should flow through the
+    # same provider-native/context/fail-loud contract as other files.
+    if update_message.video:
+        file = update_message.video
+        if getattr(config, "VIVENTIUM_TELEGRAM_FILE_UPLOAD_ENABLED", True):
+            download_result = await download_telegram_file_result(
+                context.bot,
+                file.file_id,
+                max_bytes=getattr(config, "VIVENTIUM_TELEGRAM_MAX_FILE_SIZE", 10_485_760),
+                filename_hint=getattr(file, "file_name", None) or "video.mp4",
+                mime_type_hint=getattr(file, "mime_type", None) or "video/mp4",
+            )
+            file_url = download_result.file_path or file_url
+            if download_result.file_bytes:
+                file_data_list.append(encode_file_for_agent(
+                    download_result.file_bytes,
+                    download_result.mime_type,
+                    getattr(file, "file_name", None) or download_result.filename,
+                ))
+            else:
+                file_error_list.append(build_telegram_file_error(
+                    filename=getattr(file, "file_name", None) or download_result.filename,
+                    mime_type=getattr(file, "mime_type", None) or download_result.mime_type,
+                    error_code=download_result.error_code,
+                    media_kind="video",
+                ))
+    # === VIVENTIUM END ===
 
     # === VIVENTIUM START ===
     # Return file_data_list for LibreChat agent file upload support
@@ -675,6 +772,62 @@ def get_callback_ids(update):
             convo_id = f"{chatid}:{user_id}"
     else:
         convo_id = chatid
+
+    return chatid, convo_id, message_thread_id
+# === VIVENTIUM END ===
+
+
+# === VIVENTIUM START ===
+# Feature: Lightweight Telegram update identity extraction for auth gates.
+# Purpose: Authorization decorators must not call GetMesageInfo because that
+# downloads attachments and transcribes media. This helper mirrors the convo_id
+# derivation without any network or file I/O.
+def get_update_ids(update):
+    callback_query = getattr(update, "callback_query", None)
+    if callback_query is not None:
+        msg = getattr(callback_query, "message", None)
+        user = getattr(callback_query, "from_user", None)
+    else:
+        msg = (
+            getattr(update, "effective_message", None)
+            or getattr(update, "message", None)
+            or getattr(update, "edited_message", None)
+            or getattr(update, "channel_post", None)
+            or getattr(update, "edited_channel_post", None)
+        )
+        user = getattr(update, "effective_user", None)
+        if user is None and msg is not None:
+            user = getattr(msg, "from_user", None)
+
+    if msg is None:
+        return None, None, None
+
+    raw_chat_id = getattr(msg, "chat_id", None)
+    if raw_chat_id is None:
+        chat = getattr(msg, "chat", None)
+        raw_chat_id = getattr(chat, "id", None)
+    if raw_chat_id is None:
+        return None, None, None
+
+    chatid = str(raw_chat_id)
+    user_id = str(getattr(user, "id", "") or "")
+    message_thread_id = getattr(msg, "message_thread_id", None) if getattr(msg, "is_topic_message", False) else None
+
+    try:
+        from config import VIVENTIUM_TELEGRAM_BACKEND
+    except Exception:
+        VIVENTIUM_TELEGRAM_BACKEND = "librechat"
+
+    if VIVENTIUM_TELEGRAM_BACKEND == "librechat":
+        if message_thread_id:
+            convo_id = f"{chatid}:{message_thread_id}:{user_id}"
+        else:
+            convo_id = f"{chatid}:{user_id}"
+    else:
+        if message_thread_id:
+            convo_id = f"{chatid}_{message_thread_id}"
+        else:
+            convo_id = chatid
 
     return chatid, convo_id, message_thread_id
 # === VIVENTIUM END ===
