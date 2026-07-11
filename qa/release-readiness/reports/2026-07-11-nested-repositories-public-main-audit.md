@@ -7,7 +7,8 @@
 - Result: **PARTIAL** for the synthetic Feelings chat/reaction leg because the disposable QA account
   intentionally had no connected model provider; the UI displayed the truthful provider error.
 - Publication state: GlassHive PR #36 and LibreChat PR #56 were reviewed and merged in dependency
-  order. The parent pull request and fresh-clone acceptance remain pending.
+  order. Parent PR #63 exists at the exact audited head; fresh-clone install and upgrade acceptance
+  passed. Final parent CI/review and merge remain pending.
 - Scope: 286 changed or newly added files across the parent repository, GlassHive, and
   LibreChat. Every file is listed below.
 
@@ -15,7 +16,7 @@
 
 | Repository | Base reviewed | Publication boundary | Result |
 | --- | --- | --- | --- |
-| Parent Viventium | local HEAD equals fetched `origin/main` | Public product, installer, compiler, docs, QA, Prompt Workbench, Telegram | PASS/PARTIAL pending PR |
+| Parent Viventium | PR #63 exact remote head matches the audited local commit | Public product, installer, compiler, docs, QA, Prompt Workbench, Telegram | PASS/PARTIAL pending merge |
 | GlassHive | PR #36 merged to public `main` | Public worker runtime and tests | PASS |
 | LibreChat fork | PR #56 merged to public `main` | Public fork source, packages, prompts, scheduling, and tests | PASS/PARTIAL |
 
@@ -44,6 +45,7 @@ baseline/environment gaps are separated below.
 | Builds | LibreChat package build and production client build/post-build verification passed. |
 | Generated runtime | Config compiled; placeholders resolved; `MONGO_AUTO_INDEX=false` present. |
 | Installed runtime | Supported developer activation compiled and restarted the current checkout; status reported all local surfaces running. |
+| Fresh install/upgrade | A new public-remote clone bootstrapped exact merged component pins; isolated headless install and supported upgrade passed compile, doctor, placeholder, pin, and continuity gates. |
 | Database/migration | Startup log confirmed memory/provider unique indexes ready only after the dry-run guard; synthetic QA user/state was removed after browser QA. |
 | Browser/UX | Real Chrome run exercised Feelings load, enable, manual controls, reaction drawer, refresh persistence, and 320/390/768/1024/1440 layouts. |
 | Remaining gap | Synthetic account lacked connected model auth, so detached reaction completion is BLOCKED by account setup; visible UI showed the provider error truthfully. |
@@ -88,6 +90,9 @@ baseline/environment gaps are separated below.
   Ubuntu, Windows, lint, circular-dependency, schema/provider, i18n, and Vite checks passed.
 - Changed JS/TS lint: 81 files, zero errors; 68 non-blocking existing/style warnings.
 - `git diff --check`: passed in all three repositories.
+- Fresh-clone acceptance: public PR branch clone was clean; isolated install and upgrade passed. The
+  post-upgrade continuity warning was only unavailable Mongo introspection because the acceptance
+  stack was intentionally not started; there were no continuity errors.
 
 ## Findings
 
@@ -117,7 +122,14 @@ baseline/environment gaps are separated below.
 - Parent component manifest pins both merged nested SHAs and the fetched, independently reviewed
   public `main` heads for the other clean nested repositories.
 - Claude parent verdict: publication-safe with no blocking code defect; required gates were final
-  component pins (now complete) and fresh-clone/parent-PR evidence (still pending).
+  component pins and fresh-clone/parent-PR evidence (all now complete).
+- Parent PR #63: remote head `7312bbab542bb2f24dfc3f91025be43b92bff641` exactly matched the
+  audited 129-file local commit before this evidence-only report update.
+- Fresh public-remote clone: headless install bootstrapped and validated LibreChat
+  `f051e431524e394f18cebcd0dda7df1685d328aa`, GlassHive
+  `ebc9bbab2d7e0954c5723207982f105e5fcea82c`, and modern playground
+  `83044a509b2ccd798deee916291776912b5c1b9e`; compiler/doctor passed and generated
+  `MONGO_AUTO_INDEX=false`. Supported upgrade then passed with no continuity error.
 
 ## Per-File Line Audit
 
@@ -439,5 +451,5 @@ show `-/−`. Repeated PASS wording is intentional so the inventory remains one-
 - [x] Git author/committer identity is the approved public-safe project identity in all three repos.
 - [x] Private safety snapshots and browser evidence remain outside all public repositories.
 
-Pending publication gates: parent PR exact remote diff, fresh-clone install/upgrade proof, final
-parent CI, and final parent merge evidence must be appended before merge.
+Pending publication gates: final parent PR head/diff and CI review, Claude review of this
+evidence-only delta, and final parent merge evidence.
