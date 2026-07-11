@@ -7,8 +7,8 @@
 - Result: **PARTIAL** for the synthetic Feelings chat/reaction leg because the disposable QA account
   intentionally had no connected model provider; the UI displayed the truthful provider error.
 - Publication state: GlassHive PR #36 and LibreChat PR #56 were reviewed and merged in dependency
-  order. Parent PR #63 exists at the exact audited head; fresh-clone install and upgrade acceptance
-  passed. Final parent CI and Claude review passed; only the merge remains pending.
+  order. Parent PR #63 passed fresh-clone install/upgrade, CI, and final Claude review, then merged
+  to public `main`. All publication gates are complete.
 - Scope: 286 changed or newly added files across the parent repository, GlassHive, and
   LibreChat. Every file is listed below.
 
@@ -16,7 +16,7 @@
 
 | Repository | Base reviewed | Publication boundary | Result |
 | --- | --- | --- | --- |
-| Parent Viventium | PR #63 exact remote head matches the audited local commit | Public product, installer, compiler, docs, QA, Prompt Workbench, Telegram | PASS/PARTIAL pending merge |
+| Parent Viventium | PR #63 merged to public `main` | Public product, installer, compiler, docs, QA, Prompt Workbench, Telegram | PASS/PARTIAL |
 | GlassHive | PR #36 merged to public `main` | Public worker runtime and tests | PASS |
 | LibreChat fork | PR #56 merged to public `main` | Public fork source, packages, prompts, scheduling, and tests | PASS/PARTIAL |
 
@@ -108,7 +108,7 @@ baseline/environment gaps are separated below.
 - Baseline debt, not introduced: the dated-report contract has 18 historical main-branch violations;
   dependency audit totals match baseline.
 - Environment-only: the synthetic QA account had no connected primary provider.
-- Cloud exposure: both nested PR heads were public-safe. No leaking commit was published, so no
+- Cloud exposure: all three PR heads were public-safe. No leaking commit was published, so no
   remote history cleanup was required.
 
 ## Publication Evidence
@@ -133,6 +133,8 @@ baseline/environment gaps are separated below.
 - Parent PR #63 final gate: GitHub gitleaks, manifest, and Python checks all passed. Claude reviewed
   the final component pins, UTC hardening, sanitized reports, and fresh install/upgrade evidence and
   returned APPROVE with no blocking or low-severity defect.
+- Parent PR #63 merged to `main` at `e25de005781bb9b39084d199ee68b547af24f2ee`; the merged
+  manifest pins the exact LibreChat and GlassHive public-main commits recorded above.
 
 ## Per-File Line Audit
 
@@ -454,5 +456,5 @@ show `-/−`. Repeated PASS wording is intentional so the inventory remains one-
 - [x] Git author/committer identity is the approved public-safe project identity in all three repos.
 - [x] Private safety snapshots and browser evidence remain outside all public repositories.
 
-Pending publication gate: final parent merge evidence. All code, privacy, pin, CI, Claude, and
-fresh-clone acceptance gates are complete.
+Publication gates complete: code, privacy, pins, CI, Claude review, fresh-clone install/upgrade, and
+all three dependency-ordered merges are verified.
