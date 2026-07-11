@@ -1,6 +1,6 @@
 # Viventium Periphery And Nightly Insight Routines
 
-**Status:** Approved direction; Phase 0 metadata path implemented 2026-06-25
+**Status:** Risk-radar pilot implemented and locally accepted 2026-07-11; health-pressure module remains separate future work
 **Owner:** Viventium Core
 **Scope:** Private scratchpads, nightly insight formation, risk/opportunity/blind-spot analysis,
 health-pressure awareness, and optional surfacing into the conscious agent.
@@ -139,10 +139,10 @@ Minimum JSON fields:
 Artifacts are private runtime state. They must not be committed, published, copied into public QA
 reports, or exposed through screenshots.
 
-Phase 0 implementation:
+Current implementation:
 
-- Prompt Workbench exposes an authenticated per-scheduled-prompt metadata endpoint for private
-  periphery sidecars.
+- Prompt Workbench exposes authenticated metadata, snapshot-status/refresh, and on-demand artifact
+  detail endpoints for private periphery sidecars.
 - The endpoint returns sidecar filenames, relative private paths, timestamps, confidence/severity
   labels, stale/TTL fields, source-reference counts, scheduled-run-reference hashes, markdown
   existence, and content counts.
@@ -150,25 +150,41 @@ Phase 0 implementation:
   blind-spot text, raw opportunity text, local absolute paths, or private run detail text.
 - Malformed sidecars are listed as invalid metadata with a reason instead of crashing or pretending
   insight exists.
-- The built-in Workbench nightly prompt asks the existing private nightly worker to write one
-  `risk_radar` sidecar pair for each run, including an honest low-signal/no-result artifact when
-  strong evidence is missing.
+- Schema v2 artifacts bind every claim to a private snapshot with `snapshotRef` and source refs.
+  Validation resolves those refs against the captured snapshot, counts grounded/ungrounded claims,
+  and marks artifacts `passed`, `warning`, `failed`, `legacy`, or invalid with explicit quality
+  reasons instead of trusting shape alone. Claim grounding counts only refs actually resolved in the
+  snapshot; an aged-out snapshot is reported as unavailable rather than as an unexplained failure.
+- The built-in Workbench nightly prompt is compact and asks the existing private nightly worker to
+  read projected evidence files and write one `risk_radar` sidecar pair, including an honest
+  low-signal/no-result artifact when strong evidence is missing. Raw snapshot content is not inlined
+  into prompt text.
 - Workbench startup seeding reconciles the built-in nightly definition and scheduler task so the
   live scheduled run receives the sidecar contract after a managed Workbench restart.
-- This is still not conscious-chat surfacing. It does not inject periphery into the main prompt or
-  create a saved-memory key.
+- The built-in risk-radar routine uses `memoryWriteMode=off`. A durable memory change requires a
+  separately governed proposal; the nightly routine does not create memory proposals by default.
+- Scheduling Cortex exposes two user-scoped read-only tools: a bounded periphery index and an
+  on-demand read. The list returns only the newest current artifact per module, plus bounded
+  historical context, so repeated versions do not trigger redundant reads. The agent-facing
+  serializers remove paths, filenames, run/snapshot ids, raw source record ids, invalid-artifact
+  details, and duplicate markdown while preserving evidence text, freshness, uncertainty, and
+  grounding counts.
+- Artifact recency comes from validated `generatedAt`, not file modification time, so touching or
+  restoring an older file cannot make it the newest insight.
+- The main conscious agent carries only those optional read tools and the Scheduling Cortex's
+  tool-owned instructions. No nightly body, saved-memory key, or new periphery block is injected
+  into the main chat prompt.
 
 ## Awareness Without Prompt Bloat
 
 Risk, opportunity, and blind-spot artifacts should not be inserted into the main prompt by default.
 
-The preferred first awareness mechanism is a small config-backed instruction, not a new saved-memory
-key:
+The awareness mechanism is the Scheduling Cortex's tool-owned instruction plus two read-only tools,
+not a new saved-memory key or a main-prompt block:
 
 - Viventium may have private periphery scratchpads.
 - When the user asks for blind spots, risks, opportunity costs, prior nightly insights, deep
-  planning, or self-review, inspect the periphery index or ask a local worker to read the relevant
-  private artifact.
+  planning, or self-review, list the available periphery and read only the relevant artifact.
 - Do not mention or inspect the periphery by default.
 - Do not pretend a periphery artifact exists when the index or read path is unavailable.
 
@@ -259,19 +275,37 @@ A module should declare:
 Do not build a large registry before it is earned. Start with the existing Workbench scheduled prompt
 path and generalize only when at least two modules prove the same configuration shape is real.
 
+## Automation Model Policy
+
+Unattended analytical automations use the compiled runtime tuple, currently `gpt-5.6-sol` with
+`xhigh` reasoning. This includes Workbench/GlassHive scheduled analysis in this pipeline and OpenAI
+memory hardening. The compiler, Workbench definition reconciler, Scheduling Cortex dispatch,
+GlassHive bootstrap, run ledger, and UI must agree on the requested and effective tuple. Ambient CLI
+config, stale per-definition metadata, or an unpropagated route-proof flag must not silently
+downgrade it.
+
+This policy applies to this growing private automation pipeline and future analytical modules that
+reuse it. The GlassHive host Codex configuration is shared with direct host Codex delegation, so the
+same Sol/xHigh deployment default applies there unless explicitly overridden. It does not rewrite
+existing `viventium_agent` reminders, latency-sensitive background activation classifiers, voice
+reactions, or the interactive conscious-agent route; those have separate owning contracts and must
+be migrated intentionally if their requirements change.
+
 ## Snapshot Harness Requirement
 
 Real insight quality cannot be evaluated on a messy live corpus without controls.
 
-Before trusting nightly predictions, create a private snapshot harness that:
+The private snapshot harness now:
 
-- snapshots memories, conversations, schedules, scratchpads, and recent run ledgers
-- labels QA/test/synthetic conversations instead of deleting them
-- creates synthetic and private-real eval cases
+- snapshots bounded memories, recent conversations/messages, schedules, scratchpads, recent run
+  ledgers, and the existing background-lens inventory
+- labels QA/test/synthetic conversations, messages, and scratchpads by structured metadata or exact
+  private id instead of deleting them or adding runtime keyword classification
+- creates synthetic eval cases and supports private-real scheduled runs against the same projection
 - keeps raw private content outside public QA
 - reports public-safe counts, hashes, statuses, and conclusions only
 
-The harness must test:
+The harness tests:
 
 - no hallucinated evidence
 - confidence calibration
@@ -280,8 +314,16 @@ The harness must test:
 - stale artifact handling
 - no direct memory writes
 - no private leakage
+- no verbatim copying of bounded private evidence into generated insight text
 - no nagging or intrusive surfacing
 - no overfitting to one anecdote or one test phrase
+
+The initial bank contains material-signal, honest-no-signal, degraded-source, medical-humility,
+unlabelled-QA-noise, and stale-correction cases. Provider/auth/quota failures are operationally
+classified and are not scored as model negatives. Raw completions and private snapshots remain in
+private runtime storage; public QA records only sanitized counts, hashes, status, and conclusions.
+The compact nightly prompt and schema constants live in one dependency-free contract module shared by
+Workbench execution and the eval harness, so the two paths cannot quietly drift apart.
 
 ## Surfacing Policy
 
@@ -329,13 +371,16 @@ feature -> requirement -> use case -> QA case -> expected result -> actual evide
 
 Before activating a new risk-radar or health-pressure routine:
 
-1. The user approves the periphery architecture and surfacing policy. Status: approved for Phase 0.
+1. The user approves the periphery architecture and surfacing policy. Status: approved and locally
+   accepted for the risk-radar pilot on 2026-07-11.
 2. Current nightly executor failures are classified and repaired or explicitly bounded. Status:
-   classified for Phase 0; recent failures are terminal GlassHive callback/evidence-compliance
-   failures, while the same canonical path also completed successfully on 2026-06-25.
+   complete for the pilot; fresh post-restart GlassHive execution completed with requested/effective
+   Sol/xHigh, first-attempt callbacks, a successful parent ledger, and a validated v2 artifact.
 3. Existing nightly reflection/cortex coverage is reviewed to avoid duplicate modules. Status:
    complete for Phase 0; reuse the current nightly reflection/cortex path first.
-4. The private snapshot harness design is approved. Status: not implemented in Phase 0.
-5. The first risk-radar pilot is run in propose-only mode. Status: not activated in Phase 0.
+4. The private snapshot harness design is approved. Status: implemented with bounded evidence,
+   structured exact-id labels, retention, degraded-source handling, and private-real/synthetic evals.
+5. The first risk-radar pilot is run with memory writes disabled. Status: active locally, repeatedly
+   completed, and accepted through Workbench, browser, logs, DB, and artifact validation.
 6. Health-pressure persistence is decided separately from risk-radar scratchpads. Status: separate
    design track; do not persist it through the periphery scratchpad path by default.

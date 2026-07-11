@@ -7,6 +7,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -91,6 +92,7 @@ def test_memory_hardening_defaults_are_launch_ready_and_opt_in() -> None:
     assert settings["provider_profile"] == "launch_ready_only"
     assert settings["anthropic_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["anthropic"]
     assert settings["openai_model"] in config_compiler.MEMORY_HARDENING_LAUNCH_READY_MODELS["openai"]
+    assert settings["openai_model"] == "gpt-5.6-sol"
     assert settings["anthropic_effort"] == "xhigh"
     assert settings["openai_reasoning_effort"] == "xhigh"
     assert settings["transcripts"]["rag_mode"] == "detailed_summary_only"
@@ -342,7 +344,7 @@ process.env.VIVENTIUM_MEMORY_HARDENING_PROVIDER = 'anthropic';
 process.env.VIVENTIUM_MEMORY_HARDENING_MODEL = '';
 process.env.VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS = '';
 const defaultCandidates = hardener.resolveProvider({}).candidates;
-process.env.VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS = 'anthropic:opus:xhigh,openai:gpt-5.5:high';
+process.env.VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS = 'anthropic:opus:xhigh,openai:gpt-5.6-sol:xhigh';
 const explicitCandidates = hardener.resolveProvider({}).candidates;
 process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
 """
@@ -360,6 +362,32 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
     assert any(candidate["model"] == "claude-opus-4-8" for candidate in payload["defaultCandidates"])
     assert any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
     assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
+
+
+def test_memory_hardening_prefers_sol_xhigh_when_both_providers_are_available() -> None:
+    script = """
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+process.env.VIVENTIUM_PRIMARY_PROVIDER = 'openai';
+process.env.VIVENTIUM_SECONDARY_PROVIDER = 'anthropic';
+delete process.env.VIVENTIUM_MEMORY_HARDENING_PROVIDER;
+delete process.env.VIVENTIUM_MEMORY_HARDENING_MODEL;
+delete process.env.VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS;
+const selected = hardener.resolveProvider({});
+process.stdout.write(JSON.stringify(selected));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["provider"] == "openai"
+    assert payload["model"] == "gpt-5.6-sol"
+    assert payload["effort"] == "xhigh"
 
 
 def test_memory_hardening_vector_presence_failures_are_not_model_failures() -> None:
@@ -715,14 +743,14 @@ def test_memory_hardening_wrapper_passes_compiled_model_tuple() -> None:
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.5",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-sol",
             "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL": "qa@example.com",
             "VIVENTIUM_MEMORY_TRANSCRIPTS_RAG_MODE": "detailed_summary_only",
         },
     )
 
     assert command[command.index("--provider") + 1] == "openai"
-    assert command[command.index("--model") + 1] == "gpt-5.5"
+    assert command[command.index("--model") + 1] == "gpt-5.6-sol"
     assert command[command.index("--user-email") + 1] == "qa@example.com"
     assert command[command.index("--transcript-rag-mode") + 1] == "detailed_summary_only"
 
@@ -819,6 +847,8 @@ def test_memory_hardening_wrapper_prefers_compiled_runtime_over_ambient_shell_en
 
     class Completed:
         returncode = 0
+        stdout = "{}"
+        stderr = ""
 
     calls = []
 
@@ -871,12 +901,12 @@ def test_memory_hardening_wrapper_uses_provider_specific_model_for_override() ->
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
             "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
-            "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": "gpt-5.5",
+            "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": "gpt-5.6-sol",
         },
     )
 
     assert command[command.index("--provider") + 1] == "openai"
-    assert command[command.index("--model") + 1] == "gpt-5.5"
+    assert command[command.index("--model") + 1] == "gpt-5.6-sol"
 
 
 def test_memory_hardening_cli_user_email_overrides_compiled_operator_scope() -> None:
@@ -1337,14 +1367,22 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
     args.user_email = None
 
     class Completed:
-        returncode = 0
-        stdout = ""
-        stderr = ""
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
 
     launchctl_calls = []
+    launchd = {"loaded": False}
 
     def fake_run(command, **kwargs):
         launchctl_calls.append(command)
+        if command[0:2] == ["launchctl", "print"]:
+            return Completed(0 if launchd["loaded"] else 113)
+        if command[0:2] == ["launchctl", "bootstrap"]:
+            launchd["loaded"] = True
+        elif command[0:2] == ["launchctl", "bootout"]:
+            launchd["loaded"] = False
         return Completed()
 
     monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
@@ -1362,7 +1400,11 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
     program_arguments = payload["ProgramArguments"]
 
     assert result["schedule"] == "0 3 * * *"
+    assert result["action"] == "install"
+    assert result["changed"] is True
+    assert result["loaded"] is True
     assert payload["StartCalendarInterval"] == {"Hour": 3, "Minute": 0}
+    assert "StartInterval" not in payload
     assert payload["WorkingDirectory"] == str(app_support_dir)
     assert program_arguments[0:2] == ["/usr/bin/env", "-i"]
     assert "/bin/bash" not in program_arguments
@@ -1385,7 +1427,290 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
         "--user-email",
         "qa@example.com",
     ]
-    assert launchctl_calls[-1][0:2] == ["launchctl", "bootstrap"]
+    assert [call[0:2] for call in launchctl_calls].count(["launchctl", "bootstrap"]) == 1
+    assert launchctl_calls[-1][0:2] == ["launchctl", "print"]
+
+    launchctl_calls.clear()
+    second = memory_harden.install_schedule(
+        args,
+        {
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL": "qa@example.com",
+        },
+    )
+    assert second["action"] == "noop"
+    assert second["changed"] is False
+    assert [call[0:2] for call in launchctl_calls] == [["launchctl", "print"]]
+
+    receipts = sorted(memory_harden.schedule_lifecycle_events_dir(app_support_dir).glob("event-*.json"))
+    assert len(receipts) == 2
+    receipt = json.loads(receipts[-1].read_text(encoding="utf-8"))
+    assert receipt["action"] == "noop"
+    assert receipt["status"] == "success"
+    assert receipt["loaded_verified"] is True
+    assert receipt["generation_hash"]
+    public_blob = json.dumps(receipt)
+    assert str(tmp_path) not in public_blob
+    assert "qa@example.com" not in public_blob
+
+
+def test_memory_hardening_schedule_repairs_drift_once_and_verifies_reload(tmp_path, monkeypatch) -> None:
+    plist_path = tmp_path / "ai.viventium.memory-harden.plist"
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="install-schedule",
+        json=True,
+    )
+    args.schedule = "0 4 * * *"
+    args.user_email = None
+    plist_path.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": memory_harden.LAUNCH_AGENT_LABEL,
+                "ProgramArguments": ["stale"],
+                "StartCalendarInterval": {"Hour": 3, "Minute": 0},
+                "StartInterval": 3600,
+            }
+        )
+    )
+    launchd = {"loaded": True}
+    calls = []
+
+    class Completed:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[0:2] == ["launchctl", "print"]:
+            return Completed(0 if launchd["loaded"] else 113)
+        if command[0:2] == ["launchctl", "bootout"]:
+            launchd["loaded"] = False
+        if command[0:2] == ["launchctl", "bootstrap"]:
+            launchd["loaded"] = True
+        return Completed()
+
+    monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+
+    result = memory_harden.install_schedule(args, {})
+
+    payload = plistlib.loads(plist_path.read_bytes())
+    assert result["action"] == "reinstall"
+    assert payload["StartCalendarInterval"] == {"Hour": 4, "Minute": 0}
+    assert "StartInterval" not in payload
+    assert [call[0:2] for call in calls].count(["launchctl", "bootout"]) == 1
+    assert [call[0:2] for call in calls].count(["launchctl", "bootstrap"]) == 1
+
+
+def test_memory_hardening_schedule_bootstraps_matching_unloaded_agent_without_bootout(
+    tmp_path, monkeypatch
+) -> None:
+    plist_path = tmp_path / "ai.viventium.memory-harden.plist"
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="install-schedule",
+        json=True,
+    )
+    args.schedule = "0 3 * * *"
+    args.user_email = None
+    desired = memory_harden.desired_launch_agent_payload(args, {}, args.schedule)
+    plist_path.write_bytes(plistlib.dumps(desired))
+    launchd = {"loaded": False}
+    calls = []
+
+    class Completed:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[0:2] == ["launchctl", "print"]:
+            return Completed(0 if launchd["loaded"] else 113)
+        if command[0:2] == ["launchctl", "bootstrap"]:
+            launchd["loaded"] = True
+        return Completed()
+
+    monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+
+    result = memory_harden.install_schedule(args, {})
+
+    assert result["action"] == "bootstrap"
+    assert [call[0:2] for call in calls].count(["launchctl", "bootout"]) == 0
+    assert [call[0:2] for call in calls].count(["launchctl", "bootstrap"]) == 1
+
+
+def test_memory_hardening_schedule_records_failed_post_bootstrap_verification(
+    tmp_path, monkeypatch
+) -> None:
+    plist_path = tmp_path / "ai.viventium.memory-harden.plist"
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="install-schedule",
+        json=True,
+    )
+    args.schedule = "0 3 * * *"
+    args.user_email = None
+
+    class Completed:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(command, **_kwargs):
+        if command[0:2] == ["launchctl", "print"]:
+            return Completed(113)
+        return Completed()
+
+    monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+
+    try:
+        memory_harden.install_schedule(args, {})
+        raise AssertionError("expected failed post-bootstrap verification")
+    except SystemExit as exc:
+        assert "failed to install" in str(exc)
+
+    receipt = json.loads(
+        (memory_harden.schedule_lifecycle_events_dir(app_support_dir) / "latest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert receipt["status"] == "failed"
+    assert receipt["error_class"] == "launchctl_verify_failed"
+    assert receipt["loaded_verified"] is False
+
+
+def test_memory_hardening_schedule_records_failed_bootout(tmp_path, monkeypatch) -> None:
+    plist_path = tmp_path / "ai.viventium.memory-harden.plist"
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="install-schedule",
+        json=True,
+    )
+    args.schedule = "0 4 * * *"
+    args.user_email = None
+    plist_path.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": memory_harden.LAUNCH_AGENT_LABEL,
+                "ProgramArguments": ["stale"],
+                "StartCalendarInterval": {"Hour": 3, "Minute": 0},
+            }
+        )
+    )
+
+    class Completed:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(command, **_kwargs):
+        if command[0:2] == ["launchctl", "print"]:
+            return Completed(0)
+        if command[0:2] == ["launchctl", "bootout"]:
+            return Completed(1, stderr="synthetic bootout failure")
+        return Completed()
+
+    monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+
+    try:
+        memory_harden.install_schedule(args, {})
+        raise AssertionError("expected bootout failure")
+    except SystemExit as exc:
+        assert "failed to unload" in str(exc)
+
+    receipt = json.loads(
+        (memory_harden.schedule_lifecycle_events_dir(app_support_dir) / "latest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert receipt["status"] == "failed"
+    assert receipt["error_class"] == "launchctl_bootout_failed"
+    assert receipt["bootout_returncode"] == 1
+
+
+def test_memory_hardening_schedule_loader_lock_serializes_processes(tmp_path) -> None:
+    if memory_harden.fcntl is None:
+        return
+    app_support_dir = tmp_path / "app-support"
+    ready_path = tmp_path / "child-ready"
+    acquired_path = tmp_path / "child-acquired"
+    child = """
+from pathlib import Path
+import sys
+from scripts.viventium import memory_harden
+
+app_support = Path(sys.argv[1])
+Path(sys.argv[2]).write_text("ready", encoding="utf-8")
+with memory_harden.schedule_loader_lock(app_support):
+    Path(sys.argv[3]).write_text("acquired", encoding="utf-8")
+"""
+    process = None
+    with memory_harden.schedule_loader_lock(app_support_dir):
+        process = subprocess.Popen(
+            [sys.executable, "-c", child, str(app_support_dir), str(ready_path), str(acquired_path)],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT)},
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        deadline = time.monotonic() + 5
+        while not ready_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready_path.exists()
+        time.sleep(0.1)
+        assert not acquired_path.exists()
+
+    assert process is not None
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr or stdout
+    assert acquired_path.exists()
+
+
+def test_memory_hardening_config_sync_uninstalls_only_explicit_false() -> None:
+    source = (ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    block = source.split("sync_memory_hardening_schedule() {", 1)[1].split(
+        "\n}\n\napply_default_nightly_routines()", 1
+    )[0]
+
+    assert 'elif [[ "$enabled" == "false" && -f "$plist_path" ]]' in block
+    assert 'elif [[ -f "$plist_path" ]]' not in block
+    assert "preserving the existing LaunchAgent" in block
+
+
+def test_memory_hardening_status_process_is_not_niced() -> None:
+    kwargs = memory_harden.model_subprocess_kwargs(
+        capture_output=True,
+        lower_priority=False,
+    )
+
+    assert kwargs == {"text": True, "capture_output": True}
 
 
 def test_memory_hardening_scheduled_trigger_writes_public_safe_receipt(tmp_path, monkeypatch) -> None:
@@ -1512,7 +1837,6 @@ def test_memory_hardening_dry_run_first_receipt_records_executed_command(tmp_pat
     calls = []
     monkeypatch.setattr(memory_harden, "running_on_battery_power", lambda: False)
     monkeypatch.setattr(memory_harden, "thermal_state_constrained", lambda: False)
-
     def fake_run(command, **kwargs):
         calls.append(command)
         return Completed()
@@ -1620,6 +1944,28 @@ def test_memory_hardening_public_audit_contract_has_no_raw_path_field() -> None:
     assert "private_proposal_file" in text
     assert re.search(r"proposal\.private\.json", text)
     assert re.search(r"rollback\.private\.json", text)
+
+
+def test_memory_unique_index_migration_is_dry_run_first_and_non_destructive() -> None:
+    launcher = (ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    migration = (
+        ROOT
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "scripts"
+        / "viventium-memory-dedupe.js"
+    ).read_text(encoding="utf-8")
+
+    assert "ensure_memory_unique_indexes_if_clean()" in launcher
+    section = launcher.split("ensure_memory_unique_indexes_if_clean()", 1)[1].split("\n}\n", 1)[0]
+    assert "--dry-run" in section
+    assert "--apply" in section
+    assert "--create-indexes" in section
+    assert section.index("--dry-run") < section.index("--apply")
+    assert "duplicateGroups" in section
+    assert "autoIndex: false" in migration
 
 
 def test_memory_hardening_treats_listen_only_as_soft_transcript_evidence() -> None:

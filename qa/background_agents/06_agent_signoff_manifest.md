@@ -3,6 +3,17 @@
 This manifest records the minimum reviewed scenarios that must remain true for the shipped
 background-agent roster.
 
+## Roster-wide activation release gate
+
+- `ACT-36` covers every listed cortex through the exact runtime classifier path, including positive,
+  sibling-negative, latest-turn, strict-output, injection, multilingual, typo, and combined-intent
+  cases.
+- Run the full two-pass `background_activation_routing` gate before every release while the primary
+  classifier is a preview model, and after any activation prompt, model, provider, fallback, parser,
+  or classifier-runtime change.
+- A completed-call semantic pass does not erase unavailable evidence. Record completion rate,
+  end-to-end required recall, semantic recall, precision, availability flaps, and latency separately.
+
 ### 1. Background Analysis
 
 - Activation signoff scenarios: `ACT-01`, `ACT-07`
@@ -17,9 +28,11 @@ background-agent roster.
 
 ### 3. Red Team
 
-- Activation signoff scenarios: `ACT-01`, `ACT-02`
+- Activation signoff scenarios: `ACT-01`, `ACT-02`, `ACT-35`
 - Reviewer focus:
   - challenge pressure remains available on risky claims and plans
+  - Socratic/no-bullshit/premortem decision-method asks activate only when attached to a concrete
+    claim, plan, or decision
 
 ### 4. Deep Research
 

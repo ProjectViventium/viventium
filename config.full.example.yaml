@@ -2,7 +2,7 @@ version: 1
 install:
   mode: native
 settings:
-  timezone: America/Toronto
+  timezone: local
 runtime:
   log_level: info
   profile: isolated
@@ -69,13 +69,49 @@ runtime:
       enabled: true
       active: true
       executor: glasshive_host
+  feelings:
+    # The panel is installed, but every new user's Feelings switch starts off.
+    available: true
+    default_enabled: false
+    # all_agents gives every Viventium agent and brokered worker the same turn-pinned state.
+    # Use conscious_agent to restrict the capsule to the visible main agent.
+    agent_scope: all_agents
+    reaction:
+      # always is the natural default. classified reuses the existing cortex activation detector.
+      activation_mode: always
+      provider: openai
+      model: gpt-5.6-terra
+      use_responses_api: true
+      reasoning_effort: none
+      # Fast maps to OpenAI Priority processing; service_tier remains explicit and overridable.
+      fast: true
+      service_tier: priority
+      timeout_ms: 15000
+      # A declared recovery route keeps the detached reaction moving if Terra times out.
+      # Set fallback_provider to none to disable it.
+      fallback_provider: anthropic
+      fallback_model: claude-opus-4-8
+      activation_provider: groq
+      activation_model: qwen/qwen3.6-27b
+      activation_confidence_threshold: 0.55
+      activation_timeout_ms: 2000
+    bands:
+      energy: { enabled: true, baseline: 56, half_life_minutes: 240 }
+      mood: { enabled: true, baseline: 58, half_life_minutes: 360 }
+      drive: { enabled: true, baseline: 62, half_life_minutes: 480 }
+      curiosity: { enabled: true, baseline: 66, half_life_minutes: 45 }
+      vigilance: { enabled: true, baseline: 68, half_life_minutes: 20 }
+      care: { enabled: true, baseline: 74, half_life_minutes: 1440 }
+      connection: { enabled: true, baseline: 52, half_life_minutes: 480 }
+      openness: { enabled: true, baseline: 55, half_life_minutes: 180 }
+      play: { enabled: true, baseline: 48, half_life_minutes: 90 }
   memory_hardening:
     # Semantic hardening is enabled by the supported local nightly-routines contract.
     # It runs only for local users whose memories are enabled; operator_user_email can
     # scope it to one account, and an empty value means all eligible local users.
     enabled: true
     schedule: "0 3 * * *"
-    timezone: America/Toronto
+    timezone: local
     # Optional: scope hardening to one local account email. Empty means all local users.
     operator_user_email: ""
     provider: ""
@@ -88,7 +124,7 @@ runtime:
     provider_profile: launch_ready_only
     anthropic_model: claude-opus-4-8
     anthropic_effort: xhigh
-    openai_model: gpt-5.5
+    openai_model: gpt-5.6-sol
     openai_reasoning_effort: xhigh
     transcripts:
       # Optional local folder for meeting transcripts. Empty disables transcript ingestion.
@@ -212,11 +248,13 @@ integrations:
       # codex_plugin_cache: ""
       # codex_ignore_user_config: false
       # codex_disable_features: ""
-      # Route-specific Codex effort support. Leave unset for the safe built-in default:
-      # none,low,medium,high, with minimal/xhigh opt-in only after route proof.
-      # codex_allowed_reasoning_efforts: ["none", "low", "medium", "high"]
-      # codex_reasoning_effort_fallback: medium
-      # codex_xhigh_route_proven: false
+      # Quality-first default for host Codex work and unattended analytical automations.
+      codex_model: gpt-5.6-sol
+      codex_reasoning_effort: xhigh
+      codex_xhigh_route_proven: true
+      # Override only for a deployment whose directly tested route supports a different subset.
+      # codex_allowed_reasoning_efforts: ["none", "low", "medium", "high", "xhigh"]
+      # codex_reasoning_effort_fallback: high
       # claude_enable_chrome: true
     # Enterprise-only owner identity bridging. Defaults are strict user_id matching and no aliases.
     # Use explicit aliases only when browser auth identity and MCP/chat owner identity are known to

@@ -1,4 +1,4 @@
-export type SyncState = 'synced' | 'live-ahead' | 'source-ahead' | 'conflict';
+export type SyncState = "synced" | "live-ahead" | "source-ahead" | "conflict";
 
 export interface PromptRow {
   id: string;
@@ -107,7 +107,7 @@ export interface DraftRecord {
   idempotencyToken: string;
   patch: string;
   changeSummary?: ChangeSummary;
-  status: 'draft' | 'applied' | 'discarded';
+  status: "draft" | "applied" | "discarded";
   mappedPromptId?: string;
   agentId?: string;
   duplicate?: boolean;
@@ -171,7 +171,12 @@ export interface PromptWorkbenchContext {
     families: EvalFamily[];
   };
   evalRuns: EvalRun[];
-  qaCoverage: Array<{ id: string; title: string; source: string; lastRun?: string }>;
+  qaCoverage: Array<{
+    id: string;
+    title: string;
+    source: string;
+    lastRun?: string;
+  }>;
   relatedConfig?: Array<{
     id: string;
     title: string;
@@ -218,8 +223,19 @@ export interface AuthStatus {
 }
 
 export interface VariableRegistry {
-  variables: Array<{ name: string; kind: string; wrapper: string; description: string }>;
-  functions: Array<{ name: string; kind: string; wrapper: string; description: string; arguments?: string[] }>;
+  variables: Array<{
+    name: string;
+    kind: string;
+    wrapper: string;
+    description: string;
+  }>;
+  functions: Array<{
+    name: string;
+    kind: string;
+    wrapper: string;
+    description: string;
+    arguments?: string[];
+  }>;
 }
 
 export interface VariableRenderResult {
@@ -258,6 +274,9 @@ export interface ScheduledPromptRun {
   glasshiveRunId?: string;
   resultSummary?: string;
   errorClass?: string;
+  requestedReasoningEffort?: string | null;
+  effectiveReasoningEffort?: string | null;
+  reasoningFallbackReason?: string | null;
   privateDetailPointer?: string;
   updatedAt?: string;
 }
@@ -275,14 +294,16 @@ export interface ScheduledPrompt {
   active: boolean;
   channel?: string | string[];
   executor?: string;
-  conversationPolicy?: 'new' | 'same';
+  conversationPolicy?: "new" | "same";
   memoryWriteMode: string;
   myFolder?: string;
   workspaceRoot?: string | null;
   workspaceAlias?: string | null;
   executionProfile?: string | null;
   executionMode?: string | null;
-  glasshiveWorkerStrategy?: 'same_worker' | 'new_worker_each_run' | null;
+  executionModel?: string | null;
+  reasoningEffort?: string | null;
+  glasshiveWorkerStrategy?: "same_worker" | "new_worker_each_run" | null;
   nextRunAt?: string;
   lastStatus?: string;
   latestVersion?: {
@@ -293,7 +314,7 @@ export interface ScheduledPrompt {
     createdAt: string;
   };
   recentRuns: ScheduledPromptRun[];
-  sourceKind?: 'workbench_definition' | 'user_schedule';
+  sourceKind?: "workbench_definition" | "user_schedule";
   sourceLabel?: string;
   createdAt: string;
   updatedAt: string;
@@ -314,7 +335,7 @@ export interface ScheduledPromptMemoryProposal {
   updatedAt?: string;
   actionCount: number;
   actions: Array<{
-    action: 'set' | 'delete';
+    action: "set" | "delete";
     key: string;
     valueHash?: string | null;
     valuePreview?: string;
@@ -330,6 +351,7 @@ export interface ScheduledPromptPeripheryArtifact {
   relativePath: string;
   markdownRelativePath: string;
   markdownExists: boolean;
+  schemaVersion: number;
   generatedAt: string;
   updatedAt?: string | null;
   confidence: string;
@@ -338,6 +360,12 @@ export interface ScheduledPromptPeripheryArtifact {
   ttl: string;
   staleAfter: string;
   sourceRefCount: number;
+  sourceRefsResolvedCount: number;
+  sourceRefsUnresolvedCount: number;
+  snapshotRefHash?: string | null;
+  snapshotAvailable?: boolean | null;
+  stale: boolean;
+  qualityStatus: "passed" | "warning" | "failed" | "legacy" | string;
   scheduledRunRefHash?: string | null;
   contentCounts: Record<string, number>;
 }
@@ -347,4 +375,40 @@ export interface ScheduledPromptInvalidPeripheryArtifact {
   relativePath: string;
   reason: string;
   missingFields?: string[];
+  invalidFields?: string[];
+}
+
+export interface ScheduledPromptPeripheryIndex {
+  generatedAt?: string | null;
+  artifactCount: number;
+  invalidArtifactCount: number;
+  qualityCounts: Record<string, number>;
+  modules: Array<{
+    moduleId: string;
+    description: string;
+    latestArtifactId?: string | null;
+    latestGeneratedAt?: string | null;
+    latestQualityStatus?: string | null;
+    artifactCount: number;
+  }>;
+}
+
+export interface ScheduledPromptPeripherySnapshot {
+  schemaVersion: number;
+  snapshotRef?: string | null;
+  snapshotId?: string | null;
+  generatedAt?: string | null;
+  status: "complete" | "degraded" | "not_created" | string;
+  missingPrerequisites: string[];
+  counts: Record<string, number>;
+  sourceRefCount: number;
+  contentHash?: string;
+  labelsHash?: string;
+}
+
+export interface ScheduledPromptPeripheryArtifactDetail {
+  artifact: ScheduledPromptPeripheryArtifact;
+  sidecar: Record<string, unknown>;
+  markdown: string;
+  usage: string;
 }

@@ -145,6 +145,10 @@ reopening it.
 - Do use `dev-env` when you need a side-by-side development runtime.
 - Do use `dev-runtime activate-current --validate --restart` when promoting the current checkout to
   the installed local runtime.
+- `dev-runtime activate-current --validate --restart` must fail closed before stop/restart when
+  config compilation, doctor, or helper refresh fails. A missing optional prerequisite such as a
+  required Docker daemon may block validation, but it must not schedule a delayed stop of the
+  currently running stack.
 - Do use `prompt-workbench open/start/stop/status` for the standalone prompt QA app.
 - Do use `runtime.prompt_workbench.enabled: true` when Prompt Workbench should stay up with the
   local Viventium runtime.

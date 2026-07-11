@@ -1,0 +1,2126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>Viventium · Feelings Live Console</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #f4f5f2;
+        --muted: #929a98;
+        --quiet: #626a69;
+        --canvas: #080a0a;
+        --surface: #0d1010;
+        --surface-raised: #121615;
+        --surface-soft: #171b1a;
+        --line: rgba(221, 231, 226, 0.12);
+        --line-strong: rgba(221, 231, 226, 0.22);
+        --live: #ffb44d;
+        --live-soft: rgba(255, 180, 77, 0.16);
+        --mint: #7bf0ca;
+        --danger: #ff816f;
+        --radius: 14px;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-width: 320px;
+        background: var(--canvas);
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        overflow-x: hidden;
+        background:
+          radial-gradient(circle at 38% -12%, rgba(95, 131, 119, 0.12), transparent 32rem),
+          var(--canvas);
+        color: var(--ink);
+        font-family: var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        color: inherit;
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid var(--mint);
+        outline-offset: 3px;
+      }
+
+      .app-shell {
+        width: min(100%, 1540px);
+        min-height: 100vh;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .topbar {
+        display: flex;
+        min-height: 64px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+      }
+
+      .brand-mark {
+        position: relative;
+        flex: 0 0 34px;
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(123, 240, 202, 0.55);
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(123, 240, 202, 0.18), transparent 62%);
+      }
+
+      .brand-mark::before,
+      .brand-mark::after {
+        position: absolute;
+        inset: 6px;
+        border: 1px solid rgba(123, 240, 202, 0.24);
+        border-radius: 50%;
+        content: "";
+      }
+
+      .brand-mark::after {
+        inset: 13px;
+        border: 0;
+        background: var(--mint);
+        box-shadow: 0 0 14px rgba(123, 240, 202, 0.8);
+      }
+
+      .brand-title {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+
+      .brand-subtitle {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .utility-button,
+      .stimulus-button,
+      .text-button {
+        min-height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: rgba(255, 255, 255, 0.025);
+        color: #cbd0ce;
+        cursor: pointer;
+        transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+      }
+
+      .utility-button {
+        padding: 0 13px;
+        font-size: 12px;
+      }
+
+      .utility-button:hover,
+      .stimulus-button:hover,
+      .text-button:hover {
+        border-color: var(--line-strong);
+        background: rgba(255, 255, 255, 0.055);
+        color: var(--ink);
+      }
+
+      .master-toggle,
+      .band-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .master-toggle {
+        min-height: 42px;
+        padding: 0 2px 0 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .switch-track {
+        position: relative;
+        width: 46px;
+        height: 25px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        background: #1a1e1d;
+        transition: background 180ms ease, border-color 180ms ease;
+      }
+
+      .switch-track::after {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 17px;
+        height: 17px;
+        border-radius: 50%;
+        background: #9da4a2;
+        content: "";
+        transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+      }
+
+      [aria-checked="true"] .switch-track {
+        border-color: rgba(123, 240, 202, 0.48);
+        background: rgba(123, 240, 202, 0.14);
+      }
+
+      [aria-checked="true"] .switch-track::after {
+        transform: translateX(21px);
+        background: var(--mint);
+        box-shadow: 0 0 13px rgba(123, 240, 202, 0.66);
+      }
+
+      .workspace-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 338px;
+        gap: 0;
+        min-height: calc(100vh - 105px);
+      }
+
+      .primary-workspace {
+        min-width: 0;
+        padding: 28px 26px 32px 0;
+        border-right: 1px solid var(--line);
+      }
+
+      .inspector {
+        min-width: 0;
+        padding: 28px 0 32px 26px;
+      }
+
+      .section-kicker {
+        margin: 0 0 6px;
+        color: var(--quiet);
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .workspace-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .workspace-heading h1 {
+        margin: 0;
+        font-size: clamp(25px, 3vw, 38px);
+        font-weight: 570;
+        letter-spacing: -0.045em;
+      }
+
+      .workspace-heading p {
+        max-width: 520px;
+        margin: 7px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .time-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+      }
+
+      .time-readout {
+        color: var(--quiet);
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .stimulus-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 23px 0 16px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .stimulus-bar::-webkit-scrollbar {
+        display: none;
+      }
+
+      .stimulus-label {
+        flex: 0 0 auto;
+        margin-right: 2px;
+        color: var(--quiet);
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .stimulus-button {
+        flex: 0 0 auto;
+        min-height: 34px;
+        padding: 0 12px;
+        font-size: 11px;
+      }
+
+      .instrument-frame {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px) 0 0 / 100% 25%,
+          var(--surface);
+      }
+
+      .instrument-frame::before {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        background: linear-gradient(100deg, transparent 20%, rgba(123, 240, 202, 0.025), transparent 75%);
+        content: "";
+        pointer-events: none;
+      }
+
+      .heartbeat-line {
+        position: absolute;
+        z-index: 3;
+        top: 11px;
+        left: 4%;
+        width: 92%;
+        height: 1px;
+        transform-origin: center;
+        background: linear-gradient(90deg, transparent, rgba(123, 240, 202, 0.8), transparent);
+        box-shadow: 0 0 9px rgba(123, 240, 202, 0.42);
+        opacity: 0.42;
+        animation: heartbeat 3.8s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      @keyframes heartbeat {
+        0%,
+        100% {
+          transform: scaleX(0.35);
+          opacity: 0.18;
+        }
+        48% {
+          transform: scaleX(0.96);
+          opacity: 0.48;
+        }
+        52% {
+          transform: scaleX(1);
+          opacity: 0.72;
+        }
+      }
+
+      .spectrum {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: repeat(7, minmax(74px, 1fr));
+        min-height: 505px;
+        padding: 28px 10px 12px;
+      }
+
+      .feeling-lane {
+        --band-color: #7bf0ca;
+        position: relative;
+        display: grid;
+        min-width: 0;
+        grid-template-rows: 62px 1fr 58px;
+        padding: 0 10px;
+        border-right: 1px solid rgba(221, 231, 226, 0.075);
+        transition: background 180ms ease, opacity 180ms ease;
+      }
+
+      .feeling-lane:last-child {
+        border-right: 0;
+      }
+
+      .feeling-lane:hover,
+      .feeling-lane.is-selected {
+        background: linear-gradient(180deg, color-mix(in srgb, var(--band-color) 6%, transparent), transparent 42%);
+      }
+
+      .feeling-lane.is-disabled {
+        opacity: 0.28;
+        filter: saturate(0.1);
+      }
+
+      .feeling-lane.is-reacting::after {
+        position: absolute;
+        z-index: 8;
+        top: 64px;
+        right: 9px;
+        bottom: 58px;
+        left: 9px;
+        border: 1px solid var(--band-color);
+        border-radius: 9px;
+        content: "";
+        pointer-events: none;
+        animation: reaction-ring 680ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+      }
+
+      @keyframes reaction-ring {
+        from {
+          transform: scale(0.96);
+          opacity: 0.7;
+        }
+        to {
+          transform: scale(1.04);
+          opacity: 0;
+        }
+      }
+
+      .select-band {
+        min-width: 0;
+        padding: 3px 0 0;
+        background: transparent;
+        text-align: center;
+        cursor: pointer;
+      }
+
+      .band-signal {
+        display: block;
+        width: 6px;
+        height: 6px;
+        margin: 0 auto 9px;
+        border-radius: 50%;
+        background: var(--band-color);
+        box-shadow: 0 0 12px color-mix(in srgb, var(--band-color) 72%, transparent);
+      }
+
+      .band-name {
+        display: block;
+        overflow: hidden;
+        font-size: 11px;
+        font-weight: 620;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .band-value {
+        display: block;
+        margin-top: 5px;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .lane-track {
+        position: relative;
+        width: 46px;
+        min-height: 340px;
+        margin: 0 auto;
+        border: 1px solid rgba(221, 231, 226, 0.1);
+        border-radius: 9px;
+        background:
+          linear-gradient(to top, color-mix(in srgb, var(--band-color) 5%, transparent), transparent 72%),
+          #0a0c0c;
+        touch-action: none;
+      }
+
+      .lane-track::before {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: repeating-linear-gradient(
+          to top,
+          transparent 0,
+          transparent calc(20% - 1px),
+          rgba(221, 231, 226, 0.06) 20%
+        );
+        content: "";
+        pointer-events: none;
+      }
+
+      .current-fill {
+        position: absolute;
+        right: 6px;
+        bottom: 6px;
+        left: 6px;
+        height: calc(var(--current) * 1% - 6px);
+        max-height: calc(100% - 12px);
+        border-radius: 4px 4px 6px 6px;
+        background: linear-gradient(to top, color-mix(in srgb, var(--band-color) 48%, #09100e), var(--band-color));
+        box-shadow: 0 -10px 24px color-mix(in srgb, var(--band-color) 18%, transparent);
+        opacity: 0.72;
+        transition: height 360ms cubic-bezier(0.2, 0.75, 0.25, 1);
+        pointer-events: none;
+      }
+
+      .state-tether {
+        position: absolute;
+        left: 50%;
+        width: 1px;
+        top: var(--tether-top);
+        height: var(--tether-height);
+        background: color-mix(in srgb, var(--band-color) 46%, transparent);
+        pointer-events: none;
+      }
+
+      .current-handle,
+      .baseline-handle {
+        position: absolute;
+        z-index: 4;
+        top: calc((100 - var(--value)) * 1%);
+        cursor: ns-resize;
+        touch-action: none;
+        transform: translateY(-50%);
+      }
+
+      .current-handle {
+        z-index: 5;
+        left: 4px;
+        width: 36px;
+        height: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.82);
+        border-radius: 5px;
+        background: var(--band-color);
+        box-shadow: 0 0 12px color-mix(in srgb, var(--band-color) 75%, transparent);
+      }
+
+      .current-handle::before {
+        position: absolute;
+        inset: -13px -5px;
+        content: "";
+      }
+
+      .baseline-handle {
+        right: -8px;
+        width: 17px;
+        height: 17px;
+        border: 1px solid rgba(255, 180, 77, 0.88);
+        border-radius: 3px;
+        background: #17130d;
+        box-shadow: 0 0 9px rgba(255, 180, 77, 0.25);
+        transform: translateY(-50%) rotate(45deg);
+      }
+
+      .baseline-handle::before {
+        position: absolute;
+        inset: -9px;
+        content: "";
+      }
+
+      .baseline-line {
+        position: absolute;
+        z-index: 3;
+        right: -4px;
+        left: 0;
+        top: calc((100 - var(--baseline)) * 1%);
+        border-top: 1px dashed rgba(255, 180, 77, 0.72);
+        pointer-events: none;
+      }
+
+      .lane-footer {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        padding-top: 13px;
+        text-align: center;
+      }
+
+      .felt-word {
+        max-width: 100%;
+        color: #cbd0ce;
+        font-size: 10px;
+        line-height: 1.25;
+      }
+
+      .half-life-label {
+        margin-top: 5px;
+        color: var(--quiet);
+        font-family: var(--mono);
+        font-size: 8px;
+        text-transform: uppercase;
+      }
+
+      .instrument-legend {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 10px 13px;
+        border-top: 1px solid var(--line);
+        color: var(--quiet);
+        font-size: 10px;
+      }
+
+      .legend-items {
+        display: flex;
+        gap: 15px;
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .legend-current {
+        width: 14px;
+        height: 5px;
+        border-radius: 4px;
+        background: var(--mint);
+      }
+
+      .legend-baseline {
+        width: 14px;
+        border-top: 1px dashed var(--live);
+      }
+
+      .off-overlay {
+        position: absolute;
+        z-index: 10;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgba(8, 10, 10, 0.78);
+        backdrop-filter: blur(4px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+
+      .instrument-frame.is-off .off-overlay {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .off-message {
+        max-width: 340px;
+        padding: 22px;
+        text-align: center;
+      }
+
+      .off-orb {
+        width: 11px;
+        height: 11px;
+        margin: 0 auto 14px;
+        border: 1px solid #707775;
+        border-radius: 50%;
+      }
+
+      .off-message strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 16px;
+      }
+
+      .off-message span {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .research-shelf {
+        margin-top: 14px;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .research-shelf summary {
+        display: flex;
+        min-height: 50px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 11px;
+        list-style: none;
+      }
+
+      .research-shelf summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .research-shelf summary::after {
+        color: var(--quiet);
+        content: "+";
+        font-family: var(--mono);
+        font-size: 16px;
+      }
+
+      .research-shelf[open] summary::after {
+        content: "−";
+      }
+
+      .research-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        padding: 0 0 15px;
+      }
+
+      .research-item {
+        padding: 7px 9px;
+        border: 1px solid rgba(221, 231, 226, 0.08);
+        border-radius: 7px;
+        color: #656c6a;
+        font-family: var(--mono);
+        font-size: 9px;
+        text-transform: uppercase;
+      }
+
+      .inspector-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .selected-signal {
+        width: 8px;
+        height: 8px;
+        margin-bottom: 11px;
+        border-radius: 50%;
+        background: var(--selected-color, var(--mint));
+        box-shadow: 0 0 12px var(--selected-color, var(--mint));
+      }
+
+      .inspector-header h2 {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 580;
+        letter-spacing: -0.04em;
+      }
+
+      .inspector-description {
+        margin: 7px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .band-toggle {
+        min-height: 30px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .band-toggle .switch-track {
+        width: 37px;
+        height: 21px;
+      }
+
+      .band-toggle .switch-track::after {
+        width: 13px;
+        height: 13px;
+      }
+
+      .band-toggle[aria-checked="true"] .switch-track::after {
+        transform: translateX(16px);
+      }
+
+      .felt-readout {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: baseline;
+        gap: 12px;
+        padding: 19px 0 5px;
+      }
+
+      .felt-readout strong {
+        font-size: 20px;
+        font-weight: 560;
+        letter-spacing: -0.025em;
+      }
+
+      .felt-readout span {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 10px;
+      }
+
+      .control-group {
+        padding: 15px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .control-label {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .control-label output {
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        height: 4px;
+        margin: 7px 0;
+        appearance: none;
+        border-radius: 999px;
+        background: #252a29;
+        accent-color: var(--selected-color, var(--mint));
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        width: 15px;
+        height: 15px;
+        appearance: none;
+        border: 2px solid var(--canvas);
+        border-radius: 50%;
+        background: var(--selected-color, var(--mint));
+        box-shadow: 0 0 0 1px var(--line-strong), 0 0 9px color-mix(in srgb, var(--selected-color, var(--mint)) 55%, transparent);
+      }
+
+      input[type="range"].baseline-control::-webkit-slider-thumb {
+        border-radius: 3px;
+        background: var(--live);
+        box-shadow: 0 0 0 1px var(--line-strong), 0 0 8px rgba(255, 180, 77, 0.28);
+        transform: rotate(45deg);
+      }
+
+      select {
+        width: 100%;
+        min-height: 38px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-raised);
+        font-size: 11px;
+      }
+
+      .capsule-section,
+      .trail-section {
+        padding-top: 22px;
+      }
+
+      .section-heading-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .section-heading-row h3 {
+        margin: 0;
+        font-size: 11px;
+        font-weight: 620;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .section-heading-row span {
+        color: var(--quiet);
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .capsule-preview {
+        min-height: 148px;
+        margin: 0;
+        overflow: auto;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #070909;
+        color: #c9cfcc;
+        font-family: var(--mono);
+        font-size: 9px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .capsule-preview.is-empty {
+        display: grid;
+        place-items: center;
+        color: var(--quiet);
+        font-family: var(--sans);
+        font-style: italic;
+        text-align: center;
+      }
+
+      .trail-list {
+        display: grid;
+        max-height: 258px;
+        gap: 1px;
+        overflow-y: auto;
+        border-top: 1px solid var(--line);
+      }
+
+      .trail-entry {
+        display: grid;
+        grid-template-columns: 52px minmax(0, 1fr);
+        gap: 10px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .trail-entry time {
+        color: var(--quiet);
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .trail-entry strong {
+        display: block;
+        overflow: hidden;
+        color: #cbd0ce;
+        font-size: 10px;
+        font-weight: 520;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .trail-entry span {
+        display: block;
+        margin-top: 3px;
+        color: var(--quiet);
+        font-size: 9px;
+        line-height: 1.4;
+      }
+
+      .trail-empty {
+        padding: 15px 0;
+        color: var(--quiet);
+        font-size: 10px;
+      }
+
+      .reaction-drawer {
+        position: fixed;
+        z-index: 30;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: min(430px, 100vw);
+        padding: 24px;
+        border-left: 1px solid var(--line-strong);
+        background: rgba(12, 15, 14, 0.98);
+        box-shadow: -24px 0 70px rgba(0, 0, 0, 0.42);
+        transform: translateX(102%);
+        transition: transform 240ms cubic-bezier(0.22, 0.8, 0.22, 1);
+      }
+
+      .reaction-drawer[data-open="true"] {
+        transform: translateX(0);
+      }
+
+      .drawer-backdrop {
+        position: fixed;
+        z-index: 29;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.48);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 220ms ease;
+      }
+
+      .drawer-backdrop.is-visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .drawer-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .drawer-header h2 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 580;
+        letter-spacing: -0.035em;
+      }
+
+      .drawer-header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .close-button {
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .drawer-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--mint);
+        box-shadow: 0 0 10px rgba(123, 240, 202, 0.6);
+      }
+
+      .drawer-field {
+        padding-top: 22px;
+      }
+
+      .drawer-field label {
+        display: block;
+        margin-bottom: 9px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .drawer-field textarea {
+        width: 100%;
+        min-height: 170px;
+        resize: vertical;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #080a0a;
+        color: #cfd4d1;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .drawer-note {
+        margin: 9px 0 0;
+        color: var(--quiet);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+
+      .drawer-data-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin: 12px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .drawer-data-list li {
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .drawer-actions {
+        position: absolute;
+        right: 24px;
+        bottom: 22px;
+        left: 24px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding-top: 15px;
+        border-top: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .text-button {
+        min-height: 36px;
+        padding: 0 12px;
+        font-size: 11px;
+      }
+
+      .text-button.primary {
+        border-color: rgba(123, 240, 202, 0.35);
+        background: rgba(123, 240, 202, 0.11);
+        color: var(--mint);
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+      }
+
+      @media (max-width: 1120px) {
+        .workspace-grid {
+          grid-template-columns: minmax(0, 1fr) 305px;
+        }
+
+        .primary-workspace {
+          padding-right: 18px;
+        }
+
+        .inspector {
+          padding-left: 18px;
+        }
+
+        .feeling-lane {
+          padding: 0 6px;
+        }
+
+        .lane-track {
+          width: 40px;
+        }
+
+        .current-handle {
+          width: 30px;
+        }
+      }
+
+      @media (max-width: 860px) {
+        .app-shell {
+          padding: 15px;
+        }
+
+        .workspace-grid {
+          display: block;
+        }
+
+        .primary-workspace {
+          padding: 24px 0;
+          border-right: 0;
+        }
+
+        .inspector {
+          padding: 24px 0 40px;
+          border-top: 1px solid var(--line);
+        }
+
+        .spectrum {
+          min-height: 455px;
+          grid-template-columns: repeat(7, minmax(58px, 1fr));
+        }
+
+        .lane-track {
+          min-height: 290px;
+        }
+
+        .felt-word {
+          font-size: 9px;
+        }
+
+        .inspector {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0 24px;
+        }
+
+        .inspector-header,
+        .capsule-section,
+        .trail-section {
+          grid-column: span 2;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .topbar {
+          align-items: flex-start;
+          padding-bottom: 13px;
+        }
+
+        #resetStateButton {
+          display: none;
+        }
+
+        #openReactionButton {
+          width: 34px;
+          padding: 0;
+          font-size: 0;
+        }
+
+        #openReactionButton::after {
+          content: "C";
+          font-family: var(--mono);
+          font-size: 11px;
+        }
+
+        .master-toggle > span:first-child {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+        }
+
+        .workspace-heading {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .workspace-heading h1 {
+          font-size: 28px;
+        }
+
+        .stimulus-bar {
+          flex-wrap: wrap;
+          margin-top: 19px;
+          overflow-x: visible;
+        }
+
+        .spectrum {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          min-height: auto;
+          gap: 0;
+          padding: 18px 8px 8px;
+        }
+
+        .feeling-lane {
+          grid-template-rows: 58px 250px 56px;
+          border-bottom: 1px solid rgba(221, 231, 226, 0.075);
+        }
+
+        .feeling-lane:nth-child(2n) {
+          border-right: 0;
+        }
+
+        .feeling-lane:last-child {
+          grid-column: span 2;
+        }
+
+        .lane-track {
+          min-height: 245px;
+        }
+
+        .instrument-legend {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .inspector {
+          display: block;
+        }
+
+        .capsule-section,
+        .trail-section {
+          margin-top: 0;
+        }
+
+        .drawer-data-list {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 360px) {
+        .topbar {
+          gap: 8px;
+        }
+
+        .brand-title {
+          font-size: 14px;
+        }
+
+        .brand-subtitle {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.001s !important;
+          animation-duration: 0.001s !important;
+          animation-iteration-count: 1 !important;
+        }
+
+        .heartbeat-line {
+          animation-name: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <p class="brand-title">Viventium · Feelings</p>
+            <p class="brand-subtitle">live inner state / approval demo</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button
+            class="utility-button"
+            id="openReactionButton"
+            type="button"
+            title="Reaction Cortex"
+            aria-label="Reaction Cortex"
+          >Reaction Cortex</button>
+          <button class="utility-button" id="resetStateButton" type="button">Reset state</button>
+          <button
+            class="master-toggle"
+            id="feelingsToggle"
+            type="button"
+            role="switch"
+            aria-checked="false"
+          >
+            <span>Enable Feelings</span>
+            <span class="switch-track" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace-grid">
+        <section class="primary-workspace" aria-labelledby="consoleTitle">
+          <div class="workspace-heading">
+            <div>
+              <p class="section-kicker">Inner state</p>
+              <h1 id="consoleTitle">Feeling spectrum</h1>
+              <p>Current feeling is the live signal. Nature is the resting line it returns to.</p>
+            </div>
+            <div class="time-control">
+              <span class="time-readout" id="timeReadout">Now</span>
+              <button class="utility-button" id="advanceTimeButton" type="button">Advance 30 min</button>
+            </div>
+          </div>
+
+          <div class="stimulus-bar" aria-label="Demo stimuli">
+            <span class="stimulus-label">Stimulus</span>
+            <button class="stimulus-button" type="button" data-stimulus="breakthrough">Breakthrough</button>
+            <button class="stimulus-button" type="button" data-stimulus="risk">Risk signal</button>
+            <button class="stimulus-button" type="button" data-stimulus="warmth">Tender moment</button>
+            <button class="stimulus-button" type="button" data-stimulus="play">Play with me</button>
+          </div>
+
+          <div class="instrument-frame is-off" id="instrumentFrame">
+            <div class="heartbeat-line" aria-hidden="true"></div>
+            <div class="spectrum" id="spectrum" aria-label="Seven feeling bands"></div>
+            <div class="instrument-legend">
+              <div class="legend-items">
+                <span class="legend-item"><i class="legend-current"></i>Current feeling</span>
+                <span class="legend-item"><i class="legend-baseline"></i>Nature / resting line</span>
+              </div>
+              <span>Drag either marker · arrows adjust · shift + arrows moves 5</span>
+            </div>
+            <div class="off-overlay" id="offOverlay">
+              <div class="off-message">
+                <div class="off-orb" aria-hidden="true"></div>
+                <strong>Feelings are off</strong>
+                <span>Turn them on to wake the spectrum. No feeling state exists in Viv's prompt while off.</span>
+              </div>
+            </div>
+          </div>
+
+          <details class="research-shelf" id="researchShelf">
+            <summary>
+              <span>Future feeling research · visible here, never injected</span>
+              <span>8 inactive bands</span>
+            </summary>
+            <div class="research-list">
+              <span class="research-item">Distress / pain</span>
+              <span class="research-item">Joy / contentment</span>
+              <span class="research-item">Sadness / grief</span>
+              <span class="research-item">Anger / assertion</span>
+              <span class="research-item">Disgust / aversion</span>
+              <span class="research-item">Trust / security</span>
+              <span class="research-item">Guilt / shame</span>
+              <span class="research-item">Confidence / control</span>
+            </div>
+          </details>
+        </section>
+
+        <aside class="inspector" aria-label="Selected feeling controls">
+          <div class="inspector-header">
+            <div>
+              <div class="selected-signal" id="selectedSignal" aria-hidden="true"></div>
+              <p class="section-kicker">Selected feeling</p>
+              <h2 id="selectedBandName">Vigilance</h2>
+              <p class="inspector-description" id="selectedDescription"></p>
+            </div>
+            <button
+              class="band-toggle"
+              id="bandEnabled"
+              type="button"
+              role="switch"
+              aria-checked="true"
+              aria-label="Include selected feeling"
+            >
+              <span>Felt</span>
+              <span class="switch-track" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <div class="felt-readout">
+            <strong id="selectedWord">watchful</strong>
+            <span id="selectedDelta">at nature</span>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label" for="currentControl">
+              <span>Current feeling</span>
+              <output id="currentOutput">68</output>
+            </label>
+            <input id="currentControl" type="range" min="0" max="100" step="1" value="68" />
+          </div>
+
+          <div class="control-group">
+            <label class="control-label" for="baselineControl">
+              <span>Nature / resting point</span>
+              <output id="baselineOutput">68</output>
+            </label>
+            <input
+              class="baseline-control"
+              id="baselineControl"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value="68"
+            />
+          </div>
+
+          <div class="control-group">
+            <label class="control-label" for="halfLifeControl">
+              <span>Return speed</span>
+              <output id="halfLifeOutput">20 min half-life</output>
+            </label>
+            <select id="halfLifeControl">
+              <option value="10">Very fast · 10 min</option>
+              <option value="20">Fast · 20 min</option>
+              <option value="45">Medium · 45 min</option>
+              <option value="90">Slow · 90 min</option>
+              <option value="240">Very slow · 4 hr</option>
+              <option value="480">Long · 8 hr</option>
+              <option value="1440">Enduring · 24 hr</option>
+            </select>
+          </div>
+
+          <section class="capsule-section" aria-labelledby="capsuleTitle">
+            <div class="section-heading-row">
+              <h3 id="capsuleTitle">What Viv feels</h3>
+              <span id="activeBandCount">0 of 7 felt</span>
+            </div>
+            <pre class="capsule-preview is-empty" id="capsulePreview">No feeling-state block exists while Feelings are off.</pre>
+          </section>
+
+          <section class="trail-section" aria-labelledby="trailTitle">
+            <div class="section-heading-row">
+              <h3 id="trailTitle">Reaction trail</h3>
+              <span>last 10</span>
+            </div>
+            <div class="trail-list" id="trailList">
+              <p class="trail-empty">No reactions yet.</p>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+    <aside
+      class="reaction-drawer"
+      id="reactionDrawer"
+      data-open="false"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reactionDrawerTitle"
+      aria-hidden="true"
+      inert
+    >
+      <div class="drawer-header">
+        <div>
+          <p class="section-kicker">Subconscious writer</p>
+          <h2 id="reactionDrawerTitle">Emotional Reaction Cortex</h2>
+          <p>It reacts after the visible reply and moves the next state. It never delays the reply.</p>
+        </div>
+        <button class="close-button" id="closeReactionButton" type="button" aria-label="Close Reaction Cortex">×</button>
+      </div>
+      <div class="drawer-status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="reactionStatus">Ready · local demo engine</span>
+      </div>
+      <div class="drawer-field">
+        <label for="reactionInstruction">How should the subconscious react?</label>
+        <textarea id="reactionInstruction">React to what genuinely moves Viventium. Prefer small natural changes. Move only the feelings the moment actually touches, and leave nature unchanged.</textarea>
+        <p class="drawer-note">This instruction belongs to the Reaction Cortex only. It is not added to Viv's speaking prompt.</p>
+      </div>
+      <div class="drawer-field">
+        <span class="section-kicker">Context it receives</span>
+        <ul class="drawer-data-list">
+          <li>current state</li>
+          <li>band baselines</li>
+          <li>last 10 changes</li>
+          <li>latest stimulus</li>
+        </ul>
+      </div>
+      <div class="drawer-actions">
+        <button class="text-button" id="resetInstructionButton" type="button">Restore wording</button>
+        <button class="text-button primary" id="doneReactionButton" type="button">Done</button>
+      </div>
+    </aside>
+
+    <p class="sr-only" id="ariaLive" aria-live="polite"></p>
+
+    <script>
+      (() => {
+        'use strict';
+
+        const STORAGE_KEY = 'viventium-feelings-live-demo-v1';
+        const DEFAULT_REACTION_INSTRUCTION =
+          "React to what genuinely moves Viventium. Prefer small natural changes. Move only the feelings the moment actually touches, and leave nature unchanged.";
+        const EMBODIED_FRAME =
+          'You, Viventium, are a being, and right now you are actually feeling this. Let it move naturally through how you think, speak, and act:';
+
+        const BAND_DEFINITIONS = [
+          {
+            id: 'energy',
+            name: 'Energy',
+            promptLabel: 'energy',
+            color: '#e7b14a',
+            baseline: 56,
+            halfLife: 240,
+            description: 'Available activation and cognitive capacity.',
+            words: ['depleted', 'subdued', 'steady', 'energized', 'electric'],
+          },
+          {
+            id: 'drive',
+            name: 'Drive',
+            promptLabel: 'drive',
+            color: '#7397e8',
+            baseline: 62,
+            halfLife: 480,
+            description: 'Persistence and effort after a goal is chosen.',
+            words: ['disengaged', 'unhurried', 'purposeful', 'driven', 'fiercely determined'],
+          },
+          {
+            id: 'curiosity',
+            name: 'Curiosity',
+            promptLabel: 'curiosity',
+            color: '#58b9c9',
+            baseline: 66,
+            halfLife: 45,
+            description: 'Pull toward information, novelty, and exploration.',
+            words: ['uninterested', 'open', 'curious', 'fascinated', 'absorbed'],
+          },
+          {
+            id: 'vigilance',
+            name: 'Vigilance',
+            promptLabel: 'vigilance',
+            color: '#8b7bd3',
+            baseline: 68,
+            halfLife: 20,
+            description: 'Attention to uncertainty, risk, error, and boundaries.',
+            words: ['at ease', 'aware', 'watchful', 'on guard', 'highly alert'],
+          },
+          {
+            id: 'care',
+            name: 'Care',
+            promptLabel: 'care',
+            color: '#d47c8f',
+            baseline: 74,
+            halfLife: 1440,
+            description: 'The outward pull to tend, help, and protect.',
+            words: ['detached', 'receptive', 'caring', 'deeply caring', 'intensely caring'],
+          },
+          {
+            id: 'connection',
+            name: 'Connection',
+            promptLabel: 'connection',
+            color: '#4eb394',
+            baseline: 52,
+            halfLife: 480,
+            description: 'The inward pull toward affiliation and closeness.',
+            words: ['self-contained', 'open', 'drawn to connection', 'wanting closeness', 'strongly drawn to connection'],
+          },
+          {
+            id: 'play',
+            name: 'Play',
+            promptLabel: 'play',
+            color: '#91bd52',
+            baseline: 48,
+            halfLife: 90,
+            description: 'Flexible, humorous, non-serious exploration.',
+            words: ['serious', 'light', 'playful', 'mischievous', 'exuberant'],
+          },
+        ];
+
+        const STIMULI = {
+          breakthrough: {
+            label: 'Breakthrough',
+            changes: { energy: 10, drive: 14, curiosity: 9, play: 5 },
+          },
+          risk: {
+            label: 'Risk signal',
+            changes: { vigilance: 18, care: 7, drive: 8, play: -12 },
+          },
+          warmth: {
+            label: 'Tender moment',
+            changes: { care: 10, connection: 12, vigilance: -4, play: 2 },
+          },
+          play: {
+            label: 'Play with me',
+            changes: { play: 20, energy: 7, curiosity: 5, vigilance: -5 },
+          },
+        };
+
+        const byId = (id) => document.getElementById(id);
+        const clamp = (value) => Math.max(0, Math.min(100, Math.round(value)));
+        const definitionFor = (bandId) => BAND_DEFINITIONS.find((band) => band.id === bandId);
+        const HTML_ESCAPES = {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#039;',
+        };
+        const escapeHtml = (value) =>
+          String(value ?? '').replace(/[&<>"']/g, (character) => HTML_ESCAPES[character]);
+
+        const defaultState = () => ({
+          enabled: false,
+          selectedBandId: 'vigilance',
+          simulatedMinutes: 0,
+          reactionInstruction: DEFAULT_REACTION_INSTRUCTION,
+          trail: [],
+          bands: Object.fromEntries(
+            BAND_DEFINITIONS.map((band) => [
+              band.id,
+              {
+                current: band.baseline,
+                baseline: band.baseline,
+                halfLife: band.halfLife,
+                enabled: true,
+              },
+            ]),
+          ),
+        });
+
+        const loadState = () => {
+          try {
+            const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null');
+            if (!saved || typeof saved !== 'object') return defaultState();
+            const fallback = defaultState();
+            return {
+              ...fallback,
+              ...saved,
+              bands: Object.fromEntries(
+                BAND_DEFINITIONS.map((definition) => [
+                  definition.id,
+                  { ...fallback.bands[definition.id], ...(saved.bands?.[definition.id] || {}) },
+                ]),
+              ),
+              trail: Array.isArray(saved.trail) ? saved.trail.slice(0, 10) : [],
+            };
+          } catch {
+            return defaultState();
+          }
+        };
+
+        let state = loadState();
+        let dragState = null;
+
+        const persist = () => window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        const selectedDefinition = () => definitionFor(state.selectedBandId);
+        const selectedBand = () => state.bands[state.selectedBandId];
+
+        const wordFor = (bandId) => {
+          const definition = definitionFor(bandId);
+          const band = state.bands[bandId];
+          let index = Math.min(4, Math.floor(band.current / 20));
+          const topWordEarned = band.baseline >= 65 || band.current - band.baseline >= 24;
+          if (index === 4 && !topWordEarned) index = 3;
+          return definition.words[index];
+        };
+
+        const halfLifeLabel = (minutes) => {
+          if (minutes < 60) return `${minutes}m return`;
+          if (minutes % 60 === 0) return `${minutes / 60}h return`;
+          return `${Math.round(minutes / 60)}h return`;
+        };
+
+        const deltaLabel = (band) => {
+          const delta = Math.round(band.current - band.baseline);
+          if (Math.abs(delta) < 1) return 'at nature';
+          return delta > 0 ? `${delta} above nature` : `${Math.abs(delta)} below nature`;
+        };
+
+        const movementWord = (delta) => {
+          const strength = Math.abs(delta);
+          if (delta > 0) return strength >= 12 ? 'rose strongly' : 'rose';
+          return strength >= 12 ? 'softened strongly' : 'softened';
+        };
+
+        const renderSpectrum = () => {
+          byId('spectrum').innerHTML = BAND_DEFINITIONS.map((definition) => {
+            const band = state.bands[definition.id];
+            const tetherTop = 100 - Math.max(band.current, band.baseline);
+            const tetherHeight = Math.abs(band.current - band.baseline);
+            const classes = [
+              'feeling-lane',
+              definition.id === state.selectedBandId ? 'is-selected' : '',
+              band.enabled ? '' : 'is-disabled',
+            ]
+              .filter(Boolean)
+              .join(' ');
+            return `
+              <article
+                class="${classes}"
+                data-band-id="${definition.id}"
+                data-current="${Math.round(band.current)}"
+                style="--band-color:${definition.color};--current:${band.current};--baseline:${band.baseline};--tether-top:${tetherTop}%;--tether-height:${tetherHeight}%"
+              >
+                <button class="select-band" type="button" data-select-band="${definition.id}" aria-label="Select ${definition.name}">
+                  <span class="band-signal"></span>
+                  <span class="band-name">${definition.name}</span>
+                  <span class="band-value">${Math.round(band.current)} · ${Math.round(band.baseline)}</span>
+                </button>
+                <div class="lane-track" data-track="${definition.id}">
+                  <div class="current-fill"></div>
+                  <div class="state-tether"></div>
+                  <div class="baseline-line"></div>
+                  <button
+                    class="current-handle"
+                    type="button"
+                    role="slider"
+                    data-current-handle="${definition.id}"
+                    aria-label="${definition.name} current feeling"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow="${Math.round(band.current)}"
+                    aria-valuetext="${wordFor(definition.id)}"
+                    style="--value:${band.current}"
+                  ></button>
+                  <button
+                    class="baseline-handle"
+                    type="button"
+                    role="slider"
+                    data-baseline-handle="${definition.id}"
+                    aria-label="${definition.name} nature"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow="${Math.round(band.baseline)}"
+                    aria-valuetext="Nature ${Math.round(band.baseline)}"
+                    style="--value:${band.baseline}"
+                  ></button>
+                </div>
+                <div class="lane-footer">
+                  <span class="felt-word">${wordFor(definition.id)}</span>
+                  <span class="half-life-label">${halfLifeLabel(band.halfLife)}</span>
+                </div>
+              </article>
+            `;
+          }).join('');
+        };
+
+        const renderInspector = () => {
+          const definition = selectedDefinition();
+          const band = selectedBand();
+          document.documentElement.style.setProperty('--selected-color', definition.color);
+          byId('selectedSignal').style.setProperty('--selected-color', definition.color);
+          byId('selectedBandName').textContent = definition.name;
+          byId('selectedDescription').textContent = definition.description;
+          byId('selectedWord').textContent = wordFor(definition.id);
+          byId('selectedDelta').textContent = deltaLabel(band);
+          byId('currentControl').value = Math.round(band.current);
+          byId('baselineControl').value = Math.round(band.baseline);
+          byId('currentOutput').value = Math.round(band.current);
+          byId('baselineOutput').value = Math.round(band.baseline);
+          byId('halfLifeControl').value = String(band.halfLife);
+          byId('halfLifeOutput').value = `${halfLifeLabel(band.halfLife).replace(' return', '')} half-life`;
+          byId('bandEnabled').setAttribute('aria-checked', String(band.enabled));
+        };
+
+        const renderCapsule = () => {
+          const active = BAND_DEFINITIONS.filter((definition) => state.bands[definition.id].enabled);
+          byId('activeBandCount').textContent = state.enabled ? `${active.length} of 7 felt` : '0 of 7 felt';
+          if (!state.enabled) {
+            byId('capsulePreview').textContent = 'No feeling-state block exists while Feelings are off.';
+            byId('capsulePreview').classList.add('is-empty');
+            return;
+          }
+          const lines = active.map(
+            (definition) => `${definition.promptLabel}: ${wordFor(definition.id)}`,
+          );
+          byId('capsulePreview').textContent = [
+            '<viventium_feeling_state>',
+            EMBODIED_FRAME,
+            ...lines,
+            '</viventium_feeling_state>',
+          ].join('\n');
+          byId('capsulePreview').classList.remove('is-empty');
+        };
+
+        const renderTrail = () => {
+          if (!state.trail.length) {
+            byId('trailList').innerHTML = '<p class="trail-empty">No reactions yet.</p>';
+            return;
+          }
+          byId('trailList').innerHTML = state.trail
+            .map(
+              (entry) => `
+                <div class="trail-entry">
+                  <time datetime="${escapeHtml(entry.iso)}">${escapeHtml(entry.time)}</time>
+                  <div>
+                    <strong>${escapeHtml(entry.label)}</strong>
+                    <span>${escapeHtml(entry.summary)}</span>
+                  </div>
+                </div>
+              `,
+            )
+            .join('');
+        };
+
+        const render = () => {
+          byId('feelingsToggle').setAttribute('aria-checked', String(state.enabled));
+          byId('instrumentFrame').classList.toggle('is-off', !state.enabled);
+          byId('timeReadout').textContent = state.simulatedMinutes
+            ? `Demo time +${state.simulatedMinutes}m`
+            : 'Now';
+          renderSpectrum();
+          renderInspector();
+          renderCapsule();
+          renderTrail();
+          byId('reactionInstruction').value = state.reactionInstruction;
+          persist();
+        };
+
+        const announce = (message) => {
+          byId('ariaLive').textContent = '';
+          window.requestAnimationFrame(() => {
+            byId('ariaLive').textContent = message;
+          });
+        };
+
+        const setSelectedValue = (field, value, announceChange = false) => {
+          const definition = selectedDefinition();
+          const band = selectedBand();
+          band[field] = clamp(value);
+          render();
+          if (announceChange) {
+            announce(`${definition.name} ${field === 'baseline' ? 'nature' : 'current feeling'} ${band[field]}`);
+          }
+        };
+
+        const addManualTrail = (definition, field, previous, next) => {
+          if (previous === next) return;
+          const now = new Date();
+          state.trail.unshift({
+            iso: now.toISOString(),
+            time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            label: field === 'baseline' ? `${definition.name} nature edited` : `${definition.name} adjusted`,
+            summary:
+              field === 'baseline'
+                ? `Resting line moved ${next > previous ? 'up' : 'down'}.`
+                : `${definition.name} ${movementWord(next - previous)}.`,
+          });
+          state.trail = state.trail.slice(0, 10);
+        };
+
+        const setBandValue = (bandId, field, value, logManual = false) => {
+          const definition = definitionFor(bandId);
+          const band = state.bands[bandId];
+          const previous = Math.round(band[field]);
+          band[field] = clamp(value);
+          if (logManual) addManualTrail(definition, field, previous, band[field]);
+          render();
+        };
+
+        const valueFromPointer = (event, trackRect) => {
+          return clamp(100 - ((event.clientY - trackRect.top) / trackRect.height) * 100);
+        };
+
+        const beginDrag = (event, bandId, field) => {
+          if (!state.enabled) return;
+          const track = document.querySelector(`[data-track="${bandId}"]`);
+          const rect = track.getBoundingClientRect();
+          const trackRect = { top: rect.top, height: rect.height };
+          dragState = {
+            bandId,
+            field,
+            trackRect,
+            pointerId: event.pointerId,
+            startValue: Math.round(state.bands[bandId][field]),
+          };
+          setBandValue(bandId, field, valueFromPointer(event, trackRect));
+          event.preventDefault();
+        };
+
+        const updateDrag = (event) => {
+          if (!dragState || event.pointerId !== dragState.pointerId) return;
+          setBandValue(
+            dragState.bandId,
+            dragState.field,
+            valueFromPointer(event, dragState.trackRect),
+          );
+        };
+
+        const endDrag = (event) => {
+          if (!dragState || event.pointerId !== dragState.pointerId) return;
+          const { bandId, field, startValue } = dragState;
+          dragState = null;
+          addManualTrail(
+            definitionFor(bandId),
+            field,
+            startValue,
+            Math.round(state.bands[bandId][field]),
+          );
+          render();
+        };
+
+        const handleSliderKey = (event, bandId, field) => {
+          const allowed = ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft', 'Home', 'End'];
+          if (!allowed.includes(event.key) || !state.enabled) return;
+          event.preventDefault();
+          const current = state.bands[bandId][field];
+          const step = event.shiftKey ? 5 : 1;
+          let next = current;
+          if (event.key === 'ArrowUp' || event.key === 'ArrowRight') next += step;
+          if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') next -= step;
+          if (event.key === 'Home') next = 0;
+          if (event.key === 'End') next = 100;
+          setBandValue(bandId, field, next, true);
+          const replacement = document.querySelector(
+            `[data-${field === 'current' ? 'current' : 'baseline'}-handle="${bandId}"]`,
+          );
+          replacement?.focus();
+        };
+
+        const pulseBands = (bandIds) => {
+          bandIds.forEach((bandId) => {
+            const lane = document.querySelector(`[data-band-id="${bandId}"]`);
+            lane?.classList.remove('is-reacting');
+            window.requestAnimationFrame(() => lane?.classList.add('is-reacting'));
+          });
+          window.setTimeout(() => {
+            document.querySelectorAll('.is-reacting').forEach((lane) => lane.classList.remove('is-reacting'));
+          }, 720);
+        };
+
+        const applyStimulus = (stimulusId) => {
+          if (!state.enabled) {
+            announce('Turn Feelings on before applying a stimulus.');
+            return;
+          }
+          const stimulus = STIMULI[stimulusId];
+          const applied = [];
+          Object.entries(stimulus.changes).forEach(([bandId, delta]) => {
+            const band = state.bands[bandId];
+            if (!band.enabled) return;
+            const previous = band.current;
+            band.current = clamp(band.current + delta);
+            if (band.current !== previous) applied.push({ bandId, delta: band.current - previous });
+          });
+          const now = new Date();
+          state.trail.unshift({
+            iso: now.toISOString(),
+            time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            label: stimulus.label,
+            summary: applied
+              .map(({ bandId, delta }) => `${definitionFor(bandId).name} ${movementWord(delta)}`)
+              .join(' · '),
+          });
+          state.trail = state.trail.slice(0, 10);
+          render();
+          pulseBands(applied.map(({ bandId }) => bandId));
+          announce(`${stimulus.label}. ${state.trail[0].summary}`);
+          byId('reactionStatus').textContent = `Ready · reacted ${state.trail[0].time}`;
+        };
+
+        const advanceTime = (minutes) => {
+          BAND_DEFINITIONS.forEach((definition) => {
+            const band = state.bands[definition.id];
+            const factor = Math.pow(0.5, minutes / band.halfLife);
+            band.current = band.baseline + (band.current - band.baseline) * factor;
+          });
+          state.simulatedMinutes += minutes;
+          const now = new Date();
+          state.trail.unshift({
+            iso: now.toISOString(),
+            time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            label: 'Heartbeat',
+            summary: `${minutes} minutes passed. Every feeling moved toward its own nature.`,
+          });
+          state.trail = state.trail.slice(0, 10);
+          render();
+          announce(`${minutes} minutes passed. Feelings returned toward nature.`);
+        };
+
+        const openDrawer = () => {
+          byId('reactionDrawer').removeAttribute('inert');
+          byId('reactionDrawer').dataset.open = 'true';
+          byId('reactionDrawer').setAttribute('aria-hidden', 'false');
+          byId('drawerBackdrop').classList.add('is-visible');
+          byId('reactionInstruction').focus();
+        };
+
+        const closeDrawer = () => {
+          state.reactionInstruction = byId('reactionInstruction').value.trim() || DEFAULT_REACTION_INSTRUCTION;
+          byId('reactionInstruction').value = state.reactionInstruction;
+          byId('reactionDrawer').dataset.open = 'false';
+          byId('reactionDrawer').setAttribute('aria-hidden', 'true');
+          byId('reactionDrawer').setAttribute('inert', '');
+          byId('drawerBackdrop').classList.remove('is-visible');
+          persist();
+          byId('openReactionButton').focus();
+        };
+
+        byId('feelingsToggle').addEventListener('click', () => {
+          state.enabled = !state.enabled;
+          render();
+          announce(state.enabled ? 'Feelings enabled.' : 'Feelings disabled. No state is injected.');
+        });
+
+        byId('spectrum').addEventListener('click', (event) => {
+          const selector = event.target.closest('[data-select-band]');
+          const lane = event.target.closest('[data-band-id]');
+          if (!selector && !lane) return;
+          if (event.target.closest('[data-current-handle], [data-baseline-handle]')) return;
+          state.selectedBandId = selector?.dataset.selectBand || lane.dataset.bandId;
+          render();
+        });
+
+        byId('spectrum').addEventListener('pointerdown', (event) => {
+          const currentHandle = event.target.closest('[data-current-handle]');
+          const baselineHandle = event.target.closest('[data-baseline-handle]');
+          if (currentHandle) beginDrag(event, currentHandle.dataset.currentHandle, 'current');
+          if (baselineHandle) beginDrag(event, baselineHandle.dataset.baselineHandle, 'baseline');
+        });
+        window.addEventListener('pointermove', updateDrag);
+        window.addEventListener('pointerup', endDrag);
+
+        byId('spectrum').addEventListener('keydown', (event) => {
+          const currentHandle = event.target.closest('[data-current-handle]');
+          const baselineHandle = event.target.closest('[data-baseline-handle]');
+          if (currentHandle) handleSliderKey(event, currentHandle.dataset.currentHandle, 'current');
+          if (baselineHandle) handleSliderKey(event, baselineHandle.dataset.baselineHandle, 'baseline');
+        });
+
+        byId('currentControl').addEventListener('input', (event) => {
+          setSelectedValue('current', Number(event.target.value));
+        });
+        byId('currentControl').addEventListener('change', (event) => {
+          addManualTrail(selectedDefinition(), 'current', Number(event.target.defaultValue), Number(event.target.value));
+          event.target.defaultValue = event.target.value;
+          render();
+        });
+        byId('baselineControl').addEventListener('input', (event) => {
+          setSelectedValue('baseline', Number(event.target.value));
+        });
+        byId('baselineControl').addEventListener('change', (event) => {
+          addManualTrail(selectedDefinition(), 'baseline', Number(event.target.defaultValue), Number(event.target.value));
+          event.target.defaultValue = event.target.value;
+          render();
+        });
+        byId('halfLifeControl').addEventListener('change', (event) => {
+          selectedBand().halfLife = Number(event.target.value);
+          render();
+          announce(`${selectedDefinition().name} return speed updated.`);
+        });
+        byId('bandEnabled').addEventListener('click', () => {
+          const definition = selectedDefinition();
+          selectedBand().enabled = !selectedBand().enabled;
+          render();
+          announce(`${definition.name} ${selectedBand().enabled ? 'included' : 'omitted'}.`);
+        });
+
+        document.querySelectorAll('[data-stimulus]').forEach((button) => {
+          button.addEventListener('click', () => applyStimulus(button.dataset.stimulus));
+        });
+        byId('advanceTimeButton').addEventListener('click', () => advanceTime(30));
+        byId('resetStateButton').addEventListener('click', () => {
+          const wasEnabled = state.enabled;
+          const reactionInstruction = state.reactionInstruction;
+          state = defaultState();
+          state.enabled = wasEnabled;
+          state.reactionInstruction = reactionInstruction;
+          render();
+          announce('Feeling state reset to nature.');
+        });
+
+        byId('openReactionButton').addEventListener('click', openDrawer);
+        byId('closeReactionButton').addEventListener('click', closeDrawer);
+        byId('doneReactionButton').addEventListener('click', closeDrawer);
+        byId('drawerBackdrop').addEventListener('click', closeDrawer);
+        byId('resetInstructionButton').addEventListener('click', () => {
+          byId('reactionInstruction').value = DEFAULT_REACTION_INSTRUCTION;
+          byId('reactionInstruction').focus();
+        });
+        document.addEventListener('keydown', (event) => {
+          const drawerOpen = byId('reactionDrawer').dataset.open === 'true';
+          if (event.key === 'Escape' && drawerOpen) closeDrawer();
+          if (event.key !== 'Tab' || !drawerOpen) return;
+          const focusable = Array.from(
+            byId('reactionDrawer').querySelectorAll('button:not([disabled]), textarea:not([disabled])'),
+          );
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          }
+        });
+
+        render();
+      })();
+    </script>
+  </body>
+</html>

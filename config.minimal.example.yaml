@@ -2,7 +2,7 @@ version: 1
 install:
   mode: native
 settings:
-  timezone: America/Toronto
+  timezone: local
 runtime:
   log_level: info
   profile: isolated
@@ -47,10 +47,39 @@ runtime:
       enabled: true
       active: true
       executor: glasshive_host
+  feelings:
+    available: true
+    default_enabled: false
+    agent_scope: all_agents
+    reaction:
+      activation_mode: always
+      provider: openai
+      model: gpt-5.6-terra
+      use_responses_api: true
+      reasoning_effort: none
+      fast: true
+      service_tier: priority
+      timeout_ms: 15000
+      fallback_provider: anthropic
+      fallback_model: claude-opus-4-8
+      activation_provider: groq
+      activation_model: qwen/qwen3.6-27b
+      activation_confidence_threshold: 0.55
+      activation_timeout_ms: 2000
+    bands:
+      energy: { enabled: true, baseline: 56, half_life_minutes: 240 }
+      mood: { enabled: true, baseline: 58, half_life_minutes: 360 }
+      drive: { enabled: true, baseline: 62, half_life_minutes: 480 }
+      curiosity: { enabled: true, baseline: 66, half_life_minutes: 45 }
+      vigilance: { enabled: true, baseline: 68, half_life_minutes: 20 }
+      care: { enabled: true, baseline: 74, half_life_minutes: 1440 }
+      connection: { enabled: true, baseline: 52, half_life_minutes: 480 }
+      openness: { enabled: true, baseline: 55, half_life_minutes: 180 }
+      play: { enabled: true, baseline: 48, half_life_minutes: 90 }
   memory_hardening:
     enabled: true
     schedule: "0 3 * * *"
-    timezone: America/Toronto
+    timezone: local
     operator_user_email: ""
     provider: ""
     lookback_days: 7
@@ -62,7 +91,7 @@ runtime:
     provider_profile: launch_ready_only
     anthropic_model: claude-opus-4-8
     anthropic_effort: xhigh
-    openai_model: gpt-5.5
+    openai_model: gpt-5.6-sol
     openai_reasoning_effort: xhigh
     transcripts:
       source_dir: ""
@@ -116,6 +145,9 @@ integrations:
       # Separate from the integrations.openclaw lab toggle below.
       default_worker_profile: codex-cli
       default_execution_mode: host
+      codex_model: gpt-5.6-sol
+      codex_reasoning_effort: xhigh
+      codex_xhigh_route_proven: true
   code_interpreter:
     enabled: false
   web_search:

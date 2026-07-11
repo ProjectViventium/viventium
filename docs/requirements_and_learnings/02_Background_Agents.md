@@ -27,8 +27,16 @@ For the manager-readable handbook, start with:
     must not substitute memory, recall, or file search for live inbox/workspace evidence.
 - Deep Research is a shipped web-research cortex:
   - its built-in source-of-truth contract must include `web_search`
-  - when its execution family is `openAI / gpt-5.4`, its shipped `model_parameters` must use
+  - when its execution family is `openAI / gpt-5.6-sol`, its shipped `model_parameters` must use
     `reasoning_effort: xhigh`, not Anthropic/Google-only thinking fields such as `thinkingBudget`
+  - it must use the Responses API because this is a reasoning-plus-tools workload
+- Red Team is a shipped adversarial decision-quality cortex:
+  - its built-in source-of-truth contract must include `web_search` so evidence-first checks can
+    actually use live evidence when runtime web search is enabled
+  - when its execution family is `openAI / gpt-5.6-sol`, its shipped and runtime-normalized
+    `model_parameters` must use `reasoning_effort: xhigh`, not Anthropic/Google-only thinking
+    fields such as `thinkingBudget`
+  - it must use the Responses API because this is a reasoning-plus-tools workload
 - Shipping a specialist background agent does not require the main Viventium agent to auto-activate
   it. In the current local baseline, the main agent keeps `Deep Research`, `MS365`, and `Google`
   background activation disabled. Live web/productivity execution should be handled by the
@@ -75,32 +83,33 @@ Authoritative execution matrix:
 
 | Agent | Shipped Mixed Baseline | OpenAI-only install | Anthropic-only install | OpenAI + Anthropic install |
 | --- | --- | --- | --- | --- |
-| Background Analysis | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
-| Confirmation Bias | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
-| Red Team | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.4` |
-| Deep Research | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.4` |
-| MS365 | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
-| Parietal Cortex | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
-| Pattern Recognition | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
-| Emotional Resonance | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
-| Strategic Planning | `anthropic / claude-opus-4-8` | `openAI / gpt-5.4` | `anthropic / claude-opus-4-8` | `anthropic / claude-opus-4-8` |
-| Viventium User Help | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `anthropic / claude-sonnet-4-5` |
-| Google | `openAI / gpt-5.4` | `openAI / gpt-5.4` | `anthropic / claude-sonnet-4-5` | `openAI / gpt-5.4` |
+| Viventium conscious | `openAI / gpt-5.6-sol / medium` | `openAI / gpt-5.6-sol / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / medium` |
+| Background Analysis | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
+| Confirmation Bias | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
+| Red Team | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / xhigh` |
+| Deep Research | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / xhigh` |
+| MS365 | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
+| Parietal Cortex | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
+| Pattern Recognition | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
+| Emotional Resonance | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
+| Strategic Planning | `openAI / gpt-5.6-sol / high` | `openAI / gpt-5.6-sol / high` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / high` |
+| Viventium User Help | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
+| Google | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
 
 Model inventory rule:
 
-- Do not configure a phantom Anthropic model to satisfy UI expectations. On the May 6, 2026 local
-  inventory, `claude-sonnet-4-7` is not exposed by source-of-truth model specs or the local runtime;
-  the launch-ready Sonnet family remains `claude-sonnet-4-5`.
-- Source-owned agents that rely on Anthropic models must declare a reachable `openAI / gpt-5.4`
-  fallback so local QA and user turns do not stall on Anthropic rate limits or subscription resets.
-  The fallback initializer may bypass a stale user OpenAI connected-account OAuth refresh only for
-  that recovery route and only when the platform OpenAI key is available; ordinary OpenAI
-  connected-account use still surfaces reconnect guidance. Phase B runtime owns retrying the
-  configured backup once for provider timeout/abort/recoverable provider failures; prompt-only
-  changes must not be used to hide those errors.
+- The built-in conscious/subconscious source uses only the connected-account-proven explicit
+  `gpt-5.6-sol` and `gpt-5.6-terra` slugs. Do not use the unsupported connected-account alias or
+  Luna on these built-ins merely because direct API-key inventory exposes them.
+- Every source-owned conscious/subconscious agent declares `anthropic / claude-opus-4-8` as its
+  text fallback. That route is usable only when Anthropic auth is configured for the user/runtime;
+  missing fallback auth must surface honestly rather than causing a silent model downgrade.
+  Phase B runtime owns retrying the configured backup once for provider timeout/abort/recoverable
+  provider failures; prompt-only changes must not be used to hide those errors.
 - Every built-in background cortex activation classifier uses
-  `groq / meta-llama/llama-4-scout-17b-16e-instruct` as the primary Phase A detector. It must
+  `groq / qwen/qwen3.6-27b` as the primary Phase A detector. Qwen thinking must be disabled with
+  `reasoning_effort: none`, its reasoning trace must stay hidden, and JSON-object mode plus a fixed
+  seed must keep the classifier fast and machine-readable. It must
   carry provider fallbacks: `xai / grok-4.20-non-reasoning` first, then `openai / gpt-5.4`, then
   `anthropic / claude-haiku-4-5`. This is a reliability contract for provider outages such as
   activation-provider 403/401/429 responses; it must not change activation intent semantics, add
@@ -113,14 +122,16 @@ Model inventory rule:
   `VIVENTIUM_CORTEX_EXECUTION_GUARD_GRACE_MS` may tune only that grace window, defaults to 15s,
   and is clamped between 0s and 60s.
 
-Anthropic Opus budgeting rule:
+Anthropic Opus fallback rule:
 
-- For background agents, Anthropic Opus is reserved for:
-  - `Red Team`
-  - `Deep Research`
-  - `Strategic Planning`
-- Other background agents must stay on Anthropic Sonnet when Anthropic is the selected execution
-  family so the install does not silently waste Opus tokens.
+- Opus 4.8 is the explicit fallback for every conscious/subconscious text route.
+- Fallback parameter bags remain provider-native: Red Team and Deep Research use
+  `thinkingBudget: 4000`, Strategic Planning uses `thinkingBudget: 2000`, and the retry path must
+  strip OpenAI-only `reasoning_effort` and `useResponsesApi` fields before Anthropic initialization.
+- On an Anthropic-only install, Opus 4.8 becomes the execution route for all built-in agents because
+  the preferred GPT-5.6 route is unavailable. This is an explicit quality-first fallback posture,
+  not a cost optimization; operators who need a cheaper Anthropic-only mix must use reviewed model
+  overrides rather than silently returning the shipped bundle to Sonnet.
 
 Canonical model-parameter rule:
 
@@ -131,7 +142,7 @@ Canonical model-parameter rule:
   - `thinkingBudget` or `thinking` surviving on an OpenAI execution bag
   - sampling controls such as `temperature`, `topP`, penalties, `n`, or `logprobs` surviving on an
     OpenAI reasoning-style execution bag known to reject sampling, such as `gpt-5`, `gpt-5-pro`,
-    Viventium's configured `gpt-5.4` runtime family, or `o1`/`o3`
+    Viventium's configured GPT-5.6 Sol/Terra runtime family, or `o1`/`o3`
 - The runtime normalization and built-in seed/upsert path must both resolve the canonical
   model-parameter bag for the final provider family instead of blindly merging stale keys.
 
@@ -188,7 +199,7 @@ Requirements:
 
 - Non-negotiable brain-inspired flow:
   1. Phase A starts with Groq-first activation detection. The primary detector is
-     `groq / meta-llama/llama-4-scout-17b-16e-instruct`; configured fallbacks are reliability
+     `groq / qwen/qwen3.6-27b`; configured fallbacks are reliability
      backups, not a semantic replacement for Groq-first behavior.
   2. Within the activation-detection wait budget, every activated background agent is passed into
      the main-agent Phase A context with its name, reason, confidence, and scope.
@@ -278,6 +289,11 @@ Requirements:
 - Phase B may still upsert structured cortex status/insight parts onto the Phase A message for
   durable progress/history. That parent content-part upsert is not a Phase A text replacement; the
   Phase A text and authored answer remain unchanged.
+- Runtime must persist Phase B status snapshots incrementally as cards change, not only after every
+  cortex finishes. Writes may be coalesced to the latest full snapshot, but the authoritative final
+  snapshot must drain older writes first so stale `activated`/`running` state cannot overwrite a
+  terminal result. A process interruption after a visible card must therefore leave the latest
+  successfully written state available to refresh/resume clients.
 - If the primary main model fails before visible assistant text and runtime retries a configured
   fallback model, the original Phase B execution still belongs to the same originating assistant
   message. Runtime must not erase, restart, or orphan that in-flight background work; durable
@@ -365,12 +381,15 @@ Requirements:
   model parameters after the source-of-truth copy is made.
 - The source-of-truth bundle and runtime canonical parameter map must not ship `temperature`,
   `topP`, penalties, `n`, `logprobs`, or related sampling fields for OpenAI no-sampling reasoning
-  runs such as `gpt-5`, dash-suffixed `gpt-5` reasoning variants, Viventium's configured `gpt-5.4`
-  runtime family, or `o1`/`o3`.
-- Do not blindly generalize the `gpt-5.4` runtime rule to every dotted `gpt-5.x` model id. Some
-  upstream OpenAI initialization paths treat versioned dotted IDs as sampling-capable; new dotted
-  model IDs must be added to the no-sampling compatibility set only after runtime evidence or an
-  upstream provider-contract change.
+  runs such as `gpt-5`, dash-suffixed `gpt-5` reasoning variants, Viventium's configured GPT-5.6
+  Sol/Terra runtime family, or `o1`/`o3`.
+- All GPT-5.6 conscious/subconscious bags set `useResponsesApi: true`; OpenAI documents Responses as
+  the required path for reasoning plus tools, while Chat Completions function tools are compatible
+  only at effective reasoning `none`.
+- The explicit effort map is part of the runtime contract: Sol/medium for the conscious agent,
+  Sol/xhigh for Red Team and Deep Research, Sol/high for Strategic Planning, Terra/medium for
+  Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition, and Terra/low
+  for MS365, Google, Emotional Resonance, and Viventium User Help.
 
 ## Memory Context Parity
 
@@ -445,17 +464,23 @@ Use this order so the fix stays surgical:
   Groq remains the first attempted classifier, but a slow primary attempt must not consume the
   entire turn when configured fallbacks are available. Runtime should use per-attempt activation
   timeouts so xAI/OpenAI/Anthropic fallbacks can rescue provider reachability failures without
-  changing activation semantics.
+  changing activation semantics. The per-attempt deadline must be enforced independently of the
+  provider client's `AbortSignal` behavior; a provider promise that ignores cancellation must still
+  yield to the next configured fallback.
+- Source-owned activation policy prompts may be inline strings or registry `promptRef` objects.
+  The nested LibreChat config schema must accept both, and runtime must resolve the object through
+  the canonical prompt registry rather than coercing it to `[object Object]` or requiring validation
+  bypass.
 - Late background activation recovery is opt-in only. By default, if activation was not known before
   the main answer starts, runtime must not later surface new activation cards that the main model
   never saw in its Phase A context. The explicit `any_activated` / `any_activated_on_voice` notice
   modes are the narrow exception: Phase A has already been told generically that background
   detection is still active, and late activation cards must be marked as not seen by Phase A while
   Phase B waits for and executes the final activated set.
-- On May 10, 2026, local QA reproduced a Groq outage while the operator's VPN was enabled. That is
-  an environment/provider-reachability failure, not evidence to change Viventium's default
-  activation model family. The supported baseline remains
-  `groq / meta-llama/llama-4-scout-17b-16e-instruct` as the primary activation detector.
+- On May 10, 2026, local QA reproduced a Groq outage while the operator's VPN was enabled. That was
+  an environment/provider-reachability failure rather than activation-reasoning evidence. The
+  current supported baseline is `groq / qwen/qwen3.6-27b`; the July 2026 change is instead driven
+  by Scout's announced shutdown and a same-runtime classifier benchmark.
   xAI, OpenAI, and Anthropic remain true fallbacks or explicit user-selected overrides. Browser
   QA for activation must record whether VPN/provider reachability was healthy, prove named
   cards are visible, persist after reload, and store successful terminal insights.
@@ -484,6 +509,11 @@ Use this order so the fix stays surgical:
     `thinkingBudget` instead of the documented OpenAI `reasoning_effort`
   - the supported fix is source-of-truth correction plus reseed/runtime tests proving upgrades and
     restarts restore the intended tool surface for built-in users
+- On July 9, 2026, a Red Team prompt review found that the execution instructions described web
+  search and deep decision-quality pressure, but the shipped Red Team tool/model bag did not include
+  `web_search` or OpenAI `reasoning_effort: xhigh`. The supported fix is source-of-truth prompt/tool
+  correction plus runtime-normalization tests proving upgrades and restarts preserve the intended
+  adversarial reasoning substrate.
 - Activation-provider benchmarks must use the same auth/runtime path as the product:
   - connected-account providers must be measured through their connected-account initializer path
   - standalone eval scripts must bootstrap Mongo/runtime dependencies before running activation
@@ -516,6 +546,29 @@ Use this order so the fix stays surgical:
     proving the limitation was latency, not activation reasoning quality
   - the tested SambaNova candidates remained non-viable for the current 11-cortex topology because
     they exhausted the full 2-second budget under parallel activation
+- On July 9, 2026, Scout's announced July 17 shutdown made that April selection non-shippable.
+  The Prompt Workbench activation runner therefore became the release gate for the exact
+  `BackgroundCortexService` classifier path across all 11 cortices. On the same pre-fix 20-case
+  slice, Qwen 3.6 improved decision accuracy from Scout's `181/220` to `203/220`; after registry
+  prompt repair, Qwen reached `624/627` on the first full serialized semantic pass with zero
+  provider errors (`251 ms` p50, `320 ms` p95). The remaining three scope misses were promoted to
+  contrastive prompt regressions. After restoring the documented material-commitment/comfort-
+  rationalization Red Team scope with a recovery/rest negative control, a 59-case two-pass gate
+  covered `1,298` decisions and all passed. Final fallback-parity review then added two more implicit
+  comfort domains, dedicated self-care/changed-goal negatives, and stricter sibling boundaries for
+  Red Team, Confirmation Bias, Strategic Planning, Google, and MS365. On the current 63-case bank,
+  the latest full run covered `1,386` decisions (`63` cases x `11` cortices x `2`): `1,381`
+  completed and all completed decisions passed with `100%` semantic required recall and activation
+  precision, zero semantic false positives/negatives, and zero required/forbidden semantic
+  inconsistencies. Five non-required decisions were honestly unavailable after exhausting the
+  shared 2-second activation budget, so required recall remained `100%` while overall classifier
+  completion was `99.64%` and release availability remains `PARTIAL`; latency was
+  `287/1,457/1,775 ms` p50/p95/max. Four optional allowed-activation overlaps varied across the two
+  repetitions and are reported separately from semantic errors. Direct Qwen and xAI probes for
+  every discovered semantic leak passed after the prompt-boundary repairs. GPT-OSS 120B was retained only as comparison evidence:
+  even after simplifying its
+  schema it completed `191/220`, passed `186/220`, and produced 28 provider-side JSON validation
+  failures, so it is not the primary.
 
 ### GlassHive Capability Broker Retirement Gate
 
@@ -567,6 +620,11 @@ text mode with audio delivery after the text answer, not voice-call mode.
 `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS` (default 2000 ms) is the **shared fallback** budget; a mode uses
 it only when its own `*_PHASE_A_AWAIT_MS` is unset. `VIVENTIUM_CORTEX_SPECULATIVE_PARALLEL_DETECT` is
 retained only as a **back-compat alias** for `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC`.
+`VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS` defaults to **4000 ms** and owns the existing non-blocking
+recovery pass whenever the fast window has at least one detector timeout, including partial results.
+It does not extend the conscious/main-answer wait. The recovery pass reuses the same activation
+prompts, provider order, direct-action ownership gates, cards, Phase B execution, and persistence
+pipeline, deduplicates fast-pass activations, and executes only newly recovered cortices.
 
 ### Async OFF — blocking detection with early-exit
 1. Activation Detection runs **first**, blocking the Main Agent answer, up to the mode budget.
@@ -574,7 +632,9 @@ retained only as a **back-compat alias** for `VIVENTIUM_TEXT_BACKGROUND_AGENT_DE
    it never burns the remaining budget. (Voice additionally releases on the *first* true activation
    via the notice-mode knob.)
 3. The Main Agent produces **Phase A** with the activation result injected into its instructions.
-4. Detectors that exceed the budget time out; those cortices still surface via **Phase B**.
+4. If the fast pass returns partial or zero activations after a detector timeout, the non-blocking
+   4000 ms late pass retries the same classifier/fallback contract; any new valid activation surfaces through
+   cards and **Phase B** without delaying the Main Agent answer.
 
 ### Async ON — speculative parallel with "nevermind" cancel
 1. The Main Agent answer **and** Activation Detection start **simultaneously**.
@@ -594,6 +654,29 @@ Why async ON is the smarter / default direction: on the common no-activation tur
 entire detection wait, while still giving an activation-aware answer (via the redo) when a cortex
 fires in time. The cost is a discarded speculative prefill on activation turns — a deliberate **speed
 vs. cost** trade-off, which is why async stays a per-mode flag (token-cautious operators keep it off).
+
+### QA isolation and contamination incident contract
+
+A local browser-QA harness once selected the owner account, minted local QA auth, and submitted a
+synthetic cortex prompt without an owner guard or mandatory cleanup. The synchronous Memory Agent
+wrote the synthetic premise; a later independent memory pass re-promoted related context; and a real
+schedule then combined that false premise with legitimate context and delivered a fabricated update.
+This was not a cross-user leak, a prompt-text routing bug, or Telegram re-ingestion.
+
+The durable prevention contract is:
+
+- browser QA fails closed unless an explicit owner email is configured and refuses both a requested
+  or resolved owner account;
+- QA requests carry structured `viventiumQaRun` / `viventiumQaRunId` metadata and isolate saved
+  memory, conversation recall, and feelings without inspecting prompt text or agent names;
+- saved QA messages persist `metadata.viventium.qaRun=true` and `memoryEligible=false` so the batch
+  hardener, recall corpus, and Meilisearch independently exclude them even if cleanup is interrupted;
+- every harness runs Mongo and Meili cleanup in `finally`, scoped to the QA user and run ID; and
+- owner and QA saved-memory/message/conversation counts must match their pre-run baseline after QA.
+
+Any pre-cleanup backup from such an incident is an immutable forensic restore source, not a clean
+runtime snapshot. Restoring it blindly can reintroduce contamination; a restore must sanitize the
+known rows and rebuild conversation-recall vectors and search indexes before activation.
 
 ### Worked examples (text mode, budget 1300 ms)
 - *Async OFF — "hello", no cortex:* detection returns ~600 ms (all results in) → Phase A starts at
@@ -668,8 +751,11 @@ surface cortices via Phase B. This is especially important for voice TTS and for
 LLM routes, where a mid-audio "nevermind" would feel broken.
 
 ### Related model decisions (affect Main Agent / cortex latency)
-- Main Agent: `claude-opus-4-8` with reasoning/thinking **disabled** (removes 1-15 s of pre-speech
-  reasoning on chat). Voice LLM: `grok-4.3` with `reasoning_effort: none` for the current local
-  source-of-truth main-agent route.
+- Main Agent text: `gpt-5.6-sol` with `reasoning_effort: medium` and Responses API. Background
+  execution uses the Sol/Terra effort map above. Every text route falls back to
+  `anthropic / claude-opus-4-8` when that auth path is available.
+- Voice LLM remains `grok-4.3` with `reasoning_effort: none`. Its latency-preserving voice fallback
+  is `gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does not replace the
+  explicit voice route.
 - See `qa/modern-playground-voice/reports/2026-05-29-voice-chat-latency-rca-and-fixes.md` for the
   full evidence-based RCA (memory/recall/tool-mass/model-swap disproven as latency causes).

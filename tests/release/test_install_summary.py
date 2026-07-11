@@ -1807,6 +1807,30 @@ def test_build_brain_setup_rows_does_not_call_connected_account_route_ready() ->
     assert "Connected Accounts" in states["Primary AI"][1]
 
 
+def test_build_brain_setup_rows_does_not_call_unprobed_fallback_ready() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"personalization": {"default_conversation_recall": False}},
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "connected_account"},
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "configured-but-unprobed-test-key",
+            },
+        },
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+
+    rows = install_summary.build_brain_setup_rows(config, {})
+    states = {name: (state, action) for name, state, action in rows}
+
+    assert states["Secondary/Fallback AI"][0] == "Configured"
+    assert "live provider request" in states["Secondary/Fallback AI"][1]
+
+
 def test_build_connected_accounts_notice_still_prompts_for_connected_account_route() -> None:
     install_summary = load_install_summary_module()
 

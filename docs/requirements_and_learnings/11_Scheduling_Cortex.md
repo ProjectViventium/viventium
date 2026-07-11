@@ -174,6 +174,24 @@ names must not appear in the health payload or public QA evidence.
   dispatch, store public-safe rendered and variable-snapshot hashes, then dispatch to GlassHive
   before LibreChat generation. Raw rendered prompt text and private result details stay in private
   runtime storage, not public QA artifacts.
+- Built-in Workbench schedules must own an explicit execution tuple: host profile, model, requested
+  reasoning effort, and the instruction to ignore ambient user CLI config. Startup reconciliation
+  repairs legacy missing-model or invalid-effort metadata without changing the owner, prompt,
+  active state, 03:00 schedule, timezone, or run history.
+- When a recurring task's persisted `next_run_at` spans several missed periods, misfire grace and
+  catch-up limits are measured from the latest eligible occurrence at or before the current tick.
+  Dispatch/skip ledgers record that occurrence, then advance to the next period; they never judge
+  today's due run from the oldest stale timestamp.
+- Daily, weekday, weekly, monthly, and cron recurrence use the schedule's declared timezone, not the
+  host's audit-time timezone. Interval minute/hour/day/week schedules are elapsed durations from
+  their UTC anchor; they do not silently change cadence when the host travels or crosses DST.
+- Direct/manual Scheduling Cortex startup defaults to the canonical App Support state database when
+  `SCHEDULING_DB_PATH` is absent. The legacy hidden-home database is not a fallback. Managed launch
+  remains explicit and `/health` continues to expose only a public-safe DB identity hash.
+- The run ledger distinguishes requested from effective reasoning effort because provider-route
+  compatibility may clamp a request. Workbench must show that projection, and terminal callbacks
+  must preserve structured classes such as `provider_request_rejected` in both child and parent
+  ledgers instead of flattening every provider rejection to generic `failed`.
 - GlassHive callback handling must update both the child `scheduled_prompt_runs` row and the parent
   `scheduled_tasks` delivery fields. A terminal callback is not accepted as healthy if the parent
   ledger, child row, GlassHive run row, or visible Workbench state disagree.
@@ -202,9 +220,17 @@ Rules:
   or the failure is explicitly bounded.
 - Do not branch on human-facing schedule names, prompt text, or module titles. Use structured task
   metadata.
-- Keep first pilots private, Workbench-routed, and `memoryWriteMode=propose`.
+- Keep first pilots private and Workbench-routed. The risk-radar pilot uses
+  `memoryWriteMode=off`; durable memory requires a separate governed proposal path.
 - A completed private insight run is not the same as a user-visible alert. Surfacing remains a
   separate model/policy decision.
+- Scheduling Cortex owns the user-scoped `periphery_list` and `periphery_read` tools. The list is a
+  bounded current/historical index and the read result is an agent-safe evidence view. Neither tool
+  returns storage paths, filenames, raw source-record ids, run/snapshot ids, or duplicate markdown.
+- Ordinary chat must not inspect periphery. On-demand/deep-review use follows list then read, and
+  stale/legacy/failed-quality material is treated as historical uncertainty.
+- Workbench/GlassHive automation dispatch takes the compiled `gpt-5.6-sol` / `xhigh` tuple ahead of
+  stale persisted metadata and fails closed when no configured tuple exists.
 
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.

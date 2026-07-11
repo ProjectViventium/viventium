@@ -134,3 +134,19 @@ cases:
       - mcp.scheduling_cortex.server
     source: qa/prompt-workbench/cases.md#PW-027
     lastRun: 2026-05-22
+  - id: PW-037
+    title: Scheduled execution provenance
+    appliesTo:
+      - main.scheduling_self_continuity
+      - mcp.scheduling_cortex.server
+    source: qa/prompt-workbench/cases.md#PW-037
+    lastRun: 2026-07-11
+  - id: PW-038
+    title: Memory continuity eval and native gate
+    appliesTo:
+      - main.conscious_agent
+      - main.memory_policy
+      - main.conversation_recall
+      - memory.archivist
+    source: qa/prompt-workbench/cases.md#PW-038
+    lastRun: 2026-07-11

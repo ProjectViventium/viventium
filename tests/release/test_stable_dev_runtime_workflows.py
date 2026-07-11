@@ -67,6 +67,33 @@ def minimal_config() -> dict:
     }
 
 
+def test_dev_runtime_validation_fails_closed_before_restart() -> None:
+    source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    activation = source[source.index("dev_runtime_command() {") : source.index("workflows_command() {")]
+
+    compile_guard = 'if ! compile_config; then'
+    doctor_guard = 'if ! "$REPO_ROOT/scripts/viventium/doctor.sh" \\\n'
+    helper_guard = 'if ! runtime_checkout_refresh_helper; then'
+    restart_gate = 'if [[ "$restart" == "1" ]]; then'
+    assert compile_guard in activation
+    assert doctor_guard in activation
+    assert helper_guard in activation
+    assert "the running stack was not restarted" in activation
+    assert activation.index(compile_guard) < activation.index(doctor_guard)
+    assert activation.index(doctor_guard) < activation.index(helper_guard)
+    assert activation.index(helper_guard) < activation.index(restart_gate)
+
+
+def test_compile_config_preserves_compiler_failure_status() -> None:
+    source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    compile_block = source[source.index("compile_config() {") : source.index("sync_memory_hardening_schedule() {")]
+
+    assert "local compile_status=0" in compile_block
+    assert '"$@" || compile_status=$?' in compile_block
+    assert 'if [[ "$compile_status" -ne 0 ]]; then' in compile_block
+    assert 'return "$compile_status"' in compile_block
+
+
 def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) -> None:
     app_support = tmp_path / "App Support" / "Viventium"
     config = app_support / "config.yaml"

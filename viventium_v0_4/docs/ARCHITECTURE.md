@@ -12,9 +12,13 @@ This document maps the live system to code and data structures.
 User → LibreChat UI → AgentClient (API) → BackgroundCortexService
                        │                └─ Phase A detect (≤2s)
                        │                └─ Phase B execute (async)
+                       ├→ pinned Feelings snapshot → dynamic instruction tail
+                       ├→ spoken surface → shared feeling-expression + provider prompt
+                       │                  └→ raw controls to TTS / sanitized visible text
                        │
                        ├→ SSE on_cortex_update → UI status cards
                        └→ BackgroundCortexFollowUpService → DB follow-up message
+                       └→ detached EmotionalReactionService → FeelingState
 ```
 
 ### Key Backend Components
@@ -22,12 +26,45 @@ User → LibreChat UI → AgentClient (API) → BackgroundCortexService
 - Activation + execution: `LibreChat/api/server/services/BackgroundCortexService.js`
 - Non-blocking follow-up + persistence: `LibreChat/api/server/services/viventium/BackgroundCortexFollowUpService.js`
 - Follow-up suppression on user interruption: `LibreChat/api/server/services/ResponseController.js`
+- Feelings state/decay/capsule: `LibreChat/packages/api/src/feelings/`
+- Authenticated Feelings API: `LibreChat/api/server/routes/viventium/feelings.js`
+- Detached reaction: `LibreChat/api/server/services/viventium/EmotionalReactionService.js`
+- Spoken-surface prompt composition: `LibreChat/api/server/services/viventium/surfacePrompts.js`
 
 ### Key Frontend Components
 - SSE buffering + cortex events: `LibreChat/client/src/hooks/SSE/useSSE.ts`, `LibreChat/client/src/hooks/SSE/useResumableSSE.ts`
 - UI rendering: `LibreChat/client/src/components/Chat/Messages/Content/CortexCall.tsx`, `LibreChat/client/src/components/Chat/Messages/Content/CortexCallInfo.tsx`
 - Follow-up polling: `LibreChat/client/src/hooks/Viventium/useCortexFollowUpPoll.ts`
 - Export formatting: `LibreChat/client/src/hooks/Conversations/useExportConversation.ts`
+- Feelings instrument: `LibreChat/client/src/components/Feelings/` at `/feelings`
+
+## Feelings runtime
+
+`AgentClient` loads and pins one lazily decayed per-user Feelings snapshot. The words-only capsule
+uses private action-tendency phrases distinct from the UI scale adjectives and is appended after
+stable/base/MCP instructions. `all_agents` also passes that capsule to background cortices and
+GlassHive worker bootstrap bundles; `conscious_agent` omits those paths.
+
+After a visible reply, `EmotionalReactionService` uses the configured always/classified/disabled
+activation mode and a compact no-tool agent to return typed band operations. OpenAI runs request
+JSON-object mode. The shared direct `executeCortex` wrapper validates and runs a declared
+provider/model fallback after a recoverable primary failure; activated batch execution recognizes
+that recovery and does not apply a second outer fallback. This gives direct callers such as the
+Emotional Reaction Cortex the same recovery behavior as activated background cortices. The drawer,
+structured telemetry, and persisted reaction health expose the requested primary/fallback, actual
+route, fallback use, and primary error class. One invalid or still-unavailable typed response may
+retry once, with every route bounded by the configured detached timeout. Version
+matching, per-user serialization, bounded hashed stimulus idempotency, typed-delta rebasing, and an
+atomic Mongo compare-and-set prevent lost/replayed reactions or overwritten user edits. Classifier
+prose is discarded in favor of closed result codes. No reaction provider call is on the main response
+path. Long public-safe telemetry envelopes are split into correlated, counted parts so the active text
+formatter cannot truncate or ambiguously interleave route/version/model evidence.
+
+Voice-capable requests compose the same private Feelings capsule with the registered shared
+feeling-expression prompt and exactly one resolved TTS-provider dialect. The model appraises
+expressive versus restrained delivery; runtime does not map band values to tags. Supported controls
+remain in the provider-bound synthesis text, are removed from visible text, and are counted through
+non-secret structural telemetry.
 
 ## Data Model (Agents)
 Background agent configuration is stored on the main agent document:

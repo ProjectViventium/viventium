@@ -10,18 +10,27 @@
  *   emails, credentials, or private URLs are written to the public repo.
  */
 
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const {
+  assertNonOwnerQaSelection,
+  cleanupQaRunArtifacts,
+  installQaRequestIsolation,
+} = require("./browser-qa-safety.cjs");
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const LIBRECHAT_ROOT = path.join(REPO_ROOT, 'viventium_v0_4', 'LibreChat');
-const LOCAL_JWT_ALLOW_ENV = 'VIVENTIUM_QA_ALLOW_LOCAL_JWT';
-const REQUIRED_SETUP_CARD_NAMES = ['Red Team', 'Confirmation Bias'];
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+const LIBRECHAT_ROOT = path.join(REPO_ROOT, "viventium_v0_4", "LibreChat");
+const LOCAL_JWT_ALLOW_ENV = "VIVENTIUM_QA_ALLOW_LOCAL_JWT";
+const REQUIRED_SETUP_CARD_NAMES = ["Red Team", "Confirmation Bias"];
 const TEST_PROMPT = 'say "TEST_OK"';
 
 function hashValue(value, length = 16) {
-  return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, length);
+  return crypto
+    .createHash("sha256")
+    .update(String(value || ""))
+    .digest("hex")
+    .slice(0, length);
 }
 
 function parseArgs(argv) {
@@ -29,51 +38,57 @@ function parseArgs(argv) {
   const marker = `latest-user-${hashValue(startedAt)}`;
   const args = {
     startedAt,
-    clientBase: process.env.VIVENTIUM_QA_CLIENT_BASE || 'http://localhost:3190',
-    apiBase: process.env.VIVENTIUM_QA_API_BASE || 'http://localhost:3180',
-    qaEmail: process.env.VIVENTIUM_QA_EMAIL || 'qa@example.com',
+    qaRunId: marker,
+    clientBase: process.env.VIVENTIUM_QA_CLIENT_BASE || "http://localhost:3190",
+    apiBase: process.env.VIVENTIUM_QA_API_BASE || "http://localhost:3180",
+    qaEmail: process.env.VIVENTIUM_QA_EMAIL || "qa@example.com",
     out:
       process.env.VIVENTIUM_QA_REPORT_PATH ||
-      path.join(REPO_ROOT, 'qa', 'background_agents', 'latest_user_activation_browser_qa_2026-05-11.md'),
-    headless: process.env.VIVENTIUM_QA_HEADLESS !== '0',
+      path.join(
+        REPO_ROOT,
+        "qa",
+        "background_agents",
+        "latest_user_activation_browser_qa_2026-05-11.md",
+      ),
+    headless: process.env.VIVENTIUM_QA_HEADLESS !== "0",
     timeoutMs: Number(process.env.VIVENTIUM_QA_TIMEOUT_MS || 120000),
     settleMs: Number(process.env.VIVENTIUM_QA_SETTLE_MS || 15000),
     setupPrompt:
       process.env.VIVENTIUM_QA_SETUP_PROMPT ||
       [
-        'For this synthetic QA turn only, red-team a product launch and check whether I am confirmation-biasing myself.',
+        "For this synthetic QA turn only, red-team this concrete plan: launch a paid workflow analytics pilot next month based only on one supportive buyer interview, and check whether I am confirmation-biasing myself.",
         `Synthetic QA marker: ${marker}.`,
-      ].join(' '),
+      ].join(" "),
     testPrompt: process.env.VIVENTIUM_QA_TEST_PROMPT || TEST_PROMPT,
-    testExpectedText: process.env.VIVENTIUM_QA_TEST_EXPECTED_TEXT || 'TEST_OK',
+    testExpectedText: process.env.VIVENTIUM_QA_TEST_EXPECTED_TEXT || "TEST_OK",
   };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const next = argv[i + 1];
-    if (arg === '--client-base') {
+    if (arg === "--client-base") {
       args.clientBase = next;
       i += 1;
-    } else if (arg === '--api-base') {
+    } else if (arg === "--api-base") {
       args.apiBase = next;
       i += 1;
-    } else if (arg === '--qa-email') {
+    } else if (arg === "--qa-email") {
       args.qaEmail = next;
       i += 1;
-    } else if (arg === '--out') {
+    } else if (arg === "--out") {
       args.out = next;
       i += 1;
-    } else if (arg === '--headed') {
+    } else if (arg === "--headed") {
       args.headless = false;
-    } else if (arg === '--headless') {
+    } else if (arg === "--headless") {
       args.headless = true;
-    } else if (arg === '--setup-prompt') {
+    } else if (arg === "--setup-prompt") {
       args.setupPrompt = next;
       i += 1;
-    } else if (arg === '--test-prompt') {
+    } else if (arg === "--test-prompt") {
       args.testPrompt = next;
       i += 1;
-    } else if (arg === '--test-expected-text') {
+    } else if (arg === "--test-expected-text") {
       args.testExpectedText = next;
       i += 1;
     }
@@ -83,13 +98,13 @@ function parseArgs(argv) {
 }
 
 function sanitizePublicError(value) {
-  return String(value || 'qa_failed')
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '<email>')
-    .replace(/https?:\/\/[^\s)]+/gi, '<url>')
-    .replace(/\/Users\/[^\s)]+/g, '<path>')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer <redacted>')
-    .replace(/sk-[A-Za-z0-9._-]+/g, 'sk-<redacted>')
-    .replace(/\s+/g, ' ')
+  return String(value || "qa_failed")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "<email>")
+    .replace(/https?:\/\/[^\s)]+/gi, "<url>")
+    .replace(/\/Users\/[^\s)]+/g, "<path>")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>")
+    .replace(/sk-[A-Za-z0-9._-]+/g, "sk-<redacted>")
+    .replace(/\s+/g, " ")
     .slice(0, 220);
 }
 
@@ -98,12 +113,12 @@ function parseEnvFile(filePath) {
     return {};
   }
   const env = {};
-  for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
       continue;
     }
-    const index = trimmed.indexOf('=');
+    const index = trimmed.indexOf("=");
     const key = trimmed.slice(0, index).trim();
     let value = trimmed.slice(index + 1).trim();
     if (
@@ -119,34 +134,47 @@ function parseEnvFile(filePath) {
 
 function localEnv() {
   return {
-    ...parseEnvFile(path.join(LIBRECHAT_ROOT, '.env')),
-    ...parseEnvFile(path.join(REPO_ROOT, '.env')),
+    ...parseEnvFile(path.join(LIBRECHAT_ROOT, ".env")),
+    ...parseEnvFile(path.join(REPO_ROOT, ".env")),
     ...process.env,
   };
 }
 
 async function createQaAuth({ args, env }) {
-  if (process.env.CI || process.env.NODE_ENV === 'production') {
-    throw new Error('Local QA JWT auth is forbidden in CI or production');
+  if (process.env.CI || process.env.NODE_ENV === "production") {
+    throw new Error("Local QA JWT auth is forbidden in CI or production");
   }
-  if (process.env[LOCAL_JWT_ALLOW_ENV] !== '1') {
+  if (process.env[LOCAL_JWT_ALLOW_ENV] !== "1") {
     throw new Error(`Local QA JWT auth requires ${LOCAL_JWT_ALLOW_ENV}=1`);
   }
   if (!env.MONGO_URI || !env.JWT_SECRET || !env.JWT_REFRESH_SECRET) {
-    throw new Error('Missing local QA auth prerequisites');
+    throw new Error("Missing local QA auth prerequisites");
   }
 
-  const { MongoClient, ObjectId } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'mongodb'));
-  const jwt = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'jsonwebtoken'));
+  const { MongoClient, ObjectId } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+  );
+  const jwt = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "jsonwebtoken"),
+  );
+  const { MeiliSearch } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "meilisearch"),
+  );
   const client = new MongoClient(env.MONGO_URI);
   await client.connect();
-  const dbName = new URL(env.MONGO_URI).pathname.replace(/^\//, '') || 'LibreChatViventium';
+  const dbName =
+    new URL(env.MONGO_URI).pathname.replace(/^\//, "") || "LibreChatViventium";
   const db = client.db(dbName);
-  const user = await db.collection('users').findOne({ email: args.qaEmail });
+  const user = await db.collection("users").findOne({ email: args.qaEmail });
   if (!user?._id) {
     await client.close();
-    throw new Error('QA user not found');
+    throw new Error("QA user not found");
   }
+  assertNonOwnerQaSelection({
+    ownerEmail: process.env.VIVENTIUM_QA_OWNER_EMAIL,
+    requestedEmail: args.qaEmail,
+    selectedUser: user,
+  });
 
   const userId = user._id.toString();
   const accessToken = jwt.sign(
@@ -157,7 +185,7 @@ async function createQaAuth({ args, env }) {
       email: user.email,
     },
     env.JWT_SECRET,
-    { expiresIn: '2h' },
+    { expiresIn: "2h" },
   );
   const sessionId = new ObjectId();
   const expiration = new Date(Date.now() + 2 * 60 * 60 * 1000);
@@ -166,11 +194,14 @@ async function createQaAuth({ args, env }) {
     env.JWT_REFRESH_SECRET,
     { expiresIn: Math.floor((expiration.getTime() - Date.now()) / 1000) },
   );
-  await db.collection('sessions').insertOne({
+  await db.collection("sessions").insertOne({
     _id: sessionId,
     user: user._id,
     expiration,
-    refreshTokenHash: crypto.createHash('sha256').update(refreshToken).digest('hex'),
+    refreshTokenHash: crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex"),
   });
 
   return {
@@ -179,6 +210,13 @@ async function createQaAuth({ args, env }) {
     userId,
     accessToken,
     refreshToken,
+    meiliClient:
+      env.MEILI_HOST && env.MEILI_MASTER_KEY
+        ? new MeiliSearch({
+            host: env.MEILI_HOST,
+            apiKey: env.MEILI_MASTER_KEY,
+          })
+        : null,
   };
 }
 
@@ -186,28 +224,28 @@ async function attachAuthCookies({ context, args, qaAuth }) {
   const expires = Math.floor(Date.now() / 1000) + 7200;
   const cookies = [args.apiBase, args.clientBase].flatMap((url) => [
     {
-      name: 'refreshToken',
+      name: "refreshToken",
       value: qaAuth.refreshToken,
       url,
       httpOnly: true,
-      sameSite: 'Strict',
+      sameSite: "Strict",
       expires,
     },
     {
-      name: 'token_provider',
-      value: 'librechat',
+      name: "token_provider",
+      value: "librechat",
       url,
       httpOnly: true,
-      sameSite: 'Strict',
+      sameSite: "Strict",
       expires,
     },
   ]);
   await context.addCookies(cookies);
 }
 
-async function installAccessToken(page, localAccessToken = '') {
+async function installAccessToken(page, localAccessToken = "") {
   const refresh = await page.evaluate(async () => {
-    const response = await fetch('/api/auth/refresh', { method: 'POST' });
+    const response = await fetch("/api/auth/refresh", { method: "POST" });
     let payload = {};
     try {
       payload = await response.json();
@@ -217,8 +255,12 @@ async function installAccessToken(page, localAccessToken = '') {
     return {
       ok: response.ok,
       status: response.status,
-      hasToken: Boolean(payload && typeof payload.token === 'string' && payload.token.length > 0),
-      token: payload && typeof payload.token === 'string' ? payload.token : '',
+      hasToken: Boolean(
+        payload &&
+        typeof payload.token === "string" &&
+        payload.token.length > 0,
+      ),
+      token: payload && typeof payload.token === "string" ? payload.token : "",
     };
   });
   if (!refresh.ok || !refresh.hasToken) {
@@ -226,48 +268,88 @@ async function installAccessToken(page, localAccessToken = '') {
       throw new Error(`auth_refresh_failed_status_${refresh.status}`);
     }
     await page.evaluate((token) => {
-      window.dispatchEvent(new CustomEvent('tokenUpdated', { detail: token }));
+      window.dispatchEvent(new CustomEvent("tokenUpdated", { detail: token }));
     }, localAccessToken);
     await page.waitForTimeout(250);
-    return { mode: 'direct_access_token_fallback', refreshStatus: refresh.status };
+    return {
+      mode: "direct_access_token_fallback",
+      refreshStatus: refresh.status,
+    };
   }
   await page.evaluate((token) => {
-    window.dispatchEvent(new CustomEvent('tokenUpdated', { detail: token }));
+    window.dispatchEvent(new CustomEvent("tokenUpdated", { detail: token }));
   }, refresh.token);
   await page.waitForTimeout(250);
-  return { mode: 'refresh_cookie', refreshStatus: refresh.status };
+  return { mode: "refresh_cookie", refreshStatus: refresh.status };
 }
 
-async function submitPrompt(page, prompt) {
-  const input = page.getByLabel('Message input').or(page.getByPlaceholder(/^Message Viventium$/)).last();
-  await input.waitFor({ state: 'visible', timeout: 60000 });
+async function submitPrompt(page, prompt, timeoutMs = 60000) {
+  const input = page
+    .getByLabel("Message input")
+    .or(page.getByPlaceholder(/^Message Viventium$/))
+    .last();
+  await input.waitFor({
+    state: "visible",
+    timeout: Math.min(timeoutMs, 60000),
+  });
   await input.fill(prompt);
-  await page.getByTestId('send-button').last().click({ timeout: 30000 });
+  // A named background card can appear before the conscious response has finished. Behave like a
+  // user and wait for that turn's send control to become actionable before starting the control
+  // turn; a short fixed click timeout incorrectly reports healthy long/fallback responses as UI
+  // failures.
+  await page.getByTestId("send-button").last().click({ timeout: timeoutMs });
 }
 
 async function visibleBodyText(page) {
-  return page.locator('body').innerText({ timeout: 10000 });
+  return page.locator("body").innerText({ timeout: 10000 });
+}
+
+async function waitForExpectedTextAfterReload(
+  page,
+  expectedText,
+  timeoutMs = 30000,
+) {
+  await page.waitForFunction(
+    (expected) =>
+      String(document.body.innerText || "")
+        .replace(/\s+/g, " ")
+        .toLowerCase()
+        .includes(
+          String(expected || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase(),
+        ),
+    expectedText,
+    { timeout: timeoutMs },
+  );
+  return true;
 }
 
 async function readVisibleEnvironmentBlock(page) {
   if (!page) {
-    return '';
+    return "";
   }
-  const text = await visibleBodyText(page).catch(() => '');
-  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  const text = await visibleBodyText(page).catch(() => "");
+  const normalized = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalized) {
-    return '';
+    return "";
   }
   if (/connected account needs reconnect/i.test(normalized)) {
-    return 'model_connected_account_reconnect_required';
+    return "model_connected_account_reconnect_required";
   }
   if (/unable to login with the information provided/i.test(normalized)) {
-    return 'login_rejected_by_runtime';
+    return "login_rejected_by_runtime";
   }
-  if (/something went wrong/i.test(normalized) && /processing the request/i.test(normalized)) {
+  if (
+    /something went wrong/i.test(normalized) &&
+    /processing the request/i.test(normalized)
+  ) {
     return `visible_generation_error:${sanitizePublicError(normalized)}`;
   }
-  return '';
+  return "";
 }
 
 function throwEnvironmentBlock(reason) {
@@ -286,17 +368,23 @@ function exitCodeForResult(result) {
 function extractConversationIdFromUrl(url) {
   try {
     const match = new URL(url).pathname.match(/^\/c\/([^/?#]+)$/);
-    return match ? match[1] : '';
+    return match ? match[1] : "";
   } catch {
-    return '';
+    return "";
   }
 }
 
-async function waitForConversationForPrompt({ qaAuth, prompt, startedAt, timeoutMs, page }) {
+async function waitForConversationForPrompt({
+  qaAuth,
+  prompt,
+  startedAt,
+  timeoutMs,
+  page,
+}) {
   const deadline = Date.now() + timeoutMs;
   const startedDate = new Date(startedAt);
   while (Date.now() < deadline) {
-    const userMessage = await qaAuth.db.collection('messages').findOne(
+    const userMessage = await qaAuth.db.collection("messages").findOne(
       {
         user: qaAuth.userId,
         isCreatedByUser: true,
@@ -314,16 +402,18 @@ async function waitForConversationForPrompt({ qaAuth, prompt, startedAt, timeout
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('missing_current_qa_conversation_for_prompt');
+  throw new Error("missing_current_qa_conversation_for_prompt");
 }
 
 async function waitForSetupCards(page, timeoutMs) {
   await page.waitForFunction(
     (requiredNames) => {
-      const rowTexts = Array.from(document.querySelectorAll('.progress-text-wrapper button')).map(
-        (button) => button.textContent || '',
+      const rowTexts = Array.from(
+        document.querySelectorAll(".progress-text-wrapper button"),
+      ).map((button) => button.textContent || "");
+      return requiredNames.every((name) =>
+        rowTexts.some((rowText) => rowText.includes(name)),
       );
-      return requiredNames.every((name) => rowTexts.some((rowText) => rowText.includes(name)));
     },
     REQUIRED_SETUP_CARD_NAMES,
     { timeout: timeoutMs },
@@ -331,23 +421,23 @@ async function waitForSetupCards(page, timeoutMs) {
 }
 
 function extractTextFromContentPart(part) {
-  if (!part || part.type !== 'text') {
-    return '';
+  if (!part || part.type !== "text") {
+    return "";
   }
-  if (typeof part.text === 'string') {
+  if (typeof part.text === "string") {
     return part.text;
   }
-  if (typeof part.text?.value === 'string') {
+  if (typeof part.text?.value === "string") {
     return part.text.value;
   }
-  return '';
+  return "";
 }
 
 function dedupeVisibleAnswerTextParts(parts) {
   const result = [];
   const seen = new Set();
   for (const part of parts) {
-    if (typeof part !== 'string' || !part.trim()) {
+    if (typeof part !== "string" || !part.trim()) {
       continue;
     }
     const normalized = normalizeAnswerText(part);
@@ -361,18 +451,20 @@ function dedupeVisibleAnswerTextParts(parts) {
 }
 
 function extractVisibleAnswerTextFromMessage(message) {
-  if (!message || typeof message !== 'object') {
-    return '';
+  if (!message || typeof message !== "object") {
+    return "";
   }
-  const text = typeof message.text === 'string' ? message.text : '';
+  const text = typeof message.text === "string" ? message.text : "";
   const partText = Array.isArray(message.content)
-    ? message.content.map(extractTextFromContentPart).filter(Boolean).join('\n')
-    : '';
-  return dedupeVisibleAnswerTextParts([text, partText]).join('\n').trim();
+    ? message.content.map(extractTextFromContentPart).filter(Boolean).join("\n")
+    : "";
+  return dedupeVisibleAnswerTextParts([text, partText]).join("\n").trim();
 }
 
 function normalizeAnswerText(text) {
-  return String(text || '').replace(/\s+/g, ' ').trim();
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isExactExpectedAnswer(text, expectedText) {
@@ -388,7 +480,7 @@ function textIncludesExpectedAnswer(text, expectedText) {
 }
 
 function isPlaceholderAnswerText(text) {
-  const lines = String(text || '')
+  const lines = String(text || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -396,21 +488,31 @@ function isPlaceholderAnswerText(text) {
     return false;
   }
   return lines.every((line) =>
-    /^(generation in progress|generation interrupted before completion)\.?$/i.test(line),
+    /^(generation in progress|generation interrupted before completion)\.?$/i.test(
+      line,
+    ),
   );
 }
 
 function cortexPartsFromMessage(message) {
   return Array.isArray(message?.content)
-    ? message.content.filter((part) => part && String(part.type || '').startsWith('cortex_'))
+    ? message.content.filter(
+        (part) => part && String(part.type || "").startsWith("cortex_"),
+      )
     : [];
 }
 
-async function waitForUserMessage({ qaAuth, conversationId, prompt, startedAt, timeoutMs }) {
+async function waitForUserMessage({
+  qaAuth,
+  conversationId,
+  prompt,
+  startedAt,
+  timeoutMs,
+}) {
   const deadline = Date.now() + timeoutMs;
   const startedDate = new Date(startedAt);
   while (Date.now() < deadline) {
-    const message = await qaAuth.db.collection('messages').findOne(
+    const message = await qaAuth.db.collection("messages").findOne(
       {
         user: qaAuth.userId,
         conversationId,
@@ -425,7 +527,7 @@ async function waitForUserMessage({ qaAuth, conversationId, prompt, startedAt, t
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('missing_latest_user_message');
+  throw new Error("missing_latest_user_message");
 }
 
 async function waitForAssistantParent({
@@ -433,13 +535,13 @@ async function waitForAssistantParent({
   conversationId,
   userMessageId,
   timeoutMs,
-  expectedText = '',
+  expectedText = "",
   requireExactText = false,
   rejectPhaseBPromotion = false,
 }) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const message = await qaAuth.db.collection('messages').findOne(
+    const message = await qaAuth.db.collection("messages").findOne(
       {
         user: qaAuth.userId,
         conversationId,
@@ -451,12 +553,14 @@ async function waitForAssistantParent({
     const visibleText = extractVisibleAnswerTextFromMessage(message).trim();
     const promotedByPhaseB =
       message?.metadata?.viventium?.promotedToEmptyParent === true ||
-      message?.metadata?.viventium?.type === 'cortex_followup';
+      message?.metadata?.viventium?.type === "cortex_followup";
     const expectedSatisfied =
       !expectedText ||
       (requireExactText
         ? isExactExpectedAnswer(visibleText, expectedText)
-        : visibleText.toLowerCase().includes(String(expectedText).toLowerCase()));
+        : visibleText
+            .toLowerCase()
+            .includes(String(expectedText).toLowerCase()));
     if (
       message &&
       visibleText.length > 0 &&
@@ -468,7 +572,7 @@ async function waitForAssistantParent({
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('missing_latest_assistant_parent');
+  throw new Error("missing_latest_assistant_parent");
 }
 
 async function readLatestTurnState({
@@ -476,16 +580,16 @@ async function readLatestTurnState({
   conversationId,
   userMessageId,
   assistantMessageId,
-  expectedText = '',
+  expectedText = "",
 }) {
-  const parent = await qaAuth.db.collection('messages').findOne({
+  const parent = await qaAuth.db.collection("messages").findOne({
     user: qaAuth.userId,
     conversationId,
     isCreatedByUser: false,
     messageId: assistantMessageId,
   });
   const phaseBChildren = await qaAuth.db
-    .collection('messages')
+    .collection("messages")
     .find({
       user: qaAuth.userId,
       conversationId,
@@ -495,7 +599,7 @@ async function readLatestTurnState({
     .sort({ createdAt: 1, _id: 1 })
     .toArray();
   const directChildren = await qaAuth.db
-    .collection('messages')
+    .collection("messages")
     .find({
       user: qaAuth.userId,
       conversationId,
@@ -513,9 +617,12 @@ async function readLatestTurnState({
   ).length;
 
   return {
-    parentHash: hashValue(parent?.messageId || ''),
+    parentHash: hashValue(parent?.messageId || ""),
     parentTextLength: parentText.length,
-    parentIncludesExpectedText: textIncludesExpectedAnswer(parentText, expectedText),
+    parentIncludesExpectedText: textIncludesExpectedAnswer(
+      parentText,
+      expectedText,
+    ),
     parentExactExpected: isExactExpectedAnswer(parentText, expectedText),
     directAssistantCount: directChildren.length,
     phaseBChildCount: phaseBChildren.length,
@@ -524,7 +631,11 @@ async function readLatestTurnState({
     scopedCortexNames: Array.from(
       new Set(
         allCortexParts
-          .map((part) => String(part.cortex_name || part.cortexName || part.name || '').trim())
+          .map((part) =>
+            String(
+              part.cortex_name || part.cortexName || part.name || "",
+            ).trim(),
+          )
           .filter(Boolean),
       ),
     ).sort(),
@@ -536,6 +647,7 @@ async function run() {
   const env = localEnv();
   let qaAuth;
   let browser;
+  const trackedConversationIds = new Set();
   const result = {
     startedAt: args.startedAt,
     clientBaseHash: hashValue(args.clientBase),
@@ -543,10 +655,10 @@ async function run() {
     qaEmailHash: hashValue(args.qaEmail),
     setupPromptHash: hashValue(args.setupPrompt),
     testPromptHash: hashValue(args.testPrompt),
-    conversationIdHash: '',
+    conversationIdHash: "",
     setupCardsVisible: false,
     setupFollowUpReady: false,
-    latestParentHash: '',
+    latestParentHash: "",
     latestParentTextLength: 0,
     latestParentIncludesTestOk: false,
     latestParentExactExpectedText: false,
@@ -557,34 +669,53 @@ async function run() {
     latestScopedCortexNames: [],
     directAccessTokenFallbackUsed: false,
     environmentBlocked: false,
-    environmentBlockReason: '',
+    environmentBlockReason: "",
     testOkVisibleBeforeReload: false,
     testOkVisibleAfterReload: false,
+    qaProvenancePersisted: false,
     pass: false,
     error: null,
   };
 
   try {
     qaAuth = await createQaAuth({ args, env });
-    const { chromium } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'playwright'));
-    browser = await chromium.launch({ channel: 'chrome', headless: args.headless });
+    const { chromium } = require(
+      path.join(LIBRECHAT_ROOT, "node_modules", "playwright"),
+    );
+    browser = await chromium.launch({
+      channel: "chrome",
+      headless: args.headless,
+    });
     const context = await browser.newContext({
       baseURL: args.clientBase,
       viewport: { width: 1280, height: 960 },
     });
     await attachAuthCookies({ context, args, qaAuth });
     const page = await context.newPage();
-    await page.goto(args.clientBase, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    let authState = await installAccessToken(page, qaAuth.accessToken);
-    result.directAccessTokenFallbackUsed ||= authState.mode === 'direct_access_token_fallback';
-    await page.goto(`${args.clientBase}/c/new`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    authState = await installAccessToken(page, qaAuth.accessToken);
-    result.directAccessTokenFallbackUsed ||= authState.mode === 'direct_access_token_fallback';
-    await page.waitForFunction(() => window.location.pathname === '/c/new', undefined, {
-      timeout: 10000,
+    await installQaRequestIsolation(page, { qaRunId: args.qaRunId });
+    await page.goto(args.clientBase, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
     });
+    let authState = await installAccessToken(page, qaAuth.accessToken);
+    result.directAccessTokenFallbackUsed ||=
+      authState.mode === "direct_access_token_fallback";
+    await page.goto(`${args.clientBase}/c/new`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+    authState = await installAccessToken(page, qaAuth.accessToken);
+    result.directAccessTokenFallbackUsed ||=
+      authState.mode === "direct_access_token_fallback";
+    await page.waitForFunction(
+      () => window.location.pathname === "/c/new",
+      undefined,
+      {
+        timeout: 10000,
+      },
+    );
 
-    await submitPrompt(page, args.setupPrompt);
+    await submitPrompt(page, args.setupPrompt, args.timeoutMs);
     const conversationId = await waitForConversationForPrompt({
       qaAuth,
       prompt: args.setupPrompt,
@@ -592,21 +723,26 @@ async function run() {
       timeoutMs: args.timeoutMs,
       page,
     });
+    trackedConversationIds.add(conversationId);
     result.conversationIdHash = hashValue(conversationId);
     if (extractConversationIdFromUrl(page.url()) !== conversationId) {
-      await page.waitForFunction(
-        (expectedConversationId) => window.location.pathname === `/c/${expectedConversationId}`,
-        conversationId,
-        { timeout: 30000 },
-      ).catch(() => {});
+      await page
+        .waitForFunction(
+          (expectedConversationId) =>
+            window.location.pathname === `/c/${expectedConversationId}`,
+          conversationId,
+          { timeout: 30000 },
+        )
+        .catch(() => {});
     }
     if (extractConversationIdFromUrl(page.url()) !== conversationId) {
       await page.goto(`${args.clientBase}/c/${conversationId}`, {
-        waitUntil: 'domcontentloaded',
+        waitUntil: "domcontentloaded",
         timeout: 60000,
       });
       authState = await installAccessToken(page, qaAuth.accessToken);
-      result.directAccessTokenFallbackUsed ||= authState.mode === 'direct_access_token_fallback';
+      result.directAccessTokenFallbackUsed ||=
+        authState.mode === "direct_access_token_fallback";
     }
     await waitForSetupCards(page, args.timeoutMs);
     result.setupCardsVisible = true;
@@ -619,7 +755,7 @@ async function run() {
     });
     result.setupFollowUpReady = Boolean(setupUserMessage?.messageId);
 
-    await submitPrompt(page, args.testPrompt);
+    await submitPrompt(page, args.testPrompt, args.timeoutMs);
     const latestUserMessage = await waitForUserMessage({
       qaAuth,
       conversationId,
@@ -637,10 +773,15 @@ async function run() {
     });
     await page.waitForFunction(
       (expectedText) =>
-        String(document.body.innerText || '')
-          .replace(/\s+/g, ' ')
+        String(document.body.innerText || "")
+          .replace(/\s+/g, " ")
           .toLowerCase()
-          .includes(String(expectedText || '').replace(/\s+/g, ' ').trim().toLowerCase()),
+          .includes(
+            String(expectedText || "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .toLowerCase(),
+          ),
       args.testExpectedText,
       { timeout: 60000 },
     );
@@ -658,7 +799,9 @@ async function run() {
       assistantMessageId: latestAssistantParent.messageId,
       expectedText: args.testExpectedText,
     });
-    const latestParentText = extractVisibleAnswerTextFromMessage(latestAssistantParent);
+    const latestParentText = extractVisibleAnswerTextFromMessage(
+      latestAssistantParent,
+    );
     Object.assign(result, {
       latestParentHash: latestState.parentHash,
       latestParentTextLength: latestState.parentTextLength,
@@ -669,25 +812,37 @@ async function run() {
       ),
       latestDirectAssistantCount: latestState.directAssistantCount,
       latestPhaseBChildCount: latestState.phaseBChildCount,
-      latestPhaseBChildVisibleTextCount: latestState.phaseBChildVisibleTextCount,
+      latestPhaseBChildVisibleTextCount:
+        latestState.phaseBChildVisibleTextCount,
       latestScopedCortexPartCount: latestState.scopedCortexPartCount,
       latestScopedCortexNames: latestState.scopedCortexNames,
     });
+    result.qaProvenancePersisted =
+      (await qaAuth.db.collection("messages").countDocuments({
+        user: qaAuth.userId,
+        conversationId,
+        "metadata.viventium.qaRun": true,
+        "metadata.viventium.qaRunId": args.qaRunId,
+        "metadata.viventium.memoryEligible": false,
+      })) >= 2;
 
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
     authState = await installAccessToken(page, qaAuth.accessToken);
-    result.directAccessTokenFallbackUsed ||= authState.mode === 'direct_access_token_fallback';
+    result.directAccessTokenFallbackUsed ||=
+      authState.mode === "direct_access_token_fallback";
     if (extractConversationIdFromUrl(page.url()) !== conversationId) {
       await page.goto(`${args.clientBase}/c/${conversationId}`, {
-        waitUntil: 'domcontentloaded',
+        waitUntil: "domcontentloaded",
         timeout: 60000,
       });
       authState = await installAccessToken(page, qaAuth.accessToken);
-      result.directAccessTokenFallbackUsed ||= authState.mode === 'direct_access_token_fallback';
+      result.directAccessTokenFallbackUsed ||=
+        authState.mode === "direct_access_token_fallback";
     }
-    result.testOkVisibleAfterReload = textIncludesExpectedAnswer(
-      await visibleBodyText(page),
+    result.testOkVisibleAfterReload = await waitForExpectedTextAfterReload(
+      page,
       args.testExpectedText,
+      Math.min(args.timeoutMs, 60000),
     );
     result.pass =
       result.setupCardsVisible &&
@@ -696,17 +851,41 @@ async function run() {
       result.latestParentExactExpectedText &&
       result.testOkVisibleBeforeReload &&
       result.testOkVisibleAfterReload &&
+      result.qaProvenancePersisted &&
       result.latestScopedCortexPartCount === 0 &&
       result.latestPhaseBChildVisibleTextCount === 0;
   } catch (error) {
-    if (error?.qaBlocked || String(error?.message || '').startsWith('environment_blocked:')) {
+    if (
+      error?.qaBlocked ||
+      String(error?.message || "").startsWith("environment_blocked:")
+    ) {
       result.environmentBlocked = true;
       result.environmentBlockReason = sanitizePublicError(
-        String(error?.message || '').replace(/^environment_blocked:/, ''),
+        String(error?.message || "").replace(/^environment_blocked:/, ""),
       );
     }
-    result.error = sanitizePublicError(error?.message || error || 'qa_failed');
+    result.error = sanitizePublicError(error?.message || error || "qa_failed");
   } finally {
+    if (qaAuth) {
+      try {
+        const cleanup = await cleanupQaRunArtifacts({
+          db: qaAuth.db,
+          userId: qaAuth.userId,
+          startedAt: new Date(args.startedAt),
+          trackedConversationIds: [...trackedConversationIds],
+          qaRunId: args.qaRunId,
+          meiliClient: qaAuth.meiliClient,
+        });
+        result.cleanupPass = true;
+        result.cleanupConversationCount = cleanup.conversationsDeleted;
+      } catch (cleanupError) {
+        result.cleanupPass = false;
+        result.pass = false;
+        result.error = sanitizePublicError(
+          cleanupError?.message || cleanupError,
+        );
+      }
+    }
     if (browser) {
       await browser.close().catch(() => {});
     }
@@ -716,44 +895,45 @@ async function run() {
   }
 
   const report = [
-    '# Latest-User Activation Browser QA',
-    '',
+    "# Latest-User Activation Browser QA",
+    "",
     `- Started: ${result.startedAt}`,
-    '- Scope: local synthetic browser run with public-safe hashes only; release approval still requires committed diffs, nested pin agreement, scans, and review-only gates.',
-    '- Contract: setup cards must appear, then the latest simple output-only user message must answer without stale-history cortex cards.',
+    "- Scope: local synthetic browser run with public-safe hashes only; release approval still requires committed diffs, nested pin agreement, scans, and review-only gates.",
+    "- Contract: setup cards must appear, then the latest simple output-only user message must answer without stale-history cortex cards.",
     `- Client hash: \`${result.clientBaseHash}\``,
     `- API hash: \`${result.apiBaseHash}\``,
     `- QA user hash: \`${result.qaEmailHash}\``,
     `- Setup prompt hash: \`${result.setupPromptHash}\``,
     `- Test prompt hash: \`${result.testPromptHash}\``,
-    `- Conversation hash: \`${result.conversationIdHash || 'unverified'}\``,
+    `- Conversation hash: \`${result.conversationIdHash || "unverified"}\``,
     `- Setup cards visible: ${Boolean(result.setupCardsVisible)}`,
     `- Setup follow-up ready: ${Boolean(result.setupFollowUpReady)}`,
-    `- Latest assistant hash: \`${result.latestParentHash || 'unverified'}\``,
+    `- Latest assistant hash: \`${result.latestParentHash || "unverified"}\``,
     `- Latest parent text length: ${result.latestParentTextLength}`,
     `- Expected text: \`${hashValue(args.testExpectedText)}\``,
     `- Latest parent includes expected text: ${Boolean(result.latestParentIncludesTestOk)}`,
     `- Latest parent exactly expected text: ${Boolean(result.latestParentExactExpectedText)}`,
     `- Expected text visible before reload: ${Boolean(result.testOkVisibleBeforeReload)}`,
     `- Expected text visible after reload: ${Boolean(result.testOkVisibleAfterReload)}`,
+    `- Structured QA provenance persisted: ${Boolean(result.qaProvenancePersisted)}`,
     `- Latest direct assistant count: ${result.latestDirectAssistantCount}`,
     `- Latest Phase B child count: ${result.latestPhaseBChildCount}`,
     `- Latest Phase B visible child count: ${result.latestPhaseBChildVisibleTextCount}`,
     `- Latest scoped cortex part count: ${result.latestScopedCortexPartCount}`,
-    `- Latest scoped cortex names: ${result.latestScopedCortexNames.join(', ') || 'none'}`,
+    `- Latest scoped cortex names: ${result.latestScopedCortexNames.join(", ") || "none"}`,
     `- Direct access-token fallback used: ${Boolean(result.directAccessTokenFallbackUsed)}`,
     `- Environment blocked: ${Boolean(result.environmentBlocked)}`,
     result.environmentBlockReason
       ? `- Environment block reason: ${result.environmentBlockReason}`
-      : '',
-    `- Result: ${result.pass ? 'PASS' : result.environmentBlocked ? 'BLOCKED' : 'FAIL'}`,
-    result.error ? `- Error: ${result.error}` : '',
-    '',
+      : "",
+    `- Result: ${result.pass ? "PASS" : result.environmentBlocked ? "BLOCKED" : "FAIL"}`,
+    result.error ? `- Error: ${result.error}` : "",
+    "",
   ]
     .filter(Boolean)
-    .join('\n');
+    .join("\n");
   fs.mkdirSync(path.dirname(args.out), { recursive: true });
-  fs.writeFileSync(args.out, `${report}\n`, 'utf8');
+  fs.writeFileSync(args.out, `${report}\n`, "utf8");
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -764,7 +944,9 @@ if (require.main === module) {
       process.exit(exitCodeForResult(result));
     })
     .catch((error) => {
-      console.error(sanitizePublicError(error?.message || error || 'qa_failed'));
+      console.error(
+        sanitizePublicError(error?.message || error || "qa_failed"),
+      );
       process.exit(1);
     });
 }

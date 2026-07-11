@@ -1,0 +1,49 @@
+# Background Agent Visible Cards Browser QA
+<!-- qa-evidence-exempt: Historical local QA format retained without retroactively inventing evidence; current release acceptance is recorded separately. -->
+- Started: 2026-07-09T17:12:56.922Z
+- Scope: local synthetic browser run with public-safe hashes only; release approval still requires committed diffs, nested pin agreement, scans, and review-only gates.
+- Agent ID configuration: default local QA agent IDs are used unless VIVENTIUM_QA_REQUIRED_CORTEX_AGENT_IDS_JSON overrides them.
+- Client hash: `1907c09a5927cc92`
+- API hash: `49e73564e9d328ef`
+- QA user hash: `70a842432bd857c0`
+- Agent hash: `ed61775c0d925dba`
+- Prompt hash: `cdfd4e4e2a7de8b9`
+- Conversation hash: `unverified`
+- Required visible cards: Red Team, Confirmation Bias
+- Runtime required agents: 0
+- Runtime missing required agent hashes: none
+- Runtime cortex fallback agents configured: none
+- Runtime activation expected provider: groq
+- Runtime activation expected model hash: `01327cd998eaac21`
+- Runtime activation drift agents: none
+- Runtime activation config pass: false
+- Runtime provisioning pass: false
+- Conversation fallback navigation used: false
+- Initial visible cards: none
+- Reload visible cards: none
+- Parent assistant hash: `unverified`
+- Parent visible answer text length: 0
+- Parent visible answer present: false
+- Parent cortex-only failure: false
+- Initial parent answer visible: false
+- Reload parent answer visible: false
+- Phase B follow-up message count: 0
+- Background-agent footer visible: false
+- Terminal state visible: false
+- Why-this-ran visible: false
+- Forbidden main-agent wording matches: 0
+- Main error banner matches: 0
+- Stored assistant message count: 0
+- Stored cortex part count: 0
+- Stored cortex cards: none
+- Stored terminal cortex results: none
+- Stored successful cortex insights: none
+- Stored cortex errors: none
+- Console error count: 0
+- Failed request count: 0
+- Failed request route classes: none
+- Critical HTTP error count: 0
+- Critical HTTP error routes: none
+- Result: BLOCKED
+- Interpretation: BLOCKED: the browser harness could not create an authenticated synthetic QA session because the default QA user fixture was not present. No user-visible Red Team card behavior was exercised in this run.
+- Error: QA user not found

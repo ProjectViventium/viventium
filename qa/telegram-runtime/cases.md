@@ -61,6 +61,17 @@
 - **Last run:** 2026-06-28, automated regression plus Playwright visual QA rerun. See
   `reports/2026-06-28-telegram-fallback-audio-table-qa-rerun.md`.
 
+## Case TR-007: Telegram Memory Capture Reaches New Conversations
+
+- **Expected outcome:** An explicit synthetic durable fact sent through the real Telegram bot
+  advances saved-memory state, while a separate natural event remains available through
+  conversation recall; both can be recovered later from new authenticated Chrome/voice sessions.
+- **Forbidden result:** Telegram reply success is counted as memory proof, same-thread history is
+  reused, the detached writer drops a nearby turn, or saved memory and recall are conflated.
+- **Evidence to capture:** visible Telegram send/reply, hashed writer audit, Mongo key/revision and
+  message/corpus evidence, new Chrome answer, real voice transcript/audio, and cleanup.
+- **Last run:** ADDED 2026-07-11; real native journey required under `MEMCONT-004` and `RAG-005`.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Runtime. Add narrower feature-specific
@@ -73,6 +84,7 @@ rows before claiming a pass when the feature behavior changes.
 | `TELEGRAM-UC-003` | Restart Telegram runtime and compare status/log evidence before and after restart. | `TR-001`-`TR-004` | CLI launcher/status, process list, logs, and Telegram bridge state | Scoped process evidence, status output, sanitized logs, and tests | Restart removes only stale scoped pollers, preserves unrelated processes, and status after restart matches the actual bridge state. | 2026-05-14 static regression coverage - passed |
 | `TELEGRAM-UC-004` | Simulate a primary provider-rate-limited Telegram turn while audio replies are enabled. | `TR-005` | Main-agent fallback classifier, Telegram bridge stream, and voice gate | Fallback regression test, stream regression test, sanitized log class, and QA report | A valid configured fallback produces the answer; otherwise the terminal provider-rate-limit blocker is visible text only and non-spoken. | 2026-06-28 automated regression and live-runtime QA rerun - passed automated, partial live external Telegram |
 | `TELEGRAM-UC-005` | Render a worker-style Markdown table result for Telegram. | `TR-006` | Telegram Markdown-to-HTML renderer and visual fixture | Renderer regression test and browser screenshot/check with synthetic content | The user sees readable rows, not raw pipe-table syntax. | 2026-06-28 automated plus Playwright visual coverage - passed |
+| `TELEGRAM-UC-006` | Send one explicit synthetic memory and one natural synthetic event, then ask about each from new Chrome/voice conversations. | `TR-007`, `MEMCONT-004`, `RAG-005` | real Telegram, Chrome, Modern Playground voice | DB revisions, recall source, logs, visible/audible results, cleanup | Saved memory and recall each work through their own lane and neither depends on the original Telegram thread. | ADDED 2026-07-11; run required |
 
 ## Release Test Traceability
 

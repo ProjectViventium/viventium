@@ -7,6 +7,7 @@ import subprocess
 import sys
 import importlib.util
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,7 +21,7 @@ WORKBENCH_BACKEND = REPO_ROOT / "viventium_v0_4" / "prompt-workbench" / "backend
 if str(WORKBENCH_BACKEND) not in sys.path:
     sys.path.insert(0, str(WORKBENCH_BACKEND))
 
-from prompt_workbench import drafts, import_mapper, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
+from prompt_workbench import drafts, import_mapper, periphery_snapshots, prompt_service, promptfoo_adapter, scheduled_prompts, sync_engine  # noqa: E402
 from prompt_workbench import evals  # noqa: E402
 from prompt_workbench.paths import resolve_repo_path  # noqa: E402
 from prompt_workbench.runtime_env import load_viventium_runtime_env  # noqa: E402
@@ -505,6 +506,190 @@ def test_scheduled_prompt_memories_distinguish_empty_from_unavailable(monkeypatc
     assert "User memory lookup unavailable" in user_unavailable["rendered"]
 
 
+def test_periphery_snapshot_keeps_private_full_evidence_but_quarantines_reviewed_qa(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(periphery_snapshots, "workbench_private_root", lambda: tmp_path / "private")
+    my_folder = tmp_path / "my-folder"
+    my_folder.mkdir()
+    (my_folder / "working-note.md").write_text("A real private scratch note.", encoding="utf-8")
+    (my_folder / "old-qa-note.md").write_text("Synthetic QA residue.", encoding="utf-8")
+    (my_folder / "memory-proposals-202607110700.json").write_text('{"actions": []}', encoding="utf-8")
+
+    def fake_query(script: str):
+        assert "periphery_snapshot_v1" in script
+        return {
+            "user": {"id": "user-private-id", "email": "person@example.test", "name": "Person"},
+            "counts": {"conversations": 2, "messages": 3, "memories": 1},
+            "memories": [
+                {"id": "memory-private-id", "key": "core", "value": "Private durable context", "updatedAt": "2026-07-10T10:00:00Z"}
+            ],
+            "conversations": [
+                {
+                    "id": "conversation-real-id",
+                    "title": "Current planning",
+                    "tags": [],
+                    "updatedAt": "2026-07-10T11:00:00Z",
+                    "messages": [
+                        {"id": "message-real-1", "role": "user", "text": "Private current goal", "createdAt": "2026-07-10T10:59:00Z"},
+                        {"id": "message-real-2", "role": "assistant", "text": "Private response", "createdAt": "2026-07-10T11:00:00Z"},
+                    ],
+                },
+                {
+                    "id": "conversation-qa-id",
+                    "title": "Must not reach the model snapshot",
+                    "tags": ["qa"],
+                    "updatedAt": "2026-07-10T12:00:00Z",
+                    "messages": [
+                        {"id": "message-qa-1", "role": "user", "text": "Adversarial QA phrase", "createdAt": "2026-07-10T12:00:00Z"}
+                    ],
+                },
+            ],
+        }
+
+    labels = {
+        "schemaVersion": 1,
+        "messages": {"message-real-2": {"label": "qa", "include": False, "reason": "reviewed message fixture"}},
+        "scratchpads": {"old-qa-note.md": {"label": "qa", "include": False, "reason": "reviewed fixture residue"}},
+    }
+    periphery_snapshots.write_labels("user-a", labels)
+    result = periphery_snapshots.create_snapshot(
+        user_id="user-a",
+        email="person@example.test",
+        my_folder=str(my_folder),
+        query_mongo_json=fake_query,
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+
+    full_payload = json.loads(Path(result["fullSnapshotPath"]).read_text(encoding="utf-8"))
+    model_payload = json.loads(result["modelSnapshotJson"])
+    manifest = result["manifest"]
+    assert len(full_payload["conversations"]) == 2
+    assert len(model_payload["conversations"]) == 1
+    assert len(model_payload["conversations"][0]["messages"]) == 1
+    assert len(model_payload["scratchpads"]) == 1
+    assert "Adversarial QA phrase" not in result["modelSnapshotJson"]
+    assert "Synthetic QA residue" not in result["modelSnapshotJson"]
+    assert manifest["status"] == "complete"
+    assert manifest["counts"]["conversationsExcluded"] == 1
+    assert manifest["counts"]["scratchpadsExcluded"] == 1
+    assert manifest["sourceRefCount"] >= 4
+    assert "person@example.test" not in json.dumps(manifest)
+    assert "conversation-real-id" not in result["modelSnapshotJson"]
+    assert str(tmp_path) not in json.dumps(manifest)
+    assert Path(result["fullSnapshotPath"]).stat().st_mode & 0o777 == 0o600
+
+
+def test_periphery_snapshot_reports_mongo_unavailable_without_inventing_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(periphery_snapshots, "workbench_private_root", lambda: tmp_path / "private")
+    result = periphery_snapshots.create_snapshot(
+        user_id="user-a",
+        email=None,
+        my_folder=str(tmp_path / "missing-folder"),
+        query_mongo_json=lambda _script: None,
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+
+    model_payload = json.loads(result["modelSnapshotJson"])
+    assert result["manifest"]["status"] == "degraded"
+    assert result["manifest"]["missingPrerequisites"] == ["mongo"]
+    assert model_payload["conversations"] == []
+    assert model_payload["memories"] == []
+    assert model_payload["status"] == "degraded"
+
+
+def test_periphery_snapshot_preview_is_metadata_only_and_does_not_query_mongo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(periphery_snapshots, "workbench_private_root", lambda: tmp_path / "private")
+    calls = []
+    preview = periphery_snapshots.preview_snapshot("user-a", query_mongo_json=lambda script: calls.append(script))
+
+    assert preview["status"] == "not_created"
+    assert calls == []
+
+
+def test_periphery_snapshot_retention_is_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(periphery_snapshots, "workbench_private_root", lambda: tmp_path / "private")
+    payload = {"user": {"id": "u"}, "counts": {}, "memories": [], "conversations": []}
+    started = datetime(2026, 7, 1, 7, 0, tzinfo=timezone.utc)
+    for offset in range(periphery_snapshots.SNAPSHOT_RETENTION_COUNT + 2):
+        periphery_snapshots.create_snapshot(
+            user_id="user-a",
+            email=None,
+            my_folder=None,
+            query_mongo_json=lambda _script: payload,
+            now=started + timedelta(days=offset),
+        )
+
+    snapshot_root = next((tmp_path / "private" / "periphery-snapshots").iterdir())
+    assert len(list(snapshot_root.glob("*.manifest.json"))) == periphery_snapshots.SNAPSHOT_RETENTION_COUNT
+    assert len(list(snapshot_root.glob("*.model.json"))) == periphery_snapshots.SNAPSHOT_RETENTION_COUNT
+    assert len(list(snapshot_root.glob("*.full.json"))) == periphery_snapshots.SNAPSHOT_RETENTION_COUNT
+
+
+def test_periphery_snapshot_large_corpus_stays_within_worker_bounds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(periphery_snapshots, "workbench_private_root", lambda: tmp_path / "private")
+    conversations = []
+    for conversation_index in range(130):
+        conversations.append(
+            {
+                "id": f"conversation-{conversation_index}",
+                "title": "Synthetic bounded corpus",
+                "tags": [],
+                "updatedAt": "2026-07-10T10:00:00Z",
+                "messages": [
+                    {
+                        "id": f"message-{conversation_index}-{message_index}",
+                        "role": "user" if message_index % 2 == 0 else "assistant",
+                        "text": "x" * 500,
+                        "createdAt": "2026-07-10T10:00:00Z",
+                    }
+                    for message_index in range(100)
+                ],
+            }
+        )
+    result = periphery_snapshots.create_snapshot(
+        user_id="user-a",
+        email=None,
+        my_folder=None,
+        query_mongo_json=lambda _script: {
+            "user": {"id": "u"},
+            "counts": {"conversations": 1206, "messages": 12919, "memories": 0},
+            "memories": [],
+            "conversations": conversations,
+        },
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+
+    model = json.loads(result["modelSnapshotJson"])
+    included_messages = sum(len(row["messages"]) for row in model["conversations"])
+    assert len(model["conversations"]) <= periphery_snapshots.MAX_CONVERSATIONS
+    assert included_messages <= periphery_snapshots.MAX_MESSAGES
+    assert all(len(row["messages"]) <= periphery_snapshots.MAX_MESSAGES_PER_CONVERSATION for row in model["conversations"])
+    assert len(result["modelSnapshotJson"]) < 3_000_000
+    assert result["manifest"]["counts"]["conversationsAvailable"] == 1206
+
+
+def test_periphery_snapshot_queries_newest_messages_then_restores_chronology() -> None:
+    script = periphery_snapshots._mongo_snapshot_script("user-a", None)
+
+    assert ".sort({createdAt:-1,_id:-1}).limit(" in script
+    assert "grouped[key].sort((left, right)" in script
+    assert ".sort({createdAt:1,_id:1}).limit(" not in script
+
+
 def test_variable_render_endpoint_uses_authenticated_admin_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -551,7 +736,7 @@ def test_scheduled_prompt_object_has_drafts_preview_and_execution_config_ui() ->
     assert "schedule-execution-card" in schedule_source
     assert "GlassHive host" in schedule_source
     assert "Viventium agent" in schedule_source
-    assert "This user-level schedule does not use Workbench variable rendering" in schedule_source
+    assert "This user-level schedule does not use Workbench variable" in schedule_source
     assert "User-level scheduler policy" in schedule_source
     assert "confirmUserLevelDelivery" in api_source
     assert "Manual Viventium schedule run started" in schedule_source
@@ -640,18 +825,70 @@ def test_nightly_prompt_template_prefers_configured_default_timezone(monkeypatch
         "time": "03:00",
         "timezone": "America/Toronto",
     }
+    assert template["memoryWriteMode"] == "off"
+
+
+def test_nightly_prompt_template_uses_public_safe_utc_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.delenv("VIVENTIUM_DEFAULT_TIMEZONE", raising=False)
+
+    template = scheduled_prompts.nightly_prompt_template()
+
+    assert template["schedule"]["timezone"] == "UTC"
 
 
 def test_nightly_prompt_template_requests_private_risk_radar_sidecar() -> None:
     prompt_text = scheduled_prompts.nightly_prompt_template()["promptText"]
 
     assert "{{local.viventium.my_folder}}" in prompt_text
+    assert "{{viventium.periphery.snapshot}}" in prompt_text
+    assert "scheduled-prompt/periphery-snapshot.json" in prompt_text
     assert "periphery/risk_radar/YYYY/MM" in prompt_text
     assert "paired .md and .json" in prompt_text
     assert "If there is no strong evidence" in prompt_text
     assert "Do not add a saved-memory key" in prompt_text
+    assert "{{user.memories}}" not in prompt_text
+    assert "{{memory_agent.system_prompt}}" not in prompt_text
+    assert "{{viventium.background_agents.get_list(agent_name, system_prompt)}}" not in prompt_text
+    assert len(prompt_text) < 4_000
     for field in scheduled_prompts.PERIPHERY_REQUIRED_FIELDS:
         assert field in prompt_text
+
+
+def test_nightly_dispatch_render_keeps_private_evidence_out_of_the_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_snapshot = json.dumps(
+        {
+            "snapshotRef": "snapshot:20260711T070000Z-abc123abc123",
+            "conversations": [{"messages": [{"text": "Private evidence body"}]}],
+        }
+    )
+    monkeypatch.setattr(
+        periphery_snapshots,
+        "create_snapshot",
+        lambda **_kwargs: {
+            "manifest": {
+                "snapshotRef": "snapshot:20260711T070000Z-abc123abc123",
+                "status": "complete",
+                "generatedAt": "2026-07-11T07:00:00Z",
+                "counts": {"conversationsIncluded": 1},
+                "sourceRefCount": 2,
+            },
+            "modelSnapshotJson": model_snapshot,
+        },
+    )
+
+    rendered = scheduled_prompts.render_variables(
+        scheduled_prompts.NIGHTLY_PROMPT_TEMPLATE,
+        user_id="user-a",
+        snapshot_mode="create",
+    )
+
+    assert "Private evidence body" not in rendered["rendered"]
+    assert rendered["privatePeripherySnapshotJson"] == model_snapshot
+    assert rendered["peripherySnapshotManifest"]["status"] == "complete"
+    assert len(rendered["rendered"]) < 8_000
 
 
 def test_nightly_seed_reconciles_existing_builtin_schedule_timezone(
@@ -721,6 +958,89 @@ def test_nightly_seed_reconciles_existing_builtin_prompt_into_scheduler_task(
     assert "periphery/risk_radar/YYYY/MM" in task["prompt"]
 
 
+def test_nightly_seed_backfills_legacy_execution_metadata_without_resetting_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-test-scheduled")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
+    monkeypatch.setenv("GLASSHIVE_DEFAULT_WORKER_PROFILE", "claude-code")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
+
+    template = scheduled_prompts.nightly_prompt_template()
+    existing = scheduled_prompts.create_scheduled_prompt(
+        {
+            **template,
+            "templateId": scheduled_prompts.NIGHTLY_TEMPLATE_ID,
+            "active": True,
+        },
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+    store = scheduled_prompts.storage()
+    definition = store.get_scheduled_prompt_definition(existing["id"])
+    definition_metadata = dict(definition["metadata"])
+    definition_execution = dict(definition_metadata["execution"])
+    definition_execution["execution_model"] = "gpt-stale"
+    definition_execution["reasoning_effort"] = "high"
+    definition_execution["execution_profile"] = "codex-cli"
+    definition_metadata["execution"] = definition_execution
+    store.update_scheduled_prompt_definition(
+        existing["id"],
+        {"metadata": definition_metadata, "memory_write_mode": "propose"},
+    )
+
+    task = store.get_task("startup-admin", definition["task_id"])
+    task_metadata = dict(task["metadata"])
+    task_workbench = dict(task_metadata["workbench_scheduled_prompt"])
+    task_workbench["execution_model"] = "gpt-stale"
+    task_workbench["reasoning_effort"] = "high"
+    task_workbench["memory_write_mode"] = "propose"
+    task_metadata["workbench_scheduled_prompt"] = task_workbench
+    task_metadata.pop("misfire_policy")
+    store.update_task("startup-admin", definition["task_id"], {"metadata": task_metadata})
+
+    reseeded = scheduled_prompts.seed_nightly_prompt(
+        user_id="startup-admin",
+        email="startup-admin@example.test",
+    )
+
+    stored = store.get_scheduled_prompt_definition(existing["id"])
+    task = store.get_task("startup-admin", definition["task_id"])
+    assert reseeded["executionModel"] == "gpt-test-scheduled"
+    assert reseeded["reasoningEffort"] == "xhigh"
+    assert stored["metadata"]["execution"]["execution_profile"] == "codex-cli"
+    assert stored["metadata"]["execution"]["execution_model"] == "gpt-test-scheduled"
+    assert stored["metadata"]["execution"]["reasoning_effort"] == "xhigh"
+    assert task["metadata"]["workbench_scheduled_prompt"]["execution_profile"] == "codex-cli"
+    assert task["metadata"]["workbench_scheduled_prompt"]["execution_model"] == "gpt-test-scheduled"
+    assert task["metadata"]["workbench_scheduled_prompt"]["reasoning_effort"] == "xhigh"
+    assert stored["memory_write_mode"] == "off"
+    assert task["metadata"]["workbench_scheduled_prompt"]["memory_write_mode"] == "off"
+    assert task["metadata"]["misfire_policy"] == scheduled_prompts.NIGHTLY_MISFIRE_POLICY
+
+
+def test_scheduled_automation_tuple_is_config_driven_and_profile_aware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "WPR_MODEL_HOST_CODEX_CLI",
+        "WPR_MODEL_CODEX_CLI",
+        "WPR_MODEL_CLAUDE_CODE",
+        "WPR_CODEX_CLI_REASONING_EFFORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert scheduled_prompts._default_automation_model("codex-cli") == ""
+    assert scheduled_prompts._default_automation_reasoning_effort() == ""
+
+    monkeypatch.setenv("WPR_MODEL_CLAUDE_CODE", "claude-configured-test")
+    assert scheduled_prompts._default_automation_model("claude-code") == "claude-configured-test"
+    assert scheduled_prompts._default_automation_model("unknown-profile") == ""
+
+
 def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("httpx")
     pytest.importorskip("fastapi.testclient")
@@ -733,6 +1053,8 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
     monkeypatch.setenv("SCHEDULER_GLASSHIVE_DISABLE_DISPATCH", "1")
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-5.6-sol")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda script: None)
     from fastapi.testclient import TestClient
     from prompt_workbench.app import app
@@ -753,6 +1075,8 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     assert created.status_code == 200
     prompt_id = created.json()["id"]
     assert created.json()["active"] is False
+    assert created.json()["executionModel"] == "gpt-5.6-sol"
+    assert created.json()["reasoningEffort"] == "xhigh"
 
     patched = client.patch(f"/api/scheduled-prompts/{prompt_id}", json={"active": True})
     assert patched.status_code == 200
@@ -779,8 +1103,35 @@ def test_scheduled_prompt_crud_manual_run_and_private_tables(tmp_path: Path, mon
     assert task["executor"] == "glasshive_host"
     assert task["channel"] == "workbench"
     assert task["metadata"]["workbench_scheduled_prompt"]["glasshive_worker_strategy"] == "new_worker_each_run"
+    assert task["metadata"]["workbench_scheduled_prompt"]["execution_model"] == "gpt-5.6-sol"
+    assert task["metadata"]["workbench_scheduled_prompt"]["reasoning_effort"] == "xhigh"
     assert runs and Path(runs[0]["private_detail_path"]).exists()
     assert "mongodb://" not in Path(runs[0]["private_detail_path"]).read_text(encoding="utf-8")
+
+
+def test_public_scheduled_run_exposes_requested_and_effective_effort_only() -> None:
+    public = scheduled_prompts._public_run(
+        {
+            "run_id": "run-1",
+            "status": "failed",
+            "executor": "glasshive_host",
+            "callback_payload_json": json.dumps(
+                {
+                    "effort_projection": {
+                        "requested": "xhigh",
+                        "effective": "medium",
+                        "fallback_reason": "xhigh_route_not_proven",
+                    },
+                    "private": "must not surface",
+                }
+            ),
+        }
+    )
+
+    assert public["requestedReasoningEffort"] == "xhigh"
+    assert public["effectiveReasoningEffort"] == "medium"
+    assert public["reasoningFallbackReason"] == "xhigh_route_not_proven"
+    assert "private" not in public
 
 
 def test_workbench_scheduled_prompt_can_use_viventium_executor(
@@ -902,9 +1253,11 @@ def test_scheduled_prompt_memory_proposal_review_and_governed_apply(
     assert applied.json()["applied"] is True
 
 
+@pytest.mark.parametrize("legacy_schema_version", ["1.0", "risk_radar.v1"])
 def test_scheduled_prompt_periphery_artifact_metadata_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    legacy_schema_version: str,
 ) -> None:
     pytest.importorskip("httpx")
     pytest.importorskip("fastapi.testclient")
@@ -937,7 +1290,7 @@ def test_scheduled_prompt_periphery_artifact_metadata_review(
     (artifact_dir / "20260625T030000Z.risk_radar.json").write_text(
         json.dumps(
             {
-                "schemaVersion": 1,
+                "schemaVersion": legacy_schema_version,
                 "moduleId": "risk_radar",
                 "generatedAt": "2026-06-25T07:00:00Z",
                 "scheduledRunRef": {"runId": "sp_run_private_1", "definitionId": created["id"]},
@@ -973,13 +1326,370 @@ def test_scheduled_prompt_periphery_artifact_metadata_review(
     assert artifact["contentCounts"]["blindSpots"] == 1
     assert artifact["sourceRefCount"] == 1
     assert artifact["scheduledRunRefHash"]
+    assert artifact["qualityStatus"] == "legacy"
     assert payload["invalidArtifacts"] == []
+    assert payload["index"]["artifactCount"] == 1
     assert "periphery/<moduleId>/YYYY/MM" in payload["contract"]
     encoded = json.dumps(payload)
     assert "Private synthetic insight body" not in encoded
     assert "Private observation text" not in encoded
     assert "private-conversation-id" not in encoded
     assert str(tmp_path) not in encoded
+
+
+def test_scheduled_prompt_periphery_v2_resolves_snapshot_evidence_and_builds_private_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.testclient")
+    monkeypatch.setenv("SCHEDULING_DB_PATH", str(tmp_path / "schedules.db"))
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_AUTH_DISABLED", "1")
+    monkeypatch.setenv("VIVENTIUM_PROMPT_WORKBENCH_ADMIN_USER_ID", "periphery-user")
+    monkeypatch.setattr(scheduled_prompts, "_query_mongo_json", lambda _script: None)
+    from fastapi.testclient import TestClient
+    from prompt_workbench.app import app
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/scheduled-prompts",
+        json={
+            "title": "Periphery v2 prompt",
+            "promptText": "Write private periphery notes",
+            "schedule": {"type": "daily", "time": "03:00", "timezone": "UTC"},
+            "active": False,
+            "memoryWriteMode": "propose",
+        },
+    ).json()
+    snapshot = periphery_snapshots.create_snapshot(
+        user_id="periphery-user",
+        email=None,
+        my_folder=created["myFolder"],
+        query_mongo_json=lambda _script: {
+            "user": {"id": "private-user"},
+            "counts": {"conversations": 0, "messages": 0, "memories": 1},
+            "memories": [
+                {"id": "private-memory", "key": "core", "value": "Private evidence body", "updatedAt": "2026-07-10T10:00:00Z"}
+            ],
+            "conversations": [],
+        },
+        schedule_store=scheduled_prompts.storage(),
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+    model_snapshot = json.loads(snapshot["modelSnapshotJson"])
+    source_ref = model_snapshot["memories"][0]["sourceRef"]
+    artifact_dir = Path(created["myFolder"]) / "periphery" / "risk_radar" / "2026" / "07"
+    artifact_dir.mkdir(parents=True)
+    sidecar = artifact_dir / "20260711T071500Z.risk_radar.json"
+    (artifact_dir / "20260711T071500Z.risk_radar.md").write_text("Private insight body", encoding="utf-8")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "moduleId": "risk_radar",
+                "generatedAt": "2026-07-11T07:15:00Z",
+                "snapshotRef": snapshot["manifest"]["snapshotRef"],
+                "scheduledRunRef": {"runId": "sp_run_private", "definitionId": created["id"]},
+                "sourceRefs": [source_ref],
+                "confidence": "medium",
+                "severity": "low",
+                "timeSensitivity": "low",
+                "ttl": "P7D",
+                "staleAfter": "2099-07-18T07:15:00Z",
+                "observations": [{"kind": "observation", "summary": "Private observation", "sourceRefs": [source_ref]}],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": ["on_demand"],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = client.get(f"/api/scheduled-prompts/{created['id']}/periphery-artifacts").json()
+
+    [artifact] = payload["artifacts"]
+    assert artifact["qualityStatus"] == "passed"
+    assert artifact["sourceRefsResolvedCount"] == 1
+    assert artifact["sourceRefsUnresolvedCount"] == 0
+    assert artifact["stale"] is False
+    assert payload["index"]["artifactCount"] == 1
+    assert payload["index"]["qualityCounts"] == {"passed": 1}
+    index_path = Path(created["myFolder"]) / "periphery" / "_index.json"
+    assert index_path.is_file()
+    index_text = index_path.read_text(encoding="utf-8")
+    assert "Private evidence body" not in index_text
+    assert "Private insight body" not in index_text
+    assert "Private observation" not in index_text
+    detail = client.get(
+        f"/api/scheduled-prompts/{created['id']}/periphery-artifacts/{artifact['artifactId']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["markdown"] == "Private insight body"
+    assert detail.json()["sidecar"]["observations"][0]["summary"] == "Private observation"
+    assert str(tmp_path) not in json.dumps(detail.json())
+
+
+def test_scheduled_prompt_periphery_v2_flags_unresolved_and_invalid_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    snapshot = periphery_snapshots.create_snapshot(
+        user_id="user-a",
+        email=None,
+        my_folder=None,
+        query_mongo_json=lambda _script: {"user": {"id": "u"}, "counts": {}, "memories": [], "conversations": []},
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+    root = tmp_path / "periphery"
+    artifact_dir = root / "risk_radar" / "2026" / "07"
+    artifact_dir.mkdir(parents=True)
+    base = {
+        "schemaVersion": 2,
+        "moduleId": "risk_radar",
+        "generatedAt": "2026-07-01T07:00:00Z",
+        "snapshotRef": snapshot["manifest"]["snapshotRef"],
+        "scheduledRunRef": {"runId": "sp_run_private"},
+        "sourceRefs": ["conversation:000000000000000000000000"],
+        "confidence": "medium",
+        "severity": "low",
+        "timeSensitivity": "low",
+        "ttl": "P1D",
+        "staleAfter": "2026-07-02T07:00:00Z",
+        "observations": [
+            {
+                "kind": "observation",
+                "summary": "Claim cites unresolved evidence",
+                "sourceRefs": ["conversation:000000000000000000000000"],
+            }
+        ],
+        "risks": [],
+        "blindSpots": [],
+        "opportunityCosts": [],
+        "opportunities": [],
+        "whatWouldMakeThisWrong": [],
+        "whenToSurface": [],
+        "proposedActions": [],
+        "memoryProposalRefs": [],
+    }
+    unresolved_path = artifact_dir / "20260701T070000Z.risk_radar.json"
+    unresolved_path.with_suffix(".md").write_text("Synthetic unresolved claim", encoding="utf-8")
+    unresolved_path.write_text(json.dumps(base), encoding="utf-8")
+    artifact, error = scheduled_prompts._load_periphery_artifact(
+        unresolved_path,
+        root,
+        user_id="user-a",
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+    assert error is None
+    assert artifact["qualityStatus"] == "failed"
+    assert artifact["sourceRefsUnresolvedCount"] == 1
+    assert artifact["claimsGroundedCount"] == 0
+    assert artifact["claimsUngroundedCount"] == 1
+    assert artifact["qualityReasons"] == [
+        "unresolved_evidence",
+        "ungrounded_claims",
+        "stale",
+    ]
+    assert artifact["stale"] is True
+
+    invalid_path = artifact_dir / "20260701T080000Z.risk_radar.json"
+    invalid_path.write_text(json.dumps({**base, "sourceRefs": "not-a-list"}), encoding="utf-8")
+    artifact, error = scheduled_prompts._load_periphery_artifact(
+        invalid_path,
+        root,
+        user_id="user-a",
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+    assert artifact is None
+    assert error["reason"] == "invalid_field_type"
+
+
+def test_scheduled_prompt_periphery_marks_pruned_snapshot_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    snapshot = periphery_snapshots.create_snapshot(
+        user_id="user-a",
+        email=None,
+        my_folder=None,
+        query_mongo_json=lambda _script: {
+            "user": {"id": "u"},
+            "counts": {},
+            "memories": [],
+            "conversations": [],
+        },
+        now=datetime(2026, 7, 11, 7, 0, tzinfo=timezone.utc),
+    )
+    root = tmp_path / "periphery"
+    artifact_dir = root / "risk_radar" / "2026" / "07"
+    artifact_dir.mkdir(parents=True)
+    artifact_path = artifact_dir / "20260711T071500Z.risk_radar.json"
+    artifact_path.with_suffix(".md").write_text("No material result", encoding="utf-8")
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "moduleId": "risk_radar",
+                "generatedAt": "2026-07-11T07:15:00Z",
+                "snapshotRef": snapshot["manifest"]["snapshotRef"],
+                "scheduledRunRef": {"runId": "sp_run_private"},
+                "sourceRefs": [],
+                "confidence": "low",
+                "severity": "low",
+                "timeSensitivity": "low",
+                "ttl": "P1D",
+                "staleAfter": "2026-07-12T07:15:00Z",
+                "observations": [
+                    {"kind": "no_result", "summary": "No material result", "sourceRefs": []}
+                ],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    before, error = scheduled_prompts._load_periphery_artifact(
+        artifact_path,
+        root,
+        user_id="user-a",
+        now=datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc),
+    )
+    assert error is None
+    assert before["qualityStatus"] == "passed"
+    assert before["qualityReasons"] == []
+
+    Path(snapshot["modelSnapshotPath"]).unlink()
+    after, error = scheduled_prompts._load_periphery_artifact(
+        artifact_path,
+        root,
+        user_id="user-a",
+        now=datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc),
+    )
+    assert error is None
+    assert after["qualityStatus"] == "failed"
+    assert after["qualityReasons"] == ["snapshot_unavailable"]
+
+
+def test_user_periphery_read_cannot_cross_user_folders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_LOCAL_MACHINE_GLASSHIVE_ROOT", str(tmp_path / "glasshive"))
+    user_a_folder = Path(scheduled_prompts._glasshive_my_folder("user-a"))
+    root = user_a_folder / "periphery"
+    artifact_dir = root / "risk_radar" / "2026" / "07"
+    artifact_dir.mkdir(parents=True)
+    artifact_path = artifact_dir / "20260711T071500Z.risk_radar.json"
+    artifact_path.with_suffix(".md").write_text("Private user A insight", encoding="utf-8")
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "moduleId": "risk_radar",
+                "generatedAt": "2026-07-11T07:15:00Z",
+                "scheduledRunRef": {"runId": "private"},
+                "sourceRefs": [],
+                "confidence": "low",
+                "severity": "low",
+                "timeSensitivity": "low",
+                "ttl": "P1D",
+                "staleAfter": "2099-07-12T07:15:00Z",
+                "observations": [],
+                "risks": [],
+                "blindSpots": [],
+                "opportunityCosts": [],
+                "opportunities": [],
+                "whatWouldMakeThisWrong": [],
+                "whenToSurface": [],
+                "proposedActions": [],
+                "memoryProposalRefs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifact_id = scheduled_prompts._periphery_artifact_id(artifact_path, root)
+
+    own = scheduled_prompts.read_user_periphery_artifact(
+        user_id="user-a",
+        artifact_id=artifact_id,
+    )
+    assert own["markdown"] == "Private user A insight"
+    with pytest.raises(KeyError):
+        scheduled_prompts.read_user_periphery_artifact(
+            user_id="user-b",
+            artifact_id=artifact_id,
+        )
+
+
+def test_periphery_list_uses_generated_time_not_file_mtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(tmp_path / "private"))
+    root = tmp_path / "my-folder" / "periphery"
+
+    def write_artifact(timestamp: str, generated_at: str) -> Path:
+        artifact_dir = root / "risk_radar" / "2026" / "07"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        path = artifact_dir / f"{timestamp}.risk_radar.json"
+        path.with_suffix(".md").write_text("Synthetic insight", encoding="utf-8")
+        path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "moduleId": "risk_radar",
+                    "generatedAt": generated_at,
+                    "scheduledRunRef": {"runId": "synthetic"},
+                    "sourceRefs": [],
+                    "confidence": "low",
+                    "severity": "low",
+                    "timeSensitivity": "low",
+                    "ttl": "P1D",
+                    "staleAfter": "2099-07-12T07:15:00Z",
+                    "observations": [],
+                    "risks": [],
+                    "blindSpots": [],
+                    "opportunityCosts": [],
+                    "opportunities": [],
+                    "whatWouldMakeThisWrong": [],
+                    "whenToSurface": [],
+                    "proposedActions": [],
+                    "memoryProposalRefs": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    older = write_artifact("20260709T070000Z", "2026-07-09T07:00:00Z")
+    newer = write_artifact("20260710T070000Z", "2026-07-10T07:00:00Z")
+    os.utime(older, (newer.stat().st_mtime + 60, newer.stat().st_mtime + 60))
+
+    _, artifacts, _, _ = scheduled_prompts._collect_periphery(
+        str(tmp_path / "my-folder"),
+        user_id="user-a",
+    )
+
+    assert [item["generatedAt"] for item in artifacts] == [
+        "2026-07-10T07:00:00Z",
+        "2026-07-09T07:00:00Z",
+    ]
 
 
 def test_scheduled_prompt_periphery_artifacts_reject_invalid_and_foreign_files(
@@ -1349,7 +2059,7 @@ def test_workbench_startup_seeds_builtin_nightly_template(tmp_path: Path, monkey
     assert task["metadata"]["misfire_policy"] == {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 
 
-def test_workbench_startup_seeds_active_glasshive_nightly_from_runtime_env(
+def test_workbench_startup_seeds_active_glasshive_nightly_from_runtime_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("httpx")
@@ -1884,7 +2594,7 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
     runner = eval_root / "run-exact-model-evals.cjs"
     runner.write_text("// synthetic runner\n", encoding="utf-8")
     private_root = tmp_path / "private"
-    captured: list[list[str]] = []
+    captured: list[tuple[list[str], int, dict[str, str] | None]] = []
 
     monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
     monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
@@ -1892,8 +2602,8 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
     monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", runner)
     monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
 
-    def fake_run(cmd: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        captured.append(cmd)
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.append((cmd, int(kwargs["timeout"]), kwargs.get("env")))
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(evals.subprocess, "run", fake_run)
@@ -1902,9 +2612,125 @@ def test_live_eval_runner_uses_prompt_bank_equals_flag(tmp_path: Path, monkeypat
 
     assert result["returnCode"] == 0
     assert captured
-    assert f"--prompt-bank={prompt_bank}" in captured[0]
-    assert "--prompt-bank" not in captured[0]
-    assert "--prompt-id=main.voice_style" in captured[0]
+    assert f"--prompt-bank={prompt_bank}" in captured[0][0]
+    assert "--prompt-bank" not in captured[0][0]
+    assert "--prompt-id=main.voice_style" in captured[0][0]
+    assert "--local-jwt-fallback" in captured[0][0]
+    assert captured[0][1] == 840
+    assert captured[0][2] is not None
+    assert captured[0][2]["VIVENTIUM_QA_ALLOW_LOCAL_JWT"] == "1"
+
+
+def test_live_eval_timeout_scales_for_multi_case_exact_model_runs() -> None:
+    assert evals._live_eval_timeout_seconds(1, evals.EXACT_MODEL_EVAL_SCRIPT) == 420
+    assert evals._live_eval_timeout_seconds(10, evals.EXACT_MODEL_EVAL_SCRIPT) == 3600
+    assert evals._live_eval_timeout_seconds(30, evals.EXACT_MODEL_EVAL_SCRIPT) == 3600
+
+
+def test_live_eval_timeout_is_saved_as_an_inspectable_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_root = tmp_path / "evals"
+    eval_root.mkdir(parents=True)
+    prompt_bank = eval_root / "prompt-bank.json"
+    prompt_bank.write_text(json.dumps({"families": []}), encoding="utf-8")
+    runner = eval_root / "run-exact-model-evals.cjs"
+    runner.write_text("// synthetic runner\n", encoding="utf-8")
+    private_root = tmp_path / "private"
+
+    monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", runner)
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"], output=b"partial progress")
+
+    monkeypatch.setattr(evals.subprocess, "run", fake_run)
+
+    result = evals.run_exact_model_eval(max_cases=2, live=True, prompt_id="main.voice_style")
+
+    assert result["returnCode"] == 124
+    assert result["timeoutSeconds"] == 840
+    assert "timed out after 840 seconds" in result["stderrTail"]
+    run_record = json.loads(
+        (private_root / "eval-runs" / result["id"] / "workbench-run.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert run_record["returnCode"] == 124
+    assert run_record["stdoutTail"] == "partial progress"
+
+
+def test_live_activation_eval_uses_dedicated_runtime_classifier_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_root = tmp_path / "evals"
+    eval_root.mkdir(parents=True)
+    prompt_bank = eval_root / "prompt-bank.json"
+    prompt_bank.write_text(
+        json.dumps(
+            {
+                "families": [
+                    {
+                        "id": "background_activation_routing",
+                        "runner": "background_activation",
+                        "promptRefs": ["cortex.red_team.activation"],
+                        "cases": [
+                            {
+                                "id": "red_team_explicit",
+                                "surface": "web",
+                                "prompt": "Red-team this launch decision.",
+                                "messages": [
+                                    {"role": "user", "content": "Red-team this launch decision."}
+                                ],
+                                "required_activations": ["red_team"],
+                                "allowed_activations": ["red_team"],
+                                "rubric": ["Red Team activates and sibling cortices stay quiet."],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    exact_runner = eval_root / "run-exact-model-evals.cjs"
+    exact_runner.write_text("// exact runner\n", encoding="utf-8")
+    activation_runner = eval_root / "run-activation-model-evals.cjs"
+    activation_runner.write_text("// activation runner\n", encoding="utf-8")
+    private_root = tmp_path / "private"
+    captured: list[list[str]] = []
+
+    monkeypatch.setattr(drafts, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(drafts, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(evals, "PROMPT_BANK_PATH", prompt_bank)
+    monkeypatch.setattr(evals, "EXACT_MODEL_EVAL_SCRIPT", exact_runner)
+    monkeypatch.setattr(evals, "ACTIVATION_MODEL_EVAL_SCRIPT", activation_runner)
+    monkeypatch.setattr(evals, "workbench_private_root", lambda: private_root)
+    monkeypatch.setattr(
+        evals, "load_eval_bank", lambda: json.loads(prompt_bank.read_text(encoding="utf-8"))
+    )
+
+    def fake_run(cmd: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        captured.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="activation ok", stderr="")
+
+    monkeypatch.setattr(evals.subprocess, "run", fake_run)
+
+    result = evals.run_exact_model_eval(
+        max_cases=1,
+        live=True,
+        family="background_activation_routing",
+        prompt_id="cortex.red_team.activation",
+    )
+
+    assert result["returnCode"] == 0
+    assert captured
+    assert captured[0][1] == str(activation_runner)
+    assert "--family=background_activation_routing" in captured[0]
+    assert "--prompt-id=cortex.red_team.activation" in captured[0]
 
 
 def test_eval_preview_blocks_pending_eval_bank_draft(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

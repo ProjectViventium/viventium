@@ -129,6 +129,16 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     OAuth QA when the completion page must return to a localhost browser
 - Generated runtime config must not silently preserve hidden provider defaults from the source
   template when the installer/compiler already knows the machine's real auth surface.
+- The local launcher owns the fallback OpenAI picker inventory written to LibreChat runtime env:
+  - direct API-key inventories include `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and
+    `gpt-5.6-luna`
+  - the ChatGPT connected-account inventory includes only the provider-verified
+    `gpt-5.6-sol` and `gpt-5.6-terra` slugs, with Sol first; do not silently remap unsupported IDs
+  - `OPENAI_MODELS` and `ASSISTANTS_MODELS` remain the runtime delivery fields; explicit
+    `VIVENTIUM_OPENAI_MODELS` / `VIVENTIUM_ASSISTANTS_MODELS` or canonical env overrides remain
+    authoritative
+  - supported restart/upgrade must refresh the generated LibreChat env before model-picker QA;
+    editing that generated file by hand is not a product fix
 - `librechat.yaml` memory-writer provider/model must be compiled from the actually available
   foundation providers (`openai` / `anthropic`), including connected-account auth:
   - do not leave memory on a hardcoded xAI default when xAI was never configured
@@ -190,6 +200,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     provider account/API-key, optional fallback provider, transcript folder, Conversation
     Recall/RAG, web search provider, Telegram, Telegram Codex, Google Workspace MCP, Microsoft 365
     MCP, and hosted voice when local voice is not viable
+  - foundation fallback credential presence means `Configured`, not `Ready`; only a successful live
+    provider request can prove credential validity, and status must not manufacture that proof
   - Conversation Recall/RAG remains guided opt-in because it requires Docker/Ollama/vector-resource
     consent; Docker presence alone must not turn it on
   - Transcript ingest is pending until `runtime.memory_hardening.transcripts.source_dir` is set by
@@ -211,8 +223,9 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - default local installs set `enabled: true`; explicit user disablement remains respected after
     the defaults marker has been applied
   - default schedule is `0 3 * * *`
-  - schedules are local macOS wall-clock time; the exported timezone value is operator context,
-    not a LaunchAgent timezone conversion
+  - schedules are local macOS wall-clock time; portable `timezone: local` resolves to the current
+    system IANA timezone during compilation, and the exported effective timezone is operator/status
+    evidence rather than a hardcoded owner-machine city
   - `operator_user_email` optionally scopes scheduled/helper hardening to one local account; empty
     means all local users are eligible
   - a successful scheduled run with `user_count=0` is healthy empty/skip evidence when user memory
@@ -227,7 +240,13 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - full-lookback enforcement is on by default; runs fail closed instead of silently clipping the
     7-day corpus unless an operator explicitly allows partial lookback
   - install, configure, upgrade, compile-config, and start reconcile the macOS LaunchAgent from
-    the generated env: enabled configs install the daily schedule, disabled configs remove it
+    generated env. Enabled configs install one 03:00 calendar trigger; only explicit `false`
+    removes it. Missing/invalid enablement preserves the existing agent and reports the ambiguity.
+  - schedule reconciliation is idempotent and loader-only: identical loaded state is a no-op,
+    matching-but-unloaded state is bootstrapped without bootout, and actual plist drift is replaced
+    once with post-bootstrap verification. Lifecycle receipts contain only public-safe schedule,
+    outcome, and generation-hash evidence. Install and uninstall also share a process lock so
+    overlapping supported entrypoints cannot interleave loader state.
   - the installed macOS LaunchAgent command must invoke `scripts/viventium/memory_harden.py`
     directly with the generated runtime dir instead of routing scheduled hardening through
     `bin/viventium`; the user-facing launcher may be running when the 3am job fires
@@ -279,7 +298,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - default Anthropic hardening tuple is `anthropic / claude-opus-4-8 / xhigh`; the root wrapper
     passes it to the Claude Code CLI path as the explicit provider/model plus
     `VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh`
-  - default OpenAI hardening tuple is `openai / gpt-5.5 / xhigh`; the compiler emits
+  - default OpenAI hardening tuple is `openai / gpt-5.6-sol / xhigh`; the compiler emits
     `VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=xhigh` alongside the explicit
     provider/model tuple for the Codex CLI path
   - optional meeting transcript ingestion is configured under
@@ -390,6 +409,14 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     is enabled, host workers default on, the default execution mode is `host`, the default workspace
     root is user-scoped (`~/viventium`), and `/viventium` is valid only when doctor proves it is
     writable by the current user
+  - the default host Codex automation tuple is `gpt-5.6-sol / xhigh`. The compiler emits the same
+    tuple for host and general Codex worker env so Prompt Workbench, Scheduling Cortex, GlassHive
+    bootstrap, and model-route evidence cannot silently diverge. The Viventium compiler also emits
+    the now-proven xHigh route flag by default; otherwise GlassHive's standalone safety clamp could
+    turn a requested xHigh run into medium on a clean install
+  - that host-worker setting is shared by unattended Workbench automation and direct host Codex
+    delegation. This is the intentional current quality-first baseline, not a change to the main
+    conscious agent, voice, activation classifiers, or `viventium_agent` reminder delivery
   - `integrations.glasshive.host_worker` also owns first-class optional native-capability controls
     for host worker runtime requirements, Codex native MCP allowlist/plugin cache, Codex lockdown
     flags, and Claude Chrome/effort launch flags. These compile into canonical runtime env so
@@ -552,6 +579,7 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
     - `VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690` (voice detection budget)
     - `VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300` (text detection budget)
     - `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS=2000` (shared fallback budget)
+    - `VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000` (non-blocking recovery budget after a zero-activation fast-pass timeout; reuses canonical classifier/fallback/Phase B paths and does not delay the main answer)
     - `VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true` (voice stays async even when a
       configured tool-hold cortex exists; Phase B/follow-up owns late or side-effecting evidence)
     - `VIVENTIUM_VOICE_LOG_LATENCY=1`
@@ -600,6 +628,27 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
   - `ok`: continue normally
 - The macOS helper may expose a manual `Create Backup Snapshot` action, but it must call the same
   supported snapshot path as the CLI rather than inventing a second backup implementation.
+
+## Feelings compiler contract
+
+`runtime.feelings` is the canonical operator surface for the Feelings feature. The compiler owns:
+
+- operator availability and the per-user default-enabled seed;
+- agent scope (`all_agents` by default or `conscious_agent`);
+- all seven default Nature/half-life/enabled values;
+- reaction activation mode (`always`, `classified`, or `disabled`);
+- reaction provider, model, Responses API, reasoning effort, Fast/Priority tier, and timeout;
+- classified-activation provider/model/confidence/timeout.
+
+The compiler validates closed enums, supported provider names, finite band ranges, positive
+half-lives/timeouts, known band IDs, and a bounded confidence threshold. It emits explicit
+`VIVENTIUM_FEELINGS_*` values plus `VIVENTIUM_FEELINGS_BANDS_JSON`. Defaults and examples live in
+`config.schema.yaml`, `config.full.example.yaml`, and `config.minimal.example.yaml`; the executable
+contract is `tests/release/test_feelings_contract.py`.
+
+The default reaction route is `openai / gpt-5.6-terra`, Responses API, reasoning `none`,
+`fast: true`, and `service_tier: priority`. Generated env is runtime output. Operators edit canonical
+config and recompile/restart; they do not patch generated App Support env files.
 
 ## Learnings
 

@@ -7,8 +7,12 @@ This is the high-level map of both stacks. Deep dives live in the version-specif
 Flow summary:
 ```
 User -> LibreChat UI -> AgentClient -> BackgroundCortexService
+                     -> Feelings snapshot -> dynamic prompt tail
+                     -> voice-capable surface -> feeling-expression + provider prompt
+                        -> raw provider controls -> clean display + provider TTS
                      -> SSE updates -> UI cards
                      -> Follow-up service -> extra assistant message
+                     -> detached Emotional Reaction Cortex -> versioned FeelingState
                      -> Voice Gateway (LiveKit) for calls
 ```
 
@@ -16,6 +20,10 @@ Core components:
 - Orchestration: `viventium_v0_4/LibreChat/api/server/controllers/agents/client.js`
 - Background activation: `viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js`
 - Follow-ups: `viventium_v0_4/LibreChat/api/server/services/viventium/BackgroundCortexFollowUpService.js`
+- Feelings kernel/state/config: `viventium_v0_4/LibreChat/packages/api/src/feelings/`
+- Detached feeling appraisal: `viventium_v0_4/LibreChat/api/server/services/viventium/EmotionalReactionService.js`
+- Feelings control surface: `viventium_v0_4/LibreChat/client/src/components/Feelings/`
+- Spoken-surface prompt composition: `viventium_v0_4/LibreChat/api/server/services/viventium/surfacePrompts.js`
 - Voice worker: `viventium_v0_4/voice-gateway/`
 
 Reference: `viventium_v0_4/docs/ARCHITECTURE.md`

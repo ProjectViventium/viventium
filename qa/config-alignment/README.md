@@ -24,4 +24,6 @@
 
 - Case catalog: `cases.md`.
 - Reports: `reports/` for new dated public-safe runs.
-- Last catalog update: 2026-05-17.
+- Latest result: GPT-5.6 connected-account Agent Builder acceptance PASS on 2026-07-09; see
+  `reports/2026-07-09-gpt-5-6-agent-builder.md`.
+- Last catalog update: 2026-07-09.

@@ -1956,13 +1956,17 @@ async def getViventiumResponse(
                 )
                 logger.info(
                     "[VoiceMarkup][telegram] trace=%s tts_markers laughter=%s "
-                    "emotion_tags=%s break_tags=%s speed_tags=%s volume_tags=%s",
+                    "emotion_tags=%s break_tags=%s speed_tags=%s volume_tags=%s "
+                    "xai_inline_tags=%s xai_wrapping_tags=%s xai_total=%s",
                     trace_id,
                     voice_markup["laughter"],
                     voice_markup["emotion"],
                     voice_markup["break"],
                     voice_markup["speed"],
                     voice_markup["volume"],
+                    voice_markup["xai_inline"],
+                    voice_markup["xai_wrapping"],
+                    voice_markup["xai_total"],
                 )
                 # === VIVENTIUM START ===
                 # Feature: Timing for TTS synthesis + send.

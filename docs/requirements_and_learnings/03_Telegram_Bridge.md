@@ -119,13 +119,25 @@ stream back to Telegram through the existing bridge.
   - Telegram calls `POST https://api.x.ai/v1/tts` with `text`, `voice_id`, `language`, and a
     structured `output_format`
   - xAI inline and wrapping speech tags from the shared contract are preserved for xAI synthesis
-  - Telegram audio-output prompting must expose the documented xAI inline and wrapping tags on
-    text-mode Telegram turns that request audio, especially when the user asks for more emotional
-    voice-note delivery
+  - every text-mode Telegram turn that requests audio composes the registered shared
+    `surface.voice.feeling_expression`, `surface.telegram.audio_output`, and selected-provider
+    prompt layers; Prompt Workbench must show the same source/include/eval lineage
+  - when a Feelings capsule is present, the model privately appraises expressive versus restrained
+    delivery. Expressive xAI delivery uses the smallest fitting documented xAI control without
+    waiting for the user to ask for emotion or markup; restrained delivery may correctly use none
+  - the runtime must not map bands, values, or user phrases to speech tags. It only supplies the
+    structural audio/provider capability and preserves the model-selected supported control
   - Telegram must not split xAI text into generic 800-character fallback chunks because that can
     break xAI wrapping tags and create invalid concatenated MP3 output
   - user-visible Telegram text must strip xAI tags even when the model emits malformed wrapper
     syntax such as `[soft]...[/soft]` or an orphan closing tag like `[/soft]`
+  - on Telegram text-mode turns that request audio (`voiceMode=false` and
+    `telegramAudioRequested=true`), the bridge retains the raw model-authored assistant record
+    locally so the same text can be audited and synthesized, while outgoing Telegram text applies
+    the display sanitizer. A database read for that path can therefore contain supported xAI
+    controls that never appear in the visible Telegram bubble; this is distinct from the LiveKit
+    call-history persistence rule. Do not generalize this persistence claim to a `voiceMode=true`
+    path without tracing that path's persistence sanitizer
   - Cartesia-only tags such as `<emotion>`, `<break>`, `<speed>`, `<volume>`, `<spell>`,
     `[laughter]`, and Cartesia-only bracket aliases like `[soft laugh]` or `[gentle sigh]` are
     stripped before xAI synthesis
@@ -195,6 +207,10 @@ stream back to Telegram through the existing bridge.
 - Non-secret voice delivery timing logs must be available in normal runtime logs. Each voice-routed
   Telegram turn should log the gate decision, TTS start, TTS chunk duration/bytes, and Telegram audio
   send duration without logging bot tokens, API keys, raw private message text, or local paths.
+- The same normal-runtime marker event must count the selected provider's dialect. For xAI it reports
+  inline-tag count, wrapping-tag count, and total xAI count in addition to the legacy
+  Cartesia/Chatterbox fields, so generation omission is distinguishable from display sanitization or
+  TTS loss without enabling raw-text logging.
 - GlassHive callback delivery logs must include non-secret observability states: callback accepted,
   delivery enqueued, claimed, sent, failed, suppressed, retry count, and backlog age. Telegram Bot
   API token-bearing URLs must be redacted from local logs and from persisted delivery failure
@@ -284,6 +300,19 @@ Telegram route returns a typed attachment-processing failure (`422` with
 `attachmentProcessingError`) so the Python bridge can show the actual reason instead of a generic
 server error.
 
+`.pptx` uploads are handled by the shared built-in `document_parser`, which extracts slide text and
+speaker notes into message context for the active agent. The same parser also extracts embedded PPTX
+image media and forwards those images as capped, resized vision inputs on surfaces that already
+support image message parts, including Telegram and the generic Viventium gateway. This is a shared
+LibreChat file-contract behavior, not a Telegram-only exception. It is not a full slide renderer:
+slide layout, animations, charts stored as drawing XML, and non-image media may still require OCR,
+worker analysis, or a provider/tool route that can inspect the original visual file. If a deck has no
+extractable text, notes, or supported embedded image media, the failure class must be truthful.
+Extraction fails closed before unbounded decompression when a presentation exceeds 5,000 archive
+entries, 500 slides, 8 MiB for one XML entry, or 32 MiB of XML in total. Embedded vision extraction
+also remains capped at 20 images and 12 MiB total. A limit failure is reported as an attachment
+processing error; the caption must not continue alone.
+
 ### Major file-type rule
 
 - Text-like files must extract into readable context:
@@ -293,6 +322,9 @@ server error.
 - Office/OpenDocument binaries that require OCR or a document parser must either:
   - use the configured OCR/document-parser path, or
   - fail honestly with a clear message when that extraction path is unavailable
+- `.pptx` decks must extract slide text, speaker notes, and supported embedded image media through
+  the shared built-in document parser before the agent run. Embedded images must be bounded before
+  prompt/model injection so visual decks do not cause provider-payload failures.
 - Unsupported binary/archive leftovers must not be accepted as inert message attachments.
 
 ### Fix pattern
@@ -303,6 +335,8 @@ server error.
 - send non-image files as documents
 - preserve provider-native message attachments and only auto-promote the non-provider-native
   parseable remainder into context extraction before the agent run
+- preserve extracted document images as image message parts when the ingress surface supports the
+  same vision contract as ordinary image uploads
 - reject files that are neither provider-native nor readable through context extraction
 
 ## Evidence to Capture

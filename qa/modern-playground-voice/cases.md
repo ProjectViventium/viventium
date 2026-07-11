@@ -728,6 +728,65 @@
   primary model provider streams a normal assistant answer through this path after the local provider
   failures are resolved.
 
+## MPV-019 GPT-5.6 Primary Must Not Rewrite the xAI Voice Transport
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md` (Voice Call LLM Ownership
+  Contract).
+- User Outcome: An agent can use GPT-5.6 through OpenAI Responses for text chat while its dedicated
+  live-call model remains Grok 4.3 on the configured low-latency xAI voice route.
+- Surfaces: Agent Builder primary and Voice Chat Model profiles, LibreChat voice model override,
+  Agents graph initialization, Modern Playground transcript/audio, xAI LLM and TTS providers.
+- Preconditions: authenticated Viventium QA account; primary route `openAI/gpt-5.6-sol` with
+  `useResponsesApi=true`; voice route `xai/grok-4.3` with `reasoning_effort=none`; synthetic
+  non-personal prompt.
+- Steps:
+  1. Confirm the primary and voice-specific source-of-truth profiles retain their configured models.
+  2. Run the voice-override regression with an OpenAI GPT-5.6 primary parameter bag and an xAI Grok
+     4.3 voice parameter bag.
+  3. Confirm inherited `useResponsesApi` and primary `reasoning` are absent from the resolved voice
+     request, while an explicit voice-level xAI Responses selection remains supported.
+  4. Reload the active LibreChat API from the patched checkout.
+  5. Start an authenticated Modern Playground call in real Chrome, open the transcript, and send a
+     short synthetic typed voice turn.
+  6. Confirm visible assistant text, delivered browser audio, xAI TTS metrics, token-bearing LLM
+     stream completion, and persisted assistant text. Compare the result with the escaped failure's
+     no-token timeout.
+- Expected Result: Grok 4.3 produces visible text and xAI audio without a provider error; the voice
+  override logs or regression evidence show Chat Completions provenance (`useResponsesApi` unset)
+  unless the voice profile explicitly opted into xAI Responses.
+- Forbidden Result: the GPT-5.6 primary's Responses setting silently changes the xAI voice request;
+  the call waits for the provider timeout with zero token events; the fix changes Grok 4.3 or xAI
+  Eve to a different configured route; public evidence exposes credentials, account identifiers,
+  raw call ids, or local paths.
+- Evidence: `viventium_v0_4/LibreChat/api/server/services/viventium/__tests__/voiceLlmOverride.spec.js`
+  and `qa/modern-playground-voice/reports/2026-07-09-grok-4-3-voice-transport-provenance.md`.
+- Last Run: 2026-07-09 PASS. The escaped turn ended after 101.040 seconds with no token events. The
+  post-fix real Chrome turn emitted its first token at 7.335 seconds, completed the stream at 7.735
+  seconds with token events, displayed the requested synthetic sentence, and delivered 1.61 seconds
+  of unmuted xAI audio. Focused voice-override tests passed 13/13; adjacent provider suites,
+  packages API checks, and the full voice gateway also passed. Claude Opus 4.8 found no must-fix
+  issue in the parameter-provenance design.
+
+## MPV-020 Cross-Conversation Memory And Recall From Telegram
+
+- Requirement: `20_Memory_System.md` ordered saved memory and
+  `32_Conversation_Recall_RAG.md` hybrid recall; reuse the audible acceptance gate in `MPV-014`.
+- Preconditions: real Chrome profile already authenticated; real Telegram bot; synthetic durable
+  marker and separate natural-event marker; pre-run state captured for cleanup.
+- Steps:
+  1. Send both synthetic turns in Telegram and prove the durable marker advances a memory revision
+     while the natural event is absent from saved memory but present in recall-eligible history.
+  2. Start a new Modern Playground call, open Transcript, and ask naturally about each marker.
+  3. Confirm visible transcript, audible delivered answer, `file_search` evidence for the recall
+     lane, saved-memory prompt-frame evidence for the durable lane, persistence after reload, and
+     aligned DB/log/runtime config.
+  4. Restore/delete all synthetic state through supported paths and confirm cleanup.
+- Expected Result: both answers are correct and natural; saved memory and recall have distinct
+  evidence; audio and transcript agree.
+- Forbidden Result: typed-only API proof, fake browser/audio, same-conversation history, a model
+  guess without retrieval evidence, or synthetic state left behind.
+- Last Run: ADDED 2026-07-11; real Chrome/Telegram/voice acceptance required.
+
 ## Release Test Traceability
 
 - `tests/release/test_voice_playground_dispatch_contract.py`

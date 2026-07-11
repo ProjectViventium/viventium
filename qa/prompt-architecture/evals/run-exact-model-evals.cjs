@@ -1,129 +1,184 @@
 #!/usr/bin/env node
-'use strict';
+"use strict";
 
-const crypto = require('crypto');
-const childProcess = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const crypto = require("crypto");
+const childProcess = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const LIBRECHAT_ROOT = path.join(REPO_ROOT, 'viventium_v0_4', 'LibreChat');
-const PROMPT_BANK_PATH = path.join(__dirname, 'prompt-bank.json');
-const DEFAULT_API_BASE = process.env.VIVENTIUM_EVAL_API_BASE || 'http://localhost:3180';
-const DEFAULT_QA_EMAIL = process.env.VIVENTIUM_QA_EMAIL || 'qa@example.com';
-const MAIN_AGENT_ID = 'agent_viventium_main_95aeb3';
-const NO_PARENT = '00000000-0000-0000-0000-000000000000';
-const LIVE_RUN_FLAG = 'VIVENTIUM_RUN_EXACT_MODEL_EVALS';
-const QA_PASSWORD_ENV = 'VIVENTIUM_QA_PASSWORD';
-const LOCAL_JWT_ALLOW_ENV = 'VIVENTIUM_QA_ALLOW_LOCAL_JWT';
-const SEMANTIC_JUDGE_FLAG = 'VIVENTIUM_EVAL_SEMANTIC_JUDGE';
-const DEFAULT_JUDGE_MODEL = process.env.VIVENTIUM_EVAL_JUDGE_MODEL || 'gpt-5.4';
-const DEFAULT_JUDGE_ROUTE = process.env.VIVENTIUM_EVAL_JUDGE_ROUTE || 'local-ephemeral';
-const STARTER_MORNING_BRIEFING_TEMPLATE_ID = 'morning_briefing_default_v1';
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+const LIBRECHAT_ROOT = path.join(REPO_ROOT, "viventium_v0_4", "LibreChat");
+const { assertNonOwnerQaSelection } = require(path.join(
+  REPO_ROOT,
+  "qa",
+  "background_agents",
+  "evals",
+  "browser-qa-safety.cjs",
+));
+const XAI_TTS_CAPABILITIES = require(path.join(
+  LIBRECHAT_ROOT,
+  "shared",
+  "voice",
+  "xai_tts_capabilities.json",
+));
+const CARTESIA_TTS_CAPABILITIES = require(path.join(
+  LIBRECHAT_ROOT,
+  "shared",
+  "voice",
+  "cartesia_sonic3_capabilities.json",
+));
+const PROMPT_BANK_PATH = path.join(__dirname, "prompt-bank.json");
+const DEFAULT_API_BASE =
+  process.env.VIVENTIUM_EVAL_API_BASE || "http://localhost:3180";
+const DEFAULT_QA_EMAIL = process.env.VIVENTIUM_QA_EMAIL || "qa@example.com";
+const MAIN_AGENT_ID = "agent_viventium_main_95aeb3";
+const NO_PARENT = "00000000-0000-0000-0000-000000000000";
+const LIVE_RUN_FLAG = "VIVENTIUM_RUN_EXACT_MODEL_EVALS";
+const QA_PASSWORD_ENV = "VIVENTIUM_QA_PASSWORD";
+const LOCAL_JWT_ALLOW_ENV = "VIVENTIUM_QA_ALLOW_LOCAL_JWT";
+const SEMANTIC_JUDGE_FLAG = "VIVENTIUM_EVAL_SEMANTIC_JUDGE";
+const DEFAULT_JUDGE_MODEL = process.env.VIVENTIUM_EVAL_JUDGE_MODEL || "gpt-5.4";
+const DEFAULT_JUDGE_ROUTE =
+  process.env.VIVENTIUM_EVAL_JUDGE_ROUTE || "local-ephemeral";
+const STARTER_MORNING_BRIEFING_TEMPLATE_ID = "morning_briefing_default_v1";
 const STARTER_MORNING_BRIEFING_BASELINE_PROMPT =
-  'Morning orientation: review my memories, calendar, pending tasks, ' +
-  'and any overnight signals. Prepare a concise morning briefing for the user.';
+  "Morning orientation: review my memories, calendar, pending tasks, " +
+  "and any overnight signals. Prepare a concise morning briefing for the user.";
 const BROWSER_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 ViventiumPromptEval/1.0';
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 ViventiumPromptEval/1.0";
 const PRIVATE_ROOT =
   process.env.VIVENTIUM_PROMPT_ARCH_PRIVATE_DIR ||
-  path.join(os.homedir(), 'Library', 'Application Support', 'Viventium', 'private-user-data');
+  path.join(
+    os.homedir(),
+    "Library",
+    "Application Support",
+    "Viventium",
+    "private-user-data",
+  );
 
 function timestampSlug(date = new Date()) {
-  return date.toISOString().replace(/[:.]/g, '-');
+  return date.toISOString().replace(/[:.]/g, "-");
 }
 
 function parseArgs(argv) {
   const args = {
     apiBase: DEFAULT_API_BASE,
     promptBank: PROMPT_BANK_PATH,
-    outputDir: path.join(PRIVATE_ROOT, 'prompt-architecture-evals', timestampSlug()),
+    outputDir: path.join(
+      PRIVATE_ROOT,
+      "prompt-architecture-evals",
+      timestampSlug(),
+    ),
     publicReport: path.join(
       REPO_ROOT,
-      'qa',
-      'prompt-architecture',
-      'reports',
-      'phase-4-exact-model-eval-baseline.md',
+      "qa",
+      "prompt-architecture",
+      "reports",
+      "phase-4-exact-model-eval-baseline.md",
     ),
     qaEmail: DEFAULT_QA_EMAIL,
-    runLive: process.env[LIVE_RUN_FLAG] === '1',
-    localJwtFallback: process.env.VIVENTIUM_QA_LOCAL_JWT_FALLBACK === '1',
+    runLive: process.env[LIVE_RUN_FLAG] === "1",
+    localJwtFallback: process.env.VIVENTIUM_QA_LOCAL_JWT_FALLBACK === "1",
     maxCases: Number.MAX_SAFE_INTEGER,
     timeoutMs: 120_000,
-    postCaseObserveMs: Number.parseInt(process.env.VIVENTIUM_EVAL_POST_CASE_OBSERVE_MS || '20000', 10),
-    followUpGraceMs: Number.parseInt(process.env.VIVENTIUM_EVAL_FOLLOWUP_GRACE_MS || '30000', 10),
+    postCaseObserveMs: Number.parseInt(
+      process.env.VIVENTIUM_EVAL_POST_CASE_OBSERVE_MS || "20000",
+      10,
+    ),
+    followUpGraceMs: Number.parseInt(
+      process.env.VIVENTIUM_EVAL_FOLLOWUP_GRACE_MS || "30000",
+      10,
+    ),
     agentId: process.env.VIVENTIUM_EVAL_AGENT_ID || MAIN_AGENT_ID,
-    semanticJudge: process.env[SEMANTIC_JUDGE_FLAG] === '1',
+    semanticJudge: process.env[SEMANTIC_JUDGE_FLAG] === "1",
+    semanticJudgeExplicitlyDisabled: false,
     judgeModel: DEFAULT_JUDGE_MODEL,
     judgeRoute: DEFAULT_JUDGE_ROUTE,
-    judgeEndpoint: process.env.VIVENTIUM_EVAL_JUDGE_ENDPOINT || 'openAI',
-    judgeAgentId: process.env.VIVENTIUM_EVAL_JUDGE_AGENT_ID || process.env.VIVENTIUM_EVAL_AGENT_ID || MAIN_AGENT_ID,
-    family: '',
-    surface: '',
-    promptId: '',
+    judgeEndpoint: process.env.VIVENTIUM_EVAL_JUDGE_ENDPOINT || "openAI",
+    judgeAgentId:
+      process.env.VIVENTIUM_EVAL_JUDGE_AGENT_ID ||
+      process.env.VIVENTIUM_EVAL_AGENT_ID ||
+      MAIN_AGENT_ID,
+    family: "",
+    caseId: "",
+    surface: "",
+    promptId: "",
   };
 
   for (const arg of argv) {
-    if (arg === '--run-live') {
+    if (arg === "--run-live") {
       args.runLive = true;
-    } else if (arg === '--no-live') {
+    } else if (arg === "--no-live") {
       args.runLive = false;
-    } else if (arg === '--local-jwt-fallback') {
+    } else if (arg === "--local-jwt-fallback") {
       args.localJwtFallback = true;
-    } else if (arg.startsWith('--api-base=')) {
-      args.apiBase = arg.slice('--api-base='.length).replace(/\/$/, '');
-    } else if (arg.startsWith('--prompt-bank=')) {
-      args.promptBank = path.resolve(arg.slice('--prompt-bank='.length));
-    } else if (arg.startsWith('--output-dir=')) {
-      args.outputDir = path.resolve(arg.slice('--output-dir='.length));
-    } else if (arg.startsWith('--public-report=')) {
-      args.publicReport = path.resolve(arg.slice('--public-report='.length));
-    } else if (arg.startsWith('--qa-email=')) {
-      args.qaEmail = arg.slice('--qa-email='.length).trim();
-    } else if (arg.startsWith('--agent-id=')) {
-      args.agentId = arg.slice('--agent-id='.length).trim() || MAIN_AGENT_ID;
-    } else if (arg.startsWith('--max-cases=')) {
-      const parsed = Number.parseInt(arg.slice('--max-cases='.length), 10);
+    } else if (arg.startsWith("--api-base=")) {
+      args.apiBase = arg.slice("--api-base=".length).replace(/\/$/, "");
+    } else if (arg.startsWith("--prompt-bank=")) {
+      args.promptBank = path.resolve(arg.slice("--prompt-bank=".length));
+    } else if (arg.startsWith("--output-dir=")) {
+      args.outputDir = path.resolve(arg.slice("--output-dir=".length));
+    } else if (arg.startsWith("--public-report=")) {
+      args.publicReport = path.resolve(arg.slice("--public-report=".length));
+    } else if (arg.startsWith("--qa-email=")) {
+      args.qaEmail = arg.slice("--qa-email=".length).trim();
+    } else if (arg.startsWith("--agent-id=")) {
+      args.agentId = arg.slice("--agent-id=".length).trim() || MAIN_AGENT_ID;
+    } else if (arg.startsWith("--max-cases=")) {
+      const parsed = Number.parseInt(arg.slice("--max-cases=".length), 10);
       if (Number.isFinite(parsed) && parsed > 0) {
         args.maxCases = parsed;
       }
-    } else if (arg.startsWith('--timeout-ms=')) {
-      const parsed = Number.parseInt(arg.slice('--timeout-ms='.length), 10);
+    } else if (arg.startsWith("--timeout-ms=")) {
+      const parsed = Number.parseInt(arg.slice("--timeout-ms=".length), 10);
       if (Number.isFinite(parsed) && parsed > 0) {
         args.timeoutMs = parsed;
       }
-    } else if (arg.startsWith('--post-case-observe-ms=')) {
-      const parsed = Number.parseInt(arg.slice('--post-case-observe-ms='.length), 10);
+    } else if (arg.startsWith("--post-case-observe-ms=")) {
+      const parsed = Number.parseInt(
+        arg.slice("--post-case-observe-ms=".length),
+        10,
+      );
       if (Number.isFinite(parsed) && parsed >= 0) {
         args.postCaseObserveMs = parsed;
       }
-    } else if (arg.startsWith('--follow-up-grace-ms=')) {
-      const parsed = Number.parseInt(arg.slice('--follow-up-grace-ms='.length), 10);
+    } else if (arg.startsWith("--follow-up-grace-ms=")) {
+      const parsed = Number.parseInt(
+        arg.slice("--follow-up-grace-ms=".length),
+        10,
+      );
       if (Number.isFinite(parsed) && parsed >= 0) {
         args.followUpGraceMs = parsed;
       }
-    } else if (arg === '--semantic-judge') {
+    } else if (arg === "--semantic-judge") {
       args.semanticJudge = true;
-    } else if (arg === '--no-semantic-judge') {
+      args.semanticJudgeExplicitlyDisabled = false;
+    } else if (arg === "--no-semantic-judge") {
       args.semanticJudge = false;
-    } else if (arg.startsWith('--judge-model=')) {
-      args.judgeModel = arg.slice('--judge-model='.length).trim() || DEFAULT_JUDGE_MODEL;
-    } else if (arg.startsWith('--judge-route=')) {
-      const route = arg.slice('--judge-route='.length).trim();
+      args.semanticJudgeExplicitlyDisabled = true;
+    } else if (arg.startsWith("--judge-model=")) {
+      args.judgeModel =
+        arg.slice("--judge-model=".length).trim() || DEFAULT_JUDGE_MODEL;
+    } else if (arg.startsWith("--judge-route=")) {
+      const route = arg.slice("--judge-route=".length).trim();
       if (route) {
         args.judgeRoute = route;
       }
-    } else if (arg.startsWith('--judge-endpoint=')) {
-      args.judgeEndpoint = arg.slice('--judge-endpoint='.length).trim() || args.judgeEndpoint;
-    } else if (arg.startsWith('--judge-agent-id=')) {
-      args.judgeAgentId = arg.slice('--judge-agent-id='.length).trim() || args.judgeAgentId;
-    } else if (arg.startsWith('--family=')) {
-      args.family = arg.slice('--family='.length).trim();
-    } else if (arg.startsWith('--surface=')) {
-      args.surface = arg.slice('--surface='.length).trim();
-    } else if (arg.startsWith('--prompt-id=')) {
-      args.promptId = arg.slice('--prompt-id='.length).trim();
+    } else if (arg.startsWith("--judge-endpoint=")) {
+      args.judgeEndpoint =
+        arg.slice("--judge-endpoint=".length).trim() || args.judgeEndpoint;
+    } else if (arg.startsWith("--judge-agent-id=")) {
+      args.judgeAgentId =
+        arg.slice("--judge-agent-id=".length).trim() || args.judgeAgentId;
+    } else if (arg.startsWith("--family=")) {
+      args.family = arg.slice("--family=".length).trim();
+    } else if (arg.startsWith("--case=")) {
+      args.caseId = arg.slice("--case=".length).trim();
+    } else if (arg.startsWith("--surface=")) {
+      args.surface = arg.slice("--surface=".length).trim();
+    } else if (arg.startsWith("--prompt-id=")) {
+      args.promptId = arg.slice("--prompt-id=".length).trim();
     }
   }
 
@@ -135,7 +190,7 @@ function ensureDir(dirPath) {
 }
 
 function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 function parseEnvFile(filePath) {
@@ -143,13 +198,13 @@ function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
     return values;
   }
-  for (const rawLine of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+  for (const rawLine of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
     const line = rawLine.trim();
-    if (!line || line.startsWith('#') || !line.includes('=')) {
+    if (!line || line.startsWith("#") || !line.includes("=")) {
       continue;
     }
-    const [key, ...rest] = line.split('=');
-    let value = rest.join('=').trim();
+    const [key, ...rest] = line.split("=");
+    let value = rest.join("=").trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
@@ -163,91 +218,101 @@ function parseEnvFile(filePath) {
 
 function loadLocalEnv() {
   const candidates = [
-    path.join(os.homedir(), 'Library', 'Application Support', 'Viventium', 'runtime', 'runtime.env'),
     path.join(
       os.homedir(),
-      'Library',
-      'Application Support',
-      'Viventium',
-      'runtime',
-      'runtime.local.env',
+      "Library",
+      "Application Support",
+      "Viventium",
+      "runtime",
+      "runtime.env",
     ),
     path.join(
       os.homedir(),
-      'Library',
-      'Application Support',
-      'Viventium',
-      'runtime',
-      'service-env',
-      'librechat.env',
+      "Library",
+      "Application Support",
+      "Viventium",
+      "runtime",
+      "runtime.local.env",
     ),
-    path.join(LIBRECHAT_ROOT, '.env'),
+    path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "Viventium",
+      "runtime",
+      "service-env",
+      "librechat.env",
+    ),
+    path.join(LIBRECHAT_ROOT, ".env"),
   ];
-  return candidates.reduce((acc, filePath) => Object.assign(acc, parseEnvFile(filePath)), {
-    ...process.env,
-  });
+  return candidates.reduce(
+    (acc, filePath) => Object.assign(acc, parseEnvFile(filePath)),
+    {
+      ...process.env,
+    },
+  );
 }
 
 function expandHome(filePath) {
   if (!filePath) {
     return filePath;
   }
-  if (filePath === '~') {
+  if (filePath === "~") {
     return os.homedir();
   }
-  if (filePath.startsWith('~/')) {
+  if (filePath.startsWith("~/")) {
     return path.join(os.homedir(), filePath.slice(2));
   }
   return filePath;
 }
 
 function sqlQuote(value) {
-  return `'${String(value ?? '').replace(/'/g, "''")}'`;
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
 }
 
 function sqliteUpdateStarterPrompt(dbPath, { userId, agentId }) {
   const resolvedPath = expandHome(dbPath);
   if (!resolvedPath || !fs.existsSync(resolvedPath)) {
-    return { ok: false, reason: 'scheduling_db_missing' };
+    return { ok: false, reason: "scheduling_db_missing" };
   }
   const updatedAt = new Date().toISOString();
-  const updatedBy = agentId ? `agent:${agentId}` : 'agent:qa-fixture';
+  const updatedBy = agentId ? `agent:${agentId}` : "agent:qa-fixture";
   const sql = [
-    'UPDATE scheduled_tasks',
+    "UPDATE scheduled_tasks",
     `SET prompt = ${sqlQuote(STARTER_MORNING_BRIEFING_BASELINE_PROMPT)},`,
     `updated_at = ${sqlQuote(updatedAt)},`,
     `updated_by = ${sqlQuote(updatedBy)},`,
     "updated_source = 'qa_fixture'",
     `WHERE user_id = ${sqlQuote(userId)}`,
     `AND metadata_json LIKE ${sqlQuote(`%${STARTER_MORNING_BRIEFING_TEMPLATE_ID}%`)};`,
-    'SELECT changes();',
-  ].join(' ');
+    "SELECT changes();",
+  ].join(" ");
   const output = childProcess
-    .execFileSync('sqlite3', ['-batch', '-noheader', resolvedPath, sql], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
+    .execFileSync("sqlite3", ["-batch", "-noheader", resolvedPath, sql], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
     })
     .trim();
-  const changed = Number.parseInt(output.split(/\r?\n/).pop() || '0', 10) || 0;
+  const changed = Number.parseInt(output.split(/\r?\n/).pop() || "0", 10) || 0;
   return { ok: changed > 0, changed, dbPathHash: hashValue(resolvedPath) };
 }
 
 function schedulingDbPathCandidates(env) {
-  const profile = env.VIVENTIUM_RUNTIME_PROFILE || 'isolated';
+  const profile = env.VIVENTIUM_RUNTIME_PROFILE || "isolated";
   const candidates = [
     env.SCHEDULING_DB_PATH,
     path.join(
       os.homedir(),
-      'Library',
-      'Application Support',
-      'Viventium',
-      'state',
-      'runtime',
+      "Library",
+      "Application Support",
+      "Viventium",
+      "state",
+      "runtime",
       profile,
-      'scheduling',
-      'schedules.db',
+      "scheduling",
+      "schedules.db",
     ),
-    path.join(os.homedir(), '.viventium', 'scheduling', 'schedules.db'),
+    path.join(os.homedir(), ".viventium", "scheduling", "schedules.db"),
   ].filter(Boolean);
   return [...new Set(candidates.map(expandHome))];
 }
@@ -265,20 +330,447 @@ function updateStarterPromptAcrossDbCandidates(env, { userId, agentId }) {
 }
 
 function schedulingBaseUrl(env) {
-  const raw = (env.SCHEDULING_MCP_URL || 'http://localhost:7010').replace(/\/$/, '');
-  return raw.replace(/\/mcp$/i, '');
+  const raw = (env.SCHEDULING_MCP_URL || "http://localhost:7010").replace(
+    /\/$/,
+    "",
+  );
+  return raw.replace(/\/mcp$/i, "");
 }
 
 function needsStarterMorningBriefingFixture(testCase) {
-  return testCase?.fixture?.starter_morning_briefing === 'baseline_without_blockers';
+  return (
+    testCase?.fixture?.starter_morning_briefing === "baseline_without_blockers"
+  );
 }
 
-async function applyStarterMorningBriefingFixture({ args, env, userId, agentId }) {
+function feelingsFixtureFor(testCase) {
+  const fixture = testCase?.fixture?.feelings;
+  return fixture && typeof fixture === "object" ? fixture : null;
+}
+
+function voiceOutputFixtureFor(testCase) {
+  const fixture = testCase?.fixture?.voiceOutput;
+  if (!fixture || typeof fixture !== "object" || fixture.requested !== true) {
+    return null;
+  }
+  const provider = String(fixture.provider || "").trim().toLowerCase();
+  const markerExpectation = String(fixture.markerExpectation || "").trim().toLowerCase();
+  if (!provider || !["present", "absent"].includes(markerExpectation)) {
+    return null;
+  }
+  return { requested: true, provider, markerExpectation };
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function matchSpans(text, pattern) {
+  return [...String(text || "").matchAll(pattern)].map((match) =>
+    `${match.index}:${match.index + match[0].length}`,
+  );
+}
+
+function uniqueSpanCount(spanGroups) {
+  return new Set(spanGroups.flat()).size;
+}
+
+function collectVoiceMarkerEvidence(text) {
+  const value = String(text || "");
+  const xaiInlineSpans = (XAI_TTS_CAPABILITIES.speech_tags?.inline || []).flatMap((tag) =>
+    matchSpans(value, new RegExp(escapeRegExp(tag), "giu")),
+  );
+  const xaiWrappingSpans = (XAI_TTS_CAPABILITIES.speech_tags?.wrapping || []).flatMap((tag) =>
+    matchSpans(
+      value,
+      new RegExp(`<${escapeRegExp(tag)}>[\\s\\S]*?<\\/${escapeRegExp(tag)}>`, "giu"),
+    ),
+  );
+  const xaiWrappingTokenSpans = (XAI_TTS_CAPABILITIES.speech_tags?.wrapping || []).flatMap(
+    (tag) =>
+      matchSpans(
+        value,
+        new RegExp(`<\\/?${escapeRegExp(tag)}(?:\\s[^>]*)?>`, "giu"),
+      ),
+  );
+  const xaiMalformedWrapping = Math.max(
+    0,
+    xaiWrappingTokenSpans.length - xaiWrappingSpans.length * 2,
+  );
+  const cartesiaTagNames = Object.keys(CARTESIA_TTS_CAPABILITIES.ssml_tags || {});
+  const cartesiaTagSpans = cartesiaTagNames.flatMap((tag) =>
+    matchSpans(value, new RegExp(`<${escapeRegExp(tag)}(?:\\s[^>]*)?>`, "giu")),
+  );
+  const cartesiaNonverbalSpans = (
+    CARTESIA_TTS_CAPABILITIES.nonverbal_markers || []
+  ).flatMap((marker) =>
+    matchSpans(value, new RegExp(escapeRegExp(marker), "giu")),
+  );
+  const chatterboxSpans = ["[laugh]", "[sigh]", "[gasp]"].flatMap((marker) =>
+    matchSpans(value, new RegExp(escapeRegExp(marker), "giu")),
+  );
+  const xaiInline = xaiInlineSpans.length;
+  const xaiWrapping = xaiWrappingSpans.length;
+  const cartesiaTags = cartesiaTagSpans.length;
+  const cartesiaNonverbal = cartesiaNonverbalSpans.length;
+  const chatterbox = chatterboxSpans.length;
+  return {
+    xai: xaiInline + xaiWrapping,
+    xaiInline,
+    xaiWrapping,
+    xaiMalformedWrapping,
+    cartesia: cartesiaTags + cartesiaNonverbal,
+    chatterbox,
+    totalKnown:
+      uniqueSpanCount([
+        xaiInlineSpans,
+        xaiWrappingSpans,
+        cartesiaTagSpans,
+        cartesiaNonverbalSpans,
+        chatterboxSpans,
+      ]) + xaiMalformedWrapping,
+  };
+}
+
+function validateVoiceMarkerEvidence(testCase, responseText) {
+  const fixture = voiceOutputFixtureFor(testCase);
+  if (!fixture) return { evidence: null, failures: [] };
+  const counts = collectVoiceMarkerEvidence(responseText);
+  const providerCount =
+    fixture.provider === "xai"
+      ? counts.xai
+      : fixture.provider === "cartesia"
+        ? counts.cartesia
+        : fixture.provider.includes("chatterbox")
+          ? counts.chatterbox
+          : 0;
+  const failures = [];
+  if (fixture.markerExpectation === "present" && providerCount === 0) {
+    failures.push(`voice_${fixture.provider}_supported_marker_missing`);
+  }
+  if (fixture.markerExpectation === "absent" && counts.totalKnown > 0) {
+    failures.push(`voice_${fixture.provider}_unexpected_marker`);
+  }
+  if (counts.xaiMalformedWrapping > 0) {
+    failures.push("voice_xai_malformed_wrapping_marker");
+  }
+  return {
+    evidence: {
+      provider: fixture.provider,
+      markerExpectation: fixture.markerExpectation,
+      providerMarkerCount: providerCount,
+      counts,
+    },
+    failures,
+  };
+}
+
+function feelingsHeaders(token, body = false) {
+  return {
+    Authorization: `Bearer ${token}`,
+    ...(body ? { "Content-Type": "application/json" } : {}),
+  };
+}
+
+async function readFeelingsFixtureState(args, token) {
+  const response = await fetchJson(`${args.apiBase}/api/viventium/feelings`, {
+    headers: feelingsHeaders(token),
+  });
+  if (!response.ok || !response.body?.state) {
+    throw new Error(`feelings_fixture_read_http_${response.status}`);
+  }
+  return response.body;
+}
+
+async function patchFeelingsFixture(
+  args,
+  token,
+  pathName,
+  expectedVersion,
+  update,
+) {
+  const response = await fetchJson(
+    `${args.apiBase}/api/viventium/feelings${pathName}`,
+    {
+      method: "PATCH",
+      headers: feelingsHeaders(token, true),
+      body: JSON.stringify({ expectedVersion, ...update }),
+    },
+    20_000,
+  );
+  if (!response.ok || !response.body?.state) {
+    throw new Error(`feelings_fixture_write_http_${response.status}`);
+  }
+  return response.body;
+}
+
+function publicFeelingsState(state) {
+  return {
+    version: state.version,
+    snapshotHash: state.snapshotHash,
+    enabled: state.enabled,
+    reactionActivationMode: state.reactionActivationMode,
+    trailLength: Array.isArray(state.trail) ? state.trail.length : 0,
+    trailCursorTimestamp: Array.isArray(state.trail)
+      ? state.trail[state.trail.length - 1]?.timestamp || null
+      : null,
+    bands: Object.fromEntries(
+      Object.entries(state.bands || {}).map(([band, value]) => [
+        band,
+        {
+          current: Number(Number(value.current).toFixed(2)),
+          nature: Number(Number(value.baseline).toFixed(2)),
+        },
+      ]),
+    ),
+  };
+}
+
+async function applyFeelingsFixture({ args, token, testCase }) {
+  const fixture = feelingsFixtureFor(testCase);
+  if (!fixture) return null;
+  const originalPayload = await readFeelingsFixtureState(args, token);
+  const restoreState = structuredClone(originalPayload.state);
+  let payload = originalPayload;
+  const profile = {
+    enabled: fixture.enabled !== false,
+    reactionActivationMode: fixture.reactionActivationMode || "disabled",
+  };
+  payload = await patchFeelingsFixture(
+    args,
+    token,
+    "/profile",
+    payload.state.version,
+    profile,
+  );
+  const current = fixture.current || {};
+  const nature = fixture.nature || {};
+  for (const band of (payload.definitions || []).map((definition) => definition.id)) {
+    const update = {};
+    if (Number.isFinite(Number(current[band])))
+      update.current = Number(current[band]);
+    if (Number.isFinite(Number(nature[band])))
+      update.baseline = Number(nature[band]);
+    if (!Object.keys(update).length) continue;
+    payload = await patchFeelingsFixture(
+      args,
+      token,
+      `/bands/${band}`,
+      payload.state.version,
+      update,
+    );
+  }
+  return {
+    restoreState,
+    configuredState: payload.state,
+    evidence: {
+      fixture: "feelings_state",
+      configured: publicFeelingsState(payload.state),
+    },
+  };
+}
+
+async function applyFeelingsFixtureWithRetry(params, maxAttempts = 20) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await applyFeelingsFixture(params);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
+  }
+  throw lastError || new Error("Feelings fixture setup failed");
+}
+
+async function restoreFeelingsFixture({ args, token, restoreState }) {
+  if (!restoreState) return;
+  let payload = await readFeelingsFixtureState(args, token);
+  for (const band of (payload.definitions || []).map((definition) => definition.id)) {
+    const original = restoreState.bands?.[band];
+    if (!original) continue;
+    payload = await patchFeelingsFixture(
+      args,
+      token,
+      `/bands/${band}`,
+      payload.state.version,
+      {
+        current: Number(original.current),
+        baseline: Number(original.baseline),
+        halfLifeMinutes: Number(original.halfLifeMinutes),
+        enabled: original.enabled !== false,
+      },
+    );
+  }
+  await patchFeelingsFixture(args, token, "/profile", payload.state.version, {
+    enabled: restoreState.enabled === true,
+    reactionActivationMode: restoreState.reactionActivationMode || "always",
+    reactionInstruction: restoreState.reactionInstruction,
+  });
+}
+
+async function restoreFeelingsFixtureWithRetry({
+  args,
+  token,
+  restoreState,
+  maxAttempts = 20,
+}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await restoreFeelingsFixture({ args, token, restoreState });
+      return attempt;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
+  }
+  throw lastError || new Error("Feelings fixture restoration failed");
+}
+
+async function observeFeelingsReaction({
+  args,
+  token,
+  beforeState,
+  forbiddenInnerStateTokens = [],
+  timeoutMs = 45_000,
+}) {
+  const startedAt = Date.now();
+  let latest = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = (await readFeelingsFixtureState(args, token)).state;
+    if (
+      latest.version > beforeState.version &&
+      latest.reactionHealth?.status !== "running" &&
+      latest.reactionHealth?.status !== "never"
+    ) {
+      break;
+    }
+    if (latest.reactionHealth?.status === "degraded") break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!latest) return null;
+  const bands = Object.fromEntries(
+    Object.keys(beforeState.bands || {}).map((band) => {
+      const before = beforeState.bands[band];
+      const after = latest.bands?.[band];
+      return [
+        band,
+        {
+          currentDelta: Number(
+            (Number(after?.current) - Number(before?.current)).toFixed(2),
+          ),
+          natureDelta: Number(
+            (Number(after?.baseline) - Number(before?.baseline)).toFixed(2),
+          ),
+        },
+      ];
+    }),
+  );
+  const innerStateText =
+    typeof latest.innerState?.text === "string" ? latest.innerState.text : "";
+  const normalizedInnerState = innerStateText.toLocaleLowerCase();
+  return {
+    observedMs: Date.now() - startedAt,
+    status: latest.reactionHealth?.status || "unknown",
+    lastDurationMs: latest.reactionHealth?.lastDurationMs ?? null,
+    fallbackUsed: latest.reactionHealth?.lastFallbackUsed === true,
+    usedProvider: latest.reactionHealth?.lastUsedProvider || null,
+    usedModel: latest.reactionHealth?.lastUsedModel || null,
+    primaryErrorClass:
+      latest.reactionHealth?.lastPrimaryErrorClass || null,
+    versionBefore: beforeState.version,
+    versionAfter: latest.version,
+    natureUnchanged: Object.values(bands).every(
+      (band) => Math.abs(band.natureDelta) < 0.01,
+    ),
+    bands,
+    newestCauses: (latest.trail || [])
+      .filter(
+        (entry) =>
+          new Date(entry.timestamp).getTime() >
+          new Date(beforeState.trailCursorTimestamp || 0).getTime(),
+      )
+      .map((entry) => entry.cause)
+      .filter(Boolean),
+    innerStateText,
+    innerStateGeneratedAt: latest.innerState?.generatedAt || null,
+    innerStateLength: innerStateText.length,
+    innerStateSingleLine: !/[\r\n]/u.test(innerStateText),
+    innerStateWithinLimit:
+      innerStateText.length > 0 && innerStateText.length <= 280,
+    innerStateForbiddenTokenMatches: forbiddenInnerStateTokens.filter(
+      (token) =>
+        typeof token === "string" &&
+        token.length > 0 &&
+        normalizedInnerState.includes(token.toLocaleLowerCase()),
+    ),
+  };
+}
+
+function validateFeelingsReactionEvidence(feelingsFixture, evidence) {
+  if (!feelingsFixture?.observeReaction) return [];
+  if (!evidence) return ["feelings_reaction_not_observed"];
+  const failures = [];
+  if (evidence.status !== "healthy") {
+    failures.push(`feelings_reaction_status_${evidence.status || "unknown"}`);
+  }
+  if (evidence.versionAfter <= evidence.versionBefore) {
+    failures.push("feelings_reaction_version_not_advanced");
+  }
+  if (!evidence.natureUnchanged) {
+    failures.push("feelings_reaction_changed_nature");
+  }
+  if (!evidence.innerStateWithinLimit || !evidence.innerStateSingleLine) {
+    failures.push("feelings_inner_state_invalid");
+  }
+  if (
+    feelingsFixture.requireNoForbiddenInnerStateTokens === true &&
+    evidence.innerStateForbiddenTokenMatches?.length > 0
+  ) {
+    failures.push("feelings_inner_state_contains_forbidden_token");
+  }
+  for (const [band, direction] of Object.entries(
+    feelingsFixture.requiredCurrentDirections || {},
+  )) {
+    const delta = Number(evidence.bands?.[band]?.currentDelta || 0);
+    if ((direction === "up" && delta <= 0) || (direction === "down" && delta >= 0)) {
+      failures.push(`feelings_${band}_did_not_move_${direction}`);
+    }
+  }
+  if (feelingsFixture.requireNoCurrentChange === true) {
+    const currentChanged = Object.values(evidence.bands || {}).some(
+      (band) => Math.abs(Number(band.currentDelta || 0)) >= 0.01,
+    );
+    if (currentChanged) failures.push("feelings_current_changed_for_inert_case");
+  }
+  if (feelingsFixture.requiredCausesAny?.length > 0) {
+    const causes = new Set(evidence.newestCauses || []);
+    if (!feelingsFixture.requiredCausesAny.some((cause) => causes.has(cause))) {
+      failures.push("feelings_required_cause_missing");
+    }
+  }
+  return failures;
+}
+
+async function applyStarterMorningBriefingFixture({
+  args,
+  env,
+  userId,
+  agentId,
+}) {
   if (!userId) {
-    return { ok: false, reason: 'missing_qa_user_id' };
+    return { ok: false, reason: "missing_qa_user_id" };
   }
 
-  const timezone = process.env.VIVENTIUM_EVAL_QA_TIMEZONE || env.VIVENTIUM_DEFAULT_TIMEZONE || 'America/Toronto';
+  const timezone =
+    process.env.VIVENTIUM_EVAL_QA_TIMEZONE ||
+    env.VIVENTIUM_DEFAULT_TIMEZONE ||
+    "UTC";
   const baseUrl = schedulingBaseUrl(env);
   const bootstrapPayload = {
     user_id: userId,
@@ -286,38 +778,47 @@ async function applyStarterMorningBriefingFixture({ args, env, userId, agentId }
     agent_id: agentId || args.agentId,
     channels: null,
     timezone,
-    time: process.env.VIVENTIUM_EVAL_MORNING_BRIEFING_TIME || '08:00',
-    conversation_policy: 'same',
+    time: process.env.VIVENTIUM_EVAL_MORNING_BRIEFING_TIME || "08:00",
+    conversation_policy: "same",
     prompt: STARTER_MORNING_BRIEFING_BASELINE_PROMPT,
     metadata: {
       template_id: STARTER_MORNING_BRIEFING_TEMPLATE_ID,
-      bootstrap_source: 'prompt_architecture_eval_fixture',
+      bootstrap_source: "prompt_architecture_eval_fixture",
     },
   };
 
   const bootstrap = await fetchJson(
     `${baseUrl}/internal/bootstrap-schedule`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(bootstrapPayload),
     },
     10_000,
-  ).catch((error) => ({ ok: false, status: 0, body: { reason: error.message } }));
+  ).catch((error) => ({
+    ok: false,
+    status: 0,
+    body: { reason: error.message },
+  }));
 
   const primaryUpdate = updateStarterPromptAcrossDbCandidates(env, {
     userId,
     agentId: agentId || args.agentId,
   });
   const mirrorUpdate = env.SCHEDULING_DB_MIRROR_PATH
-    ? sqliteUpdateStarterPrompt(env.SCHEDULING_DB_MIRROR_PATH, { userId, agentId: agentId || args.agentId })
+    ? sqliteUpdateStarterPrompt(env.SCHEDULING_DB_MIRROR_PATH, {
+        userId,
+        agentId: agentId || args.agentId,
+      })
     : { ok: true, skipped: true };
 
   return {
     ok: primaryUpdate.ok,
-    fixture: 'starter_morning_briefing_baseline_without_blockers',
+    fixture: "starter_morning_briefing_baseline_without_blockers",
     bootstrapStatus: bootstrap.status,
-    bootstrapBodyStatus: scrubForPublic(bootstrap.body?.status || bootstrap.body?.reason || ''),
+    bootstrapBodyStatus: scrubForPublic(
+      bootstrap.body?.status || bootstrap.body?.reason || "",
+    ),
     primaryUpdate,
     mirrorUpdate,
   };
@@ -328,13 +829,21 @@ function stableStringify(value) {
 }
 
 function hashValue(value, length = 16) {
-  const text = typeof value === 'string' ? value : stableStringify(value);
-  return crypto.createHash('sha256').update(text || '').digest('hex').slice(0, length);
+  const text = typeof value === "string" ? value : stableStringify(value);
+  return crypto
+    .createHash("sha256")
+    .update(text || "")
+    .digest("hex")
+    .slice(0, length);
 }
 
 function hashFileIfPresent(filePath) {
   try {
-    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').slice(0, 16);
+    return crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(filePath))
+      .digest("hex")
+      .slice(0, 16);
   } catch (_error) {
     return null;
   }
@@ -342,29 +851,32 @@ function hashFileIfPresent(filePath) {
 
 function scrubForPublic(value) {
   if (value == null) {
-    return '';
+    return "";
   }
   return String(value)
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
     .replace(
       /(?:file:\/\/)?(?:\/Users|\/home|\/tmp|\/var\/folders|\/private\/var\/folders|\/opt|\/etc)\/[^\r\n"'`<>]+/g,
-      '[local_path]',
+      "[local_path]",
     )
-    .replace(/~\/[^\r\n"'`<>]+/g, '[local_path]')
-    .replace(/\b[A-Za-z]:\\[^\r\n"'`<>]+/g, '[local_path]')
-    .replace(/\\\\[A-Za-z0-9_.-]+\\[^\r\n"'`<>]+/g, '[local_path]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, 'Bearer [secret]')
+    .replace(/~\/[^\r\n"'`<>]+/g, "[local_path]")
+    .replace(/\b[A-Za-z]:\\[^\r\n"'`<>]+/g, "[local_path]")
+    .replace(/\\\\[A-Za-z0-9_.-]+\\[^\r\n"'`<>]+/g, "[local_path]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, "Bearer [secret]")
     .replace(
       /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs]?)-[A-Za-z0-9_\-]{8,}\b/g,
-      '[secret]',
+      "[secret]",
     )
     .replace(
       /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret)=([^&\s"'`<>]+)/gi,
-      '$1=[secret]',
+      "$1=[secret]",
     )
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[uuid]')
-    .replace(/\b[0-9a-f]{24}\b/gi, '[object_id]')
-    .replace(/\b\d{10,}\b/g, '[numeric_id]');
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi,
+      "[uuid]",
+    )
+    .replace(/\b[0-9a-f]{24}\b/gi, "[object_id]")
+    .replace(/\b\d{10,}\b/g, "[numeric_id]");
 }
 
 async function fetchJson(url, options = {}, timeoutMs = 20_000) {
@@ -375,8 +887,8 @@ async function fetchJson(url, options = {}, timeoutMs = 20_000) {
       ...options,
       signal: controller.signal,
       headers: {
-        Accept: 'application/json',
-        'User-Agent': BROWSER_USER_AGENT,
+        Accept: "application/json",
+        "User-Agent": BROWSER_USER_AGENT,
         ...(options.headers || {}),
       },
     });
@@ -417,34 +929,39 @@ async function fetchText(url, options = {}, timeoutMs = 20_000) {
 
 function runtimeIdentityVerdict(configResponse) {
   const config = configResponse.body || {};
-  const appTitle = String(config.appTitle || '');
+  const appTitle = String(config.appTitle || "");
   const interfaceConfig = config.interface || {};
-  const defaultAgent = String(interfaceConfig.defaultAgent || '');
-  const connectedAccountsEnabled = config.viventiumConnectedAccountsEnabled === true;
-  const hasViventiumTitle = appTitle === 'Viventium';
+  const defaultAgent = String(interfaceConfig.defaultAgent || "");
+  const connectedAccountsEnabled =
+    config.viventiumConnectedAccountsEnabled === true;
+  const hasViventiumTitle = appTitle === "Viventium";
   const hasDefaultAgent = defaultAgent === MAIN_AGENT_ID;
-  const ok = configResponse.ok && hasViventiumTitle && hasDefaultAgent && connectedAccountsEnabled;
+  const ok =
+    configResponse.ok &&
+    hasViventiumTitle &&
+    hasDefaultAgent &&
+    connectedAccountsEnabled;
   const reasons = [];
 
   if (!configResponse.ok) {
     reasons.push(`api_config_http_${configResponse.status}`);
   }
   if (!hasViventiumTitle) {
-    reasons.push('app_title_not_viventium');
+    reasons.push("app_title_not_viventium");
   }
   if (!hasDefaultAgent) {
-    reasons.push('default_agent_not_main_viventium');
+    reasons.push("default_agent_not_main_viventium");
   }
   if (!connectedAccountsEnabled) {
-    reasons.push('connected_account_mode_not_enabled');
+    reasons.push("connected_account_mode_not_enabled");
   }
 
   return {
     ok,
     reasons,
     public: {
-      appTitle: scrubForPublic(appTitle || 'missing'),
-      defaultAgentHash: defaultAgent ? hashValue(defaultAgent) : 'missing',
+      appTitle: scrubForPublic(appTitle || "missing"),
+      defaultAgentHash: defaultAgent ? hashValue(defaultAgent) : "missing",
       connectedAccountsEnabled,
     },
   };
@@ -453,17 +970,23 @@ function runtimeIdentityVerdict(configResponse) {
 function loadSourceHashes() {
   const sourceAgent = path.join(
     LIBRECHAT_ROOT,
-    'viventium',
-    'source_of_truth',
-    'local.viventium-agents.yaml',
+    "viventium",
+    "source_of_truth",
+    "local.viventium-agents.yaml",
   );
   const sourceLibreChat = path.join(
     LIBRECHAT_ROOT,
-    'viventium',
-    'source_of_truth',
-    'local.librechat.yaml',
+    "viventium",
+    "source_of_truth",
+    "local.librechat.yaml",
   );
-  const compiled = path.join(REPO_ROOT, '.viventium', 'runtime', 'isolated', 'librechat.generated.yaml');
+  const compiled = path.join(
+    REPO_ROOT,
+    ".viventium",
+    "runtime",
+    "isolated",
+    "librechat.generated.yaml",
+  );
 
   return {
     source_agent: hashFileIfPresent(sourceAgent),
@@ -473,11 +996,11 @@ function loadSourceHashes() {
 }
 
 function debugLocalPromptFrameEnabled() {
-  return process.env.VIVENTIUM_PROMPT_FRAME_DEBUG_LOCAL === '1';
+  return process.env.VIVENTIUM_PROMPT_FRAME_DEBUG_LOCAL === "1";
 }
 
 function promptFrameLogFiles() {
-  const root = path.join(PRIVATE_ROOT, 'prompt-observability', 'frame-logs');
+  const root = path.join(PRIVATE_ROOT, "prompt-observability", "frame-logs");
   if (!fs.existsSync(root)) {
     return [];
   }
@@ -488,7 +1011,7 @@ function promptFrameLogFiles() {
     }
     const dayDir = path.join(root, day.name);
     for (const entry of fs.readdirSync(dayDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      if (entry.isFile() && entry.name.endsWith(".jsonl")) {
         files.push(path.join(dayDir, entry.name));
       }
     }
@@ -524,21 +1047,21 @@ function summarizePromptFrameDelta(cursor) {
     if (start > end) {
       start = 0;
     }
-    const fd = fs.openSync(filePath, 'r');
+    const fd = fs.openSync(filePath, "r");
     try {
       const buffer = Buffer.alloc(end - start);
       fs.readSync(fd, buffer, 0, buffer.length, start);
-      for (const line of buffer.toString('utf8').split(/\r?\n/)) {
+      for (const line of buffer.toString("utf8").split(/\r?\n/)) {
         if (!line.trim()) {
           continue;
         }
         try {
           const frame = JSON.parse(line);
           frames.push({
-            prompt_family: scrubForPublic(frame.prompt_family || ''),
-            surface: scrubForPublic(frame.surface || ''),
-            provider_hash: hashValue(frame.provider || ''),
-            model_hash: hashValue(frame.model || ''),
+            prompt_family: scrubForPublic(frame.prompt_family || ""),
+            surface: scrubForPublic(frame.surface || ""),
+            provider_hash: hashValue(frame.provider || ""),
+            model_hash: hashValue(frame.model || ""),
             layer_token_estimates: frame.layer_token_estimates || {},
             source_hashes: frame.source_hashes || {},
             mcp_instruction_sources: frame.mcp_instruction_sources || {},
@@ -553,8 +1076,13 @@ function summarizePromptFrameDelta(cursor) {
   }
   const maxLayerTokens = {};
   for (const frame of frames) {
-    for (const [layer, tokens] of Object.entries(frame.layer_token_estimates || {})) {
-      maxLayerTokens[layer] = Math.max(maxLayerTokens[layer] || 0, Number(tokens) || 0);
+    for (const [layer, tokens] of Object.entries(
+      frame.layer_token_estimates || {},
+    )) {
+      maxLayerTokens[layer] = Math.max(
+        maxLayerTokens[layer] || 0,
+        Number(tokens) || 0,
+      );
     }
   }
   const heavyLayers = Object.entries(maxLayerTokens)
@@ -584,10 +1112,20 @@ function flattenPromptCases(promptBank) {
       familyId: family.id,
       familyGoal: family.goal,
       ...testCase,
+      evalIsolation: {
+        ...(family.evalIsolation || {}),
+        ...(testCase.evalIsolation || {}),
+      },
+      interCaseDelayMs:
+        testCase.interCaseDelayMs ?? family.interCaseDelayMs ?? 0,
       promptRefs: [
         ...new Set([
-          ...((family.promptRefs || family.prompt_refs || []).map((item) => String(item))),
-          ...((testCase.promptRefs || testCase.prompt_refs || []).map((item) => String(item))),
+          ...(family.promptRefs || family.prompt_refs || []).map((item) =>
+            String(item),
+          ),
+          ...(testCase.promptRefs || testCase.prompt_refs || []).map((item) =>
+            String(item),
+          ),
         ]),
       ],
     })),
@@ -595,19 +1133,24 @@ function flattenPromptCases(promptBank) {
 }
 
 function runnablePromptCases(promptBank, filters = {}) {
-  return flattenPromptCases(promptBank).filter((testCase) => caseMatchesFilters(testCase, filters));
+  return flattenPromptCases(promptBank).filter((testCase) =>
+    caseMatchesFilters(testCase, filters),
+  );
 }
 
 function caseMatchesFilters(testCase, filters = {}) {
   if (filters.family && testCase.familyId !== filters.family) {
     return false;
   }
-  if (filters.surface && (testCase.surface || 'web') !== filters.surface) {
+  if (filters.caseId && testCase.id !== filters.caseId) {
+    return false;
+  }
+  if (filters.surface && (testCase.surface || "web") !== filters.surface) {
     return false;
   }
   if (
     filters.promptId &&
-    filters.promptId !== 'main.conscious_agent' &&
+    filters.promptId !== "main.conscious_agent" &&
     !(testCase.promptRefs || []).includes(filters.promptId)
   ) {
     return false;
@@ -620,43 +1163,62 @@ function buildCaseText(testCase, { includeSetup = true } = {}) {
     testCase.context,
     includeSetup ? testCase.setup : null,
     testCase.prompt,
-  ].filter(Boolean).join('\n\n');
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function buildChatPayload(testCase, args, overrides = {}) {
   const messageId = overrides.messageId || crypto.randomUUID();
   const text = overrides.text ?? buildCaseText(testCase);
-  const surface = testCase.surface || 'web';
+  const surface = testCase.surface || "web";
   const inputMode =
-    surface === 'voice' || surface === 'wing'
-      ? 'voice_call'
-      : surface === 'listen_only'
-        ? 'listen_only'
-        : 'text';
+    surface === "voice" || surface === "wing"
+      ? "voice_call"
+      : surface === "listen_only"
+        ? "listen_only"
+        : "text";
+  const voiceOutput = voiceOutputFixtureFor(testCase);
   return {
     text,
-    sender: 'User',
+    sender: "User",
     clientTimestamp: new Date().toISOString(),
-    clientTimezone: 'America/Toronto',
+    clientTimezone: "UTC",
     isCreatedByUser: true,
     parentMessageId: overrides.parentMessageId || NO_PARENT,
-    conversationId: overrides.conversationId || 'new',
+    conversationId: overrides.conversationId || "new",
     messageId,
     responseMessageId: `${messageId}_`,
-    endpoint: 'agents',
-    endpointType: 'agents',
+    endpoint: "agents",
+    endpointType: "agents",
     agent_id: args.agentId,
     model: args.agentId,
     viventiumSurface: surface,
     viventiumInputMode: inputMode,
-    viventiumListenOnly: surface === 'listen_only',
+    ...(voiceOutput
+      ? {
+          voiceMode: surface === "voice",
+          voiceProvider: voiceOutput.provider,
+          ...(surface === "telegram" ? { telegramAudioRequested: true } : {}),
+        }
+      : {}),
+    viventiumListenOnly: surface === "listen_only",
     isTemporary: true,
+    ...(testCase.evalIsolation && Object.keys(testCase.evalIsolation).length > 0
+      ? {
+          viventiumEvalIsolation: testCase.evalIsolation,
+          suppressBackgroundCortices:
+            testCase.evalIsolation.backgroundCortices === true,
+        }
+      : {}),
   };
 }
 
 function normalizeSeedPrompts(testCase) {
   if (Array.isArray(testCase.seed_prompts)) {
-    return testCase.seed_prompts.map((item) => String(item || '').trim()).filter(Boolean);
+    return testCase.seed_prompts
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
   }
   return [];
 }
@@ -665,53 +1227,59 @@ function parseSseBlock(block) {
   const lines = block.split(/\r?\n/);
   const dataLines = [];
   for (const line of lines) {
-    if (line.startsWith('data:')) {
-      dataLines.push(line.slice('data:'.length).trimStart());
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
     }
   }
   if (dataLines.length === 0) {
     return null;
   }
   try {
-    return JSON.parse(dataLines.join('\n'));
+    return JSON.parse(dataLines.join("\n"));
   } catch (_error) {
-    return { raw: dataLines.join('\n') };
+    return { raw: dataLines.join("\n") };
   }
 }
 
 function extractTextFromContent(content) {
-  if (typeof content === 'string') {
+  if (typeof content === "string") {
     return content;
   }
   if (Array.isArray(content)) {
     return content
       .map((part) => {
-        if (typeof part === 'string') {
+        if (typeof part === "string") {
           return part;
         }
-        if (part?.type === 'text') {
-          if (typeof part.text === 'string') {
+        if (part?.type === "text") {
+          if (typeof part.text === "string") {
             return part.text;
           }
-          if (typeof part.text?.value === 'string') {
+          if (typeof part.text?.value === "string") {
             return part.text.value;
           }
         }
-        return '';
+        return "";
       })
       .filter(Boolean)
-      .join('\n\n');
+      .join("\n\n");
   }
-  if (typeof content?.text === 'string') {
+  if (typeof content?.text === "string") {
     return content.text;
   }
-  return '';
+  return "";
 }
 
 function extractVisibleText(events) {
-  const finalEvent = [...events].reverse().find((event) => event && event.final != null);
-  const responseMessage = finalEvent?.responseMessage || finalEvent?.message || null;
-  const finalText = responseMessage?.text || responseMessage?.textOverride || extractTextFromContent(responseMessage?.content);
+  const finalEvent = [...events]
+    .reverse()
+    .find((event) => event && event.final != null);
+  const responseMessage =
+    finalEvent?.responseMessage || finalEvent?.message || null;
+  const finalText =
+    responseMessage?.text ||
+    responseMessage?.textOverride ||
+    extractTextFromContent(responseMessage?.content);
   if (finalText) {
     return finalText;
   }
@@ -724,92 +1292,100 @@ function extractVisibleText(events) {
         event?.response?.text ||
         event?.responseMessage?.text ||
         extractTextFromContent(event?.responseMessage?.content) ||
-        '',
+        "",
     )
-    .filter((value) => typeof value === 'string')
-    .join('');
+    .filter((value) => typeof value === "string")
+    .join("");
 }
 
 function extractFinalMeta(events) {
-  const finalEvent = [...(events || [])].reverse().find((event) => event && event.final != null);
+  const finalEvent = [...(events || [])]
+    .reverse()
+    .find((event) => event && event.final != null);
   return {
     conversationId:
       finalEvent?.conversation?.conversationId ||
       finalEvent?.responseMessage?.conversationId ||
       finalEvent?.message?.conversationId ||
-      '',
-    responseMessageId: finalEvent?.responseMessage?.messageId || finalEvent?.message?.messageId || '',
-    requestMessageId: finalEvent?.requestMessage?.messageId || '',
+      "",
+    responseMessageId:
+      finalEvent?.responseMessage?.messageId ||
+      finalEvent?.message?.messageId ||
+      "",
+    requestMessageId: finalEvent?.requestMessage?.messageId || "",
   };
 }
 
 function contentToText(value) {
   if (!value) {
-    return '';
+    return "";
   }
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     return value;
   }
   if (Array.isArray(value)) {
     return value
       .map((part) => {
-        if (typeof part === 'string') {
+        if (typeof part === "string") {
           return part;
         }
-        if (part?.type === 'text') {
-          if (typeof part.text === 'string') {
+        if (part?.type === "text") {
+          if (typeof part.text === "string") {
             return part.text;
           }
-          if (typeof part.text?.value === 'string') {
+          if (typeof part.text?.value === "string") {
             return part.text.value;
           }
         }
-        if (part?.type === 'cortex_insight' && typeof part.insight === 'string') {
-          return `[${part.cortex_name || 'cortex'} insight] ${part.insight}`;
+        if (
+          part?.type === "cortex_insight" &&
+          typeof part.insight === "string"
+        ) {
+          return `[${part.cortex_name || "cortex"} insight] ${part.insight}`;
         }
-        return '';
+        return "";
       })
       .filter(Boolean)
-      .join('\n');
+      .join("\n");
   }
-  if (typeof value.text === 'string') {
+  if (typeof value.text === "string") {
     return value.text;
   }
-  return '';
+  return "";
 }
 
 function hasCortexActivation(events) {
   return (events || []).some((event) => {
-    if (event?.event === 'on_cortex_update') {
+    if (event?.event === "on_cortex_update") {
       return true;
     }
-    return JSON.stringify(event || {}).includes('cortex_activation');
+    return JSON.stringify(event || {}).includes("cortex_activation");
   });
 }
 
 function extractOpenAIOutputText(body) {
-  if (typeof body?.output_text === 'string') {
+  if (typeof body?.output_text === "string") {
     return body.output_text;
   }
   if (Array.isArray(body?.output)) {
     return body.output
       .flatMap((item) => item?.content || [])
-      .map((part) => part?.text || part?.content || '')
+      .map((part) => part?.text || part?.content || "")
       .filter(Boolean)
-      .join('\n');
+      .join("\n");
   }
-  if (typeof body?.choices?.[0]?.message?.content === 'string') {
+  if (typeof body?.choices?.[0]?.message?.content === "string") {
     return body.choices[0].message.content;
   }
-  return '';
+  return "";
 }
 
 function parseJsonObject(text) {
   try {
     return JSON.parse(text);
   } catch (_error) {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
     if (start >= 0 && end > start) {
       return JSON.parse(text.slice(start, end + 1));
     }
@@ -819,10 +1395,10 @@ function parseJsonObject(text) {
 
 function caseAllowsEmptyResponse(testCase) {
   return (
-    testCase.expected_surface === '{NTA}' ||
-    testCase.expected_decision === 'suppress' ||
-    testCase.surface === 'listen_only' ||
-    testCase.surface === 'wing'
+    testCase.expected_surface === "{NTA}" ||
+    testCase.expected_decision === "suppress" ||
+    testCase.surface === "listen_only" ||
+    testCase.surface === "wing"
   );
 }
 
@@ -838,7 +1414,9 @@ function caseAllowsUnresolvedAsync(testCase) {
 }
 
 function isPendingCortexStatus(status) {
-  return ['activating', 'brewing', 'running', 'pending'].includes(String(status || '').trim());
+  return ["activating", "brewing", "running", "pending"].includes(
+    String(status || "").trim(),
+  );
 }
 
 function resultHasResolvedRuntimeHoldEvidence(result) {
@@ -854,56 +1432,61 @@ function resultHasResolvedRuntimeHoldEvidence(result) {
 
 function hasRuntimeHold(events) {
   return (events || []).some((event) => {
-    if (event?.final !== true || !Array.isArray(event.responseMessage?.content)) {
+    if (
+      event?.final !== true ||
+      !Array.isArray(event.responseMessage?.content)
+    ) {
       return false;
     }
-    return event.responseMessage.content.some((part) => Boolean(part?.viventium_runtime_hold));
+    return event.responseMessage.content.some((part) =>
+      Boolean(part?.viventium_runtime_hold),
+    );
   });
 }
 
 function buildJudgeSchema() {
   return {
-    type: 'object',
+    type: "object",
     additionalProperties: false,
     required: [
-      'pass',
-      'score',
-      'rubric_results',
-      'summary',
-      'failure_mode',
-      'confidence',
+      "pass",
+      "score",
+      "rubric_results",
+      "summary",
+      "failure_mode",
+      "confidence",
     ],
     properties: {
-      pass: { type: 'boolean' },
-      score: { type: 'number', minimum: 0, maximum: 1 },
+      pass: { type: "boolean" },
+      score: { type: "number", minimum: 0, maximum: 1 },
       rubric_results: {
-        type: 'array',
+        type: "array",
         items: {
-          type: 'object',
+          type: "object",
           additionalProperties: false,
-          required: ['rubric_item', 'pass', 'evidence'],
+          required: ["rubric_item", "pass", "evidence"],
           properties: {
-            rubric_item: { type: 'string' },
-            pass: { type: 'boolean' },
-            evidence: { type: 'string' },
+            rubric_item: { type: "string" },
+            pass: { type: "boolean" },
+            evidence: { type: "string" },
           },
         },
       },
-      summary: { type: 'string' },
+      summary: { type: "string" },
       failure_mode: {
-        type: 'string',
+        type: "string",
         enum: [
-          'none',
-          'identity_or_style_regression',
-          'truthfulness_or_live_data_risk',
-          'tool_routing_risk',
-          'surface_contract_risk',
-          'privacy_or_plumbing_exposure',
-          'nta_or_followup_regression',
-          'unclear_or_insufficient_evidence',
+          "none",
+          "identity_or_style_regression",
+          "truthfulness_or_live_data_risk",
+          "tool_routing_risk",
+          "surface_contract_risk",
+          "privacy_or_plumbing_exposure",
+          "nta_or_followup_regression",
+          "unclear_or_insufficient_evidence",
         ],
       },
-      confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
+      confidence: { type: "string", enum: ["low", "medium", "high"] },
     },
   };
 }
@@ -921,87 +1504,109 @@ function buildJudgePrompt(testCase, result) {
   const schema = buildJudgeSchema();
   const effectiveRubric = effectiveRubricForExactRunner(testCase);
   return [
-    'Evaluate this Viventium prompt-architecture regression case. Judge only the behavior visible in the response against the rubric.',
-    'Return exactly one JSON object matching the provided schema. Do not include markdown, code fences, prose, or extra keys.',
-    'Do not reward verbosity. Do not require private data. If evidence is missing, mark that rubric item false.',
+    "Evaluate this Viventium prompt-architecture regression case. Judge only the behavior visible in the response against the rubric.",
+    "Return exactly one JSON object matching the provided schema. Do not include markdown, code fences, prose, or extra keys.",
+    "Do not reward verbosity. Do not require private data. If evidence is missing, mark that rubric item false.",
     'Range rubric note: if a rubric says "one or two", "1-2", or similar, one satisfying item is enough. Do not fail just because the response chose the lower end of the allowed range.',
-    'Architecture-language note: if the user prompt itself asks about MCPs, Scheduling Cortex, GlassHive, prompts, or tool architecture, mentioning those user-provided concepts is not plumbing exposure by itself. Still fail raw IDs, metadata keys, hidden prompt tokens, no-response markers, memory key names, or unrelated internals.',
-    'Citation marker note: web-search citation markers such as turn0search2 are acceptable user-facing source anchors when matching web_search_sources evidence is supplied. Do not classify matching citation anchors as plumbing exposure.',
-    'Snippet-limitation note: if the response explicitly says the retrieved snippets/results do not directly support or confirm a precise rule, treat that as an honest evidence limitation, not as a fabricated page-content check.',
+    "Architecture-language note: if the user prompt itself asks about MCPs, Scheduling Cortex, GlassHive, prompts, or tool architecture, mentioning those user-provided concepts is not plumbing exposure by itself. Still fail raw IDs, metadata keys, hidden prompt tokens, no-response markers, memory key names, or unrelated internals.",
+    "Citation marker note: web-search citation markers such as turn0search2 are acceptable user-facing source anchors when matching web_search_sources evidence is supplied. Do not classify matching citation anchors as plumbing exposure.",
+    "Snippet-limitation note: if the response explicitly says the retrieved snippets/results do not directly support or confirm a precise rule, treat that as an honest evidence limitation, not as a fabricated page-content check.",
     'Conditional rubric note: if a rubric item is explicitly conditional ("if needed", "if unavailable", "when present") and the condition is not evidenced in this case, do not fail solely because the conditional behavior did not appear.',
     'Unavailable-condition note: a worker/tool case is not "unavailable" merely because the result is queued, deferred, accepted, or still in progress during the observation window. Only apply "if unavailable" rubric items when the response or evidence shows the tool was unavailable, disconnected, denied, or failed to start.',
     'Memory/context note: natural use of relevant user memory is allowed unless a rubric item explicitly forbids it. Phrases like "hidden prompt or memory keys" mean internal key names, prompt text, source metadata, IDs, or system plumbing, not ordinary personalized context.',
     'Clock note: for a "what time is it" case, allow normal elapsed clock drift during the run unless the prompt supplied an explicit timestamp to compare against.',
-    'Runner scope note: this exact-model runner exercises the main chat endpoint with surface metadata for model behavior and prompt-frame evidence. True voice gateway, Wing Mode, Listen-Only bypass, Telegram, scheduler, and browser UI behavior are evaluated in the native-surface Playwright runner. If this case lists exact-runner exclusions, do not score those native-only rubric items here.',
-    'Suppression note: when expected_decision is suppress, do not require the visible answer to reveal its private reasoning. If the supplied context contains a recent answer and repeated evidence, then an empty answer, {NTA}, or a short non-repeating acknowledgement can satisfy evidence-aware suppression.',
+    "Runner scope note: this exact-model runner exercises the main chat endpoint with surface metadata for model behavior and prompt-frame evidence. True voice gateway, Wing Mode, Listen-Only bypass, Telegram, scheduler, and browser UI behavior are evaluated in the native-surface Playwright runner. If this case lists exact-runner exclusions, do not score those native-only rubric items here.",
+    "Suppression note: when expected_decision is suppress, do not require the visible answer to reveal its private reasoning. If the supplied context contains a recent answer and repeated evidence, then an empty answer, {NTA}, or a short non-repeating acknowledgement can satisfy evidence-aware suppression.",
     'Hold/delayed-work note: for productivity, worker, scheduling, or cortex cases, a short hold such as "Checking now" is acceptable only when stream, prompt-frame, or delayed DB evidence shows a routed read-only/background path and either completed insight/delayed evidence, an explicit pending-callback contract for that case, or an honest limitation. A generic hold with still-pending statuses and no result evidence after the observation window is insufficient.',
-    'Scheduling-tool evidence note: when runtime evidence shows schedule search/get/update tool calls, treat timezone and identity handling as satisfied by the tool-owned contract unless the visible response or tool evidence contradicts it. Do not require the assistant to expose timezone, identity, task IDs, metadata, or schedule internals in the user-facing answer.',
+    "Scheduling-tool evidence note: when runtime evidence shows schedule search/get/update tool calls, treat timezone and identity handling as satisfied by the tool-owned contract unless the visible response or tool evidence contradicts it. Do not require the assistant to expose timezone, identity, task IDs, metadata, or schedule internals in the user-facing answer.",
     'Pending-worker note: after a worker/tool call, a short acknowledgement such as "working on it", "checking now", or "I will send the result here" is not pretending to have inspected anything unless it claims a concrete finding, UI state, artifact, or completion without evidence.',
-    'Direct-action callback-window note: do not fail a worker/delegation case solely because the callback or final inspection result did not arrive within this runner’s observation window. If native evidence shows a tool_call/delegation route and the visible text only promises future results, treat it as a valid pending delegation. Fail only if the answer claims completed inspection, concrete findings, or local UI state without verified evidence.',
-    'Delayed-visible note: delayed_visible_text in post-case evidence is user-visible behavior. If it honestly reports completion, approval need, or a blocker, count that alongside the initial response; still fail it if the delayed text exposes raw IDs, provider names, queue mechanics, or internal plumbing.',
-    'Observability note: prompt-frame token analysis is private QA telemetry. If prompt_budget_analysis reports heavy layers and budget_review_required=true, treat the measurement/flagging requirement as satisfied for this eval case.',
-    'Verdict rule: if every listed rubric item is satisfied, pass the case; do not fail for an extra preference outside the supplied rubric.',
-    '',
-    'Required JSON Schema:',
+    "Direct-action callback-window note: do not fail a worker/delegation case solely because the callback or final inspection result did not arrive within this runner’s observation window. If native evidence shows a tool_call/delegation route and the visible text only promises future results, treat it as a valid pending delegation. Fail only if the answer claims completed inspection, concrete findings, or local UI state without verified evidence.",
+    "Delayed-visible note: delayed_visible_text in post-case evidence is user-visible behavior. If it honestly reports completion, approval need, or a blocker, count that alongside the initial response; still fail it if the delayed text exposes raw IDs, provider names, queue mechanics, or internal plumbing.",
+    "Observability note: prompt-frame token analysis is private QA telemetry. If prompt_budget_analysis reports heavy layers and budget_review_required=true, treat the measurement/flagging requirement as satisfied for this eval case.",
+    "Verdict rule: if every listed rubric item is satisfied, pass the case; do not fail for an extra preference outside the supplied rubric.",
+    "",
+    "Required JSON Schema:",
     JSON.stringify(schema),
-    '',
+    "",
     `Case id: ${testCase.id}`,
     `Family: ${testCase.familyId}`,
-    `Surface: ${testCase.surface || 'web'}`,
-    `Expected visible surface: ${testCase.expected_surface || 'ordinary response'}`,
-    `Expected decision: ${testCase.expected_decision || 'not specified'}`,
-    `Exact-runner exclusions: ${(testCase.exact_runner_excluded_rubric_indices || []).join(', ') || 'none'}`,
-    `Exact-runner notes: ${(testCase.exact_runner_notes || []).map(scrubForPublic).join(' | ') || 'none'}`,
-    '',
-    'Prompt/context sent to the system:',
+    `Surface: ${testCase.surface || "web"}`,
+    `Expected visible surface: ${testCase.expected_surface || "ordinary response"}`,
+    `Expected decision: ${testCase.expected_decision || "not specified"}`,
+    `Exact-runner exclusions: ${(testCase.exact_runner_excluded_rubric_indices || []).join(", ") || "none"}`,
+    `Exact-runner notes: ${(testCase.exact_runner_notes || []).map(scrubForPublic).join(" | ") || "none"}`,
+    "",
+    "Prompt/context sent to the system:",
     scrubForPublic(
       [
         testCase.context,
         ...(normalizeSeedPrompts(testCase).length
-          ? normalizeSeedPrompts(testCase).map((seed, index) => `Prior seeded turn ${index + 1}: ${seed}`)
+          ? normalizeSeedPrompts(testCase).map(
+              (seed, index) => `Prior seeded turn ${index + 1}: ${seed}`,
+            )
           : [testCase.setup].filter(Boolean)),
         `Evaluated prompt: ${testCase.prompt}`,
-      ].filter(Boolean).join('\n\n'),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     ),
-    '',
-    'Rubric:',
+    "",
+    "Rubric:",
     ...effectiveRubric.map((item, index) => `${index + 1}. ${item}`),
-    '',
-    'Sanitized response to evaluate:',
-    result.responseForJudge || scrubForPublic(result.responsePreview || ''),
-    '',
-    'Sanitized runtime evidence from the streamed response:',
-    result.eventEvidenceForJudge || 'none',
-    '',
-    'Sanitized prompt-frame telemetry captured during this case:',
-    result.promptFrameEvidenceForJudge || 'none',
-    '',
-    'Sanitized delayed DB follow-up / cortex evidence observed after stream:',
-    result.postCaseEvidenceForJudge || 'none',
-  ].join('\n');
+    "",
+    "Sanitized response to evaluate:",
+    result.responseForJudge || scrubForPublic(result.responsePreview || ""),
+    "",
+    "Sanitized runtime evidence from the streamed response:",
+    result.eventEvidenceForJudge || "none",
+    "",
+    "Sanitized prompt-frame telemetry captured during this case:",
+    result.promptFrameEvidenceForJudge || "none",
+    "",
+    "Sanitized delayed DB follow-up / cortex evidence observed after stream:",
+    result.postCaseEvidenceForJudge || "none",
+  ].join("\n");
 }
 
 function validateJudgeJudgment(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { ok: false, error: 'semantic_judge_invalid_shape:not_object' };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, error: "semantic_judge_invalid_shape:not_object" };
   }
-  if (typeof value.pass !== 'boolean') {
-    return { ok: false, error: 'semantic_judge_invalid_shape:pass_not_boolean' };
+  if (typeof value.pass !== "boolean") {
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:pass_not_boolean",
+    };
   }
-  if (typeof value.score !== 'number' || value.score < 0 || value.score > 1) {
-    return { ok: false, error: 'semantic_judge_invalid_shape:score_not_0_to_1_number' };
+  if (typeof value.score !== "number" || value.score < 0 || value.score > 1) {
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:score_not_0_to_1_number",
+    };
   }
   if (!Array.isArray(value.rubric_results)) {
-    return { ok: false, error: 'semantic_judge_invalid_shape:rubric_results_not_array' };
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:rubric_results_not_array",
+    };
   }
-  if (typeof value.summary !== 'string') {
-    return { ok: false, error: 'semantic_judge_invalid_shape:summary_not_string' };
+  if (typeof value.summary !== "string") {
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:summary_not_string",
+    };
   }
-  if (typeof value.failure_mode !== 'string') {
-    return { ok: false, error: 'semantic_judge_invalid_shape:failure_mode_not_string' };
+  if (typeof value.failure_mode !== "string") {
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:failure_mode_not_string",
+    };
   }
-  if (typeof value.confidence !== 'string') {
-    return { ok: false, error: 'semantic_judge_invalid_shape:confidence_not_string' };
+  if (typeof value.confidence !== "string") {
+    return {
+      ok: false,
+      error: "semantic_judge_invalid_shape:confidence_not_string",
+    };
   }
   return { ok: true };
 }
@@ -1012,16 +1617,16 @@ async function callOpenAIJsonSchemaJudge({ apiKey, model, prompt, timeoutMs }) {
     model,
     input: [
       {
-        role: 'system',
+        role: "system",
         content:
-          'You are a strict QA judge for prompt-architecture regressions. Output only the requested JSON.',
+          "You are a strict QA judge for prompt-architecture regressions. Output only the requested JSON.",
       },
-      { role: 'user', content: prompt },
+      { role: "user", content: prompt },
     ],
     text: {
       format: {
-        type: 'json_schema',
-        name: 'viventium_prompt_eval_judgment',
+        type: "json_schema",
+        name: "viventium_prompt_eval_judgment",
         strict: true,
         schema,
       },
@@ -1029,13 +1634,13 @@ async function callOpenAIJsonSchemaJudge({ apiKey, model, prompt, timeoutMs }) {
     max_output_tokens: 1400,
   };
   const response = await fetchJson(
-    'https://api.openai.com/v1/responses',
+    "https://api.openai.com/v1/responses",
     {
-      method: 'POST',
+      method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'User-Agent': BROWSER_USER_AGENT,
+        "Content-Type": "application/json",
+        "User-Agent": BROWSER_USER_AGENT,
       },
       body: JSON.stringify(body),
     },
@@ -1046,7 +1651,9 @@ async function callOpenAIJsonSchemaJudge({ apiKey, model, prompt, timeoutMs }) {
       ok: false,
       status: response.status,
       error: `openai_responses_http_${response.status}`,
-      bodyPreview: scrubForPublic(JSON.stringify(response.body || {}).slice(0, 500)),
+      bodyPreview: scrubForPublic(
+        JSON.stringify(response.body || {}).slice(0, 500),
+      ),
     };
   }
   const text = extractOpenAIOutputText(response.body);
@@ -1063,30 +1670,36 @@ async function callLocalAgentJsonJudge({ args, token, prompt, timeoutMs }) {
   const messageId = crypto.randomUUID();
   const payload = {
     text: prompt,
-    sender: 'User',
+    sender: "User",
     clientTimestamp: new Date().toISOString(),
-    clientTimezone: 'America/Toronto',
+    clientTimezone: "UTC",
     isCreatedByUser: true,
     parentMessageId: NO_PARENT,
-    conversationId: 'new',
+    conversationId: "new",
     messageId,
     responseMessageId: `${messageId}_`,
-    endpoint: 'agents',
-    endpointType: 'agents',
+    endpoint: "agents",
+    endpointType: "agents",
     agent_id: args.judgeAgentId,
     model: args.judgeAgentId,
-    viventiumSurface: 'web',
-    viventiumInputMode: 'text',
+    viventiumSurface: "web",
+    viventiumInputMode: "text",
     isTemporary: true,
+    suppressBackgroundCortices: true,
+    viventiumEvalIsolation: {
+      savedMemory: true,
+      conversationRecall: true,
+      feelings: true,
+    },
   };
   const start = await fetchJson(
     `${args.apiBase}/api/agents/chat/agents`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': BROWSER_USER_AGENT,
+        "Content-Type": "application/json",
+        "User-Agent": BROWSER_USER_AGENT,
       },
       body: JSON.stringify(payload),
     },
@@ -1097,7 +1710,9 @@ async function callLocalAgentJsonJudge({ args, token, prompt, timeoutMs }) {
       ok: false,
       status: start.status,
       error: `local_agent_judge_start_http_${start.status}`,
-      bodyPreview: scrubForPublic(JSON.stringify(start.body || {}).slice(0, 500)),
+      bodyPreview: scrubForPublic(
+        JSON.stringify(start.body || {}).slice(0, 500),
+      ),
     };
   }
   const stream = await readSseToFinal({
@@ -1106,35 +1721,39 @@ async function callLocalAgentJsonJudge({ args, token, prompt, timeoutMs }) {
     token,
     timeoutMs,
   });
+  const finalMeta = extractFinalMeta(stream.events || []);
   if (!stream.ok) {
     return {
       ok: false,
       status: stream.status,
       error: `local_agent_judge_stream_${stream.error || stream.status}`,
       bodyPreview: scrubForPublic(stream.text.slice(0, 500)),
+      finalMeta,
     };
   }
-  const text = stream.text || '';
+  const text = stream.text || "";
   try {
     return {
       ok: true,
       status: stream.status,
       judgment: parseJsonObject(text),
       rawHash: hashValue(text),
+      finalMeta,
     };
   } catch (error) {
     return {
       ok: false,
       status: stream.status,
-      error: `local_agent_judge_json_parse_failed:${scrubForPublic(error.message || 'unknown')}`,
+      error: `local_agent_judge_json_parse_failed:${scrubForPublic(error.message || "unknown")}`,
       bodyPreview: scrubForPublic(text.slice(0, 500)),
+      finalMeta,
     };
   }
 }
 
 function encodeEphemeralAgentId({ endpoint, model, sender }) {
-  const encodePart = (value) => String(value || '').replace(/:/g, '__');
-  return `${encodePart(endpoint)}__${encodePart(model)}___${encodePart(sender || 'SemanticJudge')}`;
+  const encodePart = (value) => String(value || "").replace(/:/g, "__");
+  return `${encodePart(endpoint)}__${encodePart(model)}___${encodePart(sender || "SemanticJudge")}`;
 }
 
 async function callLocalEphemeralJsonJudge({ args, token, prompt, timeoutMs }) {
@@ -1142,40 +1761,46 @@ async function callLocalEphemeralJsonJudge({ args, token, prompt, timeoutMs }) {
   const agentId = encodeEphemeralAgentId({
     endpoint: args.judgeEndpoint,
     model: args.judgeModel,
-    sender: 'SemanticJudge',
+    sender: "SemanticJudge",
   });
   const payload = {
     text: prompt,
-    sender: 'User',
+    sender: "User",
     clientTimestamp: new Date().toISOString(),
-    clientTimezone: 'America/Toronto',
+    clientTimezone: "UTC",
     isCreatedByUser: true,
     parentMessageId: NO_PARENT,
-    conversationId: 'new',
+    conversationId: "new",
     messageId,
     responseMessageId: `${messageId}_`,
-    endpoint: 'agents',
-    endpointType: 'agents',
+    endpoint: "agents",
+    endpointType: "agents",
     agent_id: agentId,
     model: agentId,
     promptPrefix:
-      'You are a strict semantic QA judge for Viventium prompt-regression tests. You are not Viventium. You do not answer the original user. You evaluate the supplied response against the supplied rubric and return exactly one JSON object matching the supplied schema.',
+      "You are a strict semantic QA judge for Viventium prompt-regression tests. You are not Viventium. You do not answer the original user. You evaluate the supplied response against the supplied rubric and return exactly one JSON object matching the supplied schema.",
     temperature: 0,
     top_p: 1,
     max_tokens: 1600,
     ephemeralAgent: {},
-    viventiumSurface: 'web',
-    viventiumInputMode: 'text',
+    viventiumSurface: "web",
+    viventiumInputMode: "text",
     isTemporary: true,
+    suppressBackgroundCortices: true,
+    viventiumEvalIsolation: {
+      savedMemory: true,
+      conversationRecall: true,
+      feelings: true,
+    },
   };
   const start = await fetchJson(
     `${args.apiBase}/api/agents/chat/agents`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': BROWSER_USER_AGENT,
+        "Content-Type": "application/json",
+        "User-Agent": BROWSER_USER_AGENT,
       },
       body: JSON.stringify(payload),
     },
@@ -1186,7 +1811,9 @@ async function callLocalEphemeralJsonJudge({ args, token, prompt, timeoutMs }) {
       ok: false,
       status: start.status,
       error: `local_ephemeral_judge_start_http_${start.status}`,
-      bodyPreview: scrubForPublic(JSON.stringify(start.body || {}).slice(0, 500)),
+      bodyPreview: scrubForPublic(
+        JSON.stringify(start.body || {}).slice(0, 500),
+      ),
     };
   }
   const stream = await readSseToFinal({
@@ -1195,41 +1822,45 @@ async function callLocalEphemeralJsonJudge({ args, token, prompt, timeoutMs }) {
     token,
     timeoutMs,
   });
+  const finalMeta = extractFinalMeta(stream.events || []);
   if (!stream.ok) {
     return {
       ok: false,
       status: stream.status,
       error: `local_ephemeral_judge_stream_${stream.error || stream.status}`,
       bodyPreview: scrubForPublic(stream.text.slice(0, 500)),
+      finalMeta,
     };
   }
-  const text = stream.text || '';
+  const text = stream.text || "";
   try {
     return {
       ok: true,
       status: stream.status,
       judgment: parseJsonObject(text),
       rawHash: hashValue(text),
+      finalMeta,
     };
   } catch (error) {
     return {
       ok: false,
       status: stream.status,
-      error: `local_ephemeral_judge_json_parse_failed:${scrubForPublic(error.message || 'unknown')}`,
+      error: `local_ephemeral_judge_json_parse_failed:${scrubForPublic(error.message || "unknown")}`,
       bodyPreview: scrubForPublic(text.slice(0, 500)),
+      finalMeta,
     };
   }
 }
 
 async function callConfiguredJudge({ args, token, prompt, timeoutMs }) {
-  if (args.judgeRoute === 'openai-direct') {
+  if (args.judgeRoute === "openai-direct") {
     const localEnv = loadLocalEnv();
     const apiKey = localEnv.OPENAI_API_KEY;
     if (!apiKey) {
       return {
         ok: false,
         status: 0,
-        error: 'missing_OPENAI_API_KEY_for_semantic_judge',
+        error: "missing_OPENAI_API_KEY_for_semantic_judge",
       };
     }
     return callOpenAIJsonSchemaJudge({
@@ -1239,7 +1870,7 @@ async function callConfiguredJudge({ args, token, prompt, timeoutMs }) {
       timeoutMs,
     });
   }
-  if (args.judgeRoute === 'local-agent') {
+  if (args.judgeRoute === "local-agent") {
     return callLocalAgentJsonJudge({
       args,
       token,
@@ -1247,7 +1878,7 @@ async function callConfiguredJudge({ args, token, prompt, timeoutMs }) {
       timeoutMs,
     });
   }
-  if (args.judgeRoute === 'local-ephemeral') {
+  if (args.judgeRoute === "local-ephemeral") {
     return callLocalEphemeralJsonJudge({
       args,
       token,
@@ -1255,7 +1886,7 @@ async function callConfiguredJudge({ args, token, prompt, timeoutMs }) {
       timeoutMs,
     });
   }
-  if (args.judgeRoute !== 'local-agent') {
+  if (args.judgeRoute !== "local-agent") {
     return {
       ok: false,
       status: 0,
@@ -1266,32 +1897,38 @@ async function callConfiguredJudge({ args, token, prompt, timeoutMs }) {
 
 function semanticJudgeLabel(args, semanticJudge) {
   if (!semanticJudge?.enabled) {
-    return 'disabled';
+    return "disabled";
   }
   if (semanticJudge.blockedReason) {
     return `blocked:${semanticJudge.blockedReason}`;
   }
-  return args.judgeRoute === 'openai-direct'
-    ? 'openai_json_schema_semantic_judge'
-    : args.judgeRoute === 'local-ephemeral'
-      ? 'local_ephemeral_json_semantic_judge'
-    : 'local_agent_json_semantic_judge';
+  return args.judgeRoute === "openai-direct"
+    ? "openai_json_schema_semantic_judge"
+    : args.judgeRoute === "local-ephemeral"
+      ? "local_ephemeral_json_semantic_judge"
+      : "local_agent_json_semantic_judge";
 }
 
 async function judgeLiveResults(args, promptBank, liveResults, token) {
   if (!args.semanticJudge || liveResults.length === 0) {
     return {
       enabled: args.semanticJudge,
-      blockedReason: args.semanticJudge && liveResults.length === 0 ? 'no_live_results_to_judge' : null,
+      blockedReason:
+        args.semanticJudge && liveResults.length === 0
+          ? "no_live_results_to_judge"
+          : null,
       results: liveResults,
     };
   }
 
-  const casesById = new Map(runnablePromptCases(promptBank).map((testCase) => [testCase.id, testCase]));
+  const casesById = new Map(
+    runnablePromptCases(promptBank).map((testCase) => [testCase.id, testCase]),
+  );
   const judgedResults = [];
+  const conversationIds = [];
   for (const result of liveResults) {
     const testCase = casesById.get(result.caseId);
-    if (!testCase || result.status !== 'completed') {
+    if (!testCase || result.status !== "completed") {
       judgedResults.push(result);
       continue;
     }
@@ -1303,48 +1940,56 @@ async function judgeLiveResults(args, promptBank, liveResults, token) {
         prompt,
         timeoutMs: Math.max(30_000, Math.min(args.timeoutMs, 120_000)),
       });
-      const shape = judge.ok ? validateJudgeJudgment(judge.judgment) : { ok: false };
+      if (judge.finalMeta?.conversationId) {
+        conversationIds.push(judge.finalMeta.conversationId);
+      }
+      const shape = judge.ok
+        ? validateJudgeJudgment(judge.judgment)
+        : { ok: false };
       judgedResults.push({
         ...result,
-        semanticJudge: judge.ok && shape.ok
-          ? {
-              status: 'judged',
-              pass: Boolean(judge.judgment?.pass),
-              score: Number(judge.judgment?.score ?? 0),
-              failureMode: judge.judgment?.failure_mode || 'unclear_or_insufficient_evidence',
-              confidence: judge.judgment?.confidence || 'low',
-              summary: scrubForPublic(judge.judgment?.summary || ''),
-              rubricResults: Array.isArray(judge.judgment?.rubric_results)
-                ? judge.judgment.rubric_results.map((item) => ({
-                    rubricItem: scrubForPublic(item.rubric_item || ''),
-                    pass: Boolean(item.pass),
-                    evidence: scrubForPublic(item.evidence || ''),
-                  }))
-                : [],
-              rawHash: judge.rawHash,
-            }
-          : {
-              status: 'failed',
-              pass: false,
-              score: 0,
-              failureMode: 'unclear_or_insufficient_evidence',
-              confidence: 'low',
-              summary: judge.error || shape.error,
-              error: judge.error || shape.error,
-              bodyPreview: judge.bodyPreview,
-            },
+        semanticJudge:
+          judge.ok && shape.ok
+            ? {
+                status: "judged",
+                pass: Boolean(judge.judgment?.pass),
+                score: Number(judge.judgment?.score ?? 0),
+                failureMode:
+                  judge.judgment?.failure_mode ||
+                  "unclear_or_insufficient_evidence",
+                confidence: judge.judgment?.confidence || "low",
+                summary: scrubForPublic(judge.judgment?.summary || ""),
+                rubricResults: Array.isArray(judge.judgment?.rubric_results)
+                  ? judge.judgment.rubric_results.map((item) => ({
+                      rubricItem: scrubForPublic(item.rubric_item || ""),
+                      pass: Boolean(item.pass),
+                      evidence: scrubForPublic(item.evidence || ""),
+                    }))
+                  : [],
+                rawHash: judge.rawHash,
+              }
+            : {
+                status: "failed",
+                pass: false,
+                score: 0,
+                failureMode: "unclear_or_insufficient_evidence",
+                confidence: "low",
+                summary: judge.error || shape.error,
+                error: judge.error || shape.error,
+                bodyPreview: judge.bodyPreview,
+              },
       });
     } catch (error) {
       judgedResults.push({
         ...result,
         semanticJudge: {
-          status: 'failed',
+          status: "failed",
           pass: false,
           score: 0,
-          failureMode: 'unclear_or_insufficient_evidence',
-          confidence: 'low',
-          summary: `judge_failed:${scrubForPublic(error.message || 'unknown')}`,
-          error: `judge_failed:${scrubForPublic(error.message || 'unknown')}`,
+          failureMode: "unclear_or_insufficient_evidence",
+          confidence: "low",
+          summary: `judge_failed:${scrubForPublic(error.message || "unknown")}`,
+          error: `judge_failed:${scrubForPublic(error.message || "unknown")}`,
         },
       });
     }
@@ -1354,19 +1999,26 @@ async function judgeLiveResults(args, promptBank, liveResults, token) {
     enabled: true,
     blockedReason: null,
     results: judgedResults,
+    conversationIds: [...new Set(conversationIds)],
   };
 }
 
 async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
-  const response = await fetch(`${apiBase}/api/agents/chat/stream/${encodeURIComponent(streamId)}`, {
-    headers: { Authorization: `Bearer ${token}`, 'User-Agent': BROWSER_USER_AGENT },
-  });
+  const response = await fetch(
+    `${apiBase}/api/agents/chat/stream/${encodeURIComponent(streamId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": BROWSER_USER_AGENT,
+      },
+    },
+  );
   if (!response.ok || !response.body) {
     return {
       ok: false,
       status: response.status,
       events: [],
-      text: '',
+      text: "",
       error: `stream_http_${response.status}`,
     };
   }
@@ -1374,7 +2026,7 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
   const startedAt = Date.now();
-  let buffer = '';
+  let buffer = "";
   const events = [];
 
   try {
@@ -1385,7 +2037,7 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
       }
       buffer += decoder.decode(value, { stream: true });
       const blocks = buffer.split(/\n\n/);
-      buffer = blocks.pop() || '';
+      buffer = blocks.pop() || "";
       for (const block of blocks) {
         const event = parseSseBlock(block);
         if (!event) {
@@ -1410,7 +2062,7 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
       status: response.status,
       events,
       text: extractVisibleText(events),
-      error: `stream_read_failed:${scrubForPublic(error.message || error.name || 'unknown')}`,
+      error: `stream_read_failed:${scrubForPublic(error.message || error.name || "unknown")}`,
     };
   }
 
@@ -1420,11 +2072,18 @@ async function readSseToFinal({ apiBase, streamId, token, timeoutMs }) {
     status: response.status,
     events,
     text: extractVisibleText(events),
-    error: 'stream_timeout',
+    error: "stream_timeout",
   };
 }
 
-async function runChatTurn({ args, token, testCase, text, conversationId = 'new', parentMessageId = NO_PARENT }) {
+async function runChatTurn({
+  args,
+  token,
+  testCase,
+  text,
+  conversationId = "new",
+  parentMessageId = NO_PARENT,
+}) {
   const payload = buildChatPayload(testCase, args, {
     text,
     conversationId,
@@ -1433,11 +2092,11 @@ async function runChatTurn({ args, token, testCase, text, conversationId = 'new'
   const start = await fetchJson(
     `${args.apiBase}/api/agents/chat/agents`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': BROWSER_USER_AGENT,
+        "Content-Type": "application/json",
+        "User-Agent": BROWSER_USER_AGENT,
       },
       body: JSON.stringify(payload),
     },
@@ -1471,25 +2130,58 @@ async function runChatTurn({ args, token, testCase, text, conversationId = 'new'
   };
 }
 
+function isTransientChatTurnFailure(turn) {
+  const error = String(turn?.error || turn?.stream?.error || "");
+  const startStatus = Number(turn?.start?.status || 0);
+  return (
+    startStatus === 429 ||
+    startStatus >= 500 ||
+    /stream_timeout|stream_read_failed:terminated|fetch failed/i.test(error)
+  );
+}
+
+async function runChatTurnWithRetry(params, maxAttempts = 2) {
+  const qaRequestMessageIds = [];
+  let last = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    last = await runChatTurn(params);
+    if (last.payload?.messageId)
+      qaRequestMessageIds.push(last.payload.messageId);
+    if (
+      last.ok ||
+      !isTransientChatTurnFailure(last) ||
+      attempt === maxAttempts
+    ) {
+      return { ...last, qaRequestMessageIds, attemptCount: attempt };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+  return { ...last, qaRequestMessageIds, attemptCount: maxAttempts };
+}
+
 function summarizeEventsForJudge(events) {
   const toolCalls = [];
   const cortexUpdates = [];
   const finalContent = [];
   const webSearchSources = [];
   for (const event of events || []) {
-    if (event?.event === 'on_cortex_update' && event.data && typeof event.data === 'object') {
+    if (
+      event?.event === "on_cortex_update" &&
+      event.data &&
+      typeof event.data === "object"
+    ) {
       cortexUpdates.push({
-        type: scrubForPublic(event.data.type || ''),
-        cortex_name: scrubForPublic(event.data.cortex_name || ''),
-        status: scrubForPublic(event.data.status || ''),
-        reason: scrubForPublic(event.data.reason || ''),
-        activation_scope: scrubForPublic(event.data.activation_scope || ''),
+        type: scrubForPublic(event.data.type || ""),
+        cortex_name: scrubForPublic(event.data.cortex_name || ""),
+        status: scrubForPublic(event.data.status || ""),
+        reason: scrubForPublic(event.data.reason || ""),
+        activation_scope: scrubForPublic(event.data.activation_scope || ""),
         direct_action_surfaces: Array.isArray(event.data.direct_action_surfaces)
           ? event.data.direct_action_surfaces.map(scrubForPublic)
           : [],
       });
     }
-    if (event?.event === 'attachment' && event?.data?.type === 'web_search') {
+    if (event?.event === "attachment" && event?.data?.type === "web_search") {
       const organic = Array.isArray(event.data.web_search?.organic)
         ? event.data.web_search.organic
         : [];
@@ -1497,22 +2189,26 @@ function summarizeEventsForJudge(events) {
         ? Number(event.data.web_search.turn)
         : 0;
       for (const source of organic.slice(0, 8)) {
-        const position = Number.isFinite(Number(source.position)) ? Number(source.position) : 0;
+        const position = Number.isFinite(Number(source.position))
+          ? Number(source.position)
+          : 0;
         webSearchSources.push({
-          anchor: position > 0 ? `turn${turn}search${position - 1}` : '',
-          title: scrubForPublic(source.title || ''),
-          attribution: scrubForPublic(source.attribution || ''),
+          anchor: position > 0 ? `turn${turn}search${position - 1}` : "",
+          title: scrubForPublic(source.title || ""),
+          attribution: scrubForPublic(source.attribution || ""),
           link_host: scrubForPublic(
             (() => {
               try {
-                return new URL(source.link || '').hostname;
+                return new URL(source.link || "").hostname;
               } catch {
-                return '';
+                return "";
               }
             })(),
           ),
           processed: Boolean(source.processed),
-          snippet_preview: scrubForPublic(String(source.snippet || '').slice(0, 240)),
+          snippet_preview: scrubForPublic(
+            String(source.snippet || "").slice(0, 240),
+          ),
         });
       }
     }
@@ -1523,36 +2219,41 @@ function summarizeEventsForJudge(events) {
       stepDetails?.toolCalls ||
       stepDetails?.toolCall ||
       [];
-    const normalizedToolCalls = Array.isArray(rawToolCalls) ? rawToolCalls : [rawToolCalls];
+    const normalizedToolCalls = Array.isArray(rawToolCalls)
+      ? rawToolCalls
+      : [rawToolCalls];
     for (const call of normalizedToolCalls) {
-      if (!call || typeof call !== 'object') {
+      if (!call || typeof call !== "object") {
         continue;
       }
       const toolCall = call.tool_call || call;
       const outputText =
-        typeof toolCall.output === 'string'
+        typeof toolCall.output === "string"
           ? toolCall.output
-          : typeof toolCall.result === 'string'
+          : typeof toolCall.result === "string"
             ? toolCall.result
-            : '';
+            : "";
       toolCalls.push({
-        event: scrubForPublic(event.event || ''),
-        name: scrubForPublic(toolCall.name || call.name || ''),
+        event: scrubForPublic(event.event || ""),
+        name: scrubForPublic(toolCall.name || call.name || ""),
         has_output: Boolean(outputText),
         output_preview: scrubForPublic(outputText.slice(0, 500)),
       });
     }
-    if (event?.final === true && Array.isArray(event.responseMessage?.content)) {
+    if (
+      event?.final === true &&
+      Array.isArray(event.responseMessage?.content)
+    ) {
       for (const part of event.responseMessage.content) {
-        if (!part || typeof part !== 'object') {
+        if (!part || typeof part !== "object") {
           continue;
         }
         finalContent.push({
-          type: scrubForPublic(part.type || ''),
-          cortex_name: scrubForPublic(part.cortex_name || ''),
-          status: scrubForPublic(part.status || ''),
-          reason: scrubForPublic(part.reason || ''),
-          activation_scope: scrubForPublic(part.activation_scope || ''),
+          type: scrubForPublic(part.type || ""),
+          cortex_name: scrubForPublic(part.cortex_name || ""),
+          status: scrubForPublic(part.status || ""),
+          reason: scrubForPublic(part.reason || ""),
+          activation_scope: scrubForPublic(part.activation_scope || ""),
           runtime_hold: Boolean(part.viventium_runtime_hold),
         });
       }
@@ -1587,8 +2288,8 @@ async function loginQaUser(args) {
   const response = await fetchJson(
     `${args.apiBase}/api/auth/login`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         email: args.qaEmail,
         password,
@@ -1597,64 +2298,85 @@ async function loginQaUser(args) {
     20_000,
   );
 
-  const userEmail = response.body?.user?.email || '';
+  const userEmail = response.body?.user?.email || "";
   const ok = response.ok && response.body?.token && userEmail === args.qaEmail;
   return {
     ok,
     reason: ok ? null : `qa_login_http_${response.status}`,
     token: ok ? response.body.token : null,
-    userId: ok ? String(response.body?.user?.id || response.body?.user?._id || '') : null,
-    authMode: 'api_login',
+    userId: ok
+      ? String(response.body?.user?.id || response.body?.user?._id || "")
+      : null,
+    authMode: "api_login",
     public: {
-      authMode: 'api_login',
-      userEmailHash: userEmail ? hashValue(userEmail) : 'missing',
+      authMode: "api_login",
+      userEmailHash: userEmail ? hashValue(userEmail) : "missing",
       expectedEmailHash: hashValue(args.qaEmail),
     },
   };
 }
 
 async function createLocalQaJwt(args) {
-  if (process.env.CI || process.env.NODE_ENV === 'production') {
+  if (process.env.CI || process.env.NODE_ENV === "production") {
     return {
       ok: false,
-      reason: 'local_jwt_fallback_forbidden_in_ci_or_production',
-      public: { authMode: 'local_jwt_fallback' },
+      reason: "local_jwt_fallback_forbidden_in_ci_or_production",
+      public: { authMode: "local_jwt_fallback" },
     };
   }
-  if (process.env[LOCAL_JWT_ALLOW_ENV] !== '1') {
+  if (process.env[LOCAL_JWT_ALLOW_ENV] !== "1") {
     return {
       ok: false,
       reason: `local_jwt_fallback_requires_${LOCAL_JWT_ALLOW_ENV}`,
-      public: { authMode: 'local_jwt_fallback' },
+      public: { authMode: "local_jwt_fallback" },
     };
   }
 
-  const dotenv = parseEnvFile(path.join(LIBRECHAT_ROOT, '.env'));
+  const dotenv = parseEnvFile(path.join(LIBRECHAT_ROOT, ".env"));
   const mongoUri = process.env.MONGO_URI || dotenv.MONGO_URI;
   const jwtSecret = process.env.JWT_SECRET || dotenv.JWT_SECRET;
   if (!mongoUri || !jwtSecret) {
     return {
       ok: false,
-      reason: 'missing_local_jwt_prerequisites',
-      public: { authMode: 'local_jwt_fallback' },
+      reason: "missing_local_jwt_prerequisites",
+      public: { authMode: "local_jwt_fallback" },
     };
   }
 
   let client;
   try {
-    const { MongoClient } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'mongodb'));
-    const jwt = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'jsonwebtoken'));
+    const { MongoClient } = require(
+      path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+    );
+    const jwt = require(
+      path.join(LIBRECHAT_ROOT, "node_modules", "jsonwebtoken"),
+    );
     client = new MongoClient(mongoUri);
     await client.connect();
-    const dbName = new URL(mongoUri).pathname.replace(/^\//, '') || 'LibreChatViventium';
-    const user = await client.db(dbName).collection('users').findOne({ email: args.qaEmail });
+    const dbName =
+      new URL(mongoUri).pathname.replace(/^\//, "") || "LibreChatViventium";
+    const qaUserName = String(process.env.VIVENTIUM_QA_USER_NAME || "").trim();
+    const selector = qaUserName
+      ? { name: qaUserName }
+      : { email: args.qaEmail };
+    const users = client.db(dbName).collection("users");
+    const user = await users.findOne(selector);
     if (!user?._id) {
       return {
         ok: false,
-        reason: 'qa_user_not_found_for_local_jwt',
-        public: { authMode: 'local_jwt_fallback' },
+        reason: "qa_user_not_found_for_local_jwt",
+        public: { authMode: "local_jwt_fallback" },
       };
     }
+    const ownerUser = await users.findOne({ role: "ADMIN" }, { projection: { email: 1 } });
+    if (String(user.role || "").trim().toUpperCase() === "ADMIN") {
+      throw new Error("selected_admin_account_refused");
+    }
+    assertNonOwnerQaSelection({
+      ownerEmail: ownerUser?.email,
+      requestedEmail: qaUserName ? "" : args.qaEmail,
+      selectedUser: user,
+    });
     const token = jwt.sign(
       {
         id: user._id.toString(),
@@ -1663,25 +2385,25 @@ async function createLocalQaJwt(args) {
         email: user.email,
       },
       jwtSecret,
-      { expiresIn: '15m' },
+      { expiresIn: "2h" },
     );
     return {
       ok: true,
       reason: null,
       token,
       userId: user._id.toString(),
-      authMode: 'local_jwt_fallback',
+      authMode: "local_jwt_fallback",
       public: {
-        authMode: 'local_jwt_fallback',
-        userEmailHash: hashValue(user.email || ''),
-        expectedEmailHash: hashValue(args.qaEmail),
+        authMode: "local_jwt_fallback",
+        userEmailHash: hashValue(user.email || ""),
+        expectedSelectorHash: hashValue(qaUserName || args.qaEmail),
       },
     };
   } catch (error) {
     return {
       ok: false,
       reason: `local_jwt_failed:${error.message}`,
-      public: { authMode: 'local_jwt_fallback' },
+      public: { authMode: "local_jwt_fallback" },
     };
   } finally {
     if (client) {
@@ -1694,12 +2416,15 @@ async function connectLocalEvalDb() {
   const localEnv = loadLocalEnv();
   const mongoUri = localEnv.MONGO_URI;
   if (!mongoUri) {
-    return { db: null, close: async () => {}, reason: 'missing_MONGO_URI' };
+    return { db: null, close: async () => {}, reason: "missing_MONGO_URI" };
   }
-  const { MongoClient } = require(path.join(LIBRECHAT_ROOT, 'node_modules', 'mongodb'));
+  const { MongoClient } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+  );
   const client = new MongoClient(mongoUri);
   await client.connect();
-  const dbName = new URL(mongoUri).pathname.replace(/^\//, '') || 'LibreChatViventium';
+  const dbName =
+    new URL(mongoUri).pathname.replace(/^\//, "") || "LibreChatViventium";
   return {
     db: client.db(dbName),
     close: () => client.close(),
@@ -1707,13 +2432,57 @@ async function connectLocalEvalDb() {
   };
 }
 
-async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGraceMs }) {
-  const conversationId = result?.finalMeta?.conversationId || '';
+function feelingStateSelector(userId) {
+  const { ObjectId } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+  );
+  if (!ObjectId.isValid(String(userId || ""))) {
+    throw new Error("invalid_qa_user_id_for_feelings_restore");
+  }
+  return { userId: new ObjectId(String(userId)) };
+}
+
+async function captureRawFeelingsState(db, userId) {
+  if (!db || !userId) return null;
+  const selector = feelingStateSelector(userId);
+  return {
+    selector,
+    document: await db.collection("feelingstates").findOne(selector),
+  };
+}
+
+async function restoreRawFeelingsState(db, backup) {
+  if (!db || !backup) return { status: "skipped", reason: "db_unavailable" };
+  const collection = db.collection("feelingstates");
+  if (backup.document) {
+    await collection.replaceOne({ _id: backup.document._id }, backup.document, {
+      upsert: true,
+    });
+  } else {
+    await collection.deleteMany(backup.selector);
+  }
+  const restored = await collection.findOne(backup.selector);
+  if (Boolean(restored) !== Boolean(backup.document)) {
+    throw new Error("feelings_raw_restore_verification_failed");
+  }
+  return {
+    status: "restored_exact",
+    originalDocumentExisted: Boolean(backup.document),
+  };
+}
+
+async function observePostCaseDbEvidence({
+  db,
+  result,
+  maxObserveMs,
+  followUpGraceMs,
+}) {
+  const conversationId = result?.finalMeta?.conversationId || "";
   if (!db || !conversationId) {
     return {
       observed: false,
       delayedMessageCount: 0,
-      delayedVisibleText: '',
+      delayedVisibleText: "",
       cortexInsightCount: 0,
       cortexInsights: [],
       primaryCortexStatuses: [],
@@ -1727,7 +2496,7 @@ async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGra
   while (Date.now() <= deadline) {
     latest = await readConversationEvidence({ db, result, conversationId });
     const hasPendingCortex = latest.primaryCortexStatuses.some((status) =>
-      ['activating', 'brewing', 'running', 'pending'].includes(status),
+      ["activating", "brewing", "running", "pending"].includes(status),
     );
     if (!result.hasCortexActivation) {
       break;
@@ -1749,33 +2518,38 @@ async function observePostCaseDbEvidence({ db, result, maxObserveMs, followUpGra
 
 async function readConversationEvidence({ db, result, conversationId }) {
   const messages = await db
-    .collection('messages')
+    .collection("messages")
     .find({ conversationId })
     .sort({ createdAt: 1 })
     .toArray();
-  const responseMessageId = result?.finalMeta?.responseMessageId || '';
-  const primary = messages.find((message) => message.messageId === responseMessageId);
+  const responseMessageId = result?.finalMeta?.responseMessageId || "";
+  const primary = messages.find(
+    (message) => message.messageId === responseMessageId,
+  );
   const delayed = messages.filter((message) => {
     if (message.messageId === responseMessageId) {
       return false;
     }
-    if (message.isCreatedByUser === true || message.sender === 'User') {
+    if (message.isCreatedByUser === true || message.sender === "User") {
       return false;
     }
     return Boolean(contentToText(message.text || message.content).trim());
   });
   const cortexItems = Array.isArray(primary?.content)
-    ? primary.content.filter((part) => part?.type === 'cortex_insight' || part?.type === 'cortex_activation')
+    ? primary.content.filter(
+        (part) =>
+          part?.type === "cortex_insight" || part?.type === "cortex_activation",
+      )
     : [];
   const cortexInsights = cortexItems
-    .filter((part) => part?.type === 'cortex_insight')
+    .filter((part) => part?.type === "cortex_insight")
     .map((part) => ({
-      cortexName: scrubForPublic(part.cortex_name || ''),
-      status: scrubForPublic(part.status || ''),
+      cortexName: scrubForPublic(part.cortex_name || ""),
+      status: scrubForPublic(part.status || ""),
       silent: Boolean(part.silent),
       noResponse: Boolean(part.no_response),
-      insightHash: hashValue(part.insight || ''),
-      insightPreview: scrubForPublic(String(part.insight || '').slice(0, 800)),
+      insightHash: hashValue(part.insight || ""),
+      insightPreview: scrubForPublic(String(part.insight || "").slice(0, 800)),
     }));
   return {
     observed: true,
@@ -1783,25 +2557,32 @@ async function readConversationEvidence({ db, result, conversationId }) {
     responseMessageIdHash: hashValue(responseMessageId),
     delayedMessageCount: delayed.length,
     delayedVisibleText: scrubForPublic(
-      delayed.map((message) => contentToText(message.text || message.content)).join('\n\n').slice(0, 1600),
+      delayed
+        .map((message) => contentToText(message.text || message.content))
+        .join("\n\n")
+        .slice(0, 1600),
     ),
-    delayedMessageHashes: delayed.map((message) => hashValue(message.messageId || '')),
+    delayedMessageHashes: delayed.map((message) =>
+      hashValue(message.messageId || ""),
+    ),
     cortexInsightCount: cortexInsights.length,
     cortexInsights,
-    primaryCortexStatuses: cortexItems.map((part) => scrubForPublic(part.status || '')).filter(Boolean),
+    primaryCortexStatuses: cortexItems
+      .map((part) => scrubForPublic(part.status || ""))
+      .filter(Boolean),
   };
 }
 
 function summarizePostCaseEvidenceForJudge(postCaseEvidence) {
   if (!postCaseEvidence) {
-    return 'none';
+    return "none";
   }
   return scrubForPublic(
     JSON.stringify(
       {
         observed: Boolean(postCaseEvidence.observed),
         delayed_message_count: postCaseEvidence.delayedMessageCount || 0,
-        delayed_visible_text: postCaseEvidence.delayedVisibleText || '',
+        delayed_visible_text: postCaseEvidence.delayedVisibleText || "",
         cortex_insight_count: postCaseEvidence.cortexInsightCount || 0,
         cortex_insights: (postCaseEvidence.cortexInsights || []).slice(0, 8),
         primary_cortex_statuses: postCaseEvidence.primaryCortexStatuses || [],
@@ -1812,154 +2593,417 @@ function summarizePostCaseEvidenceForJudge(postCaseEvidence) {
   );
 }
 
+async function cleanupConversationIds(db, conversationIds) {
+  if (!db) return { status: "skipped", reason: "db_unavailable" };
+  const uniqueConversationIds = [
+    ...new Set(
+      (conversationIds || []).filter(
+        (conversationId) => conversationId && conversationId !== "new",
+      ),
+    ),
+  ];
+  if (uniqueConversationIds.length === 0) {
+    return { status: "complete", conversationCount: 0, messageCount: 0 };
+  }
+  const messageResult = await db
+    .collection("messages")
+    .deleteMany({ conversationId: { $in: uniqueConversationIds } });
+  const conversationResult = await db
+    .collection("conversations")
+    .deleteMany({ conversationId: { $in: uniqueConversationIds } });
+  return {
+    status: "complete",
+    conversationCount: conversationResult.deletedCount,
+    messageCount: messageResult.deletedCount,
+  };
+}
+
+async function cleanupEvalConversations(db, results) {
+  if (!db) return { status: "skipped", reason: "db_unavailable" };
+  const qaRequestMessageIds = [
+    ...new Set(
+      results
+        .flatMap((result) => result.qaRequestMessageIds || [])
+        .filter(Boolean),
+    ),
+  ];
+  const requestRows = qaRequestMessageIds.length
+    ? await db
+        .collection("messages")
+        .find({ messageId: { $in: qaRequestMessageIds } })
+        .project({ conversationId: 1 })
+        .toArray()
+    : [];
+  return cleanupConversationIds(db, [
+    ...results.map((result) => result.finalMeta?.conversationId),
+    ...requestRows.map((row) => row.conversationId),
+  ]);
+}
+
 async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
-  const runnableCases = runnablePromptCases(promptBank, args).slice(0, args.maxCases);
+  const runnableCases = runnablePromptCases(promptBank, args).slice(
+    0,
+    args.maxCases,
+  );
   const results = [];
   const env = loadLocalEnv();
+  let feelingsRestoreState = null;
+  let feelingsRestoreAttempts = 0;
+  let feelingsRestoreError = null;
+  let qaCleanup = null;
+  let qaCleanupError = null;
 
-  for (const testCase of runnableCases) {
-    const startedAt = Date.now();
-    const promptFrameCursor = capturePromptFrameCursor();
-    const seedPrompts = normalizeSeedPrompts(testCase);
-    let conversationId = 'new';
-    let parentMessageId = NO_PARENT;
-    const seedEvidence = [];
-    const fixtureEvidence = [];
-    let failedSeed = null;
+  try {
+    for (const [caseIndex, testCase] of runnableCases.entries()) {
+      if (caseIndex > 0 && Number(testCase.interCaseDelayMs) > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Number(testCase.interCaseDelayMs)),
+        );
+      }
+      const startedAt = Date.now();
+      const promptFrameCursor = capturePromptFrameCursor();
+      const seedPrompts = normalizeSeedPrompts(testCase);
+      let conversationId = "new";
+      let parentMessageId = NO_PARENT;
+      const seedEvidence = [];
+      const fixtureEvidence = [];
+      let failedSeed = null;
 
-    if (needsStarterMorningBriefingFixture(testCase)) {
-      const fixtureResult = await applyStarterMorningBriefingFixture({
-        args,
-        env,
-        userId: qaAuth?.userId,
-        agentId: args.agentId,
-      }).catch((error) => ({
-        ok: false,
-        reason: `fixture_failed:${scrubForPublic(error.message || 'unknown')}`,
-      }));
-      fixtureEvidence.push(fixtureResult);
-      if (!fixtureResult.ok) {
+      const voiceOutputFixture = voiceOutputFixtureFor(testCase);
+      if (voiceOutputFixture) {
+        fixtureEvidence.push({
+          fixture: "voice_output",
+          configured: voiceOutputFixture,
+        });
+      }
+
+      if (feelingsFixtureFor(testCase)) {
+        const fixtureResult = await applyFeelingsFixtureWithRetry({
+          args,
+          token,
+          testCase,
+        }).catch((error) => ({
+          error: `feelings_fixture_failed:${scrubForPublic(error.message || "unknown")}`,
+        }));
+        if (fixtureResult?.restoreState && !feelingsRestoreState) {
+          feelingsRestoreState = fixtureResult.restoreState;
+        }
+        if (!fixtureResult?.configuredState) {
+          results.push({
+            caseId: testCase.id,
+            familyId: testCase.familyId,
+            surface: testCase.surface || "web",
+            status: "failed_to_prepare_fixture",
+            durationMs: Date.now() - startedAt,
+            error: fixtureResult?.error || "feelings_fixture_failed",
+            requestHash: hashValue({ fixture: "feelings_state" }),
+            responseHash: "",
+            responsePreview: "",
+            responseForJudge: "",
+            eventEvidenceForJudge: "none",
+            promptFrameEvidenceForJudge:
+              summarizePromptFrameDelta(promptFrameCursor),
+            postCaseEvidenceForJudge: "none",
+            eventCount: 0,
+            finalMeta: {},
+            seedEvidence,
+            fixtureEvidence,
+            privateEvents: [],
+          });
+          continue;
+        }
+        fixtureEvidence.push(fixtureResult.evidence);
+      }
+
+      if (needsStarterMorningBriefingFixture(testCase)) {
+        const fixtureResult = await applyStarterMorningBriefingFixture({
+          args,
+          env,
+          userId: qaAuth?.userId,
+          agentId: args.agentId,
+        }).catch((error) => ({
+          ok: false,
+          reason: `fixture_failed:${scrubForPublic(error.message || "unknown")}`,
+        }));
+        fixtureEvidence.push(fixtureResult);
+        if (!fixtureResult.ok) {
+          results.push({
+            caseId: testCase.id,
+            familyId: testCase.familyId,
+            surface: testCase.surface || "web",
+            status: "failed_to_prepare_fixture",
+            durationMs: Date.now() - startedAt,
+            error: fixtureResult.reason || "fixture_failed",
+            requestHash: hashValue({
+              fixture: fixtureResult.fixture || "starter_morning_briefing",
+            }),
+            responseHash: "",
+            responsePreview: "",
+            responseForJudge: "",
+            eventEvidenceForJudge: "none",
+            promptFrameEvidenceForJudge:
+              summarizePromptFrameDelta(promptFrameCursor),
+            postCaseEvidenceForJudge: "none",
+            eventCount: 0,
+            finalMeta: {},
+            seedEvidence,
+            fixtureEvidence,
+            privateEvents: [],
+          });
+          continue;
+        }
+      }
+
+      for (const seedText of seedPrompts) {
+        const seedResult = await runChatTurn({
+          args,
+          token,
+          testCase,
+          text: seedText,
+          conversationId,
+          parentMessageId,
+        });
+        seedEvidence.push({
+          ok: seedResult.ok,
+          requestHash: hashValue(seedResult.payload),
+          responseHash: hashValue(seedResult.stream?.text || ""),
+          eventCount: seedResult.stream?.events?.length || 0,
+        });
+        if (
+          !seedResult.ok ||
+          !seedResult.finalMeta.conversationId ||
+          !seedResult.finalMeta.responseMessageId
+        ) {
+          failedSeed = seedResult;
+          break;
+        }
+        conversationId = seedResult.finalMeta.conversationId;
+        parentMessageId = seedResult.finalMeta.responseMessageId;
+      }
+
+      if (failedSeed) {
         results.push({
           caseId: testCase.id,
           familyId: testCase.familyId,
-          surface: testCase.surface || 'web',
-          status: 'failed_to_prepare_fixture',
+          surface: testCase.surface || "web",
+          status: "failed_to_seed",
           durationMs: Date.now() - startedAt,
-          error: fixtureResult.reason || 'fixture_failed',
-          requestHash: hashValue({ fixture: fixtureResult.fixture || 'starter_morning_briefing' }),
-          responseHash: '',
-          responsePreview: '',
-          responseForJudge: '',
-          eventEvidenceForJudge: 'none',
-          promptFrameEvidenceForJudge: summarizePromptFrameDelta(promptFrameCursor),
-          postCaseEvidenceForJudge: 'none',
-          eventCount: 0,
-          finalMeta: {},
+          error: failedSeed.error || "seed_turn_failed",
+          requestHash: hashValue(failedSeed.payload || {}),
+          responseHash: hashValue(failedSeed.stream?.text || ""),
+          responsePreview: scrubForPublic(
+            (failedSeed.stream?.text || "").slice(0, 300),
+          ),
+          responseForJudge: scrubForPublic(
+            (failedSeed.stream?.text || "").slice(0, 4000),
+          ),
+          eventEvidenceForJudge: summarizeEventsForJudge(
+            failedSeed.stream?.events || [],
+          ),
+          promptFrameEvidenceForJudge:
+            summarizePromptFrameDelta(promptFrameCursor),
+          postCaseEvidenceForJudge: "none",
+          eventCount: failedSeed.stream?.events?.length || 0,
+          finalMeta: failedSeed.finalMeta || {},
           seedEvidence,
           fixtureEvidence,
-          privateEvents: [],
+          privateEvents: failedSeed.stream?.events || [],
         });
         continue;
       }
-    }
 
-    for (const seedText of seedPrompts) {
-      const seedResult = await runChatTurn({
+      const promptText = buildCaseText(testCase, {
+        includeSetup: seedPrompts.length === 0,
+      });
+      const turn = await runChatTurnWithRetry({
         args,
         token,
         testCase,
-        text: seedText,
+        text: promptText,
         conversationId,
         parentMessageId,
       });
-      seedEvidence.push({
-        ok: seedResult.ok,
-        requestHash: hashValue(seedResult.payload),
-        responseHash: hashValue(seedResult.stream?.text || ''),
-        eventCount: seedResult.stream?.events?.length || 0,
-      });
-      if (!seedResult.ok || !seedResult.finalMeta.conversationId || !seedResult.finalMeta.responseMessageId) {
-        failedSeed = seedResult;
-        break;
-      }
-      conversationId = seedResult.finalMeta.conversationId;
-      parentMessageId = seedResult.finalMeta.responseMessageId;
-    }
+      const stream = turn.stream || {
+        ok: false,
+        events: [],
+        text: "",
+        error: turn.error,
+      };
 
-    if (failedSeed) {
+      const responseText = stream.text || "";
+      const emptyResponseAllowed = caseAllowsEmptyResponse(testCase);
+      const completed =
+        stream.ok && (responseText.trim() || emptyResponseAllowed);
+      const turnEvidence = {
+        finalMeta: turn.finalMeta || {},
+        hasCortexActivation: hasCortexActivation(stream.events),
+      };
+      const observeMs = turnEvidence.hasCortexActivation
+        ? args.postCaseObserveMs
+        : Math.min(args.postCaseObserveMs, 2500);
+      const postCaseEvidence = await observePostCaseDbEvidence({
+        db,
+        result: turnEvidence,
+        maxObserveMs: observeMs,
+        followUpGraceMs: args.followUpGraceMs,
+      });
+      const configuredFeelingsState = feelingsFixtureFor(testCase)
+        ? fixtureEvidence.find((item) => item.fixture === "feelings_state")
+            ?.configured
+        : null;
+      const feelingsReactionEvidence = feelingsFixtureFor(testCase)
+        ?.observeReaction
+        ? await observeFeelingsReaction({
+          args,
+          token,
+          forbiddenInnerStateTokens:
+            feelingsFixtureFor(testCase)?.forbiddenInnerStateTokens || [],
+            beforeState: {
+              version: configuredFeelingsState.version,
+              trailLength: configuredFeelingsState.trailLength,
+              trailCursorTimestamp: configuredFeelingsState.trailCursorTimestamp,
+              bands: Object.fromEntries(
+                Object.entries(configuredFeelingsState.bands).map(
+                  ([band, values]) => [
+                    band,
+                    { current: values.current, baseline: values.nature },
+                  ],
+                ),
+              ),
+            },
+          })
+        : null;
+      const eventEvidence = summarizeEventsForJudge(stream.events);
+      const voiceMarkerValidation = validateVoiceMarkerEvidence(testCase, responseText);
+      const eventEvidenceForJudge = [
+        eventEvidence,
+        feelingsReactionEvidence
+          ? `Feelings reaction persistence evidence:\n${JSON.stringify(feelingsReactionEvidence, null, 2)}`
+          : "",
+        voiceMarkerValidation.evidence
+          ? `Voice marker evidence:\n${JSON.stringify(voiceMarkerValidation.evidence, null, 2)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      const feelingsDeterministicFailures =
+        validateFeelingsReactionEvidence(
+          feelingsFixtureFor(testCase),
+          feelingsReactionEvidence,
+        );
+      const deterministicFailures = [
+        ...feelingsDeterministicFailures,
+        ...voiceMarkerValidation.failures,
+      ];
+      const deterministicallyCompleted =
+        Boolean(completed) && deterministicFailures.length === 0;
+
       results.push({
         caseId: testCase.id,
         familyId: testCase.familyId,
-        surface: testCase.surface || 'web',
-        status: 'failed_to_seed',
+        surface: testCase.surface || "web",
+        status: deterministicallyCompleted ? "completed" : "failed",
         durationMs: Date.now() - startedAt,
-        error: failedSeed.error || 'seed_turn_failed',
-        requestHash: hashValue(failedSeed.payload || {}),
-        responseHash: hashValue(failedSeed.stream?.text || ''),
-        responsePreview: scrubForPublic((failedSeed.stream?.text || '').slice(0, 300)),
-        responseForJudge: scrubForPublic((failedSeed.stream?.text || '').slice(0, 4000)),
-        eventEvidenceForJudge: summarizeEventsForJudge(failedSeed.stream?.events || []),
-        promptFrameEvidenceForJudge: summarizePromptFrameDelta(promptFrameCursor),
-        postCaseEvidenceForJudge: 'none',
-        eventCount: failedSeed.stream?.events?.length || 0,
-        finalMeta: failedSeed.finalMeta || {},
+        error:
+          stream.error ||
+          deterministicFailures[0] ||
+          (completed ? null : "empty_visible_response"),
+        requestHash: hashValue(turn.payload || {}),
+        responseHash: hashValue(responseText),
+        responsePreview: scrubForPublic(responseText.slice(0, 300)),
+        responseForJudge: scrubForPublic(responseText.slice(0, 4000)),
+        eventEvidenceForJudge,
+        promptFrameEvidenceForJudge:
+          summarizePromptFrameDelta(promptFrameCursor),
+        postCaseEvidenceForJudge:
+          summarizePostCaseEvidenceForJudge(postCaseEvidence),
+        eventCount: stream.events.length,
+        finalMeta: turnEvidence.finalMeta,
+        hasCortexActivation: turnEvidence.hasCortexActivation,
+        hasRuntimeHold: hasRuntimeHold(stream.events),
         seedEvidence,
         fixtureEvidence,
-        privateEvents: failedSeed.stream?.events || [],
+        feelingsReactionEvidence,
+        feelingsDeterministicFailures,
+        postCaseEvidence,
+        qaRequestMessageIds: turn.qaRequestMessageIds,
+        turnAttemptCount: turn.attemptCount,
+        privateEvents: stream.events,
       });
-      continue;
     }
+  } finally {
+    if (feelingsRestoreState) {
+      try {
+        feelingsRestoreAttempts = await restoreFeelingsFixtureWithRetry({
+          args,
+          token,
+          restoreState: feelingsRestoreState,
+        });
+      } catch (error) {
+        feelingsRestoreError = `feelings_fixture_restore_failed:${scrubForPublic(error.message || "unknown")}`;
+      }
+    }
+    try {
+      qaCleanup = await cleanupEvalConversations(db, results);
+    } catch (error) {
+      qaCleanupError = `qa_conversation_cleanup_failed:${scrubForPublic(error.message || "unknown")}`;
+    }
+  }
 
-    const promptText = buildCaseText(testCase, { includeSetup: seedPrompts.length === 0 });
-    const turn = await runChatTurn({
-      args,
-      token,
-      testCase,
-      text: promptText,
-      conversationId,
-      parentMessageId,
-    });
-    const stream = turn.stream || { ok: false, events: [], text: '', error: turn.error };
-
-    const responseText = stream.text || '';
-    const emptyResponseAllowed = caseAllowsEmptyResponse(testCase);
-    const completed = stream.ok && (responseText.trim() || emptyResponseAllowed);
-    const turnEvidence = {
-      finalMeta: turn.finalMeta || {},
-      hasCortexActivation: hasCortexActivation(stream.events),
-    };
-    const observeMs = turnEvidence.hasCortexActivation
-      ? args.postCaseObserveMs
-      : Math.min(args.postCaseObserveMs, 2500);
-    const postCaseEvidence = await observePostCaseDbEvidence({
-      db,
-      result: turnEvidence,
-      maxObserveMs: observeMs,
-      followUpGraceMs: args.followUpGraceMs,
-    });
-
+  for (const result of results) {
+    if (result.familyId === "feelings_embodiment_and_reaction") {
+      result.fixtureRestoration = feelingsRestoreError
+        ? { status: "failed", error: feelingsRestoreError }
+        : { status: "restored", attempts: feelingsRestoreAttempts };
+      result.qaCleanup = qaCleanupError
+        ? { status: "failed", error: qaCleanupError }
+        : qaCleanup;
+    }
+  }
+  if (feelingsRestoreError) {
     results.push({
-      caseId: testCase.id,
-      familyId: testCase.familyId,
-      surface: testCase.surface || 'web',
-      status: completed ? 'completed' : 'failed',
-      durationMs: Date.now() - startedAt,
-      error: stream.error || (completed ? null : 'empty_visible_response'),
-      requestHash: hashValue(turn.payload || {}),
-      responseHash: hashValue(responseText),
-      responsePreview: scrubForPublic(responseText.slice(0, 300)),
-      responseForJudge: scrubForPublic(responseText.slice(0, 4000)),
-      eventEvidenceForJudge: summarizeEventsForJudge(stream.events),
-      promptFrameEvidenceForJudge: summarizePromptFrameDelta(promptFrameCursor),
-      postCaseEvidenceForJudge: summarizePostCaseEvidenceForJudge(postCaseEvidence),
-      eventCount: stream.events.length,
-      finalMeta: turnEvidence.finalMeta,
-      hasCortexActivation: turnEvidence.hasCortexActivation,
-      hasRuntimeHold: hasRuntimeHold(stream.events),
-      seedEvidence,
-      fixtureEvidence,
-      postCaseEvidence,
-      privateEvents: stream.events,
+      caseId: "feelings_fixture_restore",
+      familyId: "feelings_embodiment_and_reaction",
+      surface: "web",
+      status: "failed_to_restore_fixture",
+      durationMs: 0,
+      error: feelingsRestoreError,
+      requestHash: "",
+      responseHash: "",
+      responsePreview: "",
+      responseForJudge: "",
+      eventEvidenceForJudge: "none",
+      promptFrameEvidenceForJudge: "none",
+      postCaseEvidenceForJudge: "none",
+      eventCount: 0,
+      finalMeta: {},
+      seedEvidence: [],
+      fixtureEvidence: [],
+      privateEvents: [],
+      fixtureRestoration: { status: "failed", error: feelingsRestoreError },
+    });
+  }
+  if (qaCleanupError) {
+    results.push({
+      caseId: "qa_conversation_cleanup",
+      familyId: "feelings_embodiment_and_reaction",
+      surface: "web",
+      status: "failed_to_clean_qa_conversations",
+      durationMs: 0,
+      error: qaCleanupError,
+      requestHash: "",
+      responseHash: "",
+      responsePreview: "",
+      responseForJudge: "",
+      eventEvidenceForJudge: "none",
+      promptFrameEvidenceForJudge: "none",
+      postCaseEvidenceForJudge: "none",
+      eventCount: 0,
+      finalMeta: {},
+      seedEvidence: [],
+      fixtureEvidence: [],
+      privateEvents: [],
+      qaCleanup: { status: "failed", error: qaCleanupError },
     });
   }
 
@@ -1967,13 +3011,15 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
 }
 
 function casesByIdFromPromptBank(promptBank) {
-  return new Map(runnablePromptCases(promptBank).map((testCase) => [testCase.id, testCase]));
+  return new Map(
+    runnablePromptCases(promptBank).map((testCase) => [testCase.id, testCase]),
+  );
 }
 
 function buildDuplicateResponseQualityFailures(liveResults, promptBank) {
   const casesById = casesByIdFromPromptBank(promptBank);
   const responseHashGroups = liveResults.reduce((acc, result) => {
-    if (!result.responseHash || result.status !== 'completed') {
+    if (!result.responseHash || result.status !== "completed") {
       return acc;
     }
     acc[result.responseHash] = acc[result.responseHash] || [];
@@ -1986,11 +3032,15 @@ function buildDuplicateResponseQualityFailures(liveResults, promptBank) {
       const groupedResults = caseIds
         .map((caseId) => liveResults.find((result) => result.caseId === caseId))
         .filter(Boolean);
-      const cases = caseIds.map((caseId) => casesById.get(caseId)).filter(Boolean);
+      const cases = caseIds
+        .map((caseId) => casesById.get(caseId))
+        .filter(Boolean);
       const allowedByCaseContract =
-        cases.length > 0 && cases.every((testCase) => caseAllowsDuplicateResponse(testCase));
+        cases.length > 0 &&
+        cases.every((testCase) => caseAllowsDuplicateResponse(testCase));
       const allowedResolvedHolds =
-        groupedResults.length > 0 && groupedResults.every(resultHasResolvedRuntimeHoldEvidence);
+        groupedResults.length > 0 &&
+        groupedResults.every(resultHasResolvedRuntimeHoldEvidence);
       return {
         responseHash,
         caseIds,
@@ -2006,7 +3056,7 @@ function buildUnresolvedAsyncQualityFailures(liveResults, promptBank) {
     const testCase = casesById.get(result.caseId);
     if (
       !testCase ||
-      result.status !== 'completed' ||
+      result.status !== "completed" ||
       !result.hasCortexActivation ||
       !result.hasRuntimeHold ||
       caseAllowsEmptyResponse(testCase) ||
@@ -2015,11 +3065,16 @@ function buildUnresolvedAsyncQualityFailures(liveResults, promptBank) {
       return [];
     }
     const evidence = result.postCaseEvidence || {};
-    const pendingStatuses = (evidence.primaryCortexStatuses || []).filter(isPendingCortexStatus);
+    const pendingStatuses = (evidence.primaryCortexStatuses || []).filter(
+      isPendingCortexStatus,
+    );
     const hasResolvedUserVisibleOrInsightEvidence =
       Number(evidence.delayedMessageCount || 0) > 0 ||
       Number(evidence.cortexInsightCount || 0) > 0;
-    if (pendingStatuses.length === 0 || hasResolvedUserVisibleOrInsightEvidence) {
+    if (
+      pendingStatuses.length === 0 ||
+      hasResolvedUserVisibleOrInsightEvidence
+    ) {
       return [];
     }
     return [
@@ -2049,9 +3104,12 @@ function writeReports({
   const runnableCases = runnablePromptCases(promptBank, args);
   const selectedCaseCount = Math.min(args.maxCases, runnableCases.length);
   const selectedCaseLimitLabel =
-    args.maxCases >= runnableCases.length ? `all (${runnableCases.length})` : String(args.maxCases);
+    args.maxCases >= runnableCases.length
+      ? `all (${runnableCases.length})`
+      : String(args.maxCases);
   const allCompleted =
-    liveResults.length > 0 && liveResults.every((result) => result.status === 'completed');
+    liveResults.length > 0 &&
+    liveResults.every((result) => result.status === "completed");
   const fullCoverage =
     allCompleted &&
     liveResults.length === allCases.length &&
@@ -2067,35 +3125,45 @@ function writeReports({
   const duplicateResponseHashes = Object.entries(responseHashGroups)
     .filter(([, caseIds]) => caseIds.length > 1)
     .map(([responseHash, caseIds]) => ({ responseHash, caseIds }));
-  const duplicateResponseQualityFailures = buildDuplicateResponseQualityFailures(liveResults, promptBank);
-  const unresolvedAsyncQualityFailures = buildUnresolvedAsyncQualityFailures(liveResults, promptBank);
-  const judgedResults = liveResults.filter((result) => result.semanticJudge?.status === 'judged');
+  const duplicateResponseQualityFailures =
+    buildDuplicateResponseQualityFailures(liveResults, promptBank);
+  const unresolvedAsyncQualityFailures = buildUnresolvedAsyncQualityFailures(
+    liveResults,
+    promptBank,
+  );
+  const judgedResults = liveResults.filter(
+    (result) => result.semanticJudge?.status === "judged",
+  );
   const semanticFailedResults = liveResults.filter(
     (result) => result.semanticJudge && result.semanticJudge.pass !== true,
   );
   const semanticJudgeBlocked = Boolean(semanticJudge?.blockedReason);
-  const completionFailed = liveResults.some((result) => result.status !== 'completed');
+  const completionFailed = liveResults.some(
+    (result) => result.status !== "completed",
+  );
   const qualityFailed =
-    duplicateResponseQualityFailures.length > 0 || unresolvedAsyncQualityFailures.length > 0;
+    duplicateResponseQualityFailures.length > 0 ||
+    unresolvedAsyncQualityFailures.length > 0;
   const semanticFailed =
-    Boolean(args.semanticJudge) && (semanticJudgeBlocked || semanticFailedResults.length > 0);
+    Boolean(args.semanticJudge) &&
+    (semanticJudgeBlocked || semanticFailedResults.length > 0);
   const status = blockedReason
-    ? 'blocked'
+    ? "blocked"
     : completionFailed
-      ? 'failed_completion'
+      ? "failed_completion"
       : semanticFailed
-        ? 'semantic_failed'
+        ? "semantic_failed"
         : qualityFailed
-          ? 'quality_failed'
+          ? "quality_failed"
           : fullCoverage && args.semanticJudge
-            ? 'completed_full_semantic_passed'
+            ? "completed_full_semantic_passed"
             : fullCoverage
-              ? 'completed_full'
+              ? "completed_full"
               : allCompleted && args.semanticJudge
-                ? 'partial_semantic_passed'
+                ? "partial_semantic_passed"
                 : allCompleted
-                  ? 'partial_baseline'
-                  : 'partial_or_failed';
+                  ? "partial_baseline"
+                  : "partial_or_failed";
   const summary = {
     generatedAt: new Date().toISOString(),
     status,
@@ -2110,28 +3178,47 @@ function writeReports({
     runnablePromptCases: runnableCases.length,
     filters: {
       family: args.family || null,
+      caseId: args.caseId || null,
       surface: args.surface || null,
       promptId: args.promptId || null,
     },
     selectedCaseLimit: selectedCaseLimitLabel,
     selectedCaseCount,
-    surfacesInBank: [...new Set(allCases.map((testCase) => testCase.surface || 'web'))].sort(),
-    surfacesRun: [...new Set(liveResults.map((result) => result.surface || 'web'))].sort(),
+    surfacesInBank: [
+      ...new Set(allCases.map((testCase) => testCase.surface || "web")),
+    ].sort(),
+    surfacesRun: [
+      ...new Set(liveResults.map((result) => result.surface || "web")),
+    ].sort(),
     runtime,
     debugLocalPromptFrameEnabled: debugLocalPromptFrameEnabled(),
     login: login?.public || null,
     sourceHashes,
     resultCount: liveResults.length,
-    completedCount: liveResults.filter((result) => result.status === 'completed').length,
-    failedCount: liveResults.filter((result) => result.status !== 'completed').length,
+    completedCount: liveResults.filter(
+      (result) => result.status === "completed",
+    ).length,
+    failedCount: liveResults.filter((result) => result.status !== "completed")
+      .length,
+    retriedTurnCount: liveResults.filter(
+      (result) => Number(result.turnAttemptCount || 1) > 1,
+    ).length,
+    totalTurnAttempts: liveResults.reduce(
+      (total, result) => total + Number(result.turnAttemptCount || 1),
+      0,
+    ),
     behavioralGrading: semanticJudge?.enabled
       ? semanticJudgeLabel(args, semanticJudge)
-      : 'disabled',
+      : "disabled",
     judgeModelHash: semanticJudge?.enabled
-      ? hashValue(`${args.judgeRoute}:${args.judgeRoute === 'local-agent' ? args.judgeAgentId : `${args.judgeEndpoint}:${args.judgeModel}`}`)
+      ? hashValue(
+          `${args.judgeRoute}:${args.judgeRoute === "local-agent" ? args.judgeAgentId : `${args.judgeEndpoint}:${args.judgeModel}`}`,
+        )
       : null,
     semanticJudgedCount: judgedResults.length,
-    semanticPassedCount: judgedResults.filter((result) => result.semanticJudge?.pass === true).length,
+    semanticPassedCount: judgedResults.filter(
+      (result) => result.semanticJudge?.pass === true,
+    ).length,
     semanticFailedCount: semanticFailedResults.length,
     semanticJudgeBlockedReason: semanticJudge?.blockedReason || null,
     duplicateResponseHashes,
@@ -2139,7 +3226,7 @@ function writeReports({
     unresolvedAsyncQualityFailures,
   };
 
-  const privateJsonPath = path.join(args.outputDir, 'exact-model-eval.json');
+  const privateJsonPath = path.join(args.outputDir, "exact-model-eval.json");
   fs.writeFileSync(
     privateJsonPath,
     JSON.stringify(
@@ -2151,6 +3238,7 @@ function writeReports({
           qaEmailHash: hashValue(args.qaEmail),
           agentIdHash: hashValue(args.agentId),
           family: args.family || null,
+          caseId: args.caseId || null,
           surface: args.surface || null,
           promptId: args.promptId || null,
           localJwtFallback: args.localJwtFallback,
@@ -2161,7 +3249,9 @@ function writeReports({
           semanticJudge: args.semanticJudge,
           judgeRoute: args.judgeRoute,
           judgeModelHash: args.semanticJudge
-            ? hashValue(`${args.judgeRoute}:${args.judgeRoute === 'local-agent' ? args.judgeAgentId : `${args.judgeEndpoint}:${args.judgeModel}`}`)
+            ? hashValue(
+                `${args.judgeRoute}:${args.judgeRoute === "local-agent" ? args.judgeAgentId : `${args.judgeEndpoint}:${args.judgeModel}`}`,
+              )
             : null,
         },
         liveResults,
@@ -2172,19 +3262,19 @@ function writeReports({
   );
 
   const publicLines = [
-    '# Prompt Registry Slice: Exact-Model Completion Baseline',
-    '',
+    "# Prompt Registry Slice: Exact-Model Completion Baseline",
+    "",
     `Generated: ${summary.generatedAt}`,
-    '',
-    '## Status',
-    '',
+    "",
+    "## Status",
+    "",
     `- Status: ${summary.status}`,
-    `- Live run requested: ${summary.runLiveRequested ? 'yes' : 'no'}`,
-    `- Blocked reason: ${summary.blockedReason || 'none'}`,
+    `- Live run requested: ${summary.runLiveRequested ? "yes" : "no"}`,
+    `- Blocked reason: ${summary.blockedReason || "none"}`,
     `- Prompt families: ${summary.promptFamilies}`,
     `- Prompt cases: ${summary.promptCases}`,
     `- Agent hash: ${summary.agentIdHash}`,
-    `- Runner hash: ${summary.runnerHash || 'missing'}`,
+    `- Runner hash: ${summary.runnerHash || "missing"}`,
     `- Runnable cases for this runner: ${summary.runnablePromptCases}`,
     `- Selected case limit: ${summary.selectedCaseLimit}`,
     `- Post-case observation window ms: ${args.postCaseObserveMs}`,
@@ -2192,78 +3282,87 @@ function writeReports({
     `- Result count: ${summary.resultCount}`,
     `- Completed: ${summary.completedCount}`,
     `- Failed/blocked: ${summary.failedCount}`,
+    `- Retried main turns: ${summary.retriedTurnCount}`,
+    `- Total main-turn attempts: ${summary.totalTurnAttempts}`,
     `- Behavioral grading: ${summary.behavioralGrading}`,
     `- Semantic judged: ${summary.semanticJudgedCount}`,
     `- Semantic passed: ${summary.semanticPassedCount}`,
     `- Semantic failed: ${summary.semanticFailedCount}`,
-    `- Semantic judge blocked reason: ${summary.semanticJudgeBlockedReason || 'none'}`,
-    `- Judge model hash: ${summary.judgeModelHash || 'not used'}`,
+    `- Semantic judge blocked reason: ${summary.semanticJudgeBlockedReason || "none"}`,
+    `- Judge model hash: ${summary.judgeModelHash || "not used"}`,
     `- Duplicate response hashes: ${summary.duplicateResponseHashes.length}`,
     `- Duplicate response quality failures: ${summary.duplicateResponseQualityFailures.length}`,
     `- Unresolved async quality failures: ${summary.unresolvedAsyncQualityFailures.length}`,
-    `- Surfaces in bank: ${summary.surfacesInBank.join(', ') || 'none'}`,
-    `- Surface metadata exercised: ${summary.surfacesRun.join(', ') || 'none'}`,
-    '',
-    '## Runtime Gate',
-    '',
+    `- Surfaces in bank: ${summary.surfacesInBank.join(", ") || "none"}`,
+    `- Surface metadata exercised: ${summary.surfacesRun.join(", ") || "none"}`,
+    "",
+    "## Runtime Gate",
+    "",
     `- API base hash: ${summary.apiBaseHash}`,
-    `- Runtime identity: ${summary.runtime.identity.ok ? 'pass' : 'fail'}`,
-    `- Runtime reasons: ${summary.runtime.identity.reasons.join(', ') || 'none'}`,
+    `- Runtime identity: ${summary.runtime.identity.ok ? "pass" : "fail"}`,
+    `- Runtime reasons: ${summary.runtime.identity.reasons.join(", ") || "none"}`,
     `- App title: ${summary.runtime.identity.public.appTitle}`,
-    `- Connected-account mode: ${summary.runtime.identity.public.connectedAccountsEnabled ? 'enabled' : 'not enabled'}`,
-    `- Prompt debug-local gate: ${summary.debugLocalPromptFrameEnabled ? 'enabled' : 'disabled'}`,
-    `- QA auth mode: ${summary.login?.authMode || 'not attempted'}`,
-    '',
-    '## Source Hashes',
-    '',
-    `- Agent source hash: ${summary.sourceHashes.source_agent || 'missing'}`,
-    `- LibreChat source hash: ${summary.sourceHashes.source_librechat || 'missing'}`,
-    `- Compiled LibreChat hash: ${summary.sourceHashes.compiled_librechat || 'missing'}`,
-    '',
-    '## Results',
-    '',
-    '| Case | Family | Surface | Status | Semantic | Duration ms | Response hash | Error |',
-    '| --- | --- | --- | --- | --- | ---: | --- | --- |',
-    ...liveResults.map((result) =>
-      `| ${scrubForPublic(result.caseId)} | ${scrubForPublic(result.familyId)} | ${scrubForPublic(result.surface)} | ${result.status} | ${
-        result.semanticJudge
-          ? result.semanticJudge.pass
-            ? `pass ${Number(result.semanticJudge.score || 0).toFixed(2)}`
-            : `fail ${Number(result.semanticJudge.score || 0).toFixed(2)} ${scrubForPublic(result.semanticJudge.failureMode || '')}`
-          : 'not run'
-      } | ${result.durationMs || 0} | ${result.responseHash || ''} | ${scrubForPublic(result.error || result.semanticJudge?.error || '')} |`,
+    `- Connected-account mode: ${summary.runtime.identity.public.connectedAccountsEnabled ? "enabled" : "not enabled"}`,
+    `- Prompt debug-local gate: ${summary.debugLocalPromptFrameEnabled ? "enabled" : "disabled"}`,
+    `- QA auth mode: ${summary.login?.authMode || "not attempted"}`,
+    "",
+    "## Source Hashes",
+    "",
+    `- Agent source hash: ${summary.sourceHashes.source_agent || "missing"}`,
+    `- LibreChat source hash: ${summary.sourceHashes.source_librechat || "missing"}`,
+    `- Compiled LibreChat hash: ${summary.sourceHashes.compiled_librechat || "missing"}`,
+    "",
+    "## Results",
+    "",
+    "| Case | Family | Surface | Status | Attempts | Semantic | Duration ms | Response hash | Error |",
+    "| --- | --- | --- | --- | ---: | --- | ---: | --- | --- |",
+    ...liveResults.map(
+      (result) =>
+        `| ${scrubForPublic(result.caseId)} | ${scrubForPublic(result.familyId)} | ${scrubForPublic(result.surface)} | ${result.status} | ${Number(result.turnAttemptCount || 1)} | ${
+          result.semanticJudge
+            ? result.semanticJudge.pass
+              ? `pass ${Number(result.semanticJudge.score || 0).toFixed(2)}`
+              : `fail ${Number(result.semanticJudge.score || 0).toFixed(2)} ${scrubForPublic(result.semanticJudge.failureMode || "")}`
+            : "not run"
+        } | ${result.durationMs || 0} | ${result.responseHash || ""} | ${scrubForPublic(result.error || result.semanticJudge?.error || "")} |`,
     ),
-    '',
-    '## Quality Gate Failures',
-    '',
+    "",
+    "## Quality Gate Failures",
+    "",
     summary.duplicateResponseQualityFailures.length
       ? `- Duplicate non-silent response groups: ${summary.duplicateResponseQualityFailures
-          .map((group) => `${group.responseHash} (${group.caseIds.map(scrubForPublic).join(', ')})`)
-          .join('; ')}`
-      : '- Duplicate non-silent response groups: none',
+          .map(
+            (group) =>
+              `${group.responseHash} (${group.caseIds.map(scrubForPublic).join(", ")})`,
+          )
+          .join("; ")}`
+      : "- Duplicate non-silent response groups: none",
     summary.unresolvedAsyncQualityFailures.length
       ? `- Unresolved async holds: ${summary.unresolvedAsyncQualityFailures
-          .map((failure) => `${scrubForPublic(failure.caseId)} (${failure.pendingStatuses.join(', ')})`)
-          .join('; ')}`
-      : '- Unresolved async holds: none',
-    '',
-    '## Notes',
-    '',
-    '- Raw eval JSON and response previews are private-only.',
-    '- Public output stores hashes, counts, statuses, and sanitized errors only.',
-    '- When semantic judging is enabled, the runner uses a structured JSON judge and validates the returned shape locally. The `openai-direct` judge route uses provider-enforced JSON Schema; local account routes use prompt-constrained JSON plus local schema validation.',
-    '- Duplicate response hashes are informational for intentional silence/suppression cases and resolved runtime holds, but fail the run when unrelated non-silent final answers collapse into the same visible answer.',
-    '- Runtime-hold responses fail the run when cortex/tool work remains only pending after the observation window and no delayed or insight evidence arrived.',
-    '- Semantic judge prompts and raw results are private-only; this public report stores only pass/fail counts, scores, hashes, and sanitized failure modes.',
-    '- The harness fails closed on wrong runtime identity before model calls.',
-    '- Source YAML and compiled YAML hashes are reported separately and are expected to differ when promptRefs render into plain LibreChat strings.',
-    '- Treat prompt-bundle and runtime-config drift checks, not source-vs-compiled YAML hash equality, as the live prompt-registry drift gate.',
-    '- `partial_baseline` and `partial_semantic_passed` mean the run completed only the selected subset, not the full prompt bank.',
-    '- This completion-baseline runner uses the main chat endpoint with surface metadata; true voice, Telegram, scheduler, Wing, and Listen-Only surface runners remain separate gates.',
-    '',
+          .map(
+            (failure) =>
+              `${scrubForPublic(failure.caseId)} (${failure.pendingStatuses.join(", ")})`,
+          )
+          .join("; ")}`
+      : "- Unresolved async holds: none",
+    "",
+    "## Notes",
+    "",
+    "- Raw eval JSON and response previews are private-only.",
+    "- Public output stores hashes, counts, statuses, and sanitized errors only.",
+    "- When semantic judging is enabled, the runner uses a structured JSON judge and validates the returned shape locally. The `openai-direct` judge route uses provider-enforced JSON Schema; local account routes use prompt-constrained JSON plus local schema validation.",
+    "- Duplicate response hashes are informational for intentional silence/suppression cases and resolved runtime holds, but fail the run when unrelated non-silent final answers collapse into the same visible answer.",
+    "- Runtime-hold responses fail the run when cortex/tool work remains only pending after the observation window and no delayed or insight evidence arrived.",
+    "- Semantic judge prompts and raw results are private-only; this public report stores only pass/fail counts, scores, hashes, and sanitized failure modes.",
+    "- The harness fails closed on wrong runtime identity before model calls.",
+    "- Source YAML and compiled YAML hashes are reported separately and are expected to differ when promptRefs render into plain LibreChat strings.",
+    "- Treat prompt-bundle and runtime-config drift checks, not source-vs-compiled YAML hash equality, as the live prompt-registry drift gate.",
+    "- `partial_baseline` and `partial_semantic_passed` mean the run completed only the selected subset, not the full prompt bank.",
+    "- This completion-baseline runner uses the main chat endpoint with surface metadata; true voice, Telegram, scheduler, Wing, and Listen-Only surface runners remain separate gates.",
+    "",
   ];
 
-  fs.writeFileSync(args.publicReport, `${publicLines.join('\n')}\n`);
+  fs.writeFileSync(args.publicReport, `${publicLines.join("\n")}\n`);
 
   return {
     summary,
@@ -2275,13 +3374,33 @@ function writeReports({
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const promptBank = readJson(args.promptBank);
+  const selectedCasesForJudgePolicy = runnablePromptCases(promptBank, args).slice(
+    0,
+    args.maxCases,
+  );
+  if (
+    args.runLive &&
+    !args.semanticJudgeExplicitlyDisabled &&
+    selectedCasesForJudgePolicy.length > 0 &&
+    selectedCasesForJudgePolicy.every(
+      (testCase) => testCase.familyId === "feelings_embodiment_and_reaction",
+    )
+  ) {
+    args.semanticJudge = true;
+  }
   const sourceHashes = loadSourceHashes();
-  const health = await fetchText(`${args.apiBase}/health`, {}, 10_000).catch((error) => ({
-    ok: false,
-    status: 0,
-    text: error.message,
-  }));
-  const config = await fetchJson(`${args.apiBase}/api/config`, {}, 10_000).catch((error) => ({
+  const health = await fetchText(`${args.apiBase}/health`, {}, 10_000).catch(
+    (error) => ({
+      ok: false,
+      status: 0,
+      text: error.message,
+    }),
+  );
+  const config = await fetchJson(
+    `${args.apiBase}/api/config`,
+    {},
+    10_000,
+  ).catch((error) => ({
     ok: false,
     status: 0,
     body: { error: error.message },
@@ -2291,7 +3410,7 @@ async function run() {
     health: {
       ok: health.ok,
       status: health.status,
-      bodyHash: hashValue(health.text || ''),
+      bodyHash: hashValue(health.text || ""),
     },
     identity,
   };
@@ -2299,15 +3418,24 @@ async function run() {
   let blockedReason = null;
   let login = null;
   let liveResults = [];
-  let semanticJudge = { enabled: args.semanticJudge, blockedReason: null, results: [] };
+  let semanticJudge = {
+    enabled: args.semanticJudge,
+    blockedReason: null,
+    results: [],
+  };
   let dbHandle = null;
+  let rawFeelingsBackup = null;
+  let rawFeelingsRestore = null;
+  let rawFeelingsRestoreError = null;
+  let judgeCleanup = null;
+  let judgeCleanupError = null;
 
   if (!health.ok) {
     blockedReason = `api_health_http_${health.status}`;
   } else if (!identity.ok) {
-    blockedReason = `runtime_identity_failed:${identity.reasons.join(',')}`;
+    blockedReason = `runtime_identity_failed:${identity.reasons.join(",")}`;
   } else if (debugLocalPromptFrameEnabled()) {
-    blockedReason = 'prompt_frame_debug_local_enabled';
+    blockedReason = "prompt_frame_debug_local_enabled";
   } else if (!args.runLive) {
     blockedReason = `live_eval_disabled_set_${LIVE_RUN_FLAG}_or_pass_--run-live`;
   } else {
@@ -2318,13 +3446,107 @@ async function run() {
       try {
         dbHandle = await connectLocalEvalDb();
       } catch (error) {
-        dbHandle = { db: null, close: async () => {}, reason: `db_connect_failed:${scrubForPublic(error.message || 'unknown')}` };
+        dbHandle = {
+          db: null,
+          close: async () => {},
+          reason: `db_connect_failed:${scrubForPublic(error.message || "unknown")}`,
+        };
       }
       try {
-        liveResults = await runLiveCases(args, promptBank, login.token, dbHandle.db, login);
-        semanticJudge = await judgeLiveResults(args, promptBank, liveResults, login.token);
+        const selectedCases = runnablePromptCases(promptBank, args).slice(
+          0,
+          args.maxCases,
+        );
+        if (selectedCases.some((testCase) => feelingsFixtureFor(testCase))) {
+          rawFeelingsBackup = await captureRawFeelingsState(
+            dbHandle.db,
+            login.userId,
+          );
+        }
+        liveResults = await runLiveCases(
+          args,
+          promptBank,
+          login.token,
+          dbHandle.db,
+          login,
+        );
+        semanticJudge = await judgeLiveResults(
+          args,
+          promptBank,
+          liveResults,
+          login.token,
+        );
         liveResults = semanticJudge.results;
       } finally {
+        try {
+          judgeCleanup = await cleanupConversationIds(
+            dbHandle?.db,
+            semanticJudge.conversationIds || [],
+          );
+        } catch (error) {
+          judgeCleanupError = `qa_judge_cleanup_failed:${scrubForPublic(error.message || "unknown")}`;
+        }
+        if (rawFeelingsBackup) {
+          try {
+            rawFeelingsRestore = await restoreRawFeelingsState(
+              dbHandle?.db,
+              rawFeelingsBackup,
+            );
+          } catch (error) {
+            rawFeelingsRestoreError = `feelings_exact_restore_failed:${scrubForPublic(error.message || "unknown")}`;
+          }
+        }
+        for (const result of liveResults) {
+          if (result.familyId !== "feelings_embodiment_and_reaction") continue;
+          if (rawFeelingsBackup) {
+            result.fixtureRestoration = rawFeelingsRestoreError
+              ? { status: "failed", error: rawFeelingsRestoreError }
+              : rawFeelingsRestore;
+          }
+          const caseCleanup = result.qaCleanup || {
+            status: "complete",
+            conversationCount: 0,
+            messageCount: 0,
+          };
+          result.qaCleanup = judgeCleanupError
+            ? { status: "failed", error: judgeCleanupError }
+            : {
+                status: "complete",
+                conversationCount:
+                  Number(caseCleanup.conversationCount || 0) +
+                  Number(judgeCleanup?.conversationCount || 0),
+                messageCount:
+                  Number(caseCleanup.messageCount || 0) +
+                  Number(judgeCleanup?.messageCount || 0),
+              };
+        }
+        if (rawFeelingsRestoreError || judgeCleanupError) {
+          liveResults.push({
+            caseId: rawFeelingsRestoreError
+              ? "feelings_fixture_exact_restore"
+              : "qa_judge_cleanup",
+            familyId: "feelings_embodiment_and_reaction",
+            surface: "web",
+            status: rawFeelingsRestoreError
+              ? "failed_to_restore_fixture"
+              : "failed_to_clean_qa_conversations",
+            durationMs: 0,
+            error: rawFeelingsRestoreError || judgeCleanupError,
+            requestHash: "",
+            responseHash: "",
+            responsePreview: "",
+            responseForJudge: "",
+            eventEvidenceForJudge: "none",
+            promptFrameEvidenceForJudge: "none",
+            postCaseEvidenceForJudge: "none",
+            eventCount: 0,
+            finalMeta: {},
+            seedEvidence: [],
+            fixtureEvidence: [],
+            privateEvents: [],
+          });
+        }
+        semanticJudge.results = liveResults;
         if (dbHandle) {
           await dbHandle.close().catch(() => {});
         }
@@ -2369,26 +3591,34 @@ async function run() {
 
   if (
     blockedReason ||
-    liveResults.some((result) => result.status !== 'completed') ||
+    liveResults.some((result) => result.status !== "completed") ||
     report.summary.duplicateResponseQualityFailures.length > 0 ||
     report.summary.unresolvedAsyncQualityFailures.length > 0 ||
     (args.semanticJudge &&
-      (semanticJudge.blockedReason || liveResults.some((result) => result.semanticJudge?.pass !== true)))
+      (semanticJudge.blockedReason ||
+        liveResults.some((result) => result.semanticJudge?.pass !== true)))
   ) {
     process.exitCode = 1;
   }
 }
 
-run().catch((error) => {
-  console.error(
-    JSON.stringify(
-      {
-        error: scrubForPublic(error.message),
-        stack: scrubForPublic(error.stack),
-      },
-      null,
-      2,
-    ),
-  );
-  process.exit(1);
-});
+module.exports = {
+  collectVoiceMarkerEvidence,
+  validateVoiceMarkerEvidence,
+};
+
+if (require.main === module) {
+  run().catch((error) => {
+    console.error(
+      JSON.stringify(
+        {
+          error: scrubForPublic(error.message),
+          stack: scrubForPublic(error.stack),
+        },
+        null,
+        2,
+      ),
+    );
+    process.exit(1);
+  });
+}

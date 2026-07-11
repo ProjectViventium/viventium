@@ -11,6 +11,7 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
 | `MEMCONT-001` | Saved memory, recall, and continuity state survive restore/upgrade without confusing stale facts for live truth. | User-visible behavior matches source, docs, persisted state, and logs | browser chat, memory state, restore/continuity checks | `tests/release/test_continuity_audit.py` plus user-grade QA when visible | PASS/PARTIAL 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); current dedupe dry-run found zero duplicate groups/docs/deletes, focused continuity tests passed, and fresh continuity capture was not run because it writes App Support state |
 | `MEMCONT-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); public report keeps raw runtime, DB, browser, transcript, memory, token, and account evidence out of the repo |
 | `MEMCONT-003` | Chat-time saved-memory reads are bounded, writer work is detached, and OpenAI-first provider routing is honored when OpenAI auth exists. | Turning on memory does not inject the full store, wait on writer maintenance/auth failures, route the main chat through stale Anthropic config, or show a red retrieval-tail/finalization error after a valid answer. | browser chat, generated runtime config, live built-in agent state, deep timing logs, memory DB state, CLI migration | API/unit tests, compiler/source audits, browser QA, log timing review, `bin/viventium memory-dedupe --dry-run` | PASS (2026-05-20: read path, detach tests, OpenAI-first route, scoped retrieval-tail and post-stream finalization suppression, browser QA, restart, and dry-run PASS) |
+| `MEMCONT-004` | Detached saved-memory writes are FIFO per user and revision protected across surfaces. | A Telegram fact is not dropped by a nearby turn or overwritten by stale web/voice/hardener work, and a later new conversation can use it. | Telegram, browser chat, Modern Playground voice, Mongo, memory-writer audit | coordinator, agent-memory, data-schema, hardener tests plus real cross-surface QA | ADDED 2026-07-11; automated regressions pass, native acceptance pending in this run |
 
 ## `MEMCONT-001` - Core User Flow
 
@@ -87,6 +88,31 @@ Use stable `MEMCONT-NNN` IDs for memory continuity cases.
 - Last run: PASS (2026-05-20; read path, detached-writer scheduling, OpenAI-first provider routing,
   and browser-visible scoped retrieval-tail/post-stream-finalization suppression passed).
 
+## `MEMCONT-004` - Ordered Cross-Surface Saved Memory
+
+- Requirement: same-user detached writer turns run FIFO without coalescing; prompt and revision data
+  come from one snapshot; set/delete/create use atomic revisions; audit evidence is public-safe.
+- Preconditions: authenticated local Telegram and Chrome surfaces, memory enabled, synthetic marker,
+  and a pre-run snapshot of the marker key/revision for cleanup.
+- Steps:
+  1. Send an explicit synthetic “remember this across future conversations” Telegram turn, followed
+     immediately by a second benign turn.
+  2. Poll the memory-writer audit and Mongo until the target key revision advances; confirm neither
+     turn was dropped and no raw user/conversation/message id appears in the structured audit.
+  3. Start a new Chrome conversation with conversation recall isolated/disabled and ask for the
+     marker; repeat through a real Modern Playground voice turn.
+  4. Create a stale competing write in the harness and confirm it returns a revision conflict while
+     preserving the newer value. Restore the pre-run state through the guarded write path.
+- Expected result: the marker is stored once at a newer revision and recalled naturally in new web
+  and voice conversations; stale writes and rollback attempts preserve newer user state.
+- Forbidden result: queued turns coalesce, a timestamp-only race overwrites a newer fact, same-thread
+  history is counted as saved-memory proof, or QA leaves the synthetic marker behind.
+- Evidence: visible Telegram send/reply, Mongo key/revision delta, hashed writer audit, new web answer,
+  audible voice plus transcript, persistence after reload, and cleanup confirmation.
+- Automation: `memoryWriterCoordinator.spec.js`, packages API memory suites,
+  `memory.spec.ts`, and hardener rollback/CAS regressions.
+- Last run: ADDED 2026-07-11; automated evidence passed, real native journey pending.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Memory Continuity. Add narrower feature-specific
@@ -99,3 +125,5 @@ rows before claiming a pass when the feature behavior changes.
 | `MEMCONT-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `MEMCONT-002` / `MEMCONT-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to MEMCONT-002. | MEMCONT-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)) |
 | `MEMCONT-UC-004` | Turn on memory and send a normal browser chat message with existing saved memories present. | owning requirement for `MEMCONT-003` / `MEMCONT-003` | browser chat, generated runtime config, live built-in agent state, deep timing logs, memory DB state | Source, runtime config, live agent model/provider, logs, tests, saved-memory row counts, and dedupe dry-run output. | Main response is visible on the OpenAI-first route without waiting on memory writer work or showing a post-answer provider error; logs/state show bounded read timing and detached writer timing. | PASS (2026-05-20: QA account browser run returned and persisted a `gpt-5.4` answer with no red local-retrieval tail or post-stream finalization error after wait or reload) |
 | `MEMCONT-UC-005` | Run saved-memory/provider-key dedupe as dry-run before enabling unique indexes. | owning requirement for `MEMCONT-003` / `MEMCONT-003` | `bin/viventium memory-dedupe --dry-run --json` | CLI output, DB duplicate counts, public-safety scan | Dry-run reports counts only, applies no writes, and does not print private identifiers. | PASS 2026-06-07 ([repair follow-up](../memory-hardening/reports/2026-06-07-nightly-repair-follow-up.md)); dry-run reported zero duplicate groups/docs/deletes and applied no writes |
+| `MEMCONT-UC-007` | Start or upgrade an install whose saved-memory/provider-key collections are either clean or contain synthetic duplicate rows. | owning requirement for `MEMCONT-003` / `MEMCONT-003` | generated runtime environment, launcher, Mongo migration harness | Compiled `MONGO_AUTO_INDEX`, launcher logs, dry-run JSON, index list, row counts | Automatic Mongoose indexing stays off; clean state receives unique indexes, while duplicate state remains unchanged and startup warns how to review it. | PASS 2026-07-11 for compiler, launcher-contract, and synthetic migration regressions; real clean installed-runtime restart remains part of release acceptance |
+| `MEMCONT-UC-006` | Tell Viv a synthetic durable fact in Telegram, then ask for it in new web and voice conversations. | `20_Memory_System.md` / `MEMCONT-004` | real Telegram, Chrome LibreChat, Modern Playground voice | writer audit, Mongo revision, prompt frame, transcript/audio, cleanup state | Both new conversations recover the saved fact without relying on same-thread history; cleanup restores prior state. | ADDED 2026-07-11; run required |

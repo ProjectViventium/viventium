@@ -96,6 +96,19 @@
 - Evidence: dated report under `reports/`
 - Last Run: 2026-05-27 implementation QA - passed with live helper refresh
 
+## SDR-009: Failed Activation Validation Does Not Restart The Stack
+
+- Requirement: `50_Stable_Dev_Runtime.md`
+- Surfaces: `bin/viventium dev-runtime`, config compiler, doctor, running local services
+- Preconditions: local prod is healthy and an intentionally invalid synthetic config is available
+- Steps: record API and Workbench PIDs, run `dev-runtime activate-current --validate --restart`
+  against the invalid config, then compare PIDs and health
+- Expected Result: command exits nonzero at compilation or doctor, explains that the running stack
+  was not restarted, and leaves both PIDs/health unchanged
+- Forbidden Result: failed validation continues into a delayed stop/restart or masks compiler failure
+- Evidence: release regression plus dated feature QA report
+- Last Run: 2026-07-11 local unhappy-path QA - passed; compiler failure returned 1 and both PIDs stayed unchanged
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Stable Dev Runtime. Add narrower feature-specific
@@ -107,6 +120,7 @@ rows before claiming a pass when the feature behavior changes.
 | `STABLEDEV-UC-002` | Run the same status path when optional services or helper surfaces are disabled/unreachable. | `50_Stable_Dev_Runtime.md` / `SDR-007` | CLI status, generated runtime config, helper state, and logs | Optional service health, stale lock checks, generated env/config, logs, and QA report | Status says needs attention/action required for unreachable enabled optional surfaces and never masks broken dependencies as ready. | 2026-05-17 live runtime sanity - passed |
 | `STABLEDEV-UC-003` | Start and stop Prompt Workbench from the CLI/helper path and verify it does not start or stop the main Viventium runtime. | `50_Stable_Dev_Runtime.md` / `SDR-006` | CLI prompt-workbench lifecycle, helper submenu, health endpoint, process state | PID/port metadata summary, `/api/health`, process state, helper install inspection, and QA report | Only the managed workbench process is affected; LibreChat/main Viventium stack state is preserved. | 2026-05-15 local CLI/helper integration QA - passed |
 | `STABLEDEV-UC-004` | Leave local prod running while developing and verify the helper does not continuously render user-facing root pages to decide health. | `50_Stable_Dev_Runtime.md` / `SDR-008` | macOS helper, modern playground `/api/health`, helper-launched logs, real browser route check | Helper source/test contract, Playwright health/root checks, sanitized log counts, live port/process snapshot | Local prod stays up, dev/server logs stop accumulating helper root-page probes, and no singleton service is stopped or duplicated. | 2026-05-27 implementation QA - passed with live helper refresh |
+| `STABLEDEV-UC-005` | Promote a checkout with validation enabled while the candidate config or prerequisites are invalid. | `50_Stable_Dev_Runtime.md` / `SDR-009` | `dev-runtime activate-current --validate --restart`, API/Workbench health and PIDs | Compiler/doctor exit, CLI wording, pre/post process identity | Validation fails loudly before stop/restart and the current healthy stack remains untouched. | PASS 2026-07-11; synthetic invalid config returned 1 and pre/post API and Workbench PIDs matched. |
 
 ## Release Test Traceability
 

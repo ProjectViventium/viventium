@@ -2463,7 +2463,8 @@ kbd {
   gap: 8px;
   padding: 0 9px 9px;
 }
-.periphery-artifact-panel {
+.periphery-artifact-panel,
+.periphery-snapshot-panel {
   border-top: 1px solid var(--line);
   padding: 10px;
   display: grid;
@@ -2471,14 +2472,82 @@ kbd {
   color: var(--muted);
   font-size: 12px;
 }
-.periphery-artifact-panel strong {
+.periphery-artifact-panel strong,
+.periphery-snapshot-panel strong {
   color: var(--text-strong);
+}
+.periphery-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.periphery-panel-heading > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+.periphery-snapshot-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.periphery-snapshot-meta div {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 7px;
+}
+.periphery-snapshot-meta span,
+.periphery-snapshot-meta code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.periphery-snapshot-meta span {
+  font-size: 10px;
+}
+.periphery-snapshot-meta code {
+  margin-top: 3px;
+  color: var(--code-text);
+}
+.periphery-snapshot-warning {
+  border: 1px solid var(--red);
+  border-radius: 7px;
+  padding: 7px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, var(--surface));
+}
+.periphery-quality-summary {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.periphery-quality-summary span {
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 3px 5px;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.periphery-quality-summary span[data-quality="passed"] {
+  color: var(--green);
+}
+.periphery-quality-summary span[data-quality="failed"] {
+  color: var(--red);
 }
 .periphery-artifact-card,
 .periphery-invalid-card {
   border: 1px solid var(--line-soft);
   border-radius: 7px;
   background: var(--surface);
+}
+.periphery-artifact-card[data-quality="failed"] {
+  border-color: color-mix(in srgb, var(--red) 65%, var(--line));
+}
+.periphery-artifact-card[data-quality="passed"] {
+  border-color: color-mix(in srgb, var(--green) 55%, var(--line));
 }
 .periphery-artifact-card summary {
   display: flex;
@@ -2555,6 +2624,38 @@ kbd {
   display: block;
   color: var(--text-strong);
   font-size: 14px;
+}
+.periphery-artifact-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 9px 9px;
+}
+.periphery-detail-state {
+  padding: 0 9px 9px;
+  margin: 0;
+}
+.periphery-artifact-detail {
+  border-top: 1px solid var(--line-soft);
+  padding: 9px;
+  display: grid;
+  gap: 8px;
+}
+.periphery-artifact-detail pre {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  padding: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: 11px/1.5 var(--mono);
+}
+.periphery-artifact-detail summary {
+  padding: 7px 0;
+  color: var(--muted);
 }
 .periphery-invalid-card {
   border-color: var(--red);

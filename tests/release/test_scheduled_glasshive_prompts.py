@@ -156,6 +156,8 @@ def test_glasshive_executor_branches_before_librechat_generation(tmp_path: Path,
     monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
     monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-5.6-sol")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
     storage.create_scheduled_prompt_definition(
         {
@@ -193,12 +195,23 @@ def test_glasshive_executor_branches_before_librechat_generation(tmp_path: Path,
             bundle = payload["bootstrap_bundle"]
             assert isinstance(bundle, dict)
             assert bundle["callbacks"]["events_webhook_url"]
+            assert bundle["env"] == {
+                "WPR_MODEL_HOST_CODEX_CLI": "gpt-5.6-sol",
+                "WPR_CODEX_CLI_REASONING_EFFORT": "xhigh",
+                "WPR_CODEX_CLI_IGNORE_USER_CONFIG": "true",
+            }
+            projected_files = {item["path"]: item["content"] for item in bundle["files"]}
+            assert json.loads(projected_files["scheduled-prompt/periphery-snapshot.json"])["privateEvidence"] == "snapshot-only"
+            run_context = json.loads(projected_files["scheduled-prompt/run-context.json"])
+            assert run_context["snapshotRef"] == "snapshot:20260711T070000Z-abc123abc123"
+            assert run_context["scheduledRunRef"]["runId"].startswith("sp_run_")
             assert "rendered-prompt.md" in json.dumps(bundle)
             assert "utf8_static_server.py" in json.dumps(bundle)
             assert "memory-proposals-yyyymmddHHmm.json" in json.dumps(bundle)
             return {"worker_id": "wrk_1"}
         if url.endswith("/assign"):
             assert "FINAL REPORT" in str(payload["instruction"])
+            assert "snapshot-only" not in str(payload["instruction"])
             return {"run_id": "run_1"}
         raise AssertionError(url)
 
@@ -222,8 +235,10 @@ def test_glasshive_executor_branches_before_librechat_generation(tmp_path: Path,
                     "version_id": "ver-1",
                     "title": "QA",
                     "rendered_hash": "abc",
-                    "variable_snapshot_hash": "def",
-                    "variable_snapshot_json": "{}",
+                        "variable_snapshot_hash": "def",
+                        "variable_snapshot_json": "{}",
+                        "periphery_snapshot_ref": "snapshot:20260711T070000Z-abc123abc123",
+                        "periphery_snapshot_json": json.dumps({"privateEvidence": "snapshot-only"}),
                     "memory_write_mode": "propose",
                     "workspace_alias": "workbench-scheduled-def-1",
                     "workspace_root": str(tmp_path),
@@ -249,6 +264,8 @@ def test_glasshive_find_or_resume_409_preserves_runtime_dependency_failure(
     monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
     monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-5.6-sol")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
     project_id = "prj_runtime_dependency"
     storage.create_scheduled_prompt_definition(
@@ -381,6 +398,8 @@ def test_glasshive_runtime_dependency_missing_recovers_to_docker_when_safe(
     monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
     monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-5.6-sol")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
     storage.create_scheduled_prompt_definition(
         {
@@ -506,6 +525,8 @@ def test_glasshive_dispatch_replaces_stale_cached_project_id(
     monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
     monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-5.6-sol")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
 
     stale_project_id = "prj_stale"
@@ -630,6 +651,8 @@ def test_glasshive_dispatch_repairs_task_cache_from_valid_definition_project(
     monkeypatch.setenv("SCHEDULING_DB_PATH", str(db_path))
     monkeypatch.setenv("VIVENTIUM_PRIVATE_USER_DATA_DIR", str(private_root))
     monkeypatch.setenv("SCHEDULING_GLASSHIVE_CALLBACK_SECRET", "test-secret")
+    monkeypatch.setenv("WPR_MODEL_HOST_CODEX_CLI", "gpt-5.6-sol")
+    monkeypatch.setenv("WPR_CODEX_CLI_REASONING_EFFORT", "xhigh")
     storage = ScheduleStorage(StorageConfig(db_path=str(db_path)))
 
     stale_project_id = "prj_task_stale"
@@ -978,9 +1001,16 @@ def test_glasshive_dispatch_refreshes_workbench_variables_at_runtime(
 
     class FakeWorkbenchScheduledPrompts:
         @staticmethod
-        def render_variables(prompt_text: str, *, user_id: str, email: str | None = None) -> dict[str, object]:
+        def render_variables(
+            prompt_text: str,
+            *,
+            user_id: str,
+            email: str | None = None,
+            snapshot_mode: str = "preview",
+        ) -> dict[str, object]:
             assert prompt_text == "Study {{user.memories}}"
             assert user_id == "user-1"
+            assert snapshot_mode == "create"
             return {
                 "rendered": rendered,
                 "renderedHash": dispatch._sha256_prefix(rendered),
@@ -1141,6 +1171,37 @@ def test_glasshive_completion_callback_requires_signature_and_updates_history(
     assert task["last_error"] is None
     assert task["last_delivery_outcome"] == "sent"
     assert task["last_delivery"]["scheduled_prompt_run_id"] == "scheduled-run-1"
+
+    failed_payload = {
+        "event": "run.failed",
+        "worker_id": worker_id,
+        "run_id": glasshive_run_id,
+        "failure_class": "provider_request_rejected",
+        "message": "Synthetic private provider detail",
+        "effort_projection": {
+            "requested": "xhigh",
+            "effective": "medium",
+            "fallback_reason": "xhigh_route_not_proven",
+        },
+    }
+    failed_raw = json.dumps(failed_payload, separators=(",", ":")).encode("utf-8")
+    failed_signature = "sha256=" + hmac.new(
+        derived_secret, failed_raw, hashlib.sha256
+    ).hexdigest()
+    failed = client.post(
+        "/internal/scheduled-prompts/glasshive-callback",
+        content=failed_raw,
+        headers={"content-type": "application/json", "x-glasshive-signature": failed_signature},
+    )
+
+    assert failed.status_code == 200
+    updated = storage.get_scheduled_prompt_run("scheduled-run-1")
+    assert updated["status"] == "failed"
+    assert updated["error_class"] == "provider_request_rejected"
+    callback_summary = json.loads(updated["callback_payload_json"])
+    assert callback_summary["effort_projection"] == failed_payload["effort_projection"]
+    task = storage.get_task("user-1", "task-1")
+    assert task["last_error"] == "provider_request_rejected"
 
 
 def test_glasshive_capacity_callback_keeps_run_queued_and_clears_stale_parent_error(

@@ -215,9 +215,11 @@ def render_prompt(
                 registry,
                 variables=variables,
                 _stack=(*_stack, prompt_id),
-            ).rstrip()
+            ).strip()
         )
-    rendered_parts.append(entry.body.rstrip())
+    # Match the runtime JavaScript resolver: front-matter spacing is not part
+    # of the prompt body contract and must not create cross-runtime drift.
+    rendered_parts.append(entry.body.strip())
     rendered = "\n\n".join(part for part in rendered_parts if part).rstrip() + "\n"
     return _substitute_variables(
         rendered,
