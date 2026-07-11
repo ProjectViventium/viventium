@@ -198,6 +198,14 @@ Eval behavior is split into two human-facing modes:
 - **Live exact-model run**: calls the canonical exact-model harness and is the path that records
   performance against prompt hashes.
 
+The Workbench live-run button is an explicit action from an authenticated, loopback-only operator
+surface. It may invoke the canonical runner's short-lived local QA JWT path when no QA password is
+available, but it must never embed or return a password. The canonical harness still rejects local
+JWT auth in CI or production, selects the QA account through its configurable
+`VIVENTIUM_QA_USER_NAME`/email contract, restores temporary state in `finally`, and removes synthetic
+conversations. A missing selector, account, API, or auth prerequisite is a recorded failed run, not
+a preview or silent pass.
+
 The Eval Designer must default to all eval cases linked to the selected prompt across families and
 surfaces. Creating or editing eval cases creates a reviewed `eval-edit` draft against the canonical
 eval bank, never a direct source write, and the patch should stay focused on the target case instead
@@ -368,6 +376,11 @@ access.
 Plain-English happy path: scheduled prompt -> filled placeholders -> GlassHive run -> callback ->
 scheduler ledger -> Workbench shows completed.
 
+Workbench/GlassHive automations use the compiled host-worker tuple, currently `gpt-5.6-sol` with
+`xhigh` reasoning. Workbench startup reconciles built-in metadata to that tuple; Scheduling Cortex
+projects it into GlassHive; the run ledger and Workbench UI expose the requested/effective route.
+Stale definition metadata or ambient CLI settings must not silently override the compiled tuple.
+
 The built-in nightly reflection must also carry a bounded structured catch-up policy. Its schedule
 timezone controls the real due time, so QA must compare the Workbench `next_run_at` and configured
 timezone before declaring a miss; a safe late tick inside the catch-up window should still queue one
@@ -441,6 +454,17 @@ as governed proposals or `apply_governed` memory-method calls, never direct Mong
 GlassHive worker. Workbench startup seeds this built-in template for the verified local admin as
 private state, disabled by default unless the local installation has already enabled it or
 explicitly opts into active seeding.
+
+The built-in nightly prompt follows the less-is-more rule. It carries the output/evidence contract
+and reads a bounded projected snapshot file; it does not inline the account's raw conversation and
+memory corpus or duplicate every background-lens prompt. Its private risk-radar artifact is optional
+periphery, not main-prompt context.
+
+Optional conscious access stays tool-owned. The main agent is allowed the Scheduling Cortex's
+bounded periphery list/read tools, while the server instructions say when not to use them. Tool
+results preserve useful claim text, uncertainty, freshness, and evidence-quality counts but remove
+storage paths, raw record/run/snapshot ids, and duplicate markdown before reaching the chat tool
+card. No nightly body or periphery memory key is injected into ordinary conversation.
 
 Scheduled-prompt hardening added after live QA:
 
@@ -728,33 +752,52 @@ Remaining validation gaps:
 
 ## Model-Specific Prompting Requirements
 
-### Claude Opus 4.7
+### Groq Qwen 3.6 activation classifier
 
-Current primary main model is Claude Opus 4.7. The prompt plan should follow these requirements:
+Phase A activation uses `groq / qwen/qwen3.6-27b`, which is a distinct short-classification
+workload rather than a conscious-agent reasoning route.
 
-- Be clear, direct, and specific about desired output and constraints.
-- Use consistent sectioning for mixed instructions, context, examples, and variable inputs.
+- Keep each cortex prompt to one positive gate, negative-precedence boundaries, sibling ownership,
+  and a few contrastive examples. Do not repeat the full global activation policy inside each file.
+- Runtime, not prompt prose, sets `reasoning_effort: none`, `reasoning_format: hidden`, `seed: 0`,
+  and JSON-object response mode.
+- Prompt Workbench dispatches the `background_activation` family to the exact
+  `BackgroundCortexService.checkCortexActivation` path and resolves registry `promptRef` values from
+  the canonical agent bundle. Preview mode makes no model calls; live mode writes private raw
+  results and a public-safe aggregate report.
+- The public-safe bank covers all 11 cortex scopes with positive, sibling-negative, latest-turn,
+  quoted/hypothetical/negated, strict-output, direct-action, multilingual, typo, combined-intent,
+  and prompt-injection scenarios. It uses synthetic transformations inspired by public
+  conversation-shape datasets; no real private conversation is copied.
+- Score semantics and transport independently: required recall, activation precision, false
+  positives/negatives, consistency, provider completion, and p50/p95/max latency. A timeout or
+  provider error is `unavailable`, never a true negative.
+- Groq's strict GPT-OSS schema path is not used as the primary/fallback output mode: a real
+  220-decision comparison produced 28 provider-side `JSON_VALIDATE_FAILED` responses even with a
+  primitive strict schema. JSON-object mode plus Viventium's parser is the measured reliable path.
+
+### GPT-5.6 conscious and subconscious routes
+
+Current conscious/subconscious execution uses GPT-5.6 Sol/Terra with Responses API. The exact
+workload and effort map lives in `02_Background_Agents.md` and must remain a model-config decision,
+not prompt prose.
+
 - Keep the core prompt outcome-oriented rather than process-heavy.
-- Prefer model-visible structured context over hidden runtime heuristics.
-- For tool use, move detailed "what this tool does / when to use it / caveats / response shape"
-  into tool and MCP definitions.
-- Verify Opus 4.7 runtime parameters:
-  - use the supported thinking/effort shape for the current API path
-  - do not carry removed sampling/tuning parameters into Opus 4.7 requests
-  - do not carry legacy `thinkingBudget`, `max_thinking_tokens`, `extended_thinking`, or old
-    extended-thinking budget fields into Opus 4.7 requests
+- Preserve explicit completion criteria, evidence boundaries, permissions, and output contracts.
+- Do not add model-specific prompt scaffolding merely because Sol/Terra changed; first run the same
+  prompt at the mapped effort and edit only for a measured regression.
+- Keep tool-use expectations crisp and avoid making a background cortex parse the full conscious
+  identity prompt when it only needs scope, evidence, and output rules.
+- Preserve provider-appropriate `reasoning_effort`: `xhigh` only for Deep Research and Red Team,
+  `high` for Strategic Planning, `medium` for balanced cognition, and `low` for latency-sensitive or
+  tool-heavy work.
 
-### GPT-5.4
+### Claude Opus 4.8 fallback
 
-Current background/productivity/research routes use GPT-5.4 in live configuration. The prompt plan
-should:
-
-- Give GPT-5.4 precise completion criteria and output contracts.
-- Preserve provider-appropriate `reasoning_effort`, especially `xhigh` for Deep Research.
-- Avoid contradictory instructions that waste reasoning tokens.
-- Use explicit grounding rules for live facts and productivity data.
-- Keep tool-use expectations crisp and avoid making GPT-5.4 parse a long main-agent identity prompt
-  when a background cortex only needs scope, evidence, and output rules.
+Every conscious/subconscious text route declares Claude Opus 4.8 as fallback. Fallback prompt
+behavior must preserve the same user-visible outcome and tool/evidence contract without carrying
+OpenAI-only `reasoning_effort` or `useResponsesApi` fields into Anthropic requests. Missing Anthropic
+auth is a classified fallback-availability blocker, not permission to downgrade silently.
 
 ### GPT-5.5
 
@@ -1028,10 +1071,12 @@ Improvements:
 
 - Add prompt-frame evidence proving Cartesia emotion/tag lists and xAI speech tags are injected only
   when the selected voice/TTS route needs that provider dialect.
-- Consider a two-tier voice prompt after evals:
-  - default: base voice rules plus primary/high-reliability controls
-  - advanced: full provider capability list when expressive control is explicitly enabled or when
-    the provider route requires it
+- The shipped shared `surface.voice.feeling_expression` layer tells the model to keep Feelings as a
+  private cause, appraise expressive versus restrained delivery, and use the smallest fitting
+  supported control for expressive delivery without waiting for an explicit user request.
+- Voice-call and Telegram-audio branches compose that shared layer with exactly one selected
+  provider prompt. Registered Telegram provider variants must never depend on an unregistered
+  inline fallback that Prompt Workbench and parity tests cannot inspect.
 - Keep runtime validation capability-driven. Runtime may preserve, sanitize, segment, and validate
   model-authored provider markup. It must not invent emotion from heuristics. xAI TTS has no
   Cartesia-style emotion parameter, so the xAI branch may only expose documented xAI speech tags and
@@ -1046,8 +1091,15 @@ Acceptance:
 - Non-voice text turns do not carry voice provider control tokens.
 - `What's up?` style whitespace preservation remains covered by voice TTS tests.
 - Marker-count observability distinguishes generation omission from downstream stripping.
-- If a two-tier voice prompt ships, evals must exercise every provider-control marker declared in
-  the shared voice capability contract before the split is accepted.
+- Prompt Workbench includes an expressive xAI case that must emit a fitting supported control
+  without a user request, a restrained xAI case that must remain unmarked, a Feelings-off xAI case
+  that must remain unmarked, and a plain-TTS case that must remain markup-free. Exact provider-
+  vocabulary suites continue to cover the full capability contracts separately.
+- The loopback live-eval JWT path must identify an admin/owner account from local user metadata and
+  fail closed before signing if the configured QA selector resolves to that account. A missing or
+  stale QA selector is an authentication failure, never permission to substitute the owner.
+- Inline degraded fallbacks and their registered prompt-source equivalents require an executable
+  parity test; bundle/source sync alone does not prove fallback/source parity.
 - Provider dialects remain isolated: Cartesia prompts never leak into xAI routes, xAI tags never
   leak into Cartesia routes, and OpenAI/ElevenLabs routes prohibit provider markup entirely.
 
@@ -1164,6 +1216,13 @@ Each prompt change must run old vs proposed prompt variants with the same saniti
 | Productivity cortices | Google/MS365 scopes do not fabricate outside-provider facts. |
 | Token efficiency | Prompt-layer token budgets decrease without behavior regression. |
 
+Memory continuity prompt evals are supporting evidence, not a substitute for storage and native-
+surface acceptance. A Workbench case may use a synthetic recent-event follow-up to check that the
+rendered memory/recall prompts produce a natural, grounded answer across surface metadata. Final
+acceptance for cross-conversation continuity still requires a real Telegram capture, Mongo revision
+evidence, a new authenticated Chrome conversation, a real Modern Playground voice turn with audible
+and transcript evidence, and cleanup/restoration of the synthetic marker.
+
 ### MCP tool-description checklist
 
 Before moving capability text out of the main prompt, Scheduling and GlassHive MCP tool descriptions
@@ -1210,10 +1269,11 @@ Prompt changes are not accepted unless QA can show:
 
 ### Phase 2: Exact-model eval harness
 
-- Build old-vs-new prompt eval runner.
-- Support connected-account OpenAI paths.
-- Add synthetic public-safe eval fixtures.
-- Establish baseline scores and token budgets.
+- Implemented for background activation: the workbench owns a dedicated exact-runtime classifier
+  runner, public-safe synthetic bank, private raw evidence, model overrides, per-cortex filtering,
+  per-case filtering, repetitions, latency metrics, and unavailable-result accounting.
+- Connected-account OpenAI support and broader old-vs-new prompt-stack coverage remain part of the
+  general exact-model runner.
 
 ### Phase 3: Follow-up structured decision
 
@@ -1265,6 +1325,12 @@ Prompt changes are not accepted unless QA can show:
 
 ## External Prompting References
 
+- Groq prompting basics: `https://console.groq.com/docs/prompting`
+- Groq Qwen 3.6 model controls: `https://console.groq.com/docs/model/qwen/qwen3.6-27b`
+- Groq structured outputs: `https://console.groq.com/docs/structured-outputs`
+- Groq model deprecations: `https://console.groq.com/docs/deprecations`
+- WildChat public conversation-shape dataset paper: `https://arxiv.org/abs/2405.01470`
+- LMSYS-Chat-1M public conversation-shape dataset paper: `https://arxiv.org/abs/2309.11998`
 - OpenAI GPT-5.5 prompt guidance: `https://developers.openai.com/api/docs/guides/prompt-guidance?model=gpt-5.5`
 - OpenAI MCP/connectors guidance: `https://developers.openai.com/api/docs/guides/tools-connectors-mcp`
 - OpenAI eval best practices: `https://developers.openai.com/api/docs/guides/evaluation-best-practices`
@@ -1279,5 +1345,6 @@ Prompt changes are not accepted unless QA can show:
    text-JSON only as fallback?
 3. Approve keeping memory injection tiers here while moving hardener behavior details into
    `20_Memory_System.md`?
-4. Should voice advanced provider controls remain always available in voice mode, or should the
-   two-tier prompt be eval-gated behind an explicit expressive-voice setting?
+4. Resolved 2026-07-11: provider controls remain capability-scoped on spoken surfaces. The model
+   appraises expressive versus restrained delivery from the private Feelings state and moment; no
+   explicit user request, phrase gate, or runtime band-to-tag map is required.

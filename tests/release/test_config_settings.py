@@ -197,6 +197,13 @@ def test_transcripts_source_status_works_while_lock_exists(tmp_path: Path) -> No
     lock_dir.mkdir(parents=True)
     (lock_dir / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
     (lock_dir / "command").write_text("upgrade\n", encoding="utf-8")
+    process_command = subprocess.run(
+        ["ps", "-p", str(os.getpid()), "-o", "command="],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    (lock_dir / "process_command").write_text(f"{process_command}\n", encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -230,6 +237,13 @@ def test_transcripts_source_set_respects_active_mutation_lock(tmp_path: Path) ->
     lock_dir.mkdir(parents=True)
     (lock_dir / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
     (lock_dir / "command").write_text("upgrade\n", encoding="utf-8")
+    process_command = subprocess.run(
+        ["ps", "-p", str(os.getpid()), "-o", "command="],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    (lock_dir / "process_command").write_text(f"{process_command}\n", encoding="utf-8")
 
     result = subprocess.run(
         [

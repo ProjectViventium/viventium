@@ -19,6 +19,26 @@ This index lists the Viventium-specific changes and where they live.
 - Cortex UI rendering: `LibreChat/client/src/components/Chat/Messages/Content/CortexCall.tsx`, `LibreChat/client/src/components/Chat/Messages/Content/CortexCallInfo.tsx`
 - Export formatting for cortex parts: `LibreChat/client/src/hooks/Conversations/useExportConversation.ts`
 
+## Feelings / Emotional Reaction Cortex
+
+- State schema/model/methods: `LibreChat/packages/data-schemas/src/*/feelingState.ts`
+- Kernel, capsule, config, and state service: `LibreChat/packages/api/src/feelings/`
+- Authenticated API: `LibreChat/api/server/routes/viventium/feelings.js`
+- Structured telemetry: `LibreChat/api/server/services/viventium/feelingsTelemetry.js`
+- Detached appraiser: `LibreChat/api/server/services/viventium/EmotionalReactionService.js`
+- Atomic reaction/idempotency persistence: `LibreChat/packages/data-schemas/src/methods/feelingState.ts`
+- Main/handoff prompt injection: `LibreChat/api/server/controllers/agents/client.js`
+- Background prompt injection: `LibreChat/api/server/services/BackgroundCortexService.js`
+- GlassHive worker forwarding: `LibreChat/api/server/services/viventium/GlassHiveCapabilityBootstrapService.js`
+- Source prompts: `LibreChat/viventium/source_of_truth/prompts/cortex/emotional_reaction/`
+- Shared spoken-expression and Telegram-audio prompts:
+  `LibreChat/viventium/source_of_truth/prompts/surface/voice_feeling_expression.md` and
+  `telegram_audio_*.md`
+- Voice/Telegram prompt composition: `LibreChat/api/server/services/viventium/surfacePrompts.js`
+- Client data contract/hooks: `LibreChat/packages/data-provider/src/types/feelings.ts`,
+  `LibreChat/client/src/data-provider/Feelings/`
+- Production UI: `LibreChat/client/src/components/Feelings/` and `/feelings`
+
 ## Data Model / Types
 - Agent schema (background_cortices): `LibreChat/packages/data-schemas/src/schema/agent.ts`
 - ActivationConfig + BackgroundCortex types: `LibreChat/packages/data-provider/src/types/assistants.ts`

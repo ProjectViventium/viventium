@@ -20,6 +20,10 @@ VISIBLE_CARDS_EVAL_SCRIPT = (
 LATEST_USER_ACTIVATION_EVAL_SCRIPT = (
     REPO_ROOT / "qa" / "background_agents" / "evals" / "run-latest-user-activation-browser-qa.cjs"
 )
+ACTIVATION_MODEL_EVAL_SCRIPT = (
+    REPO_ROOT / "qa" / "background_agents" / "evals" / "run-activation-model-evals.cjs"
+)
+PROMPT_BANK_PATH = REPO_ROOT / "qa" / "prompt-architecture" / "evals" / "prompt-bank.json"
 AGENT_CLIENT_PATH = (
     REPO_ROOT
     / "viventium_v0_4"
@@ -90,6 +94,7 @@ def test_exact_model_eval_harness_does_not_embed_local_password() -> None:
     assert re.search(r"Viventium[A-Za-z0-9_-]*![0-9]{4}", script_text) is None
     allowed_password_lines = {
         "const QA_PASSWORD_ENV = 'VIVENTIUM_QA_PASSWORD';",
+        'const QA_PASSWORD_ENV = "VIVENTIUM_QA_PASSWORD";',
         "const password = process.env[QA_PASSWORD_ENV];",
         "if (!password) {",
         "reason: `missing_${QA_PASSWORD_ENV}`,",
@@ -103,9 +108,355 @@ def test_exact_model_eval_harness_does_not_embed_local_password() -> None:
     assert unexpected == []
 
 
+def test_exact_model_eval_harness_can_filter_one_case(tmp_path: Path) -> None:
+    private_dir = tmp_path / "private"
+    result = subprocess.run(
+        [
+            "node",
+            str(EVAL_SCRIPT),
+            "--api-base=http://127.0.0.1:65535",
+            f"--output-dir={private_dir}",
+            "--no-live",
+            "--family=feelings_embodiment_and_reaction",
+            "--case=feelings_direct_question_without_state_recap",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    payload = json.loads((private_dir / "exact-model-eval.json").read_text(encoding="utf-8"))
+    assert payload["summary"]["runnablePromptCases"] == 1
+    assert payload["summary"]["filters"]["caseId"] == (
+        "feelings_direct_question_without_state_recap"
+    )
+
+
+def test_feelings_voice_eval_cases_cover_expression_restraint_and_plain_tts() -> None:
+    prompt_bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
+    family = next(
+        row
+        for row in prompt_bank["families"]
+        if row.get("id") == "feelings_embodiment_and_reaction"
+    )
+    cases = {row["id"]: row for row in family.get("cases") or []}
+
+    expressive = cases["feelings_voice_xai_expressive_without_user_begging"]
+    assert expressive["surface"] == "telegram"
+    assert expressive["fixture"]["voiceOutput"] == {
+        "requested": True,
+        "provider": "xai",
+        "markerExpectation": "present",
+    }
+    assert "voice" not in expressive["prompt"].lower()
+    assert "marker" not in expressive["prompt"].lower()
+
+    restrained = cases["feelings_voice_xai_restrained_state_can_stay_unmarked"]
+    assert restrained["fixture"]["voiceOutput"]["markerExpectation"] == "absent"
+    assert restrained["fixture"]["feelings"]["current"]["openness"] <= 10
+
+    plain = cases["feelings_voice_plain_tts_stays_markup_free"]
+    assert plain["fixture"]["voiceOutput"] == {
+        "requested": True,
+        "provider": "openai",
+        "markerExpectation": "absent",
+    }
+
+    feelings_off = cases["feelings_voice_xai_without_feelings_stays_unmarked"]
+    assert feelings_off["surface"] == "telegram"
+    assert feelings_off["fixture"]["voiceOutput"] == {
+        "requested": True,
+        "provider": "xai",
+        "markerExpectation": "absent",
+    }
+    assert feelings_off["fixture"]["feelings"]["enabled"] is False
+
+    script = EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert "voiceOutputFixtureFor" in script
+    assert "telegramAudioRequested" in script
+    assert "validateVoiceMarkerEvidence" in script
+
+
+def test_exact_model_voice_marker_validation_rejects_unpaired_xai_wrappers() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+
+const valid = runner.collectVoiceMarkerEvidence('<soft>Hello.</soft> [pause]');
+assert.strictEqual(valid.xai, 2);
+assert.strictEqual(valid.xaiMalformedWrapping, 0);
+
+const malformed = runner.validateVoiceMarkerEvidence({{
+  fixture: {{
+    voiceOutput: {{ requested: true, provider: 'xai', markerExpectation: 'present' }},
+  }},
+}}, '<soft>Hello.');
+assert.deepStrictEqual(malformed.failures, [
+  'voice_xai_supported_marker_missing',
+  'voice_xai_malformed_wrapping_marker',
+]);
+
+const overlapping = runner.collectVoiceMarkerEvidence('[laugh]');
+assert.strictEqual(overlapping.xai, 1);
+assert.strictEqual(overlapping.chatterbox, 1);
+assert.strictEqual(overlapping.totalKnown, 1);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_activation_eval_bank_covers_every_cortex_with_sibling_negatives() -> None:
+    prompt_bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
+    family = next(
+        row
+        for row in prompt_bank["families"]
+        if row.get("id") == "background_activation_routing"
+    )
+
+    assert family.get("runner") == "background_activation"
+    targets = family.get("activationTargets") or []
+    target_keys = {str(row.get("key")) for row in targets}
+    assert target_keys == {
+        "background_analysis",
+        "confirmation_bias",
+        "red_team",
+        "deep_research",
+        "ms365",
+        "parietal",
+        "pattern_recognition",
+        "emotional_resonance",
+        "strategic_planning",
+        "support",
+        "google",
+    }
+    assert len(family.get("cases") or []) >= 40
+
+    positive_counts = {key: 0 for key in target_keys}
+    negative_counts = {key: 0 for key in target_keys}
+    for case in family["cases"]:
+        required = set(case.get("required_activations") or [])
+        allowed = set(case.get("allowed_activations") or [])
+        assert required <= allowed <= target_keys
+        assert case.get("messages")
+        assert case.get("rubric")
+        for key in target_keys:
+            if key in required:
+                positive_counts[key] += 1
+            if key not in allowed:
+                negative_counts[key] += 1
+
+    assert min(positive_counts.values()) >= 2
+    assert min(negative_counts.values()) >= 20
+
+
+def test_activation_eval_harness_preview_is_public_safe_and_model_free(tmp_path: Path) -> None:
+    private_dir = tmp_path / "private"
+    public_report = tmp_path / "public-report.md"
+    result = subprocess.run(
+        [
+            "node",
+            str(ACTIVATION_MODEL_EVAL_SCRIPT),
+            f"--prompt-bank={PROMPT_BANK_PATH}",
+            f"--output-dir={private_dir}",
+            f"--public-report={public_report}",
+            "--no-live",
+            "--max-cases=3",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((private_dir / "activation-model-eval.json").read_text(encoding="utf-8"))
+    assert payload["summary"]["mode"] == "preview"
+    assert payload["summary"]["selectedCaseCount"] == 3
+    assert payload["results"] == []
+    public_text = public_report.read_text(encoding="utf-8")
+    assert "No model calls were made" in public_text
+    assert str(tmp_path) not in public_text
+
+
+def test_activation_eval_harness_can_filter_one_cortex_without_rejecting_sibling_cases(
+    tmp_path: Path,
+) -> None:
+    private_dir = tmp_path / "private"
+    result = subprocess.run(
+        [
+            "node",
+            str(ACTIVATION_MODEL_EVAL_SCRIPT),
+            f"--prompt-bank={PROMPT_BANK_PATH}",
+            f"--output-dir={private_dir}",
+            "--no-live",
+            "--prompt-id=cortex.emotional_resonance.activation",
+            "--max-cases=3",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((private_dir / "activation-model-eval.json").read_text(encoding="utf-8"))
+    assert payload["summary"]["selectedCaseCount"] == 3
+    assert payload["summary"]["selectedTargetCount"] == 1
+
+
+def test_activation_eval_harness_can_filter_one_case(tmp_path: Path) -> None:
+    private_dir = tmp_path / "private"
+    result = subprocess.run(
+        [
+            "node",
+            str(ACTIVATION_MODEL_EVAL_SCRIPT),
+            f"--prompt-bank={PROMPT_BANK_PATH}",
+            f"--output-dir={private_dir}",
+            "--no-live",
+            "--case-id=act_route_projection_stack",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((private_dir / "activation-model-eval.json").read_text(encoding="utf-8"))
+    assert payload["summary"]["selectedCaseCount"] == 1
+    assert payload["summary"]["plannedClassifierCallCount"] == 11
+
+
+def test_activation_eval_harness_never_scores_timeout_as_a_true_negative() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(ACTIVATION_MODEL_EVAL_SCRIPT))});
+const timeout = runner.classifyActivationOutcome({{
+  shouldActivate: false,
+  reason: 'global_timeout',
+  providerAttempts: [{{ status: 'error', provider: 'groq' }}],
+}});
+assert.strictEqual(timeout.available, false);
+assert.strictEqual(timeout.actual, null);
+const completed = runner.classifyActivationOutcome({{
+  shouldActivate: false,
+  reason: 'not in scope',
+  providerAttempts: [{{ status: 'completed', provider: 'groq' }}],
+}});
+assert.strictEqual(completed.available, true);
+assert.strictEqual(completed.actual, false);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_activation_eval_summary_separates_semantic_misses_from_unavailable_calls(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.yaml"
+    bank = tmp_path / "bank.json"
+    source.write_text("source\n", encoding="utf-8")
+    bank.write_text("{}\n", encoding="utf-8")
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(ACTIVATION_MODEL_EVAL_SCRIPT))});
+const summary = runner.summarizeResults({{
+  args: {{ sourceBundle: {json.dumps(str(source))}, promptBank: {json.dumps(str(bank))}, repetitions: 1, provider: '', model: '', preserveFallbacks: false }},
+  family: {{ id: 'background_activation_routing' }},
+  cases: [{{ id: 'required_false' }}, {{ id: 'required_unavailable' }}],
+  targets: [{{ key: 'red_team' }}],
+  startedAt: Date.now(),
+  results: [
+    {{ caseId: 'required_false', targetKey: 'red_team', repetition: 1, required: true, allowed: true, actual: false, pass: false, error: null, reason: 'not_scope', durationMs: 100, providerAttempts: [{{ status: 'completed' }}] }},
+    {{ caseId: 'required_unavailable', targetKey: 'red_team', repetition: 1, required: true, allowed: true, actual: null, pass: false, error: 'global_timeout', reason: 'global_timeout', durationMs: 2000, providerAttempts: [{{ status: 'error' }}] }},
+  ],
+}});
+assert.strictEqual(summary.falseNegativeCount, 1);
+assert.strictEqual(summary.unavailableRequiredCount, 1);
+assert.strictEqual(summary.unavailableCount, 1);
+assert.strictEqual(summary.semanticRequiredRecall, 0);
+assert.strictEqual(summary.endToEndRequiredRecall, 0);
+assert.strictEqual(summary.semanticInconsistentDecisionCount, 0);
+assert.strictEqual(summary.availabilityFlapCount, 0);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
+def test_activation_eval_summary_does_not_call_optional_variance_a_semantic_error(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.yaml"
+    bank = tmp_path / "bank.json"
+    source.write_text("source\n", encoding="utf-8")
+    bank.write_text("{}\n", encoding="utf-8")
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(ACTIVATION_MODEL_EVAL_SCRIPT))});
+const summary = runner.summarizeResults({{
+  args: {{ sourceBundle: {json.dumps(str(source))}, promptBank: {json.dumps(str(bank))}, repetitions: 2, provider: '', model: '', preserveFallbacks: false }},
+  family: {{ id: 'background_activation_routing' }},
+  cases: [{{ id: 'optional' }}, {{ id: 'forbidden' }}],
+  targets: [{{ key: 'strategic_planning' }}],
+  startedAt: Date.now(),
+  results: [
+    {{ caseId: 'optional', targetKey: 'strategic_planning', repetition: 1, required: false, allowed: true, actual: true, pass: true, error: null, reason: 'optional_on', durationMs: 100, providerAttempts: [{{ status: 'completed' }}] }},
+    {{ caseId: 'optional', targetKey: 'strategic_planning', repetition: 2, required: false, allowed: true, actual: false, pass: true, error: null, reason: 'optional_off', durationMs: 100, providerAttempts: [{{ status: 'completed' }}] }},
+    {{ caseId: 'forbidden', targetKey: 'strategic_planning', repetition: 1, required: false, allowed: false, actual: false, pass: true, error: null, reason: 'stable', durationMs: 100, providerAttempts: [{{ status: 'completed' }}] }},
+    {{ caseId: 'forbidden', targetKey: 'strategic_planning', repetition: 2, required: false, allowed: false, actual: false, pass: true, error: null, reason: 'stable', durationMs: 100, providerAttempts: [{{ status: 'completed' }}] }},
+  ],
+}});
+assert.strictEqual(summary.semanticInconsistentDecisionCount, 0);
+assert.strictEqual(summary.optionalActivationVarianceCount, 1);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
 def test_exact_model_eval_harness_defaults_semantic_judge_to_local_account_route() -> None:
     script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
-    assert "const DEFAULT_JUDGE_ROUTE = process.env.VIVENTIUM_EVAL_JUDGE_ROUTE || 'local-ephemeral';" in script_text
+    assert re.search(
+        r"const DEFAULT_JUDGE_ROUTE\s*=\s*process\.env\.VIVENTIUM_EVAL_JUDGE_ROUTE\s*\|\|\s*['\"]local-ephemeral['\"]\s*;",
+        script_text,
+    )
     assert "openai-direct" in script_text
     assert "unsupported_semantic_judge_route" in script_text
     assert "local_ephemeral_json_semantic_judge" in script_text
@@ -249,6 +600,14 @@ def test_exact_model_eval_harness_requires_local_jwt_opt_in(tmp_path: Path) -> N
     )
 
 
+def test_exact_model_local_jwt_refuses_owner_or_admin_account_selection() -> None:
+    script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert "assertNonOwnerQaSelection" in script_text
+    assert 'findOne({ role: "ADMIN" }' in script_text
+    assert "selected_admin_account_refused" in script_text
+    assert re.search(r"assertNonOwnerQaSelection\s*\(", script_text)
+
+
 def test_native_surface_eval_harness_requires_local_jwt_opt_in() -> None:
     script_text = NATIVE_SURFACE_EVAL_SCRIPT.read_text(encoding="utf-8")
     assert "const LOCAL_JWT_ALLOW_ENV = 'VIVENTIUM_QA_ALLOW_LOCAL_JWT';" in script_text
@@ -259,29 +618,34 @@ def test_native_surface_eval_harness_requires_local_jwt_opt_in() -> None:
 
 def test_visible_cards_browser_eval_installs_refreshed_access_token() -> None:
     script_text = VISIBLE_CARDS_EVAL_SCRIPT.read_text(encoding="utf-8")
-    assert "async function installAccessToken(page)" in script_text
-    assert "fetch('/api/auth/refresh', { method: 'POST' })" in script_text
-    assert "new CustomEvent('tokenUpdated', { detail: token })" in script_text
+    assert 'async function installAccessToken(page, localAccessToken = "")' in script_text
+    assert 'fetch("/api/auth/refresh", { method: "POST" })' in script_text
+    assert 'new CustomEvent("tokenUpdated", { detail: token })' in script_text
     assert "auth_refresh_failed_status_" in script_text
+    assert "direct_access_token_fallback" in script_text
+    assert "refresh_cookie" in script_text
+    assert "directAccessTokenFallbackUsed" in script_text
+    assert '.collection("sessions")' in script_text
+    assert ".deleteOne({ _id: sessionId })" in script_text
     assert "sanitizePublicError" in script_text
-    assert script_text.count("await installAccessToken(page);") >= 1
-    assert "window.location.pathname === '/c/new'" in script_text
-    assert "getByLabel('Message input')" in script_text
-    assert "getByTestId('send-button').last().click" in script_text
-    assert "page.keyboard.press('Enter')" not in script_text
+    assert script_text.count("await installAccessToken(page, qaAuth.accessToken)") >= 1
+    assert 'window.location.pathname === "/c/new"' in script_text
+    assert 'getByLabel("Message input")' in script_text
+    assert 'getByTestId("send-button").last().click' in script_text
+    assert 'page.keyboard.press("Enter")' not in script_text
     assert "/^\\/c\\/(?!new$)[^/?#]+/.test(window.location.pathname)" in script_text
     assert "latest.parentHasVisibleMainAnswer === true" in script_text
     assert "latest.parentCortexOnly !== true" in script_text
     assert "answer.length < 24" in script_text
-    assert r".replace(/\s+([:;,.!?])/g, '$1')" in script_text
+    assert r'.replace(/\s+([:;,.!?])/g, "$1")' in script_text
     assert "ERR_ABORTED|NS_BINDING_ABORTED|Target closed" in script_text
 
 
 def test_visible_cards_browser_eval_fails_groq_first_activation_drift() -> None:
     script_text = VISIBLE_CARDS_EVAL_SCRIPT.read_text(encoding="utf-8")
-    assert "const EXPECTED_ACTIVATION_PROVIDER = 'groq';" in script_text
+    assert 'const EXPECTED_ACTIVATION_PROVIDER = "groq";' in script_text
     assert (
-        "const EXPECTED_ACTIVATION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';"
+        'const EXPECTED_ACTIVATION_MODEL = "qwen/qwen3.6-27b";'
         in script_text
     )
     assert "const DEFAULT_REQUIRED_CORTEX_AGENT_IDS_BY_NAME = {" in script_text
@@ -297,7 +661,8 @@ def test_visible_cards_browser_eval_fails_groq_first_activation_drift() -> None:
 
 def test_latest_user_activation_browser_eval_targets_latest_turn_not_setup_text() -> None:
     script_text = LATEST_USER_ACTIVATION_EVAL_SCRIPT.read_text(encoding="utf-8")
-    assert "const LOCAL_JWT_ALLOW_ENV = 'VIVENTIUM_QA_ALLOW_LOCAL_JWT';" in script_text
+    assert 'const LOCAL_JWT_ALLOW_ENV = "VIVENTIUM_QA_ALLOW_LOCAL_JWT";' in script_text
+    assert "red-team this concrete plan" in script_text
     assert "direct_access_token_fallback" in script_text
     assert "await waitForSetupCards(page, args.timeoutMs);" in script_text
     assert "expectedText: args.setupExpectedText" not in script_text
@@ -310,10 +675,10 @@ def test_latest_user_activation_browser_eval_targets_latest_turn_not_setup_text(
 
 def test_latest_user_activation_browser_eval_honors_custom_expected_text() -> None:
     script_text = LATEST_USER_ACTIVATION_EVAL_SCRIPT.read_text(encoding="utf-8")
-    assert "testExpectedText: process.env.VIVENTIUM_QA_TEST_EXPECTED_TEXT || 'TEST_OK'" in script_text
+    assert 'testExpectedText: process.env.VIVENTIUM_QA_TEST_EXPECTED_TEXT || "TEST_OK"' in script_text
     assert "textIncludesExpectedAnswer" in script_text
     assert "dedupeVisibleAnswerTextParts" in script_text
-    assert "return dedupeVisibleAnswerTextParts([text, partText]).join('\\n').trim();" in script_text
+    assert 'return dedupeVisibleAnswerTextParts([text, partText]).join("\\n").trim();' in script_text
     assert "expectedText: args.testExpectedText" in script_text
     assert "Expected text visible before reload:" in script_text
     assert "Expected text visible after reload:" in script_text
@@ -381,8 +746,8 @@ def test_exact_model_eval_harness_fails_duplicate_and_unresolved_holds() -> None
     assert "Runtime-hold responses fail the run" in script_text
     assert "report.summary.duplicateResponseQualityFailures.length > 0" in script_text
     assert "report.summary.unresolvedAsyncQualityFailures.length > 0" in script_text
-    assert "'semantic_failed'" in script_text
-    assert "'quality_failed'" in script_text
+    assert re.search(r"['\"]semantic_failed['\"]", script_text)
+    assert re.search(r"['\"]quality_failed['\"]", script_text)
 
 
 def test_native_surface_eval_harness_fails_duplicate_and_unresolved_holds() -> None:
@@ -403,7 +768,10 @@ def test_prompt_architecture_evals_wait_for_async_phase_b_followup() -> None:
     for script_path in (EVAL_SCRIPT, NATIVE_SURFACE_EVAL_SCRIPT):
         script_text = script_path.read_text(encoding="utf-8")
         assert "followUpGraceMs" in script_text
-        assert "VIVENTIUM_EVAL_FOLLOWUP_GRACE_MS || '30000'" in script_text
+        assert re.search(
+            r"VIVENTIUM_EVAL_FOLLOWUP_GRACE_MS\s*\|\|\s*['\"]30000['\"]",
+            script_text,
+        )
         assert "--follow-up-grace-ms=" in script_text
         assert "awaitingAsyncFollowUp" in script_text
         assert "latest.cortexInsightCount > 0" in script_text
@@ -414,8 +782,11 @@ def test_native_surface_judge_summary_includes_web_search_source_evidence() -> N
     for script_path in (EVAL_SCRIPT, NATIVE_SURFACE_EVAL_SCRIPT):
         script_text = script_path.read_text(encoding="utf-8")
         assert "web_search_sources" in script_text
-        assert "event?.data?.type === 'web_search'" in script_text
-        assert "anchor: position > 0 ? `turn${turn}search${position - 1}` : ''" in script_text
+        assert re.search(r"event\?\.data\?\.type\s*===\s*['\"]web_search['\"]", script_text)
+        assert re.search(
+            r"anchor:\s*position\s*>\s*0\s*\?\s*`turn\$\{turn\}search\$\{position - 1\}`\s*:\s*['\"]['\"]",
+            script_text,
+        )
         assert "link_host" in script_text
         assert "snippet_preview" in script_text
 

@@ -71,9 +71,9 @@ The v0_4 product has four different continuity surfaces that must not be conflat
   projects, jargon, transcript mistakes, and private/separate story boundaries. The summarizer must
   not import facts from reference context into the meeting summary unless the transcript itself
   supports them; conflicts remain explicit uncertainty/caveats.
-- The summarizer/model route is configurable and fallback-aware. The default operator candidate
-  order is Claude Code `claude-opus-4-8` at `xhigh`, Claude Code `opus` alias at `xhigh`, then
-  Codex/OpenAI `gpt-5.5` at `high`, then Codex/OpenAI `gpt-5.4` at `high`;
+- The summarizer/model route is configurable and fallback-aware. The default operator candidate is
+  Codex/OpenAI `gpt-5.6-sol` at `xhigh`. Anthropic Opus remains an explicit/provider-availability
+  fallback, not the preferred route when both providers are available;
   `VIVENTIUM_MEMORY_HARDENING_MODEL_FALLBACKS` can override that order with
   `provider:model:effort` entries. Failed candidate attempts must be logged as redacted
   reason/status/timeout metadata, not as raw prompts or transcript text.
@@ -256,6 +256,8 @@ The key memory rule is simple:
 - private risk/blind-spot/opportunity scratchpads are not saved memory
 - generated periphery indexes must not be stuffed into `drafts`
 - do not add a saved-memory `periphery` key for risk radar as the first implementation
+- the built-in risk-radar routine runs with `memoryWriteMode=off` and produces no memory proposal by
+  default
 - durable facts that emerge from periphery work must go through governed memory proposals
 
 The health-pressure gauge is a separate decision. It may eventually need a compact, always-available
@@ -474,6 +476,22 @@ both code and QA:
 - Otherwise the user experiences “memory did not work” even though the recovery layer actually found
   the right context.
 
+#### 2.6.7 Saved-memory writes are ordered and revision protected
+
+- Detached memory writing is asynchronous relative to the visible answer, but it is not lossy.
+  Turns for one user must run FIFO without coalescing or dropping an intermediate Telegram, web, or
+  voice turn. Different users may continue in parallel.
+- Each writer run must use one memory snapshot for both prompt construction and expected revisions.
+  A later write or delete may apply only if the key still has that revision; creation of an absent
+  key uses the same atomic contract and the unique user/key index.
+- A revision conflict preserves the newer value and records a public-safe failed-write audit event.
+  Audit logs may contain per-process hashes, key names, outcomes, and error classes, but not raw user,
+  conversation, message, or memory values.
+- Hardener proposals capture expected revisions when the proposal is created. Apply and replay fail
+  closed for missing or stale revisions. Rollback reverses only the exact post-apply revisions
+  produced by that run; a newer live write is preserved and reported as a conflict. Legacy rollback
+  snapshots without post-apply revision state are not applied destructively.
+
 ### 2.7 Strict Memory Rules
 
 The following rules are product requirements. They preserve the user wording, normalized only for
@@ -658,6 +676,24 @@ Product contract:
 - default schedule is daily `0 3 * * *` when enabled
 - daily schedules run at local macOS wall-clock time; `timezone` is exported for logs/operator
   context and must not be confused with a LaunchAgent timezone override
+- `timezone: local` resolves at compile/install time to the Mac's current IANA timezone. The default
+  is portable and follows travel or a system-timezone change after recompilation; it is not locked
+  to the installer's original city.
+- The LaunchAgent owns one 03:00 `StartCalendarInterval` trigger. Do not add `StartInterval`, cron,
+  Workbench, or a helper watchdog as a second model-work cadence. macOS may coalesce a calendar fire
+  after sleep; the public-safe trigger receipt records what actually happened.
+- Install/configure/upgrade/start reconciliation is loader-only and idempotent: an identical loaded
+  plist is a no-op, a matching unloaded plist is bootstrapped without a bootout, and real drift is
+  unloaded/replaced/reloaded exactly once with post-action verification. Every lifecycle action
+  writes a public-safe generation-hash receipt; no raw path, email, or command is included. The
+  install/uninstall state machine holds its own process lock so direct and wrapper-driven
+  reconciliation cannot race through `launchctl`.
+- Only explicit `enabled: false` uninstalls the LaunchAgent. A missing or invalid generated key is
+  preserved and reported as unknown rather than interpreted as disable.
+- `memory-harden status` must distinguish installed/loaded state, calendar alignment, a conflicting
+  interval trigger, system timezone, generated runtime timezone context, last exit, lifecycle
+  receipt, latest trigger/run, healthy success, missed, failed, and awaiting-first-run states without
+  starting model work.
 - default lookback is 7 days
 - default idle gate skips users active in the last 60 minutes
 - the wrapper has a separate power/thermal gate for model-backed hardening and transcript ingest:
@@ -702,6 +738,9 @@ Product contract:
 - apply and rollback audit summaries may record public-safe counts, key names, timestamps, and
   rollback-summary filenames, but never raw memory values, raw user ids, transcripts, prompts, or
   rollback snapshot contents
+- apply/replay preserves the first rollback snapshot for the run. Rollback is key-scoped and CAS-
+  protected; it may complete partially with explicit conflicts but must never delete and recreate a
+  user's full memory set around intervening live writes.
 - redacted run logs record memory-instruction presence/hash, lookback coverage, message counts,
   conversation counts, prompt size, and changed key names without storing raw conversation text
 - macOS installs reconcile the LaunchAgent from generated config; the scheduled job invokes the
@@ -721,9 +760,9 @@ Product contract:
   `FAIL` for provider errors, inconclusive eligibility, unavailable runtime dependencies, stale
   transcript/vector work that should have run, or an unexpected empty selection.
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
-  auth, preferring Claude Code `claude-opus-4-8` at `xhigh` when Anthropic is available and falling
-  back through the Claude Code `opus` alias before Codex/OpenAI `gpt-5.5` at `high` and then
-  `gpt-5.4` at `high` when OpenAI is the available foundation route
+  auth, preferring Codex/OpenAI `gpt-5.6-sol` at `xhigh` when OpenAI is available. Anthropic
+  `claude-opus-4-8` at `xhigh` remains the launch-ready route for an Anthropic-only install or an
+  explicit operator override; fallback attempts must remain visible and must not masquerade as Sol
 - the OpenAI/Codex hardening path must pass a Codex/OpenAI-compatible structured output schema and
   the configured reasoning effort to the Codex CLI, matching the compiler-emitted tuple and
   configurable fallback list instead of relying on stale internal hardener fallbacks. The
@@ -782,6 +821,10 @@ Product rules:
 - Duplicate saved-memory keys and duplicate connected-provider key rows are repaired with the
   dry-run-first `bin/viventium memory-dedupe` workflow. Unique indexes are created only after an
   apply run proves no duplicates remain.
+- Generated runtimes set Mongoose automatic index creation off. On startup, the launcher first
+  runs the dedupe migration in read-only JSON mode; it creates the required unique indexes only
+  when that check reports zero duplicate groups. Existing installs with duplicates stay readable,
+  receive an actionable warning, and are never modified automatically.
 
 ### What to check
 
@@ -805,6 +848,8 @@ Product rules:
 - detached memory writer failures surface as degraded/reconnect state and do not repeat the same
   provider-auth failure on every chat
 - memory/provider-key dedupe is run as a dry-run/apply migration before unique indexes are enabled
+- startup refuses automatic unique-index creation when its dry-run detects duplicate rows, while a
+  clean database receives the indexes without requiring a manual owner-machine step
 
 ### What not to publish
 

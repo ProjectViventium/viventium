@@ -900,6 +900,7 @@ USAGE
 }
 
 compile_config() {
+  local compile_status=0
   refresh_repo_python
   ensure_app_support_layout "$APP_SUPPORT_DIR"
   export VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"
@@ -907,8 +908,11 @@ compile_config() {
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
     --config "$CONFIG_FILE" \
     --output-dir "$RUNTIME_DIR" \
-    "$@"
+    "$@" || compile_status=$?
   unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE
+  if [[ "$compile_status" -ne 0 ]]; then
+    return "$compile_status"
+  fi
   if [[ -f "$GENERATED_LIBRECHAT_YAML" ]]; then
     export VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="$GENERATED_LIBRECHAT_YAML"
   fi
@@ -941,7 +945,7 @@ sync_memory_hardening_schedule() {
       return 1
     fi
     echo "Memory hardening schedule installed."
-  elif [[ -f "$plist_path" ]]; then
+  elif [[ "$enabled" == "false" && -f "$plist_path" ]]; then
     if [[ ! -f "$memory_harden_script" ]]; then
       echo "Warning: memory hardening cleanup skipped; memory_harden.py was not found." >&2
       return 0
@@ -955,6 +959,11 @@ sync_memory_hardening_schedule() {
       return 1
     fi
     echo "Memory hardening schedule disabled."
+  elif [[ -z "$enabled" && -f "$plist_path" ]]; then
+    echo "Warning: generated config does not declare memory hardening enabled/disabled; preserving the existing LaunchAgent." >&2
+  elif [[ -n "$enabled" && "$enabled" != "false" ]]; then
+    echo "Warning: generated memory hardening enabled value '$enabled' is invalid; preserving the existing LaunchAgent." >&2
+    return 1
   fi
 }
 
@@ -1482,14 +1491,23 @@ dev_runtime_command() {
       fi
       runtime_checkout_command "${runtime_checkout_args[@]}"
       if [[ "$validate" == "1" ]]; then
-        compile_config
-        "$REPO_ROOT/scripts/viventium/doctor.sh" \
+        if ! compile_config; then
+          echo "Runtime activation validation failed during config compilation; the running stack was not restarted." >&2
+          return 1
+        fi
+        if ! "$REPO_ROOT/scripts/viventium/doctor.sh" \
           --config "$CONFIG_FILE" \
           --runtime-dir "$RUNTIME_DIR" \
           --repo-root "$REPO_ROOT" \
           --lock-file "$LOCK_FILE" \
-          --prefer-existing-checkout-head
-        runtime_checkout_refresh_helper
+          --prefer-existing-checkout-head; then
+          echo "Runtime activation validation failed during doctor checks; the running stack was not restarted." >&2
+          return 1
+        fi
+        if ! runtime_checkout_refresh_helper; then
+          echo "Runtime activation validation could not refresh the helper; the running stack was not restarted." >&2
+          return 1
+        fi
       fi
       if [[ "$restart" == "1" ]]; then
         if is_stack_running; then

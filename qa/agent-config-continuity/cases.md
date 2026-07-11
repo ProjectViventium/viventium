@@ -11,6 +11,7 @@ Use stable `AGCFG-NNN` IDs for agent config continuity cases.
 | `AGCFG-001` | Agent edits, source sync, and reload preserve user-visible configuration without silent field loss. | User-visible behavior matches source, docs, persisted state, and logs | Agent Builder, sync review, Mongo/source/generated config | `tests/release/test_agent_sync_review_contract.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `AGCFG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `AGCFG-003` | Web Search capability state matches runtime/provider readiness | Agent Builder, source/live/generated config, persisted agent state, status output | sync compare, generated config inspection, browser UI, logs/state | FAIL (escaped 2026-05-18; config-capability rerun pending) |
+| `AGCFG-004` | Deferred tool configuration survives sync and discoveries bind in the same invocation without cross-request leakage. | Recall stays eager while large operational schemas remain available on demand. | source/live agent config, sync compare, event-driven tool binding | sync and binding regressions plus live compare/reload | PASS-AUTOMATED 2026-07-11; live sync/reload proof pending |
 
 ## `AGCFG-001` - Core User Flow
 
@@ -52,6 +53,7 @@ rows before claiming a pass when the feature behavior changes.
 | `AGCFG-UC-001` | On Agent Builder, sync review, Mongo/source/generated config, verify that agent edits, source sync, and reload preserve user-visible configuration without silent field loss. | owning requirement for `AGCFG-001` / `AGCFG-001` | Agent Builder, sync review, Mongo/source/generated config | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to AGCFG-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `AGCFG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `AGCFG-002` / `AGCFG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to AGCFG-002. | The user sees an honest setup, retry, or degraded-state result for AGCFG-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `AGCFG-UC-003` | Compare Agent Builder's Web Search enabled state against generated config and actual provider readiness after a search failure. | `docs/requirements_and_learnings/37_LibreChat_v083_Config_Alignment.md` / `AGCFG-003` | Agent Builder browser UI, sync compare, generated config, status output | Live agent state, source-of-truth bundle, generated LibreChat YAML, provider health/status, persisted tool-call state | Capability UI, runtime config, and provider readiness are either all healthy or the degraded gap is explicit before user-facing search claims. | FAIL (escaped 2026-05-18; rerun pending) |
+| `AGCFG-UC-004` | Ask Viv to recall history and then use a deferred operational tool in the same turn after agent sync/reload. | `37_LibreChat_v083_Config_Alignment.md` / `AGCFG-004` | Chrome chat, agent compare/sync, runtime logs | A/B/C drift, prompt-frame tool counts, binding logs, visible tool result | Recall stays available eagerly and the discovered operational tool works in the same invocation without another request's tools leaking in. | PASS-AUTOMATED 2026-07-11; live proof pending |
 
 ## `AGCFG-003` - Web Search Capability State Must Match Runtime Readiness
 
@@ -76,3 +78,17 @@ rows before claiming a pass when the feature behavior changes.
 - Automation: `tests/release/test_agent_sync_review_contract.py`,
   `tests/release/test_config_compiler.py`, and user-grade browser QA.
 - Last run: FAIL (escaped 2026-05-18; config-capability rerun pending).
+
+## `AGCFG-004` - Request-Scoped Deferred Tool Binding
+
+- Compare source, live, and pending agent state before sync; verify `tool_options` is protected.
+- Keep `file_search` eager and mark bulk operational tools `defer_loading: true`.
+- Discover a deferred tool and use it in the same event-driven invocation; overlap two requests with
+  different discoveries and confirm neither receives the other's tools.
+- Reload the runtime and repeat the compare.
+- Expected: token-heavy schemas remain deferred, discovered tools bind immediately in request scope,
+  and compare/sync/reload preserves the structured options.
+- Forbidden: prompt-text/agent-name routing, next-turn-only discovery, shared mutable binding, or a
+  default push over unreviewed live drift.
+- Evidence: source/live/generated A/B/C compare, dry-run, sync tests, binding tests, runtime logs.
+- Last run: PASS-AUTOMATED 2026-07-11; live compare/reload proof pending.

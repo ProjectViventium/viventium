@@ -28,6 +28,8 @@ being silently reduced to caption-only turns.
    being readable by the model.
 7. OCR-gated Office/OpenDocument files auto-route into context extraction and either use the
    configured OCR/parser path or fail honestly if that runtime capability is unavailable.
+8. PPTX uploads extract slide text, speaker notes, and supported embedded image media; embedded
+   images enter the same vision path as ordinary image uploads when the ingress surface supports it.
 
 ## Evidence Rules
 

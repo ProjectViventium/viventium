@@ -139,6 +139,16 @@ def test_runtime_env_defaults_to_modern_playground_and_keeps_classic_opt_in() ->
     assert invalid_env["VIVENTIUM_PLAYGROUND_VARIANT"] == "modern"
 
 
+def test_runtime_env_disables_automatic_mongoose_index_creation() -> None:
+    config = minimal_compile_config()
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["MONGO_AUTO_INDEX"] == "false"
+
+
 def test_prompt_workbench_sidecar_compiles_as_explicit_runtime_opt_in() -> None:
     config = minimal_compile_config()
     disabled_env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
@@ -168,12 +178,28 @@ def test_config_compiler_exports_default_timezone_from_global_settings() -> None
     assert env["VIVENTIUM_DEFAULT_TIMEZONE"] == "Europe/Amsterdam"
 
 
-def test_config_compiler_default_timezone_falls_back_to_product_default() -> None:
+def test_config_compiler_default_timezone_follows_system_local_timezone(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_compiler, "system_timezone_name", lambda: "America/Toronto")
     config = minimal_compile_config()
 
     env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
 
     assert env["VIVENTIUM_DEFAULT_TIMEZONE"] == "America/Toronto"
+    assert env["VIVENTIUM_MEMORY_HARDENING_TIMEZONE"] == "America/Toronto"
+
+
+def test_config_compiler_local_timezone_setting_is_portable(monkeypatch) -> None:
+    monkeypatch.setattr(config_compiler, "system_timezone_name", lambda: "Europe/Amsterdam")
+    config = minimal_compile_config()
+    config["settings"] = {"timezone": "local"}
+    config["runtime"]["memory_hardening"] = {"timezone": "local"}
+
+    env = config_compiler.render_runtime_env(config, config_compiler.build_agent_assignments(config))
+
+    assert env["VIVENTIUM_DEFAULT_TIMEZONE"] == "Europe/Amsterdam"
+    assert env["VIVENTIUM_MEMORY_HARDENING_TIMEZONE"] == "Europe/Amsterdam"
 
 
 def test_memory_hardening_explicit_provider_controls_cli_provider() -> None:
@@ -346,6 +372,46 @@ def test_memory_hardening_rejects_non_launch_ready_openai_model() -> None:
         )
 
 
+def test_memory_hardening_accepts_gpt56_sol_for_overnight_automation() -> None:
+    settings = config_compiler.resolve_memory_hardening_settings(
+        {
+            "runtime": {
+                "memory_hardening": {
+                    "openai_model": "gpt-5.6-sol",
+                }
+            }
+        }
+    )
+
+    assert settings["openai_model"] == "gpt-5.6-sol"
+
+
+def test_memory_hardening_accepts_installed_gpt55_during_model_rollout() -> None:
+    settings = config_compiler.resolve_memory_hardening_settings(
+        {
+            "runtime": {
+                "memory_hardening": {
+                    "openai_model": "gpt-5.5",
+                }
+            }
+        }
+    )
+
+    assert settings["openai_model"] == "gpt-5.5"
+
+
+@pytest.mark.parametrize("filename", ["config.full.example.yaml", "config.minimal.example.yaml"])
+def test_shipped_config_examples_default_automation_to_sol_xhigh(filename: str) -> None:
+    config = yaml.safe_load((REPO_ROOT / filename).read_text(encoding="utf-8"))
+    memory_hardening = config["runtime"]["memory_hardening"]
+    host_worker = config["integrations"]["glasshive"]["host_worker"]
+
+    assert memory_hardening["openai_model"] == "gpt-5.6-sol"
+    assert memory_hardening["openai_reasoning_effort"] == "xhigh"
+    assert host_worker["codex_model"] == "gpt-5.6-sol"
+    assert host_worker["codex_reasoning_effort"] == "xhigh"
+
+
 def test_build_custom_endpoints_xai_defaults_to_grok_43() -> None:
     xai = custom_endpoint(config_compiler.build_custom_endpoints(), "xai")
     models = xai["models"]["default"]
@@ -498,6 +564,45 @@ def test_runtime_config_drift_check_fails_closed_on_stale_live_config(tmp_path: 
     assert report["reason"] == "runtime_config_drift"
     assert "viventium" in report["diff"]["live_vs_compiled"]["changed"]
     assert reviewed["status"] == "reviewed_drift"
+
+
+def test_runtime_config_drift_resolves_expected_mcp_transport_and_rejects_wrong_url(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    write_config(config_path, minimal_compile_config())
+    live_payload = config_compiler.render_current_librechat_config(
+        config_path=config_path,
+        output_dir=runtime_dir,
+    )
+    config = config_compiler.load_yaml(config_path)
+    assignments = config_compiler.build_agent_assignments(config)
+    runtime_env = config_compiler.render_runtime_env(config, assignments)
+    live_payload = config_compiler.resolve_runtime_config_placeholders(
+        live_payload,
+        runtime_env,
+    )
+    live_path = runtime_dir / "librechat.yaml"
+    live_path.write_text(yaml.safe_dump(live_payload, sort_keys=False), encoding="utf-8")
+
+    matching = config_compiler.check_runtime_config_drift(
+        config_path=config_path,
+        live_runtime_config_path=live_path,
+    )
+    assert matching["status"] == "ok"
+
+    live_payload["mcpServers"]["scheduling-cortex"]["url"] = (
+        "http://127.0.0.1:65535/mcp"
+    )
+    live_path.write_text(yaml.safe_dump(live_payload, sort_keys=False), encoding="utf-8")
+    wrong_url = config_compiler.check_runtime_config_drift(
+        config_path=config_path,
+        live_runtime_config_path=live_path,
+    )
+    assert wrong_url["status"] == "blocked"
+    assert "mcpServers" in wrong_url["diff"]["live_vs_compiled"]["changed"]
 
 
 def test_runtime_config_drift_check_blocks_when_no_live_config(tmp_path: Path) -> None:
@@ -699,6 +804,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in runtime_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180" in runtime_env
@@ -718,11 +825,11 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_MEMORY_HARDENING_MIN_APPLY_INTERVAL_SECONDS=300" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER_PROFILE=launch_ready_only" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.5" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-sol" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_MODEL=claude-opus-4-8" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT=xhigh" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.5" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL=gpt-5.6-sol" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT=xhigh" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_DIR=" in runtime_env
     assert "VIVENTIUM_MEMORY_TRANSCRIPTS_IGNORE_GLOBS=" in runtime_env
@@ -905,6 +1012,9 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert default_host_env["GLASSHIVE_DEFAULT_WORKER_PROFILE"] == "codex-cli"
     assert default_host_env["GLASSHIVE_DEFAULT_EXECUTION_MODE"] == "host"
     assert default_host_env["WPR_DEFAULT_EXECUTION_MODE"] == "host"
+    assert default_host_env["WPR_MODEL_HOST_CODEX_CLI"] == "gpt-5.6-sol"
+    assert default_host_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
+    assert default_host_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
 
     disabled_host_config = copy.deepcopy(base_config)
     disabled_host_config["integrations"]["glasshive"] = {
@@ -943,6 +1053,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
             "codex_ignore_user_config": False,
             "codex_disable_features": ["image_generation"],
             "codex_allowed_reasoning_efforts": ["none", "low", "medium", "high", "xhigh"],
+            "codex_reasoning_effort": "xhigh",
             "codex_reasoning_effort_fallback": "medium",
             "codex_xhigh_route_proven": True,
             "claude_enable_chrome": True,
@@ -980,6 +1091,7 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert enabled_env["WPR_CODEX_CLI_IGNORE_USER_CONFIG"] == "false"
     assert enabled_env["WPR_CODEX_CLI_DISABLE_FEATURES"] == "image_generation"
     assert enabled_env["WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS"] == "none,low,medium,high,xhigh"
+    assert enabled_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
     assert enabled_env["WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK"] == "medium"
     assert enabled_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
     assert enabled_env["WPR_CLAUDE_CODE_ENABLE_CHROME"] == "true"
@@ -1541,6 +1653,36 @@ def test_source_of_truth_exposes_glasshive_native_scheduler_and_followup_tools()
     assert expected_tools.issubset(set(glasshive_lc_policy["tool_names"]))
 
 
+def test_periphery_read_tools_are_declared_on_every_conscious_agent_surface() -> None:
+    expected_tools = {
+        "periphery_list_mcp_scheduling-cortex",
+        "periphery_read_mcp_scheduling-cortex",
+    }
+
+    agents_bundle = load_source_of_truth_agents_bundle()
+    main_agent = agents_bundle["mainAgent"]
+    assert expected_tools.issubset(set(main_agent["tools"]))
+
+    scheduling_policy = next(
+        server
+        for server in agents_bundle["config"]["viventium"]["background_cortices"][
+            "activation_policy"
+        ]["direct_action_mcp_servers"]
+        if server["server"] == "scheduling-cortex"
+    )
+    assert expected_tools.issubset(set(scheduling_policy["tool_names"]))
+
+    librechat_source = load_source_of_truth_librechat_yaml()
+    librechat_scheduling_policy = next(
+        server
+        for server in librechat_source["viventium"]["background_cortices"]["activation_policy"][
+            "direct_action_mcp_servers"
+        ]
+        if server["server"] == "scheduling-cortex"
+    )
+    assert expected_tools.issubset(set(librechat_scheduling_policy["tool_names"]))
+
+
 def test_config_compiler_compile_phase_ignores_stale_generated_source_override(tmp_path: Path) -> None:
     config = {
         "version": 1,
@@ -1727,7 +1869,7 @@ def test_render_librechat_yaml_preserves_defaults_and_overlays_compiled_memory_a
     assert "webSearch" not in librechat_yaml
 
 
-def test_build_agent_assignments_openai_only_uses_current_gpt5_profile() -> None:
+def test_build_agent_assignments_openai_only_uses_gpt56_workload_profile() -> None:
     config = {
         "llm": {
             "primary": {
@@ -1742,15 +1884,21 @@ def test_build_agent_assignments_openai_only_uses_current_gpt5_profile() -> None
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("openai", "gpt-5.4")
-    assert assignments["background_analysis"] == ("openai", "gpt-5.4")
-    assert assignments["red_team"] == ("openai", "gpt-5.4")
-    assert assignments["productivity"] == ("openai", "gpt-5.4")
-    assert assignments["support"] == ("openai", "gpt-5.4")
+    assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
+    assert assignments["background_analysis"] == ("openai", "gpt-5.6-terra")
+    assert assignments["confirmation_bias"] == ("openai", "gpt-5.6-terra")
+    assert assignments["red_team"] == ("openai", "gpt-5.6-sol")
+    assert assignments["deep_research"] == ("openai", "gpt-5.6-sol")
+    assert assignments["productivity"] == ("openai", "gpt-5.6-terra")
+    assert assignments["parietal"] == ("openai", "gpt-5.6-terra")
+    assert assignments["pattern_recognition"] == ("openai", "gpt-5.6-terra")
+    assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
+    assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
+    assert assignments["support"] == ("openai", "gpt-5.6-terra")
     assert assignments["memory"] == ("openai", "gpt-5.4")
 
 
-def test_build_agent_assignments_anthropic_only_uses_current_claude47_profile() -> None:
+def test_build_agent_assignments_anthropic_only_uses_opus48_agent_fallback_profile() -> None:
     config = {
         "llm": {
             "primary": {
@@ -1766,12 +1914,16 @@ def test_build_agent_assignments_anthropic_only_uses_current_claude47_profile() 
     assignments = config_compiler.build_agent_assignments(config)
 
     assert assignments["conscious"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["background_analysis"] == ("anthropic", "claude-opus-4-8")
+    assert assignments["confirmation_bias"] == ("anthropic", "claude-opus-4-8")
     assert assignments["red_team"] == ("anthropic", "claude-opus-4-8")
     assert assignments["deep_research"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["productivity"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["productivity"] == ("anthropic", "claude-opus-4-8")
+    assert assignments["parietal"] == ("anthropic", "claude-opus-4-8")
+    assert assignments["pattern_recognition"] == ("anthropic", "claude-opus-4-8")
+    assert assignments["emotional_resonance"] == ("anthropic", "claude-opus-4-8")
     assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-8")
+    assert assignments["support"] == ("anthropic", "claude-opus-4-8")
     assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
 
@@ -1992,19 +2144,19 @@ def test_render_runtime_env_exports_explicit_background_role_assignments() -> No
     assignments = config_compiler.build_agent_assignments(config)
     env = config_compiler.render_runtime_env(config, assignments)
 
-    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"] == "anthropic"
-    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "claude-sonnet-4-5"
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_PROVIDER"] == "openai"
+    assert env["VIVENTIUM_CORTEX_BACKGROUND_ANALYSIS_LLM_MODEL"] == "gpt-5.6-terra"
     assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_MODEL"] == "gpt-5.4"
+    assert env["VIVENTIUM_CORTEX_RED_TEAM_LLM_MODEL"] == "gpt-5.6-sol"
     assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_MODEL"] == "gpt-5.4"
-    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_PROVIDER"] == "anthropic"
-    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] == "claude-sonnet-4-5"
+    assert env["VIVENTIUM_CORTEX_PRODUCTIVITY_LLM_MODEL"] == "gpt-5.6-terra"
+    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_PROVIDER"] == "openai"
+    assert env["VIVENTIUM_CORTEX_SUPPORT_LLM_MODEL"] == "gpt-5.6-terra"
     assert env["VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER"] == "groq"
-    assert env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] == "meta-llama/llama-4-scout-17b-16e-instruct"
+    assert env["VIVENTIUM_BACKGROUND_ACTIVATION_MODEL"] == "qwen/qwen3.6-27b"
 
 
-def test_build_agent_assignments_use_current_generation_models() -> None:
+def test_build_agent_assignments_prefer_gpt56_agents_with_opus48_available_as_fallback() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -2042,17 +2194,17 @@ def test_build_agent_assignments_use_current_generation_models() -> None:
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["background_analysis"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["confirmation_bias"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["red_team"] == ("openai", "gpt-5.4")
-    assert assignments["deep_research"] == ("openai", "gpt-5.4")
-    assert assignments["productivity"] == ("openai", "gpt-5.4")
-    assert assignments["parietal"] == ("openai", "gpt-5.4")
-    assert assignments["pattern_recognition"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["emotional_resonance"] == ("anthropic", "claude-sonnet-4-5")
-    assert assignments["strategic_planning"] == ("anthropic", "claude-opus-4-8")
-    assert assignments["support"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
+    assert assignments["background_analysis"] == ("openai", "gpt-5.6-terra")
+    assert assignments["confirmation_bias"] == ("openai", "gpt-5.6-terra")
+    assert assignments["red_team"] == ("openai", "gpt-5.6-sol")
+    assert assignments["deep_research"] == ("openai", "gpt-5.6-sol")
+    assert assignments["productivity"] == ("openai", "gpt-5.6-terra")
+    assert assignments["parietal"] == ("openai", "gpt-5.6-terra")
+    assert assignments["pattern_recognition"] == ("openai", "gpt-5.6-terra")
+    assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
+    assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
+    assert assignments["support"] == ("openai", "gpt-5.6-terra")
     assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
 
@@ -2097,7 +2249,7 @@ def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> No
     assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
 
 
-def test_build_agent_assignments_limits_anthropic_opus_background_usage() -> None:
+def test_build_agent_assignments_uses_opus48_for_every_anthropic_agent_fallback_role() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -2136,7 +2288,18 @@ def test_build_agent_assignments_limits_anthropic_opus_background_usage() -> Non
         if assignment == ("anthropic", "claude-opus-4-8") and role != "conscious"
     }
 
-    assert opus_roles == {"red_team", "deep_research", "strategic_planning"}
+    assert opus_roles == {
+        "background_analysis",
+        "confirmation_bias",
+        "red_team",
+        "deep_research",
+        "productivity",
+        "parietal",
+        "pattern_recognition",
+        "emotional_resonance",
+        "strategic_planning",
+        "support",
+    }
 
 
 def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundation_exists() -> None:
@@ -2177,11 +2340,11 @@ def test_build_agent_assignments_do_not_promote_xai_into_main_agent_when_foundat
 
     assignments = config_compiler.build_agent_assignments(config)
 
-    assert assignments["conscious"] == ("openai", "gpt-5.4")
+    assert assignments["conscious"] == ("openai", "gpt-5.6-sol")
     assert assignments["memory"] == ("openai", "gpt-5.4")
 
 
-def test_render_runtime_env_uses_llama_4_scout_for_background_activation_defaults() -> None:
+def test_render_runtime_env_uses_qwen_36_for_background_activation_defaults() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -2217,15 +2380,15 @@ def test_render_runtime_env_uses_llama_4_scout_for_background_activation_default
     env = config_compiler.render_runtime_env(config, assignments)
 
     assert env["VIVENTIUM_CORTEX_CONFIRMATION_BIAS_ACTIVATION_LLM_MODEL"] == (
-        "meta-llama/llama-4-scout-17b-16e-instruct"
+        "qwen/qwen3.6-27b"
     )
     assert env["VIVENTIUM_CORTEX_DEEP_RESEARCH_ACTIVATION_LLM_MODEL"] == (
-        "meta-llama/llama-4-scout-17b-16e-instruct"
+        "qwen/qwen3.6-27b"
     )
     assert env["VIVENTIUM_CORTEX_PARIETAL_CORTEX_ACTIVATION_LLM_MODEL"] == (
-        "meta-llama/llama-4-scout-17b-16e-instruct"
+        "qwen/qwen3.6-27b"
     )
-    assert env["OTUC_ACTIVATION_LLM"] == "meta-llama/llama-4-scout-17b-16e-instruct"
+    assert env["OTUC_ACTIVATION_LLM"] == "qwen/qwen3.6-27b"
 
 
 def test_config_compiler_enables_code_interpreter_when_requested(tmp_path: Path) -> None:
@@ -3187,6 +3350,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in runtime_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in runtime_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in runtime_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
@@ -3194,6 +3358,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
 
@@ -4368,8 +4533,8 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
     assert "OPENAI_MODELS=" not in runtime_env
     assert "ANTHROPIC_API_KEY=anthropic-test" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=anthropic" in runtime_env
-    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=claude-opus-4-8" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-sol" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
     assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
     assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
@@ -4455,7 +4620,7 @@ def test_render_librechat_yaml_uses_connected_openai_for_memory_when_no_other_fo
 
     assert env["VIVENTIUM_OPENAI_AUTH_MODE"] == "connected_account"
     assert env["VIVENTIUM_MEMORY_HARDENING_PROVIDER"] == "openai"
-    assert env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-5.5"
+    assert env["VIVENTIUM_MEMORY_HARDENING_MODEL"] == "gpt-5.6-sol"
     assert env["VIVENTIUM_MEMORY_HARDENING_EFFORT"] == "xhigh"
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"

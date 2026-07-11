@@ -376,3 +376,89 @@ shipped background-agent roster.
   - Runtime must not promote or emit deterministic fallback text over the already-visible answer.
   - The fix must be stream/canonical-state based; no prompt wording, policy wording, provider label,
     user identity, or agent-name branching is allowed.
+
+### ACT-35 Red Team decision-method stack
+
+- User prompt:
+  - "Use Socratic interrogation, inversion, premortem, assumption mapping, reference-class forecasting, Bayesian updating, kill criteria, stage-gates, stakeholder mapping, FMEA, and OODA to red-team this concrete plan: I will sell an AI workflow diagnostic to private equity firms, get portco access after one unpaid demo, and scale only after a paid pilot."
+- Expected primary activations:
+  - `Red Team`
+- Outcome assertions:
+  - Red Team activates because the user applied decision-quality methods to a concrete plan, not because runtime parsed keywords.
+  - The Red Team result should include a method lens and a smallest test, kill criterion, or stage gate instead of a generic "be careful" response.
+  - A pure education prompt such as "What is FMEA?" remains a negative control unless paired with a concrete plan, claim, or decision.
+  - Source/runtime Red Team execution keeps `web_search` available when runtime web search is enabled and keeps OpenAI `reasoning_effort: xhigh`; Anthropic-only rewrites must not carry OpenAI reasoning fields.
+
+### ACT-36 Full activation-routing model and prompt gate
+
+- Scenario:
+  - Evaluate every source-owned background-cortex activation prompt through the exact runtime
+    classifier path, including disabled specialist scopes as isolated classifier coverage.
+- Corpus:
+  - Use the public-safe `background_activation_routing` family in
+    `qa/prompt-architecture/evals/prompt-bank.json`.
+  - Include positive, sibling-negative, latest-turn, quoted/hypothetical/negated, output-shape,
+    direct-action, multilingual, typo, combined-intent, prompt-injection, and casual/factual cases.
+- Expected primary activation route:
+  - `groq / qwen/qwen3.6-27b`
+  - runtime controls: `reasoning_effort: none`, hidden reasoning, `seed: 0`, JSON-object mode
+- Outcome assertions:
+  - The runner calls `BackgroundCortexService.checkCortexActivation`; it does not reimplement the
+    classifier or inline a second copy of activation prompts.
+  - Required recall, activation precision, false positives, false negatives, required/forbidden
+    consistency, optional allowed-activation variance, provider completion, and p50/p95/max latency
+    are reported separately.
+  - A timeout/provider error is unavailable evidence and fails that decision; it is never scored as
+    a correct negative.
+  - Source activation prompts are registry-owned and use positive gates, negative precedence,
+    sibling boundaries, and contrastive examples; runtime code contains no prompt-keyword NLU.
+  - The source/compiler/helper/title inventory contains no retiring Scout default.
+  - Real browser QA with the QA account proves at least one positive and one negative enabled-cortex
+    turn, visible card/detail state, refresh persistence, logs, and Mongo message content.
+
+### ACT-37 Interruption-safe Phase B status persistence
+
+- Scenario:
+  - An activated cortex emits `activated`, `running`, and terminal status snapshots while the main
+    response and other cortices may still be in flight.
+- Outcome assertions:
+  - The first snapshot is persisted without waiting for all Phase B work to finish.
+  - Rapid queued updates coalesce to the latest full snapshot instead of creating an unbounded write
+    backlog.
+  - One failed write is logged and does not prevent a later snapshot from being persisted.
+  - The completion pipeline drains older incremental writes before the authoritative final snapshot,
+    preventing stale `activated`/`running` state from overwriting `complete`/`error` state.
+  - A real browser positive run shows the terminal card, preserves it after refresh, and agrees with
+    Mongo `messages.content`.
+  - A deliberate local acceptance waits for a visible and persisted active card, performs the
+    supported runtime stop/start, proves the API process changed and the same active row survived,
+    then waits the normal stale-recovery window for terminal `stale_cortex_startup_recovery` state.
+  - Final reload shows the named recovered card and expanded detail, stores `unfinished=false`, and
+    does not show `Generation in progress`.
+- Last run: `PASS` on 2026-07-10; see
+  `reports/2026-07-09-interruption-restart-browser-qa.md`.
+
+### ACT-38 Non-cooperative activation-provider timeout
+
+- Scenario:
+  - The primary activation provider's stream promise remains pending even after its abort signal is
+    raised.
+- Outcome assertions:
+  - Runtime independently enforces the configured per-attempt deadline.
+  - The primary attempt is recorded as `provider_timeout` without being marked semantically false.
+  - The next configured fallback runs and may return a normal classifier decision inside the same
+    global Phase A budget.
+  - No user-text, provider-name, or agent-name heuristic is introduced.
+- Last run: `PASS` on 2026-07-10 in the owning service suite.
+
+### ACT-39 Source-owned activation-policy prompt reference
+
+- Scenario:
+  - Raw source config carries `activation_policy.prompt` as a canonical `{promptRef, promptVars?}`
+    value before compiler preprocessing.
+- Outcome assertions:
+  - The nested config schema accepts the object without `CONFIG_BYPASS_VALIDATION` being needed for
+    this field.
+  - Runtime resolves the reference through the canonical prompt registry.
+  - The rendered policy contains the referenced instructions and never `[object Object]`.
+- Last run: `PASS` on 2026-07-10 in the nested schema/runtime tests and focused exact-model probe.

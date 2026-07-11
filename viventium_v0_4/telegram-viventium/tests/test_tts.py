@@ -1062,6 +1062,7 @@ def test_summarize_voice_markup_counts_structural_markers():
     assert tts_module.summarize_voice_markup(
         '<emotion value="excited"/>Hi [laughter]. <break time="1s"/>'
         '<speed ratio="1.1"/>Fast. <volume ratio="0.9"/>Soft. <spell>ABC</spell>'
+        '<soft>Close.</soft> [pause] [breath]'
     ) == {
         "laughter": 1,
         "emotion": 1,
@@ -1069,6 +1070,9 @@ def test_summarize_voice_markup_counts_structural_markers():
         "speed": 1,
         "volume": 1,
         "spell": 1,
+        "xai_inline": 2,
+        "xai_wrapping": 1,
+        "xai_total": 3,
     }
 
 

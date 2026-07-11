@@ -84,6 +84,13 @@ For `deferred_tools` to matter, all of these must be true:
 3. Specific tools are marked with `tool_options[toolId].defer_loading: true`
 4. The run is using event-driven tool execution
 
+For Viventium's large operational tool set, deferred discovery must remain request-scoped and usable
+inside the same model invocation that discovers a tool. The fallback binding path resolves the
+current event-driven tool set dynamically; it must not snapshot tools before discovery or mutate a
+shared global binding that could leak one request's tools into another. `file_search` remains eager
+for recall continuity, while bulk operational schemas may use `tool_options.defer_loading: true`.
+Agent compare/sync/reload must preserve `tool_options` as protected structured configuration.
+
 ### Mechanical Flow
 
 1. **Tool registry is built**
@@ -203,6 +210,41 @@ These are the important current LibreChat features/config levers for Viventium.
 - `web_search`
 
 This means model specs can be used not only for curated model menus, but also for curated default behavior profiles.
+
+### GPT-5.6 Agent Builder Contract
+
+As of 2026-07-09, the supported OpenAI GPT-5.6 picker family is:
+
+- `gpt-5.6` (alias to flagship Sol)
+- `gpt-5.6-sol`
+- `gpt-5.6-terra`
+- `gpt-5.6-luna`
+
+The launcher publishes all four IDs for direct API-key inventories, and LibreChat's fallback catalog
+carries the same list for offline/failed discovery. The ChatGPT/Codex connected-account route is a
+distinct provider surface: the 2026-07-09 QA account probe accepted `gpt-5.6-sol` and
+`gpt-5.6-terra`, rejected the generic `gpt-5.6` alias with an explicit unsupported-model response,
+and did not resolve `gpt-5.6-luna`. Its generated inventory therefore exposes only Sol and Terra,
+with Sol first. Do not silently remap a configured model. An explicit operator model-list override
+remains authoritative.
+
+Agent Builder must default a newly selected GPT-5.6 model to `useResponsesApi: true` when the field
+is unset, persist that visible parameter with the agent, and apply the same default for API-created
+agents. An explicit user choice remains authoritative. This follows OpenAI's GPT-5.6 guidance to use
+Responses for reasoning, tools, and multi-turn workflows. Chat Completions with function tools is
+compatible only at effective reasoning `none`.
+
+The July 9, 2026 built-in model migration is a separate, evaluated source/compiler/runtime change:
+the conscious agent and quality-first cortices use explicit Sol; balanced and latency-sensitive
+cortices use explicit Terra; every text route uses Opus 4.8 fallback; and the voice route remains
+Grok 4.3. The exact map and efforts live in `02_Background_Agents.md`. This does not add Pro mode,
+persisted reasoning, Programmatic Tool Calling, explicit caching, or multi-agent orchestration.
+There is no `gpt-5.6-pro` model slug; Pro is a reasoning mode.
+
+Official sources:
+
+- [Using GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model)
+- [GPT-5.6 migration guide](https://developers.openai.com/api/docs/guides/upgrading-to-gpt-5p6-sol)
 
 ### OCR / Files
 

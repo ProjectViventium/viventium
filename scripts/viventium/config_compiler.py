@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -74,7 +75,8 @@ DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
 ) * 1000
 SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
-DEFAULT_VIVENTIUM_TIMEZONE = "America/Toronto"
+DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS = "4000"
+DEFAULT_VIVENTIUM_TIMEZONE = "local"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 DEFAULT_ASSEMBLYAI_STT_MODEL = "u3-rt-pro"
@@ -204,6 +206,51 @@ KEYCHAIN_SERVICE_ENV_FALLBACKS = {
     "viventium/telegram_codex_bot_token": ("TELEGRAM_CODEX_BOT_TOKEN",),
     "viventium/x_ai_api_key": ("XAI_API_KEY",),
 }
+
+
+def _valid_timezone_name(value: str) -> bool:
+    try:
+        ZoneInfo(value)
+    except (ValueError, ZoneInfoNotFoundError):
+        return False
+    return True
+
+
+def system_timezone_name() -> str:
+    for env_name in ("VIVENTIUM_SYSTEM_TIMEZONE", "TZ"):
+        candidate = os.environ.get(env_name, "").strip()
+        if candidate and candidate.lower() not in {"local", "system", "auto"}:
+            if _valid_timezone_name(candidate):
+                return candidate
+
+    for candidate_path in (Path("/etc/localtime"), Path("/var/db/timezone/localtime")):
+        try:
+            resolved = os.path.realpath(candidate_path)
+        except OSError:
+            continue
+        marker = "/zoneinfo/"
+        if marker in resolved:
+            candidate = resolved.split(marker, 1)[1]
+            if _valid_timezone_name(candidate):
+                return candidate
+
+    timezone_file = Path("/etc/timezone")
+    try:
+        candidate = timezone_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        candidate = ""
+    if candidate and _valid_timezone_name(candidate):
+        return candidate
+    return "UTC"
+
+
+def resolve_timezone_name(value: Any) -> str:
+    candidate = str(value or DEFAULT_VIVENTIUM_TIMEZONE).strip()
+    if not candidate or candidate.lower() in {"local", "system", "auto"}:
+        return system_timezone_name()
+    if not _valid_timezone_name(candidate):
+        raise SystemExit(f"Invalid IANA timezone: {candidate}")
+    return candidate
 
 
 def glasshive_enabled(config: dict[str, Any]) -> bool:
@@ -509,6 +556,21 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "integrations.glasshive.host_worker.codex_disable_features",
     )
     valid_codex_efforts = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    codex_model = str(
+        host_worker.get("codex_model")
+        or model_override_for(config, "openai", "glasshive_codex")
+        or "gpt-5.6-sol"
+    ).strip()
+    if not codex_model:
+        raise SystemExit("integrations.glasshive.host_worker.codex_model must be non-empty")
+    codex_reasoning_effort = str(
+        host_worker.get("codex_reasoning_effort") or "xhigh"
+    ).strip().lower()
+    if codex_reasoning_effort not in valid_codex_efforts:
+        raise SystemExit(
+            "integrations.glasshive.host_worker.codex_reasoning_effort "
+            "must be none, minimal, low, medium, high, or xhigh"
+        )
     codex_allowed_reasoning_efforts = optional_csv(
         host_worker.get("codex_allowed_reasoning_efforts"),
         "integrations.glasshive.host_worker.codex_allowed_reasoning_efforts",
@@ -530,9 +592,11 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
             "integrations.glasshive.host_worker.codex_reasoning_effort_fallback "
             "must be none, minimal, low, medium, high, or xhigh"
         )
-    codex_xhigh_route_proven = ""
-    if "codex_xhigh_route_proven" in host_worker:
-        codex_xhigh_route_proven = "true" if resolve_bool(host_worker.get("codex_xhigh_route_proven"), False) else "false"
+    codex_xhigh_route_proven = (
+        "true"
+        if resolve_bool(host_worker.get("codex_xhigh_route_proven"), True)
+        else "false"
+    )
     claude_effort = str(host_worker.get("claude_effort") or "").strip().lower()
     if claude_effort and claude_effort not in {"low", "medium", "high", "xhigh", "max"}:
         raise SystemExit("integrations.glasshive.host_worker.claude_effort must be low, medium, high, xhigh, or max")
@@ -566,6 +630,8 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "codex_plugin_cache": str(host_worker.get("codex_plugin_cache") or "").strip(),
         "codex_ignore_user_config": codex_ignore_user_config,
         "codex_disable_features": codex_disable_features,
+        "codex_model": codex_model,
+        "codex_reasoning_effort": codex_reasoning_effort,
         "codex_allowed_reasoning_efforts": codex_allowed_reasoning_efforts,
         "codex_reasoning_effort_fallback": codex_reasoning_effort_fallback,
         "codex_xhigh_route_proven": codex_xhigh_route_proven,
@@ -585,31 +651,31 @@ VOICE_PROVIDER_KEYCHAIN_SERVICES = {
 
 MODEL_MAP = {
     "openai": {
-        "conscious": "gpt-5.4",
-        "background_analysis": "gpt-5.4",
-        "confirmation_bias": "gpt-5.4",
-        "red_team": "gpt-5.4",
-        "deep_research": "gpt-5.4",
-        "productivity": "gpt-5.4",
-        "parietal": "gpt-5.4",
-        "pattern_recognition": "gpt-5.4",
-        "emotional_resonance": "gpt-5.4",
-        "strategic_planning": "gpt-5.4",
-        "support": "gpt-5.4",
+        "conscious": "gpt-5.6-sol",
+        "background_analysis": "gpt-5.6-terra",
+        "confirmation_bias": "gpt-5.6-terra",
+        "red_team": "gpt-5.6-sol",
+        "deep_research": "gpt-5.6-sol",
+        "productivity": "gpt-5.6-terra",
+        "parietal": "gpt-5.6-terra",
+        "pattern_recognition": "gpt-5.6-terra",
+        "emotional_resonance": "gpt-5.6-terra",
+        "strategic_planning": "gpt-5.6-sol",
+        "support": "gpt-5.6-terra",
         "memory": "gpt-5.4",
     },
     "anthropic": {
         "conscious": "claude-opus-4-8",
-        "background_analysis": "claude-sonnet-4-5",
-        "confirmation_bias": "claude-sonnet-4-5",
+        "background_analysis": "claude-opus-4-8",
+        "confirmation_bias": "claude-opus-4-8",
         "red_team": "claude-opus-4-8",
         "deep_research": "claude-opus-4-8",
-        "productivity": "claude-sonnet-4-5",
-        "parietal": "claude-sonnet-4-5",
-        "pattern_recognition": "claude-sonnet-4-5",
-        "emotional_resonance": "claude-sonnet-4-5",
+        "productivity": "claude-opus-4-8",
+        "parietal": "claude-opus-4-8",
+        "pattern_recognition": "claude-opus-4-8",
+        "emotional_resonance": "claude-opus-4-8",
         "strategic_planning": "claude-opus-4-8",
-        "support": "claude-sonnet-4-5",
+        "support": "claude-opus-4-8",
         "memory": "claude-sonnet-4-5",
     },
     "x_ai": {
@@ -644,12 +710,12 @@ AGENT_ASSIGNMENT_ROLES = {
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
     "anthropic": {"claude-opus-4-8"},
-    "openai": {"gpt-5.5"},
+    "openai": {"gpt-5.5", "gpt-5.6-sol"},
 }
 DEFAULT_MEMORY_HARDENING = {
     "enabled": False,
     "schedule": "0 3 * * *",
-    "timezone": "America/Toronto",
+    "timezone": "local",
     "operator_user_email": "",
     "provider": "",
     "lookback_days": 7,
@@ -662,7 +728,7 @@ DEFAULT_MEMORY_HARDENING = {
     "provider_profile": "launch_ready_only",
     "anthropic_model": "claude-opus-4-8",
     "anthropic_effort": "xhigh",
-    "openai_model": "gpt-5.5",
+    "openai_model": "gpt-5.6-sol",
     "openai_reasoning_effort": "xhigh",
     "transcripts": {
         "source_dir": "",
@@ -681,8 +747,47 @@ DEFAULT_MEMORY_HARDENING = {
 
 MEMORY_TRANSCRIPT_RAG_MODES = {"detailed_summary_only", "raw_and_summary", "raw_only"}
 
+FEELINGS_AGENT_SCOPES = {"all_agents", "conscious_agent"}
+FEELINGS_REACTION_ACTIVATION_MODES = {"always", "classified", "disabled"}
+FEELINGS_REACTION_PROVIDERS = {"openai", "anthropic", "xai", "groq", "google"}
+FEELINGS_REACTION_FALLBACK_PROVIDERS = FEELINGS_REACTION_PROVIDERS | {"none"}
+FEELINGS_REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh", "max"}
+FEELINGS_SERVICE_TIERS = {"auto", "default", "flex", "priority"}
+DEFAULT_FEELINGS = {
+    "available": True,
+    "default_enabled": False,
+    "agent_scope": "all_agents",
+    "reaction": {
+        "activation_mode": "always",
+        "provider": "openai",
+        "model": "gpt-5.6-terra",
+        "use_responses_api": True,
+        "reasoning_effort": "none",
+        "fast": True,
+        "service_tier": "priority",
+        "timeout_ms": 15000,
+        "fallback_provider": "anthropic",
+        "fallback_model": "claude-opus-4-8",
+        "activation_provider": "groq",
+        "activation_model": "qwen/qwen3.6-27b",
+        "activation_confidence_threshold": 0.55,
+        "activation_timeout_ms": 2000,
+    },
+    "bands": {
+        "energy": {"enabled": True, "baseline": 56, "half_life_minutes": 240},
+        "mood": {"enabled": True, "baseline": 58, "half_life_minutes": 360},
+        "drive": {"enabled": True, "baseline": 62, "half_life_minutes": 480},
+        "curiosity": {"enabled": True, "baseline": 66, "half_life_minutes": 45},
+        "vigilance": {"enabled": True, "baseline": 68, "half_life_minutes": 20},
+        "care": {"enabled": True, "baseline": 74, "half_life_minutes": 1440},
+        "connection": {"enabled": True, "baseline": 52, "half_life_minutes": 480},
+        "openness": {"enabled": True, "baseline": 55, "half_life_minutes": 180},
+        "play": {"enabled": True, "baseline": 48, "half_life_minutes": 90},
+    },
+}
+
 CURRENT_BACKGROUND_ACTIVATION_PROVIDER = "groq"
-CURRENT_BACKGROUND_ACTIVATION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+CURRENT_BACKGROUND_ACTIVATION_MODEL = "qwen/qwen3.6-27b"
 CURRENT_BACKGROUND_ACTIVATION_PROVIDER_ALIASES = {"groq"}
 OPTIONAL_BACKGROUND_ACTIVATION_PROVIDER_ALIASES = {"xai", "x_ai"}
 BACKGROUND_ACTIVATION_MODELS_BY_PROVIDER = {
@@ -787,7 +892,7 @@ CURATED_CUSTOM_ENDPOINTS = [
         "apiKeyEnv": "GROQ_API_KEY",
         "baseURL": "https://api.groq.com/openai/v1/",
         "models": [
-            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "qwen/qwen3.6-27b",
             "meta-llama/llama-4-maverick-17b-128e-instruct",
             "moonshotai/kimi-k2-instruct",
             "qwen/qwen3-32b",
@@ -796,8 +901,8 @@ CURATED_CUSTOM_ENDPOINTS = [
             "groq/compound",
             "groq/compound-mini",
         ],
-        "titleModel": "meta-llama/llama-4-scout-17b-16e-instruct",
-        "summaryModel": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "titleModel": "qwen/qwen3.6-27b",
+        "summaryModel": "qwen/qwen3.6-27b",
         "modelDisplayLabel": "Groq",
         "fetch": True,
     },
@@ -897,6 +1002,28 @@ SECRET_CONFIG_KEY_FRAGMENTS = (
     "client_secret",
     "refreshtoken",
     "refresh_token",
+)
+RUNTIME_CONFIG_PLACEHOLDER_ENV_KEYS = (
+    "SCHEDULING_MCP_URL",
+    "GLASSHIVE_MCP_URL",
+    "VIVENTIUM_MAIN_AGENT_ID",
+    "MS365_MCP_SERVER_URL",
+    "MS365_MCP_AUTH_URL",
+    "MS365_MCP_TOKEN_URL",
+    "MS365_MCP_REDIRECT_URI",
+    "MS365_MCP_CLIENT_ID",
+    "MS365_MCP_CLIENT_SECRET",
+    "MS365_MCP_SCOPE",
+    "GOOGLE_WORKSPACE_MCP_URL",
+    "GOOGLE_WORKSPACE_MCP_AUTH_URL",
+    "GOOGLE_WORKSPACE_MCP_TOKEN_URL",
+    "GOOGLE_WORKSPACE_MCP_REDIRECT_URI",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GOOGLE_WORKSPACE_MCP_SCOPE",
+    "SKYVERN_API_KEY",
+    "SKYVERN_BASE_URL",
+    "SKYVERN_APP_URL",
 )
 
 
@@ -1867,10 +1994,14 @@ def runtime_model_lists(
 
 def worker_runtime_model_env(config: dict[str, Any]) -> dict[str, str]:
     values: dict[str, str] = {}
-    openai_model = model_override_for(config, "openai", "glasshive_codex") or model_override_for(config, "openai", "default")
-    if openai_model:
-        values["WPR_MODEL_CODEX_CLI"] = openai_model
-        values["WPR_MODEL_OPENCLAW_CODEX"] = openai_model
+    openai_model = (
+        model_override_for(config, "openai", "glasshive_codex")
+        or model_override_for(config, "openai", "default")
+        or "gpt-5.6-sol"
+    )
+    values["WPR_MODEL_HOST_CODEX_CLI"] = openai_model
+    values["WPR_MODEL_CODEX_CLI"] = openai_model
+    values["WPR_MODEL_OPENCLAW_CODEX"] = openai_model
     anthropic_model = model_override_for(config, "anthropic", "glasshive_claude") or model_override_for(config, "anthropic", "default")
     if anthropic_model:
         values["WPR_MODEL_CLAUDE_CODE"] = anthropic_model
@@ -1909,11 +2040,11 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
         )
 
     foundation_fallback = foundation_available[0]
-    conscious_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
-    reflective_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
+    conscious_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
+    reflective_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     analytical_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
-    emotional_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
-    support_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
+    emotional_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
+    support_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     memory_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
 
     return {
@@ -2157,6 +2288,134 @@ def conversation_recall_enabled(config: dict[str, Any]) -> bool:
     return resolve_bool(personalization.get("default_conversation_recall"), False)
 
 
+def resolve_feelings_settings(config: dict[str, Any]) -> dict[str, Any]:
+    runtime = config.get("runtime", {}) or {}
+    raw = runtime.get("feelings", {}) or {}
+    if raw and not isinstance(raw, dict):
+        raise SystemExit("runtime.feelings must be a mapping when provided")
+
+    settings = copy.deepcopy(DEFAULT_FEELINGS)
+    settings.update({key: value for key, value in raw.items() if key not in {"reaction", "bands"}})
+    settings["available"] = resolve_bool(settings.get("available"), True)
+    settings["default_enabled"] = resolve_bool(settings.get("default_enabled"), False)
+    settings["agent_scope"] = str(settings.get("agent_scope") or "all_agents").strip().lower()
+    if settings["agent_scope"] not in FEELINGS_AGENT_SCOPES:
+        raise SystemExit(
+            "runtime.feelings.agent_scope must be all_agents or conscious_agent"
+        )
+
+    raw_reaction = raw.get("reaction", {}) if isinstance(raw, dict) else {}
+    if raw_reaction and not isinstance(raw_reaction, dict):
+        raise SystemExit("runtime.feelings.reaction must be a mapping when provided")
+    reaction = copy.deepcopy(DEFAULT_FEELINGS["reaction"])
+    reaction.update(raw_reaction or {})
+    reaction["activation_mode"] = str(
+        reaction.get("activation_mode") or "always"
+    ).strip().lower()
+    reaction["provider"] = str(reaction.get("provider") or "openai").strip().lower()
+    reaction["model"] = str(reaction.get("model") or "gpt-5.6-terra").strip()
+    reaction["use_responses_api"] = resolve_bool(
+        reaction.get("use_responses_api"), True
+    )
+    reaction["reasoning_effort"] = str(
+        reaction.get("reasoning_effort") or "none"
+    ).strip().lower()
+    reaction["fast"] = resolve_bool(reaction.get("fast"), True)
+    reaction["service_tier"] = str(
+        reaction.get("service_tier") or ("priority" if reaction["fast"] else "default")
+    ).strip().lower()
+    reaction["timeout_ms"] = positive_int(
+        reaction.get("timeout_ms"), "runtime.feelings.reaction.timeout_ms"
+    )
+    reaction["fallback_provider"] = str(
+        reaction.get("fallback_provider") or "anthropic"
+    ).strip().lower()
+    reaction["fallback_model"] = str(
+        reaction.get("fallback_model") or "claude-opus-4-8"
+    ).strip()
+    reaction["activation_provider"] = str(
+        reaction.get("activation_provider") or CURRENT_BACKGROUND_ACTIVATION_PROVIDER
+    ).strip().lower()
+    reaction["activation_model"] = str(
+        reaction.get("activation_model") or CURRENT_BACKGROUND_ACTIVATION_MODEL
+    ).strip()
+    try:
+        reaction["activation_confidence_threshold"] = float(
+            reaction.get("activation_confidence_threshold", 0.55)
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            "runtime.feelings.reaction.activation_confidence_threshold must be a number"
+        ) from exc
+    if not 0 <= reaction["activation_confidence_threshold"] <= 1:
+        raise SystemExit(
+            "runtime.feelings.reaction.activation_confidence_threshold must be between 0 and 1"
+        )
+    reaction["activation_timeout_ms"] = positive_int(
+        reaction.get("activation_timeout_ms"),
+        "runtime.feelings.reaction.activation_timeout_ms",
+    )
+    if reaction["activation_mode"] not in FEELINGS_REACTION_ACTIVATION_MODES:
+        raise SystemExit(
+            "runtime.feelings.reaction.activation_mode must be always, classified, or disabled"
+        )
+    if reaction["provider"] not in FEELINGS_REACTION_PROVIDERS:
+        raise SystemExit(
+            "runtime.feelings.reaction.provider must be openai, anthropic, xai, groq, or google"
+        )
+    if not reaction["model"]:
+        raise SystemExit("runtime.feelings.reaction.model must be non-empty")
+    if reaction["reasoning_effort"] not in FEELINGS_REASONING_EFFORTS:
+        raise SystemExit(
+            "runtime.feelings.reaction.reasoning_effort must be none, low, medium, high, xhigh, or max"
+        )
+    if reaction["service_tier"] not in FEELINGS_SERVICE_TIERS:
+        raise SystemExit(
+            "runtime.feelings.reaction.service_tier must be auto, default, flex, or priority"
+        )
+    if reaction["fallback_provider"] not in FEELINGS_REACTION_FALLBACK_PROVIDERS:
+        raise SystemExit(
+            "runtime.feelings.reaction.fallback_provider must be none, openai, anthropic, xai, groq, or google"
+        )
+    if reaction["fallback_provider"] != "none" and not reaction["fallback_model"]:
+        raise SystemExit("runtime.feelings.reaction.fallback_model must be non-empty")
+    settings["reaction"] = reaction
+
+    raw_bands = raw.get("bands", {}) if isinstance(raw, dict) else {}
+    if raw_bands and not isinstance(raw_bands, dict):
+        raise SystemExit("runtime.feelings.bands must be a mapping when provided")
+    unknown_bands = set(raw_bands) - set(DEFAULT_FEELINGS["bands"])
+    if unknown_bands:
+        raise SystemExit(
+            "runtime.feelings.bands contains unknown band(s): "
+            + ", ".join(sorted(unknown_bands))
+        )
+    bands = copy.deepcopy(DEFAULT_FEELINGS["bands"])
+    for band_id, raw_band in raw_bands.items():
+        if not isinstance(raw_band, dict):
+            raise SystemExit(f"runtime.feelings.bands.{band_id} must be a mapping")
+        bands[band_id].update(raw_band)
+    for band_id, band in bands.items():
+        band["enabled"] = resolve_bool(band.get("enabled"), True)
+        try:
+            baseline = float(band.get("baseline"))
+        except (TypeError, ValueError) as exc:
+            raise SystemExit(
+                f"runtime.feelings.bands.{band_id}.baseline must be a number between 0 and 100"
+            ) from exc
+        if not 0 <= baseline <= 100:
+            raise SystemExit(
+                f"runtime.feelings.bands.{band_id}.baseline must be between 0 and 100"
+            )
+        band["baseline"] = int(baseline) if baseline.is_integer() else baseline
+        band["half_life_minutes"] = positive_int(
+            band.get("half_life_minutes"),
+            f"runtime.feelings.bands.{band_id}.half_life_minutes",
+        )
+    settings["bands"] = bands
+    return settings
+
+
 def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     runtime = config.get("runtime", {}) or {}
     raw = runtime.get("memory_hardening", {}) or {}
@@ -2178,7 +2437,9 @@ def resolve_memory_hardening_settings(config: dict[str, Any]) -> dict[str, Any]:
     if settings["provider"] and settings["provider"] not in {"anthropic", "openai"}:
         raise SystemExit("runtime.memory_hardening.provider must be anthropic, openai, or empty")
     settings["schedule"] = str(settings.get("schedule") or DEFAULT_MEMORY_HARDENING["schedule"])
-    settings["timezone"] = str(settings.get("timezone") or DEFAULT_MEMORY_HARDENING["timezone"])
+    settings["timezone"] = resolve_timezone_name(
+        settings.get("timezone") or DEFAULT_MEMORY_HARDENING["timezone"]
+    )
     settings["provider_profile"] = str(
         settings.get("provider_profile") or DEFAULT_MEMORY_HARDENING["provider_profile"]
     )
@@ -2295,7 +2556,7 @@ def resolve_memory_hardening_model_tuple(
             "effort_env": "VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT",
         }
     available = [provider for provider in enabled_provider_names(config) if provider in {"anthropic", "openai"}]
-    provider = choose_provider(available, ["anthropic", "openai"], available[0] if available else "")
+    provider = choose_provider(available, ["openai", "anthropic"], available[0] if available else "")
     if provider == "anthropic":
         return {
             "provider": "anthropic",
@@ -2401,14 +2662,15 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         agents.get("default_main_agent_id") or DEFAULT_MAIN_AGENT_ID
     ).strip() or DEFAULT_MAIN_AGENT_ID
     default_conversation_recall = conversation_recall_enabled(config)
+    feelings = resolve_feelings_settings(config)
     memory_hardening = resolve_memory_hardening_settings(config)
     memory_hardening_model = resolve_memory_hardening_model_tuple(config, memory_hardening)
     global_settings = config.get("settings", {}) if isinstance(config.get("settings"), dict) else {}
-    default_timezone = str(
+    default_timezone = resolve_timezone_name(
         global_settings.get("timezone")
         or memory_hardening.get("timezone")
         or DEFAULT_VIVENTIUM_TIMEZONE
-    ).strip() or DEFAULT_VIVENTIUM_TIMEZONE
+    )
     retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
     auth_settings = resolve_auth_settings(config)
     openid_settings = auth_settings["openid"]
@@ -2526,6 +2788,52 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_DEFAULT_CONVERSATION_RECALL": "true"
         if default_conversation_recall
         else "false",
+        "VIVENTIUM_FEELINGS_AVAILABLE": "true" if feelings["available"] else "false",
+        "VIVENTIUM_FEELINGS_DEFAULT_ENABLED": "true"
+        if feelings["default_enabled"]
+        else "false",
+        "VIVENTIUM_FEELINGS_AGENT_SCOPE": feelings["agent_scope"],
+        "VIVENTIUM_FEELINGS_BANDS_JSON": json.dumps(
+            feelings["bands"], separators=(",", ":")
+        ),
+        "VIVENTIUM_FEELINGS_REACTION_ACTIVATION_MODE": feelings["reaction"][
+            "activation_mode"
+        ],
+        "VIVENTIUM_FEELINGS_REACTION_PROVIDER": feelings["reaction"]["provider"],
+        "VIVENTIUM_FEELINGS_REACTION_MODEL": feelings["reaction"]["model"],
+        "VIVENTIUM_FEELINGS_REACTION_USE_RESPONSES_API": "true"
+        if feelings["reaction"]["use_responses_api"]
+        else "false",
+        "VIVENTIUM_FEELINGS_REACTION_REASONING_EFFORT": feelings["reaction"][
+            "reasoning_effort"
+        ],
+        "VIVENTIUM_FEELINGS_REACTION_FAST": "true"
+        if feelings["reaction"]["fast"]
+        else "false",
+        "VIVENTIUM_FEELINGS_REACTION_SERVICE_TIER": feelings["reaction"][
+            "service_tier"
+        ],
+        "VIVENTIUM_FEELINGS_REACTION_TIMEOUT_MS": str(
+            feelings["reaction"]["timeout_ms"]
+        ),
+        "VIVENTIUM_FEELINGS_REACTION_FALLBACK_PROVIDER": feelings["reaction"][
+            "fallback_provider"
+        ],
+        "VIVENTIUM_FEELINGS_REACTION_FALLBACK_MODEL": feelings["reaction"][
+            "fallback_model"
+        ],
+        "VIVENTIUM_FEELINGS_REACTION_ACTIVATION_PROVIDER": feelings["reaction"][
+            "activation_provider"
+        ],
+        "VIVENTIUM_FEELINGS_REACTION_ACTIVATION_MODEL": feelings["reaction"][
+            "activation_model"
+        ],
+        "VIVENTIUM_FEELINGS_REACTION_ACTIVATION_CONFIDENCE": str(
+            feelings["reaction"]["activation_confidence_threshold"]
+        ),
+        "VIVENTIUM_FEELINGS_REACTION_ACTIVATION_TIMEOUT_MS": str(
+            feelings["reaction"]["activation_timeout_ms"]
+        ),
         "VIVENTIUM_MEMORY_HARDENING_ENABLED": "true"
         if memory_hardening["enabled"]
         else "false",
@@ -2617,6 +2925,10 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if auth_settings["bootstrap_registration_once"]
         else "false",
         "ALLOW_PASSWORD_RESET": "true" if auth_settings["allow_password_reset"] else "false",
+        # Unique Mongo indexes are created by the guarded startup migration after
+        # duplicate inspection. Automatic creation can make upgrades fail before
+        # that non-destructive check has run.
+        "MONGO_AUTO_INDEX": "false",
         "VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN": auth_settings[
             "connected_accounts_return_origin"
         ],
@@ -2731,6 +3043,12 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["WPR_HOST_CODEX_CLI_AVAILABLE"] = "true" if glasshive_host_worker["codex_cli_available"] else "false"
         env["WPR_HOST_CLAUDE_CLI_AVAILABLE"] = "true" if glasshive_host_worker["claude_cli_available"] else "false"
         env["WPR_HOST_OPENCLAW_CLI_AVAILABLE"] = "true" if glasshive_host_worker["openclaw_cli_available"] else "false"
+        env["WPR_MODEL_HOST_CODEX_CLI"] = str(glasshive_host_worker["codex_model"])
+        env["WPR_MODEL_CODEX_CLI"] = str(glasshive_host_worker["codex_model"])
+        env["WPR_MODEL_OPENCLAW_CODEX"] = str(glasshive_host_worker["codex_model"])
+        env["WPR_CODEX_CLI_REASONING_EFFORT"] = str(
+            glasshive_host_worker["codex_reasoning_effort"]
+        )
         if glasshive_host_worker["codex_cli_path"]:
             env["WPR_CODEX_BIN"] = str(glasshive_host_worker["codex_cli_path"])
         if glasshive_host_worker["claude_cli_path"]:
@@ -3021,6 +3339,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] = "690"
     env["VIVENTIUM_TEXT_PHASE_A_AWAIT_MS"] = "1300"
     env["VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS"] = "2000"
+    # When the fast window times out with zero activations, reuse the existing non-blocking late
+    # detector so a provider tail-latency spike does not silently erase an otherwise valid cortex.
+    # This is a total background budget across the configured fallback chain and never extends the
+    # main-answer wait. Four seconds covers the evaluated Qwen tail plus bounded fallbacks.
+    env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] = DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS
     env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "true"
     env["VIVENTIUM_VOICE_LOG_LATENCY"] = "1"
     # Enable LibreChat structured/redacted/rotated debug logs (debug-YYYY-MM-DD.log). Without this,
@@ -3850,6 +4173,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS",
         "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS",
         "VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS",
+        "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS",
         "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD",
         "VIVENTIUM_VOICE_LOG_LATENCY",
         "OPENID_CLIENT_ID",
@@ -4205,6 +4529,22 @@ def _redacted_runtime_config_value(value: Any, key_path: tuple[str, ...] = ()) -
     return value
 
 
+def resolve_runtime_config_placeholders(value: Any, env: dict[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: resolve_runtime_config_placeholders(item, env)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [resolve_runtime_config_placeholders(item, env) for item in value]
+    if not isinstance(value, str):
+        return value
+    resolved = value
+    for env_key in RUNTIME_CONFIG_PLACEHOLDER_ENV_KEYS:
+        resolved = resolved.replace(f"${{{env_key}}}", str(env.get(env_key, "")))
+    return resolved
+
+
 def normalize_prompt_affecting_runtime_config(payload: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
     for section in PROMPT_AFFECTING_RUNTIME_CONFIG_SECTIONS:
@@ -4273,11 +4613,21 @@ def check_runtime_config_drift(
 
     live_path = next((path for path in candidates if path.is_file()), None)
     compiled_output_dir = live_path.parent if live_path else APP_SUPPORT_VIVENTIUM_DIR / "runtime"
-    compiled_now = render_current_librechat_config(
-        config_path=config_path.expanduser().resolve(),
-        output_dir=compiled_output_dir,
+    config = load_yaml(config_path.expanduser().resolve())
+    validate_config(config, config_path.expanduser().resolve())
+    assignments = build_agent_assignments(config)
+    runtime_env = render_runtime_env(config, assignments)
+    compiled_now = resolve_runtime_config_placeholders(
+        render_current_librechat_config(
+            config_path=config_path.expanduser().resolve(),
+            output_dir=compiled_output_dir,
+        ),
+        runtime_env,
     )
-    source = load_source_of_truth_librechat_yaml()
+    source = resolve_runtime_config_placeholders(
+        load_source_of_truth_librechat_yaml(),
+        runtime_env,
+    )
     report: dict[str, Any] = {
         "check": "runtime_config_drift",
         "status": "blocked",
@@ -4302,7 +4652,10 @@ def check_runtime_config_drift(
         report["reason"] = "no_live_runtime_config_found"
         return report
 
-    live = load_live_runtime_config(live_path)
+    live = resolve_runtime_config_placeholders(
+        load_live_runtime_config(live_path),
+        runtime_env,
+    )
     report["live"] = _section_hash_report(live)
     live_hashes = runtime_config_section_hashes(live)
     report["diff"]["live_vs_source"] = _diff_section_hashes(

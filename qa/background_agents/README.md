@@ -1,9 +1,13 @@
 # Background Agents QA
 
+- `reports/2026-07-10-qa-memory-contamination-prevention.md` — owner-targeted QA contamination RCA,
+  surgical cleanup evidence, structured QA isolation, derived-index reconciliation, and real
+  connected-account browser acceptance.
+
 ## Scope
 
-Verify Anthropic background-cortex execution stays compatible with provider thinking defaults while
-the shipped built-in bundle remains truthful for fresh installs and local restarts.
+Verify the shipped conscious/subconscious execution matrix, provider-native fallback behavior, and
+background-cortex runtime remain truthful for fresh installs and local restarts.
 
 Additional current QA artifacts:
 
@@ -16,6 +20,9 @@ Additional current QA artifacts:
 - `qa/background_agents/phase_b_main_fallback_persistence_2026-05-09.md` — main-model fallback regression proving in-flight Phase B work is preserved and persisted against the final fallback/primary answer
 - `qa/background_agents/late_stream_termination_rendering_2026-05-09.md` — web rendering/backend persistence regression for assistant messages that have visible text plus a late stream-termination error part
 - `qa/background_agents/visible_cards_browser_qa_2026-05-10.md` — real browser regression proving named background-agent cards are visible, persisted after reload, and stored as successful terminal cortex insights
+- `qa/background_agents/reports/2026-07-09-gpt-5-6-conscious-subconscious-routing.md` — GPT-5.6 Sol/Terra workload routing, Opus 4.8 fallback, live sync, and QA-account browser acceptance
+- `qa/background_agents/reports/2026-07-09-activation-routing-model-eval.md` — full 11-cortex Prompt Workbench classifier corpus, Scout/Qwen/GPT-OSS comparison, prompt repair, runtime model controls, and QA-account acceptance
+- `qa/background_agents/reports/2026-07-09-interruption-restart-browser-qa.md` — ACT-37 real browser/Mongo supported-stop-start acceptance proving active-state durability, stale startup recovery, expanded terminal reload detail, and no generation placeholder
 
 ## Outcome Philosophy
 
@@ -41,11 +48,21 @@ sarcasm, denial, and recent-context carryover.
   explicitly in the source-of-truth bundle.
 - Deep Research must ship with `web_search` in its built-in tool surface whenever runtime web
   search is enabled.
-- Deep Research on `openAI / gpt-5.4` must ship `model_parameters.reasoning_effort: xhigh` and must
+- Deep Research on `openAI / gpt-5.6-sol` must ship
+  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must
   not drift onto Anthropic/Google-only `thinkingBudget`.
-- When Anthropic is the execution family, only `Red Team`, `Deep Research`, and `Strategic
-  Planning` may use `claude-opus-4-7`; other background agents must stay on
-  `claude-sonnet-4-5`.
+- Red Team must ship with `web_search` in its built-in tool surface whenever runtime web search is
+  enabled.
+- Red Team on `openAI / gpt-5.6-sol` must ship and runtime-normalize to
+  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must not drift onto
+  Anthropic/Google-only `thinkingBudget`.
+- The conscious agent uses Sol/medium; Strategic Planning uses Sol/high; Background Analysis,
+  Confirmation Bias, Parietal Cortex, and Pattern Recognition use Terra/medium; MS365, Google,
+  Emotional Resonance, and Viventium User Help use Terra/low.
+- Every conscious/subconscious text route uses `anthropic / claude-opus-4-8` as fallback. Voice
+  remains `xai / grok-4.3 / none` with a latency-preserving Terra/none voice fallback.
+- High-effort Opus fallbacks preserve the source-owned Anthropic thinking budgets, and cross-provider
+  fallback initialization strips OpenAI-only `reasoning_effort` and `useResponsesApi` fields.
 - Built-in background-agent provider rewrites must replace provider-specific `model_parameters`
   with the canonical bag for the final provider family instead of blindly merging stale keys.
 - Local LibreChat startup must continue sourcing built-in agent truth from
@@ -70,16 +87,18 @@ sarcasm, denial, and recent-context carryover.
      shipped built-ins
 4. Source-of-truth YAML audit verifies there are zero shipped Anthropic background agents with
    `temperature` but no explicit `thinking`/`thinkingBudget`.
-5. Deep Research source/runtime audit verifies:
-   - its source-of-truth tool list contains `web_search`
+5. Deep Research and Red Team source/runtime audit verifies:
+   - each source-of-truth tool list contains `web_search`
    - runtime normalization keeps `web_search` when `VIVENTIUM_WEB_SEARCH_ENABLED=true`
    - seed-style upgrades do not preserve stale existing tools when the incoming built-in bundle
      restores `web_search`
-   - its OpenAI execution parameters use `reasoning_effort: xhigh`, not `thinkingBudget`
+   - each OpenAI execution bag uses `reasoning_effort: xhigh` plus Responses API, not
+     `thinkingBudget`
 6. Provider-matrix audit verifies:
    - the documented OpenAI-only, Anthropic-only, and mixed execution matrix matches compiler
      assignments
-   - Anthropic Opus is limited to `Red Team`, `Deep Research`, and `Strategic Planning`
+   - GPT-5.6 Sol/Terra and effort assignments match the documented workload map
+   - Anthropic Opus 4.8 is the explicit fallback for every conscious/subconscious text route
    - runtime normalization and seed/upsert repair stale cross-provider model-parameter drift
 7. Start-script inspection verifies local startup still re-seeds built-ins from the source-of-truth
    agents bundle through `viventium-seed-agents.js`.
@@ -89,12 +108,11 @@ sarcasm, denial, and recent-context carryover.
 - Targeted Jest suites pass for Anthropic endpoint, memory, and background-cortex execution.
 - The source-of-truth audit reports zero remaining Anthropic built-ins with ambiguous
   `temperature`-plus-default-thinking behavior.
-- The Deep Research audit proves fresh installs and upgrade/restart reseeds restore both:
+- The Deep Research and Red Team audits prove fresh installs and upgrade/restart reseeds restore both:
   - `web_search` when runtime web search is enabled
   - `reasoning_effort: xhigh` on the shipped OpenAI execution bag
-- The provider-matrix audit proves Anthropic-only installs keep Opus limited to `Red Team`,
-  `Deep Research`, and `Strategic Planning`, while other Anthropic background agents stay on
-  Sonnet.
+- The provider-matrix audit proves OpenAI-capable installs use the GPT-5.6 workload map and
+  Anthropic-only installs use the explicit Opus 4.8 fallback profile for built-in agents.
 - Start-path inspection confirms fresh installs and restarts consume the corrected bundle instead of
   relying on live Mongo edits.
 - Live QA separates activation success from downstream user-scoped auth:

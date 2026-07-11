@@ -749,6 +749,10 @@ Host-worker UX and callback requirements:
   `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN=true` or `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN=true` is set, or
   until an explicit deployment allowlist includes `xhigh`; another provider account or model catalog
   is not enough proof.
+  Viventium's compiled host-worker profile is a deployment-owned exception backed by a real
+  `gpt-5.6-sol`/xHigh run: it requests Sol/xHigh and emits
+  `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN=true` by default. A deployment that changes the Codex route must
+  override that proof/allowlist and re-run route QA rather than accepting a hidden downgrade.
 - GlassHive host prompts and MCP descriptions must not override that deployment/user default with
   `medium` just because a task is simple. For ordinary bounded work, omit the per-run `effort` field
   unless the user explicitly asks for a cheaper/faster pass. For deep research, critical analysis,
@@ -1868,7 +1872,7 @@ persistent home and workspace mounts.
 | `GLASSHIVE_UI_SHOW_LEGACY_OPENCLAW_PROFILE` | unset / false | Opt-in visibility for the legacy OpenClaw profile choice in the old built-in UI. The option remains visible when `openclaw-general` is the selected/default profile, but Codex/Claude-first deployments should not advertise OpenClaw as a routine create option. This is UI visibility only; runtime selection still uses `profile + execution_mode`. |
 | `WPR_OPENCLAW_START_GATEWAY` | `false` | Opt-in OpenClaw loopback gateway process; task runs use `openclaw agent --local` directly for lower overhead and to avoid session contention |
 | `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS` | `none,low,medium,high` plus `minimal`/`xhigh` only by explicit route proof or allowlist | Comma-separated Codex effort values supported by the configured Codex provider route; set this to the directly probed active-route subset when a deployment route supports or rejects values such as `minimal`; if unset, minimal and xhigh are not sent to the provider |
-| `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN` / `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN` | `false` | Enables built-in xhigh acceptance only after the active Codex route has been proven by a real worker run; explicit allowlists can still override when deployment QA owns the proof |
+| `WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN` / `GLASSHIVE_CODEX_XHIGH_ROUTE_PROVEN` | standalone GlassHive: `false`; Viventium compiled host profile: `true` | Enables built-in xhigh acceptance only after the active Codex route has been proven by a real worker run; Viventium owns that proof for its shipped Sol route, while changed/custom routes must be re-proven or explicitly constrained |
 | `WPR_CODEX_CLI_REASONING_EFFORT_FALLBACK` | `medium` | Codex effort used when the requested per-run/user default effort is not allowed by `WPR_CODEX_CLI_ALLOWED_REASONING_EFFORTS`; keep `medium` as the quality floor unless active-route QA proves a different supported value is the right product tradeoff |
 | `WPR_CODEX_CLI_IGNORE_USER_CONFIG` | `false` | Workspace-mode Codex should load the worker-local config by default so projected broker/native MCPs work; set `true` only for an explicit locked-down provider route |
 | `WPR_CODEX_CLI_DISABLE_FEATURES` | unset | Optional comma-separated Codex feature disables for explicitly locked-down provider routes. The default must preserve native Codex app, multi-agent, plugin, browser/computer, workspace-dependency, and related capability surfaces; set this only with dated preflight/QA evidence that the lockdown is intentional. |

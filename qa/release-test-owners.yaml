@@ -30,6 +30,8 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_detached_librechat_supervision.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_feelings_contract.py:
+    qa_owner: qa/emotional-cortex/cases.md
   tests/release/test_directory_link.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_default_nightly_routines.py:
@@ -64,6 +66,10 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_ollama_embeddings_prereqs.py:
     qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_openai_model_inventory.py:
+    qa_owner: qa/config-alignment/cases.md
+  tests/release/test_periphery_eval_harness.py:
+    qa_owner: qa/periphery-nightly-insights/cases.md
   tests/release/test_preflight.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_private_repo_resolution_contract.py:

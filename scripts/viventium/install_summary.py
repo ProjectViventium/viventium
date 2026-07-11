@@ -1165,7 +1165,10 @@ def brain_setup_state(
         return "Needs setup", feature_guidance(key)
     if key == "secondary_ai":
         if secondary_ai_configured(config):
-            return "Ready", "Fallback provider configured"
+            return (
+                "Configured",
+                "Fallback credential is present; validity is confirmed only by a live provider request.",
+            )
         return "Needs setup", "No fallback configured; add one later if you want provider redundancy."
     if key == "transcript_ingest":
         source = transcript_source_dir(config, runtime_env)

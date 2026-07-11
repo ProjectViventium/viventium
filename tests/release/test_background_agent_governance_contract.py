@@ -38,13 +38,13 @@ BACKGROUND_CORTEX_SERVICE = (
 )
 
 APPROVED_EXECUTION_FAMILIES = {
-    ("anthropic", "claude-sonnet-4-5"),
     ("anthropic", "claude-opus-4-8"),
-    ("openAI", "gpt-5.4"),
+    ("openAI", "gpt-5.6-sol"),
+    ("openAI", "gpt-5.6-terra"),
 }
-APPROVED_ACTIVATION_FAMILY = ("groq", "meta-llama/llama-4-scout-17b-16e-instruct")
+APPROVED_ACTIVATION_FAMILY = ("groq", "qwen/qwen3.6-27b")
 APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.20-non-reasoning")
-APPROVED_MAIN_AGENT_FAMILY = ("anthropic", "claude-opus-4-8")
+APPROVED_MAIN_AGENT_FAMILY = ("openAI", "gpt-5.6-sol")
 
 
 def _load_source_of_truth() -> dict:
@@ -227,6 +227,64 @@ def test_background_agent_execution_models_stay_in_launch_ready_families() -> No
         )
 
 
+def test_conscious_and_subconscious_agents_use_gpt56_by_workload_with_opus48_fallback() -> None:
+    bundle = _load_source_of_truth()
+    expected = {
+        "Viventium": ("gpt-5.6-sol", "medium"),
+        "Background Analysis": ("gpt-5.6-terra", "medium"),
+        "Confirmation Bias": ("gpt-5.6-terra", "medium"),
+        "Red Team": ("gpt-5.6-sol", "xhigh"),
+        "Deep Research": ("gpt-5.6-sol", "xhigh"),
+        "MS365": ("gpt-5.6-terra", "low"),
+        "Parietal Cortex": ("gpt-5.6-terra", "medium"),
+        "Pattern Recognition": ("gpt-5.6-terra", "medium"),
+        "Emotional Resonance": ("gpt-5.6-terra", "low"),
+        "Strategic Planning": ("gpt-5.6-sol", "high"),
+        "Viventium User Help": ("gpt-5.6-terra", "low"),
+        "Google": ("gpt-5.6-terra", "low"),
+    }
+
+    agents = {"Viventium": bundle["mainAgent"]}
+    agents.update({agent["name"]: agent for agent in bundle.get("backgroundAgents", [])})
+    assert set(agents) == set(expected)
+    opus_fallback_parameters = {
+        "Red Team": {"thinkingBudget": 4000},
+        "Deep Research": {"thinkingBudget": 4000},
+        "Strategic Planning": {"thinkingBudget": 2000},
+    }
+
+    for name, (model, effort) in expected.items():
+        agent = agents[name]
+        assert agent.get("provider") == "openAI"
+        assert agent.get("model") == model
+        assert agent.get("model_parameters") == {
+            "model": model,
+            "reasoning_effort": effort,
+            "useResponsesApi": True,
+        }
+        assert agent.get("fallback_llm_provider") == "anthropic"
+        assert agent.get("fallback_llm_model") == "claude-opus-4-8"
+        assert agent.get("fallback_llm_model_parameters") == {
+            "model": "claude-opus-4-8",
+            **opus_fallback_parameters.get(name, {}),
+        }
+
+    main_agent = bundle["mainAgent"]
+    assert main_agent.get("voice_llm_provider") == "xai"
+    assert main_agent.get("voice_llm_model") == "grok-4.3"
+    assert main_agent.get("voice_llm_model_parameters") == {
+        "model": "grok-4.3",
+        "reasoning_effort": "none",
+    }
+    assert main_agent.get("voice_fallback_llm_provider") == "openAI"
+    assert main_agent.get("voice_fallback_llm_model") == "gpt-5.6-terra"
+    assert main_agent.get("voice_fallback_llm_model_parameters") == {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "none",
+        "useResponsesApi": True,
+    }
+
+
 def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> None:
     bundle = _load_source_of_truth()
     sampling_params = {
@@ -247,7 +305,7 @@ def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> Non
 
     def is_openai_reasoning_without_sampling(model: str) -> bool:
         normalized = (model or "").strip().lower()
-        explicit_no_sampling_models = {"gpt-5.4"}
+        explicit_no_sampling_models = {"gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra"}
         return bool(
             re.match(r"^o[13](?:[-.]|$)", normalized)
             or re.match(r"^gpt-5(?!\.|-chat)(?:-|$)", normalized)
@@ -276,20 +334,13 @@ def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> Non
             )
 
 
-def test_timeout_prone_background_agents_have_reachable_fallback() -> None:
+def test_all_background_agents_use_opus48_as_the_text_fallback() -> None:
     bundle = _load_source_of_truth()
 
-    expected = {
-        "Confirmation Bias": ("xai", "grok-4.3", {}),
-        "Viventium User Help": ("openAI", "gpt-5.4", {"reasoning_effort": "high"}),
-    }
-    for agent_name, (provider, model, parameter_expectations) in expected.items():
-        agent = _background_agent_by_name(bundle, agent_name)
-        assert agent.get("fallback_llm_provider") == provider
-        assert agent.get("fallback_llm_model") == model
-        assert agent.get("fallback_llm_model_parameters", {}).get("model") == model
-        for key, value in parameter_expectations.items():
-            assert agent.get("fallback_llm_model_parameters", {}).get(key) == value
+    for agent in bundle.get("backgroundAgents", []):
+        assert agent.get("fallback_llm_provider") == "anthropic"
+        assert agent.get("fallback_llm_model") == "claude-opus-4-8"
+        assert agent.get("fallback_llm_model_parameters", {}).get("model") == "claude-opus-4-8"
 
 
 def test_support_and_confirmation_activation_prompts_exclude_broad_status_checks() -> None:
@@ -328,6 +379,30 @@ def test_support_and_confirmation_activation_prompts_exclude_broad_status_checks
             assert phrase.lower() in prompt
 
 
+def test_every_background_activation_prompt_is_registry_owned() -> None:
+    bundle = yaml.safe_load(SOURCE_OF_TRUTH_PATH.read_text(encoding="utf-8"))
+    expected_prompt_refs = {
+        "agent_viventium_background_analysis_95aeb3": "cortex.background_analysis.activation",
+        "agent_viventium_confirmation_bias_95aeb3": "cortex.confirmation_bias.activation",
+        "agent_viventium_red_team_95aeb3": "cortex.red_team.activation",
+        "agent_viventium_deep_research_95aeb3": "cortex.deep_research.activation",
+        "agent_viventium_online_tool_use_95aeb3": "cortex.online_tool_use.activation",
+        "agent_viventium_parietal_cortex_95aeb3": "cortex.parietal_cortex.activation",
+        "agent_viventium_pattern_recognition_95aeb3": "cortex.pattern_recognition.activation",
+        "agent_viventium_emotional_resonance_95aeb3": "cortex.emotional_resonance.activation",
+        "agent_viventium_strategic_planning_95aeb3": "cortex.strategic_planning.activation",
+        "agent_viventium_support_95aeb3": "cortex.support.activation",
+        "agent_8Y1d7JNhpubtvzYz3hvEv": "cortex.google.activation",
+    }
+    cortices = bundle["mainAgent"]["background_cortices"]
+    assert {row["agent_id"] for row in cortices} == set(expected_prompt_refs)
+
+    for cortex in cortices:
+        assert cortex["activation"]["prompt"] == {
+            "promptRef": expected_prompt_refs[cortex["agent_id"]]
+        }
+
+
 def test_red_team_activation_prompt_covers_explicit_pressure_test_requests() -> None:
     bundle = _load_source_of_truth()
     cortices_by_agent_id = {
@@ -342,11 +417,58 @@ def test_red_team_activation_prompt_covers_explicit_pressure_test_requests() -> 
         "pressure-test",
         "strongest counter-case",
         "concrete idea, plan, claim, or decision",
+        "socratic interrogation",
+        "premortem",
+        "assumption mapping",
+        "reference-class forecasting",
+        "bayesian updating",
+        "kill criteria",
+        "stage-gates",
+        "stakeholder/incentive mapping",
+        "fmea",
+        "ooda",
+        "pure education about decision methods",
     ]:
         assert phrase in prompt
 
 
-def test_local_source_of_truth_main_agent_stays_on_claude_opus_48() -> None:
+def test_red_team_execution_uses_decision_quality_stack_and_xhigh_openai_bag() -> None:
+    bundle = _load_source_of_truth()
+    red_team = _background_agent_by_name(bundle, "Red Team")
+    instructions = (red_team.get("instructions") or "").lower()
+
+    for phrase in [
+        "decision-quality stack",
+        "max-effort adversarial reasoning",
+        "socratic interrogation is the default entry point",
+        "first-principles decomposition",
+        "assumption mapping",
+        "inversion, premortem, and steelman opposition",
+        "reference-class forecasting",
+        "stakeholder/incentive mapping",
+        "fmea",
+        "bayesian updating",
+        "kill criteria",
+        "stage-gates",
+        "decision journals",
+        "ooda loops",
+        "method lens",
+        "smallest test, kill criterion, or stage gate",
+    ]:
+        assert phrase in instructions
+
+    assert "web_search" in red_team.get("tools", [])
+    assert red_team.get("model_parameters", {}).get("reasoning_effort") == "xhigh"
+    assert "thinkingBudget" not in red_team.get("model_parameters", {})
+
+    runtime_contract = _load_runtime_models_contract()
+    red_team_openai_parameters = runtime_contract["canonicalParameters"][
+        "agent_viventium_red_team_95aeb3"
+    ]["openAI"]
+    assert red_team_openai_parameters["reasoning_effort"] == "xhigh"
+
+
+def test_local_source_of_truth_main_agent_uses_gpt56_sol() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
@@ -389,7 +511,7 @@ def test_runtime_models_script_covers_all_shipped_background_agents() -> None:
     assert set(runtime_contract["builtInAgentIds"]) == source_agent_ids
 
 
-def test_background_cortex_activation_models_stay_on_llama_4_scout() -> None:
+def test_background_cortex_activation_models_stay_on_qwen_36() -> None:
     bundle = _load_source_of_truth()
     cortices_by_agent_id = {
         cortex.get("agent_id"): cortex

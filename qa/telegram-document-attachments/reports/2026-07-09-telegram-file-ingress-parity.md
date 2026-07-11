@@ -6,9 +6,10 @@ PASS for the Telegram file-ingress contract tested in local runtime: grouped pho
 captioned Office uploads, unsupported archives, audio uploads, and regular video uploads now produce
 one aligned user-visible outcome instead of silence or split turns.
 
-Important scope note: this pass proves routing/parity/fail-loud behavior. It does not claim every
-file type is provider-native or extractable in this local stack. The tested PPTX, WAV, and MP4 paths
-returned clear attachment-processing errors when extraction/provider upload was unavailable.
+Important scope note: this pass originally proved routing/parity/fail-loud behavior. A later
+same-day PPTX implementation pass added slide text, speaker-note, and embedded-image extraction; see
+`reports/2026-07-09-pptx-text-notes-vision-qa.md`. WAV and MP4 remain attachment-contract cases
+that return clear processing errors when the configured runtime cannot process them.
 
 ## Requirement Trace
 
@@ -64,7 +65,7 @@ in this public report because the surrounding chat history is private.
 | --- | --- | --- | --- | --- |
 | Unsupported archive with caption | `TGDOC-004`, `TGDOC-UC-006` | One clear attachment-processing error; no caption-only answer | Bot sent one file to bridge; LibreChat logged typed 422 for unsupported archive | PASS |
 | Two-image album with one caption | `TGDOC-005`, `TGDOC-UC-005` | One assistant reply described both images together | Bot log: coalesced media group with `messages=2 files=2`, then one `Bridge sending 2 file(s)` | PASS |
-| Captioned synthetic PPTX | `TGDOC-003`, `TGDOC-UC-004` | One clear attachment-processing error that extraction was unavailable; no silence | Bot sent one PPTX to bridge; LibreChat logged typed 422 for extraction failure | PASS for ingress/fail-loud contract |
+| Captioned synthetic PPTX | `TGDOC-003`, `TGDOC-UC-004` | Initially proved one clear attachment-processing error instead of silence | Bot sent one PPTX to bridge; LibreChat logged typed 422 for extraction failure | SUPERSEDED for PPTX extraction by `reports/2026-07-09-pptx-text-notes-vision-qa.md` |
 | Synthetic WAV upload | `TGDOC-007`, `TGDOC-UC-007` | One clear unsupported-file attachment error | Bot sent one file to bridge; voice gate logged `voice_note=0` and did not send TTS for the failed attachment | PASS |
 | Synthetic MP4 regular video upload | `TGDOC-007`, `TGDOC-UC-007` | One clear unsupported-file attachment error | Bot sent one file to bridge; voice gate logged `voice_note=0` and did not treat it as video-note STT | PASS |
 | Two grouped text/markdown files with one caption | `TGDOC-005`, `TGDOC-UC-005` | One assistant reply named both files in one turn | Bot log: coalesced media group with `messages=2 files=2`, then one `Bridge sending 2 file(s)` | PASS |
@@ -75,8 +76,9 @@ in this public report because the surrounding chat history is private.
   separate `Bridge sending 1 file(s)` calls.
 - After the restart, synthetic grouped photos and grouped files each produced one coalesced
   `messages=2 files=2` log entry and one `Bridge sending 2 file(s)` call.
-- Unsupported ZIP, PPTX extraction failure, WAV, and MP4 each produced one Telegram-visible error
-  after a typed 422 route response.
+- Unsupported ZIP, WAV, and MP4 each produced one Telegram-visible error after a typed 422 route
+  response. PPTX extraction failure evidence from this report was superseded by the same-day PPTX
+  parser/vision implementation report.
 - Database summary after live QA showed recent conversation/message records and Telegram ingress
   records, with zero recent voice-ingress records for the regular audio/video file tests.
 - After the final source cleanup, the local runtime was restarted from the current checkout and API,
@@ -99,9 +101,9 @@ in this public report because the surrounding chat history is private.
 
 ## Residual Risks
 
-- This local stack still returns clear errors for PPTX extraction, WAV, and MP4 when the configured
-  upload/parser path cannot process them. That is acceptable for the Telegram parity contract, but
-  it is not full provider-native support for every file type.
+- This local stack still returns clear errors for WAV and MP4 when the configured upload/parser path
+  cannot process them. That is acceptable for the Telegram parity contract, but it is not full
+  provider-native support for every file type.
 - The live grouped-file tests covered two photos and two document files. Larger albums, mixed media
   groups, and slow Telegram delivery are covered by the coalescing design and automated regression,
   but should be included in a future release-scale soak if file throughput becomes a release focus.

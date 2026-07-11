@@ -4,15 +4,23 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows does not install LaunchAgents.
+    fcntl = None  # type: ignore[assignment]
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -23,10 +31,11 @@ import power_budget
 
 
 DEFAULT_SCHEDULE = "0 3 * * *"
-DEFAULT_TIMEZONE = "America/Toronto"
+DEFAULT_TIMEZONE = "local"
 LAUNCH_AGENT_LABEL = "ai.viventium.memory-harden"
 PARTIAL_BACKFILL_EXIT = 2
 TRIGGER_EVENT_SCHEMA_VERSION = 1
+SCHEDULE_LIFECYCLE_SCHEMA_VERSION = 1
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -107,6 +116,16 @@ def local_timezone_name() -> str:
     return time.tzname[time.localtime().tm_isdst > 0] or "local"
 
 
+def configured_timezone(env: dict[str, str]) -> tuple[str, object]:
+    name = str(env.get("VIVENTIUM_MEMORY_HARDENING_TIMEZONE") or DEFAULT_TIMEZONE).strip()
+    if not name or name.lower() in {"local", "system", "auto"}:
+        name = local_timezone_name()
+    try:
+        return name, ZoneInfo(name)
+    except (ValueError, ZoneInfoNotFoundError):
+        return local_timezone_name(), datetime.now().astimezone().tzinfo or timezone.utc
+
+
 def public_hash(value: object, length: int = 16) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:length]
 
@@ -126,10 +145,13 @@ def trigger_source_for_args(args: argparse.Namespace) -> str:
 
 def trigger_schedule_payload(env: dict[str, str]) -> dict[str, object]:
     schedule = env.get("VIVENTIUM_MEMORY_HARDENING_SCHEDULE") or DEFAULT_SCHEDULE
+    configured_timezone_name, _tzinfo = configured_timezone(env)
     payload: dict[str, object] = {
         "kind": "StartCalendarInterval",
         "cron": schedule,
-        "timezone_context": env.get("VIVENTIUM_MEMORY_HARDENING_TIMEZONE") or DEFAULT_TIMEZONE,
+        "timezone_source": "system",
+        "system_timezone": local_timezone_name(),
+        "generated_runtime_timezone": configured_timezone_name,
     }
     try:
         hour, minute = cron_to_launchd_time(schedule)
@@ -241,13 +263,58 @@ def launch_agent_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 
 
-def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> dict[str, object]:
-    if sys.platform != "darwin":
-        raise SystemExit("install-schedule currently supports macOS LaunchAgents. Use cron/systemd on Linux.")
-    schedule = args.schedule or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_SCHEDULE") or DEFAULT_SCHEDULE
+def schedule_lifecycle_events_dir(app_support_dir: Path) -> Path:
+    return app_support_dir / "state" / "memory-hardening" / "schedule-lifecycle"
+
+
+@contextmanager
+def schedule_loader_lock(app_support_dir: Path):
+    if fcntl is None:
+        yield
+        return
+    lock_path = app_support_dir / "state" / "memory-hardening" / "schedule-loader.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def launch_agent_target() -> str:
+    return f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}"
+
+
+def launch_agent_loaded() -> tuple[bool, subprocess.CompletedProcess[str]]:
+    result = subprocess.run(
+        ["launchctl", "print", launch_agent_target()],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0, result
+
+
+def read_launch_agent_payload(plist_path: Path) -> dict[str, object] | None:
+    if not plist_path.exists():
+        return None
+    try:
+        with plist_path.open("rb") as handle:
+            payload = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def desired_launch_agent_payload(
+    args: argparse.Namespace,
+    runtime_env: dict[str, str],
+    schedule: str,
+) -> dict[str, object]:
     hour, minute = cron_to_launchd_time(schedule)
-    plist_path = launch_agent_path()
-    plist_path.parent.mkdir(parents=True, exist_ok=True)
     logs_dir = args.app_support_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     launch_path = ":".join(
@@ -290,7 +357,7 @@ def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> d
     operator_user_email = args.user_email or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_USER_EMAIL")
     if operator_user_email:
         program_arguments.extend(["--user-email", operator_user_email])
-    payload = {
+    return {
         "Label": LAUNCH_AGENT_LABEL,
         "ProgramArguments": program_arguments,
         "StartCalendarInterval": {"Hour": hour, "Minute": minute},
@@ -299,33 +366,277 @@ def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> d
         "WorkingDirectory": str(args.app_support_dir),
         "RunAtLoad": False,
     }
-    with plist_path.open("wb") as handle:
-        plistlib.dump(payload, handle)
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)], check=False)
+
+
+def launch_agent_generation_hash(payload: dict[str, object]) -> str:
+    encoded = plistlib.dumps(payload, sort_keys=True)
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def write_launch_agent_payload(plist_path: Path, payload: dict[str, object]) -> None:
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = plist_path.with_name(f".{plist_path.name}.tmp-{os.getpid()}-{time.time_ns()}")
+    try:
+        with temporary_path.open("wb") as handle:
+            plistlib.dump(payload, handle, sort_keys=True)
+        os.chmod(temporary_path, 0o644)
+        os.replace(temporary_path, plist_path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def write_schedule_lifecycle_receipt(
+    args: argparse.Namespace,
+    *,
+    action: str,
+    status: str,
+    schedule: str,
+    desired_payload: dict[str, object],
+    prior_installed: bool,
+    prior_loaded: bool,
+    loaded_verified: bool,
+    bootout_returncode: int | None = None,
+    bootstrap_returncode: int | None = None,
+    error_class: str | None = None,
+) -> Path:
+    now = utc_now()
+    hour, minute = cron_to_launchd_time(schedule)
+    event_id = f"event-{now.strftime('%Y%m%dT%H%M%S%fZ')}-{os.getpid()}-{time.time_ns()}"
+    payload: dict[str, object] = {
+        "schemaVersion": SCHEDULE_LIFECYCLE_SCHEMA_VERSION,
+        "event_id": event_id,
+        "recorded_at_utc": iso_z(now),
+        "recorded_at_local": now.astimezone().isoformat(timespec="milliseconds"),
+        "action": action,
+        "status": status,
+        "label": LAUNCH_AGENT_LABEL,
+        "schedule": {
+            "kind": "StartCalendarInterval",
+            "cron": schedule,
+            "hour": hour,
+            "minute": minute,
+            "timezone_source": "system",
+        },
+        "generation_hash": launch_agent_generation_hash(desired_payload),
+        "prior_installed": prior_installed,
+        "prior_loaded": prior_loaded,
+        "loaded_verified": loaded_verified,
+        "bootout_returncode": bootout_returncode,
+        "bootstrap_returncode": bootstrap_returncode,
+    }
+    if error_class:
+        payload["error_class"] = error_class
+    events_dir = schedule_lifecycle_events_dir(args.app_support_dir)
+    event_path = events_dir / f"{event_id}.json"
+    write_json_private(event_path, payload)
+    write_json_private(events_dir / "latest.json", payload)
+    return event_path
+
+
+def schedule_install_result(
+    *,
+    schedule: str,
+    runtime_env: dict[str, str],
+    plist_path: Path,
+    action: str,
+    loaded: bool,
+) -> dict[str, object]:
+    configured_timezone_name, _tzinfo = configured_timezone(runtime_env)
+    return {
+        "installed": True,
+        "loaded": loaded,
+        "changed": action != "noop",
+        "action": action,
+        "label": LAUNCH_AGENT_LABEL,
+        "schedule": schedule,
+        "timezone": local_timezone_name(),
+        "timezone_source": "system",
+        "generated_runtime_timezone": configured_timezone_name,
+        "plist": str(plist_path),
+    }
+
+
+def _install_schedule_locked(args: argparse.Namespace, runtime_env: dict[str, str]) -> dict[str, object]:
+    if sys.platform != "darwin":
+        raise SystemExit("install-schedule currently supports macOS LaunchAgents. Use cron/systemd on Linux.")
+    schedule = args.schedule or runtime_env.get("VIVENTIUM_MEMORY_HARDENING_SCHEDULE") or DEFAULT_SCHEDULE
+    cron_to_launchd_time(schedule)
+    plist_path = launch_agent_path()
+    desired_payload = desired_launch_agent_payload(args, runtime_env, schedule)
+    current_payload = read_launch_agent_payload(plist_path)
+    prior_installed = plist_path.exists()
+    prior_loaded, _probe = launch_agent_loaded()
+    payload_matches = current_payload == desired_payload
+
+    if payload_matches and prior_loaded:
+        write_schedule_lifecycle_receipt(
+            args,
+            action="noop",
+            status="success",
+            schedule=schedule,
+            desired_payload=desired_payload,
+            prior_installed=prior_installed,
+            prior_loaded=prior_loaded,
+            loaded_verified=True,
+        )
+        return schedule_install_result(
+            schedule=schedule,
+            runtime_env=runtime_env,
+            plist_path=plist_path,
+            action="noop",
+            loaded=True,
+        )
+
+    action = "bootstrap" if payload_matches else ("reinstall" if prior_installed or prior_loaded else "install")
+    bootout_returncode: int | None = None
+    if prior_loaded and not payload_matches:
+        bootout = subprocess.run(
+            ["launchctl", "bootout", launch_agent_target()],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        bootout_returncode = int(bootout.returncode)
+        still_loaded, _ = launch_agent_loaded()
+        if bootout.returncode != 0 or still_loaded:
+            write_schedule_lifecycle_receipt(
+                args,
+                action=action,
+                status="failed",
+                schedule=schedule,
+                desired_payload=desired_payload,
+                prior_installed=prior_installed,
+                prior_loaded=prior_loaded,
+                loaded_verified=False,
+                bootout_returncode=bootout_returncode,
+                error_class="launchctl_bootout_failed",
+            )
+            raise SystemExit("failed to unload the previous memory hardening LaunchAgent")
+
+    if not payload_matches:
+        write_launch_agent_payload(plist_path, desired_payload)
+
     bootstrap = subprocess.run(
         ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
         check=False,
         capture_output=True,
         text=True,
     )
-    if bootstrap.returncode != 0:
+    loaded_verified, _verify = launch_agent_loaded()
+    if bootstrap.returncode != 0 or not loaded_verified:
+        write_schedule_lifecycle_receipt(
+            args,
+            action=action,
+            status="failed",
+            schedule=schedule,
+            desired_payload=desired_payload,
+            prior_installed=prior_installed,
+            prior_loaded=prior_loaded,
+            loaded_verified=loaded_verified,
+            bootout_returncode=bootout_returncode,
+            bootstrap_returncode=int(bootstrap.returncode),
+            error_class="launchctl_bootstrap_failed" if bootstrap.returncode != 0 else "launchctl_verify_failed",
+        )
         detail = (bootstrap.stderr or bootstrap.stdout or "").strip()
         raise SystemExit(
             "failed to install memory hardening LaunchAgent"
             + (f": {detail}" if detail else "")
         )
-    return {"installed": True, "label": LAUNCH_AGENT_LABEL, "schedule": schedule, "plist": str(plist_path)}
+    write_schedule_lifecycle_receipt(
+        args,
+        action=action,
+        status="success",
+        schedule=schedule,
+        desired_payload=desired_payload,
+        prior_installed=prior_installed,
+        prior_loaded=prior_loaded,
+        loaded_verified=True,
+        bootout_returncode=bootout_returncode,
+        bootstrap_returncode=int(bootstrap.returncode),
+    )
+    return schedule_install_result(
+        schedule=schedule,
+        runtime_env=runtime_env,
+        plist_path=plist_path,
+        action=action,
+        loaded=True,
+    )
 
 
-def uninstall_schedule(args: argparse.Namespace) -> dict[str, object]:
+def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> dict[str, object]:
+    if sys.platform != "darwin":
+        raise SystemExit("install-schedule currently supports macOS LaunchAgents. Use cron/systemd on Linux.")
+    with schedule_loader_lock(args.app_support_dir):
+        return _install_schedule_locked(args, runtime_env)
+
+
+def _uninstall_schedule_locked(args: argparse.Namespace) -> dict[str, object]:
     plist_path = launch_agent_path()
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)], check=False)
+    current_payload = read_launch_agent_payload(plist_path) or {
+        "Label": LAUNCH_AGENT_LABEL,
+        "StartCalendarInterval": {"Hour": 0, "Minute": 0},
+    }
+    schedule = DEFAULT_SCHEDULE
+    calendar = current_payload.get("StartCalendarInterval")
+    if isinstance(calendar, dict):
+        schedule = f"{int(calendar.get('Minute') or 0)} {int(calendar.get('Hour') or 0)} * * *"
+    prior_installed = plist_path.exists()
+    prior_loaded, _probe = launch_agent_loaded() if sys.platform == "darwin" else (False, None)
+    bootout_returncode: int | None = None
+    if prior_loaded:
+        bootout = subprocess.run(
+            ["launchctl", "bootout", launch_agent_target()],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        bootout_returncode = int(bootout.returncode)
+        still_loaded, _ = launch_agent_loaded()
+        if bootout.returncode != 0 or still_loaded:
+            write_schedule_lifecycle_receipt(
+                args,
+                action="uninstall",
+                status="failed",
+                schedule=schedule,
+                desired_payload=current_payload,
+                prior_installed=prior_installed,
+                prior_loaded=prior_loaded,
+                loaded_verified=False,
+                bootout_returncode=bootout_returncode,
+                error_class="launchctl_bootout_failed",
+            )
+            raise SystemExit("failed to unload the memory hardening LaunchAgent")
     if plist_path.exists():
         plist_path.unlink()
     marker = args.app_support_dir / "state" / "memory-hardening" / "dry-run-first-complete"
     if marker.exists():
         marker.unlink()
-    return {"installed": False, "label": LAUNCH_AGENT_LABEL, "plist": str(plist_path)}
+    action = "uninstall" if prior_installed or prior_loaded else "noop"
+    write_schedule_lifecycle_receipt(
+        args,
+        action=action,
+        status="success",
+        schedule=schedule,
+        desired_payload=current_payload,
+        prior_installed=prior_installed,
+        prior_loaded=prior_loaded,
+        loaded_verified=False,
+        bootout_returncode=bootout_returncode,
+    )
+    return {
+        "installed": False,
+        "loaded": False,
+        "changed": action != "noop",
+        "action": action,
+        "label": LAUNCH_AGENT_LABEL,
+        "plist": str(plist_path),
+    }
+
+
+def uninstall_schedule(args: argparse.Namespace) -> dict[str, object]:
+    with schedule_loader_lock(args.app_support_dir):
+        return _uninstall_schedule_locked(args)
 
 
 def model_for_provider(provider: str | None, runtime_env: dict[str, str]) -> str:
@@ -502,11 +813,106 @@ def transcript_backfill_skipped_by_cap(summary: dict[str, object]) -> int:
     return skipped
 
 
-def model_subprocess_kwargs(*, capture_output: bool) -> dict[str, object]:
+def model_subprocess_kwargs(
+    *, capture_output: bool, lower_priority: bool = True
+) -> dict[str, object]:
     kwargs: dict[str, object] = {"text": True, "capture_output": capture_output}
-    if hasattr(os, "nice"):
+    if lower_priority and hasattr(os, "nice"):
         kwargs["preexec_fn"] = lambda: os.nice(10)
     return kwargs
+
+
+def launch_agent_status(runtime_env: dict[str, str]) -> dict[str, object]:
+    plist_path = launch_agent_path()
+    payload = read_launch_agent_payload(plist_path) or {}
+    loaded = False
+    state = None
+    last_exit_code = None
+    if sys.platform == "darwin":
+        loaded, result = launch_agent_loaded()
+        if loaded:
+            state_match = re.search(r"\bstate\s*=\s*([^\n]+)", result.stdout)
+            exit_match = re.search(r"\blast exit code\s*=\s*(-?\d+)", result.stdout)
+            state = state_match.group(1).strip() if state_match else None
+            last_exit_code = int(exit_match.group(1)) if exit_match else None
+    configured_timezone_name, _tzinfo = configured_timezone(runtime_env)
+    latest_lifecycle: dict[str, object] | None = None
+    app_support_text = runtime_env.get("VIVENTIUM_APP_SUPPORT_DIR")
+    if app_support_text:
+        latest_path = schedule_lifecycle_events_dir(Path(app_support_text)) / "latest.json"
+        try:
+            decoded = json.loads(latest_path.read_text(encoding="utf-8"))
+            latest_lifecycle = decoded if isinstance(decoded, dict) else None
+        except (OSError, json.JSONDecodeError):
+            latest_lifecycle = None
+    return {
+        "installed": plist_path.exists(),
+        "loaded": loaded,
+        "state": state,
+        "last_exit_code": last_exit_code,
+        "calendar": payload.get("StartCalendarInterval"),
+        "conflicting_start_interval": payload.get("StartInterval"),
+        "timezone": local_timezone_name(),
+        "timezone_source": "system",
+        "system_timezone": local_timezone_name(),
+        "generated_runtime_timezone": configured_timezone_name,
+        "latest_lifecycle": latest_lifecycle,
+    }
+
+
+def run_status(
+    args: argparse.Namespace,
+    runtime_env: dict[str, str],
+    env: dict[str, str],
+) -> int:
+    result = subprocess.run(
+        node_command(args, runtime_env),
+        cwd=args.repo_root / "viventium_v0_4" / "LibreChat",
+        env=env,
+        **model_subprocess_kwargs(capture_output=True, lower_priority=False),
+    )
+    if result.returncode != 0:
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        return int(result.returncode)
+    try:
+        status = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        sys.stdout.write(result.stdout)
+        return int(result.returncode)
+    if not isinstance(status, dict):
+        sys.stdout.write(result.stdout)
+        return int(result.returncode)
+    schedule_health = status.get("schedule_health")
+    if not isinstance(schedule_health, dict):
+        schedule_health = {}
+    launch_agent = launch_agent_status(env)
+    schedule_health["launch_agent"] = launch_agent
+    latest = schedule_health.get("latest_scheduled_trigger")
+    latest = latest if isinstance(latest, dict) else {}
+    if not launch_agent["installed"] or not launch_agent["loaded"]:
+        health_state = "not_loaded"
+    elif schedule_health.get("missed_expected_window"):
+        health_state = "missed"
+    elif latest.get("status") == "failed" or (
+        latest.get("exit_code") not in {None, 0}
+    ):
+        health_state = "failed"
+    elif latest.get("status") == "started":
+        health_state = "running"
+    elif latest.get("status") == "skipped":
+        health_state = "retry_pending"
+    elif latest.get("status") == "success":
+        health_state = "healthy"
+    else:
+        health_state = "awaiting_first_run"
+    schedule_health["state"] = health_state
+    schedule_health["healthy"] = health_state == "healthy"
+    status["schedule_health"] = schedule_health
+    print(json.dumps(status, indent=2))
+    return int(result.returncode)
 
 
 def run_node_once(args: argparse.Namespace, runtime_env: dict[str, str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -598,6 +1004,8 @@ def run_node(args: argparse.Namespace, runtime_env: dict[str, str]) -> int:
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_EFFORT", "xhigh")
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_ANTHROPIC_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
     env.setdefault("VIVENTIUM_MEMORY_HARDENING_OPENAI_REASONING_EFFORT", env["VIVENTIUM_MEMORY_HARDENING_EFFORT"])
+    if args.command == "status":
+        return run_status(args, runtime_env, env)
     trigger_event = start_trigger_event(args, env)
     skip_reason = power_gate_skip_reason(args, env)
     if skip_reason:

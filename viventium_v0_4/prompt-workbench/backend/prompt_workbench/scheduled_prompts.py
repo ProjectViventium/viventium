@@ -13,6 +13,12 @@ from typing import Any
 
 import yaml
 
+from . import periphery_snapshots
+from .periphery_contract import (
+    NIGHTLY_PROMPT_TEMPLATE,
+    PERIPHERY_CONTENT_FIELDS,
+    PERIPHERY_REQUIRED_FIELDS,
+)
 from .paths import AGENTS_SOURCE_PATH, LIBRECHAT_ROOT, LIBRECHAT_SOURCE_PATH, PROMPTS_ROOT, REPO_ROOT
 
 from scripts.viventium.prompt_registry import load_and_resolve_prompt_refs
@@ -24,66 +30,16 @@ from scheduling_cortex.utils import to_utc_iso
 
 PLACEHOLDER_RE = re.compile(r"{{\s*([^{}]+?)\s*}}")
 BACKGROUND_AGENTS_FUNCTION = "viventium.background_agents.get_list(agent_name, system_prompt)"
+PERIPHERY_SNAPSHOT_VARIABLE = "viventium.periphery.snapshot"
 NIGHTLY_TEMPLATE_ID = "workbench_nightly_subconscious_thought_formation_v1"
 NIGHTLY_MISFIRE_POLICY = {"mode": "catch_up", "max_late_s": 12 * 60 * 60}
 MEMORY_WRITE_MODES = {"off", "propose", "apply_governed"}
 EXECUTORS = {"glasshive_host", "viventium_agent"}
 GLASSHIVE_WORKER_STRATEGIES = {"same_worker", "new_worker_each_run"}
 USER_SCHEDULE_PREFIX = "user_schedule:"
-PERIPHERY_REQUIRED_FIELDS = (
-    "schemaVersion",
-    "moduleId",
-    "generatedAt",
-    "scheduledRunRef",
-    "sourceRefs",
-    "confidence",
-    "severity",
-    "timeSensitivity",
-    "ttl",
-    "staleAfter",
-    "observations",
-    "risks",
-    "blindSpots",
-    "opportunityCosts",
-    "opportunities",
-    "whatWouldMakeThisWrong",
-    "whenToSurface",
-    "proposedActions",
-    "memoryProposalRefs",
-)
-PERIPHERY_CONTENT_FIELDS = (
-    "observations",
-    "risks",
-    "blindSpots",
-    "opportunityCosts",
-    "opportunities",
-    "whatWouldMakeThisWrong",
-    "whenToSurface",
-    "proposedActions",
-    "memoryProposalRefs",
-)
+PERIPHERY_ARTIFACT_LIMIT = 100
 _MANUAL_RUN_LOCKS: dict[str, threading.Lock] = {}
 _MANUAL_RUN_LOCKS_GUARD = threading.Lock()
-
-NIGHTLY_PROMPT_TEMPLATE = """study {{user}} memories from the perspective of each of the Viventium Background agent's and update your scratchpad in case you come up with thoughts, realizations, ideas, plans, anything you think is worth jotting down and concluding.
-
-You may follow {{memory_agent.system_prompt}} and prepare governed memory proposals for {{user.memories}} to help Viventium's brain naturally become aware of anything important. Do not directly edit MongoDB or memory database tables. If this scheduled prompt is configured for apply_governed memory mode, route memory changes only through Viventium/LibreChat governed memory methods and policy.
-
-You may also just use your own personal / private scratchpad as yyyymmddHHmm.md file in {{local.viventium.my_folder}}
-
-Private periphery artifact: write one risk_radar artifact for this run. Use the folder shown in {{local.viventium.my_folder}} and write paired .md and .json files under:
-periphery/risk_radar/YYYY/MM/YYYYMMDDTHHMMSSZ.risk_radar.md
-periphery/risk_radar/YYYY/MM/YYYYMMDDTHHMMSSZ.risk_radar.json
-
-The JSON sidecar must include: schemaVersion, moduleId, generatedAt, scheduledRunRef, sourceRefs, confidence, severity, timeSensitivity, ttl, staleAfter, observations, risks, blindSpots, opportunityCosts, opportunities, whatWouldMakeThisWrong, whenToSurface, proposedActions, memoryProposalRefs.
-Use moduleId "risk_radar". Keep it concise and evidence-first; mark hypotheses as hypotheses and unsupported thoughts as unsupported. If there is no strong evidence, write a short no-result artifact with empty arrays and one observation explaining the low signal or missing prerequisite. Do not add a saved-memory key for periphery, do not inject this artifact into the main chat prompt, and do not copy raw private conversations into the sidecar.
-
-
-# user = {{user}}
-# you can access this user's recent conversations, account memories, schedules, etc all on the local viventium db = {{local.viventium.database}}
-# memories = {{user.memories}}
-# Viventium Background Cortices / agents instructions to analyze based off: {{viventium.background_agents.get_list(agent_name, system_prompt)}}
-"""
 
 
 def _sha(value: str, length: int = 16) -> str:
@@ -156,6 +112,29 @@ def _background_agents() -> list[dict[str, Any]]:
             resolved = instructions_value
         rows.append({"agent_name": name, "system_prompt": str(resolved or "").strip()})
     return rows
+
+
+def _background_lens_inventory() -> list[dict[str, Any]]:
+    config = _load_yaml(AGENTS_SOURCE_PATH)
+    agents = config.get("backgroundAgents")
+    if not isinstance(agents, list):
+        return []
+    lenses: list[dict[str, Any]] = []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        name = str(agent.get("name") or "").strip()
+        purpose = str(agent.get("description") or "").strip()
+        if not name or not purpose:
+            continue
+        lenses.append(
+            {
+                "sourceRef": f"lens:{_sha(str(agent.get('id') or name), length=24)}",
+                "name": name,
+                "purpose": purpose[:320],
+            }
+        )
+    return lenses
 
 
 def _query_mongo_json(script: str) -> Any:
@@ -245,6 +224,24 @@ def _default_glasshive_worker_profile() -> str:
     return (os.getenv("GLASSHIVE_DEFAULT_WORKER_PROFILE") or "codex-cli").strip() or "codex-cli"
 
 
+def _default_automation_model(profile: str | None = None) -> str:
+    resolved_profile = str(profile or _default_glasshive_worker_profile()).strip()
+    if resolved_profile == "codex-cli":
+        return (
+            os.getenv("WPR_MODEL_HOST_CODEX_CLI")
+            or os.getenv("WPR_MODEL_CODEX_CLI")
+            or ""
+        ).strip()
+    if resolved_profile == "claude-code":
+        return (os.getenv("WPR_MODEL_CLAUDE_CODE") or "").strip()
+    return ""
+
+
+def _default_automation_reasoning_effort() -> str:
+    effort = (os.getenv("WPR_CODEX_CLI_REASONING_EFFORT") or "").strip().lower()
+    return effort if effort in {"none", "minimal", "low", "medium", "high", "xhigh"} else ""
+
+
 def _worker_strategy(value: Any) -> str:
     strategy = str(value or "same_worker").strip()
     if strategy not in GLASSHIVE_WORKER_STRATEGIES:
@@ -300,6 +297,7 @@ def variable_registry() -> dict[str, Any]:
         {"name": "local.viventium.database", "kind": "json", "wrapper": "local.viventium.database", "description": "Governed local database context without credentials."},
         {"name": "local.viventium.local_machine_glasshive.my_folder", "kind": "path", "wrapper": "local.viventium.local_machine_glasshive.my_folder", "description": "Private GlassHive continuity folder for this user."},
         {"name": "local.viventium.my_folder", "kind": "path", "wrapper": "local.viventium.my_folder", "description": "Alias for the GlassHive private continuity folder."},
+        {"name": PERIPHERY_SNAPSHOT_VARIABLE, "kind": "json", "wrapper": PERIPHERY_SNAPSHOT_VARIABLE, "description": "Metadata-only manifest for the latest private nightly evidence snapshot."},
     ]
     functions = [
         {
@@ -317,7 +315,7 @@ def nightly_prompt_template() -> dict[str, Any]:
     default_timezone = (
         os.getenv("VIVENTIUM_DEFAULT_TIMEZONE")
         or os.getenv("TZ")
-        or "America/Toronto"
+        or "UTC"
     )
     return {
         "id": NIGHTLY_TEMPLATE_ID,
@@ -326,7 +324,7 @@ def nightly_prompt_template() -> dict[str, Any]:
         "promptText": NIGHTLY_PROMPT_TEMPLATE,
         "schedule": {"type": "daily", "time": "03:00", "timezone": default_timezone},
         "active": False,
-        "memoryWriteMode": "propose",
+        "memoryWriteMode": "off",
     }
 
 
@@ -367,12 +365,39 @@ def _resolve_placeholder(name: str, user_id: str, email: str | None = None) -> t
     raise ValueError(f"Unsupported scheduled prompt variable: {key}")
 
 
-def render_variables(prompt_text: str, *, user_id: str, email: str | None = None) -> dict[str, Any]:
+def render_variables(
+    prompt_text: str,
+    *,
+    user_id: str,
+    email: str | None = None,
+    snapshot_mode: str = "preview",
+) -> dict[str, Any]:
+    if snapshot_mode not in {"preview", "create"}:
+        raise ValueError("snapshot_mode must be preview or create")
     snapshots: list[dict[str, Any]] = []
+    periphery_result: dict[str, Any] | None = None
 
     def replace(match: re.Match[str]) -> str:
+        nonlocal periphery_result
         name = match.group(1).strip()
-        value, kind, wrapper = _resolve_placeholder(name, user_id, email)
+        if name == PERIPHERY_SNAPSHOT_VARIABLE:
+            if periphery_result is None:
+                if snapshot_mode == "create":
+                    periphery_result = periphery_snapshots.create_snapshot(
+                        user_id=user_id,
+                        email=email,
+                        my_folder=_glasshive_my_folder(user_id),
+                        query_mongo_json=_query_mongo_json,
+                        schedule_store=storage(),
+                        lenses=_background_lens_inventory(),
+                    )
+                else:
+                    periphery_result = {"manifest": periphery_snapshots.preview_snapshot(user_id)}
+            value = periphery_result["manifest"]
+            kind = "json"
+            wrapper = PERIPHERY_SNAPSHOT_VARIABLE
+        else:
+            value, kind, wrapper = _resolve_placeholder(name, user_id, email)
         rendered = _wrap(wrapper, value, kind)
         snapshots.append(
             {
@@ -389,13 +414,17 @@ def render_variables(prompt_text: str, *, user_id: str, email: str | None = None
     rendered = PLACEHOLDER_RE.sub(replace, prompt_text)
     snapshot = {"resolvedAt": _utc_now(), "userId": user_id, "items": snapshots}
     snapshot_json = json.dumps(snapshot, indent=2, sort_keys=True)
-    return {
+    result = {
         "rendered": rendered,
         "renderedHash": _sha(rendered),
         "variableSnapshot": snapshot,
         "variableSnapshotJson": snapshot_json,
         "variableSnapshotHash": _sha(snapshot_json),
     }
+    if periphery_result:
+        result["peripherySnapshotManifest"] = periphery_result.get("manifest")
+        result["privatePeripherySnapshotJson"] = periphery_result.get("modelSnapshotJson")
+    return result
 
 
 def _schedule_next(schedule: dict[str, Any]) -> str | None:
@@ -421,6 +450,7 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
     execution = metadata.get("execution") if isinstance(metadata.get("execution"), dict) else {}
     executor = str(execution.get("executor") or "glasshive_host")
     worker_strategy = str(execution.get("glasshive_worker_strategy") or "same_worker")
+    execution_profile = str(execution.get("execution_profile") or _default_glasshive_worker_profile())
     metadata["workbench_scheduled_prompt"] = {
         "definition_id": definition["id"],
         "version_id": version["id"],
@@ -436,36 +466,85 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
         "my_folder": definition.get("my_folder") or _glasshive_my_folder(definition["user_id"]),
         "executor": executor,
         "glasshive_worker_strategy": worker_strategy,
-        "execution_profile": str(execution.get("execution_profile") or _default_glasshive_worker_profile()),
+        "execution_profile": execution_profile,
         "execution_mode": str(execution.get("execution_mode") or "host"),
+        "execution_model": str(execution.get("execution_model") or _default_automation_model(execution_profile)),
+        "reasoning_effort": str(
+            execution.get("reasoning_effort") or _default_automation_reasoning_effort()
+        ),
     }
     if definition.get("template_id") == NIGHTLY_TEMPLATE_ID:
         metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
     return metadata
 
 
-def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> None:
+def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> dict[str, Any]:
     if row.get("template_id") != NIGHTLY_TEMPLATE_ID or not row.get("task_id"):
-        return
+        return row
     store = storage()
     task = store.get_task(str(row["user_id"]), str(row["task_id"]))
     if not task:
-        return
-    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-    if metadata.get("misfire_policy") == NIGHTLY_MISFIRE_POLICY:
-        return
-    patched_metadata = dict(metadata)
-    patched_metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
-    store.update_task(
-        str(row["user_id"]),
-        str(row["task_id"]),
-        {
-            "metadata": patched_metadata,
-            "updated_at": _utc_now(),
-            "updated_by": "agent:prompt-workbench",
-            "updated_source": "startup-reconcile",
-        },
+        return row
+
+    definition_metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    execution = (
+        dict(definition_metadata.get("execution"))
+        if isinstance(definition_metadata.get("execution"), dict)
+        else {}
     )
+    executor = _executor(execution.get("executor") or task.get("executor"))
+    execution["executor"] = executor
+    if executor == "glasshive_host":
+        execution["execution_profile"] = str(
+            execution.get("execution_profile") or _default_glasshive_worker_profile()
+        )
+        execution["execution_mode"] = str(execution.get("execution_mode") or "host")
+        configured_model = _default_automation_model(execution["execution_profile"])
+        configured_effort = _default_automation_reasoning_effort()
+        if configured_model:
+            execution["execution_model"] = configured_model
+        if configured_effort:
+            execution["reasoning_effort"] = configured_effort
+
+    patched_definition_metadata = {**definition_metadata, "execution": execution}
+    patched_row = row
+    if patched_definition_metadata != definition_metadata:
+        patched_row = store.update_scheduled_prompt_definition(
+            str(row["id"]),
+            {"metadata": patched_definition_metadata, "updated_at": _utc_now()},
+        ) or {**row, "metadata": patched_definition_metadata}
+
+    task_metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    patched_task_metadata = {**task_metadata, "execution": execution}
+    workbench_metadata = (
+        dict(task_metadata.get("workbench_scheduled_prompt"))
+        if isinstance(task_metadata.get("workbench_scheduled_prompt"), dict)
+        else {}
+    )
+    if executor == "glasshive_host":
+        workbench_metadata.update(
+            {
+                "executor": executor,
+                "execution_profile": execution["execution_profile"],
+                "execution_mode": execution["execution_mode"],
+                "execution_model": execution["execution_model"],
+                "reasoning_effort": execution["reasoning_effort"],
+            }
+        )
+    patched_task_metadata["workbench_scheduled_prompt"] = workbench_metadata
+    patched_task_metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
+    if patched_task_metadata != task_metadata:
+        store.update_task(
+            str(row["user_id"]),
+            str(row["task_id"]),
+            {
+                "metadata": patched_task_metadata,
+                "updated_at": _utc_now(),
+                "updated_by": "agent:prompt-workbench",
+                "updated_source": "startup-reconcile",
+            },
+        )
+    return patched_row
 
 
 def _user_schedule_id(task_id: str) -> str:
@@ -612,6 +691,17 @@ def _public_definition(definition: dict[str, Any]) -> dict[str, Any]:
     definition_metadata = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
     execution = definition_metadata.get("execution") if isinstance(definition_metadata.get("execution"), dict) else {}
     executor = (task or {}).get("executor") or execution.get("executor") or "glasshive_host"
+    execution_profile = (
+        workbench_metadata.get("execution_profile")
+        or execution.get("execution_profile")
+        or (_default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium")
+    )
+    execution_model = workbench_metadata.get("execution_model") or execution.get("execution_model")
+    reasoning_effort = workbench_metadata.get("reasoning_effort") or execution.get("reasoning_effort")
+    if executor == "glasshive_host":
+        execution_model = execution_model or _default_automation_model(str(execution_profile))
+        if str(execution_profile) == "codex-cli":
+            reasoning_effort = reasoning_effort or _default_automation_reasoning_effort()
     return {
         "id": definition["id"],
         "taskId": definition.get("task_id"),
@@ -630,8 +720,10 @@ def _public_definition(definition: dict[str, Any]) -> dict[str, Any]:
         "myFolder": definition.get("my_folder"),
         "workspaceRoot": workbench_metadata.get("workspace_root") or execution.get("workspace_root") or _workspace_root(),
         "workspaceAlias": definition.get("workspace_alias") or workbench_metadata.get("workspace_alias"),
-        "executionProfile": workbench_metadata.get("execution_profile") or execution.get("execution_profile") or (_default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium"),
+        "executionProfile": execution_profile,
         "executionMode": workbench_metadata.get("execution_mode") or execution.get("execution_mode") or ("host" if executor == "glasshive_host" else "scheduler delivery"),
+        "executionModel": execution_model,
+        "reasoningEffort": reasoning_effort,
         "glasshiveWorkerStrategy": workbench_metadata.get("glasshive_worker_strategy") or execution.get("glasshive_worker_strategy") or "same_worker",
         "nextRunAt": (task or {}).get("next_run_at"),
         "lastStatus": (task or {}).get("last_status"),
@@ -655,6 +747,18 @@ def _public_version(version: dict[str, Any]) -> dict[str, Any]:
 
 
 def _public_run(run: dict[str, Any]) -> dict[str, Any]:
+    callback_payload: dict[str, Any] = {}
+    try:
+        decoded = json.loads(str(run.get("callback_payload_json") or "{}"))
+    except json.JSONDecodeError:
+        decoded = {}
+    if isinstance(decoded, dict):
+        callback_payload = decoded
+    effort_projection = (
+        callback_payload.get("effort_projection")
+        if isinstance(callback_payload.get("effort_projection"), dict)
+        else {}
+    )
     return {
         "runId": run.get("run_id"),
         "taskId": run.get("task_id"),
@@ -672,6 +776,9 @@ def _public_run(run: dict[str, Any]) -> dict[str, Any]:
         "glasshiveRunId": run.get("glasshive_run_id"),
         "resultSummary": _safe_summary(str(run.get("result_summary") or "")),
         "errorClass": run.get("error_class"),
+        "requestedReasoningEffort": str(effort_projection.get("requested") or "") or None,
+        "effectiveReasoningEffort": str(effort_projection.get("effective") or "") or None,
+        "reasoningFallbackReason": str(effort_projection.get("fallback_reason") or "") or None,
         "privateDetailPointer": _private_detail_pointer(run.get("private_detail_path")),
         "updatedAt": run.get("updated_at"),
     }
@@ -736,13 +843,16 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
     channel = _channel_for_executor(executor, payload.get("channel"))
     conversation_policy = _conversation_policy(payload.get("conversationPolicy") or payload.get("conversation_policy"))
     worker_strategy = _worker_strategy(payload.get("glasshiveWorkerStrategy") or payload.get("glasshive_worker_strategy"))
+    execution_profile = _default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium"
     execution_metadata = {
         "executor": executor,
         "channel": channel,
         "conversation_policy": conversation_policy,
         "glasshive_worker_strategy": worker_strategy,
-        "execution_profile": _default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium",
+        "execution_profile": execution_profile,
         "execution_mode": "host" if executor == "glasshive_host" else "scheduler delivery",
+        "execution_model": _default_automation_model(execution_profile) if executor == "glasshive_host" else None,
+        "reasoning_effort": _default_automation_reasoning_effort() if executor == "glasshive_host" else None,
         "workspace_root": _workspace_root(),
     }
     definition = {
@@ -883,8 +993,23 @@ def update_scheduled_prompt(definition_id: str, payload: dict[str, Any], *, user
         execution["channel"] = _channel_for_executor(executor, execution.get("channel"))
         execution["conversation_policy"] = _conversation_policy(execution.get("conversation_policy"))
         execution["glasshive_worker_strategy"] = _worker_strategy(execution.get("glasshive_worker_strategy"))
-        execution["execution_profile"] = _default_glasshive_worker_profile() if executor == "glasshive_host" else "main Viventium"
-        execution["execution_mode"] = "host" if executor == "glasshive_host" else "scheduler delivery"
+        if executor == "glasshive_host":
+            execution_profile = str(
+                execution.get("execution_profile") or _default_glasshive_worker_profile()
+            )
+            execution["execution_profile"] = execution_profile
+            execution["execution_mode"] = str(execution.get("execution_mode") or "host")
+            execution["execution_model"] = str(
+                _default_automation_model(execution_profile) or execution.get("execution_model") or ""
+            )
+            execution["reasoning_effort"] = str(
+                _default_automation_reasoning_effort() or execution.get("reasoning_effort") or ""
+            )
+        else:
+            execution["execution_profile"] = "main Viventium"
+            execution["execution_mode"] = "scheduler delivery"
+            execution["execution_model"] = None
+            execution["reasoning_effort"] = None
         execution["workspace_root"] = _workspace_root()
         metadata = {**metadata, "execution": execution}
         updates["metadata"] = metadata
@@ -1184,10 +1309,23 @@ def _periphery_files(my_folder: str | None) -> tuple[Path | None, list[Path]]:
         except (OSError, ValueError):
             continue
         paths.append(path)
-    return root, sorted(paths, key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)[:100]
+    # Artifact paths carry their canonical UTC timestamp. File mtimes are not authoritative because
+    # an old artifact may be touched during backup, restore, or manual inspection.
+    return root, sorted(
+        paths,
+        key=lambda item: _relative_posix(item, root),
+        reverse=True,
+    )[:PERIPHERY_ARTIFACT_LIMIT]
 
 
-def _periphery_invalid(path: Path, root: Path, reason: str, *, missing_fields: list[str] | None = None) -> dict[str, Any]:
+def _periphery_invalid(
+    path: Path,
+    root: Path,
+    reason: str,
+    *,
+    missing_fields: list[str] | None = None,
+    invalid_fields: list[str] | None = None,
+) -> dict[str, Any]:
     result = {
         "fileName": path.name,
         "relativePath": _relative_posix(path, root),
@@ -1195,6 +1333,8 @@ def _periphery_invalid(path: Path, root: Path, reason: str, *, missing_fields: l
     }
     if missing_fields:
         result["missingFields"] = missing_fields[:12]
+    if invalid_fields:
+        result["invalidFields"] = invalid_fields[:12]
     return result
 
 
@@ -1215,7 +1355,23 @@ def _periphery_artifact_id(path: Path, root: Path) -> str:
     return _sha(_relative_posix(path, root), length=24)
 
 
-def _load_periphery_artifact(path: Path, root: Path) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+def _parse_periphery_datetime(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _load_periphery_artifact(
+    path: Path,
+    root: Path,
+    *,
+    user_id: str | None = None,
+    now: datetime | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     try:
         relative_parts = path.resolve().relative_to(root.resolve()).parts
     except (OSError, ValueError):
@@ -1232,7 +1388,23 @@ def _load_periphery_artifact(path: Path, root: Path) -> tuple[dict[str, Any] | N
     if not isinstance(payload, dict):
         return None, _periphery_invalid(path, root, "invalid_payload")
 
-    missing = [field for field in PERIPHERY_REQUIRED_FIELDS if field not in payload]
+    schema_version_value = payload.get("schemaVersion")
+    legacy_schema_labels = {
+        "1",
+        "1.0",
+        "v1",
+        f"{str(payload.get('moduleId') or '').strip()}.v1",
+    }
+    if isinstance(schema_version_value, str) and schema_version_value.strip() in legacy_schema_labels:
+        schema_version = 1
+    else:
+        schema_version = schema_version_value
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version < 1:
+        return None, _periphery_invalid(path, root, "invalid_field_type", invalid_fields=["schemaVersion"])
+    required_fields = PERIPHERY_REQUIRED_FIELDS
+    if schema_version < 2:
+        required_fields = tuple(field for field in PERIPHERY_REQUIRED_FIELDS if field != "snapshotRef")
+    missing = [field for field in required_fields if field not in payload]
     if missing:
         return None, _periphery_invalid(path, root, "missing_required_fields", missing_fields=missing)
     module_id = str(payload.get("moduleId") or "").strip()
@@ -1240,6 +1412,46 @@ def _load_periphery_artifact(path: Path, root: Path) -> tuple[dict[str, Any] | N
         return None, _periphery_invalid(path, root, "invalid_module_id")
     if module_id != module_from_path:
         return None, _periphery_invalid(path, root, "module_path_mismatch")
+
+    generated_at = _parse_periphery_datetime(payload.get("generatedAt"))
+    stale_after = _parse_periphery_datetime(payload.get("staleAfter"))
+    invalid_fields: list[str] = []
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    if not generated_at:
+        invalid_fields.append("generatedAt")
+    if not stale_after:
+        invalid_fields.append("staleAfter")
+    if generated_at and generated_at > current:
+        invalid_fields.append("generatedAt")
+    if generated_at and stale_after and stale_after <= generated_at:
+        invalid_fields.append("staleAfter")
+    if not isinstance(payload.get("scheduledRunRef"), (dict, str)):
+        invalid_fields.append("scheduledRunRef")
+    source_refs = payload.get("sourceRefs")
+    if not isinstance(source_refs, list):
+        invalid_fields.append("sourceRefs")
+    for field in PERIPHERY_CONTENT_FIELDS:
+        if not isinstance(payload.get(field), list):
+            invalid_fields.append(field)
+    if schema_version >= 2:
+        snapshot_ref = str(payload.get("snapshotRef") or "")
+        if not re.fullmatch(r"snapshot:[0-9TZ]+-[a-f0-9]{12}", snapshot_ref):
+            invalid_fields.append("snapshotRef")
+        if isinstance(source_refs, list) and any(
+            not isinstance(ref, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,31}:[a-f0-9]{24}", ref)
+            for ref in source_refs
+        ):
+            invalid_fields.append("sourceRefs")
+    if invalid_fields:
+        return None, _periphery_invalid(
+            path,
+            root,
+            "invalid_field_type",
+            invalid_fields=sorted(set(invalid_fields)),
+        )
 
     markdown_path = path.with_suffix(".md")
     try:
@@ -1251,7 +1463,73 @@ def _load_periphery_artifact(path: Path, root: Path) -> tuple[dict[str, Any] | N
     scheduled_run_ref_hash = None
     if scheduled_run_ref:
         scheduled_run_ref_hash = _sha(json.dumps(scheduled_run_ref, sort_keys=True, default=str), length=24)
-    source_refs = payload.get("sourceRefs")
+    stale = bool(stale_after and current > stale_after)
+    snapshot_ref = str(payload.get("snapshotRef") or "")
+    snapshot_available = False
+    snapshot_refs: set[str] = set()
+    resolved_count = 0
+    unresolved_count = 0
+    if schema_version >= 2 and user_id:
+        snapshot_refs = periphery_snapshots.snapshot_source_refs(user_id, snapshot_ref)
+        snapshot_available = periphery_snapshots.load_model_snapshot(user_id, snapshot_ref) is not None
+        resolved_count = sum(1 for ref in source_refs if ref in snapshot_refs)
+        unresolved_count = len(source_refs) - resolved_count
+    elif schema_version < 2:
+        resolved_count = 0
+        unresolved_count = 0
+
+    claim_fields = (
+        "observations",
+        "risks",
+        "blindSpots",
+        "opportunityCosts",
+        "opportunities",
+        "whatWouldMakeThisWrong",
+        "proposedActions",
+    )
+    claims_grounded = 0
+    claims_ungrounded = 0
+    top_level_refs = {
+        ref for ref in source_refs if isinstance(ref, str)
+    } if isinstance(source_refs, list) else set()
+    resolved_claim_refs = top_level_refs & snapshot_refs
+    if schema_version >= 2:
+        for field in claim_fields:
+            for claim in payload.get(field) or []:
+                if not isinstance(claim, dict):
+                    claims_ungrounded += 1
+                    continue
+                claim_refs = claim.get("sourceRefs")
+                kind = str(claim.get("kind") or "").strip().lower()
+                if kind in {"no_result", "missing_prerequisite"} and claim_refs == []:
+                    claims_grounded += 1
+                elif (
+                    isinstance(claim_refs, list)
+                    and bool(claim_refs)
+                    and all(isinstance(ref, str) and ref in resolved_claim_refs for ref in claim_refs)
+                ):
+                    claims_grounded += 1
+                else:
+                    claims_ungrounded += 1
+
+    markdown_exists = markdown_path.is_file()
+    quality_reasons: list[str] = []
+    if schema_version < 2:
+        quality_status = "legacy"
+        quality_reasons.append("legacy_schema")
+    else:
+        if not snapshot_available:
+            quality_reasons.append("snapshot_unavailable")
+        if unresolved_count:
+            quality_reasons.append("unresolved_evidence")
+        if claims_ungrounded:
+            quality_reasons.append("ungrounded_claims")
+        if not markdown_exists:
+            quality_reasons.append("markdown_missing")
+        if stale:
+            quality_reasons.append("stale")
+        blocking_reasons = [reason for reason in quality_reasons if reason != "stale"]
+        quality_status = "failed" if blocking_reasons else "warning" if stale else "passed"
     return {
         "artifactId": _periphery_artifact_id(path, root),
         "moduleId": module_id,
@@ -1259,7 +1537,8 @@ def _load_periphery_artifact(path: Path, root: Path) -> tuple[dict[str, Any] | N
         "markdownFileName": markdown_path.name,
         "relativePath": _relative_posix(path, root),
         "markdownRelativePath": _relative_posix(markdown_path, root),
-        "markdownExists": markdown_path.is_file(),
+        "markdownExists": markdown_exists,
+        "schemaVersion": schema_version,
         "generatedAt": str(payload.get("generatedAt") or ""),
         "updatedAt": modified,
         "confidence": _safe_summary(str(payload.get("confidence") or ""), limit=80),
@@ -1268,32 +1547,213 @@ def _load_periphery_artifact(path: Path, root: Path) -> tuple[dict[str, Any] | N
         "ttl": _safe_summary(str(payload.get("ttl") or ""), limit=80),
         "staleAfter": str(payload.get("staleAfter") or ""),
         "sourceRefCount": len(source_refs) if isinstance(source_refs, list) else 0,
+        "sourceRefsResolvedCount": resolved_count,
+        "sourceRefsUnresolvedCount": unresolved_count,
+        "claimsGroundedCount": claims_grounded,
+        "claimsUngroundedCount": claims_ungrounded,
+        "snapshotRefHash": _sha(snapshot_ref, length=24) if snapshot_ref else None,
+        "snapshotAvailable": snapshot_available if schema_version >= 2 else None,
+        "stale": stale,
+        "qualityStatus": quality_status,
+        "qualityReasons": quality_reasons,
         "scheduledRunRefHash": scheduled_run_ref_hash,
         "contentCounts": _periphery_content_counts(payload),
     }, None
 
 
-def list_periphery_artifacts(definition_id: str, *, user_id: str) -> dict[str, Any]:
-    definition = _definition_for_periphery(definition_id, user_id)
-    root, paths = _periphery_files(definition.get("my_folder"))
+def _periphery_index_payload(
+    artifacts: list[dict[str, Any]],
+    invalid: list[dict[str, Any]],
+) -> dict[str, Any]:
+    quality_counts: dict[str, int] = {}
+    modules: dict[str, dict[str, Any]] = {}
+    for artifact in artifacts:
+        quality = str(artifact.get("qualityStatus") or "unknown")
+        quality_counts[quality] = quality_counts.get(quality, 0) + 1
+        module_id = str(artifact.get("moduleId") or "unknown")
+        if module_id not in modules:
+            modules[module_id] = {
+                "moduleId": module_id,
+                "description": (
+                    "Private risk, blind-spot, opportunity-cost, and opportunity review."
+                    if module_id == "risk_radar"
+                    else "Private Viventium periphery artifact module."
+                ),
+                "latestArtifactId": artifact.get("artifactId"),
+                "latestGeneratedAt": artifact.get("generatedAt"),
+                "latestQualityStatus": quality,
+                "artifactCount": 0,
+            }
+        modules[module_id]["artifactCount"] += 1
+    return {
+        "schemaVersion": 1,
+        "generatedAt": _utc_now(),
+        "artifactCount": len(artifacts),
+        "invalidArtifactCount": len(invalid),
+        "qualityCounts": quality_counts,
+        "modules": list(modules.values()),
+        "artifacts": artifacts,
+        "invalidArtifacts": invalid,
+    }
+
+
+def _write_periphery_index(root: Path, payload: dict[str, Any]) -> None:
+    path = root / "_index.json"
+    temporary = root / "._index.json.tmp"
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+    os.chmod(path, 0o600)
+
+
+def _public_periphery_index(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "generatedAt": payload.get("generatedAt"),
+        "artifactCount": payload.get("artifactCount", 0),
+        "invalidArtifactCount": payload.get("invalidArtifactCount", 0),
+        "qualityCounts": payload.get("qualityCounts", {}),
+        "modules": payload.get("modules", []),
+    }
+
+
+def _collect_periphery(
+    my_folder: str | None,
+    *,
+    user_id: str,
+) -> tuple[Path | None, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    root, paths = _periphery_files(my_folder)
     artifacts: list[dict[str, Any]] = []
     invalid: list[dict[str, Any]] = []
     if root:
         for path in paths:
-            artifact, error = _load_periphery_artifact(path, root)
+            artifact, error = _load_periphery_artifact(path, root, user_id=user_id)
             if artifact:
                 artifacts.append(artifact)
             if error:
                 invalid.append(error)
+    artifacts.sort(
+        key=lambda item: (
+            _parse_periphery_datetime(item.get("generatedAt"))
+            or datetime.min.replace(tzinfo=timezone.utc),
+            str(item.get("artifactId") or ""),
+        ),
+        reverse=True,
+    )
+    index_payload = _periphery_index_payload(artifacts, invalid)
+    if root:
+        _write_periphery_index(root, index_payload)
+    return root, artifacts, invalid, index_payload
+
+
+def list_periphery_artifacts(definition_id: str, *, user_id: str) -> dict[str, Any]:
+    definition = _definition_for_periphery(definition_id, user_id)
+    _, artifacts, invalid, index_payload = _collect_periphery(
+        definition.get("my_folder"),
+        user_id=user_id,
+    )
     return {
         "artifacts": artifacts,
         "invalidArtifacts": invalid,
+        "index": _public_periphery_index(index_payload),
         "contract": (
             "Write private periphery artifacts as paired .md/.json files under "
             "my_folder/periphery/<moduleId>/YYYY/MM/. The API returns metadata only; "
             "markdown bodies, source refs, and raw insight text stay private."
         ),
     }
+
+
+def periphery_snapshot_status(definition_id: str, *, user_id: str) -> dict[str, Any]:
+    _definition_for_periphery(definition_id, user_id)
+    return {
+        "snapshot": periphery_snapshots.preview_snapshot(user_id),
+        "contract": (
+            "Private full/model snapshots stay in App Support. Workbench returns metadata, labels, "
+            "counts, hashes, and prerequisite state only."
+        ),
+    }
+
+
+def refresh_periphery_snapshot(definition_id: str, *, user_id: str) -> dict[str, Any]:
+    definition = _definition_for_periphery(definition_id, user_id)
+    result = periphery_snapshots.create_snapshot(
+        user_id=user_id,
+        email=None,
+        my_folder=definition.get("my_folder"),
+        query_mongo_json=_query_mongo_json,
+        schedule_store=storage(),
+        lenses=_background_lens_inventory(),
+    )
+    return {
+        "snapshot": result["manifest"],
+        "contract": "Private evidence refreshed; raw content remains outside the Workbench API.",
+    }
+
+
+def list_user_periphery(*, user_id: str) -> dict[str, Any]:
+    _, artifacts, invalid, index_payload = _collect_periphery(
+        _glasshive_my_folder(user_id),
+        user_id=user_id,
+    )
+    return {
+        "index": _public_periphery_index(index_payload),
+        "artifacts": artifacts,
+        "invalidArtifacts": invalid,
+    }
+
+
+def _read_periphery_from_folder(
+    my_folder: str | None,
+    *,
+    user_id: str,
+    artifact_id: str,
+) -> dict[str, Any]:
+    root, paths = _periphery_files(my_folder)
+    if not root:
+        raise KeyError(artifact_id)
+    for path in paths:
+        if _periphery_artifact_id(path, root) != artifact_id:
+            continue
+        metadata, error = _load_periphery_artifact(path, root, user_id=user_id)
+        if error or not metadata:
+            raise ValueError(str((error or {}).get("reason") or "invalid_artifact"))
+        try:
+            sidecar = json.loads(path.read_text(encoding="utf-8"))
+            markdown = path.with_suffix(".md").read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError("artifact_body_unavailable") from exc
+        return {
+            "artifact": metadata,
+            "sidecar": sidecar,
+            "markdown": markdown,
+            "usage": (
+                "Treat stale or failed-quality content as private historical evidence, not a current fact. "
+                "Summarize for the user without exposing storage paths or tool plumbing."
+            ),
+        }
+    raise KeyError(artifact_id)
+
+
+def read_periphery_artifact(
+    definition_id: str,
+    artifact_id: str,
+    *,
+    user_id: str,
+) -> dict[str, Any]:
+    definition = _definition_for_periphery(definition_id, user_id)
+    return _read_periphery_from_folder(
+        definition.get("my_folder"),
+        user_id=user_id,
+        artifact_id=artifact_id,
+    )
+
+
+def read_user_periphery_artifact(*, user_id: str, artifact_id: str) -> dict[str, Any]:
+    return _read_periphery_from_folder(
+        _glasshive_my_folder(user_id),
+        user_id=user_id,
+        artifact_id=artifact_id,
+    )
 
 
 def _proposal_files(my_folder: str | None) -> list[Path]:
@@ -1445,14 +1905,19 @@ def seed_nightly_prompt(
                 updates["promptText"] = NIGHTLY_PROMPT_TEMPLATE
             if _should_reconcile_builtin_nightly_schedule(row.get("schedule"), template["schedule"]):
                 updates["schedule"] = template["schedule"]
+            if str(row.get("memory_write_mode") or "off") != template["memoryWriteMode"]:
+                updates["memoryWriteMode"] = template["memoryWriteMode"]
             if active and not row.get("active"):
                 updates["active"] = True
             if executor and _public_definition(row).get("executor") != template["executor"]:
                 updates["executor"] = template["executor"]
             if updates:
-                return update_scheduled_prompt(str(row["id"]), updates, user_id=user_id, email=email)
-            _ensure_builtin_nightly_task_policy(row)
-            return _public_definition(row)
+                update_scheduled_prompt(str(row["id"]), updates, user_id=user_id, email=email)
+                refreshed = storage().get_scheduled_prompt_definition(str(row["id"])) or row
+                reconciled = _ensure_builtin_nightly_task_policy(refreshed)
+                return _public_definition(reconciled)
+            reconciled = _ensure_builtin_nightly_task_policy(row)
+            return _public_definition(reconciled)
     return create_scheduled_prompt(
         {**template, "templateId": NIGHTLY_TEMPLATE_ID, "active": active},
         user_id=user_id,

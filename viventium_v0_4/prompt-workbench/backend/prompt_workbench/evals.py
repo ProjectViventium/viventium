@@ -1,16 +1,31 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .paths import EXACT_MODEL_EVAL_SCRIPT, PROMPT_BANK_PATH, REPO_ROOT, workbench_private_root
+from .paths import (
+    ACTIVATION_MODEL_EVAL_SCRIPT,
+    EXACT_MODEL_EVAL_SCRIPT,
+    PROMPT_BANK_PATH,
+    REPO_ROOT,
+    workbench_private_root,
+)
 from .prompt_service import load_eval_bank
 from .promptfoo_adapter import prompt_bank_to_promptfoo
 from . import drafts
+
+
+def _live_eval_timeout_seconds(max_cases: int, runner: Path) -> int:
+    if runner == ACTIVATION_MODEL_EVAL_SCRIPT:
+        return 600
+    # One exact-model case can consume two 120 s main-model attempts plus a 120 s semantic
+    # judge. Keep cleanup margin without letting a whole Workbench run exceed one hour.
+    return max(420, min(3600, max(1, max_cases) * 420))
 
 
 def eval_bank_summary() -> dict[str, Any]:
@@ -101,9 +116,10 @@ def run_exact_model_eval(
             encoding="utf-8",
         )
         return _public_run_record(record)
+    runner = _eval_runner(bank=load_eval_bank(), family=family, prompt_id=prompt_id)
     cmd = [
         "node",
-        str(EXACT_MODEL_EVAL_SCRIPT),
+        str(runner),
         f"--prompt-bank={PROMPT_BANK_PATH}",
         f"--output-dir={output_dir}",
         f"--public-report={output_dir / 'public-safe-report.md'}",
@@ -116,20 +132,43 @@ def run_exact_model_eval(
         cmd.append(f"--surface={surface}")
     if prompt_id:
         cmd.append(f"--prompt-id={prompt_id}")
-    result = subprocess.run(
-        cmd,
-        cwd=REPO_ROOT,
-        text=True,
-        capture_output=True,
-        timeout=180,
-        check=False,
-    )
+    child_env: dict[str, str] | None = None
+    if runner == EXACT_MODEL_EVAL_SCRIPT:
+        # A live run is an explicit action from the authenticated, loopback-only Workbench.
+        # Let the canonical harness mint its short-lived local QA token without storing or
+        # forwarding a password. The harness still rejects this path in CI and production.
+        cmd.append("--local-jwt-fallback")
+        child_env = os.environ.copy()
+        child_env["VIVENTIUM_QA_ALLOW_LOCAL_JWT"] = "1"
+    timeout_seconds = _live_eval_timeout_seconds(max_cases, runner)
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=child_env,
+        )
+        return_code = result.returncode
+        stdout = result.stdout
+        stderr = result.stderr
+    except subprocess.TimeoutExpired as error:
+        return_code = 124
+        stdout = error.stdout or ""
+        stderr = f"Exact-model eval timed out after {timeout_seconds} seconds."
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8", errors="replace")
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
     record = {
         "id": run_id,
         "command": _safe_command(cmd),
-        "returnCode": result.returncode,
-        "stdoutTail": _sanitize_output(result.stdout[-4000:]),
-        "stderrTail": _sanitize_output(result.stderr[-4000:]),
+        "returnCode": return_code,
+        "stdoutTail": _sanitize_output(stdout[-4000:]),
+        "stderrTail": _sanitize_output(stderr[-4000:]),
+        "timeoutSeconds": timeout_seconds,
         "outputDir": str(output_dir),
         "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "live": live,
@@ -144,6 +183,23 @@ def run_exact_model_eval(
         encoding="utf-8",
     )
     return _public_run_record(record)
+
+
+def _eval_runner(
+    *, bank: dict[str, Any], family: str | None, prompt_id: str | None
+) -> Path:
+    families = bank.get("families") or []
+    if family:
+        selected = next((row for row in families if row.get("id") == family), None)
+        if selected and selected.get("runner") == "background_activation":
+            return ACTIVATION_MODEL_EVAL_SCRIPT
+    if prompt_id:
+        for row in families:
+            if row.get("runner") != "background_activation":
+                continue
+            if prompt_id in set(row.get("promptRefs") or row.get("prompt_refs") or []):
+                return ACTIVATION_MODEL_EVAL_SCRIPT
+    return EXACT_MODEL_EVAL_SCRIPT
 
 
 def get_eval_run(run_id: str) -> dict[str, Any]:

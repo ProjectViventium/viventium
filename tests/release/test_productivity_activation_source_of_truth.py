@@ -131,7 +131,7 @@ def test_productivity_activation_models_follow_documented_local_recommendation()
     ):
         activation = activation_by_agent_id[agent_id]
         assert activation["provider"] == "groq"
-        assert activation["model"] == "meta-llama/llama-4-scout-17b-16e-instruct"
+        assert activation["model"] == "qwen/qwen3.6-27b"
         assert isinstance(activation["fallbacks"], list)
         assert len(activation["fallbacks"]) >= 2
 
@@ -164,14 +164,18 @@ def test_broker_first_local_baseline_disables_retired_main_background_cortices()
     agents_by_id = _load_background_agents_by_id()
 
     retired_main_background_cortices = {
-        "agent_viventium_deep_research_95aeb3": "web_search",
-        "agent_viventium_online_tool_use_95aeb3": "sys__server__sys_mcp_ms-365",
-        "agent_8Y1d7JNhpubtvzYz3hvEv": "sys__server__sys_mcp_google_workspace",
+        "agent_viventium_deep_research_95aeb3",
+        "agent_viventium_online_tool_use_95aeb3",
+        "agent_8Y1d7JNhpubtvzYz3hvEv",
     }
 
-    for agent_id, required_tool in retired_main_background_cortices.items():
+    for agent_id in retired_main_background_cortices:
         assert activation_by_agent_id[agent_id]["enabled"] is False
-        assert required_tool in set(agents_by_id[agent_id]["tools"])
+    assert "web_search" not in set(
+        agents_by_id["agent_viventium_deep_research_95aeb3"]["tools"]
+    )
+    assert agents_by_id["agent_viventium_online_tool_use_95aeb3"]["tools"] == []
+    assert agents_by_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["tools"] == []
 
     assert (
         activation_by_agent_id["agent_viventium_confirmation_bias_95aeb3"]["enabled"] is True
@@ -199,13 +203,11 @@ def test_productivity_activation_prompts_define_chat_format_negative_boundary() 
     ):
         prompt = activation_by_agent_id[agent_id]["prompt"].lower()
 
-        assert "primary decision rule" in prompt
-        assert 'return "should_activate": false when' in prompt
-        assert "activate (true) when all of these are true" in prompt
-        assert "chat" in prompt
-        assert "direct_ok" in prompt
+        assert "positive gate" in prompt
+        assert "negative precedence" in prompt
+        assert "chat wording/output instructions" in prompt
         assert "respond only with yes" in prompt
-        assert "capability question" in prompt
+        assert "capability questions" in prompt
 
 
 def test_productivity_activation_prompts_name_their_owned_scopes() -> None:
@@ -214,11 +216,9 @@ def test_productivity_activation_prompts_name_their_owned_scopes() -> None:
     ms365_prompt = activation_by_agent_id["agent_viventium_online_tool_use_95aeb3"]["prompt"]
     google_prompt = activation_by_agent_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["prompt"]
 
-    assert "PRIMARY DECISION RULE:" in ms365_prompt
     assert "SCOPE:" in ms365_prompt
-    assert "Microsoft 365 / Outlook / OneDrive" in ms365_prompt
+    assert "Outlook email/calendar, OneDrive, Teams, Planner, and OneNote" in ms365_prompt
 
-    assert "PRIMARY DECISION RULE:" in google_prompt
     assert "SCOPE:" in google_prompt
     assert "Google Workspace" in google_prompt
 
@@ -239,42 +239,14 @@ def test_productivity_activation_configs_define_provider_fallback_chain() -> Non
         assert all(isinstance(entry.get("model"), str) and entry["model"] for entry in fallbacks)
 
 
-def test_productivity_execution_agents_ship_owned_mcp_tools() -> None:
+def test_retired_productivity_cortices_do_not_duplicate_connected_account_tools() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     ms365_tools = set(agents_by_id["agent_viventium_online_tool_use_95aeb3"]["tools"])
     google_tools = set(agents_by_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["tools"])
 
-    assert {
-        "sys__server__sys_mcp_ms-365",
-        "list-mail-messages_mcp_ms-365",
-        "get-mail-message_mcp_ms-365",
-        "list-mail-folder-messages_mcp_ms-365",
-        "list-calendar-events_mcp_ms-365",
-        "get-calendar-event_mcp_ms-365",
-        "list-folder-files_mcp_ms-365",
-        "download-onedrive-file-content_mcp_ms-365",
-        "get-excel-range_mcp_ms-365",
-        "search-query_mcp_ms-365",
-    } <= ms365_tools
-    assert {
-        "sys__server__sys_mcp_google_workspace",
-        "search_gmail_messages_mcp_google_workspace",
-        "get_gmail_message_content_mcp_google_workspace",
-        "get_gmail_messages_content_batch_mcp_google_workspace",
-        "get_gmail_thread_content_mcp_google_workspace",
-        "list_calendars_mcp_google_workspace",
-        "get_events_mcp_google_workspace",
-        "search_drive_files_mcp_google_workspace",
-        "get_drive_file_content_mcp_google_workspace",
-        "search_docs_mcp_google_workspace",
-        "get_doc_content_mcp_google_workspace",
-        "read_sheet_values_mcp_google_workspace",
-    } <= google_tools
-    assert not any("_mcp_google_workspace" in tool for tool in ms365_tools)
-    assert not any("_mcp_ms-365" in tool for tool in google_tools)
-    assert "file_search" not in ms365_tools
-    assert "file_search" not in google_tools
+    assert ms365_tools == set()
+    assert google_tools == set()
 
 
 def test_main_agent_does_not_ship_provider_productivity_mcp_tools() -> None:
@@ -544,10 +516,10 @@ def test_productivity_activation_prompts_keep_parallel_provider_rule() -> None:
     ms365_prompt = activation_by_agent_id["agent_viventium_online_tool_use_95aeb3"]["prompt"]
     google_prompt = activation_by_agent_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["prompt"]
 
-    assert "Another cortex may activate in parallel for the Google portion" in ms365_prompt
-    assert "Another cortex may activate in parallel for the Microsoft portion" in google_prompt
-    assert "check both Outlook and Gmail and summarize anything urgent" in ms365_prompt
-    assert "check both Outlook and Gmail and summarize anything urgent" in google_prompt
+    assert "Mixed-provider rule" in ms365_prompt
+    assert "Mixed-provider rule" in google_prompt
+    assert "both Outlook and Gmail activates this Microsoft scope" in ms365_prompt
+    assert "both Gmail and Outlook activates this Google scope" in google_prompt
 
 
 def test_productivity_activation_prompts_cover_generic_plural_inbox_sweeps() -> None:
@@ -556,35 +528,32 @@ def test_productivity_activation_prompts_cover_generic_plural_inbox_sweeps() -> 
     ms365_prompt = activation_by_agent_id["agent_viventium_online_tool_use_95aeb3"]["prompt"]
     google_prompt = activation_by_agent_id["agent_8Y1d7JNhpubtvzYz3hvEv"]["prompt"]
 
-    for prompt, provider in (
-        (ms365_prompt, "Microsoft"),
-        (google_prompt, "Google"),
+    for prompt in (
+        " ".join(ms365_prompt.lower().split()),
+        " ".join(google_prompt.lower().split()),
     ):
-        assert "check my inboxes" in prompt
-        assert "check my email accounts" in prompt
-        assert "check all my inboxes for anything urgent" in prompt
-        assert "with no provider restriction" in prompt
-        assert f"true for the {provider}" in prompt
+        assert "generic plural request for all connected inboxes" in prompt
+        assert "singular ambiguous inbox" in prompt
 
-    assert "check my Gmail inbox; ignore Outlook" in ms365_prompt
-    assert "check my Outlook inbox; ignore Gmail" in google_prompt
+    assert "Google-only work is out of scope" in ms365_prompt
+    assert "Microsoft-only work is out of scope" in google_prompt
 
 
 def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     expected = {
-        "agent_viventium_background_analysis_95aeb3": ("anthropic", "claude-sonnet-4-5"),
-        "agent_viventium_confirmation_bias_95aeb3": ("anthropic", "claude-sonnet-4-5"),
-        "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.4"),
-        "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.4"),
-        "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.4"),
-        "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.4"),
-        "agent_viventium_pattern_recognition_95aeb3": ("anthropic", "claude-sonnet-4-5"),
-        "agent_viventium_emotional_resonance_95aeb3": ("anthropic", "claude-sonnet-4-5"),
-        "agent_viventium_strategic_planning_95aeb3": ("anthropic", "claude-opus-4-8"),
-        "agent_viventium_support_95aeb3": ("anthropic", "claude-sonnet-4-5"),
-        "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.4"),
+        "agent_viventium_background_analysis_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_confirmation_bias_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_pattern_recognition_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_emotional_resonance_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_viventium_strategic_planning_95aeb3": ("openAI", "gpt-5.6-sol"),
+        "agent_viventium_support_95aeb3": ("openAI", "gpt-5.6-terra"),
+        "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.6-terra"),
     }
 
     for agent_id, (provider, model) in expected.items():
@@ -594,22 +563,30 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
         assert agent["model_parameters"]["model"] == model
 
 
-def test_deep_research_ships_with_web_search_and_openai_reasoning_effort() -> None:
+def test_retired_deep_research_keeps_reasoning_config_without_live_web_tool() -> None:
     agents_by_id = _load_background_agents_by_id()
     deep_research = agents_by_id["agent_viventium_deep_research_95aeb3"]
 
-    assert "web_search" in deep_research["tools"]
+    assert "web_search" not in deep_research["tools"]
     assert deep_research["model_parameters"]["reasoning_effort"] == "xhigh"
     assert "thinkingBudget" not in deep_research["model_parameters"]
+
+
+def test_red_team_ships_with_web_search_and_openai_reasoning_effort() -> None:
+    agents_by_id = _load_background_agents_by_id()
+    red_team = agents_by_id["agent_viventium_red_team_95aeb3"]
+
+    assert "web_search" in red_team["tools"]
+    assert red_team["model_parameters"]["reasoning_effort"] == "xhigh"
+    assert "thinkingBudget" not in red_team["model_parameters"]
 
 
 def test_background_agent_execution_models_stay_within_launch_ready_families() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     allowed = {
-        ("anthropic", "claude-sonnet-4-5"),
-        ("anthropic", "claude-opus-4-8"),
-        ("openAI", "gpt-5.4"),
+        ("openAI", "gpt-5.6-terra"),
+        ("openAI", "gpt-5.6-sol"),
     }
 
     for agent in agents_by_id.values():
@@ -646,7 +623,7 @@ def test_productivity_and_help_instructions_do_not_contradict_parallel_tooling()
     assert "you have no tools" not in support_instructions.lower()
     assert "if a search tool is available" in support_instructions.lower()
     assert "verify viventium usage/help information" in support_instructions.lower()
-    assert support_agent["tools"] == ["web_search"]
+    assert support_agent["tools"] == []
 
 
 def test_runtime_activation_plumbing_stays_config_driven_and_avoids_illegal_title_hardcoding() -> None:

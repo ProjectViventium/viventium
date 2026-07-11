@@ -17,6 +17,19 @@ Key directories:
 - `viventium_v0_4/agent-starter-react/` (modern playground)
 - `viventium_v0_4/livekit/` (LiveKit server repo)
 
+Feelings ownership inside LibreChat:
+
+- compiler/env contract: root `config.schema.yaml`, examples, and `scripts/viventium/config_compiler.py`
+- persisted state and methods: `packages/data-schemas/src/*/feelingState.ts`
+- decay/capsule/runtime config: `packages/api/src/feelings/`
+- authenticated API and telemetry: `api/server/routes/viventium/feelings.js` and
+  `api/server/services/viventium/`
+- product UI: `client/src/components/Feelings/` at `/feelings`
+- feeling-aware spoken prompt source: `viventium/source_of_truth/prompts/surface/voice_feeling_expression.md`
+  included by registered voice-call and Telegram-audio provider prompts
+- Telegram audio delivery/telemetry: `viventium_v0_4/telegram-viventium/TelegramVivBot/`, consuming
+  the same shared voice capability JSON as LibreChat prompt composition
+
 Nested git repos inside v0.4:
 - `viventium_v0_4/GlassHive/`
 - `viventium_v0_4/LibreChat/`

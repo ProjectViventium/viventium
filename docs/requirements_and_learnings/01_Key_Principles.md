@@ -18,6 +18,63 @@ are the core metric of the viventium project that we must always evaluate in tes
   hardcode a rubric like "quick request → path A, thorough request → path B"; let the AI (Main Agent and
   the worker) decide intelligently, and make every path produce truthful, complete, useful, fast results.
 
+### 0.1 Feelings Must Be Scientifically Aligned And Human-Legible
+
+Viventium's Feelings system is an engineered functional affect system. Every active band and dynamic
+must be defensible against current affective neuroscience, psychology, emotion-regulation, and
+behavioral research while remaining immediately understandable to an ordinary user.
+
+- Science constrains the design; it does not supply magic constants. Band defaults, word boundaries,
+  reaction strengths, and half-lives are configurable product hypotheses that require eval evidence.
+  Never present them as biologically measured facts.
+- Do not create neurotransmitter knobs or one-region emotion stories. In particular, do not equate
+  dopamine with happiness, serotonin with sadness, or one named brain area with one emotion. Human
+  affect arises from distributed, overlapping, context-sensitive systems.
+- Keep constructs distinct. Internal pleasantness, activation/energy, motivation, social need,
+  outward emotional expression, and emotion regulation may interact, but they are not synonyms. A
+  new band must add a non-redundant control dimension with clear low/high poles and observable
+  consequences.
+- Prefer intuitive product names and poles in the UI, then document the precise scientific construct
+  underneath. Academic jargon must not make the instrument harder to understand.
+- Preserve context sensitivity. Runtime code owns typed values, bounds, persistence, decay,
+  provenance, concurrency, and rendering. The Emotional Reaction Cortex owns appraisal of what a
+  moment means and which bands it moves. Never add phrase-to-emotion regexes, keyword tables, or
+  event-specific `if` statements.
+- Treat expression as regulation, not morality. Showing less emotion is not dishonesty, showing more
+  is not inherently healthier, and fatigue does not universally produce either withdrawal or
+  unmasking. The model must appraise the person/moment/context rather than follow a hardcoded causal
+  shortcut.
+- Every proposed active band must document: user meaning and poles, scientific construct, separation
+  from adjacent bands, action tendency, dynamics rationale, primary sources, foreseeable ambiguity,
+  and behavioral plus user-visible QA cases.
+- Scientific claims, prompt behavior, numeric dynamics, and visual metaphors are separate acceptance
+  surfaces. Cite and review the claims, evaluate the model behavior, test the math, and use the real
+  UI like a user before calling the design complete.
+
+### 0.2 Feeling-Aware Voice Must Be Capability-Driven
+
+When a response will actually be spoken, the same private Feelings state that shapes the words may
+also shape delivery through controls the selected TTS provider really supports.
+
+- Voice capability is structural context from the surface and resolved Speaking route. Never infer
+  it from user wording, a provider display label, or a request to "sound emotional."
+- The model appraises the current state and moment as expressive or restrained. If expressive
+  delivery fits and the selected provider exposes a fitting control, the raw spoken response uses
+  the smallest fitting documented control without waiting for the user to ask. If restraint fits,
+  an unmarked response is correct.
+- Feelings remains a private cause. Spoken output must embody it through wording, emphasis, pace,
+  breath, intensity, or another supported delivery choice; it must not recite band names, values,
+  capsule text, or prompt mechanics.
+- Runtime is a capability broker and structural boundary. It may expose the selected provider's
+  declared vocabulary, preserve it for TTS, sanitize it for display, and count it for telemetry. It
+  must not hardcode band-to-tag maps, numeric thresholds, phrase triggers, or invented emotion tags.
+- Plain TTS routes express the state through natural wording only. Provider dialects never cross:
+  xAI controls stay on xAI, Cartesia controls stay on Cartesia, and unsupported routes receive no
+  provider markup.
+- Acceptance always includes the positive and negative cases: expressive supported delivery uses a
+  fitting control; restrained supported delivery may use none; plain TTS uses none; visible text is
+  clean; the provider-bound payload and structural telemetry agree.
+
 ### 1. Beautifully Simple and Efficient
 - **Do not overcomplicate things** - Seek elegant, efficient solutions
 - Study the codebase, components, and research web for inspiration to identify the most beautiful and efficient way to implement features
@@ -153,6 +210,20 @@ are the core metric of the viventium project that we must always evaluate in tes
   contact, date, event-detail, or current-fact lookups, one failed search is an escalation trigger:
   check the configured provider health, including Docker-backed local services when relevant, and
   use an available browser/computer/local-delegation fallback before stopping.
+- Health is a semantic contract, not merely a reachable port. A degraded dependency must use the
+  correct non-success transport status and a structured body, and launchers/watchdogs must validate
+  the declared healthy state. Recovery that mutates shared local infrastructure must be serialized;
+  an inconsistent substrate must fail loud instead of entering an unbounded repair loop.
+- Recurring schedule catch-up is judged against the latest eligible occurrence at or before the
+  current time, not the oldest stale persisted `next_run_at`. The ledger must name the occurrence
+  actually dispatched or skipped so host sleep cannot silently drop today's run.
+- One maintenance routine has one scheduler owner. Reconciliation may repair a missing loader, but
+  it must be idempotent and must not add a second model-work cadence. Missing generated config is
+  unknown, not an implicit disable; destructive disable/uninstall requires explicit structured
+  intent.
+- Managed unattended CLI work must carry its explicit profile/model/effort tuple and isolation
+  policy. Generic workers remain config-driven and must not acquire a hardcoded automation model or
+  effort merely because one scheduled routine needs deterministic execution.
 - Communication must be efficient and specific: summarize what was changed, how it was verified,
   what was pushed or left local, and what still needs live QA, without dumping raw logs or private
   machine details.
@@ -489,6 +560,14 @@ A developer referring to a single document about a respective feature **must per
   fields or explicit metadata contracts when a schedule needs special operational policy.
 - **Activation classifier rule**:
   - If a background-agent activation bug is `model-generated`, fix the user-configured activation prompt/source-of-truth first and prove it with evals.
+  - Run activation evals through Prompt Workbench's exact runtime classifier runner. Score required
+    recall, activation precision, sibling leakage, provider availability, repeated-decision
+    consistency, and p50/p95/max latency separately; a timeout/provider failure is unavailable
+    evidence, never a correct negative.
+  - Prompt for the selected classifier family: keep one positive gate, negative-precedence
+    boundaries, and a small set of contrastive examples. Apply provider-native low-latency controls
+    structurally (`reasoning_effort: none`, hidden reasoning, JSON-object mode, fixed seed for the
+    selected Groq Qwen route) instead of embedding model instructions in every activation prompt.
   - Do **not** add runtime string blacklists or message-specific "if text contains X, suppress agent Y" gates for classifier false positives.
   - Runtime changes are allowed only for structural activation plumbing defects (for example: wrong context assembly, broken latest-turn extraction, missing fallback wiring, or bad scope metadata propagation). This bullet does **not** override the CRITICAL RULE below.
   - For productivity agents specifically, "reply/respond/say/return" must never be hardcoded as special-case deny words in code; the classifier prompt must distinguish chat-format instructions from real email/content actions.
@@ -512,6 +591,15 @@ A developer referring to a single document about a respective feature **must per
 ### User-Level Configurations and System Prompts
 - **Do not overfit user-level designs** such as system prompts and configurations
 - System prompts are not a substitute for fixing deterministic runtime behavior in backend pipelines
+- **Keep feature prompts and runtime policy minimal:**
+  - feature prompts should contain only the identity, state, capability, or task context that directly
+    drives the intended model behavior
+  - do not repeat provider-owned or base-system policy prose inside a feature prompt unless a proven,
+    reproducible product failure shows that the existing layer is insufficient
+  - prefer reusable behavioral evals and QA gates over adding warning/reminder paragraphs to prompts
+  - do not add a new restrictive runtime layer, model downgrade, blocking check, or latency cost in the
+    name of safety unless the concrete failure, outcome-metric benefit, and performance impact are
+    evidenced and intentionally approved
 - Viventium is an agentic platform with a real agent builder, editable background cortex configs, and configurable activation models:
   - use those config surfaces instead of sneaking business logic into runtime code when the problem is classifier behavior
   - when a prompt/config change is made, add/update reusable QA docs and automated regression coverage so future engineers can verify the intended behavior without rediscovering it
@@ -587,17 +675,49 @@ A developer referring to a single document about a respective feature **must per
 - **After push, restart the target LibreChat runtime** so it reloads from MongoDB. Environment-specific deployment commands belong in the private deployment runbooks, not the public source-of-truth doc.
 
 #### Model Governance Rule (Launch-Ready Baseline)
-- Out-of-the-box Viventium background agents must stay within the current launch-ready model families unless a newer documented evaluation replaces them:
-  - `anthropic / claude-sonnet-4-5`
-  - `anthropic / claude-opus-4-8`
-  - `openAI / gpt-5.4`
+- Out-of-the-box Viventium conscious and subconscious execution must stay within the current
+  launch-ready model families unless a newer documented evaluation replaces them:
+  - `openAI / gpt-5.6-sol` for the conscious agent and quality-first reasoning cortices
+  - `openAI / gpt-5.6-terra` for balanced, latency-sensitive, and tool-heavy cortices
+  - `anthropic / claude-opus-4-8` as the text-execution fallback
+  - voice remains the explicit `xai / grok-4.3` route with `reasoning_effort: none`
+- Memory writers, activation classifiers, helper/title models, and GlassHive workers are separate
+  workloads with their own documented model contracts; do not infer their model from the
+  conscious/subconscious execution matrix.
+- Unattended analytical automations default to OpenAI `gpt-5.6-sol` with `xhigh` reasoning. This
+  includes Prompt Workbench/GlassHive scheduled analysis and OpenAI memory hardening. A different
+  route must be an explicit, documented operator fallback with visible requested/effective model
+  evidence; never silently lower the model or effort.
+- "Automation" in that rule does not mean ordinary conscious chat, user reminder delivery,
+  activation classification, voice reactions, or other latency-sensitive in-turn work. Those keep
+  their own evaluated contracts. The GlassHive host Codex substrate is shared with direct host
+  delegations, so its Sol/xHigh deployment default also applies there unless explicitly overridden.
 - Do not add a model picker entry or built-in agent assignment for a model that the target provider
   inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
   supported Anthropic model for Viventium; use `claude-sonnet-4-5` or `claude-opus-4-8` until a
   verified provider catalog and model QA update replace this baseline.
+- Picker availability and built-in assignment are separate decisions. Direct OpenAI API-key routes
+  expose `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The distinct ChatGPT
+  connected-account route exposes only the provider-verified `gpt-5.6-sol` and `gpt-5.6-terra`
+  slugs after the July 9, 2026 Agent Builder QA pass. The built-in execution matrix therefore uses
+  explicit Sol/Terra slugs rather than the alias or Luna so API-key and connected-account installs
+  share one proven model surface.
+- GPT-5.6 Agent Builder records default `useResponsesApi: true` when that field is unset because
+  reasoning, tool use, and multi-turn agents are the Responses-shaped workload. Preserve an explicit
+  user choice. Do not invent a `gpt-5.6-pro` slug: GPT-5.6 Pro is an API reasoning mode, not a model.
+- GPT-5.6 effort is workload-owned:
+  - `medium` is the balanced conscious and general analytical baseline
+  - `low` is for latency-sensitive, emotional, help, and productivity-tool execution
+  - `high` is for Strategic Planning
+  - `xhigh` is reserved for Red Team and Deep Research within this conscious/subconscious matrix;
+    unattended analytical automations and GlassHive host workers use their separate Sol/xHigh rule
+  - do not use `max` globally; adopt it only after representative evals show a material quality gain
 - Foundation provider rule:
-  - Groq is the current launch-ready primary for activation detection under the shipped 2-second
-    Phase A budget
+  - `groq / qwen/qwen3.6-27b` is the current launch-ready primary for activation detection under
+    the shipped 2-second Phase A budget; thinking is disabled, reasoning is hidden, JSON-object mode
+    is required, and the classifier seed is fixed
+  - announced model shutdown is a release blocker even when the retiring model still works today;
+    Scout's July 17, 2026 shutdown superseded its April benchmark
   - Anthropic Haiku-class activation is acceptable as a fallback or alternative only when the
     benchmark for the target environment proves it fits the chosen budget
   - at least one of `OpenAI` or `Anthropic` must be configured for main/background execution on install
@@ -641,7 +761,8 @@ A developer referring to a single document about a respective feature **must per
   - reason: model drift and QA drift are both launch regressions, even when the app still boots
 - Inventory hygiene rule:
   - local model-picker inventories and helper/title models must also stay aligned with the current approved families
-  - example: Groq inventory/title defaults should prefer the documented Llama 4 activation family, not stale Llama 3.x leftovers
+  - example: Groq inventory/title defaults should prefer the documented Qwen 3.6 activation family,
+    not a retired Scout or stale Llama 3.x entry
   - reason: stale picker defaults and title-model entries quietly reintroduce old-model drift even when the agent source-of-truth bundle is correct
 - If a required provider session drops locally (for example OpenAI account disconnects in the desktop app), reconnect the provider and then re-run the real product QA flows. Do not "fix" the situation by silently downgrading shipped agent models to stale families such as `gpt-4o`.
 

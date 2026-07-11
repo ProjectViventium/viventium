@@ -18,6 +18,8 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 | `MEMHARD-008` | Apply and rollback leave public-safe audit evidence. | A guarded apply can be verified and reversed without exposing private memory values. | memory-harden apply/rollback, summary.json, redacted run log, rollback summary | `tests/release/test_memory_hardening_contract.py::test_memory_hardening_rollback_records_public_safe_summary` plus guarded live apply/rollback | PASS 2026-06-02 ([schema repair report](reports/2026-06-02-openai-schema-repair.md)); apply wrote three key updates, rollback restored one user, and summary/log recorded only counts/timestamps |
 | `MEMHARD-009` | Full scheduled-shaped apply gives the configured model enough runtime for large overnight workpacks. | The nightly job does not fall back solely because a healthy large OpenAI/GPT-5.5 call exceeded an undersized timeout. | memory-harden apply --scheduled, model attempt telemetry, timeout default | `tests/release/test_memory_hardening_contract.py::test_memory_hardening_model_timeout_matches_large_overnight_workload` plus scheduled-shaped apply proof | PASS 2026-06-02 ([schema repair report](reports/2026-06-02-openai-schema-repair.md)); after the timeout default was raised to 30 minutes, full scheduled-shaped apply used one OpenAI/GPT-5.5 attempt, zero failures, zero fallback, and rollback restored private state |
 | `MEMHARD-010` | Scheduled hardening leaves an authoritative public-safe trigger receipt. | Nightly QA can prove the macOS maintenance job fired without guessing from UTC timestamps, travel, DST, or wake state. | LaunchAgent command, wrapper trigger receipt, hardener summary, automation report | `tests/release/test_memory_hardening_contract.py` trigger-receipt regressions plus next real scheduled run | PASS 2026-06-11 ([nightly review](reports/2026-06-11-nightly-routines-health-review.md)); Jun 9, Jun 10, and Jun 11 live launchd receipts were public-safe and finalized as `skipped` with `on_battery_power`, proving scheduled delivery without forcing model work |
+| `MEMHARD-011` | Proposal apply, replay, and rollback are revision protected. | Nightly maintenance cannot overwrite or erase a newer Telegram/web/voice memory write. | proposal/apply/rollback, Mongo revisions, private rollback snapshot, public-safe summary | hardener and memory CAS regressions | PASS-AUTOMATED 2026-07-11; live guarded smoke pending |
+| `MEMHARD-012` | The 03:00 LaunchAgent is single-trigger, idempotently reconciled, and lifecycle-receipted. | Repeated start/upgrade cannot unload a healthy agent, reset its evidence, or create a competing model cadence. | compiler, CLI sync, LaunchAgent, trigger/lifecycle receipts | memory-hardening contract tests plus live plist/status | PASS 2026-07-11; 56 tests plus loaded single-trigger plist and repeated live no-op receipts ([report](reports/2026-07-11-nightly-failure-prevention.md)) |
 
 ## `MEMHARD-001` - Core User Flow
 
@@ -285,6 +287,38 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
   ([nightly review](reports/2026-06-11-nightly-routines-health-review.md)); live launchd receipt
   correlation proved the schedule fired and finalized a power-gate skip without forcing model work.
 
+## `MEMHARD-011` - Revision-Safe Apply And Rollback
+
+- Generate a proposal, then advance the same memory key through a synthetic live write before apply.
+- Apply and replay the proposal; confirm `revision_conflict`, zero stale overwrite, and conflict
+  visibility in `apply_results`.
+- On a clean synthetic key, apply once and verify the first rollback snapshot is preserved across
+  replay. Advance the key again before rollback and confirm rollback preserves the newer value.
+- Expected: apply and rollback touch only exact expected revisions; legacy snapshots without
+  post-apply state fail closed; partial rollback conflicts are explicit.
+- Forbidden: delete/recreate of the user's entire memory set, silent stale overwrite, replay erasing
+  the original snapshot, or raw values/ids in public logs.
+- Evidence: automated 71-case hardener suite, Mongo revision delta, private snapshot schema/version,
+  redacted summary conflict counts, and guarded live smoke.
+- Last run: PASS-AUTOMATED 2026-07-11; guarded live smoke pending.
+
+## `MEMHARD-012` - Single-Trigger Idempotent LaunchAgent
+
+- Install a synthetic 03:00 plist, reconcile it twice, then introduce real schedule/command drift.
+- Verify the first install bootstraps and verifies, the identical second pass performs only a
+  `launchctl print`, and real drift performs one bootout/bootstrap with post-action verification.
+- Remove the generated enablement key and confirm sync preserves the installed agent; explicit
+  `false` remains the only uninstall input.
+- Expected: only `StartCalendarInterval` exists; trigger receipts prove scheduled fires and
+  lifecycle receipts prove installer/reconciler actions with a generation hash.
+- Forbidden: `StartInterval`, Workbench/cron as a second trigger, bootout/bootstrap on every start,
+  absent config interpreted as disable, or receipts containing paths/email/commands.
+- Evidence: contract tests, installed plist, `launchctl` state, status JSON, lifecycle receipt, and
+  latest public-safe trigger receipt.
+- Last run: PASS 2026-07-11; 56 tests cover install/no-op/unloaded/drift/failure/lock paths, and the
+  live loaded plist has one calendar trigger with repeated successful no-op lifecycle receipts
+  ([report](reports/2026-07-11-nightly-failure-prevention.md)).
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Memory Hardening. Add narrower feature-specific
@@ -303,6 +337,9 @@ rows before claiming a pass when the feature behavior changes.
 | `MEMHARD-UC-009` | Apply and roll back a hardener proposal during QA. | `20_Memory_System.md` / `MEMHARD-008` | memory-harden apply/rollback, summary.json, redacted run log, rollback summary | Changed-key counts, maintenance flag, transcript-vector counts, rollback restored count, public-safety scan. | The user gets reversible proof of the scheduled apply path without leaking private memory values. | PASS 2026-06-02 ([schema repair report](reports/2026-06-02-openai-schema-repair.md)); guarded apply and rollback succeeded |
 | `MEMHARD-UC-010` | Let the full scheduled-shaped hardener run model generation and apply in one operation. | `20_Memory_System.md` / `MEMHARD-009` | memory-harden apply --scheduled, run summary/status, redacted log, rollback summary | Model attempt/failure reasons, selected provider/model, apply counts, rollback restored count. | The configured OpenAI path completes without timeout/fallback and rollback restores private state during QA. | PASS 2026-06-02 ([schema repair report](reports/2026-06-02-openai-schema-repair.md)); full scheduled-shaped apply and rollback succeeded after timeout fix |
 | `MEMHARD-UC-011` | Wake up after the scheduled memory-maintenance window and inspect whether it ran. | `20_Memory_System.md`, `39_Installer_and_Config_Compiler.md` / `MEMHARD-010` | LaunchAgent plist/state, schedule trigger receipt, memory-harden status/run summary, QA report wording | Trigger source, fired-at timestamps, timezone at fire, exit status, run id/status when present, generated schedule, public-safety scan. | The user sees PASS/SKIPPED for a healthy scheduled run or healthy skip, and PARTIAL/FAIL only for missing receipt, duplicate/conflicting triggers, failed run, provider/vector errors, or unknown eligibility. | PASS/SKIPPED 2026-06-11 ([nightly review](reports/2026-06-11-nightly-routines-health-review.md)); live receipt correlation proved launchd fired and finalized the scheduled power skip |
+
+| `MEMHARD-UC-012` | Apply, replay, and roll back a synthetic proposal while another surface advances the same key. | `20_Memory_System.md` / `MEMHARD-011` | hardener CLI, Mongo revisions, Telegram/web write | apply/rollback summaries, revision conflicts, preserved final value | Stale apply/rollback loses the race visibly and never erases the newer value. | PASS-AUTOMATED 2026-07-11; live smoke pending |
+| `MEMHARD-UC-013` | Re-run start/upgrade reconciliation, then inspect the overnight job after travel or sleep. | `20_Memory_System.md` / `MEMHARD-012` | LaunchAgent, `memory-harden status`, trigger/lifecycle receipts | system timezone, single calendar trigger, loaded state, generation hash, latest exit/run | Reconciliation is a no-op when healthy; launchd's observed calendar fire is judged from its receipt without a competing model cadence. | PASS 2026-07-11; loaded single-trigger state, scheduled success receipt, and repeated no-op lifecycle receipts agree ([report](reports/2026-07-11-nightly-failure-prevention.md)) |
 
 ## Release Test Traceability
 

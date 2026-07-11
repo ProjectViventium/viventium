@@ -1026,6 +1026,7 @@ export VIVENTIUM_LOCAL_MEILI_PORT="${VIVENTIUM_LOCAL_MEILI_PORT:-$PROFILE_MEILI_
 export VIVENTIUM_GOOGLE_MCP_PORT="${VIVENTIUM_GOOGLE_MCP_PORT:-$PROFILE_GOOGLE_MCP_PORT}"
 export VIVENTIUM_SCHEDULING_MCP_PORT="${VIVENTIUM_SCHEDULING_MCP_PORT:-$PROFILE_SCHEDULING_MCP_PORT}"
 export VIVENTIUM_RAG_API_PORT="${VIVENTIUM_RAG_API_PORT:-$PROFILE_RAG_API_PORT}"
+export VIVENTIUM_RAG_COMPOSE_PROJECT_NAME="${VIVENTIUM_RAG_COMPOSE_PROJECT_NAME:-viventium-rag}"
 export VIVENTIUM_CODE_INTERPRETER_PORT="${VIVENTIUM_CODE_INTERPRETER_PORT:-$PROFILE_CODE_INTERPRETER_PORT}"
 export VIVENTIUM_SKYVERN_API_PORT="${VIVENTIUM_SKYVERN_API_PORT:-$PROFILE_SKYVERN_API_PORT}"
 export VIVENTIUM_SKYVERN_UI_PORT="${VIVENTIUM_SKYVERN_UI_PORT:-$PROFILE_SKYVERN_UI_PORT}"
@@ -1072,11 +1073,13 @@ mkdir -p "$VIVENTIUM_RAG_PGDATA_PATH"
 # Purpose: Prevent local Viventium from falling back to older OpenAI families.
 # The launcher owns the default local OpenAI model inventory for both the chat
 # surface and Agent Builder/Assistants surface, while still allowing explicit
-# env overrides when needed.
-DEFAULT_VIVENTIUM_OPENAI_MODELS="gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-mini,gpt-5-nano,o3,o4-mini"
-DEFAULT_VIVENTIUM_ASSISTANTS_MODELS="gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3,o4-mini"
-CONNECTED_ACCOUNT_VIVENTIUM_OPENAI_MODELS="gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
-CONNECTED_ACCOUNT_VIVENTIUM_ASSISTANTS_MODELS="gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
+# env overrides when needed. Direct API keys expose the full official GPT-5.6
+# family. The ChatGPT connected-account route exposes only slugs verified on
+# that distinct provider surface; do not silently remap unsupported aliases.
+DEFAULT_VIVENTIUM_OPENAI_MODELS="gpt-5.6,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-mini,gpt-5-nano,o3,o4-mini"
+DEFAULT_VIVENTIUM_ASSISTANTS_MODELS="gpt-5.6,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.4,gpt-5,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3,o4-mini"
+CONNECTED_ACCOUNT_VIVENTIUM_OPENAI_MODELS="gpt-5.6-sol,gpt-5.6-terra,gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
+CONNECTED_ACCOUNT_VIVENTIUM_ASSISTANTS_MODELS="gpt-5.6-sol,gpt-5.6-terra,gpt-5.4,gpt-5.4-pro,gpt-5,gpt-5-pro,gpt-5-chat-latest,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini"
 # === VIVENTIUM END ===
 
 MONGO_CONTAINER_NAME="$VIVENTIUM_LOCAL_MONGO_CONTAINER"
@@ -4690,6 +4693,53 @@ ensure_mongodb_ready() {
   return 1
 }
 
+ensure_memory_unique_indexes_if_clean() {
+  local migration_script="$LIBRECHAT_DIR/scripts/viventium-memory-dedupe.js"
+  local summary=""
+  local duplicate_groups=""
+
+  if [[ ! -f "$migration_script" ]]; then
+    log_warn "Memory index migration helper is missing; continuing without creating unique indexes"
+    return 0
+  fi
+
+  if ! summary="$(MONGO_URI="$MONGO_URI" node "$migration_script" --dry-run --json 2>/dev/null)"; then
+    log_warn "Could not inspect memory duplicates; continuing without creating unique indexes"
+    return 0
+  fi
+
+  duplicate_groups="$(printf '%s' "$summary" | "$PYTHON_BIN" -c '
+import json
+import sys
+
+try:
+    report = json.load(sys.stdin)
+    total = sum(
+        int(report.get(collection, {}).get("duplicateGroups", 0) or 0)
+        for collection in ("memoryentries", "keys")
+    )
+    print(total)
+except (TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+' 2>/dev/null)" || {
+    log_warn "Memory duplicate inspection returned an unreadable result; continuing without creating unique indexes"
+    return 0
+  }
+
+  if [[ "$duplicate_groups" != "0" ]]; then
+    log_warn "Memory/provider-key duplicates were found; no rows were changed and unique indexes were not created"
+    log_warn "Review first with: bin/viventium memory-dedupe --dry-run --json"
+    return 0
+  fi
+
+  if ! MONGO_URI="$MONGO_URI" node "$migration_script" --apply --create-indexes --json >/dev/null; then
+    log_warn "Memory unique-index creation did not complete; startup will continue without modifying rows"
+    return 0
+  fi
+
+  log_success "Memory and provider-key unique indexes are ready"
+}
+
 resolve_meili_connection() {
   local meili_host="${MEILI_HOST:-http://127.0.0.1:${VIVENTIUM_LOCAL_MEILI_PORT}}"
   local host="127.0.0.1"
@@ -5788,9 +5838,10 @@ PY
       if [[ -f "$rag_compose" ]]; then
         (
           cd "$LIBRECHAT_DIR"
-          RAG_PORT="$VIVENTIUM_RAG_API_PORT" docker compose -f "$rag_compose" down >/dev/null 2>&1 || true
+          RAG_PORT="$VIVENTIUM_RAG_API_PORT" docker compose --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" -f "$rag_compose" down >/dev/null 2>&1 || true
         )
       fi
+      remove_compose_service_containers "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" "rag_api" "vectordb"
       remove_compose_service_containers "librechat" "rag_api" "vectordb"
 
       # VIVENTIUM START: Use v0.4 SearxNG compose.
@@ -6717,7 +6768,16 @@ start_optional_docker_recovery_worker() {
         start_ms365_mcp || true
       fi
       if [[ "$START_RAG_API" == "true" && "$SKIP_LIBRECHAT" != "true" ]] && ! rag_api_http_ping "$VIVENTIUM_RAG_API_PORT"; then
-        start_rag_api || true
+        local rag_recovery_status=0
+        if start_rag_api; then
+          :
+        else
+          rag_recovery_status=$?
+          if [[ "$rag_recovery_status" -eq "$RAG_COMPOSE_UNRECOVERABLE_EXIT" ]]; then
+            log_error "Late Docker recovery stopped because the RAG compose state needs Docker-level repair"
+            exit 1
+          fi
+        fi
       fi
       if [[ "$START_FIRECRAWL" == "true" ]] && ! firecrawl_http_ping; then
         start_firecrawl || true
@@ -7441,7 +7501,7 @@ cleanup() {
     if [[ "$RAG_API_STARTED_BY_SCRIPT" == "true" ]]; then
       (
         cd "$LIBRECHAT_DIR"
-        RAG_PORT="$VIVENTIUM_RAG_API_PORT" docker compose -f "$LIBRECHAT_DIR/rag.yml" down >/dev/null 2>&1 || true
+        RAG_PORT="$VIVENTIUM_RAG_API_PORT" docker compose --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" -f "$LIBRECHAT_DIR/rag.yml" down >/dev/null 2>&1 || true
       )
     fi
     ## === VIVENTIUM START ===
@@ -8154,30 +8214,170 @@ start_ms365_mcp() {
   return 0
 }
 
-rag_api_http_ping() {
-  local port="${1:-$VIVENTIUM_RAG_API_PORT}"
-  curl -fsS --max-time 3 "http://localhost:${port}/health" >/dev/null 2>&1
+RAG_COMPOSE_UNRECOVERABLE_EXIT=75
+RAG_COMPOSE_LOCK_HELD=false
+RAG_COMPOSE_LOCK_OWNER_PID=""
+
+rag_compose_lock_dir() {
+  printf '%s\n' "${VIVENTIUM_RAG_COMPOSE_LOCK_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/state/locks/rag-compose.lock}"
 }
 
-rag_api_container_needs_recreate() {
+rag_compose_lock_age_seconds() {
+  local lock_dir="$1"
+  local modified_at=""
+  local now=""
+  modified_at="$(stat -f '%m' "$lock_dir" 2>/dev/null || stat -c '%Y' "$lock_dir" 2>/dev/null || true)"
+  now="$(date +%s)"
+  if [[ "$modified_at" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ && "$now" -ge "$modified_at" ]]; then
+    printf '%s\n' "$((now - modified_at))"
+  else
+    printf '0\n'
+  fi
+}
+
+acquire_rag_compose_lock() {
+  local retries="${1:-30}"
+  local lock_dir=""
+  local owner_pid=""
+  local attempt=0
+  local stale_dir=""
+  local lock_age=0
+  local stale_grace="${VIVENTIUM_RAG_COMPOSE_LOCK_STALE_GRACE_SECONDS:-3}"
+  RAG_COMPOSE_LOCK_OWNER_PID=""
+  if ! [[ "$stale_grace" =~ ^[0-9]+$ ]]; then
+    stale_grace=3
+  fi
+  lock_dir="$(rag_compose_lock_dir)"
+  mkdir -p "$(dirname "$lock_dir")"
+
+  while [[ "$attempt" -le "$retries" ]]; do
+    if mkdir "$lock_dir" 2>/dev/null; then
+      if ! /bin/sh -c 'printf "%s\n" "$PPID"' >"$lock_dir/pid"; then
+        rmdir "$lock_dir" 2>/dev/null || true
+        return 1
+      fi
+      RAG_COMPOSE_LOCK_OWNER_PID="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+      if ! [[ "$RAG_COMPOSE_LOCK_OWNER_PID" =~ ^[0-9]+$ ]]; then
+        rm -f "$lock_dir/pid"
+        rmdir "$lock_dir" 2>/dev/null || true
+        RAG_COMPOSE_LOCK_OWNER_PID=""
+        return 1
+      fi
+      RAG_COMPOSE_LOCK_HELD=true
+      return 0
+    fi
+
+    owner_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if [[ -n "$owner_pid" && "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
+      sleep 1
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    lock_age="$(rag_compose_lock_age_seconds "$lock_dir")"
+    if [[ "$lock_age" -lt "$stale_grace" ]]; then
+      sleep 1
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    stale_dir="${lock_dir}.stale.${BASHPID:-$$}"
+    if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+      rm -f "$stale_dir/pid"
+      rmdir "$stale_dir" 2>/dev/null || true
+      continue
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+release_rag_compose_lock() {
+  local lock_dir=""
+  local owner_pid=""
+  if [[ "$RAG_COMPOSE_LOCK_HELD" != "true" ]]; then
+    return 0
+  fi
+  lock_dir="$(rag_compose_lock_dir)"
+  owner_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+  if [[ -n "$RAG_COMPOSE_LOCK_OWNER_PID" && "$owner_pid" == "$RAG_COMPOSE_LOCK_OWNER_PID" ]]; then
+    rm -f "$lock_dir/pid"
+    rmdir "$lock_dir" 2>/dev/null || true
+  fi
+  RAG_COMPOSE_LOCK_HELD=false
+  RAG_COMPOSE_LOCK_OWNER_PID=""
+}
+
+rag_api_http_ping() {
+  local port="${1:-$VIVENTIUM_RAG_API_PORT}"
+  local payload=""
+  payload="$(curl -fsS --max-time 3 "http://localhost:${port}/health" 2>/dev/null)" || return 1
+  RAG_HEALTH_PAYLOAD="$payload" "$PYTHON_BIN" - <<'PY'
+import json
+import os
+
+try:
+    payload = json.loads(os.environ.get("RAG_HEALTH_PAYLOAD", ""))
+except (TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+if isinstance(payload, dict) and str(payload.get("status") or "").upper() == "UP":
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+rag_api_compose_state() {
   local compose_file="${1:-$LIBRECHAT_DIR/rag.yml}"
   local port="${2:-$VIVENTIUM_RAG_API_PORT}"
   local container_id=""
   local published_port=""
 
   if [[ ! -f "$compose_file" ]] || ! command -v docker >/dev/null 2>&1; then
-    return 1
+    printf 'unavailable\n'
+    return 0
   fi
-
-  container_id="$(
-    cd "$LIBRECHAT_DIR" && docker compose -f "$compose_file" ps -q rag_api 2>/dev/null | head -n 1
-  )"
+  if ! container_id="$(
+    cd "$LIBRECHAT_DIR" && docker compose --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" -f "$compose_file" ps -q rag_api 2>/dev/null | head -n 1
+  )"; then
+    printf 'compose_error\n'
+    return 0
+  fi
   if [[ -z "$container_id" ]]; then
-    return 1
+    printf 'absent\n'
+    return 0
   fi
-
+  if ! docker inspect "$container_id" >/dev/null 2>&1; then
+    printf 'phantom\n'
+    return 0
+  fi
   published_port="$(docker port "$container_id" "${port}/tcp" 2>/dev/null || true)"
-  [[ "$published_port" != *"127.0.0.1:${port}"* && "$published_port" != *"0.0.0.0:${port}"* && "$published_port" != *"[::]:${port}"* ]]
+  if [[ "$published_port" == *"127.0.0.1:${port}"* || "$published_port" == *"0.0.0.0:${port}"* || "$published_port" == *"[::]:${port}"* ]]; then
+    printf 'ready\n'
+  else
+    printf 'binding_mismatch\n'
+  fi
+}
+
+rag_api_container_needs_recreate() {
+  local compose_file="${1:-$LIBRECHAT_DIR/rag.yml}"
+  local port="${2:-$VIVENTIUM_RAG_API_PORT}"
+  [[ "$(rag_api_compose_state "$compose_file" "$port")" == "binding_mismatch" ]]
+}
+
+wait_for_rag_api_health() {
+  local port="${1:-$VIVENTIUM_RAG_API_PORT}"
+  local retries="${2:-5}"
+  local attempt=0
+  while [[ "$attempt" -lt "$retries" ]]; do
+    if rag_api_http_ping "$port"; then
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  return 1
 }
 
 # === VIVENTIUM START ===
@@ -8329,7 +8529,7 @@ ensure_ollama_embedding_model_for_rag() {
   return 1
 }
 
-start_rag_api() {
+_start_rag_api_locked() {
   if [[ "$START_RAG_API" != "true" || "$SKIP_LIBRECHAT" == "true" ]]; then
     log_info "Skipping local RAG API startup"
     return 0
@@ -8356,13 +8556,23 @@ start_rag_api() {
   fi
 
   local rag_port="$VIVENTIUM_RAG_API_PORT"
+  local rag_compose_state=""
+  rag_compose_state="$(rag_api_compose_state "$compose_file" "$rag_port")"
+  if [[ "$rag_compose_state" == "phantom" || "$rag_compose_state" == "compose_error" ]]; then
+    log_error "Docker engine/Compose state is inconsistent for the RAG sidecar; stopping automatic retries until Docker is healthy"
+    return "$RAG_COMPOSE_UNRECOVERABLE_EXIT"
+  fi
   if port_in_use "$rag_port"; then
     if rag_api_http_ping "$rag_port"; then
+      if [[ "$rag_compose_state" != "ready" && "$RESTART_DOCKER_SERVICES" != "true" ]]; then
+        log_error "RAG API port $rag_port is healthy but is not owned by the expected Compose project; stopping automatic retries"
+        return "$RAG_COMPOSE_UNRECOVERABLE_EXIT"
+      fi
       if [[ "$RESTART_DOCKER_SERVICES" == "true" ]]; then
         log_warn "Local RAG API already running on port $rag_port - restarting"
         (
           cd "$LIBRECHAT_DIR"
-          RAG_PORT="$rag_port" docker compose -f "$compose_file" down >/dev/null 2>&1 || true
+          RAG_PORT="$rag_port" docker compose --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" -f "$compose_file" down >/dev/null 2>&1 || true
         )
       else
         export RAG_API_URL="http://localhost:${rag_port}"
@@ -8374,7 +8584,11 @@ start_rag_api() {
         log_warn "RAG API port $rag_port is in use; attempting restart on the same port"
         kill_port_listeners "$rag_port" "$LIBRECHAT_DIR"
       else
-        log_warn "Port $rag_port is in use; skipping local RAG API startup"
+        if [[ "$rag_compose_state" == "absent" || "$rag_compose_state" == "binding_mismatch" ]]; then
+          log_error "RAG API port $rag_port is occupied by an unhealthy service outside the expected Compose binding; stopping automatic retries"
+          return "$RAG_COMPOSE_UNRECOVERABLE_EXIT"
+        fi
+        log_warn "Port $rag_port is in use by the RAG compose service but semantic health is not ready yet"
         return 1
       fi
     fi
@@ -8401,6 +8615,11 @@ start_rag_api() {
   log_info "Starting local RAG API (Docker)..."
   local rag_compose_status=0
   local rag_compose_args=(up -d)
+  rag_compose_state="$(rag_api_compose_state "$compose_file" "$rag_port")"
+  if [[ "$rag_compose_state" == "phantom" || "$rag_compose_state" == "compose_error" ]]; then
+    log_error "Docker engine/Compose state is inconsistent for the RAG sidecar; stopping automatic retries until Docker is healthy"
+    return "$RAG_COMPOSE_UNRECOVERABLE_EXIT"
+  fi
   if rag_api_container_needs_recreate "$compose_file" "$rag_port"; then
     log_warn "Local RAG API container is missing the expected localhost:${rag_port} port binding; recreating sidecar"
     rag_compose_args+=(--force-recreate rag_api)
@@ -8409,15 +8628,23 @@ start_rag_api() {
     cd "$LIBRECHAT_DIR"
     VIVENTIUM_DOCKER_COMPOSE_UP_TIMEOUT_SECONDS="$rag_compose_up_timeout" \
       RAG_PORT="$rag_port" \
-      docker compose -f "$compose_file" "${rag_compose_args[@]}"
+      docker compose --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" -f "$compose_file" "${rag_compose_args[@]}"
   ) || rag_compose_status=$?
   RAG_API_STARTED_BY_SCRIPT=true
 
   if [[ "$rag_compose_status" -ne 0 ]]; then
-    log_warn "Local RAG API compose start exited with status ${rag_compose_status}; checking whether the service is still converging"
+    if wait_for_rag_api_health "$rag_port" "$quick_probe_retries"; then
+      export RAG_API_URL="http://localhost:${rag_port}"
+      return 0
+    fi
+    log_error "Local RAG API compose start exited with status ${rag_compose_status} and semantic health is down"
+    if [[ "$rag_compose_status" -eq "$RAG_COMPOSE_UNRECOVERABLE_EXIT" ]]; then
+      return 1
+    fi
+    return "$rag_compose_status"
   fi
 
-  if wait_for_http "http://localhost:${rag_port}/health" "RAG API" "$quick_probe_retries"; then
+  if wait_for_rag_api_health "$rag_port" "$quick_probe_retries"; then
     export RAG_API_URL="http://localhost:${rag_port}"
     return 0
   fi
@@ -8429,6 +8656,21 @@ start_rag_api() {
 
   log_warn "RAG API bootstrap still in progress; continuing startup"
   return 1
+}
+
+start_rag_api() {
+  local result=0
+  if ! acquire_rag_compose_lock "${VIVENTIUM_RAG_COMPOSE_LOCK_RETRIES:-30}"; then
+    if rag_api_http_ping "$VIVENTIUM_RAG_API_PORT"; then
+      export RAG_API_URL="http://localhost:${VIVENTIUM_RAG_API_PORT}"
+      return 0
+    fi
+    log_warn "Another Viventium process is managing the RAG compose project; semantic health is not ready yet"
+    return 1
+  fi
+  _start_rag_api_locked || result=$?
+  release_rag_compose_lock
+  return "$result"
 }
 
 # === VIVENTIUM START ===
@@ -10141,6 +10383,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     log_error "MongoDB is required before LibreChat user-default reconciliation and agent seeding"
     exit 1
   fi
+
+  ensure_memory_unique_indexes_if_clean
 
   if ! ensure_meilisearch_ready; then
     log_error "Meilisearch is required before LibreChat user-default reconciliation and agent seeding"

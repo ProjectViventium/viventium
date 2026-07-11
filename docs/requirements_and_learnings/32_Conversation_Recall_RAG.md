@@ -199,6 +199,14 @@ evidence.
 - Near-term hybrid on the current stack should use application-level fusion over:
   - vector hits from the recall corpus, and
   - scoped lexical hits from the existing recall-safe message retrieval path.
+- Lexical matches are candidates, not a short-circuit. Vector retrieval must still run when lexical
+  evidence exists, and the two ranked channels are fused before the result budget is applied.
+- The channels are failure-independent: lexical failure must preserve vector evidence, and vector
+  failure must preserve lexical evidence. If both operational channels fail, `file_search` returns a
+  differentiated retrieval failure rather than claiming that nothing was found.
+- Current-conversation rows, the active message, expired/QA-ineligible rows, and Listen-Only
+  transcript rows remain excluded from lexical rescue; hybrid continuity must not weaken those
+  provenance boundaries.
 - Reciprocal rank fusion or another explicit generic fusion strategy should be used; do not invent
   entity-specific or prompt-specific runtime rules.
 - Longer term, a single backend with first-class lexical + vector retrieval may simplify this.
@@ -597,6 +605,19 @@ A private local benchmark pass over a real local corpus refined the local-first 
     recall avoids repeated cold loads while making the local residency window explicit
   - negative keep-alive values are rejected by the RAG override because they would keep local models
     resident indefinitely; large local rebuilds should raise the positive seconds value instead
+  - RAG `/health` returns HTTP 200 only for semantic `status: UP`; vector dependency failure or an
+    exception returns a real HTTP 503 JSON response, never a tuple encoded inside a 200 body
+  - launcher/readiness probes parse the health body and require `UP`; HTTP reachability alone is not
+    accepted as healthy
+  - Compose starts RAG only after PGVector passes `pg_isready`, and both services declare healthchecks
+  - RAG compose mutation is protected by a stale-owner-safe interprocess lock. A Compose container id
+    that Docker cannot inspect is an inconsistent substrate: recovery stops and reports Docker-level
+    repair instead of repeatedly force-recreating in parallel
+  - every launcher-owned RAG Compose command uses the canonical `viventium-rag` project identity
+    (overridable only through `VIVENTIUM_RAG_COMPOSE_PROJECT_NAME`). A healthy port owned by another
+    Compose project is an ownership conflict, not proof of readiness; an explicit Docker-service
+    restart may retire the legacy `librechat` RAG project without deleting the configured host vector
+    state
 - Environment policy for local Ollama embedding residency:
   - laptop / single-user local prod default: keep the 300-second residency window; this balances
     battery/RAM/GPU pressure against warm Recall during normal back-and-forth chat

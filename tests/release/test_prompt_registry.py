@@ -89,6 +89,12 @@ def test_public_prompt_registry_validates_and_compiles() -> None:
     assert bundle["prompt_count"] >= 50
     assert "main.conscious_agent" in bundle["prompts"]
     assert "surface.voice.provider.cartesia" in bundle["prompts"]
+    assert "surface.voice.feeling_expression" in bundle["prompts"]
+    assert "surface.telegram.audio_output" in bundle["prompts"]
+    assert "surface.telegram.audio_provider.cartesia" in bundle["prompts"]
+    assert "surface.telegram.audio_provider.chatterbox" in bundle["prompts"]
+    assert "surface.telegram.audio_provider.plain_tts" in bundle["prompts"]
+    assert "surface.telegram.audio_provider.xai" in bundle["prompts"]
     assert bundle["prompts"]["main.identity"]["content_hash"]
 
 
@@ -103,19 +109,20 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert "{{current_user}}" in agents["mainAgent"]["instructions"]
     assert "For important actions, If unsure which service the user means, ask." in agents["mainAgent"]["instructions"]
     assert "configured/available connected email providers" in agents["mainAgent"]["instructions"]
-    assert "read-only Connected Accounts handoff" in agents["mainAgent"]["instructions"]
+    assert "Connected Accounts handoff for immediate checks and quick updates" in agents["mainAgent"]["instructions"]
     assert "immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff" in (
+    assert "Do not use GlassHive when the Connected Accounts handoff is the direct, sufficient path" in (
         agents["mainAgent"]["instructions"]
     )
-    assert "For immediate read-only connected-account checks or quick updates" in (
+    assert "For immediate connected-account checks or quick updates" in (
         agents["mainAgent"]["instructions"]
     )
     assert "first get explicit user confirmation" in agents["mainAgent"]["instructions"]
     assert "write-capable connected-account path" in agents["mainAgent"]["instructions"]
     assert "GlassHive host-signed broker path" in agents["mainAgent"]["instructions"]
     assert "If no write-capable path is available" in agents["mainAgent"]["instructions"]
-    assert "creating/updating/deleting calendar events" in agents["mainAgent"]["instructions"]
+    assert "creating/updating calendar events" in agents["mainAgent"]["instructions"]
+    assert "deleting calendar events" in agents["mainAgent"]["instructions"]
     assert "Use GlassHive for document generation, reports, deep research" in (
         agents["mainAgent"]["instructions"]
     )
@@ -126,6 +133,25 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert isinstance(librechat["memory"]["agent"]["instructions"], str)
     assert isinstance(librechat["mcpServers"]["ms-365"]["serverInstructions"], str)
     assert "Microsoft 365 owns" in librechat["mcpServers"]["ms-365"]["serverInstructions"]
+
+
+def test_main_agent_defers_glasshive_operation_schemas_but_keeps_recall_eager() -> None:
+    agents = yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8"))
+    main_agent = agents["mainAgent"]
+    options = main_agent.get("tool_options") or {}
+    glasshive_operations = {
+        tool
+        for tool in main_agent.get("tools", [])
+        if tool.endswith("_mcp_glasshive-workers-projects")
+        and not tool.startswith("sys__server__")
+    }
+
+    assert glasshive_operations
+    assert all(options.get(tool, {}).get("defer_loading") is True for tool in glasshive_operations)
+    assert options.get("file_search", {}).get("defer_loading") is not True
+    assert options.get("sys__server__sys_mcp_glasshive-workers-projects", {}).get(
+        "defer_loading"
+    ) is not True
 
 
 def test_js_sync_resolves_full_source_agent_yaml_prompt_refs(tmp_path: Path) -> None:
@@ -386,6 +412,8 @@ def _load_glasshive_instruction_namespace():
         "_host_profile_binary",
         "_host_workers_enabled",
         "_host_worker_mentions",
+        "_worker_surface_summary",
+        "_worker_surface_routing_guidance",
         "_worker_capability_summary",
         "_worker_execution_instruction",
         "glasshive_workers_server_instructions",
@@ -676,6 +704,7 @@ def test_runtime_surface_prompt_fallbacks_match_registry_rendering(tmp_path: Pat
     script = r"""
 const {
   buildVoiceModeInstructions,
+  buildTelegramAudioOutputInstructions,
   buildTelegramTextInstructions,
   buildWebTextInstructions,
   buildPlaygroundTextInstructions,
@@ -727,6 +756,11 @@ function snapshot(useBundle) {
     voice_chatterbox: buildVoiceModeInstructions('chatterbox'),
     voice_plain: buildVoiceModeInstructions('openai'),
     voice_unknown: buildVoiceModeInstructions(''),
+    telegram_audio_cartesia: buildTelegramAudioOutputInstructions('cartesia'),
+    telegram_audio_xai: buildTelegramAudioOutputInstructions('xai'),
+    telegram_audio_chatterbox: buildTelegramAudioOutputInstructions('chatterbox'),
+    telegram_audio_plain: buildTelegramAudioOutputInstructions('openai'),
+    telegram_audio_unknown: buildTelegramAudioOutputInstructions(''),
     telegram: buildTelegramTextInstructions(),
     web: buildWebTextInstructions(),
     playground: buildPlaygroundTextInstructions(),

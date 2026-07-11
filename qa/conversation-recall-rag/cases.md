@@ -12,6 +12,8 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 | `RAG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); report summarizes recovered RAG service health and the remaining browser-proof gap without raw private runtime data |
 | `RAG-003` | Background conversation-recall maintenance must not starve live recall search during voice calls. | Voice users get either fast grounded recall or an honest fast degraded result, not a 8-30s tool stall. | voice call, RAG API, vector DB, embeddings service, logs | Synthetic active-call recall/query harness plus RAG queue and voice latency logs | PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); RCA proved starvation risk, product fix not yet applied |
 | `RAG-004` | Installer Recall/RAG opt-in must stay honest about Docker/Ollama/vector prerequisites. | A new user can skip Recall/RAG without a false failure, or opt in and see exact readiness/degraded state before the brain is called ready. | installer wizard, preflight, generated env, RAG API, vector DB, browser recall | `test_wizard.py`, `test_install_summary.py`, `test_ollama_embeddings_prereqs.py`, user-grade browser recall QA | PARTIAL 2026-05-31; installer/status coverage added under `INST-004`, browser recall proof remains |
+| `RAG-005` | Lexical and vector recall run together and fail independently. | Exact names/recent events remain recoverable during vector degradation without suppressing healthy semantic evidence. | `file_search`, Mongo lexical rescue, RAG API, browser/voice recall | focused `fileSearch.test.js` hybrid regressions plus native recall QA | PASS-AUTOMATED 2026-07-11; native cross-conversation proof pending |
+| `RAG-006` | RAG health and recovery are semantic, dependency-aware, and serialized. | Recall is never called healthy because a DOWN tuple arrived with HTTP 200, and concurrent helpers cannot thrash one Compose project. | RAG route, PGVector/RAG Compose healthchecks, launcher recovery | `test_rag_api_override_contract.py`, compose validation, shell syntax | PASS/PARTIAL-LIVE 2026-07-11; 11 behavioral/contract tests and live canonical HTTP 200 `UP`; legacy vector-only project and browser recall proof remain ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)) |
 
 ## `RAG-001` - Core User Flow
 
@@ -94,6 +96,38 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 - Last run: PARTIAL 2026-05-31; automated installer/status coverage added, browser recall proof
   remains.
 
+## `RAG-005` - Hybrid Retrieval Failure Isolation
+
+- Seed synthetic prior-conversation evidence with both exact/named-entity and semantic phrasing.
+- Confirm lexical hits do not skip vector calls and fused results contain both channels.
+- Fail lexical Mongo retrieval while vector succeeds, then fail vector retrieval while lexical
+  succeeds. Finally fail both channels.
+- Expected: either healthy channel remains usable; both failures return an operational retrieval
+  failure, not “nothing found”; current conversation, active message, and Listen-Only rows stay out.
+- Forbidden: first lexical hit short-circuits vector search, one rejected promise discards the other
+  channel, or a provider outage is represented as a successful empty result.
+- Evidence: focused tool tests, structured error/latency logs, source artifacts, visible grounded
+  answer, and DB/RAG health correlation.
+- Last run: PASS-AUTOMATED 2026-07-11; real native recall journey pending.
+
+## `RAG-006` - Truthful Health And Serialized Recovery
+
+- Return healthy and unhealthy synthetic vector states through the overridden RAG `/health` route.
+- Probe `UP`, `DOWN`, tuple-shaped legacy, malformed, and unreachable responses through the launcher.
+- Validate PGVector health ordering and run two synthetic lock owners against the same compose lock.
+- Simulate an uninspectable Compose container id and confirm recovery stops with a Docker-level
+  blocker rather than repeatedly force-recreating.
+- Launch from different caller environments and confirm every RAG Compose command selects the
+  canonical project; a healthy foreign-project port is an ownership conflict.
+- Expected: only semantic `UP` passes; DOWN is HTTP 503; one owner mutates Compose; RAG waits for
+  PGVector health; phantom state is explicit.
+- Forbidden: HTTP-only green, tuple body with status 200, concurrent compose mutation, infinite
+  retry/recreate, or deleting vector state as automated recovery.
+- Last run: PASS/PARTIAL-LIVE 2026-07-11; 11 behavioral/contract tests pass and the canonical live
+  RAG/PGVector pair is healthy with semantic HTTP 200 `UP`. A legacy vector-only project remains to
+  retire through a controlled restart, and browser recall grounding remains pending
+  ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)).
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Conversation Recall Rag. Add narrower feature-specific
@@ -106,6 +140,8 @@ rows before claiming a pass when the feature behavior changes.
 | `RAG-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `RAG-002` / `RAG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to RAG-002. | RAG-002 remains correct after the persistence or parity step and final wording matches evidence. | PASS 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)) |
 | `RAG-UC-004` | During a voice call, ask for earlier conversation or transcript recall while a background recall refresh is active. | owning requirement for `RAG-003` / `RAG-003` | voice call, RAG API, vector DB, embeddings service, logs | Voice timing logs, RAG queue/upload/query logs, DB corpus metadata, and visible/user-facing result. | The user gets fast grounded recall or a clear fast degraded response; no 8-30s recall/tool stall. | PARTIAL 2026-05-21 ([report](reports/2026-05-21-voice-call-recall-latency-rca.md)); RCA only, fix not yet applied |
 | `RAG-UC-005` | During Express setup, skip Recall/RAG, opt in without Docker, and opt in with services healthy. | `39_Installer_and_Config_Compiler.md` / `RAG-004`, `INST-004` | installer wizard, preflight, status, RAG API/vector DB, browser chat | Wizard output, generated env keys, preflight/degraded state, RAG/vector health, browser-visible grounded answer. | Recall is pending when skipped, prerequisite-gated when opted in, and only called ready after service and browser grounding proof. | PARTIAL 2026-05-31; automated setup/status coverage added, browser proof remains |
+| `RAG-UC-006` | Mention a synthetic event in Telegram without explicitly saving it, then ask about it in a new voice conversation. | `32_Conversation_Recall_RAG.md` / `RAG-005` | Telegram, real Modern Playground voice, `file_search` | Mongo message, recall corpus/freshness, tool sources, transcript/audio, logs | Voice visibly and audibly recovers the event through recall; saved memory is confirmed absent. | ADDED 2026-07-11; run required |
+| `RAG-UC-007` | Start or inspect local Recall while PGVector is down or Compose state is inconsistent. | `32_Conversation_Recall_RAG.md` / `RAG-006` | launcher/status, RAG `/health`, Docker Compose | HTTP status/body, semantic probe result, compose health, serialized recovery log | Recall stays degraded with one actionable Docker blocker; no false ready state or repeated repair loop. | PASS/PARTIAL-LIVE 2026-07-11; false-green state reproduced, canonical service recovered to semantic `UP`, legacy project cleanup/browser recall pending ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)) |
 
 ## Release Test Traceability
 

@@ -37,3 +37,12 @@ The system passes only when it is:
 
 Raw private prompts, scratchpads, conversations, local paths, account identifiers, and screenshots
 must not be copied into this QA folder.
+
+## Exact-Model Run
+
+```bash
+qa/periphery-nightly-insights/scripts/run-periphery-evals.py \
+  --live --model gpt-5.6-sol --effort xhigh
+```
+
+The command stores raw run evidence only in private App Support state and prints a sanitized summary.

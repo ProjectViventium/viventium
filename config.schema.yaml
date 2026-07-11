@@ -74,6 +74,76 @@ properties:
               executor:
                 type: string
                 enum: [glasshive_host, viventium_agent]
+      feelings:
+        type: object
+        properties:
+          available:
+            type: boolean
+          default_enabled:
+            type: boolean
+          agent_scope:
+            type: string
+            enum: [all_agents, conscious_agent]
+          reaction:
+            type: object
+            properties:
+              activation_mode:
+                type: string
+                enum: [always, classified, disabled]
+              provider:
+                type: string
+                enum: [openai, anthropic, xai, groq, google]
+              model:
+                type: string
+              use_responses_api:
+                type: boolean
+              reasoning_effort:
+                type: string
+                enum: [none, low, medium, high, xhigh, max]
+              fast:
+                type: boolean
+              service_tier:
+                type: string
+                enum: [auto, default, flex, priority]
+              timeout_ms:
+                type: integer
+              fallback_provider:
+                type: string
+                enum: [none, openai, anthropic, xai, groq, google]
+              fallback_model:
+                type: string
+              activation_provider:
+                type: string
+              activation_model:
+                type: string
+              activation_confidence_threshold:
+                type: number
+              activation_timeout_ms:
+                type: integer
+          bands:
+            type: object
+            additionalProperties: false
+            properties:
+              energy: &feeling_band
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  baseline:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+                  half_life_minutes:
+                    type: integer
+                    minimum: 1
+              mood: *feeling_band
+              drive: *feeling_band
+              curiosity: *feeling_band
+              vigilance: *feeling_band
+              care: *feeling_band
+              connection: *feeling_band
+              openness: *feeling_band
+              play: *feeling_band
       memory_hardening:
         type: object
         properties:
@@ -413,6 +483,11 @@ properties:
                   - type: array
                     items:
                       type: string
+              codex_model:
+                type: string
+              codex_reasoning_effort:
+                type: string
+                enum: [none, minimal, low, medium, high, xhigh]
               codex_allowed_reasoning_efforts:
                 oneOf:
                   - type: string

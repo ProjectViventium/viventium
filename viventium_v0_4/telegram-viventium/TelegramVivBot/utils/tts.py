@@ -592,6 +592,16 @@ def _normalize_cartesia_numeric_control(name: str, value: Any) -> float:
 
 def summarize_voice_markup(text: str) -> dict[str, int]:
     value = text or ""
+    # === VIVENTIUM START ===
+    # Feature: Provider-aware voice-control observability.
+    # Count xAI controls from the shared capability vocabulary so telemetry
+    # cannot drift from what the synthesis path actually accepts.
+    xai_inline = sum(
+        len(re.findall(rf"\[\s*{re.escape(tag)}\s*\]", value, re.IGNORECASE))
+        for tag in _XAI_TTS_INLINE_TAGS
+    )
+    xai_wrapping = len(list(_VCT_XAI_WRAPPER_RE.finditer(value)))
+    # === VIVENTIUM END ===
     return {
         "laughter": len(_CARTESIA_LAUGHTER_RE.findall(value)),
         "emotion": len(list(_CARTESIA_EMOTION_EVENT_RE.finditer(value))),
@@ -599,6 +609,9 @@ def summarize_voice_markup(text: str) -> dict[str, int]:
         "speed": len(_VCT_SPEED_RE.findall(value)),
         "volume": len(_VCT_VOLUME_RE.findall(value)),
         "spell": len(_VCT_SPELL_RE.findall(value)),
+        "xai_inline": xai_inline,
+        "xai_wrapping": xai_wrapping,
+        "xai_total": xai_inline + xai_wrapping,
     }
 
 

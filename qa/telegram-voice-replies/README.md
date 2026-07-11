@@ -5,6 +5,14 @@
 Validate that Telegram voice-note replies reuse the linked user's saved modern voice Speaking route
 and do not drift from the browser voice selector.
 
+Latest acceptance: on 2026-07-11 the real Telegram always-voice xAI path passed feeling-aware
+expression without an explicit user request. Raw local output carried one supported xAI wrapping
+control, the visible bubble was clean, structural telemetry counted the control, and a voice note was
+delivered. The linked Prompt Workbench expressive/restrained/Feelings-off/plain slice passed 4/4.
+See
+`qa/emotional-cortex/reports/2026-07-11-telegram-voice-feelings-expression.md`. LiveKit voice and a
+fresh real Telegram voice-note-input/STT run remain separate gates.
+
 ## 2026-04-28 RCA
 
 Observed state:

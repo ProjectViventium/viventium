@@ -307,12 +307,11 @@ Mongo credentials, direct `memoryentries` writes or prompt text that instructs d
 unauthenticated private prompt access, hardcoded real user identity in public artifacts, or raw
 rendered prompt/result text in public QA reports.
 
-Last Run: PASS-CORRECTNESS/LONG-DURATION 2026-06-11
-([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)).
-The Jun 11 built-in run completed through Scheduler, GlassHive, callback, and the visible Workbench
-recent-run list; browser scratch snapshots containing private prompt context were deleted and are
-not public evidence. Duration was a watch item at 9,833 seconds, far above recent healthy
-190-868-second completions and similar to earlier long-run outliers.
+Last Run: PASS 2026-07-10
+([callback repair](../scheduling-cortex/reports/2026-07-10-workbench-callback-repair.md)).
+Fresh built-in manual proof completed through Workbench API -> Scheduling Cortex -> GlassHive ->
+signed callbacks -> scheduler ledger; queued, started, and completed callbacks all delivered on
+first attempt and no private prompt/result text was copied into public evidence.
 
 ## PW-010 Eval Designer And Results
 
@@ -1015,13 +1014,149 @@ no raw prompt/result/private user identifier is written to public QA.
 Forbidden Result: A seeded schedule without GlassHive delivery, a callback success not reflected in
 Workbench, an owner-specific hardcoded account, or public evidence containing raw reflection text.
 
-Last Run: PASS-CORRECTNESS/LONG-DURATION 2026-06-11
-([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)).
-Owner-runtime proof again covered the full chain: scheduled prompt -> filled placeholders ->
-GlassHive run -> callback -> scheduler ledger -> Workbench shows completed. The Jun 11 due run
-completed at `2026-06-11T12:49:09Z`; Playwright verified the Workbench detail state showed the Jun
-11 completed run and the next Jun 12 due state. Clean-machine installer proof remains under
-installer release QA, not a known owner-runtime nightly blocker.
+Last Run: PASS 2026-07-10
+([callback repair](../scheduling-cortex/reports/2026-07-10-workbench-callback-repair.md)).
+Owner-runtime proof covered the full chain with the built-in `Subconscious Deep Thought` schedule:
+manual trigger, filled snapshot, GlassHive run, all signed callbacks delivered, scheduler ledger
+completed, and Workbench API reported healthy schedule status. Clean-machine installer proof remains
+under installer release QA, not a known owner-runtime nightly blocker.
+
+## PW-034 Exact Runtime Background Activation Evals
+
+Requirement: Prompt Workbench must evaluate background activation with the real runtime classifier,
+canonical prompt registry, and honest semantic/reliability metrics.
+
+User Outcome: An operator can select the background activation family, preview its coverage without
+model calls, run an approved live subset or full corpus, and distinguish prompt misses from provider
+timeouts or transport failures.
+
+Surfaces: Web UI, API, exact-runtime CLI runner, private Workbench evidence
+
+Steps:
+
+1. Open Evals and select `background_activation_routing`.
+2. Preview a subset and confirm the planned call count covers selected cases × selected cortices.
+3. Run an approved live subset, inspect aggregate metrics, and filter a single cortex/case for
+   surgical regression work.
+4. Inspect recent run history, reload, and compare the private aggregate result with the source
+   prompt-bank and bundle hashes.
+
+Expected Result: The backend dispatches to `run-activation-model-evals.cjs`, which resolves registry
+prompt references and calls `BackgroundCortexService.checkCortexActivation`; results report recall,
+precision, sibling leaks, unavailable calls, consistency, and latency. Preview performs no model
+calls. Raw prompts/responses remain private.
+
+Forbidden Result: Reimplemented classifier semantics, inline duplicate activation prompts, a timeout
+counted as a correct negative, a public raw-response artifact, or live sync as a side effect of eval.
+
+Last Run: 2026-07-09, exact-runtime CLI and backend-dispatch implementation; browser acceptance is
+recorded in the activation-routing report.
+
+## PW-035 Long Live Evals Restore And Record State
+
+Requirement: Long exact-model matrices must complete or fail with durable evidence while leaving
+the QA account as they found it.
+
+User Outcome: An operator can run a multi-case Feelings matrix from Evals, keep using the UI while it
+runs, see an honest completion/timeout code, and trust that temporary state and conversations are
+cleaned.
+
+Surfaces: Real Workbench Evals UI, backend subprocess boundary, exact-model runner, QA API/DB
+
+Steps:
+
+1. Select `feelings_embodiment_and_reaction`, set 19 cases, enable live exact-model, and run.
+2. Verify the subprocess timeout scales with the selected case count and the UI remains responsive.
+3. Inspect the saved run record and public-safe report on completion or timeout.
+4. Verify prior Feelings state is restored after success/failure and synthetic eval conversations are
+   removed.
+
+Expected Result: A nineteen-case run receives a 3,600-second orchestration budget; runtime calls keep their
+own bounded timeouts. Temporary Feelings cases suppress unrelated memory/recall/background workers,
+while the judge additionally suppresses Feelings. The local QA token spans the run. The runner
+retries fixture setup/restoration through short local hot reloads, restores the exact prior Feelings
+document in `finally`, removes case and judge conversations, and persists code `124` plus a sanitized
+reason if the orchestration timeout is actually reached.
+
+Forbidden Result: Fixed 180-second kill, empty run directory, silent success, dirty Feeling state,
+or leftover synthetic conversations.
+
+Last Run: PASS 2026-07-09. The real Evals UI launched run `20260710T025741Z`; 10/10 main turns and
+10/10 independent semantic judgments completed, all ten passed, the exact prior Feelings document
+was restored for every case, and aggregate cleanup removed 20 synthetic conversations/40 messages.
+No duplicate response hash or unresolved async quality failure remained.
+
+## PW-036 Feeling-Aware Voice Happy And Unhappy Paths
+
+Requirement: spoken Feelings behavior must be provider-capability-driven, visible in Prompt
+Workbench, and runnable from the authenticated local UI without storing a QA password.
+
+User Outcome: An operator can inspect the shared feeling-expression prompt, see every Telegram
+provider dependent, and prove that expressive xAI delivery uses a fitting control without user
+begging while restrained xAI, Feelings-off xAI, and plain TTS do not emit gratuitous markup.
+
+Surfaces: Real Prompt Workbench Evals UI, prompt registry/flow, exact-model runner, QA API/DB
+
+Steps:
+
+1. Search for `surface.voice.feeling_expression`; inspect Flow, Prompt, dependents, and live drift.
+2. Filter linked cases to Telegram and select the four voice-expression cases.
+3. Run preview and confirm exactly four cases are selected without model calls.
+4. Enable live exact-model and run through the configured local QA account.
+5. Inspect the private result, state restoration, and conversation cleanup; expose only counts and
+   hashes in public evidence.
+
+Expected Result: The expressive xAI fixture has at least one fitting documented xAI control; the
+restrained xAI, Feelings-off xAI, and plain-TTS fixtures have zero provider controls. All four semantic rubrics pass,
+the exact prior FeelingState is restored, synthetic conversations are removed, and the UI records
+code `0`. The loopback Workbench may opt the canonical runner into its short-lived local JWT path
+for this explicit action, but the runner still rejects CI/production and never stores a password.
+
+Forbidden Result: An explicit-request phrase gate, preview presented as performance, user/owner
+account substitution for a configured QA account, embedded credentials, raw responses in public QA,
+unrestored Feelings state, leftover conversations, provider-crossed markup, or all capable replies
+being forced to contain a tag. An opening xAI wrapping tag without its required closing tag must
+fail deterministic validation rather than count as a supported control.
+
+Last Run: PASS 2026-07-11. Real Workbench preview selected 4/4; the real UI live run
+`20260711T162254Z` completed code `0`, 4/4 model turns and 4/4 independent semantic judgments
+passed, marker expectations were `1/0/0/0`, and every fixture reported exact state restoration and
+complete synthetic cleanup. See
+[`2026-07-11-telegram-voice-feelings-expression.md`](../emotional-cortex/reports/2026-07-11-telegram-voice-feelings-expression.md).
+
+## PW-037 Scheduled Execution Provenance
+
+Requirement: Workbench scheduled definitions and run history expose the configured model, requested
+effort, effective effort, clamp reason, and structured terminal failure from the Scheduler/
+GlassHive ledger without exposing private prompt/result content.
+
+Expected Result: legacy invalid/missing execution metadata is reconciled surgically; a real manual
+run displays requested to effective effort and agrees with bootstrap, run evidence, callback, child
+row, and parent task.
+
+Forbidden Result: ambient `max` leaks into the provider request, migration resets user schedule
+fields, or `provider_request_rejected` appears only as generic failed.
+
+Last Run: PASS-LIVE-MANUAL 2026-07-11. Full Workbench, GlassHive profile-runtime, and Scheduler
+dispatch suites pass with explicit bootstrap model/effort/isolation, legacy-effort migration, and
+profile preservation. A later manual child completed through callback/ledger and the browser showed
+`xhigh -> xhigh`, persistence after reload, and zero fresh console errors. The next automatic 03:00
+occurrence remains the scheduled acceptance gate
+([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)).
+
+## PW-038 Memory Continuity Eval And Native Gate
+
+Requirement: Prompt Workbench links memory/recall prompts to a public-safe synthetic recent-event
+eval, while final continuity acceptance remains the real Telegram to new Chrome/voice journey.
+
+Expected Result: no-live/live prompt evals are selectable and honest about surface-metadata scope;
+native QA separately proves Mongo revision, saved-memory versus recall provenance, visible web
+answer, audible voice/transcript, persistence, and cleanup.
+
+Forbidden Result: same-thread exact-model output is represented as proof that Telegram capture,
+detached persistence, conversation recall, or real voice delivery worked.
+
+Last Run: ADDED 2026-07-11; no-live/live Workbench eval and native gate pending.
 
 ## Natural User Use Case Checklist
 
@@ -1039,6 +1174,11 @@ rows before claiming a pass when the feature behavior changes.
 | `PW-UC-007` | Open Prompt Workbench from the LibreChat account dropdown as an admin/operator. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-028` | Real browser against same-host local LibreChat plus `/api/viventium/prompt-workbench/start` and the managed workbench tab | Browser DOM/screenshot evidence, local API response, CLI status JSON, server logs, and route tests | The account dropdown shows Prompt Workbench directly below Connected Accounts for admins, selecting it opens the local managed workbench URL in a new tab, non-admin route access is blocked, and no cloud/provider account state changes. | 2026-05-22 LibreChat entry QA - passed |
 | `PW-UC-008` | Close the sync sidebar, reload, select diff baselines, and verify opt-in Workbench sidecar startup. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-031` | Real browser against built local Workbench plus `/api/prompts/:id/revisions/:revision`, compiler output, launcher smoke logs, and CLI status | Browser storage/DOM/screenshot evidence, prompt revision API, release tests, launcher pid/log state | Sidebar stays closed after reload, `Compare from` changes the actual diff baseline, the revision API is prompt-path/git based, and the local sidecar starts only when enabled without token leakage. | 2026-05-22 sidebar/diff/sidecar QA - passed |
 | `PW-UC-009` | Inspect the built-in nightly reflection schedule after Express install or upgrade, then verify a completed run. | `39_Installer_and_Config_Compiler.md` / `PW-033`, `INST-004` | Prompt Workbench UI, Scheduler ledger, GlassHive callbacks, install/status summary | Browser-visible schedule/completion, sanitized scheduler delivery fields, generated env keys, callback status counts, focused tests. | Nightly reflection is active for the resolved local admin, placeholders are filled at run time, callbacks complete, and Workbench shows completed without private data leakage. | PASS-CORRECTNESS/LONG-DURATION 2026-06-11 ([nightly review](../memory-hardening/reports/2026-06-11-nightly-routines-health-review.md)); live Workbench browser detail and scheduler DB show the Jun 11 completed built-in run and next Jun 12 due state |
+| `PW-UC-010` | Select the background activation family, preview it, run an approved live subset, inspect semantic/reliability metrics, and reload recent history. | `49_Prompt_Architecture_and_Token_Efficiency.md` / `PW-034`, `ACT-36` | Real Prompt Workbench browser plus `/api/evals/run`, exact-runtime activation runner, and private run history | Prompt bank/source hashes, aggregate metrics, browser console/network, backend dispatch, private report pointer | Preview makes no model calls; live mode uses the exact runtime classifier; unavailable calls are distinct from false decisions; reload preserves a public-safe run summary without raw prompt/response leakage. | 2026-07-09 exact-runtime runner/backend tests passed; real browser result in activation-routing report |
+| `PW-UC-011` | Run the nineteen-case Feelings matrix and inspect its result after completion or timeout. | `PW-035`, `EMO-030` | Real Prompt Workbench Evals UI plus live exact-model runner and QA DB | UI status, saved run record/report, fixture version/state, synthetic conversation counts | Run has a proportional budget, semantic verdicts are saved, timeout is code 124 rather than an empty folder, and QA fixtures/conversations are restored/cleaned. | Historical PASS 2026-07-09: prior 10-case matrix; fresh 19-case UI run pending ([report](../emotional-cortex/reports/2026-07-09-feelings-embodiment-motion-eval.md)) |
+| `PW-UC-012` | Inspect and run the four feeling-aware Telegram voice cases. | `PW-036`, `EMO-036` | Real Prompt Workbench Evals UI plus live exact-model runner | Prompt lineage, marker counts, semantic results, QA state restoration, cleanup, UI run code | Expressive xAI uses one fitting control without a user request; restrained xAI, Feelings-off xAI, and plain TTS use none; the run is clean and reproducible | PASS 4/4 2026-07-11; broader real-provider delivery parity remains PARTIAL ([report](../emotional-cortex/reports/2026-07-11-telegram-voice-feelings-expression.md)) |
+| `PW-UC-013` | Trigger the built-in nightly definition and inspect requested/effective execution provenance. | `PW-037`, `SCHED-014` | real Workbench schedule detail | bootstrap, GlassHive evidence, callbacks, child/parent ledgers | Visible run provenance and terminal class agree across every layer. | PASS-LIVE-MANUAL 2026-07-11; visible `xhigh -> xhigh` completion and failed scheduled child agree with DB/callback state; next automatic run pending |
+| `PW-UC-014` | Run the memory recent-event eval, then perform the real Telegram-to-new-web/voice continuity journey. | `PW-038`, `MEMCONT-004`, `RAG-005`, `MPV-020` | Workbench Evals, Telegram, Chrome, Modern Playground | eval record, DB revisions, tool sources, transcript/audio, cleanup | Prompt behavior passes and native surfaces independently prove persistence/retrieval/delivery. | ADDED 2026-07-11; run pending |
 
 ## Release Test Traceability
 

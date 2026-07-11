@@ -85,6 +85,11 @@ background-cortex behavior.
   `voice_llm_model` fields.
 - If the Voice Call LLM is unset, runtime must use the agent's primary provider/model exactly as
   selected in Agent Builder.
+- A dedicated Voice Call LLM may inherit provider-neutral generation settings, but it must not
+  inherit a provider-specific API transport from the primary route. In particular, an OpenAI
+  primary's `useResponsesApi` selection must not silently switch an xAI Voice Call LLM from its
+  intended Chat Completions route. xAI Responses remains available only when the voice-specific
+  parameter bag explicitly selects it.
 - Machine-level voice transport settings such as STT/TTS configuration must not silently rewrite the
   call LLM route.
 - Legacy machine-level config fields such as `voice.fast_llm_provider` /
@@ -283,8 +288,10 @@ background-cortex behavior.
   `VIVENTIUM_VOICE_TURN_COALESCE_WINDOW_MS` only when they intentionally prefer merge latency over
   first-token latency. Listen-Only may keep its own short ambient transcript merge window through
   `VIVENTIUM_VOICE_LISTEN_ONLY_TURN_COALESCE_WINDOW_MS`.
-- Voice persistence may keep provider markup in the live synthesis path, but the canonical saved
-  assistant text/content used for history and reloads must not retain raw voice-control tags.
+- LiveKit call persistence may keep provider markup in the live synthesis path, but the canonical
+  saved call assistant text/content used for history and reloads must not retain raw voice-control
+  tags. Telegram audio delivery has its separately documented raw-record/display-sanitizer contract
+  in `03_Telegram_Bridge.md`.
 - The live TTS boundary must receive speech-safe phrase chunks, not raw model scaffolding. After
   phrase buffering and before forwarding text to LiveKit TTS, the gateway must deterministically
   strip or convert non-speech artifacts such as source/reference labels, citation remnants,
@@ -296,6 +303,16 @@ background-cortex behavior.
   metadata declares inline voice-control support may keep known provider controls for synthesis;
   routes without that capability, including OpenAI/ElevenLabs plain TTS and fallbacks, must strip
   voice-control tags/stage directions before synthesis while preserving spoken inner text.
+- Feeling-aware spoken expression is also capability-scoped. When the request contains the private
+  Feelings capsule, the model decides from the state and moment whether delivery should be
+  expressive or restrained. Expressive delivery on a capable route uses the smallest fitting
+  documented provider control without an explicit user request; restrained delivery may remain
+  unmarked, and plain TTS remains markup-free. Runtime must not translate bands, values, or user
+  phrases into tags.
+- The shared `surface.voice.feeling_expression` prompt owns that cross-surface rule. Voice-call and
+  Telegram-audio prompts include it alongside exactly one resolved provider dialect. Prompt
+  registry, compiled bundle, runtime fallback, and Prompt Workbench eval references must remain in
+  parity so one surface cannot silently lose the rule.
 - When Cartesia is the call-mode TTS provider, the model-facing voice prompt may instruct the LLM
   to emit Sonic-3 SSML-like tags. Runtime must not invent emotion tags from heuristics; it may only
   preserve, segment, sanitize-for-display, and route LLM-selected provider markup.
@@ -403,10 +420,11 @@ background-cortex behavior.
   character counts, punctuation-only status, leading/trailing-space flags, and JSON-escaped text.
   This marker is the authoritative evidence for whether a standalone period or other artifact was
   actually sent to TTS.
-- Non-secret structural marker counts should be logged for Telegram voice turns and Cartesia
-  segments even when full transcript debug is disabled. At minimum, logs should expose counts for
-  `[laughter]`, emotion tags, break tags, speed tags, volume tags, and spell tags so incidents can
-  distinguish generation omission from downstream loss without dumping private transcript text.
+- Non-secret structural marker counts should be logged for Telegram voice turns and provider
+  segments even when full transcript debug is disabled. Cartesia/Chatterbox fields include
+  `[laughter]`, emotion, break, speed, volume, and spell counts; xAI fields include inline,
+  wrapping, and total counts. Incidents must be able to distinguish generation omission from
+  downstream loss without dumping private transcript text.
 - When a TTS provider does not support native incremental text input, runtime may adapt it to an
   incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
   for voice-first providers.
@@ -675,7 +693,9 @@ background-cortex behavior.
   - xAI routes may preserve xAI speech tags but must strip Cartesia-only tags and Cartesia-only
     bracket aliases before xAI synthesis
   - OpenAI/ElevenLabs fallbacks strip all provider voice-control markup before synthesis
-  - saved/displayed assistant text strips provider markup while preserving spoken inner text
+  - LiveKit call-history and displayed assistant text strip provider markup while preserving spoken
+    inner text; Telegram's local raw generation record and sanitized outgoing bubble follow the
+    separate contract in `03_Telegram_Bridge.md`
   - display sanitizers must also strip malformed xAI wrapper remnants such as `[soft]...[/soft]`
     and orphan closing tags like `[/soft]`; malformed provider markup is never user-facing text
 - Telegram voice-note and always-voice replies must use the same saved Speaking route as the modern
