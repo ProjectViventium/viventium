@@ -19,7 +19,7 @@ dependencies = [
     "httpx-socks>=0.10.1",
     "httpx[http2]>=0.28.1",
     "lxml-html-clean>=0.4.2",
-    "mcp>=1.17.0",
+    "mcp>=1.27.2",
     "msgspec>=0.19.0",
     "pdfminer-six==20240706",
     "pillow>=11.3.0",
