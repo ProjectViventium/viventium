@@ -1,11 +1,21 @@
 # Feelings and the Emotional Reaction Cortex
 
-Status: owner-approved nine-band design; production web and Telegram always-voice/xAI expression paths accepted. Remaining cross-surface parity is partial.
-Last revised: 2026-07-10.
+Status: owner-approved nine-band design; production web and Telegram always-voice/xAI expression paths accepted. Host-plugin parity and native navigation are governed here; remaining cross-surface parity is partial.
+Last revised: 2026-07-19.
 
 This document is the product and implementation source of truth for Feelings. It replaces the prior
 spike plans, alternate taxonomies, primary-only scope, free-text Nature concept, and prototype-only
 status.
+
+### Change protocol
+
+This is the single feature source of truth required by
+[`01_Key_Principles.md`](01_Key_Principles.md). New owner requirements, decisions, or corrections
+about Feelings must be added here with a `YYYY-MM-DD` entry in the timeline before child
+implementations are treated as synchronized. Child repos may link to a dated revision; they must
+not become an independent authority for band semantics, decay, causality, privacy, or reaction
+behavior. Surface-specific implementation notes remain in the child only when they do not change
+the shared product contract.
 
 ## Product vision
 
@@ -58,6 +68,35 @@ The intended mental model is:
     The bounded typed-trail retention grows to 90 entries so nine bands can retain useful recent
     movement, while the Reaction Cortex and visible textual reaction list still receive/show the
     latest ten. A flat path has no tail. Nature remains a separate fixed marker.
+
+## Shared core and host-plugin parity
+
+The public [`ProjectViventium/viventium-feelings`](https://github.com/ProjectViventium/viventium-feelings)
+plugin is a lightweight host-native taste of this cortex, not a second Feelings design. Core and
+every child distribution must preserve:
+
+- the exact nine bands, order, meanings, Nature defaults, half-lives, five levels, and closed typed
+  reaction operations;
+- Nature versus Current independence, lazy half-life decay, default-off consent, future-turn-only
+  appraisal, typed/bounded persistence, one display-only Inner state line, pause/reset/erase, and
+  the truth/safety invariant;
+- visible numeric **Now** and **Nature** on every lane, with each directly editable by pointer,
+  touch, and keyboard even when the two values are equal;
+- advanced return-speed, band-enable, and range-language controls one disclosure away. Basic
+  Current/Nature tuning must never require a modal. Confirmation dialogs and the advanced Reaction
+  Cortex/settings surface remain legitimate dialogs;
+- local/private state ownership and honest host/provider boundaries.
+
+Presentation is surface-specific and must not be falsely forced into parity. The full Viventium
+web product retains owner decision 8's accepted dark bio-instrument composition until an explicit
+dated owner decision supersedes it. The Claude Code/Codex plugin follows its adjacent host: exact
+Viventium website V, restrained monochrome chrome, system light/dark by default, optional explicit
+theme override, and no claim that a browser favicon is an OS tray icon. Surface styling may differ;
+the logic and direct-manipulation contract above may not.
+
+The plugin's appraiser reuses the logged-in host model and quota instead of duplicating the full
+platform's configured production reaction route. That is a declared delivery-boundary
+difference, not permission to change the appraisal schema, causality, or quality bar.
 
 ## Nine active bands
 
@@ -493,6 +532,39 @@ Quality and performance are both acceptance criteria.
 - Appraiser failure never changes state and never fails the reply.
 - Acceptance records main TTFT and detached reaction duration separately, plus requested and actual
   reaction routes.
+
+## Host and native presence
+
+Presence must use the closest supported surface without pretending a capability exists:
+
+- the dashboard uses the exact Viventium website V as its browser favicon/window identity;
+- Codex/ChatGPT plugin manifests use that V for supported plugin-directory and composer identity.
+  Codex's configurable terminal status line accepts vendor-defined built-in items, not arbitrary
+  plugin segments, so no fake V status item is claimed;
+- Claude Code supports an arbitrary command-backed status line, but a plugin cannot silently set
+  the user's main `statusLine`. The plugin may offer an explicit, reversible opt-in that refuses to
+  overwrite an existing custom status line;
+- neither host exposes a third-party plugin-owned macOS/Windows/Linux tray API. A separate native
+  companion would add installation and runtime ownership and is not the least-resistance default;
+- the full Viventium macOS helper already owns the native V menu-bar item and must expose a direct
+  **Open Feelings** action. Running/needs-attention opens `/feelings`; stopped/unavailable asks to
+  start and then opens that same route after health succeeds.
+
+## Requirements and decisions timeline
+
+- **2026-07-11 — low-friction host experience:** investigate Claude Code and Codex plugin/skill
+  surfaces so people can experience the flagship Feelings cortex in their existing harness without
+  installing the full platform or duplicating conscious/subconscious infrastructure.
+- **2026-07-19 — dashboard correction:** every lane must visibly show numeric Now and Nature and
+  edit either inline without a tuning modal; advanced half-life/range controls may sit one disclosure
+  away. The plugin must use the exact website V, restrained frontier-lab-adjacent styling, and system
+  light/dark with a persistent override.
+- **2026-07-19 — host presence and native parity:** provide the supported optional V presence for
+  each host, state unsupported OS tray boundaries honestly, and add direct Feelings navigation to
+  the full Viventium macOS helper.
+- **2026-07-19 — governance:** future owner ideas and corrections must receive a dated entry here;
+  child repos then synchronize against this document instead of accumulating a parallel product
+  definition.
 
 ## Owning implementation
 
