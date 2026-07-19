@@ -40,6 +40,11 @@ behavioral research while remaining immediately understandable to an ordinary us
   provenance, concurrency, and rendering. The Emotional Reaction Cortex owns appraisal of what a
   moment means and which bands it moves. Never add phrase-to-emotion regexes, keyword tables, or
   event-specific `if` statements.
+- Calibrate model-owned categorical judgments at their semantic boundary. If exact evals show an
+  appraiser collapsing onto its minimum category, clarify the category meanings and remove
+  default-to-minimum wording; do not multiply the numeric effect afterward, infer intensity from
+  keywords, or add stimulus-specific prompt examples. Preserve a valid no-change outcome and
+  measure the committed category/delta distribution in telemetry.
 - Treat expression as regulation, not morality. Showing less emotion is not dishonesty, showing more
   is not inherently healthier, and fatigue does not universally produce either withdrawal or
   unmasking. The model must appraise the person/moment/context rather than follow a hardcoded causal

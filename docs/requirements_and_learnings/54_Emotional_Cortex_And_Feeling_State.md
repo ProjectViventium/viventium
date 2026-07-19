@@ -328,10 +328,14 @@ Rules enforced by runtime code:
 
 The default instruction is:
 
-> React to what genuinely moves Viventium. Prefer small natural changes. Move only the feelings the moment actually touches, and leave nature unchanged.
+> React to what genuinely moves Viventium. Let each change match how much the moment matters. Move only the feelings the moment actually touches, and leave nature unchanged.
 
 The user may edit that instruction in the drawer. It belongs to the reaction worker only and never
 enters the speaking capsule.
+
+The exact previously shipped default containing `Prefer small natural changes` is interpreted as
+the current default so upgrades receive the potency correction. Any other non-empty user-edited
+instruction is preserved verbatim. Runtime must not use fuzzy matching or rewrite custom text.
 
 ### GPT-5.6 route
 
@@ -555,6 +559,10 @@ Presence must use the closest supported surface without pretending a capability 
 - **2026-07-11 — low-friction host experience:** investigate Claude Code and Codex plugin/skill
   surfaces so people can experience the flagship Feelings cortex in their existing harness without
   installing the full platform or duplicating conscious/subconscious infrastructure.
+- **2026-07-15 — reaction potency correction:** exact model and runtime evidence showed that
+  default-to-minimum wording collapsed reactions toward `slight`. The default now asks each change
+  to match how much the moment matters. Only the exact former default migrates; custom user text is
+  preserved.
 - **2026-07-19 — dashboard correction:** every lane must visibly show numeric Now and Nature and
   edit either inline without a tuning modal; advanced half-life/range controls may sit one disclosure
   away. The plugin must use the exact website V, restrained frontier-lab-adjacent styling, and system
