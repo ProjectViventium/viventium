@@ -635,7 +635,8 @@ paths, plus the generated-runtime boundary enforced by the config compiler.
 
 - operator availability and the per-user default-enabled seed;
 - agent scope (`all_agents` by default or `conscious_agent`);
-- all seven default Nature/half-life/enabled values;
+- all nine default Nature/half-life/enabled values, whose band semantics and product requirements
+  are owned by `54_Emotional_Cortex_And_Feeling_State.md`;
 - reaction activation mode (`always`, `classified`, or `disabled`);
 - reaction provider, model, Responses API, reasoning effort, Fast/Priority tier, and timeout;
 - classified-activation provider/model/confidence/timeout.

@@ -88,6 +88,32 @@ def test_feelings_defaults_match_owner_approved_contract() -> None:
     ]
 
 
+def test_reaction_potency_wording_and_legacy_default_migration_are_canonical() -> None:
+    principles = (
+        ROOT / "docs/requirements_and_learnings/01_Key_Principles.md"
+    ).read_text(encoding="utf-8")
+    feelings = (
+        ROOT / "docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md"
+    ).read_text(encoding="utf-8")
+
+    assert "default-to-minimum wording" in principles
+    assert "Let each change match how much the moment matters" in feelings
+    assert "exact previously shipped default" in feelings
+    assert "current default so upgrades" in feelings
+    assert "instruction is preserved verbatim" in feelings
+    assert "> React to what genuinely moves Viventium. Prefer small natural changes" not in feelings
+
+
+def test_feelings_compiler_doc_defers_band_truth_to_the_canonical_feature_doc() -> None:
+    compiler_doc = (
+        ROOT / "docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md"
+    ).read_text(encoding="utf-8")
+
+    assert "all nine default Nature/half-life/enabled values" in compiler_doc
+    assert "54_Emotional_Cortex_And_Feeling_State.md" in compiler_doc
+    assert "all seven default Nature/half-life/enabled values" not in compiler_doc
+
+
 def test_feelings_compile_to_explicit_env_contract() -> None:
     config = minimal_config()
     config["runtime"]["feelings"] = {

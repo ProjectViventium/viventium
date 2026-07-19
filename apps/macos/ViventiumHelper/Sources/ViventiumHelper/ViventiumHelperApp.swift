@@ -342,6 +342,26 @@ final class HelperController: ObservableObject {
         }
     }
 
+    func openFeelings() {
+        switch self.stackState {
+        case .running, .needsAttention:
+            self.openBrowser(path: "/feelings")
+        case .starting, .stopping:
+            return
+        case .stopped, .unavailable:
+            let alert = NSAlert()
+            alert.messageText = "Viventium is not running"
+            alert.informativeText = "Start Viventium now and open Feelings in your browser?"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Start and Open Feelings")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                self.startStack(openWhenReady: true, openPath: "/feelings")
+            }
+        }
+    }
+
     func toggleStack() {
         switch self.stackState {
         case .running:
@@ -976,7 +996,7 @@ final class HelperController: ObservableObject {
         }
     }
 
-    private func startStack(openWhenReady: Bool, launchReason: String = "manual") {
+    private func startStack(openWhenReady: Bool, openPath: String? = nil, launchReason: String = "manual") {
         self.cancelDelayedQuitWatch()
         guard let config else {
             self.log("Start requested without helper config")
@@ -1049,7 +1069,7 @@ final class HelperController: ObservableObject {
                 self.refreshState(force: true)
                 self.log(started ? "Stack healthy after \(launchReason)" : "Stack did not become healthy after \(launchReason)")
                 if started && openWhenReady {
-                    self.openBrowser()
+                    self.openBrowser(path: openPath)
                 } else if openWhenReady && !started {
                     let alert = NSAlert()
                     alert.messageText = "Viventium did not finish starting"
@@ -2968,8 +2988,11 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         return value
     }
 
-    private func openBrowser() {
-        guard let url = URL(string: self.openURLString) else { return }
+    private func openBrowser(path: String? = nil) {
+        guard let baseURL = URL(string: self.openURLString) else { return }
+        let url = path.map {
+            baseURL.appendingPathComponent($0.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        } ?? baseURL
         NSWorkspace.shared.open(url)
     }
 }
@@ -3355,6 +3378,9 @@ struct ViventiumHelperApp: App {
         ) {
             Button("Open") {
                 self.controller.openViventium()
+            }
+            Button("Open Feelings") {
+                self.controller.openFeelings()
             }
             Button(self.controller.actionLabel) {
                 self.controller.toggleStack()

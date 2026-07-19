@@ -23,6 +23,7 @@ This folder owns QA for Viventium's Feelings/emotional-state layer:
 - compact prompt capsule injection;
 - no-latency runtime contract;
 - production `/feelings` control surface;
+- native macOS V menu direct navigation to `/feelings`;
 - public/private evidence safety.
 
 ## Surfaces
@@ -68,6 +69,15 @@ main-model timeout plus fallback can finish and be verified. The local-only
 recovery into a performance pass.
 
 ## Latest Status
+
+- 2026-07-19 (native navigation): The rebuilt universal macOS helper exposes a first-level
+  `Open Feelings` item alongside the generic `Open` action. A clean isolated install used the
+  shipped prebuilt, the real menu opened the live `/feelings` surface while the local stack was
+  healthy, and the stopped-state menu showed the explicit `Start and Open Feelings` confirmation.
+  The focused release suite passed 22/22. Starting a second full local stack from the stopped-state
+  confirmation was deliberately not run while the user's primary stack was active, so that final
+  branch remains `PARTIAL`. See
+  `reports/2026-07-19-native-feelings-navigation.md`.
 
 - 2026-07-10 (post-review durability): Default fallback is now `claude-opus-4-8`; Feelings-only live
   evals auto-require the semantic judge and independently hard-fail typed reaction mismatches;
