@@ -506,7 +506,7 @@ Required flow coverage:
 | Activation | mode, decision, reason, confidence, classifier duration |
 | Model | requested provider/model/effort/tier, completion/error class, duration |
 | Parse | valid/invalid, bounded validation issue paths, operation count, cause counts, and inner-state character count—not text |
-| Write | expected version, changed band count, operation count, causes, inner-state update boolean/length, conflict, duration |
+| Write | expected version, changed band count, operation count, causes, committed strength counts, realized absolute-delta counts, inner-state update boolean/length, conflict, duration |
 | UI | API/network/console state plus visible health drawer |
 
 Prompt-frame telemetry has a dedicated `viventium_feeling_state` layer. Reaction health persists the
@@ -562,7 +562,9 @@ Presence must use the closest supported surface without pretending a capability 
 - **2026-07-15 — reaction potency correction:** exact model and runtime evidence showed that
   default-to-minimum wording collapsed reactions toward `slight`. The default now asks each change
   to match how much the moment matters. Only the exact former default migrates; custom user text is
-  preserved.
+  preserved. The authoritative appraiser prompt and runtime fallback define `slight`, `clear`, and
+  `strong` proportionally without minimum bias, while committed write telemetry records category and
+  realized-delta distributions so future evals can detect collapse without post-amplifying output.
 - **2026-07-19 — dashboard correction:** every lane must visibly show numeric Now and Nature and
   edit either inline without a tuning modal; advanced half-life/range controls may sit one disclosure
   away. The plugin must use the exact website V, restrained frontier-lab-adjacent styling, and system

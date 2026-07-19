@@ -12,7 +12,9 @@ account value, raw conversation, credential, hostname, or machine-local path is 
 - Source: the isolated `codex/feelings-status-navigation` worktree based on the current public core
   baseline.
 - Product change: a first-level `Open Feelings` item in the native macOS V menu, plus a reusable
-  path-aware browser opener and a stopped-state `Start and Open Feelings` continuation.
+  path-aware browser opener and a stopped-state `Start and Open Feelings` continuation; the same
+  release also removes minimum-strength bias at the full-platform reaction-appraiser boundary and
+  adds distribution telemetry for committed reaction potency.
 - Delivery surfaces: Swift source, rebuilt universal prebuilt helper, prebuilt source checksum,
   clean isolated installation, and the installed/signed app artifact.
 - Owning requirement: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md`.
@@ -32,8 +34,9 @@ account value, raw conversation, credential, hostname, or machine-local path is 
 | --- | --- |
 | Swift source typecheck | **PASS** |
 | Focused release tests (Feelings contract/SOT, navigation, macOS helper install, and native stack helpers) | **36 passed, 0 failed** |
+| Full-platform reaction boundary tests | **PASS**: 31 backend tests and 18 API-package Feelings tests; authoritative prompt, fallback prompt, category semantics, allowlisted telemetry, and committed strength/delta distributions are covered |
 | Rebuilt helper architecture | **PASS**: universal `x86_64` + `arm64` |
-| Full-platform Feelings implementation pin | **PASS**: parent manifest and clean nested checkout both resolve to merged LibreChat commit `81c03714ca749c06d9ea88c311386c6eb087ea31` |
+| Full-platform Feelings implementation pin | **PASS**: parent manifest and clean nested checkout both resolve to merged LibreChat commit `7c702629599f5b229f9b49f6ea2f458c6981581a` |
 | Clean isolated installer selection | **PASS**: installer selected the shipped prebuilt |
 | Installed artifact signature | **PASS**: valid on disk and satisfies its designated requirement |
 | Installed artifact strings | **PASS**: `Open Feelings`, `Start and Open Feelings`, and `/feelings` present |
@@ -45,3 +48,9 @@ installed helper and browser. `stopped -> confirmation -> startStack(openPath: "
 covered by the source contract and the real native confirmation, but a second complete Viventium
 stack was not started during this run. `EMO-038` and `EMO-UC-028` therefore remain **PARTIAL**, not
 relabeled as complete.
+
+The reaction-potency correction is proven at both model-facing boundaries: the tracked prompt and
+the runtime fallback define `slight`, `clear`, and `strong` proportionally, retain `no_change` as a
+valid outcome, and never instruct the model to minimize strength. Runtime write telemetry records
+only public-safe category counts and realized absolute-delta counts—not stimulus or inner-state
+text—so category collapse is observable without post-amplifying model output.
