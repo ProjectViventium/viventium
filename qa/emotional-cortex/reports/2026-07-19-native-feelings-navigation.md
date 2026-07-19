@@ -31,8 +31,9 @@ account value, raw conversation, credential, hostname, or machine-local path is 
 | Gate | Result |
 | --- | --- |
 | Swift source typecheck | **PASS** |
-| Focused release tests (the Feelings SOT doc guard plus `feelings_navigation_contract`, `macos_helper_install`, and `native_stack_helpers`) | **22 passed, 0 failed** |
+| Focused release tests (Feelings contract/SOT, navigation, macOS helper install, and native stack helpers) | **36 passed, 0 failed** |
 | Rebuilt helper architecture | **PASS**: universal `x86_64` + `arm64` |
+| Full-platform Feelings implementation pin | **PASS**: parent manifest and clean nested checkout both resolve to merged LibreChat commit `81c03714ca749c06d9ea88c311386c6eb087ea31` |
 | Clean isolated installer selection | **PASS**: installer selected the shipped prebuilt |
 | Installed artifact signature | **PASS**: valid on disk and satisfies its designated requirement |
 | Installed artifact strings | **PASS**: `Open Feelings`, `Start and Open Feelings`, and `/feelings` present |
