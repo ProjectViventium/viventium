@@ -425,9 +425,12 @@ the repository owner can supply:
   and arm64 nested virtualization is unsupported, so these lanes cannot close the pristine-Mac or
   physical Docker/TCC gates. See the
   [GitHub-hosted runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-- A protected signing/release job must require an independent reviewer, prevent self-review, pin
-  all actions, expose signing secrets only in that environment, publish exact immutable assets,
-  and independently download and verify them on both architectures. GitHub documents
+- A protected signing/release job must pin all actions, expose signing secrets only in that
+  environment, publish exact immutable assets, and independently download and verify them on both
+  architectures. Multi-member organizations should require a separate reviewer and prevent
+  self-review. A sole-owner organization instead needs an explicit owner dispatch from protected,
+  CI-gated source; enabling both reviewer requirements and no-self-review would deadlock release.
+  GitHub documents
   [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
   [secure Action pinning](https://docs.github.com/en/actions/reference/security/secure-use), and
   [immutable releases](https://docs.github.com/en/enterprise-cloud@latest/code-security/concepts/supply-chain-security/immutable-releases).

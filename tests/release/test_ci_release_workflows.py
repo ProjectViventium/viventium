@@ -66,6 +66,70 @@ def _native_component_policy_run_script() -> str:
     )
 
 
+def _release_component_refs_run_script() -> str:
+    workflow = yaml.safe_load(
+        (WORKFLOW_ROOT / "release-policy.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["manifests"]["steps"]
+    return next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Verify merged component refs are live public main tips"
+    )
+
+
+def _run_release_component_refs_step(
+    tmp_path: Path,
+    *,
+    lock_payload: dict,
+    remote_ref: str,
+    failures_before_success: int = 0,
+) -> subprocess.CompletedProcess[str]:
+    (tmp_path / "components.lock.json").write_text(
+        json.dumps(lock_payload), encoding="utf-8"
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "python").symlink_to(sys.executable)
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        """#!/bin/sh
+if [ "$1" != "-c" ] || [ "$2" != "credential.helper=" ] || \
+   [ "$3" != "-c" ] || [ "$4" != "http.followRedirects=false" ] || \
+   [ "$5" != "ls-remote" ] || [ "$6" != "--exit-code" ] || \
+   [ "$7" != "--refs" ] || [ "${9}" != "refs/heads/main" ]; then
+  echo "unexpected git arguments" >&2
+  exit 2
+fi
+count=0
+if [ -f "$FAKE_COUNTER" ]; then
+  count="$(sed -n '1p' "$FAKE_COUNTER")"
+fi
+count=$((count + 1))
+printf '%s\\n' "$count" > "$FAKE_COUNTER"
+if [ "$count" -le "$FAKE_FAILURES_BEFORE_SUCCESS" ]; then
+  echo "synthetic transient public lookup failure" >&2
+  exit 69
+fi
+printf '%s\\trefs/heads/main\\n' "$FAKE_REMOTE_REF"
+""",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    return subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", _release_component_refs_run_script()],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "FAKE_COUNTER": str(tmp_path / "git-call-count"),
+            "FAKE_FAILURES_BEFORE_SUCCESS": str(failures_before_success),
+            "FAKE_REMOTE_REF": remote_ref,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 def _run_native_component_policy_step(
     tmp_path: Path,
     *,
@@ -196,6 +260,88 @@ def test_release_policy_executes_all_public_policy_suites_in_one_hosted_step() -
         "tests/release/test_qa_operating_contract.py::"
         "test_release_tests_have_central_qa_ownership"
     ) in run_script
+
+
+def test_release_policy_verifies_merged_component_refs_against_public_main(
+    tmp_path: Path,
+) -> None:
+    expected_ref = "1" * 40
+    lock_payload = {
+        "publication_state": "merged",
+        "components": [
+            {
+                "name": "example",
+                "origin": "https://github.com/ProjectViventium/example.git",
+                "ref": expected_ref,
+            }
+        ],
+    }
+
+    result = _run_release_component_refs_step(
+        tmp_path,
+        lock_payload=lock_payload,
+        remote_ref=expected_ref,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified 1 merged component refs" in result.stdout
+
+
+def test_release_policy_rejects_stale_or_non_public_component_refs(
+    tmp_path: Path,
+) -> None:
+    expected_ref = "1" * 40
+    lock_payload = {
+        "publication_state": "merged",
+        "components": [
+            {
+                "name": "stale",
+                "origin": "https://github.com/ProjectViventium/stale.git",
+                "ref": expected_ref,
+            },
+            {
+                "name": "private-origin",
+                "origin": "ssh://git@example.test/private.git",
+                "ref": expected_ref,
+            },
+        ],
+    }
+
+    result = _run_release_component_refs_step(
+        tmp_path,
+        lock_payload=lock_payload,
+        remote_ref="2" * 40,
+    )
+
+    assert result.returncode == 1
+    assert "stale: lock ref" in result.stderr
+    assert "private-origin: origin is outside" in result.stderr
+
+
+def test_release_policy_retries_a_transient_public_ref_failure(
+    tmp_path: Path,
+) -> None:
+    expected_ref = "1" * 40
+    lock_payload = {
+        "publication_state": "merged",
+        "components": [
+            {
+                "name": "example",
+                "origin": "https://github.com/ProjectViventium/example.git",
+                "ref": expected_ref,
+            }
+        ],
+    }
+
+    result = _run_release_component_refs_step(
+        tmp_path,
+        lock_payload=lock_payload,
+        remote_ref=expected_ref,
+        failures_before_success=1,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "git-call-count").read_text(encoding="utf-8") == "2\n"
 
 
 def test_node_ci_uses_project_node_major_and_secret_scan_image_is_immutable() -> None:
@@ -399,12 +545,17 @@ def test_native_payload_candidate_refuses_unmerged_review_heads() -> None:
 def test_native_payload_candidate_policy_step_fails_closed_for_pending_pins(
     tmp_path: Path,
 ) -> None:
+    lock_payload = json.loads((ROOT / "components.lock.json").read_text())
+    native_payload = json.loads(
+        (ROOT / "release" / "native-payload" / "components.json").read_text()
+    )
+    lock_payload["publication_state"] = "review-head-pending-merge"
+    native_payload["publication_state"] = "review-head-pending-merge"
+
     completed = _run_native_component_policy_step(
         tmp_path,
-        lock_payload=json.loads((ROOT / "components.lock.json").read_text()),
-        native_payload=json.loads(
-            (ROOT / "release" / "native-payload" / "components.json").read_text()
-        ),
+        lock_payload=lock_payload,
+        native_payload=native_payload,
     )
 
     assert completed.returncode != 0
@@ -418,8 +569,9 @@ def test_native_payload_candidate_policy_step_accepts_merged_aligned_pins(
     native_payload = json.loads(
         (ROOT / "release" / "native-payload" / "components.json").read_text()
     )
-    lock_payload["publication_state"] = "merged"
-    native_payload["publication_state"] = "merged"
+
+    assert lock_payload["publication_state"] == "merged"
+    assert native_payload["publication_state"] == "merged"
 
     completed = _run_native_component_policy_step(
         tmp_path,

@@ -297,7 +297,11 @@ For installer, runtime, release, or publish-boundary work, also read:
 - Run/check side-by-side dev runtime: `bin/viventium dev-env run dev start` and `bin/viventium dev-env run dev status`
 - Promote current checkout to installed local prod: `bin/viventium dev-runtime activate-current --validate --restart --allow-protected-folder`
 - Public refresh flow: `bin/viventium upgrade --restart`
-- Release tests: `python3 -m pytest tests/release/ -q`
+- Release tests: first materialize the managed component paths at their locked refs with
+  `python3 scripts/viventium/bootstrap_components.py --repo-root "$PWD" --jobs 4` (the complete
+  suite reads nested LibreChat, GlassHive, and modern-playground source); then run
+  `python3 -m pytest tests/release/ -q`. Until those paths exist, use the suites named by the relevant
+  hosted workflow rather than treating missing-path `FileNotFoundError` results as product failures.
 - Compiler tests: `python3 -m pytest tests/release/test_config_compiler.py -q`
 - LibreChat backend dev: `cd viventium_v0_4/LibreChat && npm run backend:dev`
 - LibreChat frontend dev: `cd viventium_v0_4/LibreChat && npm run frontend:dev`

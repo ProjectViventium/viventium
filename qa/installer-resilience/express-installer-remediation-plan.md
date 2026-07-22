@@ -71,13 +71,13 @@ user-facing process even without a restart.
 5. Finish Slices 4–5 by carrying the proven source-candidate provider lifecycle onto the exact signed
    artifact and implementing one shared configured/ready/degraded/repair state model across setup,
    status, helper, and provider/channel surfaces.
-6. Complete Feelings in delivery order: the local nested head and parent pin now agree, so the next
-   gates are remote merge identity, rebuilt client/payload, installed artifact, authenticated
-   ordinary-chat right-control QA, and stopped-helper continuation.
+6. Complete Feelings in delivery order: reviewed-tree-to-merged-pin identity now agrees, so the next
+   gates are rebuilt client/payload, installed artifact, authenticated ordinary-chat right-control
+   QA, and stopped-helper continuation.
 7. Complete Telegram lifecycle QA, then treat Slack and WhatsApp as separately approved adapters;
    do not let roadmap channels block the secure core Easy Install path.
-8. Close the discrete `INST-015`–`INST-024` release gates. In particular, do not confuse current clean
-   local source-to-pin agreement with public remote reachability or a signed installed payload.
+8. Close the discrete `INST-015`–`INST-024` release gates. In particular, do not confuse proven
+   merged source-to-pin agreement with a signed installed payload.
 9. Finish `INST-024` under the exact packaged runtime. Six source surfaces now align on Node 24 and a
    contract test prevents the Node 20/24 split from recurring; clean-install build/start/restart and
    PATH/process provenance are still required before runtime acceptance.

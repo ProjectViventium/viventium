@@ -1,77 +1,77 @@
 {
   "version": 1,
   "generated_from": "devops/git/repos.json",
-  "publication_state": "review-head-pending-merge",
+  "publication_state": "merged",
   "components": [
     {
       "name": "LibreChat",
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "44ac1f7a149e5a915e52f2f9f54fce5d38bab710"
+      "ref": "38527a8651653f5f7d0cba48038421653312d999"
     },
     {
       "name": "agents-playground",
       "path": "viventium_v0_4/agents-playground",
       "origin": "https://github.com/ProjectViventium/agents-playground.git",
       "upstream": "https://github.com/livekit/agents-playground.git",
-      "ref": "112f646c47280561d40d48f9f57f64db39a9459d"
+      "ref": "f7ea19564bd062e82aed775b7c8932b70fb8984e"
     },
     {
       "name": "livekit",
       "path": "viventium_v0_4/livekit",
       "origin": "https://github.com/ProjectViventium/livekit.git",
       "upstream": "https://github.com/livekit/livekit.git",
-      "ref": "8839980c6a8e0058ce775a301ba8783b90d44a5d"
+      "ref": "c20e96166726565f026f894ccca6f1cff2480741"
     },
     {
       "name": "cartesia-voice-agent",
       "path": "viventium_v0_4/cartesia-voice-agent",
       "origin": "https://github.com/ProjectViventium/cartesia-voice-agent.git",
       "upstream": "https://github.com/livekit-examples/cartesia-voice-agent.git",
-      "ref": "df2f024822cf6c2fd0349bd9d5b26387cabcb98a"
+      "ref": "a37250ac2c2de1827853cdc2b2eebee4164b6c69"
     },
     {
       "name": "agent-starter-react",
       "path": "viventium_v0_4/agent-starter-react",
       "origin": "https://github.com/ProjectViventium/agent-starter-react.git",
       "upstream": "https://github.com/livekit-examples/agent-starter-react.git",
-      "ref": "fd778562af199f7fb503bd4a0d106e22c282b16b"
+      "ref": "f196cd5837fe6044543c50f5912f63e976d9d7b1"
     },
     {
       "name": "GlassHive",
       "path": "viventium_v0_4/GlassHive",
       "origin": "https://github.com/ProjectViventium/GlassHive.git",
       "upstream": "",
-      "ref": "464f97f013ee79dfe973ff9f52be49720ea9d2e4"
+      "ref": "1cf868e0218262328700085df38ec0ae2196cc2a"
     },
     {
       "name": "ms-365-mcp-server",
       "path": "viventium_v0_4/MCPs/ms-365-mcp-server",
       "origin": "https://github.com/ProjectViventium/ms-365-mcp-server.git",
       "upstream": "https://github.com/softeria/ms-365-mcp-server.git",
-      "ref": "61f4b88e4fbed87cd340aa6bc410b04e6b32b6d7"
+      "ref": "c4c6f33b5e395a96780576cf0b55e5c420309e31"
     },
     {
       "name": "google_workspace_mcp",
       "path": "viventium_v0_4/MCPs/google_workspace_mcp",
       "origin": "https://github.com/ProjectViventium/google_workspace_mcp.git",
       "upstream": "https://github.com/taylorwilsdon/google_workspace_mcp.git",
-      "ref": "c99e0e8d478cbcb7be502604d14781cf3aedf7b9"
+      "ref": "070aee1fc34b2eb6e32237e81f3333a71a7e75bb"
     },
     {
       "name": "mcp-youtube-transcript",
       "path": "viventium_v0_4/MCPs/yt_transcript",
       "origin": "https://github.com/ProjectViventium/mcp-youtube-transcript.git",
       "upstream": "https://github.com/jkawamoto/mcp-youtube-transcript.git",
-      "ref": "b12ec8775693fb3d76c0691b79be2fc09ee79938"
+      "ref": "60d6bbb38e9c8e1db6dfa0bed03e6834e759f1cd"
     },
     {
       "name": "openclaw",
       "path": "viventium_v0_4/openclaw",
       "origin": "https://github.com/ProjectViventium/viventium-openclaw.git",
       "upstream": "https://github.com/openclaw/openclaw.git",
-      "ref": "ea9923db5fbedcd4a171bae92eef80d14e5e2077",
+      "ref": "841336aa05beae35df3c907e0a5b8d40d6350652",
       "product_posture": "lab-only",
       "release_approved": false
     },
@@ -80,7 +80,7 @@
       "path": "viventium_v0_4/skyvern-source",
       "origin": "https://github.com/ProjectViventium/skyvern-source.git",
       "upstream": "https://github.com/Skyvern-AI/skyvern.git",
-      "ref": "ea7c8106bef5282c268f7f33091e96767925e8ee"
+      "ref": "7c0a4ac1364ff30c880ba791be0ef3d487b70370"
     }
   ]
 }

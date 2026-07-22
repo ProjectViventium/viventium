@@ -33,7 +33,7 @@ remains an explicit Custom Settings fallback and is not a default install depend
 
 ## Traceability
 
-`modern voice UI -> voice and installer requirements -> default voice-capable install -> MPV-010 -> modern selected and visibly rendered -> process/browser/test evidence -> final merged pin and exact fresh-install identity still required`
+`modern voice UI -> voice and installer requirements -> default voice-capable install -> MPV-010 -> modern selected and visibly rendered -> process/browser/test evidence -> merged pin proven; exact fresh-install identity still required`
 
 - Feature: default LiveKit voice playground selection.
 - Requirement: voice requirements and installer requirement 39.
@@ -43,7 +43,7 @@ remains an explicit Custom Settings fallback and is not a default install depend
   selection.
 - Actual evidence: source-bound runtime identity, wrong/stale rejection, real browser rendering, and
   focused release tests.
-- Remaining gap: repeat identity comparison after final nested merge and parent artifact build.
+- Remaining gap: rebuild the parent artifact and repeat installed/fresh-install identity comparison.
 
 ## Full-View Evidence Checklist
 

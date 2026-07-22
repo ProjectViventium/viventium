@@ -32,16 +32,23 @@ quota, outage and network repair, local Disconnect with no subsequent provider r
 The earlier source-candidate install/rerun/restart/reinstall and Feelings evidence remains supporting
 lineage. The exact signed payload, truly vanilla no-developer-tools machine, public full-payload restore,
 Developer ID/Keychain/Gatekeeper, wider fault/accessibility/network matrices, physical Docker
-comparison, and delivery-pin/shipped-artifact alignment remain open.
+comparison and shipped/installed-artifact alignment remain open; merged source-to-pin alignment now
+passes.
 The reconstructed parent candidate passed `python3 -m pytest tests/release/ -q` on 2026-07-22 with
-1,539 passed, 11 skipped, and 0 failed in 275.92 seconds against temporary zero-copy links to all 11
-clean reviewed component heads. A recorded corrected pin/payload/provenance slice passed 311/311;
-the prior 174-pass run against rejected LibreChat `a2553962...` remains supporting history because
-its exact argv was not retained. All 11 nested heads are hosted in open PRs. Corrected
-LibreChat `44ac1f7a149e5a915e52f2f9f54fce5d38bab710` passes 59 stream and 216 Viventium route tests
-locally, independent and Claude reviews pass, both parent manifests now match it, and all 15 exact
-hosted checks pass, including actual Redis. No source suite can replace independent approval, committed delivery alignment, the
-blocked signed artifact, or physical user paths.
+1,542 passed, 11 skipped, and 0 failed in 293.15 seconds against temporary zero-copy links to all 11
+clean audited component trees after the actual merge refs were pinned. The current post-merge
+workflow/manifest/payload/public-safety slice passed 128/128 in 9.76 seconds before the final hosted-
+ref gate; that gate's focused workflow/manifest slice passed 45/45 in 4.24 seconds. The recorded 311/311
+slice remains pre-merge provenance history. The prior 174-pass run against rejected LibreChat
+`a2553962...` remains supporting history because
+its exact argv was not retained. All 11 nested changes are merged; fetched `origin/main` refs match
+the hosted merge commits, every merge tree equals its audited review head, and
+`components.lock.json` contains all 11 merged refs. The Native policy contains the same merged
+LibreChat ref. LibreChat reviewed head `44ac1f7a...` passes 59 stream and 216 Viventium
+route tests locally, separate fresh-context model and Claude Desktop reviews pass, and all 15 exact hosted checks pass,
+including actual Redis; its exact tree is merged and pinned at `38527a8651...`. No source suite can
+replace committed built/shipped/installed alignment, the blocked signed artifact, or physical user
+paths.
 
 The Finder-launched Native Bootstrap now has a source-built AppKit Easy Install window and compiled
 headless-forwarding contracts. Its local synthetic headed run is still `BLOCKED` because the desktop

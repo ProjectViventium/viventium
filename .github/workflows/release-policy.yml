@@ -31,3 +31,87 @@ jobs:
           tests/release/test_qa_operating_contract.py::test_release_tests_have_central_qa_ownership
           tests/release/test_qa_storage_guard.py
           -q
+      - name: Verify merged component refs are live public main tips
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          import time
+
+          lock = json.loads(Path("components.lock.json").read_text(encoding="utf-8"))
+          if lock.get("publication_state") != "merged":
+              raise SystemExit("components.lock.json must declare publication_state=merged")
+
+          origin_pattern = re.compile(
+              r"https://github\.com/ProjectViventium/[A-Za-z0-9_.-]+\.git"
+          )
+          sha_pattern = re.compile(r"[0-9a-f]{40}")
+          errors = []
+          components = lock.get("components")
+          if not isinstance(components, list) or not components:
+              raise SystemExit("components.lock.json must contain a non-empty components list")
+
+          for component in components:
+              name = component.get("name", "<unnamed>")
+              origin = component.get("origin", "")
+              expected_ref = component.get("ref", "")
+              if not origin_pattern.fullmatch(origin):
+                  errors.append(f"{name}: origin is outside the public ProjectViventium allowlist")
+                  continue
+              if not sha_pattern.fullmatch(expected_ref):
+                  errors.append(f"{name}: ref is not a full lowercase commit SHA")
+                  continue
+
+              result = None
+              failure_detail = "public main lookup did not run"
+              for attempt in range(1, 4):
+                  try:
+                      result = subprocess.run(
+                          [
+                              "git",
+                              "-c", "credential.helper=",
+                              "-c", "http.followRedirects=false",
+                              "ls-remote", "--exit-code", "--refs",
+                              origin, "refs/heads/main",
+                          ],
+                          check=False,
+                          capture_output=True,
+                          text=True,
+                          timeout=15,
+                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                      )
+                      if result.returncode == 0:
+                          break
+                      stderr_lines = result.stderr.strip().splitlines()
+                      detail = stderr_lines[-1][:240] if stderr_lines else "no error detail"
+                      failure_detail = f"git exited {result.returncode}: {detail}"
+                  except subprocess.TimeoutExpired:
+                      failure_detail = "lookup timed out after 15 seconds"
+                  if attempt < 3:
+                      time.sleep(attempt)
+              if result is None or result.returncode != 0:
+                  errors.append(f"{name}: could not read public main ({failure_detail})")
+                  continue
+
+              lines = [line.split() for line in result.stdout.splitlines() if line.strip()]
+              if len(lines) != 1 or len(lines[0]) != 2 or lines[0][1] != "refs/heads/main":
+                  errors.append(f"{name}: public main returned an unexpected ref response")
+                  continue
+              actual_ref = lines[0][0]
+              if actual_ref != expected_ref:
+                  errors.append(
+                      f"{name}: lock ref {expected_ref} does not equal public main {actual_ref}"
+                  )
+
+          if errors:
+              for error in errors:
+                  print(f"ERROR: {error}", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"Verified {len(components)} merged component refs against public main tips")
+          PY

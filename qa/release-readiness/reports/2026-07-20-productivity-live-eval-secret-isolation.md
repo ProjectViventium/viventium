@@ -91,9 +91,11 @@ git ls-remote public-librechat-origin pinned-commit
 - Flakes: none observed
 - Environment issues: hosted environment/ruleset configuration cannot be proven from local source;
   the current local LibreChat pin is not yet reachable from its public origin
-- Residual risks: a malicious change merged to the protected branch can still misuse live secrets;
-  required reviewers, protected-branch review, dedicated synthetic spend-limited credentials, and
-  environment-only storage are mandatory external controls
+- Residual risks: a malicious change merged to the protected branch can still misuse live secrets.
+  Protected-branch PR gates, dedicated synthetic spend-limited credentials, environment-only
+  storage, and deployment-branch restrictions are mandatory external controls. A multi-member
+  organization should additionally require a separate environment reviewer; the current sole-owner
+  organization must not enable no-self-review because it would create an impossible approval queue.
 
 ## Public-Safety Review
 

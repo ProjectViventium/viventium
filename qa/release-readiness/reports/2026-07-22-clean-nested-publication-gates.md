@@ -2,14 +2,16 @@
 
 ## Summary
 
-**Result: PARTIAL.** Eleven clean nested review branches are hosted. LibreChat is corrected and
-repinned, with local review and all 15 exact hosted checks green; independent approval,
-signed-artifact, and real-user acceptance gates remain open.
+**Result: PARTIAL.** Eleven clean nested review branches were merged, and the parent manifests are
+repinned to their actual `main` commits. LibreChat's reviewed tree remains exact after merge, with
+local review and all 15 exact hosted checks green; signed-artifact and real-user acceptance gates
+remain open.
 
 This report records the local and hosted gate results for the clean nested publication branches
 that precede the parent Viventium release branch. It contains no credentials, personal paths,
-account data, runtime state, or private evidence. All eleven reviewed heads are now hosted in open,
-non-draft pull requests; none has been merged or used to publish a release artifact.
+account data, runtime state, or private evidence. All eleven reviewed heads were merged through
+non-draft pull requests. Each fetched `origin/main` commit equals the captured hosted merge commit,
+and each merge tree equals the audited review-head tree. No release artifact was published.
 
 The purpose of this gate is source publication safety. It does not claim that a signed/notarized
 public installer exists, that real provider credentials passed, or that the headed Intel and
@@ -21,28 +23,30 @@ physical-machine matrices passed.
 | --- | --- | --- | --- |
 | Nested clean-history reconstruction | `PASS` | Eleven clean heads based on their fetched ProjectViventium main tips | No owner-machine ancestry was published. |
 | Nested focused verification | `PASS` | Component results recorded below | Existing dependency trees were mounted read-only where required. |
-| Hosted pull-request identity | `PASS` | Eleven hosted PR head hashes exactly matched the reviewed local heads | Hosted CI and independent approval remain separate merge gates. |
+| Hosted pull-request and merge identity | `PASS` | Eleven hosted PR heads matched locally; fetched merge commits match GitHub and preserve the audited trees | The organization has one member and the PR author is that same owner. The impossible one-independent-approval rule was replaced with a verified solo-maintainer policy that still requires PRs and resolved conversations, applies to admins, and forbids force-pushes and deletions. |
 | Parent contract slice | `PARTIAL` | A focused run reported 257 passed | The exact argv was not retained, so this count is supporting history rather than a reproducible release gate. |
-| Complete parent release suite | `PASS` | `python3 -m pytest tests/release/ -q`: 1,539 passed, 11 skipped, 0 failed in 275.92 seconds | Exact clean component heads and existing compatible dependency/build trees were exposed through temporary zero-copy links, then removed. |
-| Pin and payload alignment slice | `PASS` | Recorded nine-file release slice: 311 passed in 67.40 seconds; direct 11-head/origin/policy assertion passed | Both manifests use corrected, pushed LibreChat `44ac1f7a...`; all temporary links were removed. |
+| Complete parent release suite | `PASS` | Final post-merge `python3 -m pytest tests/release/ -q`: 1,542 passed, 11 skipped, 0 failed in 293.15 seconds | Exact audited component trees behind the merged refs and existing compatible dependency/build trees were exposed through temporary zero-copy links, then removed. |
+| Pre-merge pin and payload slice | `PASS` | Historical nine-file release slice: 311 passed in 67.40 seconds | This ran on the final reviewed heads before merge and remains provenance history. |
+| Post-merge pin and payload slice | `PASS` | Recorded five-file release slice: 128 passed in 9.76 seconds; final hosted-ref workflow/manifest slice: 45 passed in 4.24 seconds; full-suite preflight directly checked all 11 merged refs and trees | `components.lock.json` contains all 11 merged refs; the Native policy contains matching merged LibreChat `38527a86...`, whose tree equals reviewed head `44ac1f7a...`. All temporary links were removed. |
+| Hosted release environments | `PARTIAL` | GitHub settings inspected through the authorized owner session | `productivity-activation-live-eval` permits protected branches only; `native-payload-release` permits `v*` tags only. Both keep required reviewers off for the sole-owner organization and disable administrator bypass. Neither contains secrets, so provider/signing execution remains blocked rather than silently using personal credentials. |
 | Exact modern-playground browser surface | `PASS` | Headed Chromium at exact head `fd778562af199f7fb503bd4a0d106e22c282b16b` | Ten named keyboard stops; 320 px reflow; forced colors; zero retained motion; clean loopback-only browser ledger; reload passed. |
 | Signed installer and physical matrix | `BLOCKED` | No approved signing/notarization authority or complete physical matrix was available | No signed-release claim is made. |
 
 ## Clean branch inventory
 
-| Component | Reviewed head | Delta from live `origin/main` | Local verification |
-| --- | --- | ---: | --- |
-| LibreChat | `44ac1f7a149e5a915e52f2f9f54fce5d38bab710` | 355 files / 19 commits | Corrected exact-head evidence: unchanged 59/59 stream regressions, 216/216 Viventium route tests, and the CI-stability regression pass locally; syntax/diff/privacy checks and changed-file lint have zero errors. All hosted checks, including actual Redis and the serialized data-schema lane, pass. Independent approval remains open. |
-| Classic playground | `112f646c47280561d40d48f9f57f64db39a9459d` | 24 files / 6 commits | 11/11 tests; production build and local health proof |
-| Modern playground | `fd778562af199f7fb503bd4a0d106e22c282b16b` | 7 files / 6 commits | Production build and local health proof |
-| LiveKit | `8839980c6a8e0058ce775a301ba8783b90d44a5d` | 1 file / 1 commit | Focused contract and privacy checks |
-| Cartesia voice agent | `df2f024822cf6c2fd0349bd9d5b26387cabcb98a` | 1 file / 1 commit | Focused contract and privacy checks |
-| YouTube transcript MCP | `b12ec8775693fb3d76c0691b79be2fc09ee79938` | 1 file / 1 commit | Focused contract and privacy checks |
-| Microsoft 365 MCP | `61f4b88e4fbed87cd340aa6bc410b04e6b32b6d7` | 15 files / 3 commits | 30/30 tests; build; changed-file formatting |
-| Google Workspace MCP | `c99e0e8d478cbcb7be502604d14781cf3aedf7b9` | 29 files / 4 commits | 34 tests; Ruff; reproducible DXT build |
-| GlassHive | `464f97f013ee79dfe973ff9f52be49720ea9d2e4` | 15 files / 4 commits | Syntax, signed-link, browser-privacy, diff, and metadata checks |
-| Skyvern provenance | `ea7c8106bef5282c268f7f33091e96767925e8ee` | 6 files / 1 commit | 6/6 tests; offline and live provenance verification |
-| OpenClaw provenance | `ea9923db5fbedcd4a171bae92eef80d14e5e2077` | 12 files / 1 commit | 8/8 tests; offline and live provenance verification |
+| Component | Audited review head | Merged `main` commit | Original delta | Verification |
+| --- | --- | --- | ---: | --- |
+| LibreChat | `44ac1f7a149e5a915e52f2f9f54fce5d38bab710` | `38527a8651653f5f7d0cba48038421653312d999` | 355 files / 19 commits | Merge tree exact. Corrected exact-head evidence remains unchanged: 59/59 stream regressions, 216/216 Viventium route tests, the CI-stability regression, zero syntax/diff/privacy/lint errors, and all 15 hosted checks including actual Redis and the serialized data-schema lane. |
+| Classic playground | `112f646c47280561d40d48f9f57f64db39a9459d` | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | 24 files / 6 commits | Merge tree exact; 11/11 tests, production build, and local health proof. |
+| Modern playground | `fd778562af199f7fb503bd4a0d106e22c282b16b` | `f196cd5837fe6044543c50f5912f63e976d9d7b1` | 7 files / 6 commits | Merge tree exact; production build and local health proof. |
+| LiveKit | `8839980c6a8e0058ce775a301ba8783b90d44a5d` | `c20e96166726565f026f894ccca6f1cff2480741` | 1 file / 1 commit | Merge tree exact; focused contract and privacy checks. |
+| Cartesia voice agent | `df2f024822cf6c2fd0349bd9d5b26387cabcb98a` | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | 1 file / 1 commit | Merge tree exact; focused contract and privacy checks. |
+| YouTube transcript MCP | `b12ec8775693fb3d76c0691b79be2fc09ee79938` | `60d6bbb38e9c8e1db6dfa0bed03e6834e759f1cd` | 1 file / 1 commit | Merge tree exact; focused contract and privacy checks. |
+| Microsoft 365 MCP | `61f4b88e4fbed87cd340aa6bc410b04e6b32b6d7` | `c4c6f33b5e395a96780576cf0b55e5c420309e31` | 15 files / 3 commits | Merge tree exact; 30/30 tests, build, and changed-file formatting. |
+| Google Workspace MCP | `c99e0e8d478cbcb7be502604d14781cf3aedf7b9` | `070aee1fc34b2eb6e32237e81f3333a71a7e75bb` | 29 files / 4 commits | Squash-merge tree exact; 34 tests, Ruff, and reproducible DXT build. |
+| GlassHive | `464f97f013ee79dfe973ff9f52be49720ea9d2e4` | `1cf868e0218262328700085df38ec0ae2196cc2a` | 15 files / 4 commits | Merge tree exact; syntax, signed-link, browser-privacy, diff, and metadata checks. |
+| Skyvern provenance | `ea7c8106bef5282c268f7f33091e96767925e8ee` | `7c0a4ac1364ff30c880ba791be0ef3d487b70370` | 6 files / 1 commit | Merge tree exact; 6/6 tests plus offline and live provenance verification. |
+| OpenClaw provenance | `ea9923db5fbedcd4a171bae92eef80d14e5e2077` | `841336aa05beae35df3c907e0a5b8d40d6350652` | 12 files / 1 commit | Merge tree exact; 8/8 tests plus offline and live provenance verification. |
 
 OpenClaw is structurally marked `product_posture: lab-only` and `release_approved: false` in the
 component manifest. It is not an Easy Install or Custom Settings Install dependency and is not a
@@ -93,8 +97,9 @@ deferred unsubscribe is still waiting. Claude's final review was `PARTIAL` and c
 `a2553962...` is therefore not accepted for merge.
 
 Head `568ebfba5382027c705905b46c317f1d0a9ef67e` corrected the Redis demand race, async generation
-state, lookup/resume cancellation, and Telegram abort normalization. Current review head
-`44ac1f7a149e5a915e52f2f9f54fce5d38bab710` additionally suppresses post-disconnect SSE errors in
+state, lookup/resume cancellation, and Telegram abort normalization. Audited review head
+`44ac1f7a149e5a915e52f2f9f54fce5d38bab710`, whose exact tree is merged at `38527a8651...`,
+additionally suppresses post-disconnect SSE errors in
 gateway and scheduler readiness and serializes the Mongo-backed data-schema CI lane after a real
 binary-lock failure. The exact current source passed:
 
@@ -170,14 +175,16 @@ account is named as OpenAI without falsely making Anthropic mandatory.
 
 ### Complete parent release suite
 
-The clean parent reconstruction was then tested with the exact eleven reviewed component heads by
-running `python3 -m pytest tests/release/ -q` after the corrected pin and hosted rerun.
+The clean parent reconstruction was then tested with the exact eleven reviewed component trees by
+running `python3 -m pytest tests/release/ -q` after the actual merge refs were pinned. A fail-closed
+preflight proved each manifest ref equals fetched `origin/main` and each merged tree equals the
+audited worktree tree.
 Existing compatible dependencies and build outputs were exposed through temporary zero-copy links;
 no package was installed, no component was copied, and no Docker or virtual-machine storage was
 created. All temporary links were removed after the run.
 
 ```text
-1,539 passed, 11 skipped, 0 failed in 275.92 seconds
+1,542 passed, 11 skipped, 0 failed in 293.15 seconds
 ```
 
 The skipped cases remain visible in the test result and are not represented as physical-machine,
@@ -209,15 +216,20 @@ was not retained:
 The temporary links were absent again after the run. No package install, component copy, Docker
 image, or virtual-machine disk was created. Claude's later Redis finding invalidated the word
 "final" for that historical pin. Both `components.lock.json` and
-`release/native-payload/components.json` now use corrected, pushed LibreChat head
-`44ac1f7a149e5a915e52f2f9f54fce5d38bab710`. A recorded nine-file release slice covering bootstrap,
-upgrade, workflows, Native manifests/assembly, public manifests, stable runtime, and playground
-dispatch passed 311/311 in 67.40 seconds. A separate direct assertion proved all 11 checkout heads
-and origins equal `components.lock.json` and the Native LibreChat policy equals that same corrected
-ref. Both manifests are explicitly `review-head-pending-merge`; the Native candidate workflow
-rejects that state and accepts only aligned `merged` manifests. This makes the required post-merge
-repin a machine-enforced artifact gate rather than report-only process guidance. All temporary
-links were removed afterward.
+`release/native-payload/components.json` now use merged LibreChat commit
+`38527a8651653f5f7d0cba48038421653312d999`, whose tree equals corrected reviewed head
+`44ac1f7a149e5a915e52f2f9f54fce5d38bab710`. A historical pre-merge nine-file release slice covering
+bootstrap, upgrade, workflows, Native manifests/assembly, public manifests, stable runtime, and
+playground dispatch passed 311/311 in 67.40 seconds. After merge, the current workflow/public-
+manifest/Native-manifest/assembly/public-safety slice passed 128/128 in 9.76 seconds before the final
+hosted-ref gate. Its focused workflow/manifest slice passed 45/45 in 4.24 seconds. The complete
+suite preflight separately proved that each fetched nested `origin/main` equals its lock ref, each
+configured origin URL is exact, and each merged tree equals its audited review-worktree tree. The
+Native policy's merged LibreChat ref equals the lock's merged LibreChat ref. Both manifests are
+explicitly `merged`; the Native candidate workflow rejects a synthetic
+`review-head-pending-merge` state and accepts only aligned `merged` manifests. This makes the
+post-merge repin a machine-enforced artifact gate rather than report-only process guidance. All
+temporary links were removed afterward.
 
 ```text
 python3 -m pytest -q \
@@ -230,7 +242,24 @@ python3 -m pytest -q \
   tests/release/test_stable_dev_runtime_workflows.py \
   tests/release/test_upgrade_transaction.py \
   tests/release/test_voice_playground_dispatch_contract.py
-Test evidence: 311 passed in 67.40 seconds
+Historical pre-merge evidence: 311 passed in 67.40 seconds
+```
+
+```text
+python3 -m pytest -q \
+  tests/release/test_ci_release_workflows.py \
+  tests/release/test_public_bootstrap_manifests.py \
+  tests/release/test_native_component_manifest.py \
+  tests/release/test_native_payload_assembler.py \
+  tests/release/test_native_public_safety.py
+Recorded post-merge evidence before the hosted-ref gate: 128 passed in 9.76 seconds
+```
+
+```text
+python3 -m pytest -q \
+  tests/release/test_ci_release_workflows.py \
+  tests/release/test_public_bootstrap_manifests.py
+Final hosted-ref workflow/manifest evidence: 45 passed in 4.24 seconds
 ```
 
 ## Traceability
@@ -244,46 +273,51 @@ Test evidence: 311 passed in 67.40 seconds
   parent release.
 - QA case: nested history reconstruction, public-safety scan, hosted head comparison, focused
   component verification, and parent installer contract slice.
-- Expected result: hosted PR heads equal reviewed clean local heads; no private/local data is in
-  proposed history; optional OpenClaw is not exposed by Easy Install.
-- Actual evidence: all eleven hosted heads matched; the corrected LibreChat source passed 162
-  affected tests, independent review, and all 15 hosted checks; both parent manifests match its
-  pushed head; the recorded 311-test pin slice and complete 1,539-test parent suite passed; the
-  public-safety checks below found no private data in the proposed deltas. The earlier 257- and
-  174-test counts remain supporting history because their exact argv was not recorded.
-- Remaining gap or fix: obtain independent hosted approval, verify post-merge identities, build/sign the
-  artifact, prove a real optimized provider answer, and complete the physical matrix.
+- Expected result: hosted PR heads equal reviewed clean local heads, merged trees preserve those
+  audited trees, no private/local data is in proposed history, and optional OpenClaw is not exposed
+  by Easy Install.
+- Actual evidence: all eleven hosted heads matched; all eleven fetched merge commits equal the
+  hosted merge refs and preserve the audited trees. The corrected LibreChat source passed 162
+  affected tests, fresh-context model review, and all 15 hosted checks. The parent manifests now match its
+  merged commit; the recorded 311-test pin slice passed before merge, and the complete 1,542-test
+  parent suite passed again after the real merge pins were applied. The public-safety checks below
+  found no private data in the proposed deltas. The earlier
+  257- and 174-test counts remain supporting history because their exact argv was not recorded.
+- Remaining gap or fix: inspect the exact parent PR, build/sign the artifact, prove a real optimized
+  provider answer, and complete the physical matrix.
 
 ## Full-View Evidence Checklist
 
 | Evidence surface | Required question | Evidence / sanitized pointer |
 | --- | --- | --- |
 | Requirement and use case | What product promise is being protected? | Easy Install source safety, first-run truth, and nested publication alignment. |
-| Code owning path | Which source owns it? | Parent installer/compiler/summary code and the eleven component branches listed above. |
+| Code owning path | Which source owns it? | Parent installer/compiler/summary code and the eleven merged component commits listed above. |
 | Docs and nested docs | Which documents define expected behavior? | Installer, public/private boundary, runtime QA map, and component release documentation. |
 | Scripts or harnesses | What ran? | Git ancestry/diff checks, component tests/builds, parent release tests, and public-safety scanners. |
-| Local/external prerequisite state | What was available? | Clean local worktrees and hosted PR metadata; signing authority, real provider account, Intel, and full physical matrix were unavailable. |
+| Local/external prerequisite state | What was available? | Clean local worktrees, hosted PR/merge metadata, and fetched merge commits; signing authority, real provider account, Intel, and full physical matrix were unavailable. |
 | Logs, DB/state/persistence | What supports the result? | Sanitized test summaries and refetched hosted PR hashes; no user DB or personal runtime state was accessed. |
 | Generated/shipped artifact | What artifact was inspected? | Reproducible Google Workspace DXT only; no signed Viventium installer is claimed. |
-| Real user path | What reviewer path ran? | Local CLI diff/history inspection followed by hosted GitHub PR/check inspection. |
+| Real user path | What reviewer path ran? | Local CLI diff/history inspection followed by hosted GitHub PR/check/merge inspection and refetch verification. |
 | Visual/UX comparison | What visible product path ran? | No installed GUI path was part of this source-publication gate. |
-| Not run / blocked | What remains? | Independent merge approval, signed/notarized install, provider-backed first answer, and headed physical/Intel fault matrices. |
+| Not run / blocked | What remains? | Parent PR completion, signed/notarized install, provider-backed first answer, and headed physical/Intel fault matrices. |
 
 ## User-Grade Evidence
 
 - Surface exercised: local CLI plus hosted GitHub pull-request and Actions-check surfaces.
 - Real user path: inspect every proposed branch diff and history, open the hosted PR, verify its
-  displayed head, and expand failed/successful check details.
-- Visible outcome: eleven hosted PRs displayed the exact reviewed clean heads; review protection
-  remained active and was not bypassed.
+  displayed head and checks, merge it, then refetch and verify the merged identity.
+- Visible outcome: eleven hosted PRs displayed the exact reviewed clean heads and then their merged
+  state. PR protection remained active; the solo-owner policy still enforced PRs, resolved
+  conversations, admin coverage, and force-push/deletion prevention.
 - Expanded/detail state: hosted check details were expanded where present and exact component test
   summaries were recorded below.
-- Persistence/reload result: hosted PR metadata was refetched after push and continued to report the
-  same head hashes and review requirement.
+- Persistence/reload result: hosted PR metadata was refetched after merge, and each repository's
+  `origin/main` continued to report the captured merge commit and audited tree.
 - Backend/log/DB confirmation: Git object ancestry, diff scans, test logs, and GitHub Actions logs
   support the source result; no DB state applied to this publication gate.
-- Final model/runtime wording check: the report says clean source is ready for hosted review and
-  does not claim a signed installer, provider-backed first answer, or public release.
+- Final model/runtime wording check: the report says clean nested source is merged and parent
+  repinning is complete; it does not claim a signed installer, provider-backed first answer, or
+  public release.
 - Substitution check: logs, Git objects, source inspection, model review, and automated tests are
   supporting evidence, not substitutes for any required visible-UI, detail-state, persistence, or
   wording step; they also do not replace the blocked signed/physical user paths.
@@ -295,8 +329,9 @@ checked against the then-live `origin/main`:
 
 - all eleven merge bases exactly equalled the live remote main tip;
 - every worktree was clean;
-- every publication commit used the approved public-safe Project Viventium noreply identity for
-  author and committer metadata;
+- every authored review-branch commit used the approved public-safe Project Viventium noreply
+  identity for author and committer metadata; hosted merge commits carry ordinary GitHub-generated
+  metadata attributable to the already-public organization owner;
 - the proposed remote branch names did not already exist;
 - no binary delta existed except the expected reproducible Google Workspace DXT package;
 - an added-line scan found no personal home path, local username, personal email, private-key
@@ -327,26 +362,27 @@ paths.
 - Defects found and fixed before publication: stale unexecuted LibreChat commits, parent lifecycle
   harness drift, misleading saved-provider readiness wording, Microsoft 365 fallback ownership,
   an unpinned GlassHive leak exemption, and Easy Install OpenClaw exposure.
-- Hosted findings still open: obtain independent approval for corrected LibreChat `44ac1f7a...`
-  and the other nested PRs; resolve any new failed check before merge.
+- Hosted findings closed: all eleven corrected nested PRs merged, their fetched `main` commits match
+  the hosted merge refs, and every merged tree equals its audited review tree.
 - Environment limitations: no release signing/notarization authority, dedicated provider account,
   Intel target, or complete isolated physical-machine matrix.
 
 ### Remaining gates
 
-Before nested merge:
+Nested publication completed:
 
-- inspect each hosted PR diff and CI result;
-- preserve or record the actual post-merge commit SHA used by the parent pin;
-- do not merge a branch if the hosted diff differs from the reviewed local head.
+- each hosted PR diff and available CI result was inspected;
+- every actual post-merge commit SHA was recorded in the parent pin;
+- every merged tree was verified equal to the reviewed local head tree.
 
 Before the parent PR:
 
-- reconstruct a fresh parent branch from the live parent `origin/main`;
-- use the actual merged nested SHAs in `components.lock.json` and shipped manifests;
-- apply the reviewed parent source changes without owner-machine artifacts;
-- run the complete parent release suite, candidate privacy scan, generated-output checks, and
-  supported local lifecycle paths against that exact reconstruction.
+- retain the fresh parent reconstruction based on the fetched parent `origin/main`;
+- retain the actual merged nested SHAs in `components.lock.json` and shipped manifests;
+- preserve the reviewed parent source changes without owner-machine artifacts;
+- retain the complete post-merge parent release-suite pass;
+- complete the candidate privacy scan, generated-output checks, supported local lifecycle paths,
+  and exact hosted parent-PR inspection against that reconstruction.
 
 Before a signed public artifact:
 
@@ -357,8 +393,8 @@ Before a signed public artifact:
   physical Docker/fault matrix;
 - implement and verify the authenticated bootstrap freshness boundary.
 
-Until those later gates pass, the defensible claim is **eleven clean nested review branches are
-hosted, with corrected LibreChat locally and hosted green**, not **public installer released**.
+Until those later gates pass, the defensible claim is **eleven clean nested changes are merged and
+the parent is repinned to their exact merge commits**, not **public installer released**.
 
 ## Public-Safety Review
 

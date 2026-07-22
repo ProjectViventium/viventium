@@ -209,7 +209,9 @@ External authority that implementation code cannot invent:
 
 1. release-owner approval of the real manifest signer public key and Apple team identifier;
 2. Account Holder-created Developer ID Application certificate and App Store Connect notary access;
-3. protected `native-payload-release` environment reviewers/no-self-review/deployment policy/secrets;
+3. protected `native-payload-release` environment deployment policy and secrets; use separate
+   reviewers/no-self-review only when the organization has another authorized reviewer, not for the
+   current sole-owner configuration;
 4. repository-owner enablement of GitHub immutable releases;
 5. human review and publication after clean-Mac acceptance.
 

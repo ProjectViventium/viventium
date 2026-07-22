@@ -109,10 +109,13 @@ remain unavailable. Install Native updates by running a newly verified publisher
 ## External Administration Required
 
 Before production use, a repository administrator must configure the `native-payload-release`
-environment with required reviewers, prevent self-review where the plan supports it, restrict the
-deployment branch/tag policy, provision its secrets, and enable GitHub immutable releases. The
-workflow checks the authorities and immutable-release API, but repository settings cannot be safely
-invented or enforced from workflow YAML alone.
+environment, restrict its deployment branch/tag policy, provision its secrets, and enable GitHub
+immutable releases. A multi-member organization should add required reviewers and prevent
+self-review. A sole-owner organization must leave required reviewers off to avoid an impossible
+self-approval queue; the release remains an explicit owner-dispatched workflow from protected,
+reviewed source and still fails closed on CI, sequence, provenance, signing, notarization, and
+artifact checks. The workflow checks the authorities and immutable-release API, but repository
+settings cannot be safely invented or enforced from workflow YAML alone.
 
 Primary references: [Apple Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/),
 [Apple custom notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),

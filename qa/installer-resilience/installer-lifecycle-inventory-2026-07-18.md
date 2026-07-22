@@ -202,27 +202,29 @@ established machine cannot substitute for clean-pin acceptance.
 
 ### Current Isolated Candidate Reconciliation — 2026-07-22
 
-A read-only reconciliation after candidate changes stopped compared every configured component path
-and full ref with that nested checkout's `HEAD` and porcelain status. All 11 local candidate trees
-are clean and exactly match the current parent lock:
+After the 11 hosted pull requests merged, a reconciliation fetched each new `origin/main`, compared
+the hosted merge commit with the captured GitHub result, and compared the merged tree with the
+previously audited review tree. All 11 merged trees are byte-for-byte identical to their reviewed
+heads, every isolated review worktree remains clean, and the parent lock now records the real merged
+`main` commits:
 
 | Component | Current ref | Local source state | Delivery evidence |
 | --- | --- | --- | --- |
-| LibreChat | `44ac1f7a149e5a915e52f2f9f54fce5d38bab710` | exact and clean | Hosted PR 67 review head; 59 stream tests, all 216 Viventium route tests, and the CI-stability regression pass locally; all 15 exact-head hosted checks pass, including actual Redis and the serialized data-schema lane. Independent approval, merge, post-merge pin, and built/shipped/installed identity remain open. |
-| agents-playground | `112f646c47280561d40d48f9f57f64db39a9459d` | exact and clean | Hosted PR 1 review head; classic fallback only. Independent approval, merge, and artifact identity remain open. |
-| livekit | `8839980c6a8e0058ce775a301ba8783b90d44a5d` | exact and clean | Hosted PR 1 review head; the locked Docker runtime is a separate delivery artifact. Independent approval and merge remain open. |
-| cartesia-voice-agent | `df2f024822cf6c2fd0349bd9d5b26387cabcb98a` | exact and clean | Hosted PR 1 review head. Independent approval, merge, and artifact identity remain open. |
-| agent-starter-react | `fd778562af199f7fb503bd4a0d106e22c282b16b` | exact and clean | Hosted PR 8 review head and current modern-playground source. Its hosted test passes; independent approval, merge, and final installed identity remain open. |
-| GlassHive | `464f97f013ee79dfe973ff9f52be49720ea9d2e4` | exact and clean | Hosted PR 41 review head. Independent approval, merge, and artifact identity remain open. |
-| ms-365-mcp-server | `61f4b88e4fbed87cd340aa6bc410b04e6b32b6d7` | exact and clean | Hosted PR 1 review head. Independent approval, merge, and runtime identity remain open. |
-| google_workspace_mcp | `c99e0e8d478cbcb7be502604d14781cf3aedf7b9` | exact and clean | Hosted PR 2 review head. Independent approval, merge, and shipped DXT/runtime identity remain open. |
-| mcp-youtube-transcript | `b12ec8775693fb3d76c0691b79be2fc09ee79938` | exact and clean | Hosted PR 1 review head. Independent approval, merge, and runtime identity remain open. |
-| openclaw | `ea9923db5fbedcd4a171bae92eef80d14e5e2077` | exact and clean | Hosted PR 1 review head; optional experimental component only, not supported Slack or WhatsApp onboarding. Independent approval and merge remain open. |
-| skyvern-source | `ea7c8106bef5282c268f7f33091e96767925e8ee` | exact and clean | Hosted PR 1 review head. Independent approval, merge, and runtime identity remain open. |
+| LibreChat | `38527a8651653f5f7d0cba48038421653312d999` | merged tree exact; review worktree clean | PR 67 merged reviewed head `44ac1f7a...`; 59 stream tests, all 216 Viventium route tests, and the CI-stability regression pass locally; all 15 exact-head hosted checks pass, including actual Redis and the serialized data-schema lane. Built/shipped/installed identity remains open. |
+| agents-playground | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | merged tree exact; review worktree clean | PR 1 merged reviewed head `112f646c...`; classic fallback only. Artifact identity remains open. |
+| livekit | `c20e96166726565f026f894ccca6f1cff2480741` | merged tree exact; review worktree clean | PR 1 merged reviewed head `8839980c...`; the locked Docker runtime is a separate delivery artifact. |
+| cartesia-voice-agent | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | merged tree exact; review worktree clean | PR 1 merged reviewed head `df2f0248...`; artifact identity remains open. |
+| agent-starter-react | `f196cd5837fe6044543c50f5912f63e976d9d7b1` | merged tree exact; review worktree clean | PR 8 merged reviewed head `fd778562...`, the current modern-playground source. Its hosted test passes; final installed identity remains open. |
+| GlassHive | `1cf868e0218262328700085df38ec0ae2196cc2a` | merged tree exact; review worktree clean | PR 41 merged reviewed head `464f97f0...`; artifact identity remains open. |
+| ms-365-mcp-server | `c4c6f33b5e395a96780576cf0b55e5c420309e31` | merged tree exact; review worktree clean | PR 1 merged reviewed head `61f4b88e...`; runtime identity remains open. |
+| google_workspace_mcp | `070aee1fc34b2eb6e32237e81f3333a71a7e75bb` | merged tree exact; review worktree clean | PR 2 squash-merged reviewed head `c99e0e8d...`; shipped DXT/runtime identity remains open. |
+| mcp-youtube-transcript | `60d6bbb38e9c8e1db6dfa0bed03e6834e759f1cd` | merged tree exact; review worktree clean | PR 1 merged reviewed head `b12ec877...`; runtime identity remains open. |
+| openclaw | `841336aa05beae35df3c907e0a5b8d40d6350652` | merged tree exact; review worktree clean | PR 1 merged reviewed head `ea9923db...`; optional lab-only component, not supported Slack or WhatsApp onboarding. |
+| skyvern-source | `7c0a4ac1364ff30c880ba791be0ef3d487b70370` | merged tree exact; review worktree clean | PR 1 merged reviewed head `ea7c8106...`; runtime identity remains open. |
 
-This closes local source-to-review-pin drift only. The refs are publicly reachable as open review
-heads, but none is treated as merged, built into the final payload, shipped, or installed until
-those separate gates produce evidence.
+This closes review-head-to-merge-pin drift. It does not claim that these sources have been built
+into the final immutable payload, signed, shipped, or proven as the installed runtime; those
+delivery gates remain separate.
 
 ## Nested Feature Evolution
 
@@ -342,6 +344,6 @@ individual features. It is a single truthful, transactional, secure new-user sys
 features together on the exact shipped artifact and proves the same system preserves an established
 user's state. The audit and remediation plan use that end-to-end boundary as the release gate.
 The current disposable-VM result is therefore a **source-candidate proof**, not delivery proof. The
-11 clean local component heads and parent pins now agree, but remote merge identity, rebuilt client
-and payload bytes, signed/notarized distribution, and installed-artifact reruns remain required
+11 audited component trees, merged commits, and parent pins now agree, but rebuilt client and
+payload bytes, signed/notarized distribution, and installed-artifact reruns remain required
 before `INST-022` can pass.

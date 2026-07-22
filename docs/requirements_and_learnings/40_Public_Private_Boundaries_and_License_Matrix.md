@@ -120,7 +120,7 @@ The Native release trust split is explicit:
 `release/native-payload/mongodb-redistribution-approved` must not be added until the corresponding
 release-owner/legal review approves the real public values. Their absence is an intentional
 fail-closed production gate. The candidate producer runs without release secrets; only the protected
-release job receives authorities after environment approval. Temporary credentials live under the
+release job receives authorities after its environment gates pass. Temporary credentials live under the
 runner's temporary directory, use restrictive modes and an ephemeral keychain, and are removed on
 exit. Raw notary responses stay in temporary storage; the public draft uses an exact filename
 allowlist and contains no runner paths or notary request identifiers. Public bootstrap trust values
@@ -157,7 +157,11 @@ trusted workflow fetches and validates the exact LibreChat commit from `componen
 missing/unpublished pin fails the live gate rather than silently skipping it.
 
 The repository source cannot prove GitHub-hosted policy. Release owners must configure the named
-environment with required reviewers and a deployment-branch rule limited to the protected default
-branch, store dedicated synthetic spend-limited provider credentials in that environment, and keep
-the default branch protected against direct or unreviewed writes. Until those controls are verified
-in GitHub, the source boundary is implemented but the hosted live-eval gate remains `PARTIAL`.
+environment with a deployment-branch rule limited to the protected default branch, store dedicated
+synthetic spend-limited provider credentials in that environment, and keep the default branch
+protected against direct writes. Multi-member organizations should also require a reviewer and
+prevent self-review. A sole-owner organization must not enable that pair because GitHub prevents the
+initiator from approving their own waiting deployment; its compensating controls are protected-branch
+PRs, required automated gates, exact immutable pins, environment-scoped credentials, and an explicit
+owner dispatch for release workflows. Until the applicable controls are verified in GitHub, the source
+boundary is implemented but the hosted live-eval gate remains `PARTIAL`.

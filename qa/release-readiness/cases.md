@@ -9,14 +9,14 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
 | `REL-001` | Public/private boundary | No private identifiers, secrets, raw logs, or local paths enter public history | Parent repo | `git diff --check` and public/private pattern scans | PARTIAL 2026-07-22; complete local parent-candidate inventory and public-safety review passed, while staged diff and remote parent-PR exactness remain under `REL-008` |
-| `REL-002` | Nested repo boundary | Nested component diffs are reviewed independently before parent pin update | LibreChat and changed nested repos | `git diff --check`, targeted tests, line-by-line review | PARTIAL 2026-07-22; all 11 reviewed heads are clean, pushed, and hosted in open PRs with exact head parity. Corrected LibreChat `44ac1f7a...` passes 59 stream and 216 Viventium route tests locally plus all 15 hosted checks; independent approvals and merges remain open. |
-| `REL-003` | Reproducible component pin | Parent manifest points to the pushed nested commit | Parent `components.lock.json` | Git status/commit SHA inspection | PARTIAL 2026-07-22; both parent manifests point to pushed LibreChat review head `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`, and the other refs match their hosted review heads. Source/pin identity aligns for review; merged, built, shipped, and installed identity is unproved. |
+| `REL-002` | Nested repo boundary | Each nested component diff receives a separate per-repository review before parent pin update | LibreChat and changed nested repos | `git diff --check`, targeted tests, line-by-line review | PASS 2026-07-22; all 11 clean reviewed heads were merged. Fetched `origin/main` commits equal the captured hosted merge refs, every merge tree equals its audited review head, and all isolated review worktrees remain clean. Corrected LibreChat reviewed head `44ac1f7a...` passes 59 stream and 216 Viventium route tests locally plus all 15 hosted checks; its exact tree is merged at `38527a8651...`. |
+| `REL-003` | Reproducible component pin | Parent manifest points to the pushed nested commit | Parent `components.lock.json` | Git status/commit SHA inspection | PASS 2026-07-22; `components.lock.json` declares `merged`, contains all 11 fetched nested `origin/main` refs, and every merged tree equals its audited review head. The Native policy also declares `merged` and contains the same LibreChat ref. Built, shipped, and installed identity remains separately partial under `REL-008`. |
 | `REL-004` | User-grade QA evidence | Browser-visible background-agent behavior works without contradictory main errors | Web UI | `node qa/background_agents/evals/run-visible-cards-browser-qa.cjs --headless` | PASS 2026-05-11 local / 2026-05-12 UTC |
 | `REL-005` | Project boundary contamination | Viventium public tree contains no cross-project brand/account markers | Parent repo plus nested source tree | `python3 -m pytest tests/release/test_project_boundary_contamination.py -q` | PASS 2026-07-21 in the focused frozen-candidate run |
 | `REL-006` | Immutable payload privacy | The exact assembled installer payload contains no producer-machine paths, runtime logs/audits, bytecode caches, secrets, or personal state | Native payload tree and archive | payload assembler exclusions plus `verify_native_public_safety.py` byte/path scans | PARTIAL 2026-07-20; pre-fix payload fails the new gate and 77 focused producer/gate tests pass; rebuilt payload scan pending |
 | `REL-007` | Dependency security and compatibility | A clean lockfile install has no moderate-or-higher production advisory and still passes affected runtime/tests/builds on supported Node | LibreChat manifests, lockfile, upload/provider paths, CI | `npm ci`, production `npm audit`, malformed-file regression, provider/package/API/client suites and builds | PARTIAL 2026-07-22; corrected exact LibreChat head `44ac1f7a...` passes 59 stream and 216 Viventium route tests locally and all 15 hosted checks, including actual Redis. Exact native payload install/artifact proof remains open. |
-| `REL-008` | Candidate/PR exactness | Every public PR contains exactly the audited final-state diff; nested merge SHAs, parent pins, built payload, and installed evidence agree | All nested repos, parent manifest, workflows, payload | local/remote SHA and compare checks, PR-file review, CI, fresh-clone install/upgrade | PARTIAL 2026-07-22; 11 clean nested heads are hosted in open PRs with local/remote SHA parity and available CI evidence. Corrected LibreChat local and all 15 hosted checks passed; independent approvals, merges, post-merge pins, parent PR exactness, payload, and fresh install/upgrade remain open. |
-| `REL-009` | CI provider-secret isolation | Proposed PR code and dependency lifecycle scripts cannot read live-eval provider credentials | GitHub Actions workflows | `test_ci_release_workflows.py` plus hosted environment/ruleset inspection | PARTIAL 2026-07-22; source/static contracts and exact hosted nested-head reachability pass. Protected-environment reviewers, secret scope, and live-eval execution remain unverified administrative/external gates. |
+| `REL-008` | Candidate/PR exactness | Every public PR contains exactly the audited final-state diff; nested merge SHAs, parent pins, built payload, and installed evidence agree | All nested repos, parent manifest, workflows, payload | local/remote SHA and compare checks, PR-file review, CI, fresh-clone install/upgrade | PARTIAL 2026-07-22; all 11 nested changes are merged with hosted-merge/fetched-main equality, reviewed-tree equality, and exact parent repinning. Parent PR exactness, rebuilt payload, and fresh install/upgrade remain open. |
+| `REL-009` | CI provider-secret isolation | Proposed PR code and dependency lifecycle scripts cannot read live-eval provider credentials | GitHub Actions workflows | `test_ci_release_workflows.py` plus hosted environment/ruleset inspection | PARTIAL 2026-07-22; 31/31 workflow contracts and exact hosted nested-head reachability pass. The sole-owner branch policy is verified. The hosted live-eval environment now permits protected branches only, has no reviewer deadlock, disables administrator bypass, and contains no secrets; dedicated synthetic credentials and a trusted live run remain external gates. |
 
 ## `REL-001` - Public Diff Hygiene
 
@@ -30,7 +30,7 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Expected result: only synthetic values, hashes, and documented placeholders remain.
 - Forbidden result: real account identifiers, credentials, owner paths, raw logs, screenshots, private URLs, or generated runtime files are staged.
 - Evidence to capture: sanitized scan summary and reviewer findings.
-- Automation: shell scans plus independent review.
+- Automation: shell scans plus fresh-context model review.
 - Last run: PARTIAL 2026-07-22. Complete local parent-candidate inventory, diff hygiene, special-file
   and binary classification, and public-safety review found no real secret, private state, personal
   path, or unintended payload. Staged-diff inspection and remote parent-PR parity still belong to
@@ -98,7 +98,7 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Evidence to capture: resolved dependency graph, audit output, exact regression/broad-suite totals,
   build result, and workflow diff.
 - Last run: PARTIAL 2026-07-22. Corrected exact LibreChat head `44ac1f7a...` passes 59 stream and
-  216 Viventium route tests locally. Independent code review and Claude Desktop Fable 5 Extra found
+  216 Viventium route tests locally. Fresh-context code review and Claude Desktop Fable 5 Extra found
   no remaining P0-P3 issue. All 15 hosted checks pass, including actual Redis; exact native
   payload/install identity remains open.
 
@@ -125,10 +125,11 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
   dirty intermediate commit visible in remote history.
 - Evidence to capture: branch bases/heads, per-PR compare/file/check results, merged SHAs, parent
   manifest, payload digest, and fresh-clone ledger.
-- Last run: PARTIAL 2026-07-22. All 11 clean nested branches are hosted in open PRs and their remote
-  head hashes matched the reviewed local commits. Available hosted checks were inspected. The
-  independent approvals, merges, post-merge identities, parent PR,
-  rebuilt payload, and fresh-clone install/upgrade proof remain open.
+- Last run: PARTIAL 2026-07-22. All 11 clean nested branches were merged after their remote heads
+  matched the reviewed local commits and available hosted checks were inspected. Fetched
+  `origin/main` commits equal the captured GitHub merge refs, every merge tree equals its audited
+  review head, and the parent manifests contain the exact merged refs. Parent PR exactness, rebuilt
+  payload, and fresh-clone install/upgrade proof remain open.
 
 ## `REL-009` - CI Provider-Secret Isolation
 
@@ -146,8 +147,10 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
   4. Confirm dependency installation completes before provider secrets are injected into the one
      live-eval step, and confirm the live workflow disables npm lifecycle scripts and does not
      install Python packages.
-  5. In GitHub settings, verify required environment reviewers, default-branch-only deployment,
-     dedicated synthetic spend-limited environment secrets, and protected-branch review rules.
+  5. In GitHub settings, verify protected-default-branch-only deployment, dedicated synthetic
+     spend-limited environment secrets, and protected-branch PR rules. If another authorized
+     maintainer exists, additionally require a separate environment reviewer and prevent self-review;
+     do not enable that impossible queue for a sole-owner organization.
 - Expected result: proposed PR code never receives provider secrets; trusted live eval remains
   available after protected review, with credentials scoped to the exact eval step.
 - Forbidden result: any PR-reachable workflow references repository/environment secrets, any
@@ -156,10 +159,13 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Evidence to capture: RED/GREEN static test output, workflow diff, and sanitized hosted policy
   inspection without secret values.
 - Last run: PARTIAL 2026-07-22. The split workflow, disabled npm lifecycle hooks, step-scoped secret
-  boundary, and pass/failure/outage shell semantics pass 19/19 workflow tests. The current
-  LibreChat pin is reachable at corrected hosted PR head `44ac1f7a...`.
-  Hosted environment reviewers, protected-ref deployment policy, secret scope, and a trusted live
-  eval were not changed or verified in this local source audit.
+  boundary, public-main ref gate, and pass/failure/outage shell semantics pass 31/31 workflow tests. The current
+  LibreChat pin is merged at `38527a8651...`, whose tree equals corrected audited head
+  `44ac1f7a...`.
+  Hosted inspection created the named live-eval environment, limited it to protected branches,
+  disabled administrator bypass, and confirmed required reviewers remain off for the sole-owner
+  organization. It intentionally has no secrets. Dedicated synthetic spend-limited credentials and
+  a trusted live eval remain unrun.
 
 ## `REL-002` - Nested Component Boundary
 
@@ -175,10 +181,12 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: parent commit without matching nested pushed commit and pin.
 - Evidence to capture: nested commit SHA and PR link.
 - Automation: git inspection plus targeted Jest/Pytest suites.
-- Last run: PARTIAL 2026-07-22. All 11 reviewed nested worktrees were clean, their heads were pushed
-  to open hosted PRs, and local/remote head parity was verified. Component-focused checks passed at
-  those heads. Corrected LibreChat `44ac1f7a...` passes 59 stream and 216 Viventium route tests
-  locally plus all 15 hosted checks; independent approvals and merges remain open.
+- Last run: PASS 2026-07-22. All 11 reviewed nested worktrees were clean and their hosted heads
+  matched the reviewed local commits before merge. Component-focused checks passed at those heads.
+  The fetched `origin/main` commits equal the captured GitHub merge refs, and every merge tree
+  equals its reviewed head. Corrected LibreChat head `44ac1f7a...` passes 59 stream and 216
+  Viventium route tests locally plus all 15 hosted checks; its exact tree is merged at
+  `38527a8651...`.
 
 ## `REL-003` - Parent Pin Matches Nested Commit
 
@@ -193,10 +201,12 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PARTIAL 2026-07-22. Both parent manifests point to corrected, pushed LibreChat review
-  head `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`, and all other managed refs match their clean hosted
-  review heads. Source/pin and hosted-check identity align for review; prove merged, built,
-  shipped, and installed identities before promoting this case to `PASS`.
+- Last run: PASS 2026-07-22. `components.lock.json` declares `merged` and contains all 11 fetched
+  nested `origin/main` refs. The Native policy also declares `merged`; both point LibreChat to
+  `38527a8651653f5f7d0cba48038421653312d999`, whose tree equals corrected audited head
+  `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`, and every other managed ref equals fetched nested
+  `origin/main` with reviewed-tree equality. Built, shipped, and installed identities remain
+  separately partial under `REL-008`.
 
 ## `REL-004` - Browser-Visible Background Cards
 
@@ -231,9 +241,9 @@ rows before claiming a pass when the feature behavior changes.
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
 | `REL-UC-001` | Review the intended public diff before staging or publication. | public/private boundary / `REL-001` | Parent repo | Diff hygiene, added-line sensitive-pattern scan, QA public-safety contracts | No private identifiers, secrets, raw logs, or local paths enter public history. | PARTIAL 2026-07-22; complete local parent-candidate review passed, while staged and remote parent-PR inspection remains under `REL-008`. |
-| `REL-UC-002` | Scan the Viventium parent and nested source tree for another project's brand, account, or operating context. | project boundary / `REL-005` | Parent repo plus nested source tree | Boundary test, source/report review, public-safety scan | Only Viventium-scoped synthetic fixtures and public-safe examples remain. | PARTIAL 2026-07-22; local candidate and nested-delta reviews passed, including corrected LibreChat local and hosted checks, while post-merge pin and parent remote-PR exactness remain under `REL-008`. |
-| `REL-UC-003` | Reconcile each nested candidate head with the parent pin, then compare the built, shipped, and installed identities. | nested boundary and reproducible pin / `REL-002`, `REL-003`, `REL-008` | All managed component repos, parent lock, payload, installed runtime | Source status/SHAs, parent refs, remote reachability, artifact digests, installed provenance | Every delivery surface carries the exact reviewed component identities without uncommitted or unpublished drift. | PARTIAL 2026-07-22; 11 clean hosted PR heads and current parent refs align, including corrected LibreChat `44ac1f7a...`, whose 15 hosted checks pass. Approvals, merges, post-merge pins, and built/shipped/installed parity remain open. |
-| `REL-UC-004` | Open a pull request that changes activation/eval code, then run the live eval manually from the protected default branch. | `40_Public_Private_Boundaries_and_License_Matrix.md` / `REL-009` | GitHub Actions PR check and protected environment | Workflow source, check logs, environment deployment history, branch/ruleset settings, static regression | PR validation receives no provider credentials; only the reviewed protected-branch live step can access dedicated synthetic secrets. | PARTIAL 2026-07-22; source/static isolation passes, while protected-environment administration and a trusted live run remain unverified. |
+| `REL-UC-002` | Scan the Viventium parent and nested source tree for another project's brand, account, or operating context. | project boundary / `REL-005` | Parent repo plus nested source tree | Boundary test, source/report review, public-safety scan | Only Viventium-scoped synthetic fixtures and public-safe examples remain. | PARTIAL 2026-07-22; local candidate and nested-delta reviews passed, including corrected LibreChat local and hosted checks, while parent remote-PR exactness remains under `REL-008`. |
+| `REL-UC-003` | Reconcile each nested candidate head with the parent pin, then compare the built, shipped, and installed identities. | nested boundary and reproducible pin / `REL-002`, `REL-003`, `REL-008` | All managed component repos, parent lock, payload, installed runtime | Source status/SHAs, parent refs, remote reachability, artifact digests, installed provenance | Every delivery surface carries the exact reviewed component identities without uncommitted or unpublished drift. | PARTIAL 2026-07-22; all 11 nested changes are merged, every fetched main and parent ref matches its hosted merge commit, and each merged tree equals its audited review head. Built/shipped/installed parity remains open. |
+| `REL-UC-004` | Open a pull request that changes activation/eval code, then run the live eval manually from the protected default branch. | `40_Public_Private_Boundaries_and_License_Matrix.md` / `REL-009` | GitHub Actions PR check and protected environment | Workflow source, check logs, environment deployment history, branch/ruleset settings, static regression | PR validation receives no provider credentials; only the reviewed protected-branch live step can access dedicated synthetic secrets. | PARTIAL 2026-07-22; source/static isolation and hosted protected-branch/no-bypass environment administration pass. The environment intentionally has no secrets; dedicated synthetic credentials and a trusted live run remain unverified. |
 
 ## Release Test Traceability
 

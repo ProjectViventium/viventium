@@ -26,38 +26,52 @@
 
 | Suite | Command or Manual Path | Required When | Last Run |
 | --- | --- | --- | --- |
-| Release tests | `python3 -m pytest tests/release/ -q` in the reviewed stable test environment | Before parent push | PASS 2026-07-22 corrected-pin candidate: 1,539 passed, 11 skipped, 0 failed in 275.92 seconds |
+| Release tests | `python3 -m pytest tests/release/ -q` in the reviewed stable test environment | Before parent push | PASS 2026-07-22 final post-merge tree: 1,542 passed, 11 skipped, 0 failed in 293.15 seconds |
 | Diff hygiene | `git diff --check` plus public/private pattern scans | Before staging | PARTIAL 2026-07-22: complete parent-candidate inventory, diff hygiene, special-file/binary classification, and public-safety review passed locally; staged/remote parent-PR exactness remains under `REL-008` |
 | Browser-visible QA | `node qa/background_agents/evals/run-visible-cards-browser-qa.cjs --headless` with local opt-in env | When background-agent UI behavior changed | PASS 2026-05-11 local / 2026-05-12 UTC; public-safe report saved |
 | Latest-user activation QA | `node qa/background_agents/evals/run-latest-user-activation-browser-qa.cjs --headless` with local opt-in env | When activation history/window behavior changed | PASS 2026-05-11 local / 2026-05-12 UTC; public-safe report saved |
 | Full activation classifier gate | `node qa/background_agents/evals/run-activation-model-evals.cjs --run-live --with-fallbacks --repetitions=1 --concurrency=1 --output-dir=<private-output> --public-report=<public-safe-report>` | Before release while the primary activation model is preview, and after any activation prompt/model/provider/fallback/parser/runtime change | PARTIAL: the fixture-backed parser and fallback contracts pass. A release-candidate live run with dedicated synthetic credentials remains required; owner-account provider health and routing observations are private evidence and are not a public release result. |
 | Background interruption/restart QA | `VIVENTIUM_QA_ALLOW_LOCAL_JWT=1 VIVENTIUM_QA_ALLOW_RUNTIME_RESTART=1 node qa/background_agents/evals/run-interruption-restart-browser-qa.cjs --headless` with a local synthetic QA user | When background status persistence, stale recovery, or runtime restart behavior changes | PASS 2026-07-10; real active Red Team card/DB state, changed API process, same-conversation survival, terminal stale recovery, expanded reload detail, no generation placeholder |
-| Nested component tests | Targeted Jest/Pytest suites in changed nested repos | Before nested commit | PARTIAL 2026-07-22; all 11 reviewed heads are clean, pushed, and represented by open hosted PRs. Corrected LibreChat `44ac1f7a149e5a915e52f2f9f54fce5d38bab710` passes 59 stream tests and 216 Viventium route tests locally and all 15 hosted checks, including actual Redis. Independent approvals and merges remain open. |
+| Nested component tests | Targeted Jest/Pytest suites in changed nested repos | Before nested commit | PASS 2026-07-22; all 11 audited changes were merged, fetched `origin/main` commits equal the captured GitHub merge refs, and every merge tree equals its clean reviewed head. Corrected LibreChat reviewed head `44ac1f7a...` passes 59 stream tests and 216 Viventium route tests locally and all 15 hosted checks, including actual Redis; its exact tree is merged at `38527a8651...`. |
 
 ## Coverage Matrix
 
 | Requirement / Surface | Cases | Last Full Run |
 | --- | --- | --- |
-| Parent and nested diffs are public-safe before push | `REL-001`, `REL-002` | PARTIAL 2026-07-22; complete local parent-candidate and nested-delta public-safety reviews passed, and all 11 nested heads are hosted in open PRs. Corrected LibreChat local and all 15 hosted checks passed; independent approval, nested merge, post-merge repinning, and parent staging/PR inspection remain open. |
-| Nested component commit and parent pin are consistent | `REL-003` | PARTIAL 2026-07-22: both parent manifests point to pushed LibreChat review head `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`, and the other managed refs match their reviewed hosted heads. Source/pin identity now aligns for review; merged, built, shipped, and installed identity is not yet proven. |
+| Parent and nested diffs are public-safe before push | `REL-001`, `REL-002` | PARTIAL 2026-07-22; complete local parent-candidate and nested-delta public-safety reviews passed, all 11 nested changes merged with reviewed-tree equality, and parent staging/PR inspection remains open. |
+| Nested component commit and parent pin are consistent | `REL-003` | PASS 2026-07-22: both parent manifests declare `merged`; every managed ref equals fetched nested `origin/main`, and every merged tree equals its audited review head. Built, shipped, and installed identity remains separately partial under `REL-008`. |
 | User-visible QA evidence is browser-backed and sanitized | `REL-004` | 2026-05-10 PASS |
 
 ## Current Status
 
 - Current reconstructed parent result: `python3 -m pytest tests/release/ -q` passed on 2026-07-22
-  with 1,539 passed, 11 skipped, and 0 failed in 275.92 seconds against temporary zero-copy links to
-  all 11 exact reviewed component heads. The recorded corrected pin/payload/provenance slice passed
-  311/311. A prior 174-pass run against rejected LibreChat `a2553962...` remains supporting history
+  with 1,542 passed, 11 skipped, and 0 failed in 293.15 seconds against temporary zero-copy links to
+  all 11 exact reviewed component trees after their merge refs were pinned. The current post-merge
+  workflow/manifest/payload/public-safety slice passed 128/128 in 9.76 seconds before the final
+  hosted-ref gate; that gate's focused workflow/manifest slice passed 45/45 in 4.24 seconds. The recorded
+  311/311 slice remains pre-merge provenance history. A prior 174-pass run against rejected
+  LibreChat `a2553962...` remains supporting history
   because its exact argv was not retained.
-- All 11 reviewed nested heads are clean and hosted in open PRs. LibreChat PR 67 now points to
-  corrected commit `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`; both parent manifests match it.
-  Local evidence is 59/59 stream tests and 216/216 Viventium route tests, with independent review and
-  Claude Desktop Fable 5 Extra reporting no remaining P0-P3 finding. All 15 hosted checks pass,
-  including actual Redis; independent approval and merge remain separate gates.
-- Known gaps: independent PR approvals and merges; post-merge component identities; rebuilt,
-  signed/notarized payload and installed-artifact equality; pristine exact-artifact install; real
+- Full-suite prerequisite: the complete release suite reads nested LibreChat, GlassHive, and modern-
+  playground source. Materialize the managed component paths at their locked refs first with
+  `python3 scripts/viventium/bootstrap_components.py --repo-root "$PWD" --jobs 4`. Until those paths
+  exist, run the exact suites named by the applicable hosted workflow; raw missing-path
+  `FileNotFoundError` results are an incomplete harness, not product evidence.
+- Hosted component-ref equality is intentionally point-in-time and fail-closed: when any managed
+  public `main` advances, the parent lock must be reviewed and repinned before an unrelated parent PR
+  can pass the release-policy job. Release artifacts remain bound to their immutable reviewed commit;
+  later component development does not silently rewrite an existing candidate.
+- All 11 reviewed nested changes are merged. Each fetched `origin/main` equals the captured hosted
+  merge ref, each merged tree equals its audited review head, and `components.lock.json` carries all
+  11 actual merged refs with `publication_state: merged`. The Native policy is also `merged` and
+  carries the matching LibreChat ref. LibreChat reviewed head `44ac1f7a...` has
+  local evidence of 59/59 stream tests and 216/216 Viventium route tests, fresh-context model review,
+  and no remaining Claude P0-P3 finding; all 15 hosted checks pass, including actual Redis. Its exact tree
+  is merged and pinned at `38527a8651...`.
+- Known gaps: parent PR exactness; rebuilt, signed/notarized payload and installed-artifact equality;
+  pristine exact-artifact install; real
   optimized provider-answer persistence; Intel and native assistive-technology coverage; the wider
-  physical fault/Docker matrix; authenticated bootstrap freshness; and parent-PR exactness. Passing
+  physical fault/Docker matrix; and authenticated bootstrap freshness. Passing
   source suites or opening PRs does not close those gates.
 - Next required hardening: keep provider-native structured Phase B and full doc-49 runtime/source/
   compiled A/B/C drift gate as explicit post-baseline work before main-prompt compaction.
