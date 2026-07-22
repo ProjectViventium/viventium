@@ -40,6 +40,12 @@ jobs:
         with:
           node-version: "24"
       - run: python -m pip install -r scripts/viventium/requirements.txt pytest
+      - name: Fetch and validate the exact pinned LibreChat component
+        run: |
+          python scripts/viventium/bootstrap_components.py \
+            --repo-root "$PWD" \
+            --config config.minimal.example.yaml \
+            --jobs 1
       - name: Run cross-architecture installer and payload policy suites
         run: |
           python -m pytest \

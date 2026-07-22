@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import stat
 import subprocess
 import zipfile
@@ -35,8 +36,12 @@ def write_candidate(
     sequence: int = 1,
     channel: str = "local-qa",
     local_qa: bool = True,
+    arch: str | None = None,
     files: dict[str, bytes] | None = None,
 ) -> tuple[Path, Path, dict]:
+    arch = arch or platform.machine()
+    if arch not in {"arm64", "x86_64"}:
+        raise AssertionError(f"unsupported synthetic payload architecture: {arch}")
     files = files or {
         "bin/viventium": b"#!/bin/sh\nexit 0\n",
         "app/version.txt": release_id.encode("utf-8") + b"\n",
@@ -56,7 +61,7 @@ def write_candidate(
         "sequence": sequence,
         "channel": channel,
         "local_qa": local_qa,
-        "platform": {"os": "macos", "arch": "arm64", "minimum_version": "14.0"},
+        "platform": {"os": "macos", "arch": arch, "minimum_version": "14.0"},
         "artifact": {
             "filename": artifact.name,
             "sha256": sha256(artifact.read_bytes()),
@@ -125,7 +130,7 @@ def test_unsigned_manifest_fails_closed_without_explicit_local_qa_override(
     tmp_path: Path,
 ) -> None:
     module = load_module()
-    manifest, artifact, _payload = write_candidate(tmp_path)
+    manifest, artifact, _payload = write_candidate(tmp_path, arch="arm64")
 
     with pytest.raises(module.PayloadError, match="signature is required"):
         module.verify_candidate(manifest, artifact)
@@ -163,6 +168,7 @@ def test_publisher_signature_accepts_exact_manifest_and_rejects_tampering(
         release_id="1.0.0",
         channel="stable",
         local_qa=False,
+        arch="arm64",
     )
     signature, allowed_signers = sign_manifest(module, tmp_path, manifest)
 
@@ -197,6 +203,7 @@ def test_signed_manifest_is_verified_before_the_large_artifact_download(
         release_id="1.0.0",
         channel="stable",
         local_qa=False,
+        arch="arm64",
     )
     signature, allowed_signers = sign_manifest(module, tmp_path, manifest)
 
@@ -290,7 +297,7 @@ def test_candidate_enforces_platform_contract(
     error: str,
 ) -> None:
     module = load_module()
-    manifest, artifact, _payload = write_candidate(tmp_path)
+    manifest, artifact, _payload = write_candidate(tmp_path, arch="arm64")
 
     with pytest.raises(module.PayloadError, match=error):
         module.verify_candidate(
@@ -621,6 +628,7 @@ def test_stage_reuse_rejects_broken_symlink_at_final_release_path(
     install_root = tmp_path / "install"
     release = module.stage_candidate(verified, artifact, install_root)
     preserved_release = release.with_name(f"{release.name}.preserved")
+    module._make_verified_tree_removable(release)
     release.rename(preserved_release)
     release.symlink_to("missing-release", target_is_directory=True)
 
