@@ -28,6 +28,11 @@ confusing upstream component boundaries.
   - Microsoft 365 MCP
 - Shared singleton services must not be duplicated merely because a developer starts a dev env.
 - Full isolation is an explicit advanced future mode, not the default.
+- A listener on the configured Mongo port is not sufficient persistence readiness. Before reusing an
+  existing Mongo process, the native launcher must query the running server's parsed command-line
+  options and verify that `storage.dbPath` resolves to the configured Viventium data directory. A
+  listener backed by restored, development, or otherwise unexpected state must fail closed instead
+  of silently switching the user's conversation and memory history.
 - Launcher-managed modern-playground runtimes should prewarm the voice startup API routes before
   starting the voice worker so local users and developers do not pay the first-hit Next.js dev
   compile cost on the call page. These prewarm requests are bounded and warn-only so a stuck dev
@@ -140,6 +145,12 @@ prompt-workbench open`, the helper submenu, or the LibreChat account-menu entry.
 Workbench explicitly, the watchdog respects the local user-stopped marker instead of immediately
 reopening it.
 
+The stack-managed Workbench owns its configured canonical loopback port. During startup it may
+reclaim that port only from a positively identified `prompt_workbench.app:app` process left by a
+different checkout or an untracked prior launch. It must never terminate an unrelated listener.
+This keeps a healthy-looking restored/dev Workbench from silently serving stale code while the
+active runtime reports the sidecar as ready.
+
 ## Do And Do Not
 
 - Do use `dev-env` when you need a side-by-side development runtime.
@@ -152,9 +163,15 @@ reopening it.
 - Do use `prompt-workbench open/start/stop/status` for the standalone prompt QA app.
 - Do use `runtime.prompt_workbench.enabled: true` when Prompt Workbench should stay up with the
   local Viventium runtime.
+- Do verify that the stack-managed Workbench process and state file resolve to the active runtime
+  checkout; a loopback health response from another checkout is not sufficient readiness.
 - Do keep Scheduling Cortex per-runtime: local prod and each dev env get distinct scheduler DBs and
   distinct MCP ports. The default dev-env scheduler port is biased away from shared singleton ports
   so it does not collide with RAG.
+- Do report Scheduling Cortex as running only when `/health` has the expected semantic status,
+  service identity, and hash of the configured scheduler ledger. An arbitrary HTTP 200 is not
+  readiness. Report Memory Hardening from its dedicated loaded/receipt/run health state rather than
+  configuration presence alone.
 - Do keep heavy singleton services shared unless the user explicitly asks for full isolation and QA
   proves the isolation.
 - Do keep Viventium-owned Docker singleton services bounded with source-owned memory, CPU, PID, and
@@ -202,7 +219,12 @@ config, runs doctor, refreshes the helper, and optionally restarts.
 ## Update Check
 
 `bin/viventium upgrade --check --json` reports update availability and blockers without pulling,
-compiling, installing helpers, or touching the running stack.
+writing Git metadata, creating App Support state, compiling, installing helpers, or touching the
+running stack. Remote observation uses `git ls-remote`; when the remote commit is not already in the
+local object database, `commits_behind` is a lower-bound signal and `remote_history_complete` is
+false rather than pretending an exact history count was available. The check requires the current
+branch's explicit remote+merge configuration; it does not silently assume `origin`, and the mutating
+pull uses that same configured pair.
 
 The helper uses this for **Check for Updates...**:
 
@@ -212,9 +234,51 @@ The helper uses this for **Check for Updates...**:
 - Offline or git error
 
 Installing an update still uses the canonical `bin/viventium upgrade --restart` path.
-The check also reports and blocks on helper fallback rebuild need using the same package-source hash
-contract as `install_macos_helper.sh`, so the helper does not present stale package state after source
-changes.
+The check also reports and blocks on helper fallback rebuild need using the same package-source hash,
+binary SHA-256, executable, and universal-architecture contract as `install_macos_helper.sh`, so the
+helper does not present missing, corrupted, single-architecture, or stale package state as aligned.
+
+The machine-readable exit contract is:
+
+- `0`: inspection completed and an update/repair can safely be attempted; this includes clean
+  selected components that need refresh to their configured pins
+- `2`: remote or Git inspection could not complete
+- `3`: a policy/safety blocker exists, including a dirty selected component, invalid/unverifiable
+  lock entry, dirty parent checkout, or stale helper artifact
+
+The JSON keeps `component_lock_drift` for blocking component states and reports safe clean movement
+under `component_refresh_required`. When canonical config exists, only components selected for that
+installation block its upgrade; other managed checkouts remain release diagnostics. The helper must
+require schema version 1 and typed readiness/update/blocker/count/component fields, then parse valid
+JSON even when the process returns `2` or `3`, so a person sees the concrete blocker instead of a
+generic command failure. Parent dirtiness includes untracked user work while declared managed
+component roots are classified by the component inspector rather than double-counted as parent files.
+A stray untracked parent file is therefore an intentional fail-closed upgrade refusal: the CLI must
+tell the user to preserve/remove the file and retry, or use the explicitly local-only
+`--skip-pull --allow-dirty` path. The synthetic regression must prove refusal occurs before App
+Support creation or source/component mutation and that the untracked file remains unchanged.
+
+The mutating upgrade path refuses a running stack without `--restart` before pull or continuity
+mutation, runs the structured local-safety inspection before pull/stop/component mutation, captures
+and gates a trustworthy pre-upgrade continuity baseline while services are still available, and
+fails if the stack cannot stop. `--allow-dirty` is accepted only with `--skip-pull`. Automatic
+recovery is journaled rollback, not an availability restart from partially changed disk state. The
+transaction is registered and its recovery trap is armed before stop; after stop, the CLI verifies a
+private checkpoint of source identities, config/runtime, product-owned runtime/bootstrap/data state,
+legacy Mongo paths, and the active Docker Mongo named volume when applicable. Source activation,
+component refresh, candidate compile/doctor, and health-checked restart occur while that checkpoint
+remains active. Candidate config/runtime are activated only after validation. System prerequisites
+are check-only during upgrade because system package installation cannot be rolled back; the user is
+told to apply a missing prerequisite separately and retry. A post-upgrade continuity `error`,
+`unknown`, malformed result, capture failure, compile/doctor failure, component drift, or failed
+restart invokes rollback and restoration of the prior running/stopped state. Unknown local commits
+or tracked edits make rollback fail closed instead of discarding work. Newly cloned managed
+components are retained under the private transaction quarantine and removed from their formerly
+absent managed path. Exact stopped file/volume restoration is verified, while semantic reversal of
+arbitrary data migrations remains explicitly unproven. Helper refresh remains unlaunched until an
+accepted post-audit and successful runtime restart, preventing helper login auto-start from racing
+the gate. After component bootstrap, the CLI reruns structured component alignment; stdout wording
+is never a safety gate.
 
 ## Safety Rules
 

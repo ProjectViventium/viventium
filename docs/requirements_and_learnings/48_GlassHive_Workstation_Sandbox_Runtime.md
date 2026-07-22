@@ -313,10 +313,11 @@ Selenium base:
 - **System**: bash, curl, file, git, jq, LibreOffice Writer/Impress/Calc, Pandoc, poppler-utils,
   ripgrep, screen, tmux, vim, wmctrl, xdotool, xterm, pcmanfm
 - **Node.js 22.x** via nodesource
-- **npm globals**: pinned Codex and Claude Code specs (`@openai/codex@0.142.0`,
-  `@anthropic-ai/claude-code@2.1.186`) plus `openclaw@latest` by default. Operators may override
-  the package specs with `WPR_SANDBOX_CODEX_NPM_SPEC`, `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC`, and
-  `WPR_SANDBOX_OPENCLAW_NPM_SPEC` after updating QA evidence. Global npm install must use a
+- **npm runtimes**: pinned Codex and Claude Code specs (`@openai/codex@0.142.0`,
+  `@anthropic-ai/claude-code@2.1.186`) plus an app-owned OpenClaw 2026.7.1-2 runtime installed
+  from the reviewed lock with `fast-uri` 3.1.3. Operators may override the Codex and Claude specs
+  with `WPR_SANDBOX_CODEX_NPM_SPEC` and `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` after updating QA
+  evidence. OpenClaw is not overrideable by a mutable npm spec. The build must use a
   disposable build cache and remove `/tmp`, root, and `seluser` npm caches before image export so
   the worker image stays reproducible and does not fail on Docker Desktop overlay storage.
 - **Python**: selenium plus research/document/artifact libraries such as `requests`,
@@ -1361,6 +1362,16 @@ Unauthenticated paths: `/health`, `/docs`, `/openapi.json`.
   Short refs are durable by default and must resolve only for the authenticated owner. Opening a
   View / Steer short ref mints a fresh bounded worker-scoped session token; raw signed URLs remain
   server-side or legacy compatibility details.
+- **Personal public-edge links**: a local personal install may publish a dedicated GlassHive HTTPS
+  origin only through `runtime.network.public_glasshive_origin`. Compilation then makes that origin
+  canonical for watch/artifact URLs, derives a separate signed-link secret, limits short refs to 24
+  hours, keeps the server-side artifact token behind each artifact ref valid for that same window,
+  renews a bounded 30-minute worker-view session whenever its still-valid workspace ref is opened,
+  and enables `GLASSHIVE_PUBLIC_LINKS_ONLY`.
+  In that mode `/r/{ref}` and `/v1/link-refs/{ref}` are scoped bearer links: the health endpoint and
+  static assets may be public, but the root launcher, API docs, raw runtime/operator routes, and raw
+  `/v1/signed-links/{token}` path must fail closed without a valid ref/session. This personal
+  bearer-link boundary does not replace enterprise owner/tenant authentication.
 - **Artifact link semantics**: the default user-facing file-delivery link must be the scoped
   `signed_download_url`, labeled explicitly as `Download file`, so ordinary chat Markdown can act as
   a direct file download without requiring a detour through the GlassHive page. GlassHive must still
@@ -1469,6 +1480,11 @@ but it cannot replace real user-path evidence. Every case result must be marked 
    raw signed tokens expire or reject tampering, raw local/VM internals are hidden from member
    users, provider secrets are not surfaced, and access logs do not retain raw `gh_token`,
    bearer/service-token values, or opaque artifact signed-link paths.
+   For personal `public_glasshive_origin` deployments, also prove an unauthenticated request cannot
+   open the root launcher, bootstrap/control APIs, raw worker routes, or raw signed-token routes;
+   prove a valid opaque workspace ref opens a tokenless watch URL and an opaque artifact ref opens
+   the intended artifact; and prove generated chat/callback links contain the public origin rather
+   than localhost.
 7. Efficiency/performance: prove idle workspaces automatically release compute while preserving
    workspace data, active/queued/checkpoint work is not killed, quotas are enforced, and spawn/resume
    paths are measured against the documented responsiveness target. When a quota is hit, API and MCP
@@ -1845,7 +1861,7 @@ persistent home and workspace mounts.
 | `GLASSHIVE_AI_WORKER_BROWSER_EXTENSIONS` / `WPR_AI_WORKER_BROWSER_EXTENSIONS` | `none` | Comma-separated optional Docker browser extensions to force-install (`claude`, `codex`, or `all`). The default is `none` because extension policy/profile install is not proof of a connected bridge; opt in only when the selected worker image has a proven compatible browser, native host, auth/session, and user-grade QA evidence. |
 | `WPR_SANDBOX_CODEX_NPM_SPEC` | `@openai/codex@0.142.0` | Pinned Codex CLI package installed into rebuilt workstation images; update only with dated version/QA evidence |
 | `WPR_SANDBOX_CLAUDE_CODE_NPM_SPEC` | `@anthropic-ai/claude-code@2.1.186` | Pinned Claude Code package installed into rebuilt workstation images; update only with dated version/QA evidence |
-| `WPR_SANDBOX_OPENCLAW_NPM_SPEC` | `openclaw@latest` | OpenClaw package spec for rebuilt workstation images |
+| `WPR_SANDBOX_OPENCLAW_LOCK_DIR` | bundled reviewed lock | App-owned OpenClaw 2026.7.1-2 lock used for rebuilt workstation images; mutable npm specs are rejected |
 | `WPR_CODEX_CHROME_PLUGIN_ROOT` / `CODEX_CHROME_PLUGIN_ROOT` | unset | Optional worker-local first-party Codex Chrome plugin root containing `extension-host/linux/<arch>/extension-host`; when present with a reachable node-repl executable, bootstrap writes the Codex native messaging manifest and config |
 | `WPR_CODEX_NODE_REPL_PATH` / `CODEX_NODE_REPL_PATH` | unset | Optional worker-local node-repl executable used by the Codex Chrome native host config. If unset, bootstrap tries `node_repl` on the container `PATH`; the base workstation image does not claim Codex Chrome readiness unless this path or a PATH-provided node-repl is actually present. |
 | `WPR_SANDBOX_MEMORY` | `3g` | Docker memory cap per worker container |

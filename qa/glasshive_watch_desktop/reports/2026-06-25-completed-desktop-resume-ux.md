@@ -1,5 +1,7 @@
 # Completed Desktop Resume UX QA - 2026-06-25
 
+<!-- qa-evidence-exempt: Historical focused UX evidence retained for lineage; current full-view acceptance is recorded in later feature reports. -->
+
 ## Scope
 
 This report covers the reusable public-safe repro for a completed GlassHive worker whose live desktop

@@ -11,12 +11,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def test_private_repo_resolution_avoids_parent_directory_globs() -> None:
     gitignore_text = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    gitignore_lines = set(gitignore_text.splitlines())
     cli_text = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     common_text = (REPO_ROOT / "scripts" / "viventium" / "common.sh").read_text(encoding="utf-8")
-    assert "/private-companion-repo/" in gitignore_text
-    assert "/.private-companion-repo/" in gitignore_text
-    assert "/enterprise-deployment-repo/" in gitignore_text
-    assert "/.enterprise-deployment-repo/" in gitignore_text
+    assert "/private-companion-repo" in gitignore_lines
+    assert "/.private-companion-repo" in gitignore_lines
+    assert "/enterprise-deployment-repo" in gitignore_lines
+    assert "/.enterprise-deployment-repo" in gitignore_lines
     assert '"$workspace_root"/*private-companion-repo*' not in cli_text
     assert '"$workspace_root"/*private-companion-repo*' not in common_text
     assert '"$repo_root/private-companion-repo"' in common_text

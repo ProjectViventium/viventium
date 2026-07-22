@@ -1,5 +1,11 @@
 # Continuity Ops QA Report
 
+> Historical baseline (2026-04-14), not the current acceptance result. The age-gated/partial apply
+> design described below has been replaced by current-format logical bundles and independent-target
+> transactional restore. Use
+> [`reports/2026-07-20-complete-snapshot-independent-restore.md`](reports/2026-07-20-complete-snapshot-independent-restore.md)
+> for current evidence and remaining browser/live-runtime blockers.
+
 ## Date
 
 - 2026-04-14

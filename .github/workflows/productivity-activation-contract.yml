@@ -1,0 +1,46 @@
+name: Productivity Activation Contract
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/productivity-activation-contract.yml
+      - .github/workflows/productivity-activation-live-eval.yml
+      - components.lock.json
+      - tests/release/test_ci_release_workflows.py
+      - tests/release/test_productivity_activation_live_eval.py
+      - tests/release/test_no_runtime_nlu.py
+      - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
+      - viventium_v0_4/LibreChat/api/server/services/viventium/**
+      - viventium_v0_4/LibreChat/scripts/run-productivity-activation-evals.js
+      - viventium_v0_4/LibreChat/viventium/source_of_truth/*.viventium-agents.yaml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: productivity-activation-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  activation-contract:
+    name: Productivity activation contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install test runner
+        run: python3 -m pip install pytest pyyaml
+
+      - name: Run secretless activation contracts
+        run: >-
+          python3 -m pytest
+          tests/release/test_ci_release_workflows.py
+          tests/release/test_no_runtime_nlu.py
+          -q

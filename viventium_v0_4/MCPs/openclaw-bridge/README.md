@@ -18,11 +18,11 @@ LibreChat/Codex ──MCP──▶ openclaw-bridge (FastMCP)
                           ├─ VM lifecycle tools (openclaw_vm_*)
                           ├─ Execution tools (openclaw_exec/browser/agent/...)
                           └─ Runtime manager (user_id + vm_id)
-                               ├─ E2B adapter (default)
-                               │    ├─ Sandbox create/connect/pause/kill/list
-                               │    ├─ Desktop takeover stream URL/auth
-                               │    └─ Metrics collection
-                               └─ Direct runtime adapter (compat fallback)
+                               ├─ E2B adapter (default sandbox)
+                               └─ Direct adapter (explicit host-execution opt-in)
+                                    ├─ Sandbox create/connect/pause/kill/list
+                                    ├─ Desktop takeover stream URL/auth
+                                    └─ Metrics collection
 ```
 
 ## No-Reinvention Policy (E2B Native Features Reused)
@@ -44,18 +44,24 @@ References:
 
 ## Runtime Modes
 
-- `OPENCLAW_RUNTIME=e2b` (default for this POC)
-- `OPENCLAW_RUNTIME=direct` (local OpenClaw process fallback)
+- `OPENCLAW_RUNTIME=e2b` (default sandbox; requires the reviewed E2B template and credentials)
+- `OPENCLAW_RUNTIME=direct` (explicit host-execution opt-in; also requires
+  `OPENCLAW_ALLOW_DIRECT_HOST_EXEC=true` after reviewing the risk)
 
-If E2B dependencies are unavailable and `OPENCLAW_RUNTIME_ALLOW_FALLBACK=true`, manager falls back to `direct`.
+Runtime selection fails closed by default. An operator may explicitly set
+`OPENCLAW_RUNTIME_ALLOW_FALLBACK=true` for an E2B-to-direct fallback only after both paths have
+the reviewed runtime and appropriate QA evidence.
 
 ## Quick Start
+
+This bridge remains a standalone lab surface. The current public Viventium config compiler does not register this bridge as a LibreChat MCP client. Starting it alone therefore does not make OpenClaw appear in LibreChat. Keep it outside the supported install story until client-side secret delivery, an authenticated initialize/tool-call test, and the full lifecycle matrix are complete.
 
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 22+
-- OpenClaw installed globally: `npm install -g openclaw`
+- Node.js 22.23.1 for native mode
+- The reviewed OpenClaw 2026.7.1-2 runtime installed by `viventium-openclaw-bridge-start.sh`;
+  arbitrary global installs are not accepted
 - E2B key for VM mode: `E2B_API_KEY`
 - LLM provider key used by OpenClaw (for agent tasks)
 
@@ -69,11 +75,18 @@ pip install -r requirements.txt
 ### Run (native)
 
 ```bash
-export OPENCLAW_RUNTIME=e2b
-export E2B_API_KEY="..."
+export OPENCLAW_RUNTIME=direct
+export OPENCLAW_ALLOW_DIRECT_HOST_EXEC=true
 export ANTHROPIC_API_KEY="..."
-python mcp_server.py
+bash ../../viventium-openclaw-bridge-start.sh native
 ```
+
+The bridge requires its own 64-hex-character `OPENCLAW_BRIDGE_SECRET` even on loopback. The managed
+launcher creates it as an owner-only file without following or replacing a pre-existing symlink.
+Loopback limits network exposure but does not authenticate unrelated processes on the same Mac.
+
+E2B mode additionally requires a template containing Node 22.23.1 and the exact reviewed runtime
+lock at `/opt/viventium/openclaw-runtime`; the bridge does not install mutable packages at runtime.
 
 ### Run (script)
 

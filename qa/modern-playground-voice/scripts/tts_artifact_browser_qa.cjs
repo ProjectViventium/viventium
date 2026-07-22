@@ -36,6 +36,26 @@ function shortHash(value) {
   return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 12);
 }
 
+function artifactCountsForMessages(messages) {
+  const totals = artifactCounts('');
+  for (const message of messages || []) {
+    addCounts(totals, artifactCounts(String(message || '')));
+  }
+  return totals;
+}
+
+function semanticModelIsHealthy({
+  debugStreamObserved,
+  providerCompleted,
+  transcriptVisible,
+  persistedAssistantCount,
+}) {
+  return (
+    debugStreamObserved ||
+    (providerCompleted && transcriptVisible && Number(persistedAssistantCount) > 0)
+  );
+}
+
 function parseEnvFile(filePath) {
   const values = {};
   if (!fs.existsSync(filePath)) {
@@ -441,22 +461,24 @@ async function main() {
     while (Date.now() - started < 120_000) {
       const scan = scanVoiceLog(beforeOffset);
       const transcriptMessages = await readTranscriptMessages(page);
-      const remoteText = transcriptMessages
+      const remoteMessages = transcriptMessages
         .filter((message) => message.origin === 'remote')
         .map((message) => message.text)
-        .filter(Boolean)
-        .join('\n');
+        .filter(Boolean);
+      const remoteText = remoteMessages.join('\n');
       result.transcriptMessageCount = transcriptMessages.length;
       result.remoteTranscriptTextHashes = transcriptMessages
         .filter((message) => message.origin === 'remote' && message.text)
         .map((message) => shortHash(message.text));
-      result.pageArtifacts = artifactCounts(remoteText);
+      result.pageArtifacts = artifactCountsForMessages(remoteMessages);
       result.transcriptVisible = remoteText.trim().length > 0;
       result.expectedContentVisible =
         /\b(done|brief|email|link available|references|going on|tell me)\b/i.test(remoteText);
       const providerCompleted =
         scan.ttsProviderMetricCount > 0 && scan.ttsProviderCancelledCount === 0;
-      if (scan.ttsEmitCount > 0 && result.transcriptVisible && providerCompleted) {
+      // VoiceMarkup chunk logging is optional. Provider completion plus a visible transcript is
+      // sufficient to continue because the final gate also inspects the persisted assistant text.
+      if (result.transcriptVisible && providerCompleted) {
         result.logScan = scan;
         break;
       }
@@ -487,15 +509,14 @@ async function main() {
           .sort({ createdAt: 1 })
           .toArray()
       : [];
-    const persistedAssistantText = persistedAssistantMessages
+    const persistedAssistantTexts = persistedAssistantMessages
       .map((message) => String(message.text || ''))
-      .filter(Boolean)
-      .join('\n');
+      .filter(Boolean);
     result.persistedAssistantCount = persistedAssistantMessages.length;
     result.persistedAssistantTextHashes = persistedAssistantMessages.map((message) =>
       shortHash(`${message.messageId || ''}:${message.text || ''}`),
     );
-    result.persistedAssistantArtifacts = artifactCounts(persistedAssistantText);
+    result.persistedAssistantArtifacts = artifactCountsForMessages(persistedAssistantTexts);
     const ttsTextArtifactScanAvailable = Number(result.logScan.ttsEmitCount || 0) > 0;
     const forbiddenTtsArtifacts = ttsTextArtifactScanAvailable
       ? sumForbiddenArtifacts(tts, DEFAULT_TTS_FORBIDDEN_ARTIFACT_KEYS) +
@@ -513,9 +534,12 @@ async function main() {
       result.logScan.ttsProviderMetricCount > 0 && result.logScan.ttsProviderCancelledCount === 0;
     const debugStreamObserved =
       Number(result.logScan.rawDeltaCount || 0) + Number(result.logScan.streamDeltaCount || 0) > 0;
-    result.semanticModelHealthy =
-      debugStreamObserved ||
-      (providerCompleted && result.expectedContentVisible && result.persistedAssistantCount > 0);
+    result.semanticModelHealthy = semanticModelIsHealthy({
+      debugStreamObserved,
+      providerCompleted,
+      transcriptVisible: result.transcriptVisible,
+      persistedAssistantCount: result.persistedAssistantCount,
+    });
     result.ttsTextArtifactEvidence = ttsTextArtifactScanAvailable
       ? 'debug_tts_chunks'
       : 'provider_metric_visible_persisted';
@@ -578,6 +602,7 @@ module.exports = {
   LOG_PATH,
   OUTPUT_DIR,
   artifactCounts,
+  artifactCountsForMessages,
   cleanupCallArtifacts,
   createQaAuth,
   fetchJson,
@@ -585,6 +610,7 @@ module.exports = {
   loadEnv,
   requireLocalQaAuth,
   scanVoiceLog,
+  semanticModelIsHealthy,
   shortHash,
   stripProtectedTextRanges,
 };

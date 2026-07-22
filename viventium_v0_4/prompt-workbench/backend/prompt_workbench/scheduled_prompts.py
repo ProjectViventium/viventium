@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -242,6 +243,38 @@ def _default_automation_reasoning_effort() -> str:
     return effort if effort in {"none", "minimal", "low", "medium", "high", "xhigh"} else ""
 
 
+def _valid_timezone_name(value: str) -> bool:
+    try:
+        ZoneInfo(value)
+    except (ValueError, ZoneInfoNotFoundError):
+        return False
+    return True
+
+
+def _system_timezone_name() -> str:
+    for candidate_path in (Path("/etc/localtime"), Path("/var/db/timezone/localtime")):
+        try:
+            resolved = os.path.realpath(candidate_path)
+        except OSError:
+            continue
+        marker = "/zoneinfo/"
+        if marker in resolved:
+            candidate = resolved.split(marker, 1)[1]
+            if _valid_timezone_name(candidate):
+                return candidate
+
+    try:
+        candidate = Path("/etc/timezone").read_text(encoding="utf-8").strip()
+    except OSError:
+        candidate = ""
+    if candidate and _valid_timezone_name(candidate):
+        return candidate
+
+    tzinfo = datetime.now().astimezone().tzinfo
+    candidate = str(getattr(tzinfo, "key", "") or getattr(tzinfo, "zone", "")).strip()
+    return candidate if candidate and _valid_timezone_name(candidate) else "UTC"
+
+
 def _worker_strategy(value: Any) -> str:
     strategy = str(value or "same_worker").strip()
     if strategy not in GLASSHIVE_WORKER_STRATEGIES:
@@ -311,12 +344,14 @@ def variable_registry() -> dict[str, Any]:
     return {"variables": variables, "functions": functions}
 
 
+def _default_timezone_name() -> str:
+    # The built-in nightly definition is explicitly managed-local. Read the current system zone at
+    # reconciliation time so travel does not leave it pinned to the last compiled runtime.env.
+    return _system_timezone_name()
+
+
 def nightly_prompt_template() -> dict[str, Any]:
-    default_timezone = (
-        os.getenv("VIVENTIUM_DEFAULT_TIMEZONE")
-        or os.getenv("TZ")
-        or "UTC"
-    )
+    default_timezone = _default_timezone_name()
     return {
         "id": NIGHTLY_TEMPLATE_ID,
         "title": "Subconscious Deep Thought",
@@ -326,14 +361,6 @@ def nightly_prompt_template() -> dict[str, Any]:
         "active": False,
         "memoryWriteMode": "off",
     }
-
-
-def _should_reconcile_builtin_nightly_schedule(current: Any, desired: dict[str, Any]) -> bool:
-    if not isinstance(current, dict):
-        return True
-    if current == desired:
-        return False
-    return current.get("type") == "daily" and current.get("time") == "03:00"
 
 
 def _format_value(value: Any, kind: str) -> str:
@@ -451,7 +478,7 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
     executor = str(execution.get("executor") or "glasshive_host")
     worker_strategy = str(execution.get("glasshive_worker_strategy") or "same_worker")
     execution_profile = str(execution.get("execution_profile") or _default_glasshive_worker_profile())
-    metadata["workbench_scheduled_prompt"] = {
+    workbench_metadata = {
         "definition_id": definition["id"],
         "version_id": version["id"],
         "title": definition["title"],
@@ -474,7 +501,9 @@ def _task_metadata(definition: dict[str, Any], version: dict[str, Any], render_p
         ),
     }
     if definition.get("template_id") == NIGHTLY_TEMPLATE_ID:
+        workbench_metadata["ignore_user_config"] = True
         metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
+    metadata["workbench_scheduled_prompt"] = workbench_metadata
     return metadata
 
 
@@ -495,24 +524,69 @@ def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> dict[str, Any]:
     executor = _executor(execution.get("executor") or task.get("executor"))
     execution["executor"] = executor
     if executor == "glasshive_host":
-        execution["execution_profile"] = str(
+        execution_profile = str(
             execution.get("execution_profile") or _default_glasshive_worker_profile()
         )
+        execution["execution_profile"] = execution_profile
         execution["execution_mode"] = str(execution.get("execution_mode") or "host")
-        configured_model = _default_automation_model(execution["execution_profile"])
+        configured_model = _default_automation_model(execution_profile)
         configured_effort = _default_automation_reasoning_effort()
-        if configured_model:
-            execution["execution_model"] = configured_model
-        if configured_effort:
-            execution["reasoning_effort"] = configured_effort
+        execution_model = str(configured_model or execution.get("execution_model") or "").strip()
+        reasoning_effort = (
+            str(configured_effort or execution.get("reasoning_effort") or "").strip().lower()
+        )
+        if execution_profile == "codex-cli" and not execution_model:
+            raise RuntimeError(
+                "Prompt Workbench Codex automation requires WPR_MODEL_HOST_CODEX_CLI or execution_model"
+            )
+        if execution_profile == "codex-cli" and reasoning_effort not in {
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        }:
+            raise RuntimeError(
+                "Prompt Workbench Codex automation requires "
+                "WPR_CODEX_CLI_REASONING_EFFORT or reasoning_effort"
+            )
+        execution["execution_model"] = execution_model
+        execution["reasoning_effort"] = reasoning_effort
+        execution["ignore_user_config"] = True
 
-    patched_definition_metadata = {**definition_metadata, "execution": execution}
-    patched_row = row
+    # === VIVENTIUM START ===
+    # The managed nightly schedule follows the current Mac timezone. Before timezone-mode metadata
+    # existed, every built-in daily 03:00 definition was reconciled as the managed default; retain
+    # that migration behavior so first upgrade while traveling cannot freeze the previous city.
+    schedule = dict(row.get("schedule") or {})
+    configured_timezone = _default_timezone_name()
+    timezone_mode = str(definition_metadata.get("schedule_timezone_mode") or "").strip()
+    if timezone_mode not in {"local", "fixed"}:
+        timezone_mode = (
+            "local"
+            if schedule.get("type") == "daily" and schedule.get("time") == "03:00"
+            else "fixed"
+        )
+    patched_definition_metadata = {
+        **definition_metadata,
+        "execution": execution,
+        "schedule_timezone_mode": timezone_mode,
+    }
+    definition_updates: dict[str, Any] = {}
     if patched_definition_metadata != definition_metadata:
+        definition_updates["metadata"] = patched_definition_metadata
+    if timezone_mode == "local" and schedule.get("timezone") != configured_timezone:
+        schedule["timezone"] = configured_timezone
+        definition_updates["schedule"] = schedule
+        definition_updates["timezone"] = configured_timezone
+    # === VIVENTIUM END ===
+    patched_row = row
+    if definition_updates:
         patched_row = store.update_scheduled_prompt_definition(
             str(row["id"]),
-            {"metadata": patched_definition_metadata, "updated_at": _utc_now()},
-        ) or {**row, "metadata": patched_definition_metadata}
+            {**definition_updates, "updated_at": _utc_now()},
+        ) or {**row, **definition_updates}
 
     task_metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     patched_task_metadata = {**task_metadata, "execution": execution}
@@ -529,16 +603,34 @@ def _ensure_builtin_nightly_task_policy(row: dict[str, Any]) -> dict[str, Any]:
                 "execution_mode": execution["execution_mode"],
                 "execution_model": execution["execution_model"],
                 "reasoning_effort": execution["reasoning_effort"],
+                "ignore_user_config": execution["ignore_user_config"],
             }
         )
     patched_task_metadata["workbench_scheduled_prompt"] = workbench_metadata
     patched_task_metadata["misfire_policy"] = dict(NIGHTLY_MISFIRE_POLICY)
+    task_updates: dict[str, Any] = {}
+    # === VIVENTIUM START ===
+    # Dispatch reads the top-level executor first, so reconcile it with the
+    # managed nightly definition instead of repairing metadata alone.
+    if task.get("executor") != executor:
+        task_updates["executor"] = executor
+    # === VIVENTIUM END ===
+    if task.get("prompt") != patched_row.get("prompt_text"):
+        task_updates["prompt"] = str(patched_row.get("prompt_text") or "")
+    desired_active = 1 if patched_row.get("active") else 0
+    if int(bool(task.get("active"))) != desired_active:
+        task_updates["active"] = desired_active
+    if task.get("schedule") != patched_row.get("schedule"):
+        task_updates["schedule"] = patched_row.get("schedule")
+        task_updates["next_run_at"] = _schedule_next(patched_row.get("schedule") or {})
     if patched_task_metadata != task_metadata:
+        task_updates["metadata"] = patched_task_metadata
+    if task_updates:
         store.update_task(
             str(row["user_id"]),
             str(row["task_id"]),
             {
-                "metadata": patched_task_metadata,
+                **task_updates,
                 "updated_at": _utc_now(),
                 "updated_by": "agent:prompt-workbench",
                 "updated_source": "startup-reconcile",
@@ -855,6 +947,13 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
         "reasoning_effort": _default_automation_reasoning_effort() if executor == "glasshive_host" else None,
         "workspace_root": _workspace_root(),
     }
+    if payload.get("templateId") == NIGHTLY_TEMPLATE_ID:
+        execution_metadata["ignore_user_config"] = True
+    definition_metadata = {"execution": execution_metadata}
+    if payload.get("templateId") == NIGHTLY_TEMPLATE_ID:
+        definition_metadata["schedule_timezone_mode"] = (
+            "local" if timezone_name == _default_timezone_name() else "fixed"
+        )
     definition = {
         "id": definition_id,
         "user_id": user_id,
@@ -869,7 +968,7 @@ def create_scheduled_prompt(payload: dict[str, Any], *, user_id: str, email: str
         "memory_write_mode": _memory_write_mode(payload.get("memoryWriteMode")),
         "workspace_alias": _workspace_alias(definition_id),
         "my_folder": my_folder,
-        "metadata": {"execution": execution_metadata},
+        "metadata": definition_metadata,
         "created_at": now,
         "updated_at": now,
     }
@@ -974,6 +1073,8 @@ def update_scheduled_prompt(definition_id: str, payload: dict[str, Any], *, user
         updates["timezone"] = str(payload["schedule"].get("timezone") or existing.get("timezone") or "UTC")
         updated_definition["schedule"] = updates["schedule"]
         updated_definition["timezone"] = updates["timezone"]
+        if existing.get("template_id") == NIGHTLY_TEMPLATE_ID:
+            metadata = {**metadata, "schedule_timezone_mode": "fixed"}
     if "active" in payload:
         updates["active"] = 1 if payload.get("active") else 0
         updated_definition["active"] = bool(payload.get("active"))
@@ -1898,24 +1999,6 @@ def seed_nightly_prompt(
         template["executor"] = _executor(executor)
     for row in rows:
         if row.get("template_id") == NIGHTLY_TEMPLATE_ID:
-            updates: dict[str, Any] = {}
-            if str(row.get("title") or "").strip() != template["title"]:
-                updates["title"] = template["title"]
-            if str(row.get("prompt_text") or "").strip() != NIGHTLY_PROMPT_TEMPLATE.strip():
-                updates["promptText"] = NIGHTLY_PROMPT_TEMPLATE
-            if _should_reconcile_builtin_nightly_schedule(row.get("schedule"), template["schedule"]):
-                updates["schedule"] = template["schedule"]
-            if str(row.get("memory_write_mode") or "off") != template["memoryWriteMode"]:
-                updates["memoryWriteMode"] = template["memoryWriteMode"]
-            if active and not row.get("active"):
-                updates["active"] = True
-            if executor and _public_definition(row).get("executor") != template["executor"]:
-                updates["executor"] = template["executor"]
-            if updates:
-                update_scheduled_prompt(str(row["id"]), updates, user_id=user_id, email=email)
-                refreshed = storage().get_scheduled_prompt_definition(str(row["id"])) or row
-                reconciled = _ensure_builtin_nightly_task_policy(refreshed)
-                return _public_definition(reconciled)
             reconciled = _ensure_builtin_nightly_task_policy(row)
             return _public_definition(reconciled)
     return create_scheduled_prompt(

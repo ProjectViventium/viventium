@@ -39,7 +39,10 @@ def qa_public_evidence_roots() -> list[Path]:
 
 
 def public_evidence_files() -> list[Path]:
-    return [path for path in PUBLIC_DOC_FILES if path.is_file()]
+    files = [path for path in PUBLIC_DOC_FILES if path.is_file()]
+    files.extend(path for path in sorted(QA_ROOT.glob("*.md")) if path.is_file())
+    files.extend(path for path in sorted(QA_ROOT.glob("*/*.md")) if path.is_file())
+    return files
 
 
 def is_git_ignored(path: Path) -> bool:
@@ -63,6 +66,10 @@ PRIVATE_PATTERNS = {
     "bearer_token": re.compile(r"\bBearer\s+[A-Za-z0-9._=-]{10,}", re.IGNORECASE),
     "glasshive_signed_query": re.compile(r"\bgh_(?:token|sig|exp|kind)\s*=", re.IGNORECASE),
     "glasshive_runtime_id": re.compile(r"\b(?:prj|wrk|run)_[0-9A-Fa-f]{8,}\b"),
+    "relationship_identity_tier": re.compile(
+        r"\b(?:spouse-owned|wife-owned|husband-owned|spouse's personal|wife's personal|husband's personal)\b",
+        re.IGNORECASE,
+    ),
 }
 
 

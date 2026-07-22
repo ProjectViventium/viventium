@@ -8,7 +8,7 @@ Use stable `CCMEM-NNN` IDs for config compiler memory cases.
 
 | Case ID | Requirement | User Outcome | Surfaces | Automation | Last Run |
 | --- | --- | --- | --- | --- | --- |
-| `CCMEM-001` | Memory config compiles into runtime files without leaking private state or dropping required memory behavior. | User-visible behavior matches source, docs, persisted state, and logs | compiler output, memory agent config, runtime env | `tests/release/test_config_compiler.py` plus user-grade QA when visible | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
+| `CCMEM-001` | Memory config compiles into runtime files without leaking private state or dropping required memory behavior. | User-visible behavior matches source, docs, persisted state, and logs | compiler output, memory agent config, runtime env | `tests/release/test_config_compiler.py` plus isolated user-grade QA when visible | PASS-AUTOMATED/PARTIAL 2026-07-14; 121 compiler fixtures prove configured primary-first selection; isolated runtime writer proof NOT RUN |
 | `CCMEM-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 
 ## `CCMEM-001` - Core User Flow
@@ -24,7 +24,9 @@ Use stable `CCMEM-NNN` IDs for config compiler memory cases.
 - Forbidden result: backend logs, mocks, source inspection, or model completions are treated as full acceptance when a user-visible surface exists.
 - Evidence to capture: sanitized visible result, supporting command/test result, generated/runtime state summary, and docs/case links.
 - Automation: `tests/release/test_config_compiler.py` plus any narrower feature tests discovered during implementation.
-- Last run: NOT YET RUN (cataloged 2026-05-17; not a substitute for the next real feature run).
+- Last run: PASS-AUTOMATED/PARTIAL 2026-07-14. Primary/fallback and auth-mode compiler fixtures
+  passed; generated output selected the configured fixture route. Isolated writer and cross-surface
+  continuity remain NOT RUN here.
 
 ## `CCMEM-002` - Public-Safe Evidence Record
 
@@ -48,6 +50,6 @@ rows before claiming a pass when the feature behavior changes.
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
-| `CCMEM-UC-001` | On compiler output, memory agent config, runtime env, verify that memory config compiles into runtime files without leaking private state or dropping required memory behavior. | owning requirement for `CCMEM-001` / `CCMEM-001` | compiler output, memory agent config, runtime env | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to CCMEM-001. | User-visible behavior matches source, docs, persisted state, and logs | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
+| `CCMEM-UC-001` | On compiler output, memory agent config, runtime env, verify that memory config compiles into runtime files without leaking private state or dropping required memory behavior. | owning requirement for `CCMEM-001` / `CCMEM-001` | compiler output, memory agent config, runtime env | Source, owning requirement doc, case steps, logs, fixture state, generated config, and shipped artifact evidence that apply to CCMEM-001. | User-visible behavior matches source, docs, persisted state, and logs | PASS-AUTOMATED/PARTIAL 2026-07-14; generated-config fixtures agree with source/tests, isolated writer completion NOT RUN |
 | `CCMEM-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `CCMEM-002` / `CCMEM-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to CCMEM-002. | The user sees an honest setup, retry, or degraded-state result for CCMEM-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `CCMEM-UC-003` | After creating the public QA evidence record, rerun the scan after any retry, report update, or linked artifact change. | owning requirement for `CCMEM-002` / `CCMEM-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to CCMEM-002. | CCMEM-002 remains correct after the persistence or parity step and final wording matches evidence. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "publication_state": "review-head-pending-merge",
+  "librechat": {
+    "commit": "44ac1f7a149e5a915e52f2f9f54fce5d38bab710"
+  },
+  "mongodb": {
+    "version": "8.0.23",
+    "architectures": {
+      "arm64": {
+        "sha256": "811f2341b8458fe30105aff470b7cf4df75c2b9659729217ec48dd2c4cc8d64c",
+        "url": "https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.23.tgz"
+      },
+      "x86_64": {
+        "sha256": "f5d803151258e8c304af630c070db149bd00883fbf7c70fdf8925f3b31e360dd",
+        "url": "https://fastdl.mongodb.org/osx/mongodb-macos-x86_64-8.0.23.tgz"
+      }
+    },
+    "publisher_team_id": "4XWMY46275"
+  },
+  "node": {
+    "version": "24.16.0",
+    "architectures": {
+      "arm64": {
+        "sha256": "39189dab4eeb15706c424af0ac08a3044c9e48f7db12a7d77f6b7aafc7dd5df6",
+        "url": "https://nodejs.org/dist/v24.16.0/node-v24.16.0-darwin-arm64.tar.gz"
+      },
+      "x86_64": {
+        "sha256": "298b4c7b3cb80765c8703e42b90324a4ece3b6634947b89e769c3c980ab55185",
+        "url": "https://nodejs.org/dist/v24.16.0/node-v24.16.0-darwin-x64.tar.gz"
+      }
+    }
+  },
+  "python": {
+    "version": "3.12.13",
+    "release": "20260718",
+    "license_source": {
+      "commit": "0e4d9c24b72d28573e622518f09b16aef4a33be8",
+      "sha256": "ee2198ba38c22e05e9b0781c1fad93e9f8ead81194f873130af4ca6bcefb9d31",
+      "url": "https://github.com/astral-sh/python-build-standalone/archive/0e4d9c24b72d28573e622518f09b16aef4a33be8.tar.gz"
+    },
+    "architectures": {
+      "arm64": {
+        "sha256": "9a1e9e06175c10efd8378b904b07fa21bd791ab3345d7cdffeb4a76c9ff55903",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-aarch64-apple-darwin-install_only_stripped.tar.gz"
+      },
+      "x86_64": {
+        "sha256": "8e6b7e6533bdf746287008edf91102e7bee0a6ca1d24f16c4514237cafd706c5",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-x86_64-apple-darwin-install_only_stripped.tar.gz"
+      }
+    }
+  }
+}

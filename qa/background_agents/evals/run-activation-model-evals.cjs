@@ -38,6 +38,9 @@ const DEFAULT_PRIVATE_ROOT = path.join(
   'activation-evals',
 );
 const ACTIVATION_FAMILY_RUNNER = 'background_activation';
+const { assertNonOwnerQaSelection } = require(
+  path.join(__dirname, 'browser-qa-safety.cjs'),
+);
 
 function timestampSlug(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, '-');
@@ -62,6 +65,9 @@ function parseArgs(argv) {
     concurrency: 6,
     timeoutMs: 2000,
     preserveFallbacks: false,
+    useQaUserContext: false,
+    qaEmail: process.env.VIVENTIUM_QA_EMAIL || 'qa@example.com',
+    qaUserName: process.env.VIVENTIUM_QA_USER_NAME || '',
   };
 
   for (const arg of argv) {
@@ -71,6 +77,12 @@ function parseArgs(argv) {
       args.runLive = false;
     } else if (arg === '--with-fallbacks') {
       args.preserveFallbacks = true;
+    } else if (arg === '--qa-user-context') {
+      args.useQaUserContext = true;
+    } else if (arg.startsWith('--qa-email=')) {
+      args.qaEmail = arg.slice('--qa-email='.length).trim();
+    } else if (arg.startsWith('--qa-user-name=')) {
+      args.qaUserName = arg.slice('--qa-user-name='.length).trim();
     } else if (arg.startsWith('--prompt-bank=')) {
       args.promptBank = path.resolve(arg.slice('--prompt-bank='.length));
     } else if (arg.startsWith('--source-bundle=')) {
@@ -324,6 +336,7 @@ async function runOneClassifier({
   target,
   testCase,
   repetition,
+  qaUserContext = null,
 }) {
   const source = cortexById.get(target.agentId);
   if (!source?.activation) {
@@ -356,7 +369,10 @@ async function runOneClassifier({
       runId: `activation-eval-${userScope}`,
       req: {
         config: reqConfig,
-        user: { id: `activation-eval-${userScope}`, role: 'ADMIN' },
+        user: qaUserContext?.user || {
+          id: `activation-eval-${userScope}`,
+          role: 'ADMIN',
+        },
         body: {
           conversationId: `activation-eval-${userScope}`,
           viventiumSurface: testCase.surface || 'web',
@@ -507,6 +523,7 @@ function summarizeResults({
   targets,
   results,
   startedAt,
+  qaUserContext = null,
 }) {
   const completed = results.filter(
     (result) => result.actual !== null && !result.error,
@@ -690,6 +707,7 @@ function summarizeResults({
     providerOverride: args.provider || null,
     modelOverride: args.model || null,
     fallbacksEnabled: args.preserveFallbacks,
+    qaUserContext: qaUserContext?.public || { enabled: false },
     failedCaseRuns,
     perTarget,
   };
@@ -757,6 +775,69 @@ function renderPublicReport(summary) {
   return `${lines.join('\n')}\n`;
 }
 
+async function connectLocalActivationEvalDb(env) {
+  const mongoUri = String(env.MONGO_URI || '').trim();
+  if (!mongoUri) {
+    throw new Error('qa_user_context_missing_MONGO_URI');
+  }
+  const { MongoClient } = require(
+    path.join(LIBRECHAT_ROOT, 'node_modules', 'mongodb'),
+  );
+  const client = new MongoClient(mongoUri);
+  await client.connect();
+  const dbName =
+    new URL(mongoUri).pathname.replace(/^\//, '') || 'LibreChatViventium';
+  return {
+    db: client.db(dbName),
+    close: () => client.close(),
+  };
+}
+
+async function selectQaUserContext({ db, qaUserName, qaEmail }) {
+  if (!db) {
+    throw new Error('qa_user_context_missing_db');
+  }
+  const requestedName = String(qaUserName || '').trim();
+  const requestedEmail = String(qaEmail || '').trim();
+  const selector = requestedName
+    ? { name: requestedName }
+    : requestedEmail
+      ? { email: requestedEmail }
+      : null;
+  if (!selector) {
+    throw new Error('qa_user_context_missing_selector');
+  }
+  const users = db.collection('users');
+  const selectedUser = await users.findOne(selector);
+  if (!selectedUser?._id) {
+    throw new Error('qa_user_context_user_not_found');
+  }
+  const ownerUser = await users.findOne(
+    { role: 'ADMIN' },
+    { projection: { email: 1 } },
+  );
+  if (String(selectedUser.role || '').trim().toUpperCase() === 'ADMIN') {
+    throw new Error('qa_user_context_admin_refused');
+  }
+  assertNonOwnerQaSelection({
+    ownerEmail: ownerUser?.email,
+    requestedEmail: requestedName ? '' : requestedEmail,
+    selectedUser,
+  });
+  return {
+    user: {
+      id: selectedUser._id.toString(),
+      role: String(selectedUser.role || 'USER'),
+      provider: String(selectedUser.provider || 'local'),
+    },
+    public: {
+      enabled: true,
+      selectorHash: hashValue(requestedName || requestedEmail),
+      userHash: hashValue(selectedUser._id.toString()),
+    },
+  };
+}
+
 async function runLive(args, family, cases, targets) {
   const env = loadCanonicalRuntimeEnv();
   Object.assign(process.env, env);
@@ -778,6 +859,21 @@ async function runLive(args, family, cases, targets) {
   const bundle = loadResolvedSourceBundle(args.sourceBundle);
   const reqConfig = buildReqConfig(bundle);
   const cortexById = sourceCortexByAgentId(bundle);
+  let qaDbHandle = null;
+  let qaUserContext = null;
+  if (args.useQaUserContext) {
+    qaDbHandle = await connectLocalActivationEvalDb(env);
+    try {
+      qaUserContext = await selectQaUserContext({
+        db: qaDbHandle.db,
+        qaUserName: args.qaUserName,
+        qaEmail: args.qaEmail,
+      });
+    } catch (error) {
+      await qaDbHandle.close().catch(() => {});
+      throw error;
+    }
+  }
   const startedAt = Date.now();
   const tasks = [];
   for (let repetition = 1; repetition <= args.repetitions; repetition += 1) {
@@ -793,23 +889,29 @@ async function runLive(args, family, cases, targets) {
             target,
             testCase,
             repetition,
+            qaUserContext,
           }),
         );
       }
     }
   }
-  const results = await runWithConcurrency(tasks, args.concurrency);
-  const summary = summarizeResults({
-    args,
-    family,
-    cases,
-    targets,
-    results,
-    startedAt,
-  });
-  const payload = { summary, results };
-  writeArtifacts(args, payload);
-  return payload;
+  try {
+    const results = await runWithConcurrency(tasks, args.concurrency);
+    const summary = summarizeResults({
+      args,
+      family,
+      cases,
+      targets,
+      results,
+      startedAt,
+      qaUserContext,
+    });
+    const payload = { summary, results };
+    writeArtifacts(args, payload);
+    return payload;
+  } finally {
+    await qaDbHandle?.close().catch(() => {});
+  }
 }
 
 async function main() {
@@ -866,6 +968,7 @@ module.exports = {
   parseArgs,
   percentile,
   selectCases,
+  selectQaUserContext,
   selectTargets,
   summarizeResults,
   validateFamily,

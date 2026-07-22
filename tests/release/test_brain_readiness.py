@@ -53,15 +53,20 @@ def test_registry_covers_express_brain_surfaces_and_public_safety() -> None:
         assert feature.health_probe
 
 
-def test_registry_keeps_lab_and_unavailable_features_out_of_express_default() -> None:
+def test_registry_keeps_unshipped_features_out_of_easy_install_default() -> None:
     registry = load_brain_readiness_module()
 
-    assert {"code_interpreter", "skyvern", "openclaw", "remote_access"} <= set(
+    assert {"code_interpreter", "skyvern", "remote_access"} <= set(
         registry.ADVANCED_OFF_KEYS
     )
-    assert registry.FEATURE_BY_KEY["whatsapp"].express_posture == "unavailable"
-    assert "conversation_recall" in registry.GUIDED_EXPRESS_KEYS
-    assert "web_search" in registry.GUIDED_EXPRESS_KEYS
-    assert "glasshive" in registry.CORE_EXPRESS_KEYS
-    assert "prompt_workbench" in registry.CORE_EXPRESS_KEYS
-    assert "nightly_reflection" in registry.CORE_EXPRESS_KEYS
+    assert {"whatsapp", "openclaw"} <= set(registry.UNAVAILABLE_KEYS)
+    assert registry.CORE_EXPRESS_KEYS == ("core_app",)
+    assert registry.GUIDED_EXPRESS_KEYS == ("primary_ai", "secondary_ai")
+    assert {
+        "scheduler",
+        "glasshive",
+        "prompt_workbench",
+        "nightly_reflection",
+        "memory_hardening",
+    } <= set(registry.CUSTOM_SETTINGS_ONLY_KEYS)
+    assert not set(registry.CORE_EXPRESS_KEYS) & set(registry.CUSTOM_SETTINGS_ONLY_KEYS)

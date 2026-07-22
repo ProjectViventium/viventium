@@ -10,6 +10,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_COMPILER_SPEC = importlib.util.spec_from_file_location(
@@ -543,18 +545,83 @@ def test_memory_hardening_status_reports_scheduled_trigger_health(tmp_path: Path
         + "\n",
         encoding="utf-8",
     )
+    (events_dir / "legacy-newer.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "status": "success",
+                "trigger_source": "scheduled_legacy",
+                "scheduled_invocation": True,
+                "fired_at_utc": "2021-01-01T08:00:00.000Z",
+                "fired_at_local": "2021-01-01T03:00:00.000-05:00",
+                "finished_at_utc": "2021-01-01T08:01:00.000Z",
+                "exit_code": 0,
+                "run_id": "legacy-run",
+                "run_status": "success",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    system_timezone = memory_harden.local_timezone_name()
+    configured_timezone = (
+        "Pacific/Honolulu" if system_timezone != "Pacific/Honolulu" else "America/New_York"
+    )
     script = """
 const assert = require('assert');
 const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
 const status = hardener.status({stateDir: process.argv[1]});
 assert.strictEqual(status.schedule_health.schedule, '0 3 * * *');
-assert.strictEqual(status.schedule_health.timezone, 'America/Toronto');
+assert.strictEqual(status.schedule_health.timezone, process.argv[3]);
+assert.strictEqual(status.schedule_health.system_timezone, process.argv[3]);
+assert.strictEqual(status.schedule_health.configured_timezone, process.argv[4]);
 assert.strictEqual(status.schedule_health.latest_scheduled_trigger.run_id, 'old-run');
+assert.strictEqual(status.schedule_health.trigger_receipt_count, 1);
 assert.strictEqual(status.schedule_health.missed_expected_window, true);
 assert(!JSON.stringify(status.schedule_health).includes(process.argv[2]));
 """
     subprocess.run(
-        ["node", "-e", script, str(state_dir), str(tmp_path)],
+        [
+            "node",
+            "-e",
+            script,
+            str(state_dir),
+            str(tmp_path),
+            system_timezone,
+            configured_timezone,
+        ],
+        cwd=ROOT,
+        check=True,
+        env={
+            **os.environ,
+            "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+            "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": configured_timezone,
+        },
+    )
+
+
+def test_memory_hardening_expected_fire_uses_system_timezone_not_generated_context(
+    tmp_path: Path,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {
+    now: new Date('2026-01-15T15:00:00.000Z'),
+    systemTimeZone: 'America/Los_Angeles',
+  },
+);
+assert.strictEqual(health.configured_timezone, 'America/Toronto');
+assert.strictEqual(health.system_timezone, 'America/Los_Angeles');
+assert.strictEqual(health.timezone, 'America/Los_Angeles');
+assert.strictEqual(health.expected_latest_fire_at_utc, '2026-01-15T11:00:00.000Z');
+"""
+    subprocess.run(
+        ["node", "-e", script, str(events_dir)],
         cwd=ROOT,
         check=True,
         env={
@@ -562,6 +629,127 @@ assert(!JSON.stringify(status.schedule_health).includes(process.argv[2]));
             "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
             "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
         },
+    )
+
+
+@pytest.mark.parametrize(
+    ("effective_provider", "effective_model", "effective_effort", "mismatch_field"),
+    [
+        ("anthropic", "claude-opus-4-8", "xhigh", "provider_mismatch"),
+        ("openai", "gpt-5.6-terra", "xhigh", "model_mismatch"),
+        ("openai", "gpt-5.6-sol", "medium", "effort_mismatch"),
+    ],
+)
+def test_memory_hardening_execution_tuple_mismatch_is_not_healthy(
+    tmp_path: Path,
+    effective_provider: str,
+    effective_model: str,
+    effective_effort: str,
+    mismatch_field: str,
+) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    (events_dir / "launchd-now.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "status": "success",
+                "trigger_source": "launchd",
+                "scheduled_invocation": True,
+                "fired_at_utc": "2026-07-14T07:00:00.000Z",
+                "fired_at_local": "2026-07-14T03:00:00.000-04:00",
+                "exit_code": 0,
+                "run_id": "fallback-run",
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-sol",
+                "requested_effort": "xhigh",
+                "effective_provider": effective_provider,
+                "effective_model": effective_model,
+                "effective_effort": effective_effort,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.missed_expected_window, false);
+assert.strictEqual(health.execution_tuple_complete, true);
+assert.strictEqual(health.execution_mismatch, true);
+assert.strictEqual(health[process.argv[2]], true);
+assert.strictEqual(health.state, 'execution_mismatch');
+assert.strictEqual(health.healthy, false);
+assert.strictEqual(health.latest_scheduled_trigger.requested_provider, 'openai');
+"""
+    subprocess.run(
+        ["node", "-e", script, str(events_dir), mismatch_field], cwd=ROOT, check=True
+    )
+
+
+def test_memory_hardening_incomplete_execution_tuple_is_not_healthy(tmp_path: Path) -> None:
+    events_dir = tmp_path / "schedule-events"
+    events_dir.mkdir()
+    (events_dir / "launchd-now.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "status": "success",
+                "trigger_source": "launchd",
+                "fired_at_utc": "2026-07-14T07:00:00.000Z",
+                "exit_code": 0,
+                "run_status": "success",
+                "requested_provider": "openai",
+                "requested_model": "gpt-5.6-sol",
+                "requested_effort": "xhigh",
+                "effective_provider": "openai",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+const health = hardener.buildScheduleHealth(
+  {scheduleEventsDir: process.argv[1]},
+  {now: new Date('2026-07-14T07:05:00.000Z'), systemTimeZone: 'America/Toronto'},
+);
+assert.strictEqual(health.execution_tuple_complete, false);
+assert.strictEqual(health.execution_unverified, true);
+assert.strictEqual(health.state, 'execution_unverified');
+assert.strictEqual(health.healthy, false);
+"""
+    subprocess.run(["node", "-e", script, str(events_dir)], cwd=ROOT, check=True)
+
+
+def test_memory_hardening_system_timezone_ignores_stale_process_tz(
+    monkeypatch,
+) -> None:
+    system_timezone = memory_harden.local_timezone_name()
+    stale_timezone = (
+        "Pacific/Honolulu" if system_timezone != "Pacific/Honolulu" else "America/New_York"
+    )
+
+    monkeypatch.setenv("TZ", stale_timezone)
+
+    assert memory_harden.local_timezone_name() == system_timezone
+
+    script = """
+const assert = require('assert');
+const hardener = require('./viventium_v0_4/LibreChat/scripts/viventium-memory-hardening.js');
+assert.strictEqual(hardener.resolveSystemTimezone(), process.argv[1]);
+"""
+    subprocess.run(
+        ["node", "-e", script, system_timezone],
+        cwd=ROOT,
+        check=True,
+        env={**os.environ, "TZ": stale_timezone},
     )
 
 
@@ -1413,6 +1601,7 @@ def test_memory_hardening_schedule_runs_wrapper_directly_without_cli_lock(tmp_pa
         f"PATH={Path.home()}/.local/bin:{Path.home()}/.codex/bin:" in item
         for item in program_arguments
     )
+    assert any("/Applications/ChatGPT.app/Contents/Resources" in item for item in program_arguments)
     assert any(item == "/Applications/Codex.app/Contents/Resources" or "/Applications/Codex.app/Contents/Resources" in item for item in program_arguments)
     assert any("/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" in item for item in program_arguments)
     assert "bin/viventium" not in " ".join(program_arguments)
@@ -1739,6 +1928,9 @@ def test_memory_hardening_scheduled_trigger_writes_public_safe_receipt(tmp_path,
             "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "false",
             "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
             "VIVENTIUM_MEMORY_HARDENING_TIMEZONE": "America/Toronto",
+            "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "openai",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "gpt-5.6-sol",
+            "VIVENTIUM_MEMORY_HARDENING_EFFORT": "xhigh",
         },
     )
 
@@ -1755,6 +1947,9 @@ def test_memory_hardening_scheduled_trigger_writes_public_safe_receipt(tmp_path,
     assert payload["schedule"]["minute"] == 0
     assert payload["timezone_at_fire"]
     assert payload["exit_code"] == 0
+    assert payload["requested_provider"] == "openai"
+    assert payload["requested_model"] == "gpt-5.6-sol"
+    assert payload["requested_effort"] == "xhigh"
     assert "repo_root_hash" in payload
     assert "runtime_dir_hash" in payload
     public_blob = json.dumps(payload)
@@ -2031,7 +2226,20 @@ def test_meeting_transcript_eval_fixtures_are_executable() -> None:
 
 def test_meeting_transcript_recall_dist_bundle_contains_runtime_hooks() -> None:
     dist = ROOT / "viventium_v0_4" / "LibreChat" / "packages" / "api" / "dist" / "index.js"
-    text = dist.read_text(encoding="utf-8")
+    pending = [dist]
+    reachable: dict[Path, str] = {}
+    while pending:
+        bundle = pending.pop()
+        if bundle in reachable:
+            continue
+        assert bundle.is_file(), f"Referenced API bundle is missing: {bundle.name}"
+        source = bundle.read_text(encoding="utf-8")
+        reachable[bundle] = source
+        for local_reference in re.findall(r"require\(['\"](\./[^'\"]+\.js)['\"]\)", source):
+            referenced_bundle = (bundle.parent / local_reference).resolve()
+            assert referenced_bundle.parent == dist.parent.resolve()
+            pending.append(referenced_bundle)
+    text = "\n".join(reachable.values())
 
     assert "viventiumMeetingTranscriptRecall: true" in text
     assert "FileContext.meeting_transcript" in text

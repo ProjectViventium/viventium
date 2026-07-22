@@ -26,31 +26,43 @@
 
 | Suite | Command or Manual Path | Required When | Last Run |
 | --- | --- | --- | --- |
-| Release tests | `PYTHONPATH=. python -m pytest tests/release -q` in a stable test environment with `pytest` and `pyyaml` | Before parent push | 2026-05-11 local / 2026-05-12 UTC: 504 passed, 2 skipped |
-| Diff hygiene | `git diff --check` plus public/private pattern scans | Before staging | 2026-05-11 local / 2026-05-12 UTC: parent, LibreChat, and GlassHive diff checks passed; sensitive-pattern scans found no added private values |
-| Browser-visible QA | `node qa/background_agents/evals/run-visible-cards-browser-qa.cjs --headless` with local opt-in env | When background-agent UI behavior changed | 2026-05-11 local / 2026-05-12 UTC: PASS, public-safe report saved |
-| Latest-user activation QA | `node qa/background_agents/evals/run-latest-user-activation-browser-qa.cjs --headless` with local opt-in env | When activation history/window behavior changed | 2026-05-11 local / 2026-05-12 UTC: PASS, public-safe report saved |
-| Full activation classifier gate | `node qa/background_agents/evals/run-activation-model-evals.cjs --run-live --with-fallbacks --repetitions=2 --concurrency=1 --output-dir=<private-output> --public-report=<public-safe-report>` | Before release while the primary activation model is preview, and after any activation prompt/model/provider/fallback/parser/runtime change | 2026-07-10 PARTIAL availability: current 63-case bank produced 1,381/1,386 completed-and-passed decisions at concurrency 2; completed-call required recall and activation precision 100%, 0 FP/FN/required-or-forbidden inconsistency, but 5 non-required all-provider unavailable decisions (99.64% completion). Four optional allowed-activation overlaps varied and are reported separately. Release gate remains open until a clean full run completes. |
-| Background interruption/restart QA | `VIVENTIUM_QA_ALLOW_LOCAL_JWT=1 VIVENTIUM_QA_ALLOW_RUNTIME_RESTART=1 node qa/background_agents/evals/run-interruption-restart-browser-qa.cjs --headless` with a local synthetic QA user | When background status persistence, stale recovery, or runtime restart behavior changes | 2026-07-10: PASS; real active Red Team card/DB state, changed API process, same-conversation survival, terminal stale recovery, expanded reload detail, no generation placeholder |
-| Nested component tests | Targeted Jest/Pytest suites in changed nested repos | Before nested commit | 2026-05-11 local / 2026-05-12 UTC: focused LibreChat backend 254 passed, focused frontend cortex-card 14 passed, MCP manager 43 passed, Scheduling Cortex 85 passed, GlassHive runtime 109 passed / 3 skipped |
+| Release tests | `python3 -m pytest tests/release/ -q` in the reviewed stable test environment | Before parent push | PASS 2026-07-22 corrected-pin candidate: 1,539 passed, 11 skipped, 0 failed in 275.92 seconds |
+| Diff hygiene | `git diff --check` plus public/private pattern scans | Before staging | PARTIAL 2026-07-22: complete parent-candidate inventory, diff hygiene, special-file/binary classification, and public-safety review passed locally; staged/remote parent-PR exactness remains under `REL-008` |
+| Browser-visible QA | `node qa/background_agents/evals/run-visible-cards-browser-qa.cjs --headless` with local opt-in env | When background-agent UI behavior changed | PASS 2026-05-11 local / 2026-05-12 UTC; public-safe report saved |
+| Latest-user activation QA | `node qa/background_agents/evals/run-latest-user-activation-browser-qa.cjs --headless` with local opt-in env | When activation history/window behavior changed | PASS 2026-05-11 local / 2026-05-12 UTC; public-safe report saved |
+| Full activation classifier gate | `node qa/background_agents/evals/run-activation-model-evals.cjs --run-live --with-fallbacks --repetitions=1 --concurrency=1 --output-dir=<private-output> --public-report=<public-safe-report>` | Before release while the primary activation model is preview, and after any activation prompt/model/provider/fallback/parser/runtime change | PARTIAL: the fixture-backed parser and fallback contracts pass. A release-candidate live run with dedicated synthetic credentials remains required; owner-account provider health and routing observations are private evidence and are not a public release result. |
+| Background interruption/restart QA | `VIVENTIUM_QA_ALLOW_LOCAL_JWT=1 VIVENTIUM_QA_ALLOW_RUNTIME_RESTART=1 node qa/background_agents/evals/run-interruption-restart-browser-qa.cjs --headless` with a local synthetic QA user | When background status persistence, stale recovery, or runtime restart behavior changes | PASS 2026-07-10; real active Red Team card/DB state, changed API process, same-conversation survival, terminal stale recovery, expanded reload detail, no generation placeholder |
+| Nested component tests | Targeted Jest/Pytest suites in changed nested repos | Before nested commit | PARTIAL 2026-07-22; all 11 reviewed heads are clean, pushed, and represented by open hosted PRs. Corrected LibreChat `44ac1f7a149e5a915e52f2f9f54fce5d38bab710` passes 59 stream tests and 216 Viventium route tests locally and all 15 hosted checks, including actual Redis. Independent approvals and merges remain open. |
 
 ## Coverage Matrix
 
 | Requirement / Surface | Cases | Last Full Run |
 | --- | --- | --- |
-| Parent and nested diffs are public-safe before push | `REL-001`, `REL-002` | 2026-05-12 PASS |
-| Nested component commit and parent pin are consistent | `REL-003` | 2026-05-12 PASS |
+| Parent and nested diffs are public-safe before push | `REL-001`, `REL-002` | PARTIAL 2026-07-22; complete local parent-candidate and nested-delta public-safety reviews passed, and all 11 nested heads are hosted in open PRs. Corrected LibreChat local and all 15 hosted checks passed; independent approval, nested merge, post-merge repinning, and parent staging/PR inspection remain open. |
+| Nested component commit and parent pin are consistent | `REL-003` | PARTIAL 2026-07-22: both parent manifests point to pushed LibreChat review head `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`, and the other managed refs match their reviewed hosted heads. Source/pin identity now aligns for review; merged, built, shipped, and installed identity is not yet proven. |
 | User-visible QA evidence is browser-backed and sanitized | `REL-004` | 2026-05-10 PASS |
 
 ## Current Status
 
-- Last full QA: 2026-05-11 local / 2026-05-12 UTC release and targeted nested regression pass.
-- Current result: implementation tests, release tests, nested backend/frontend/MCP tests, API build,
-  browser-visible background-card QA, and latest-user activation browser QA pass in the latest local
-  synthetic environment. The browser runs prove named cards, parent answer visibility before and
-  after reload, successful stored terminal insights, Groq-first activation config with no drift, no
-  stale-history cortex cards on the latest simple turn, and no critical HTTP errors for that
-  environment; release approval still requires the remaining packaging and review gates.
-- Known gaps: PR merge remains the final publication gate.
+- Current reconstructed parent result: `python3 -m pytest tests/release/ -q` passed on 2026-07-22
+  with 1,539 passed, 11 skipped, and 0 failed in 275.92 seconds against temporary zero-copy links to
+  all 11 exact reviewed component heads. The recorded corrected pin/payload/provenance slice passed
+  311/311. A prior 174-pass run against rejected LibreChat `a2553962...` remains supporting history
+  because its exact argv was not retained.
+- All 11 reviewed nested heads are clean and hosted in open PRs. LibreChat PR 67 now points to
+  corrected commit `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`; both parent manifests match it.
+  Local evidence is 59/59 stream tests and 216/216 Viventium route tests, with independent review and
+  Claude Desktop Fable 5 Extra reporting no remaining P0-P3 finding. All 15 hosted checks pass,
+  including actual Redis; independent approval and merge remain separate gates.
+- Known gaps: independent PR approvals and merges; post-merge component identities; rebuilt,
+  signed/notarized payload and installed-artifact equality; pristine exact-artifact install; real
+  optimized provider-answer persistence; Intel and native assistive-technology coverage; the wider
+  physical fault/Docker matrix; authenticated bootstrap freshness; and parent-PR exactness. Passing
+  source suites or opening PRs does not close those gates.
 - Next required hardening: keep provider-native structured Phase B and full doc-49 runtime/source/
   compiled A/B/C drift gate as explicit post-baseline work before main-prompt compaction.
+
+## Current Gate Audit
+
+- [2026-07-22 clean nested publication gates](reports/2026-07-22-clean-nested-publication-gates.md)
+- [2026-07-20 release gate matrix audit](reports/2026-07-20-release-gate-matrix-audit.md)

@@ -60,11 +60,11 @@ fi
 if [[ -d "/usr/local/opt/python@3.12/libexec/bin" ]]; then
   export PATH="/usr/local/opt/python@3.12/libexec/bin:${PATH}"
 fi
-if [[ -d "/opt/homebrew/opt/node@20/bin" ]]; then
-  export PATH="/opt/homebrew/opt/node@20/bin:${PATH}"
+if [[ -d "/opt/homebrew/opt/node@24/bin" ]]; then
+  export PATH="/opt/homebrew/opt/node@24/bin:${PATH}"
 fi
-if [[ -d "/usr/local/opt/node@20/bin" ]]; then
-  export PATH="/usr/local/opt/node@20/bin:${PATH}"
+if [[ -d "/usr/local/opt/node@24/bin" ]]; then
+  export PATH="/usr/local/opt/node@24/bin:${PATH}"
 fi
 # === VIVENTIUM END ===
 
@@ -91,33 +91,33 @@ current_node_major_version() {
   printf '%s\n' "$version"
 }
 
-prepend_node20_to_path() {
-  local node20_prefix=""
+prepend_node24_to_path() {
+  local node24_prefix=""
   if command -v brew >/dev/null 2>&1; then
-    node20_prefix="$(brew --prefix node@20 2>/dev/null || true)"
+    node24_prefix="$(brew --prefix node@24 2>/dev/null || true)"
   fi
-  if [[ -n "$node20_prefix" && -d "$node20_prefix/bin" ]]; then
-    export PATH="$node20_prefix/bin:${PATH}"
+  if [[ -n "$node24_prefix" && -d "$node24_prefix/bin" ]]; then
+    export PATH="$node24_prefix/bin:${PATH}"
     hash -r 2>/dev/null || true
   fi
 }
 
-ensure_validated_node20_runtime() {
-  prepend_node20_to_path
+ensure_validated_node24_runtime() {
+  prepend_node24_to_path
 
   local major=""
   major="$(current_node_major_version || true)"
-  if [[ "$major" == "20" ]] && command -v npm >/dev/null 2>&1; then
+  if [[ "$major" == "24" ]] && command -v npm >/dev/null 2>&1; then
     return 0
   fi
 
   if ! command -v brew >/dev/null 2>&1; then
-    log_error "Validated node@20 runtime required, but Homebrew is unavailable to install it"
+    log_error "Validated node@24 runtime required, but Homebrew is unavailable to install it"
     return 1
   fi
 
   if [[ "${VIVENTIUM_AUTO_INSTALL_NODE:-true}" != "true" ]]; then
-    log_error "Validated node@20 runtime required, but automatic node installation is disabled"
+    log_error "Validated node@24 runtime required, but automatic node installation is disabled"
     return 1
   fi
 
@@ -126,13 +126,13 @@ ensure_validated_node20_runtime() {
     current_version="$(node -v 2>/dev/null || printf 'unknown')"
   fi
 
-  log_warn "Validated node@20 runtime required; found ${current_version}. Installing/activating Homebrew node@20"
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install node@20 >/dev/null 2>&1 || return 1
-  prepend_node20_to_path
+  log_warn "Validated node@24 runtime required; found ${current_version}. Installing/activating Homebrew node@24"
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install node@24 >/dev/null 2>&1 || return 1
+  prepend_node24_to_path
 
   major="$(current_node_major_version || true)"
-  if [[ "$major" != "20" || ! "$(command -v npm || true)" ]]; then
-    log_error "Unable to activate the validated node@20 runtime after Homebrew install"
+  if [[ "$major" != "24" || ! "$(command -v npm || true)" ]]; then
+    log_error "Unable to activate the validated node@24 runtime after Homebrew install"
     return 1
   fi
 
@@ -176,17 +176,31 @@ detect_livekit_node_ip() {
   return 0
 }
 
-livekit_native_binary_path() {
-  if command -v livekit-server >/dev/null 2>&1; then
-    command -v livekit-server
-    return 0
-  fi
-  if command -v livekit >/dev/null 2>&1; then
-    command -v livekit
-    return 0
-  fi
-  return 1
+# === VIVENTIUM START ===
+# Feature: Immutable LiveKit runtime provenance.
+# Purpose: The nested LiveKit source checkout is an audit placeholder. Viventium
+# runs only the exact Docker artifact below or a deliberately configured external
+# endpoint; an arbitrary executable discovered on PATH is never trusted.
+readonly LIVEKIT_SERVER_VERSION="v1.13.4"
+readonly LIVEKIT_SERVER_SOURCE_COMMIT="0b3fd288e3ef3263ec475ba0d78cf3ad77459981"
+readonly LIVEKIT_SERVER_IMAGE="livekit/livekit-server:v1.13.4@sha256:189f7c81b704a36642bc5c7e2d3e1ae83744627c11978a23a251bf19fbec64e0"
+
+livekit_managed_container_matches_release() {
+  local container_id="$1"
+  local configured_image=""
+  local image_label=""
+  local source_label=""
+
+  [[ -n "$container_id" ]] || return 1
+  configured_image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
+  image_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.image" }}' "$container_id" 2>/dev/null || true)"
+  source_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.source" }}' "$container_id" 2>/dev/null || true)"
+
+  [[ "$configured_image" == "$LIVEKIT_SERVER_IMAGE" ]] &&
+    [[ "$image_label" == "$LIVEKIT_SERVER_IMAGE" ]] &&
+    [[ "$source_label" == "$LIVEKIT_SERVER_SOURCE_COMMIT" ]]
 }
+# === VIVENTIUM END ===
 
 librechat_client_build_node_options() {
   local max_old_space_size="${VIVENTIUM_CLIENT_BUILD_MAX_OLD_SPACE_SIZE:-4096}"
@@ -982,6 +996,7 @@ fi
 if [[ "$VIVENTIUM_RUNTIME_PROFILE" == "isolated" ]]; then
   PROFILE_LC_API_PORT=3180
   PROFILE_LC_FRONTEND_PORT=3190
+  PROFILE_SANDPACK_BUNDLER_PORT=3191
   PROFILE_PLAYGROUND_PORT=3300
   PROFILE_MONGO_PORT=27117
   PROFILE_MONGO_DB="LibreChatViventium"
@@ -1000,6 +1015,7 @@ if [[ "$VIVENTIUM_RUNTIME_PROFILE" == "isolated" ]]; then
 else
   PROFILE_LC_API_PORT=3080
   PROFILE_LC_FRONTEND_PORT=3090
+  PROFILE_SANDPACK_BUNDLER_PORT=3091
   PROFILE_PLAYGROUND_PORT=3000
   PROFILE_MONGO_PORT=27017
   PROFILE_MONGO_DB="LibreChat"
@@ -1019,6 +1035,11 @@ fi
 
 export VIVENTIUM_LC_API_PORT="${VIVENTIUM_LC_API_PORT:-$PROFILE_LC_API_PORT}"
 export VIVENTIUM_LC_FRONTEND_PORT="${VIVENTIUM_LC_FRONTEND_PORT:-$PROFILE_LC_FRONTEND_PORT}"
+export VIVENTIUM_SANDPACK_BUNDLER_PORT="${VIVENTIUM_SANDPACK_BUNDLER_PORT:-${SANDPACK_BUNDLER_LISTEN_PORT:-$PROFILE_SANDPACK_BUNDLER_PORT}}"
+export SANDPACK_BUNDLER_LISTEN_HOST="${SANDPACK_BUNDLER_LISTEN_HOST:-127.0.0.1}"
+export SANDPACK_BUNDLER_LISTEN_PORT="$VIVENTIUM_SANDPACK_BUNDLER_PORT"
+export SANDPACK_BUNDLER_URL="${SANDPACK_BUNDLER_URL:-http://127.0.0.1:${VIVENTIUM_SANDPACK_BUNDLER_PORT}/}"
+export SANDPACK_STATIC_BUNDLER_URL="${SANDPACK_STATIC_BUNDLER_URL:-$SANDPACK_BUNDLER_URL}"
 export VIVENTIUM_PLAYGROUND_PORT="${VIVENTIUM_PLAYGROUND_PORT:-$PROFILE_PLAYGROUND_PORT}"
 export VIVENTIUM_LOCAL_MONGO_PORT="${VIVENTIUM_LOCAL_MONGO_PORT:-$PROFILE_MONGO_PORT}"
 export VIVENTIUM_LOCAL_MONGO_DB="${VIVENTIUM_LOCAL_MONGO_DB:-$PROFILE_MONGO_DB}"
@@ -1049,6 +1070,7 @@ if [[ "$VIVENTIUM_RUNTIME_PROFILE" == "isolated" ]]; then
 fi
 export VIVENTIUM_LOCAL_MEILI_DATA_PATH="${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-$VIVENTIUM_STATE_ROOT/meili-data}"
 export VIVENTIUM_RAG_PGDATA_PATH="${VIVENTIUM_RAG_PGDATA_PATH:-$VIVENTIUM_STATE_ROOT/rag-pgdata}"
+export VIVENTIUM_RAG_PGDATA_PATH_MODE="${VIVENTIUM_RAG_PGDATA_PATH_MODE:-host}"
 export SCHEDULING_DB_PATH="${SCHEDULING_DB_PATH:-$VIVENTIUM_STATE_ROOT/scheduling/schedules.db}"
 export SCHEDULING_MCP_DB_PATH="${SCHEDULING_MCP_DB_PATH:-$SCHEDULING_DB_PATH}"
 export VIVENTIUM_PUBLIC_NETWORK_STATE_FILE="${VIVENTIUM_PUBLIC_NETWORK_STATE_FILE:-$VIVENTIUM_STATE_ROOT/public-network.json}"
@@ -1066,7 +1088,6 @@ export MCP_PERSISTENT_CONNECTION_SERVERS="${MCP_PERSISTENT_CONNECTION_SERVERS:-s
 export MCP_PERSISTENT_WARMUP_COOLDOWN_MS="${MCP_PERSISTENT_WARMUP_COOLDOWN_MS:-10000}"
 export MCP_CONNECTION_STATUS_SETTLE_WINDOW_MS="${MCP_CONNECTION_STATUS_SETTLE_WINDOW_MS:-3500}"
 export MCP_CONNECTION_STATUS_SETTLE_POLL_MS="${MCP_CONNECTION_STATUS_SETTLE_POLL_MS:-500}"
-mkdir -p "$VIVENTIUM_RAG_PGDATA_PATH"
 
 # === VIVENTIUM START ===
 # Feature: Curated local OpenAI model inventory.
@@ -1149,6 +1170,10 @@ fi
 # === VIVENTIUM END ===
 
 # LiveKit defaults for dev mode
+LIVEKIT_API_HOST_WAS_CONFIGURED=false
+if [[ -n "${LIVEKIT_API_HOST:-}" ]]; then
+  LIVEKIT_API_HOST_WAS_CONFIGURED=true
+fi
 export LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
 export LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
 export LIVEKIT_URL="${LIVEKIT_URL:-ws://localhost:${LIVEKIT_HTTP_PORT}}"
@@ -1800,6 +1825,27 @@ if [[ "$PLAYGROUND_VARIANT" == "modern" ]]; then
   PLAYGROUND_LABEL="Viventium Modern Playground"
 fi
 
+playground_source_ref() {
+  local app_dir="${1:-}"
+  local recorded_ref=""
+  if [[ -f "$app_dir/.viventium-source-ref" ]]; then
+    recorded_ref="$(tr -d '[:space:]' < "$app_dir/.viventium-source-ref")"
+  elif git -C "$app_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    recorded_ref="$(git -C "$app_dir" rev-parse HEAD 2>/dev/null || true)"
+  fi
+  if [[ ! "$recorded_ref" =~ ^[0-9a-f]{40}$ ]]; then
+    return 1
+  fi
+  printf '%s\n' "$recorded_ref"
+}
+
+PLAYGROUND_SOURCE_REF="$(playground_source_ref "$PLAYGROUND_APP_DIR" || true)"
+# === VIVENTIUM START ===
+# Feature: Voice readiness and runtime identity guard.
+# Purpose: Give LibreChat the exact source identity it must verify before creating a call session.
+export VIVENTIUM_PLAYGROUND_SOURCE_REF="$PLAYGROUND_SOURCE_REF"
+# === VIVENTIUM END ===
+
 # Service enable/disable flags (env overrides)
 START_GOOGLE_MCP="${START_GOOGLE_MCP:-true}"
 START_MS365_MCP="${START_MS365_MCP:-true}"
@@ -1950,7 +1996,7 @@ require_cmd() {
   # === VIVENTIUM START ===
   # Feature: One-click node/npm self-repair on fresh macOS machines.
   # Purpose: Avoid manual npm install steps when Homebrew is available.
-  maybe_install_node20_with_brew() {
+  maybe_install_node24_with_brew() {
     if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
       return 0
     fi
@@ -1962,13 +2008,13 @@ require_cmd() {
       return 1
     fi
 
-    log_warn "node/npm missing; attempting automatic install via Homebrew (node@20)"
-    HOMEBREW_NO_AUTO_UPDATE=1 brew install node@20 >/dev/null 2>&1 || return 1
+    log_warn "node/npm missing; attempting automatic install via Homebrew (node@24)"
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install node@24 >/dev/null 2>&1 || return 1
 
-    local node20_prefix
-    node20_prefix="$(brew --prefix node@20 2>/dev/null || true)"
-    if [[ -n "$node20_prefix" && -d "$node20_prefix/bin" ]]; then
-      export PATH="$node20_prefix/bin:${PATH}"
+    local node24_prefix
+    node24_prefix="$(brew --prefix node@24 2>/dev/null || true)"
+    if [[ -n "$node24_prefix" && -d "$node24_prefix/bin" ]]; then
+      export PATH="$node24_prefix/bin:${PATH}"
     fi
     return 0
   }
@@ -2016,13 +2062,13 @@ require_cmd() {
     fi
 
     if [[ "$cmd" == "node" || "$cmd" == "npm" ]]; then
-      local node20_prefix
-      node20_prefix="$(brew --prefix node@20 2>/dev/null || true)"
-      if [[ -n "$node20_prefix" && -d "$node20_prefix/bin" ]]; then
-        export PATH="$node20_prefix/bin:${PATH}"
+      local node24_prefix
+      node24_prefix="$(brew --prefix node@24 2>/dev/null || true)"
+      if [[ -n "$node24_prefix" && -d "$node24_prefix/bin" ]]; then
+        export PATH="$node24_prefix/bin:${PATH}"
       fi
       if [[ "$cmd" == "node" || "$cmd" == "npm" ]]; then
-        maybe_install_node20_with_brew || true
+        maybe_install_node24_with_brew || true
       fi
     elif [[ "$cmd" == "uv" ]]; then
       maybe_install_uv_with_brew || true
@@ -2259,6 +2305,16 @@ is_truthy() {
       ;;
   esac
 }
+
+# === VIVENTIUM START ===
+# Feature: Easy Install truthful startup output.
+# Purpose: Keep deferred Docker/voice services out of the first-run success story.
+express_install_experience() {
+  local experience="${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}"
+  experience="$(printf '%s' "$experience" | tr '[:upper:]' '[:lower:]')"
+  [[ "$experience" == "express" ]]
+}
+# === VIVENTIUM END ===
 
 # === VIVENTIUM START ===
 # Feature: Smarter process scope detection for restarts.
@@ -2550,11 +2606,96 @@ read_pid_file() {
   fi
 }
 
+telegram_launchctl_receipt_file() {
+  printf '%s\n' "$VIVENTIUM_STATE_ROOT/telegram-launchctl-owner.json"
+}
+
+write_telegram_launchctl_receipt() {
+  local receipt_file=""
+  receipt_file="$(telegram_launchctl_receipt_file)"
+  mkdir -p "$(dirname "$receipt_file")"
+  "$PYTHON_BIN" - "$receipt_file" "$VIVENTIUM_APP_SUPPORT_ROOT" "$TELEGRAM_BOT_LAUNCHCTL_LABEL" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = {
+    "schema_version": 1,
+    "app_support_dir": str(Path(sys.argv[2]).expanduser().resolve()),
+    "label": sys.argv[3],
+}
+fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    os.chmod(path, 0o600)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+telegram_launchctl_receipt_valid() {
+  local receipt_file=""
+  receipt_file="$(telegram_launchctl_receipt_file)"
+  [[ -f "$receipt_file" && ! -L "$receipt_file" ]] || return 1
+  "$PYTHON_BIN" - "$receipt_file" "$VIVENTIUM_APP_SUPPORT_ROOT" "$TELEGRAM_BOT_LAUNCHCTL_LABEL" <<'PY'
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+expected_app_support = str(Path(sys.argv[2]).expanduser().resolve())
+expected_label = sys.argv[3]
+try:
+    metadata = os.lstat(path)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ValueError("unsafe receipt")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if payload.get("schema_version") != 1:
+    raise SystemExit(1)
+if str(Path(str(payload.get("app_support_dir") or "")).expanduser().resolve()) != expected_app_support:
+    raise SystemExit(1)
+if payload.get("label") != expected_label:
+    raise SystemExit(1)
+PY
+}
+
+migrate_legacy_telegram_launchctl_receipt() {
+  local pid=""
+  pid="$(read_pid_file "$TELEGRAM_BOT_PID_FILE")"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  if ! pid_matches_scope "$pid" "$TELEGRAM_DIR_PRIMARY" && ! pid_matches_scope "$pid" "$TELEGRAM_DIR_FALLBACK"; then
+    return 1
+  fi
+  local service="gui/$(id -u)/${TELEGRAM_BOT_LAUNCHCTL_LABEL}"
+  local launchctl_pid=""
+  launchctl_pid="$(launchctl print "$service" 2>/dev/null | awk -F' = ' '/pid =/ {print $2; exit}' | tr -cd '0-9')"
+  [[ "$launchctl_pid" == "$pid" ]] || return 1
+  write_telegram_launchctl_receipt
+}
+
 stop_telegram_launchctl_job() {
   [[ "$(uname -s)" == "Darwin" ]] || return 0
   command -v launchctl >/dev/null 2>&1 || return 0
   local label="${TELEGRAM_BOT_LAUNCHCTL_LABEL:-}"
   [[ -n "$label" ]] || return 0
+
+  if ! telegram_launchctl_receipt_valid; then
+    migrate_legacy_telegram_launchctl_receipt || return 0
+  fi
 
   local user_domain="gui/$(id -u)"
   local service="${user_domain}/${label}"
@@ -2566,6 +2707,7 @@ stop_telegram_launchctl_job() {
   launchctl bootout "$service" >/dev/null 2>&1 \
     || launchctl remove "$label" >/dev/null 2>&1 \
     || true
+  rm -f "$(telegram_launchctl_receipt_file)"
 }
 
 telegram_pid_is_running() {
@@ -4257,7 +4399,7 @@ ensure_librechat_node_dependencies() {
 
   pushd "$LIBRECHAT_DIR" >/dev/null || return 1
 
-  ensure_validated_node20_runtime || {
+  ensure_validated_node24_runtime || {
     popd >/dev/null || true
     return 1
   }
@@ -5147,6 +5289,7 @@ clear_remote_call_runtime_exports() {
   unset VIVENTIUM_PUBLIC_SERVER_URL
   unset VIVENTIUM_PUBLIC_PLAYGROUND_URL
   unset VIVENTIUM_PUBLIC_LIVEKIT_URL
+  unset VIVENTIUM_PUBLIC_GLASSHIVE_URL
   unset LIVEKIT_NODE_IP
   unset LIVEKIT_TURN_DOMAIN
   unset LIVEKIT_TURN_TLS_PORT
@@ -5250,6 +5393,7 @@ prepare_remote_call_access() {
   local api_port
   local playground_port=""
   local livekit_port=""
+  local glasshive_port=""
   local livekit_tcp_port=""
   local livekit_udp_port=""
   local voice_enabled="false"
@@ -5261,6 +5405,7 @@ prepare_remote_call_access() {
   local public_api_url=""
   local public_playground_url=""
   local public_livekit_url=""
+  local public_glasshive_url=""
   local livekit_node_ip=""
   local livekit_turn_domain=""
   local livekit_turn_tls_port=""
@@ -5281,6 +5426,13 @@ prepare_remote_call_access() {
     livekit_port="$(get_livekit_port)"
     livekit_tcp_port="${LIVEKIT_TCP_PORT:-}"
     livekit_udp_port="${LIVEKIT_UDP_PORT:-}"
+  fi
+  if [[ "$remote_provider" == "public_https_edge" \
+    && "${START_GLASSHIVE:-false}" == "true" \
+    && "$SKIP_GLASSHIVE" != "true" \
+    && "${GLASSHIVE_PUBLIC_LINKS_ONLY:-false}" == "true" \
+    && -n "${VIVENTIUM_PUBLIC_GLASSHIVE_URL:-}" ]]; then
+    glasshive_port="${GLASSHIVE_UI_PORT:-8780}"
   fi
   if [[ "$remote_provider" == "cloudflare_quick_tunnel" && ( -z "$playground_port" || -z "$livekit_port" ) ]]; then
     log_warn "cloudflare_quick_tunnel only supports the voice playground surfaces; skipping remote access setup because voice is not active for this run"
@@ -5306,6 +5458,9 @@ prepare_remote_call_access() {
   if [[ -n "$livekit_port" ]]; then
     helper_args+=(--livekit-port "$livekit_port")
   fi
+  if [[ -n "$glasshive_port" ]]; then
+    helper_args+=(--glasshive-port "$glasshive_port")
+  fi
   if [[ -n "$livekit_tcp_port" ]]; then
     helper_args+=(--livekit-tcp-port "$livekit_tcp_port")
   fi
@@ -5323,6 +5478,9 @@ prepare_remote_call_access() {
   fi
   if [[ -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
     helper_args+=(--public-livekit-url "$VIVENTIUM_PUBLIC_LIVEKIT_URL")
+  fi
+  if [[ -n "${VIVENTIUM_PUBLIC_GLASSHIVE_URL:-}" ]]; then
+    helper_args+=(--public-glasshive-origin "$VIVENTIUM_PUBLIC_GLASSHIVE_URL")
   fi
   if [[ -n "${LIVEKIT_NODE_IP:-}" ]]; then
     helper_args+=(--livekit-node-ip "$LIVEKIT_NODE_IP")
@@ -5347,6 +5505,7 @@ prepare_remote_call_access() {
   public_api_url="$(json_state_value "$state_json" "public_api_url")"
   public_playground_url="$(json_state_value "$state_json" "public_playground_url")"
   public_livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
+  public_glasshive_url="$(json_state_value "$state_json" "public_glasshive_url")"
   livekit_node_ip="$(json_state_value "$state_json" "livekit_node_ip")"
   livekit_turn_domain="$(json_state_value "$state_json" "livekit_turn_domain")"
   livekit_turn_tls_port="$(json_state_value "$state_json" "livekit_turn_tls_port")"
@@ -5365,6 +5524,11 @@ prepare_remote_call_access() {
   fi
   if [[ -n "$public_livekit_url" ]]; then
     export VIVENTIUM_PUBLIC_LIVEKIT_URL="$public_livekit_url"
+  fi
+  if [[ -n "$public_glasshive_url" ]]; then
+    export VIVENTIUM_PUBLIC_GLASSHIVE_URL="$public_glasshive_url"
+    export GLASSHIVE_OPERATOR_BASE_URL="$public_glasshive_url"
+    export GLASSHIVE_ARTIFACT_BASE_URL="$public_glasshive_url"
   fi
   if [[ -n "$livekit_node_ip" ]]; then
     export LIVEKIT_NODE_IP="$livekit_node_ip"
@@ -5403,6 +5567,7 @@ prewarm_remote_call_access() {
   local api_url=""
   local playground_url=""
   local livekit_url=""
+  local glasshive_url=""
   state_json="$("$PYTHON_BIN" "$VIVENTIUM_REMOTE_CALL_TUNNEL_SCRIPT" status \
     --state-file "$VIVENTIUM_PUBLIC_NETWORK_STATE_FILE" 2>&1)" || command_status=$?
 
@@ -5410,6 +5575,7 @@ prewarm_remote_call_access() {
   api_url="$(json_state_value "$state_json" "public_api_url")"
   playground_url="$(json_state_value "$state_json" "public_playground_url")"
   livekit_url="$(json_state_value "$state_json" "public_livekit_url")"
+  glasshive_url="$(json_state_value "$state_json" "public_glasshive_url")"
   local remote_error=""
   remote_error="$(json_state_value "$state_json" "last_error")"
 
@@ -5422,8 +5588,8 @@ prewarm_remote_call_access() {
     return 0
   fi
 
-  if [[ -n "$client_url" || -n "$api_url" || -n "$playground_url" || -n "$livekit_url" ]]; then
-    log_success "Remote access ready${client_url:+ (app: $client_url)}${api_url:+, api: $api_url}${playground_url:+, playground: $playground_url}${livekit_url:+, livekit: $livekit_url}"
+  if [[ -n "$client_url" || -n "$api_url" || -n "$playground_url" || -n "$livekit_url" || -n "$glasshive_url" ]]; then
+    log_success "Remote access ready${client_url:+ (app: $client_url)}${api_url:+, api: $api_url}${playground_url:+, playground: $playground_url}${livekit_url:+, livekit: $livekit_url}${glasshive_url:+, glasshive: $glasshive_url}"
   else
     log_success "Remote access ready"
   fi
@@ -5608,6 +5774,7 @@ stop_running_services() {
   if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
     kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+    kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
     kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"
     kill_by_pattern_scoped "npm run backend:dev" "$LIBRECHAT_DIR"
     kill_by_pattern_scoped "npm exec nodemon api/server/index.js" "$LIBRECHAT_DIR"
@@ -5972,6 +6139,26 @@ port_in_use() {
   port_has_listener "$port"
 }
 
+playground_listener_matches_variant() {
+  local port="${1:-}"
+  [[ -n "$port" && -n "$PLAYGROUND_SOURCE_REF" ]] || return 1
+  "$PYTHON_BIN" "$VIVENTIUM_CORE_DIR/scripts/viventium/verify_playground_identity.py" \
+    --base-url "http://127.0.0.1:${port}" \
+    --variant "$PLAYGROUND_VARIANT" \
+    --source-ref "$PLAYGROUND_SOURCE_REF" \
+    --timeout 2 \
+    >/dev/null 2>&1
+}
+
+kill_known_playground_listeners() {
+  local port="${1:-}"
+  [[ -n "$port" ]] || return 0
+  kill_port_listeners "$port" "$MODERN_PLAYGROUND_DIR"
+  if port_in_use "$port"; then
+    kill_port_listeners "$port" "$PLAYGROUND_DIR"
+  fi
+}
+
 find_free_port() {
   local start_port="$1"
   shift || true
@@ -6066,8 +6253,48 @@ librechat_api_health_url() {
   printf '%s/health\n' "${origin%/}"
 }
 
-librechat_api_healthy() {
+librechat_api_http_healthy() {
   curl -fsS --max-time 3 "$(librechat_api_health_url)" >/dev/null 2>&1
+}
+
+librechat_sandpack_healthy() {
+  local api_pids=""
+  local sandpack_pids=""
+  local pid=""
+  if ! curl -fsS --max-time 3 "${SANDPACK_BUNDLER_URL}index.html" 2>/dev/null |
+    grep -Fq 'IS_ONPREM:"true"'; then
+    return 1
+  fi
+  api_pids="$(find_port_listener_pids "$LC_API_PORT")"
+  sandpack_pids="$(find_port_listener_pids "$VIVENTIUM_SANDPACK_BUNDLER_PORT")"
+  [[ -n "$api_pids" && -n "$sandpack_pids" ]] || return 1
+  for pid in $api_pids; do
+    if [[ " $sandpack_pids " == *" $pid "* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+librechat_api_healthy() {
+  librechat_api_http_healthy && librechat_sandpack_healthy
+}
+
+wait_for_librechat_runtime() {
+  local label="$1"
+  local retries="${2:-30}"
+  if ! [[ "$retries" =~ ^[0-9]+$ ]] || [[ "$retries" -lt 1 ]]; then
+    retries=30
+  fi
+  for _ in $(seq 1 "$retries"); do
+    if librechat_api_healthy; then
+      log_success "$label ready"
+      return 0
+    fi
+    sleep 1
+  done
+  log_warn "$label did not respond with both API and isolated artifact health in time"
+  return 1
 }
 
 scheduling_mcp_health_url() {
@@ -6295,6 +6522,7 @@ restart_detached_librechat_backend() {
 
   log_warn "Detached LibreChat API watchdog restarting backend"
   kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
+  kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
   kill_by_pattern_scoped "node.*api/server" "$LIBRECHAT_DIR"
   kill_by_pattern_scoped "npm run backend:dev" "$LIBRECHAT_DIR"
   kill_by_pattern_scoped "npm exec nodemon api/server/index.js" "$LIBRECHAT_DIR"
@@ -6302,12 +6530,15 @@ restart_detached_librechat_backend() {
   kill_by_pattern_scoped "node .*nodemon api/server/index.js" "$LIBRECHAT_DIR"
 
   local port_release_tries=0
-  while [[ "$port_release_tries" -lt 10 ]] && port_has_listener "$LC_API_PORT"; do
+  while [[ "$port_release_tries" -lt 10 ]] && {
+    port_has_listener "$LC_API_PORT" ||
+      port_has_listener "$VIVENTIUM_SANDPACK_BUNDLER_PORT"
+  }; do
     sleep 0.5
     port_release_tries=$((port_release_tries + 1))
   done
-  if port_has_listener "$LC_API_PORT"; then
-    log_warn "Detached LibreChat API watchdog is restarting backend before port ${LC_API_PORT} fully released"
+  if port_has_listener "$LC_API_PORT" || port_has_listener "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+    log_warn "Detached LibreChat API watchdog is restarting backend before its API/artifact ports fully released"
   fi
 
   (
@@ -6345,10 +6576,10 @@ start_detached_librechat_api_watchdog() {
     local consecutive_failures=0
     local failed_recoveries=0
     local initial_started_at="$SECONDS"
-    while ! wait_for_http "$(librechat_api_health_url)" "Detached LibreChat API watchdog initial probe" "$initial_recovery_retries"; do
-      log_warn "Detached LibreChat API watchdog did not observe initial API health; attempting backend recovery"
+    while ! wait_for_librechat_runtime "Detached LibreChat runtime watchdog initial probe" "$initial_recovery_retries"; do
+      log_warn "Detached LibreChat API watchdog did not observe complete runtime health; attempting backend recovery"
       restart_detached_librechat_backend
-      if wait_for_http "$(librechat_api_health_url)" "LibreChat API after detached backend restart" "$recovery_retries"; then
+      if wait_for_librechat_runtime "LibreChat runtime after detached backend restart" "$recovery_retries"; then
         failed_recoveries=0
         break
       fi
@@ -6378,7 +6609,7 @@ start_detached_librechat_api_watchdog() {
 
       log_warn "Detached LibreChat API watchdog detected ${consecutive_failures} failed health checks"
       restart_detached_librechat_backend
-      if wait_for_http "$(librechat_api_health_url)" "LibreChat API after detached backend restart" "$recovery_retries"; then
+      if wait_for_librechat_runtime "LibreChat runtime after detached backend restart" "$recovery_retries"; then
         consecutive_failures=0
         failed_recoveries=0
         continue
@@ -6568,52 +6799,6 @@ start_prompt_workbench_watchdog() {
     disown "$watchdog_pid" 2>/dev/null || true
   fi
   log_info "Started Prompt Workbench watchdog (pid: $watchdog_pid, interval: ${interval_s}s)"
-}
-
-start_native_livekit_fallback() {
-  local livekit_bin="$1"
-  local app_support_dir="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
-  local native_state_dir="${app_support_dir}/state/native"
-  local native_log_dir="${app_support_dir}/logs/native"
-  local native_profile_state_dir="${app_support_dir}/state/runtime/${VIVENTIUM_RUNTIME_PROFILE}"
-  local native_cfg_dir="${native_profile_state_dir}/livekit"
-  local native_cfg_file="${native_cfg_dir}/livekit.yaml"
-  local native_pid_file="${native_state_dir}/livekit.pid"
-  local native_meta_file="${native_state_dir}/livekit.runtime.env"
-  local native_log_file="${native_log_dir}/livekit.log"
-  local livekit_pid=""
-
-  mkdir -p "$native_state_dir" "$native_log_dir" "$native_profile_state_dir" "$native_cfg_dir"
-
-  write_livekit_config "$native_cfg_file" "${LIVEKIT_TURN_CERT_FILE:-}" "${LIVEKIT_TURN_KEY_FILE:-}"
-
-  cat > "$native_meta_file" <<EOF
-LIVEKIT_NODE_IP=${LIVEKIT_NODE_IP}
-LIVEKIT_HTTP_PORT=${LIVEKIT_HTTP_PORT}
-LIVEKIT_TCP_PORT=${LIVEKIT_TCP_PORT}
-LIVEKIT_UDP_PORT=${LIVEKIT_UDP_PORT}
-LIVEKIT_TURN_DOMAIN=${LIVEKIT_TURN_DOMAIN:-}
-LIVEKIT_TURN_TLS_PORT=${LIVEKIT_TURN_TLS_PORT:-}
-LIVEKIT_TURN_CERT_FILE=${LIVEKIT_TURN_CERT_FILE:-}
-LIVEKIT_TURN_KEY_FILE=${LIVEKIT_TURN_KEY_FILE:-}
-EOF
-
-  echo -e "${YELLOW}[viventium]${NC} LiveKit image is not available locally; using native LiveKit binary ${livekit_bin} for this run"
-  nohup "$livekit_bin" \
-    --config "$native_cfg_file" \
-    --node-ip "$LIVEKIT_NODE_IP" \
-    >"$native_log_file" 2>&1 &
-  livekit_pid="$!"
-  printf '%s\n' "$livekit_pid" >"$native_pid_file"
-  LIVEKIT_STARTED_BY_SCRIPT=true
-
-  if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
-    log_error "Native LiveKit fallback did not respond at ${LIVEKIT_API_HOST}; check ${native_log_file}"
-    return 1
-  fi
-
-  log_success "Started native LiveKit fallback (${livekit_bin})"
-  return 0
 }
 
 write_livekit_config() {
@@ -7375,6 +7560,14 @@ run_health_checks() {
     else
       failures=$((failures + 1))
     fi
+    if wait_for_http "${SANDPACK_BUNDLER_URL}index.html" "Isolated browser artifact runtime" "$librechat_api_retries"; then
+      if ! librechat_sandpack_healthy; then
+        log_warn "Isolated browser artifact runtime responded without its on-prem privacy marker"
+        failures=$((failures + 1))
+      fi
+    else
+      failures=$((failures + 1))
+    fi
     if wait_for_http "${LC_FRONTEND_URL}" "LibreChat Frontend" "$librechat_frontend_retries"; then
       :
     else
@@ -7944,7 +8137,7 @@ PY
       log_warn "Scheduling Cortex MCP venv python not found after dependency sync; falling back to $PYTHON_BIN"
     fi
   fi
-  "$scheduling_python" -m scheduling_cortex.server --transport streamable-http --port "$SCHEDULING_MCP_PORT" >"$LOG_DIR/scheduling_cortex_mcp.log" 2>&1 &
+  "$scheduling_python" -m scheduling_cortex.server --transport streamable-http --host 127.0.0.1 --port "$SCHEDULING_MCP_PORT" >"$LOG_DIR/scheduling_cortex_mcp.log" 2>&1 &
 
   SCHEDULING_MCP_PID=$!
   SCHEDULING_MCP_STARTED_BY_SCRIPT=true
@@ -8529,6 +8722,75 @@ ensure_ollama_embedding_model_for_rag() {
   return 1
 }
 
+prepare_rag_pgdata_path() {
+  local path_mode="${VIVENTIUM_RAG_PGDATA_PATH_MODE:-host}"
+  local pgdata_path="${VIVENTIUM_RAG_PGDATA_PATH:-}"
+
+  if [[ -z "$pgdata_path" ]]; then
+    log_error "VIVENTIUM_RAG_PGDATA_PATH must name a safe absolute daemon path or a host directory"
+    return 1
+  fi
+
+  case "$path_mode" in
+    host)
+      if ! mkdir -p "$pgdata_path"; then
+        log_error "Could not create the host-owned RAG PostgreSQL data directory"
+        return 1
+      fi
+      ;;
+    daemon)
+      if [[ "$pgdata_path" != /* || "$pgdata_path" == "/" \
+        || "$pgdata_path" == *//* || "$pgdata_path" == */./* \
+        || "$pgdata_path" == */../* || "$pgdata_path" == */. \
+        || "$pgdata_path" == */.. || "$pgdata_path" == *$'\n'* \
+        || "$pgdata_path" == *$'\r'* || "$pgdata_path" == *$'\t'* \
+        || "$pgdata_path" == *:* ]]; then
+        log_error "VIVENTIUM_RAG_PGDATA_PATH must name a safe absolute daemon path"
+        return 1
+      fi
+      case "$pgdata_path" in
+        /var/lib/viventium/?*) ;;
+        *)
+          log_error "VIVENTIUM_RAG_PGDATA_PATH must name a safe absolute daemon path in a Viventium-owned namespace"
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      log_error "VIVENTIUM_RAG_PGDATA_PATH_MODE must be host or daemon"
+      return 1
+      ;;
+  esac
+}
+
+prepare_rag_document_route_path() {
+  local selected_route="$LIBRECHAT_DIR/viventium/rag_api_overrides/app/routes/document_routes.py"
+  local candidate_route="${VIVENTIUM_RAG_DOCUMENT_ROUTE_PATH:-$selected_route}"
+  local selected_parent=""
+  local candidate_parent=""
+
+  if [[ ! -f "$selected_route" || ! -r "$selected_route" || -L "$selected_route" ]]; then
+    log_error "The selected LibreChat runtime does not contain a readable regular RAG document route"
+    return 1
+  fi
+  if [[ ! -f "$candidate_route" || ! -r "$candidate_route" || -L "$candidate_route" ]]; then
+    log_error "VIVENTIUM_RAG_DOCUMENT_ROUTE_PATH must name a readable regular file"
+    return 1
+  fi
+
+  selected_parent="$(cd "$(dirname "$selected_route")" 2>/dev/null && pwd -P)" || return 1
+  candidate_parent="$(cd "$(dirname "$candidate_route")" 2>/dev/null && pwd -P)" || return 1
+  selected_route="$selected_parent/$(basename "$selected_route")"
+  candidate_route="$candidate_parent/$(basename "$candidate_route")"
+
+  if ! cmp -s "$selected_route" "$candidate_route"; then
+    log_error "The configured RAG document route does not match the selected LibreChat runtime"
+    return 1
+  fi
+
+  export VIVENTIUM_RAG_DOCUMENT_ROUTE_PATH="$candidate_route"
+}
+
 _start_rag_api_locked() {
   if [[ "$START_RAG_API" != "true" || "$SKIP_LIBRECHAT" == "true" ]]; then
     log_info "Skipping local RAG API startup"
@@ -8542,16 +8804,22 @@ _start_rag_api_locked() {
   if ! ensure_docker_daemon_for_service "local RAG API"; then
     return 1
   fi
-  if ! ensure_ollama_for_rag; then
-    return 1
-  fi
-  if ! ensure_ollama_embedding_model_for_rag; then
-    return 1
-  fi
 
   local compose_file="$LIBRECHAT_DIR/rag.yml"
   if [[ ! -f "$compose_file" ]]; then
     log_warn "Local RAG compose file not found: $compose_file"
+    return 1
+  fi
+  if ! prepare_rag_pgdata_path; then
+    return 1
+  fi
+  if ! prepare_rag_document_route_path; then
+    return 1
+  fi
+  if ! ensure_ollama_for_rag; then
+    return 1
+  fi
+  if ! ensure_ollama_embedding_model_for_rag; then
     return 1
   fi
 
@@ -9665,6 +9933,7 @@ EOF
       )"
       if [[ -n "$TELEGRAM_BOT_PID" ]] && ps -p "$TELEGRAM_BOT_PID" >/dev/null 2>&1; then
         telegram_started_with_launchctl=true
+        write_telegram_launchctl_receipt
       else
         log_warn "Telegram launchctl job did not report a running pid; falling back to direct nohup"
         stop_telegram_launchctl_job
@@ -9929,34 +10198,28 @@ if [[ -n "${VIVENTIUM_WEB_SEARCH_PROVIDER:-}" ]]; then
   echo -e "  Web Search:        ${GREEN}${VIVENTIUM_WEB_SEARCH_PROVIDER}${NC}"
 fi
 if [[ -n "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
-  _secret_len=${#VIVENTIUM_CALL_SESSION_SECRET}
-  if [[ $_secret_len -ge 8 ]]; then
-    _secret_mask="${VIVENTIUM_CALL_SESSION_SECRET:0:4}...${VIVENTIUM_CALL_SESSION_SECRET: -4}"
-  else
-    _secret_mask="(len=$_secret_len)"
-  fi
-  echo -e "  Call Secret:       ${GREEN}${_secret_mask}${NC}"
+  echo -e "  Call Secret:       ${GREEN}Configured${NC}"
 fi
 if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-  echo -e "  OpenAI API Key:    ${GREEN}${OPENAI_API_KEY:0:8}...${NC}"
+  echo -e "  OpenAI API Key:    ${GREEN}Configured${NC}"
 else
   echo -e "  OpenAI API Key:    ${YELLOW}Not set (STT will fail)${NC}"
 fi
 # Check for ElevenLabs API key (support both ELEVEN_API_KEY and ELEVENLABS_API_KEY)
 ELEVEN_API_KEY_FINAL="${ELEVEN_API_KEY:-${ELEVENLABS_API_KEY:-}}"
 if [[ -n "${ELEVEN_API_KEY_FINAL:-}" ]]; then
-  echo -e "  ElevenLabs API Key: ${GREEN}${ELEVEN_API_KEY_FINAL:0:8}...${NC}"
+  echo -e "  ElevenLabs API Key: ${GREEN}Configured${NC}"
 else
   echo -e "  ElevenLabs API Key: ${YELLOW}Not set (TTS will fallback to OpenAI)${NC}"
 fi
 # Check for xAI API key
 if [[ -n "${XAI_API_KEY:-}" ]]; then
-  echo -e "  xAI API Key:        ${GREEN}${XAI_API_KEY:0:8}...${NC}"
+  echo -e "  xAI API Key:        ${GREEN}Configured${NC}"
 else
   echo -e "  xAI API Key:        ${YELLOW}Not set${NC}"
 fi
 if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
-  echo -e "  Cartesia API Key:   ${GREEN}${CARTESIA_API_KEY:0:8}...${NC}"
+  echo -e "  Cartesia API Key:   ${GREEN}Configured${NC}"
 else
   echo -e "  Cartesia API Key:   ${YELLOW}Not set${NC}"
 fi
@@ -10028,12 +10291,13 @@ prepare_remote_call_access
 
 export LIVEKIT_NODE_IP="${LIVEKIT_NODE_IP:-$(detect_livekit_node_ip)}"
 
-if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" || -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]]; then
+if [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" || -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" || -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" || -n "${VIVENTIUM_PUBLIC_GLASSHIVE_URL:-}" ]]; then
   echo -e "${CYAN}[viventium]${NC} Public remote access:"
   [[ -n "${VIVENTIUM_PUBLIC_CLIENT_URL:-}" ]] && echo -e "  App:         ${GREEN}${VIVENTIUM_PUBLIC_CLIENT_URL}${NC}"
   [[ -n "${VIVENTIUM_PUBLIC_SERVER_URL:-}" ]] && echo -e "  API:         ${GREEN}${VIVENTIUM_PUBLIC_SERVER_URL}${NC}"
   [[ -n "${VIVENTIUM_PUBLIC_PLAYGROUND_URL:-}" ]] && echo -e "  Playground:  ${GREEN}${VIVENTIUM_PUBLIC_PLAYGROUND_URL}${NC}"
   [[ -n "${VIVENTIUM_PUBLIC_LIVEKIT_URL:-}" ]] && echo -e "  LiveKit:     ${GREEN}${VIVENTIUM_PUBLIC_LIVEKIT_URL}${NC}"
+  [[ -n "${VIVENTIUM_PUBLIC_GLASSHIVE_URL:-}" ]] && echo -e "  GlassHive:   ${GREEN}${VIVENTIUM_PUBLIC_GLASSHIVE_URL}${NC}"
 fi
 start_remote_call_mapping_refresh_worker
 
@@ -10045,138 +10309,142 @@ start_remote_call_mapping_refresh_worker
 # Added: 2026-01-11
 # === VIVENTIUM END ===
 if [[ "$SKIP_LIVEKIT" != "true" ]]; then
-  native_install_mode=false
-  if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
-    native_install_mode=true
-  fi
   if [[ "$SKIP_DOCKER" == "true" ]]; then
-    if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
-      log_error "LiveKit is not reachable at ${LIVEKIT_API_HOST} and --skip-docker is enabled"
+    if [[ "$LIVEKIT_API_HOST_WAS_CONFIGURED" != "true" ]]; then
+      log_error "No external LiveKit endpoint was configured and --skip-docker is enabled."
+      log_error "Configure LIVEKIT_API_HOST or use --skip-livekit to start without Voice."
       exit 1
     fi
-    log_success "Using external/native LiveKit at ${LIVEKIT_API_HOST}"
+    if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
+      log_error "LiveKit is not reachable at ${LIVEKIT_API_HOST} and --skip-docker is enabled"
+      log_error "Voice needs the exact Viventium LiveKit Docker runtime or a deliberately configured external LiveKit endpoint."
+      log_error "Enable Docker or configure LIVEKIT_API_HOST. Use --skip-livekit to start without Voice."
+      exit 1
+    fi
+    log_success "Using configured LiveKit endpoint at ${LIVEKIT_API_HOST}"
   else
-    if curl -fsS --max-time 2 "$LIVEKIT_API_HOST" >/dev/null 2>&1; then
-      log_success "Using existing/native LiveKit at ${LIVEKIT_API_HOST}"
+    if [[ "$LIVEKIT_API_HOST_WAS_CONFIGURED" == "true" ]]; then
+      if ! curl -fsS --max-time 2 "$LIVEKIT_API_HOST" >/dev/null 2>&1; then
+        log_error "Configured LiveKit endpoint did not respond at ${LIVEKIT_API_HOST}; refusing an implicit runtime fallback."
+        log_error "Repair LIVEKIT_API_HOST, enable the exact Docker runtime by removing the override, or use --skip-livekit."
+        exit 1
+      fi
+      log_success "Using configured LiveKit endpoint at ${LIVEKIT_API_HOST}"
     else
-      native_livekit_bin=""
-      if [[ "$native_install_mode" == "true" ]]; then
-        native_livekit_bin="$(livekit_native_binary_path || true)"
-      elif ! docker image inspect livekit/livekit-server >/dev/null 2>&1; then
-        native_livekit_bin="$(livekit_native_binary_path || true)"
+      require_cmd docker
+
+      if ! docker_daemon_ready; then
+        # === VIVENTIUM START ===
+        # Feature: Auto-start Docker Desktop on macOS for one-click local startup.
+        # === VIVENTIUM END ===
+        request_docker_desktop_launch || true
+        docker_start_retries="${VIVENTIUM_DOCKER_START_RETRIES:-90}"
+        if ! [[ "$docker_start_retries" =~ ^[0-9]+$ ]] || [[ "$docker_start_retries" -lt 1 ]]; then
+          docker_start_retries=90
+        fi
+        for _ in $(seq 1 "$docker_start_retries"); do
+          if docker_daemon_ready; then
+            break
+          fi
+          sleep 2
+        done
       fi
 
-      if [[ -n "$native_livekit_bin" ]]; then
-        if ! start_native_livekit_fallback "$native_livekit_bin"; then
-          exit 1
-        fi
-      else
-        require_cmd docker
+      if ! docker_daemon_ready; then
+        echo -e "${RED}[viventium]${NC} Docker is not running"
+        exit 1
+      fi
 
-        if ! docker_daemon_ready; then
-          # === VIVENTIUM START ===
-          # Feature: Auto-start Docker Desktop on macOS for one-click local startup.
-          # === VIVENTIUM END ===
-          request_docker_desktop_launch || true
-          docker_start_retries="${VIVENTIUM_DOCKER_START_RETRIES:-90}"
-          if ! [[ "$docker_start_retries" =~ ^[0-9]+$ ]] || [[ "$docker_start_retries" -lt 1 ]]; then
-            docker_start_retries=90
-          fi
-          for _ in $(seq 1 "$docker_start_retries"); do
-            if docker_daemon_ready; then
-              break
-            fi
-            sleep 2
-          done
-        fi
-
-        if ! docker_daemon_ready; then
-          echo -e "${RED}[viventium]${NC} Docker is not running"
-          exit 1
-        fi
-
+      EXISTING=$(docker ps -q \
+        --filter "label=viventium.stack=viventium_v0_4" \
+        --filter "label=viventium.service=livekit" \
+        --filter "label=viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}" \
+        2>/dev/null | head -1)
+      if [[ -z "$EXISTING" ]]; then
+        EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-" 2>/dev/null | head -1)
+      fi
+      if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
         EXISTING=$(docker ps -q \
           --filter "label=viventium.stack=viventium_v0_4" \
           --filter "label=viventium.service=livekit" \
-          --filter "label=viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}" \
           2>/dev/null | head -1)
-        if [[ -z "$EXISTING" ]]; then
-          EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-" 2>/dev/null | head -1)
-        fi
-        if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
-          EXISTING=$(docker ps -q \
-            --filter "label=viventium.stack=viventium_v0_4" \
-            --filter "label=viventium.service=livekit" \
-            2>/dev/null | head -1)
-        fi
-        if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
-          EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null | head -1)
-        fi
+      fi
+      if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
+        EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null | head -1)
+      fi
 
-        if [[ -n "$EXISTING" ]]; then
-          echo -e "${GREEN}[viventium]${NC} LiveKit already running (container: ${EXISTING:0:12})"
-          LIVEKIT_CONTAINER_ID="$EXISTING"
-          if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
-            log_error "LiveKit container is running but not responding at ${LIVEKIT_API_HOST}"
-            exit 1
-          fi
+      if [[ -n "$EXISTING" ]] && ! livekit_managed_container_matches_release "$EXISTING"; then
+        log_warn "Replacing stale managed LiveKit container ${EXISTING:0:12} with ${LIVEKIT_SERVER_VERSION}"
+        if ! docker rm -f "$EXISTING" >/dev/null 2>&1; then
+          log_error "Could not replace the stale managed LiveKit container safely"
+          exit 1
+        fi
+        EXISTING=""
+      fi
+
+      if [[ -n "$EXISTING" ]]; then
+        echo -e "${GREEN}[viventium]${NC} LiveKit already running (container: ${EXISTING:0:12})"
+        LIVEKIT_CONTAINER_ID="$EXISTING"
+        if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
+          log_error "LiveKit container is running but not responding at ${LIVEKIT_API_HOST}"
+          exit 1
+        fi
+      else
+        if port_in_use "$LIVEKIT_HTTP_PORT"; then
+          log_error "Port $LIVEKIT_HTTP_PORT is already in use; refusing to treat it as LiveKit without explicit configuration"
+          log_error "Stop the other process or configure LIVEKIT_API_HOST to deliberately use an external LiveKit endpoint."
+          exit 1
         else
-          if port_in_use "$LIVEKIT_HTTP_PORT"; then
-            echo -e "${YELLOW}[viventium]${NC} Port $LIVEKIT_HTTP_PORT in use by another container; using external LiveKit if available"
-            if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
-              log_error "LiveKit did not respond at ${LIVEKIT_API_HOST}; stop the other service or set LIVEKIT_URL"
-              exit 1
-            fi
-          else
-            # === VIVENTIUM START ===
-            # Purpose: Store generated LiveKit config under .viventium to avoid dirtying the repo.
-            # === VIVENTIUM END ===
-            LIVEKIT_CFG_DIR="$VIVENTIUM_STATE_ROOT/livekit"
-            mkdir -p "$LIVEKIT_CFG_DIR"
-            LIVEKIT_CFG="$LIVEKIT_CFG_DIR/livekit.yaml"
-            LIVEKIT_TURN_CERT_MOUNT=""
-            LIVEKIT_TURN_KEY_MOUNT=""
-            if [[ -n "${LIVEKIT_TURN_DOMAIN:-}" && -n "${LIVEKIT_TURN_TLS_PORT:-}" && -f "${LIVEKIT_TURN_CERT_FILE:-}" && -f "${LIVEKIT_TURN_KEY_FILE:-}" ]]; then
-              LIVEKIT_TURN_CERT_MOUNT="/etc/viventium-livekit-turn.crt"
-              LIVEKIT_TURN_KEY_MOUNT="/etc/viventium-livekit-turn.key"
-            fi
-            write_livekit_config "$LIVEKIT_CFG" "$LIVEKIT_TURN_CERT_MOUNT" "$LIVEKIT_TURN_KEY_MOUNT"
+          # === VIVENTIUM START ===
+          # Purpose: Store generated LiveKit config under .viventium to avoid dirtying the repo.
+          # === VIVENTIUM END ===
+          LIVEKIT_CFG_DIR="$VIVENTIUM_STATE_ROOT/livekit"
+          mkdir -p "$LIVEKIT_CFG_DIR"
+          LIVEKIT_CFG="$LIVEKIT_CFG_DIR/livekit.yaml"
+          LIVEKIT_TURN_CERT_MOUNT=""
+          LIVEKIT_TURN_KEY_MOUNT=""
+          if [[ -n "${LIVEKIT_TURN_DOMAIN:-}" && -n "${LIVEKIT_TURN_TLS_PORT:-}" && -f "${LIVEKIT_TURN_CERT_FILE:-}" && -f "${LIVEKIT_TURN_KEY_FILE:-}" ]]; then
+            LIVEKIT_TURN_CERT_MOUNT="/etc/viventium-livekit-turn.crt"
+            LIVEKIT_TURN_KEY_MOUNT="/etc/viventium-livekit-turn.key"
+          fi
+          write_livekit_config "$LIVEKIT_CFG" "$LIVEKIT_TURN_CERT_MOUNT" "$LIVEKIT_TURN_KEY_MOUNT"
 
-            echo -e "${CYAN}[viventium]${NC} Starting LiveKit server (Docker) ..."
-            LIVEKIT_DOCKER_ARGS=(
-              docker run -d
-              --name "viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-$$"
-              --label "viventium.stack=viventium_v0_4"
-              --label "viventium.service=livekit"
-              --label "viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}"
-              -p "${LIVEKIT_HTTP_PORT}:${LIVEKIT_HTTP_PORT}"
-              -p "${LIVEKIT_TCP_PORT}:${LIVEKIT_TCP_PORT}"
-              -p "${LIVEKIT_UDP_PORT}:${LIVEKIT_UDP_PORT}/udp"
-              -v "$LIVEKIT_CFG:/etc/livekit.yaml:ro"
-            )
-            if [[ -n "${LIVEKIT_TURN_TLS_PORT:-}" ]]; then
-              LIVEKIT_DOCKER_ARGS+=(-p "${LIVEKIT_TURN_TLS_PORT}:${LIVEKIT_TURN_TLS_PORT}")
-            fi
-            if [[ -n "$LIVEKIT_TURN_CERT_MOUNT" && -n "$LIVEKIT_TURN_KEY_MOUNT" ]]; then
-              LIVEKIT_DOCKER_ARGS+=(
-                -v "${LIVEKIT_TURN_CERT_FILE}:${LIVEKIT_TURN_CERT_MOUNT}:ro"
-                -v "${LIVEKIT_TURN_KEY_FILE}:${LIVEKIT_TURN_KEY_MOUNT}:ro"
-              )
-            fi
+          echo -e "${CYAN}[viventium]${NC} Starting LiveKit server (Docker) ..."
+          LIVEKIT_DOCKER_ARGS=(
+            docker run -d
+            --name "viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-$$"
+            --label "viventium.stack=viventium_v0_4"
+            --label "viventium.service=livekit"
+            --label "viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}"
+            --label "viventium.livekit.image=${LIVEKIT_SERVER_IMAGE}"
+            --label "viventium.livekit.source=${LIVEKIT_SERVER_SOURCE_COMMIT}"
+            -p "${LIVEKIT_HTTP_PORT}:${LIVEKIT_HTTP_PORT}"
+            -p "${LIVEKIT_TCP_PORT}:${LIVEKIT_TCP_PORT}"
+            -p "${LIVEKIT_UDP_PORT}:${LIVEKIT_UDP_PORT}/udp"
+            -v "$LIVEKIT_CFG:/etc/livekit.yaml:ro"
+          )
+          if [[ -n "${LIVEKIT_TURN_TLS_PORT:-}" ]]; then
+            LIVEKIT_DOCKER_ARGS+=(-p "${LIVEKIT_TURN_TLS_PORT}:${LIVEKIT_TURN_TLS_PORT}")
+          fi
+          if [[ -n "$LIVEKIT_TURN_CERT_MOUNT" && -n "$LIVEKIT_TURN_KEY_MOUNT" ]]; then
             LIVEKIT_DOCKER_ARGS+=(
-              livekit/livekit-server
-              --config /etc/livekit.yaml
-              --node-ip "$LIVEKIT_NODE_IP"
+              -v "${LIVEKIT_TURN_CERT_FILE}:${LIVEKIT_TURN_CERT_MOUNT}:ro"
+              -v "${LIVEKIT_TURN_KEY_FILE}:${LIVEKIT_TURN_KEY_MOUNT}:ro"
             )
-            LIVEKIT_CONTAINER_ID="$("${LIVEKIT_DOCKER_ARGS[@]}")"
-            LIVEKIT_STARTED_BY_SCRIPT=true
-            echo -e "${GREEN}[viventium]${NC} LiveKit container: ${LIVEKIT_CONTAINER_ID:0:12}"
-            echo -e "${CYAN}[viventium]${NC} LiveKit node IP: ${LIVEKIT_NODE_IP}"
+          fi
+          LIVEKIT_DOCKER_ARGS+=(
+            "$LIVEKIT_SERVER_IMAGE"
+            --config /etc/livekit.yaml
+            --node-ip "$LIVEKIT_NODE_IP"
+          )
+          LIVEKIT_CONTAINER_ID="$("${LIVEKIT_DOCKER_ARGS[@]}")"
+          LIVEKIT_STARTED_BY_SCRIPT=true
+          echo -e "${GREEN}[viventium]${NC} LiveKit container: ${LIVEKIT_CONTAINER_ID:0:12}"
+          echo -e "${CYAN}[viventium]${NC} LiveKit node IP: ${LIVEKIT_NODE_IP}"
 
-            if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
-              log_error "LiveKit did not respond after startup; check Docker logs"
-              exit 1
-            fi
+          if ! wait_for_http "$LIVEKIT_API_HOST" "LiveKit"; then
+            log_error "LiveKit did not respond after startup; check Docker logs"
+            exit 1
           fi
         fi
       fi
@@ -10263,8 +10531,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   fi
   require_cmd node
   require_cmd npm
-  ensure_validated_node20_runtime || {
-    log_error "LibreChat startup requires the validated node@20 runtime"
+  ensure_validated_node24_runtime || {
+    log_error "LibreChat startup requires the validated node@24 runtime"
     exit 1
   }
 
@@ -10273,9 +10541,11 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     exit 1
   fi
 
-  if ! ensure_meilisearch_ready; then
-    log_error "Meilisearch is required for local conversation search startup"
-    exit 1
+  if is_truthy "${SEARCH:-false}"; then
+    if ! ensure_meilisearch_ready; then
+      log_error "Meilisearch is required for local conversation search startup"
+      exit 1
+    fi
   fi
 
   reconcile_google_workspace_local_oauth_state
@@ -10284,12 +10554,21 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   LIBRECHAT_BACKEND_ALREADY_RUNNING=false
   LIBRECHAT_FRONTEND_ALREADY_RUNNING=false
   if port_in_use "$LC_API_PORT"; then
-    if curl -s --max-time 3 "${LC_API_URL}/health" >/dev/null 2>&1; then
-      if [[ "$RESTART_SERVICES" == "true" ]]; then
+    if librechat_api_http_healthy; then
+      if ! librechat_sandpack_healthy; then
+        log_warn "LibreChat API is running without its isolated browser runtime; repairing the scoped backend"
+        kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
+        kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
+        if port_in_use "$LC_API_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+          log_warn "LibreChat API/artifact ports remain occupied outside this checkout; skipping startup"
+          START_LIBRECHAT=false
+        fi
+      elif [[ "$RESTART_SERVICES" == "true" ]]; then
         log_warn "LibreChat already running - restarting"
         kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
-        if port_in_use "$LC_API_PORT" || port_in_use "$LC_FRONTEND_PORT"; then
+        kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
+        if port_in_use "$LC_API_PORT" || port_in_use "$LC_FRONTEND_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
           log_warn "LibreChat ports still in use (outside scope); skipping startup"
           START_LIBRECHAT=false
         fi
@@ -10301,7 +10580,8 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
         log_warn "LibreChat port $LC_API_PORT in use - restarting"
         kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
-        if port_in_use "$LC_API_PORT" || port_in_use "$LC_FRONTEND_PORT"; then
+        kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
+        if port_in_use "$LC_API_PORT" || port_in_use "$LC_FRONTEND_PORT" || port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
           log_warn "LibreChat ports still in use (outside scope); skipping startup"
           START_LIBRECHAT=false
         fi
@@ -10312,11 +10592,22 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     fi
   fi
 
+  if [[ "$START_LIBRECHAT" == "true" && "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" ]] && \
+    port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+    log_warn "Isolated browser runtime port $VIVENTIUM_SANDPACK_BUNDLER_PORT is already occupied; attempting scoped cleanup"
+    kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
+    if port_in_use "$VIVENTIUM_SANDPACK_BUNDLER_PORT"; then
+      log_warn "Isolated browser runtime port remains occupied outside this checkout; skipping LibreChat startup"
+      START_LIBRECHAT=false
+    fi
+  fi
+
   if [[ "$START_LIBRECHAT" == "true" ]] && port_in_use "$LC_FRONTEND_PORT"; then
     if curl -s --max-time 3 "${LC_FRONTEND_URL}" >/dev/null 2>&1; then
       if [[ "$RESTART_SERVICES" == "true" ]]; then
         log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+        kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
         if port_in_use "$LC_FRONTEND_PORT"; then
           log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
           START_LIBRECHAT=false
@@ -10328,6 +10619,7 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
       if [[ "$RESTART_SERVICES" == "true" ]]; then
         log_warn "LibreChat port $LC_FRONTEND_PORT in use - restarting"
         kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+        kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
         if port_in_use "$LC_FRONTEND_PORT"; then
           log_warn "LibreChat port $LC_FRONTEND_PORT still in use (outside scope); skipping startup"
           START_LIBRECHAT=false
@@ -10386,9 +10678,11 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
 
   ensure_memory_unique_indexes_if_clean
 
-  if ! ensure_meilisearch_ready; then
-    log_error "Meilisearch is required before LibreChat user-default reconciliation and agent seeding"
-    exit 1
+  if is_truthy "${SEARCH:-false}"; then
+    if ! ensure_meilisearch_ready; then
+      log_error "Meilisearch is required before LibreChat user-default reconciliation and agent seeding"
+      exit 1
+    fi
   fi
 
   librechat_server_packages_need_rebuild=false
@@ -10400,7 +10694,9 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   if should_rebuild_librechat_client_package; then
     librechat_client_package_needs_rebuild=true
   fi
-  if [[ ! -f "$LIBRECHAT_DIR/client/dist/index.html" ]]; then
+  if [[ ! -f "$LIBRECHAT_DIR/client/dist/index.html" ]] || \
+    [[ ! -f "$LIBRECHAT_DIR/client/dist/sandpack-bundler/index.html" ]] || \
+    ! grep -Fq 'IS_ONPREM:"true"' "$LIBRECHAT_DIR/client/dist/sandpack-bundler/index.html" 2>/dev/null; then
     librechat_client_bundle_needs_build=true
   fi
   if [[ "$librechat_server_packages_need_rebuild" == "true" || "$librechat_client_package_needs_rebuild" == "true" ]]; then
@@ -10550,23 +10846,29 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
       START_PLAYGROUND_RUN=false
     fi
     if port_in_use "$PLAYGROUND_PORT"; then
-      if [[ "$RESTART_SERVICES" == "true" ]]; then
-        log_warn "Playground already running on port $PLAYGROUND_PORT - restarting"
-        kill_port_listeners "$PLAYGROUND_PORT" "$PLAYGROUND_APP_DIR"
-        if port_in_use "$PLAYGROUND_PORT"; then
-          if [[ "$PLAYGROUND_URL_WAS_DEFAULT" == "true" ]]; then
-            fallback_port=$(find_free_port "$PLAYGROUND_PORT" "$MS365_MCP_CALLBACK_PORT")
-            log_warn "Playground port $PLAYGROUND_PORT still in use (outside scope); using $fallback_port for this run"
-            PLAYGROUND_PORT="$fallback_port"
-            VIVENTIUM_PLAYGROUND_URL="http://localhost:${PLAYGROUND_PORT}"
-          else
-            log_warn "Playground port $PLAYGROUND_PORT still in use (outside scope); skipping startup"
-            START_PLAYGROUND_RUN=false
-          fi
+      if playground_listener_matches_variant "$PLAYGROUND_PORT"; then
+        if [[ "$RESTART_SERVICES" == "true" ]]; then
+          log_warn "Verified $PLAYGROUND_LABEL already running on port $PLAYGROUND_PORT - restarting"
+          kill_port_listeners "$PLAYGROUND_PORT" "$PLAYGROUND_APP_DIR"
+        else
+          log_success "Verified $PLAYGROUND_LABEL already running on port $PLAYGROUND_PORT"
+          START_PLAYGROUND_RUN=false
         fi
       else
-        log_success "$PLAYGROUND_LABEL already running on port $PLAYGROUND_PORT"
-        START_PLAYGROUND_RUN=false
+        log_warn "Port $PLAYGROUND_PORT is not serving the selected $PLAYGROUND_VARIANT playground at source $PLAYGROUND_SOURCE_REF"
+        kill_known_playground_listeners "$PLAYGROUND_PORT"
+      fi
+      if [[ "$START_PLAYGROUND_RUN" == "true" ]] && port_in_use "$PLAYGROUND_PORT"; then
+        if [[ "$PLAYGROUND_URL_WAS_DEFAULT" == "true" ]]; then
+          fallback_port=$(find_free_port "$PLAYGROUND_PORT" "$MS365_MCP_CALLBACK_PORT")
+          log_warn "Playground port $PLAYGROUND_PORT remains in use by an unrelated process; using $fallback_port for this run"
+          PLAYGROUND_PORT="$fallback_port"
+          VIVENTIUM_PLAYGROUND_URL="http://localhost:${PLAYGROUND_PORT}"
+        else
+          log_error "Configured playground port $PLAYGROUND_PORT is in use by an unrelated process; refusing to report it as healthy"
+          START_PLAYGROUND_RUN=false
+          PLAYGROUND_START_BLOCKED=true
+        fi
       fi
     fi
 
@@ -10591,6 +10893,7 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
         # Leaving AGENT_NAME unset prevents the bare root page from dispatching
         # a voice worker without that session context.
         export LIVEKIT_API_KEY LIVEKIT_API_SECRET LIVEKIT_API_HOST LIVEKIT_URL NEXT_PUBLIC_LIVEKIT_URL
+        export VIVENTIUM_PLAYGROUND_BUILD_REF="$PLAYGROUND_SOURCE_REF"
         if [[ "$PLAYGROUND_VARIANT" == "modern" ]]; then
           if [[ -n "${VIVENTIUM_PLAYGROUND_AGENT_NAME:-}" ]]; then
             export AGENT_NAME="$VIVENTIUM_PLAYGROUND_AGENT_NAME"
@@ -10614,9 +10917,9 @@ if [[ "$SKIP_PLAYGROUND" != "true" ]]; then
         # Next.js parses `next dev [dir] [options]`. Passing an extra `--` causes
         # `--port` to be treated as the project directory (crash).
         if [[ -x "node_modules/.bin/next" ]]; then
-          exec "./node_modules/.bin/next" dev -p "$PLAYGROUND_PORT"
+          exec "./node_modules/.bin/next" dev -H 127.0.0.1 -p "$PLAYGROUND_PORT"
         else
-          exec npx next dev -p "$PLAYGROUND_PORT"
+          exec npx next dev -H 127.0.0.1 -p "$PLAYGROUND_PORT"
         fi
       ) &
       PLAYGROUND_PID=$!
@@ -10921,14 +11224,12 @@ PY
         fi
         # Also export ELEVENLABS_API_KEY for backward compatibility
         export ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
-        # xAI voice configuration (standalone TTS by default; legacy realtime adapter is opt-in)
+        # xAI standalone Text-to-Speech configuration.
         export XAI_API_KEY="${XAI_API_KEY:-}"
         export VIVENTIUM_XAI_TTS_API_KEY="${VIVENTIUM_XAI_TTS_API_KEY:-}"
         export VIVENTIUM_XAI_VOICE="${VIVENTIUM_XAI_VOICE:-Sal}"
-        export VIVENTIUM_XAI_WSS_URL="${VIVENTIUM_XAI_WSS_URL:-wss://api.x.ai/v1/realtime}"
         export VIVENTIUM_XAI_SAMPLE_RATE="${VIVENTIUM_XAI_SAMPLE_RATE:-24000}"
         export VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY="${VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY:-1}"
-        export VIVENTIUM_XAI_INSTRUCTIONS="${VIVENTIUM_XAI_INSTRUCTIONS:-}"
         # Cartesia Sonic-3 configuration
         export CARTESIA_API_KEY="${CARTESIA_API_KEY:-}"
         export VIVENTIUM_CARTESIA_API_URL="${VIVENTIUM_CARTESIA_API_URL:-https://api.cartesia.ai/tts/bytes}"
@@ -10941,7 +11242,7 @@ PY
         export VIVENTIUM_CARTESIA_EMOTION="${VIVENTIUM_CARTESIA_EMOTION:-neutral}"
         # Debug: Show what we're exporting
         if [[ -n "${ELEVEN_API_KEY:-}" ]]; then
-          echo -e "${CYAN}[viventium]${NC} ELEVEN_API_KEY is set (${ELEVEN_API_KEY:0:8}...)"
+          echo -e "${CYAN}[viventium]${NC} ELEVEN_API_KEY is configured"
         else
           echo -e "${YELLOW}[viventium]${NC} WARNING: ELEVEN_API_KEY not set - ElevenLabs TTS will fallback to OpenAI"
         fi
@@ -10949,7 +11250,7 @@ PY
           echo -e "${CYAN}[viventium]${NC} xAI voice available"
         fi
         if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
-          echo -e "${CYAN}[viventium]${NC} CARTESIA_API_KEY is set (${CARTESIA_API_KEY:0:8}...) - Cartesia TTS available"
+          echo -e "${CYAN}[viventium]${NC} CARTESIA_API_KEY is configured - Cartesia TTS available"
         fi
         voice_stt_provider_normalized="$(printf '%s' "${VIVENTIUM_STT_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')"
         if [[ "$voice_stt_provider_normalized" == "whisper_local" || "$voice_stt_provider_normalized" == "pywhispercpp" ]]; then
@@ -11000,7 +11301,7 @@ sleep 3
 
 if detached_start_requested; then
   start_detached_librechat_api_watchdog
-  log_info "Skipping blocking post-start health checks for detached launch; detached watchdog will monitor LibreChat API health while helper/user surfaces monitor readiness"
+  log_info "Skipping blocking post-start health checks for detached launch; detached watchdog will monitor LibreChat API/artifact health while helper/user surfaces monitor readiness"
 elif [[ "$SKIP_HEALTH_CHECKS" != "true" ]]; then
   run_health_checks
 else
@@ -11022,7 +11323,11 @@ fi
 echo ""
 LOCAL_NETWORK_HOST="$(detect_livekit_node_ip)"
 LOCAL_NETWORK_FRONTEND_URL=""
-if [[ -n "$LOCAL_NETWORK_HOST" && "$LOCAL_NETWORK_HOST" != 127.0.0.1 ]]; then
+FRONTEND_BIND_HOST="${HOST:-::}"
+if [[ -n "$LOCAL_NETWORK_HOST" \
+  && "$LOCAL_NETWORK_HOST" != 127.0.0.1 \
+  && "$FRONTEND_BIND_HOST" != "127.0.0.1" \
+  && "$FRONTEND_BIND_HOST" != "localhost" ]]; then
   LOCAL_NETWORK_FRONTEND_URL="http://${LOCAL_NETWORK_HOST}:${LC_FRONTEND_PORT}"
 fi
 echo -e "  ${CYAN}LibreChat Frontend:${NC}  ${LC_FRONTEND_URL}"
@@ -11030,6 +11335,7 @@ if [[ -n "$LOCAL_NETWORK_FRONTEND_URL" ]]; then
   echo -e "  ${CYAN}Local Network URL:${NC}  ${LOCAL_NETWORK_FRONTEND_URL}"
 fi
 echo -e "  ${CYAN}LibreChat API:${NC}       ${LC_API_URL}/api"
+echo -e "  ${CYAN}Isolated browser runtime:${NC} ${SANDPACK_BUNDLER_URL}"
 if is_truthy "${SEARCH:-false}"; then
   echo -e "  ${CYAN}Conversation Search:${NC} enabled (${MEILI_HOST})"
 fi
@@ -11043,11 +11349,20 @@ if [[ "$START_PROMPT_WORKBENCH" == "true" ]]; then
     echo -e "  ${CYAN}Prompt Workbench:${NC}   enabled (check $PROMPT_WORKBENCH_WATCHDOG_LOG_FILE)"
   fi
 fi
-echo -e "  ${CYAN}${PLAYGROUND_LABEL}:${NC}   $VIVENTIUM_PLAYGROUND_URL"
-echo -e "  ${CYAN}LiveKit WS:${NC}          $LIVEKIT_URL"
-echo -e "  ${CYAN}MS365 MCP:${NC}          $MS365_MCP_SERVER_URL"
-echo -e "  ${CYAN}Google MCP:${NC}         $GOOGLE_WORKSPACE_MCP_URL"
-echo -e "  ${CYAN}Code Interpreter:${NC}   $LIBRECHAT_CODE_BASEURL"
+# === VIVENTIUM START ===
+# Feature: Easy Install Native truthful startup output.
+# Purpose: Do not advertise endpoints that Easy Install deliberately leaves deferred.
+if express_install_experience; then
+  echo -e "  ${CYAN}Connect an AI account:${NC} Settings > Account > Connected Accounts"
+  echo -e "  ${CYAN}Optional services:${NC}   deferred by Easy Install; enable them later with bin/viventium configure"
+else
+  echo -e "  ${CYAN}${PLAYGROUND_LABEL}:${NC}   $VIVENTIUM_PLAYGROUND_URL"
+  echo -e "  ${CYAN}LiveKit WS:${NC}          $LIVEKIT_URL"
+  echo -e "  ${CYAN}MS365 MCP:${NC}          $MS365_MCP_SERVER_URL"
+  echo -e "  ${CYAN}Google MCP:${NC}         $GOOGLE_WORKSPACE_MCP_URL"
+  echo -e "  ${CYAN}Code Interpreter:${NC}   $LIBRECHAT_CODE_BASEURL"
+fi
+# === VIVENTIUM END ===
 if [[ "$START_V1_AGENT" == "true" ]]; then
   if [[ "$V1_AGENT_STARTED_BY_SCRIPT" == "true" ]]; then
     echo -e "  ${CYAN}V1 Agent:${NC}            running (PID: $V1_AGENT_PID)"
@@ -11095,17 +11410,33 @@ else
   echo -e "  ${CYAN}Telegram Codex:${NC}      disabled"
 fi
 echo ""
-echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}  Testing Voice Call Button${NC}"
-echo -e "${CYAN}========================================${NC}"
+# === VIVENTIUM START ===
+# Feature: Easy Install Native truthful startup output.
+# Purpose: Lead first-run users to the one required account action and keep deferred voice out.
+if express_install_experience; then
+  echo -e "${CYAN}========================================${NC}"
+  echo -e "${CYAN}  First Run${NC}"
+  echo -e "${CYAN}========================================${NC}"
+  echo ""
+  echo -e "1. Open ${GREEN}${LC_FRONTEND_URL}${NC} in your browser"
+  echo -e "2. Create or sign in to your local Viventium account"
+  echo -e "3. Use the Connected Accounts screen that opens automatically to connect your AI account"
+else
+  echo -e "${CYAN}========================================${NC}"
+  echo -e "${CYAN}  Testing Voice Call Button${NC}"
+  echo -e "${CYAN}========================================${NC}"
+  echo ""
+  echo -e "1. Open ${GREEN}${LC_FRONTEND_URL}${NC} in browser"
+  echo -e "2. Log in and select an ${GREEN}Agent${NC} conversation"
+  echo -e "3. Look for the ${GREEN}phone icon${NC} in the chat header"
+  echo -e "4. Click it to open the voice playground"
+fi
 echo ""
-echo -e "1. Open ${GREEN}${LC_FRONTEND_URL}${NC} in browser"
-echo -e "2. Log in and select an ${GREEN}Agent${NC} conversation"
-echo -e "3. Look for the ${GREEN}phone icon${NC} in the chat header"
-echo -e "4. Click it to open the voice playground"
-echo ""
-echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
-echo ""
+if ! detached_start_requested; then
+  echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
+  echo ""
+fi
+# === VIVENTIUM END ===
 
 if [[ "${VIVENTIUM_DETACHED_START:-false}" == "1" || "${VIVENTIUM_DETACHED_START:-false}" == "true" ]]; then
   CLEANUP_ENABLED=false

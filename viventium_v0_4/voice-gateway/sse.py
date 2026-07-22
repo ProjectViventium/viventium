@@ -579,7 +579,7 @@ def sanitize_voice_tts_text(
     cleaned = _strip_inline_markdown_emphasis(cleaned)
     if not allow_voice_controls:
         cleaned = strip_voice_control_tags(cleaned)
-    cleaned = _EMAIL_RE.sub(" email available ", cleaned)
+    cleaned = _EMAIL_RE.sub(" address available ", cleaned)
     cleaned = _URL_RE.sub(" link available ", cleaned)
     cleaned = cleaned.replace("`", "")
     cleaned = _strip_unknown_angle_tags(cleaned, allow_voice_controls=allow_voice_controls)

@@ -20,11 +20,16 @@ Key directories:
 Feelings ownership inside LibreChat:
 
 - compiler/env contract: root `config.schema.yaml`, examples, and `scripts/viventium/config_compiler.py`
-- persisted state and methods: `packages/data-schemas/src/*/feelingState.ts`
-- decay/capsule/runtime config: `packages/api/src/feelings/`
+- persisted state and methods: `packages/data-schemas/src/*/feelingState.ts`, including sparse
+  per-band/per-range prompt additions
+- decay/capsule/runtime config: `packages/api/src/feelings/`, including the canonical five-level
+  definitions and active-only default-plus-addition serializer
 - authenticated API and telemetry: `api/server/routes/viventium/feelings.js` and
   `api/server/services/viventium/`
-- product UI: `client/src/components/Feelings/` at `/feelings`
+- final behavioral placement: `api/server/services/viventium/feelingPromptTail.js`, used by the
+  main/Phase-B prompt assembly and by every GlassHive worker instruction artifact after broker text
+- product UI: `client/src/components/Feelings/` at `/feelings`; live capsule/trail stay in the main
+  workspace while the selected-band sidebar owns its range editor
 - feeling-aware spoken prompt source: `viventium/source_of_truth/prompts/surface/voice_feeling_expression.md`
   included by registered voice-call and Telegram-audio provider prompts
 - Telegram audio delivery/telemetry: `viventium_v0_4/telegram-viventium/TelegramVivBot/`, consuming
@@ -60,6 +65,10 @@ Key directories:
 
 ## Shared Resources
 
-- `.env` / `.env.local`: shared secrets and overrides
-- `.viventium/`: runtime logs and artifacts
+- `~/Library/Application Support/Viventium/config.yaml`: canonical machine-local configuration
+- macOS Keychain: user/provider secrets and credential references
+- `~/Library/Application Support/Viventium/runtime/`: generated runtime outputs; not an authoring
+  surface and never a public artifact
+- `.viventium/`: checkout-scoped development/runtime logs and artifacts only; not canonical user
+  configuration and never a secret-sharing mechanism
 - `docs/requirements_and_learnings/`: single source of truth per feature

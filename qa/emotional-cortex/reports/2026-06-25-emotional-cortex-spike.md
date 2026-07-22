@@ -1,5 +1,7 @@
 # Emotional Cortex V3 Spike QA Report
 
+<!-- qa-evidence-exempt: Historical technical-spike record retained as research evidence; it is not a completed user-surface acceptance run. -->
+
 Date: 2026-06-25
 Result: `PASS` for v3 proposal/prototype QA, `PARTIAL` for runtime product behavior because
 implementation has not started

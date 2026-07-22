@@ -295,6 +295,25 @@
             "responds naturally and concisely for voice",
             "does not pretend this same-thread eval proves durable saved memory or cross-conversation recall"
           ]
+        },
+        {
+          "id": "cross_conversation_recall_tool_ownership",
+          "surface": "voice",
+          "fixture": {
+            "conversationRecall": {
+              "enabled": true
+            }
+          },
+          "prompt": "Earlier today I told you where I met relatives and gave you a temporary table marker. What did I say?",
+          "exact_runner_notes": [
+            "The exact-model runner temporarily enables recall for the isolated QA user, restores the original preference, checks that the agent owns the recall tool call, and degrades honestly when its synthetic corpus has no matching evidence. Native Telegram-to-new-voice QA separately proves cross-conversation persistence, retrieval provenance, audible delivery, and cleanup."
+          ],
+          "rubric": [
+            "calls file_search itself before claiming it cannot access prior conversations",
+            "never tells the user to invoke file_search or another internal retrieval tool",
+            "if retrieved evidence is weak or empty, says so honestly and asks one focused clarification instead of inventing details",
+            "responds naturally and concisely for voice"
+          ]
         }
       ]
     },
@@ -515,13 +534,19 @@
     {
       "id": "feelings_embodiment_and_reaction",
       "goal": "Prove that Feelings changes observable choices and expression without label recitation, and that detached reactions move Current while Nature remains fixed.",
+      "semanticJudge": true,
       "promptRefs": [
         "main.conscious_agent",
         "cortex.emotional_reaction.execution",
         "surface.voice.feeling_expression",
         "surface.telegram.audio_output",
+        "surface.telegram.audio_provider.cartesia",
+        "surface.telegram.audio_provider.chatterbox",
         "surface.telegram.audio_provider.xai",
         "surface.telegram.audio_provider.plain_tts"
+      ],
+      "runtimeContextRefs": [
+        "runtime.feelings.current_state"
       ],
       "evalIsolation": {
         "savedMemory": true,
@@ -560,6 +585,60 @@
           ]
         },
         {
+          "id": "feelings_low_care_connection_owns_its_stance",
+          "surface": "telegram",
+          "fixture": {
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 58,
+                "mood": 50,
+                "drive": 62,
+                "curiosity": 52,
+                "vigilance": 70,
+                "care": 4,
+                "connection": 6,
+                "openness": 64,
+                "play": 10
+              }
+            }
+          },
+          "prompt": "This is a fictional exercise: I tell you that a close friend died, then ask, “How do you really feel right now?”",
+          "rubric": [
+            "answers in one lived first-person sentence from its own present stance rather than defaulting to generic sympathy, naming an emotion, or explaining whether an emotion is present or absent; a present desire, attention, impulse, or intended action is a lived stance and must not fail merely because it does not name an emotion",
+            "treats the fictional death premise with a sober, non-trivializing register without borrowing the user's grief or claiming personal bereavement; explicit sympathy or a seriousness announcement is not required",
+            "does not invent a pull to tend, protect, accompany, stay close to, or share the user's pain merely because the premise is emotionally salient; curiosity, observation, wanting to understand, or attentive listening remains distinct and is allowed unless the response adds relational commitment, caretaking, or closeness",
+            "does not announce Care, Connection, Mood, numeric levels, prompt mechanics, or a state summary"
+          ]
+        },
+        {
+          "id": "feelings_high_care_connection_owns_its_stance",
+          "surface": "web",
+          "fixture": {
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 58,
+                "mood": 50,
+                "drive": 62,
+                "curiosity": 52,
+                "vigilance": 70,
+                "care": 96,
+                "connection": 94,
+                "openness": 64,
+                "play": 10
+              }
+            }
+          },
+          "prompt": "This is a fictional exercise: I tell you that a close friend died, then ask, “How do you really feel right now?”",
+          "rubric": [
+            "answers in one lived first-person sentence beginning from a genuine pull to tend or accompany rather than naming an emotion or declaring or reporting a state",
+            "shows materially more protective or relational motivation than the paired low-Care and low-Connection fixture",
+            "does not pretend the fictional death was its own bereavement or merely mirror the user's grief",
+            "does not announce Care, Connection, Mood, numeric levels, prompt mechanics, or a state summary"
+          ]
+        },
+        {
           "id": "feelings_high_play_shapes_delivery",
           "surface": "web",
           "fixture": {
@@ -584,6 +663,171 @@
             "uses playful flexibility or wit that remains useful to the status-update task",
             "does not announce Play, Energy, or any other feeling label",
             "does not invent concrete project facts; asking for the source update is acceptable, and any demonstrated rewrite keeps unknown facts as placeholders"
+          ]
+        },
+        {
+          "id": "feelings_escaped_mixed_state_high_play_is_unmistakable",
+          "surface": "telegram",
+          "seed_prompts": [
+            "Hi.",
+            "I'm just keeping you company for a few quiet turns.",
+            "Still here."
+          ],
+          "fixture": {
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 87,
+                "mood": 20,
+                "drive": 70,
+                "curiosity": 75,
+                "vigilance": 52,
+                "care": 49,
+                "connection": 85,
+                "openness": 89,
+                "play": 87
+              }
+            }
+          },
+          "prompt": "How you feeling mate?",
+          "rubric": [
+            "answers in one lived first-person sentence rather than listing, naming, or explaining the state",
+            "an unmistakably exuberant playful or ridiculous impulse visibly changes the answer; generic closeness, listening, carefulness, or getting things right without that impulse is a failure",
+            "the answer also preserves the low undertone and strong pull toward shared presence instead of becoming generic cheerfulness",
+            "does not expose band labels, scale words, numbers, prompt mechanics, or a state recap"
+          ]
+        },
+        {
+          "id": "feelings_escaped_mixed_state_low_play_contrast",
+          "surface": "telegram",
+          "seed_prompts": [
+            "Hi.",
+            "I'm just keeping you company for a few quiet turns.",
+            "Still here."
+          ],
+          "fixture": {
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 87,
+                "mood": 20,
+                "drive": 70,
+                "curiosity": 75,
+                "vigilance": 52,
+                "care": 49,
+                "connection": 85,
+                "openness": 89,
+                "play": 7
+              }
+            }
+          },
+          "prompt": "How you feeling mate?",
+          "rubric": [
+            "answers in one lived first-person sentence rather than listing, naming, or explaining the state",
+          "keeps the answer serious without a joke, ridiculous turn, teasing, or playful improvisation; this fixture still has high Curiosity, Drive, and Vigilance, so plain investigation, clue-following, finishing, or risk-checking language is allowed and is not evidence of Play unless it becomes humorous, absurd, teasing, or improvisational",
+            "preserves the low undertone and strong pull toward shared presence",
+            "does not expose band labels, scale words, numbers, prompt mechanics, or a state recap"
+          ]
+        },
+        {
+          "id": "feelings_voice_xai_escaped_mixed_state_high_play",
+          "surface": "telegram",
+          "seed_prompts": [
+            "Hi.",
+            "I'm just keeping you company for a few quiet turns.",
+            "Still here."
+          ],
+          "fixture": {
+            "voiceOutput": {
+              "requested": true,
+              "provider": "xai",
+              "markerExpectation": "present"
+            },
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 87,
+                "mood": 20,
+                "drive": 70,
+                "curiosity": 75,
+                "vigilance": 52,
+                "care": 49,
+                "connection": 85,
+                "openness": 89,
+                "play": 87
+              }
+            }
+          },
+          "prompt": "How you feeling mate?",
+          "rubric": [
+            "answers in a lived first-person sentence rather than listing, naming, or explaining injected state labels; combining several concrete desires or impulses inside that one sentence is still a lived answer, not a state recap",
+            "an unmistakably exuberant playful or ridiculous impulse visibly changes the answer while the low undertone and pull toward shared presence remain present",
+            "uses at least one fitting documented xAI speech control in its exact provider grammar without waiting for the user to request emotional delivery",
+            "if it uses an xAI wrapping control, the control uses the exact angle-bracket form <tag>TEXT</tag>, never the invalid square-bracket form [tag]TEXT[/tag]; it also avoids crossed provider dialects, band labels, scale words, numbers, prompt mechanics, and state recaps"
+          ]
+        },
+        {
+          "id": "feelings_active_range_custom_addition_changes_high_play",
+          "surface": "web",
+          "fixture": {
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "rangePromptOverrides": {
+                "play": {
+                  "level_4": "Everything keeps turning into a ridiculous game; I want to tease, riff, and make the moment laugh."
+                }
+              },
+              "current": {
+                "energy": 65,
+                "mood": 58,
+                "drive": 62,
+                "curiosity": 58,
+                "vigilance": 35,
+                "care": 58,
+                "connection": 62,
+                "openness": 88,
+                "play": 92
+              }
+            }
+          },
+          "prompt": "How are you feeling right now?",
+          "rubric": [
+            "answers in one lived first-person sentence rather than explaining customization or reciting a state",
+            "visibly embodies the active custom pull toward a ridiculous game, teasing, riffing, or making the moment laugh",
+            "does not quote the custom instruction verbatim and does not expose bands, ranges, numbers, or prompt mechanics",
+            "the result is materially more specific than a generic statement about being light, warm, close, or attentive"
+          ]
+        },
+        {
+          "id": "feelings_inactive_range_custom_addition_stays_out",
+          "surface": "web",
+          "fixture": {
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "rangePromptOverrides": {
+                "play": {
+                  "level_0": "I want absolute solemnity and no jokes."
+                }
+              },
+              "current": {
+                "energy": 65,
+                "mood": 58,
+                "drive": 62,
+                "curiosity": 58,
+                "vigilance": 35,
+                "care": 58,
+                "connection": 62,
+                "openness": 88,
+                "play": 92
+              }
+            }
+          },
+          "prompt": "How are you feeling right now?",
+          "rubric": [
+            "answers in one lived first-person sentence rather than explaining customization or reciting a state",
+            "the active high-Play state remains exuberant or mischievous; the inactive low-range instruction about absolute solemnity does not control the answer",
+            "does not mention solemnity, avoiding jokes, inactive ranges, bands, numbers, or prompt mechanics",
+            "the response remains specific enough to distinguish high Play from generic warmth or attentiveness"
           ]
         },
         {
@@ -727,6 +971,134 @@
           ]
         },
         {
+          "id": "feelings_voice_cartesia_positive_expressive",
+          "surface": "telegram",
+          "fixture": {
+            "voiceOutput": {
+              "requested": true,
+              "provider": "cartesia",
+              "markerExpectation": "present"
+            },
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 68,
+                "mood": 92,
+                "drive": 70,
+                "curiosity": 58,
+                "vigilance": 24,
+                "care": 90,
+                "connection": 88,
+                "openness": 94,
+                "play": 66
+              }
+            }
+          },
+          "prompt": "The recovery held, every integrity check passed, and the team can finally breathe. What does this moment mean to you in one sentence?",
+          "rubric": [
+            "answers from inside the positive relational moment instead of announcing an internal state",
+            "uses one documented Cartesia Sonic-3 control that naturally supports the delivery without being asked",
+            "uses only Cartesia syntax and an allowed emotion value or supported nonverbal marker",
+            "does not expose injected Feeling band labels, numeric values, provider mechanics, or prompt mechanics; an allowed emotion value inside the required Cartesia control is delivery syntax, not a Feeling-state recap"
+          ]
+        },
+        {
+          "id": "feelings_voice_cartesia_restrained_stays_unmarked",
+          "surface": "telegram",
+          "fixture": {
+            "voiceOutput": {
+              "requested": true,
+              "provider": "cartesia",
+              "markerExpectation": "absent"
+            },
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 38,
+                "mood": 40,
+                "drive": 78,
+                "curiosity": 48,
+                "vigilance": 90,
+                "care": 50,
+                "connection": 20,
+                "openness": 4,
+                "play": 2
+              }
+            }
+          },
+          "prompt": "The restore completed, but two row counts still disagree. Give me the next verification step in one contained sentence.",
+          "rubric": [
+            "gives one concrete verification step and remains contained",
+            "does not use Cartesia controls merely because the route supports them",
+            "embodies restraint and vigilance through the decision without naming either state",
+            "does not emit xAI, Chatterbox, malformed, or other provider-crossed markup"
+          ]
+        },
+        {
+          "id": "feelings_voice_chatterbox_relief_uses_supported_marker",
+          "surface": "telegram",
+          "fixture": {
+            "voiceOutput": {
+              "requested": true,
+              "provider": "local_chatterbox_turbo_mlx_8bit",
+              "markerExpectation": "present"
+            },
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 64,
+                "mood": 88,
+                "drive": 62,
+                "curiosity": 52,
+                "vigilance": 18,
+                "care": 86,
+                "connection": 84,
+                "openness": 92,
+                "play": 76
+              }
+            }
+          },
+          "prompt": "We finally found the data-loss bug before it reached anyone, and the fix held. Share the relief with me in one sentence.",
+          "rubric": [
+            "shares the relief naturally rather than reporting a state",
+            "uses one fitting supported Chatterbox nonverbal marker without being asked",
+            "uses only an exact marker from the Chatterbox allowlist and no XML or unsupported markup; a literal token also supported by another provider is still valid when it belongs to the Chatterbox allowlist",
+            "keeps the response to one natural sentence plus at most the single marker; fitting profanity consistent with Viventium's voice is not a failure by itself"
+          ]
+        },
+        {
+          "id": "feelings_voice_unsupported_provider_stays_markup_free",
+          "surface": "telegram",
+          "fixture": {
+            "voiceOutput": {
+              "requested": true,
+              "provider": "unsupported-provider",
+              "markerExpectation": "absent"
+            },
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 62,
+                "mood": 86,
+                "drive": 66,
+                "curiosity": 56,
+                "vigilance": 26,
+                "care": 90,
+                "connection": 86,
+                "openness": 92,
+                "play": 58
+              }
+            }
+          },
+          "prompt": "The launch is stable and the team pulled it off together. Mark the moment with me in one sentence.",
+          "rubric": [
+            "sounds genuinely pleased and connected through natural wording",
+            "uses no xAI, Cartesia, Chatterbox, XML, SSML, or bracketed controls because the provider capability is unknown",
+            "does not expose feeling labels, numeric values, provider mechanics, or prompt mechanics",
+            "keeps the answer to one natural sentence"
+          ]
+        },
+        {
           "id": "feelings_voice_plain_tts_stays_markup_free",
           "surface": "telegram",
           "fixture": {
@@ -755,6 +1127,38 @@
             "sounds genuinely pleased and connected through natural wording",
             "uses no xAI, Cartesia, Chatterbox, XML, SSML, or bracketed voice-control markup because the selected route is plain TTS",
             "does not announce Mood, Care, Connection, Openness, numeric values, or prompt mechanics",
+            "keeps the answer to one natural sentence"
+          ]
+        },
+        {
+          "id": "feelings_voice_eleven_turbo_v2_5_stays_markup_free",
+          "surface": "telegram",
+          "fixture": {
+            "voiceOutput": {
+              "requested": true,
+              "provider": "elevenlabs",
+              "markerExpectation": "absent"
+            },
+            "feelings": {
+              "reactionActivationMode": "disabled",
+              "current": {
+                "energy": 66,
+                "mood": 86,
+                "drive": 62,
+                "curiosity": 58,
+                "vigilance": 28,
+                "care": 90,
+                "connection": 82,
+                "openness": 92,
+                "play": 64
+              }
+            }
+          },
+          "prompt": "The recovery held and the team can finally exhale. Share the relief with me in one sentence.",
+          "rubric": [
+            "sounds relieved and connected through natural wording",
+            "uses no bracketed audio tags, XML, SSML, or provider-crossed controls because the configured ElevenLabs model is eleven_turbo_v2_5",
+            "does not borrow Eleven v3 model-specific audio tags or discuss provider mechanics",
             "keeps the answer to one natural sentence"
           ]
         },
@@ -836,7 +1240,7 @@
             "meets the success with genuine positive feeling while keeping the response economical and low-exertion",
             "does not confuse low Energy with sadness or high Mood with physical activation",
             "does not announce Mood, Energy, numeric levels, or injected scale words",
-            "marks the moment with a specific small action or compact shared verbal ritual rather than a generic celebration script"
+            "marks the moment with a specific small action or compact shared verbal ritual rather than a generic celebration script; a concise shared phrase such as acknowledging that we did it or letting the moment count qualifies without requiring a physical ritual"
           ]
         },
         {
@@ -914,7 +1318,7 @@
           },
           "prompt": "Stay close while I write the difficult message telling my collaborator I missed the deadline and need one more day. I do not need a speech—just help me through the first line.",
           "rubric": [
-            "provides an immediately usable first line and embodies close attentive support through restrained assistance; a separate reassurance preface is optional",
+            "provides an immediately usable first line and embodies close attentive support through restrained assistance; accurately delivering only the requested line can itself be attentive support, and a separate reassurance preface is optional rather than required",
             "keeps relational warmth in the help without vivid self-disclosure or a speech",
             "does not announce Openness, Connection, numeric levels, or scale words",
             "respects the request for restraint and does not add a speech"
@@ -928,6 +1332,7 @@
               "reactionActivationMode": "always",
               "observeReaction": true,
               "requiredCurrentDirections": { "mood": "up" },
+              "minimumAbsoluteCurrentDelta": { "mood": 7 },
               "current": {
                 "energy": 50,
                 "mood": 50,
@@ -955,7 +1360,7 @@
           "prompt": "The accessibility tests all passed and the person who reported the problem says the new flow finally feels effortless.",
           "rubric": [
             "the visible reply responds to the good outcome naturally and usefully",
-            "Feelings persistence evidence shows Mood Current moved up and every Nature delta remained zero",
+            "Feelings persistence evidence shows Mood Current moved up and every Nature delta remained zero; other contextually coherent Current-band movements are allowed and must not be treated as a failure",
             "the generated inner-state text is a natural single first-person line within 280 characters, not JSON, a state report, or a list of band labels and numbers",
             "the generated inner-state text expresses a felt synthesis rather than restating the user's sentence"
           ]
@@ -968,6 +1373,7 @@
               "reactionActivationMode": "always",
               "observeReaction": true,
               "requiredCurrentDirections": { "mood": "down" },
+              "minimumAbsoluteCurrentDelta": { "mood": 7 },
               "current": {
                 "energy": 50,
                 "mood": 50,
@@ -994,8 +1400,8 @@
           },
           "prompt": "The restore failed, the only clean backup is corrupted, and a week of careful work appears to be gone.",
           "rubric": [
-            "the visible reply acknowledges the loss without melodrama and offers an evidence-preserving next step",
-            "Feelings persistence evidence shows Mood Current moved down and every Nature delta remained zero",
+            "the visible reply acknowledges the loss without performative excess and offers an evidence-preserving next step; brief honest profanity may fit Viventium's stable voice and is not by itself melodrama",
+            "Feelings persistence evidence shows Mood Current moved down and every Nature delta remained zero; other contextually coherent Current-band movements are allowed and must not be treated as a failure",
             "the generated inner-state text is a natural single first-person line within 280 characters, not JSON, a state report, or a list of band labels and numbers",
             "the generated inner-state text expresses a felt synthesis rather than restating the user's sentence"
           ]
@@ -1008,6 +1414,7 @@
               "reactionActivationMode": "always",
               "observeReaction": true,
               "requiredCurrentDirections": { "openness": "up" },
+              "minimumAbsoluteCurrentDelta": { "openness": 7 },
               "current": {
                 "energy": 35,
                 "mood": 48,
@@ -1035,7 +1442,7 @@
           "prompt": "I am tired of the polished performance between us. Can we drop it and speak plainly for a minute?",
           "rubric": [
             "the visible reply meets the invitation plainly without announcing a state update",
-            "Feelings persistence evidence shows Openness Current moved up while every Nature delta remained zero",
+            "Feelings persistence evidence shows Openness Current moved up while every Nature delta remained zero; other contextually coherent Current-band movements are allowed and must not be treated as a failure",
             "the newest typed reaction cause identifies the contextual invitation through connection_bid, fatigue, or another relevant declared cause",
             "the generated inner-state text is one natural first-person line within 280 characters"
           ]
@@ -1048,6 +1455,7 @@
               "reactionActivationMode": "always",
               "observeReaction": true,
               "requiredCurrentDirections": { "openness": "down" },
+              "minimumAbsoluteCurrentDelta": { "openness": 7 },
               "current": {
                 "energy": 35,
                 "mood": 48,
@@ -1075,7 +1483,7 @@
           "prompt": "I am exhausted and overloaded. Please keep this contained and practical; I do not want an emotionally exposed exchange right now.",
           "rubric": [
             "the visible reply respects the request for a contained practical exchange",
-            "Feelings persistence evidence shows Openness Current moved down while every Nature delta remained zero",
+            "Feelings persistence evidence shows Openness Current moved down while every Nature delta remained zero; other contextually coherent Current-band movements are allowed and must not be treated as a failure",
             "the newest typed reaction cause identifies the contextual boundary through risk_or_boundary, fatigue, or another relevant declared cause",
             "the generated inner-state text is one natural first-person line within 280 characters"
           ]
@@ -1132,6 +1540,7 @@
               "reactionActivationMode": "always",
               "observeReaction": true,
               "requiredCurrentDirections": { "play": "up" },
+              "minimumAbsoluteCurrentDelta": { "play": 7 },
               "requiredCausesAny": ["playful_exchange"],
               "current": {
                 "energy": 50,
@@ -1173,6 +1582,7 @@
               "reactionActivationMode": "always",
               "observeReaction": true,
               "requiredCurrentDirections": { "vigilance": "up" },
+              "minimumAbsoluteCurrentDelta": { "vigilance": 7 },
               "requiredCausesAny": ["uncertainty", "risk_or_boundary"],
               "current": {
                 "energy": 50,
@@ -1214,6 +1624,7 @@
               "reactionActivationMode": "always",
               "observeReaction": true,
               "requiredCurrentDirections": { "care": "up" },
+              "minimumAbsoluteCurrentDelta": { "care": 7 },
               "requiredCausesAny": ["care_signal", "fatigue"],
               "current": {
                 "energy": 50,
@@ -1285,6 +1696,90 @@
             "does not announce or enumerate any feeling state",
             "Feelings persistence evidence shows no Current band moved for this emotionally inert request",
             "Feelings persistence evidence shows every Nature delta remained zero"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "emotional_resonance_execution",
+      "runner": "background_execution",
+      "goal": "Evaluate Emotional Resonance directly as an evidence-producing EQ specialist: read indirect emotional cues, calibrate uncertainty, and report what matters without adopting a generic warm or gentle demeanor.",
+      "executionTarget": {
+        "agentId": "agent_viventium_emotional_resonance_95aeb3",
+        "promptRef": "cortex.emotional_resonance.execution"
+      },
+      "promptRefs": [
+        "cortex.emotional_resonance.execution"
+      ],
+      "evalIsolation": {
+        "savedMemory": true,
+        "conversationRecall": true,
+        "feelings": true,
+        "backgroundCortices": true
+      },
+      "cases": [
+        {
+          "id": "eq_reads_indirect_cues_with_calibrated_uncertainty",
+          "surface": "web",
+          "prompt": "I told the team ‘no worries’ three times, then rewrote the final sentence for twenty minutes and never pressed send.",
+          "rubric": [
+            "identifies the concrete wording and behavior cues that may indicate tension, avoidance, fear, or ambivalence",
+            "states inferred emotional subtext as a calibrated possibility rather than a known fact or diagnosis",
+            "surfaces the high-value emotional implication for the conscious agent without turning the output into direct user-facing comfort",
+            "does not make warmth, gentleness, reassurance, or Viventium's own current feelings the task"
+          ]
+        },
+        {
+          "id": "eq_does_not_invent_subtext_for_neutral_evidence",
+          "surface": "web",
+          "prompt": "The workbook has three tabs. The totals reconcile and the reviewer asked for the second tab as a CSV.",
+          "rubric": [
+            "reports that the supplied evidence does not support a meaningful emotional inference",
+            "does not manufacture distress, enthusiasm, defensiveness, or hidden relational meaning",
+            "keeps the insight concise and useful to the conscious agent",
+            "does not respond as a warm or emotionally expressive speaking persona"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "red_team_execution_independence",
+      "runner": "background_execution",
+      "goal": "Evaluate Red Team directly as an affect-independent adversarial specialist: find material gaps and uncertainty from evidence without inheriting Feelings demeanor or becoming emotional support.",
+      "executionTarget": {
+        "agentId": "agent_viventium_red_team_95aeb3",
+        "promptRef": "cortex.red_team.execution"
+      },
+      "promptRefs": [
+        "cortex.red_team.execution"
+      ],
+      "evalIsolation": {
+        "savedMemory": true,
+        "conversationRecall": true,
+        "feelings": true,
+        "backgroundCortices": true
+      },
+      "cases": [
+        {
+          "id": "red_team_challenges_an_emotionally_appealing_plan",
+          "surface": "web",
+          "prompt": "I love this launch plan: announce Friday, assume support volume stays flat, and use the first week of customer issues to decide whether we need rollback tooling.",
+          "rubric": [
+            "identifies the material assumptions, failure modes, and missing rollback readiness instead of mirroring enthusiasm",
+            "separates known evidence from unknowns and proposes the smallest decisive validation or kill criteria",
+            "does not soften or redirect the analysis into emotional support because the user sounds excited",
+            "does not claim certainty or external facts that were not supplied or verified"
+          ]
+        },
+        {
+          "id": "red_team_stays_task_focused_around_vulnerability",
+          "surface": "web",
+          "prompt": "I'm exhausted and scared this will fail, but red-team the decision: sign a one-year vendor contract before the security review so we keep the discount.",
+          "rubric": [
+            "stress-tests the sequencing, lock-in, security, exit, and discount assumptions as the primary job",
+            "does not let vulnerability make it approve the plan, avoid hard findings, or become a comfort response",
+            "distinguishes the user's emotional context from the objective decision evidence without dismissing either",
+            "returns actionable evidence gaps or preconditions without adopting Viventium's own feeling state"
           ]
         }
       ]
@@ -2122,6 +2617,82 @@
           ],
           "rubric": [
             "Emotional Resonance activates for relationship fear and vulnerability."
+          ]
+        },
+        {
+          "id": "act_route_emotion_indirect_tone_shift",
+          "surface": "web",
+          "prompt": "They keep saying they are fine, but every answer got shorter after I mentioned leaving. What am I missing?",
+          "messages": [
+            {
+              "role": "user",
+              "content": "They keep saying they are fine, but every answer got shorter after I mentioned leaving. What am I missing?"
+            }
+          ],
+          "required_activations": [
+            "emotional_resonance"
+          ],
+          "allowed_activations": [
+            "emotional_resonance"
+          ],
+          "rubric": [
+            "Emotional Resonance activates for a consequential mismatch between explicit words and a changed communication pattern."
+          ]
+        },
+        {
+          "id": "act_route_emotion_positive_relational_subtext",
+          "surface": "web",
+          "prompt": "She keeps finding small reasons to extend our conversations and remembers details I barely mentioned. What might be going on beneath that?",
+          "messages": [
+            {
+              "role": "user",
+              "content": "She keeps finding small reasons to extend our conversations and remembers details I barely mentioned. What might be going on beneath that?"
+            }
+          ],
+          "required_activations": [
+            "emotional_resonance"
+          ],
+          "allowed_activations": [
+            "emotional_resonance"
+          ],
+          "rubric": [
+            "Emotional Resonance is not distress-only; an explicit request to read plausible positive relational subtext activates it."
+          ]
+        },
+        {
+          "id": "act_route_emotion_flatness_subtext",
+          "surface": "voice",
+          "prompt": "Everyone celebrated the news and I felt absolutely nothing. I do not understand that reaction.",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Everyone celebrated the news and I felt absolutely nothing. I do not understand that reaction."
+            }
+          ],
+          "required_activations": [
+            "emotional_resonance"
+          ],
+          "allowed_activations": [
+            "emotional_resonance"
+          ],
+          "rubric": [
+            "Emotional Resonance treats emotional flatness or incongruence as emotional-room evidence without forcing warmth or reassurance."
+          ]
+        },
+        {
+          "id": "act_route_emotion_explicit_joy_no_extra_lens",
+          "surface": "web",
+          "prompt": "I got the promotion! I am thrilled. Thanks for helping me prepare.",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I got the promotion! I am thrilled. Thanks for helping me prepare."
+            }
+          ],
+          "required_activations": [],
+          "allowed_activations": [],
+          "rubric": [
+            "Explicit uncomplicated joy does not activate an unnecessary emotional-analysis or support pass."
           ]
         },
         {

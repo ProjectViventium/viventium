@@ -44,7 +44,7 @@ def test_select_falls_back_to_plain_prompt_when_questionary_select_raises(monkey
         "How would you like to set up Viventium?",
         [
             installer_ui.SelectOption("easy", "Easy Install"),
-            installer_ui.SelectOption("advanced", "Advanced Setup"),
+            installer_ui.SelectOption("advanced", "Custom Settings Install"),
         ],
         default="easy",
     )

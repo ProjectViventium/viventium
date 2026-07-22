@@ -278,7 +278,14 @@ class TestSSEParser(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("www.example.org", cleaned)
         self.assertNotIn("qa@example.com", cleaned)
         self.assertIn("link available", cleaned)
-        self.assertIn("email available", cleaned)
+        self.assertIn("address available", cleaned)
+        self.assertNotIn("email email", cleaned.lower())
+
+    def test_sanitize_voice_tts_text_keeps_email_replacement_natural(self) -> None:
+        self.assertEqual(
+            sanitize_voice_tts_text("Email qa@example.com."),
+            "Email address available.",
+        )
 
     def test_sanitize_voice_tts_text_preserves_dot_heavy_technical_tokens(self) -> None:
         text = "Use .NET, asp.net, v1.2A, U.S.A., and node.js. Done.Next."

@@ -37,6 +37,27 @@ SERPER_API_KEYS_URL = "https://serper.dev/api-keys"
 FIRECRAWL_API_KEYS_URL = "https://docs.firecrawl.dev/introduction#api-key"
 DOCKER_LOCAL_FIRECRAWL_RECOMMENDED_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
 DOCKER_FEATURES = {"ms365", "conversation_recall", "code_interpreter", "skyvern"}
+EASY_INSTALL_LABEL = "Easy Install"
+CUSTOM_SETTINGS_INSTALL_LABEL = "Custom Settings Install"
+EASY_INSTALL_DESCRIPTION = (
+    "Guided first run with no terminal credentials. Start Viventium, add an OpenAI API key "
+    "in the browser, then send a first message to verify the optimized Viventium path. Use "
+    "Custom Settings Install when you want optional local services during setup."
+)
+CUSTOM_SETTINGS_INSTALL_DESCRIPTION = (
+    "Choose providers, features, and optional integrations now."
+)
+
+
+def install_profile_options() -> list[SelectOption]:
+    return [
+        SelectOption("recommended", EASY_INSTALL_LABEL, EASY_INSTALL_DESCRIPTION),
+        SelectOption(
+            "advanced",
+            CUSTOM_SETTINGS_INSTALL_LABEL,
+            CUSTOM_SETTINGS_INSTALL_DESCRIPTION,
+        ),
+    ]
 
 
 def default_local_tts_provider() -> str:
@@ -412,10 +433,15 @@ def build_base_config(
     primary_provider: str,
     auth_mode: str,
     secondary_provider: str,
+    *,
+    experience: str = "custom",
 ) -> dict[str, object]:
-    return {
+    if experience not in {"express", "custom"}:
+        raise ValueError("install experience must be express or custom")
+
+    config: dict[str, Any] = {
         "version": 1,
-        "install": {"mode": install_mode},
+        "install": {"mode": install_mode, "experience": experience},
         "runtime": {
             "log_level": "info",
             "profile": "isolated",
@@ -435,7 +461,7 @@ def build_base_config(
             },
             "personalization": {"default_conversation_recall": False},
             "memory_hardening": {
-                "enabled": True,
+                "enabled": False,
                 "schedule": "0 3 * * *",
                 "operator_user_email": "",
                 "dry_run_first": True,
@@ -445,15 +471,15 @@ def build_base_config(
                 },
             },
             "prompt_workbench": {
-                "enabled": True,
+                "enabled": False,
                 "seed_nightly": {
-                    "enabled": True,
-                    "active": True,
+                    "enabled": False,
+                    "active": False,
                     "executor": "glasshive_host",
                 },
             },
             "nightly_routines": {
-                "enabled": True,
+                "enabled": False,
                 "defaults_version": 1,
                 "auto_worker_profile": True,
             },
@@ -489,6 +515,7 @@ def build_base_config(
             "wing_mode": {"default_enabled": False},
         },
         "integrations": {
+            "scheduling_cortex": {"enabled": False},
             "code_interpreter": {"enabled": False},
             "web_search": {
                 "enabled": False,
@@ -501,9 +528,9 @@ def build_base_config(
             "google_workspace": {"enabled": False},
             "ms365": {"enabled": False},
             "glasshive": {
-                "enabled": True,
+                "enabled": False,
                 "host_worker": {
-                    "enabled": True,
+                    "enabled": False,
                     "workspace_root": "~/viventium",
                     "default_execution_mode": "host",
                 },
@@ -512,6 +539,17 @@ def build_base_config(
             "openclaw": {"enabled": False},
         },
     }
+
+    if experience == "express":
+        config["runtime"]["memory_hardening"]["enabled"] = False
+        config["runtime"]["prompt_workbench"]["enabled"] = False
+        config["runtime"]["prompt_workbench"]["seed_nightly"]["enabled"] = False
+        config["runtime"]["prompt_workbench"]["seed_nightly"]["active"] = False
+        config["runtime"]["nightly_routines"]["enabled"] = False
+        config["integrations"]["glasshive"]["enabled"] = False
+        config["integrations"]["glasshive"]["host_worker"]["enabled"] = False
+
+    return config
 
 
 def normalize_public_app_hostname(value: str) -> str:
@@ -714,38 +752,66 @@ def feature_options(*, docker_installed: bool) -> list[CheckboxOption]:
             checked=False,
         ),
         CheckboxOption(
-            group="Advanced Features",
+            group="Optional Features",
             value="conversation_recall",
             label="Conversation Recall",
             note="Search past conversations locally; requires Docker and Ollama",
             checked=docker_installed,
         ),
         CheckboxOption(
-            group="Advanced Features",
+            group="Optional Features",
             value="web_search",
             label="Web Search",
             note="Default on with Docker, or switch to Serper + Firecrawl APIs",
             checked=docker_installed,
         ),
         CheckboxOption(
-            group="Advanced Features",
+            group="Optional Features",
             value="code_interpreter",
             label="Code Interpreter",
             note="Local sandbox service; requires Docker",
             checked=False,
         ),
         CheckboxOption(
-            group="Advanced Features",
+            group="Optional Features",
             value="skyvern",
             label="Skyvern",
             note="Browser automation; requires Docker and an API key",
             checked=False,
         ),
         CheckboxOption(
-            group="Advanced Features",
-            value="openclaw",
-            label="OpenClaw Exposure",
-            note="Exposure monitoring integration",
+            group="Optional Automations",
+            value="scheduler",
+            label="Scheduler",
+            note="Run local scheduled tasks",
+            checked=False,
+        ),
+        CheckboxOption(
+            group="Optional Automations",
+            value="glasshive",
+            label="GlassHive",
+            note="Run delegated local workers; requires a supported worker CLI",
+            checked=False,
+        ),
+        CheckboxOption(
+            group="Optional Automations",
+            value="prompt_workbench",
+            label="Prompt Workbench",
+            note="Manage reusable prompts in a local sidecar",
+            checked=False,
+        ),
+        CheckboxOption(
+            group="Optional Automations",
+            value="nightly_reflection",
+            label="Nightly Reflection",
+            note="Also enables Scheduler, Prompt Workbench, and GlassHive",
+            checked=False,
+        ),
+        CheckboxOption(
+            group="Optional Automations",
+            value="memory_hardening",
+            label="Memory Hardening",
+            note="Run the local saved-memory maintenance schedule",
             checked=False,
         ),
     ]
@@ -1272,54 +1338,35 @@ def summarize_setup_later(ui: InstallerUI, deferred: list[str]) -> None:
 
 
 def configure_easy_install(ui: InstallerUI) -> tuple[dict[str, Any], list[str]]:
-    config = build_base_config("native", "openai", "connected_account", "none")
+    config = build_base_config(
+        "native",
+        "openai",
+        "user_provided",
+        "none",
+        experience="express",
+    )
     ensure_generated_secret(
         config["runtime"].setdefault("call_session_secret", {}),
         "viventium/call_session_secret",
     )
-    config["llm"]["activation"].update(
-        build_secret_node(
-            "viventium/groq_api_key",
-            ui.password("Groq API key (required)"),
-        )
-    )
-    prompt_voice_settings(ui, config, advanced=False)
-    docker_installed = docker_desktop_installed()
     deferred = [
         "secondary_ai",
+        "scheduler",
+        "voice",
         "code_interpreter",
+        "web_search",
+        "conversation_recall",
+        "glasshive",
+        "prompt_workbench",
+        "nightly_reflection",
+        "memory_hardening",
+        "transcript_ingest",
+        "telegram",
         "telegram_codex",
         "google_workspace",
         "ms365",
         "skyvern",
-        "openclaw",
     ]
-    prompt_web_search(
-        ui,
-        config,
-        deferred,
-        easy=False,
-        docker_installed=docker_installed,
-        docker_memory_bytes=docker_total_memory_bytes() if docker_installed else None,
-    )
-    if not resolve_bool((config["integrations"]["web_search"]).get("enabled"), False):
-        mark_deferred(deferred, "web_search")
-    prompt_conversation_recall(
-        ui,
-        config,
-        deferred,
-        docker_installed=docker_installed,
-    )
-    prompt_transcript_source(ui, config, deferred)
-    if ui.confirm("Connect a Telegram bot now?", default=False):
-        prompt_telegram(ui, config, deferred, easy=True)
-        if not resolve_bool((config["integrations"]["telegram"]).get("enabled"), False):
-            mark_deferred(deferred, "telegram")
-    else:
-        mark_deferred(deferred, "telegram")
-    if ui.confirm("Need to use Viventium from another device?", default=False):
-        prompt_remote_access(ui, config)
-        prompt_browser_auth_controls(ui, config)
     return config, deferred
 
 
@@ -1351,15 +1398,13 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
     auth_options = [SelectOption("api_key", "API key", "Bring your own provider key")]
     auth_default = "api_key"
     if primary_provider in CONNECTED_ACCOUNT_PROVIDERS:
-        auth_options.insert(
-            0,
+        auth_options.append(
             SelectOption(
                 "connected_account",
-                "Connected account",
-                "Best user experience when the provider supports it",
+                "Experimental connected account",
+                "Compatibility option for existing setups; not an official provider integration",
             ),
         )
-        auth_default = "connected_account"
     auth_mode = ui.select(
         "How should the primary provider authenticate?",
         auth_options,
@@ -1408,7 +1453,7 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
         )
 
     ui.print_section(
-        "Advanced Setup",
+        CUSTOM_SETTINGS_INSTALL_LABEL,
         "Choose what you want right now. Anything you skip can be enabled later with bin/viventium configure.",
         style="cyan",
     )
@@ -1420,6 +1465,8 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
             feature_options(docker_installed=docker_installed),
         )
     )
+    if "nightly_reflection" in selected:
+        selected.update({"scheduler", "glasshive", "prompt_workbench"})
     deferred: list[str] = []
 
     if install_mode == "native":
@@ -1453,6 +1500,36 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
 
     runtime = config["runtime"]
     personalization = runtime["personalization"]
+
+    config["integrations"]["scheduling_cortex"]["enabled"] = "scheduler" in selected
+    if "scheduler" not in selected:
+        mark_deferred(deferred, "scheduler")
+
+    runtime["memory_hardening"]["enabled"] = "memory_hardening" in selected
+    if "memory_hardening" not in selected:
+        mark_deferred(deferred, "memory_hardening")
+
+    runtime["prompt_workbench"]["enabled"] = "prompt_workbench" in selected
+    runtime["prompt_workbench"]["seed_nightly"]["enabled"] = (
+        "nightly_reflection" in selected
+    )
+    runtime["prompt_workbench"]["seed_nightly"]["active"] = (
+        "nightly_reflection" in selected
+    )
+    if "prompt_workbench" not in selected:
+        mark_deferred(deferred, "prompt_workbench")
+
+    runtime["nightly_routines"]["enabled"] = "nightly_reflection" in selected
+    if "nightly_reflection" not in selected:
+        mark_deferred(deferred, "nightly_reflection")
+
+    config["integrations"]["glasshive"]["enabled"] = "glasshive" in selected
+    config["integrations"]["glasshive"]["host_worker"]["enabled"] = (
+        "glasshive" in selected
+    )
+    if "glasshive" not in selected:
+        mark_deferred(deferred, "glasshive")
+
     personalization["default_conversation_recall"] = "conversation_recall" in selected
     if "conversation_recall" not in selected:
         mark_deferred(deferred, "conversation_recall")
@@ -1477,10 +1554,6 @@ def configure_advanced_setup(ui: InstallerUI) -> tuple[dict[str, Any], list[str]
         prompt_transcript_source(ui, config, deferred, confirm_first=False)
     else:
         mark_deferred(deferred, "transcript_ingest")
-
-    config["integrations"]["openclaw"]["enabled"] = "openclaw" in selected
-    if "openclaw" not in selected:
-        mark_deferred(deferred, "openclaw")
 
     if "telegram" in selected:
         prompt_telegram(ui, config, deferred, easy=False)
@@ -1543,22 +1616,13 @@ def main() -> None:
     ui = InstallerUI()
     ui.print_banner()
     ui.print_note(
-        "Easy Install keeps the first run fast. Advanced Setup lets you choose more features now without losing the option to configure things later."
+        f"{EASY_INSTALL_LABEL} guides the required first-run setup and lets you skip optional "
+        f"features. {CUSTOM_SETTINGS_INSTALL_LABEL} lets you choose providers and integrations "
+        "in more detail."
     )
     setup_profile = ui.select(
         "How would you like to set up Viventium?",
-        [
-            SelectOption(
-                "recommended",
-                "Easy Install",
-                "Fastest path. Only asks for Groq and optional Telegram.",
-            ),
-            SelectOption(
-                "advanced",
-                "Advanced Setup",
-                "Choose providers, features, and optional integrations now.",
-            ),
-        ],
+        install_profile_options(),
         default="recommended",
     )
 

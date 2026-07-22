@@ -86,6 +86,7 @@ def write_prompt(root: Path, rel: str, prompt_id: str, body: str, **metadata: ob
 def test_public_prompt_registry_validates_and_compiles() -> None:
     bundle = build_prompt_bundle(PROMPT_ROOT)
 
+    assert bundle["prompt_root"] == "."
     assert bundle["prompt_count"] >= 50
     assert "main.conscious_agent" in bundle["prompts"]
     assert "surface.voice.provider.cartesia" in bundle["prompts"]
@@ -96,6 +97,22 @@ def test_public_prompt_registry_validates_and_compiles() -> None:
     assert "surface.telegram.audio_provider.plain_tts" in bundle["prompts"]
     assert "surface.telegram.audio_provider.xai" in bundle["prompts"]
     assert bundle["prompts"]["main.identity"]["content_hash"]
+    assert all(
+        not Path(prompt["path"]).is_absolute()
+        and ".." not in Path(prompt["path"]).parts
+        for prompt in bundle["prompts"].values()
+    )
+
+
+def test_prompt_bundle_paths_are_stable_outside_the_repository(tmp_path: Path) -> None:
+    prompt_root = tmp_path / "detached-build" / "prompts"
+    write_prompt(prompt_root, "nested/example.md", "test.detached", "Detached prompt")
+
+    bundle = build_prompt_bundle(prompt_root)
+
+    assert bundle["prompt_root"] == "."
+    assert bundle["prompts"]["test.detached"]["path"] == "nested/example.md"
+    assert str(tmp_path) not in json.dumps(bundle)
 
 
 def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
@@ -111,7 +128,7 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert "configured/available connected email providers" in agents["mainAgent"]["instructions"]
     assert "Connected Accounts handoff for immediate checks and quick updates" in agents["mainAgent"]["instructions"]
     assert "immediate checks and quick updates" in agents["mainAgent"]["instructions"]
-    assert "Do not use GlassHive when the Connected Accounts handoff is the direct, sufficient path" in (
+    assert "Do not use GlassHive when a simple read-only Connected Accounts handoff is the direct, sufficient path" in (
         agents["mainAgent"]["instructions"]
     )
     assert "For immediate connected-account checks or quick updates" in (
@@ -135,7 +152,48 @@ def test_source_yaml_prompt_refs_resolve_to_runtime_strings() -> None:
     assert "Microsoft 365 owns" in librechat["mcpServers"]["ms-365"]["serverInstructions"]
 
 
-def test_main_agent_defers_glasshive_operation_schemas_but_keeps_recall_eager() -> None:
+def test_main_and_background_agent_execution_prompts_are_registry_owned() -> None:
+    source = yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8"))
+    registry = load_prompt_registry(PROMPT_ROOT)
+
+    assert source["mainAgent"]["instructions"] == {"promptRef": "main.conscious_agent"}
+
+    for agent in source["backgroundAgents"]:
+        instructions = agent.get("instructions")
+        assert isinstance(instructions, dict), (
+            f"{agent['name']} duplicates its execution prompt inline instead of using Prompt Workbench"
+        )
+        prompt_id = instructions.get("promptRef")
+        assert prompt_id in registry, f"{agent['name']} has no registered execution prompt"
+        assert registry[prompt_id].metadata["target"] == (
+            f"backgroundAgents.{agent['id']}.instructions"
+        )
+
+
+def test_emotional_resonance_is_an_eq_observer_not_a_fixed_demeanor() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("cortex.emotional_resonance.execution", registry)
+
+    assert "high-EQ" in prompt
+    assert "word choice" in prompt
+    assert "uncertainty" in prompt
+    assert "warm not clinical" not in prompt
+    assert "One gentle opening" not in prompt
+
+
+def test_main_memory_policy_uses_product_neutral_user_references() -> None:
+    registry = load_prompt_registry(PROMPT_ROOT)
+    prompt = render_prompt("main.memory_policy", registry)
+
+    assert "What the user said" in prompt
+    assert "Who the user is" in prompt
+    assert "What he said" not in prompt
+    assert "Who he is" not in prompt
+    assert "help him" not in prompt
+    assert "about him" not in prompt
+
+
+def test_main_agent_keeps_glasshive_gateway_eager_and_defers_bulk_operations() -> None:
     agents = yaml.safe_load(AGENTS_SOURCE.read_text(encoding="utf-8"))
     main_agent = agents["mainAgent"]
     options = main_agent.get("tool_options") or {}
@@ -146,8 +204,19 @@ def test_main_agent_defers_glasshive_operation_schemas_but_keeps_recall_eager() 
         and not tool.startswith("sys__server__")
     }
 
-    assert glasshive_operations
-    assert all(options.get(tool, {}).get("defer_loading") is True for tool in glasshive_operations)
+    eager_gateway = {
+        "workspace_launch_mcp_glasshive-workers-projects",
+        "workspace_status_mcp_glasshive-workers-projects",
+        "workspace_wait_mcp_glasshive-workers-projects",
+    }
+    deferred_operations = glasshive_operations - eager_gateway
+
+    assert eager_gateway <= glasshive_operations
+    assert deferred_operations
+    assert all(options.get(tool, {}).get("defer_loading") is not True for tool in eager_gateway)
+    assert all(
+        options.get(tool, {}).get("defer_loading") is True for tool in deferred_operations
+    )
     assert options.get("file_search", {}).get("defer_loading") is not True
     assert options.get("sys__server__sys_mcp_glasshive-workers-projects", {}).get(
         "defer_loading"
@@ -462,6 +531,11 @@ def test_glasshive_fastmcp_default_instructions_match_registry_prompt(monkeypatc
     ).strip()
 
     assert registry_instructions == server_instructions
+    assert "tool_search" in server_instructions
+    assert "query=<needed capability>" in server_instructions
+    assert "mcp_server=glasshive-workers-projects" in server_instructions
+    assert "same invocation" in server_instructions
+    assert "needed GlassHive capability is not currently available" in server_instructions
 
 
 def test_glasshive_prompt_reflects_disabled_host_workers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -552,6 +626,14 @@ def test_three_way_prompt_ref_resolution_matches_python_js_sync_and_runtime(
                     "primary_emotions": ["calm"],
                     "speed": {"min": "0.5", "max": "2.0"},
                     "volume": {"min": "0.5", "max": "2.0"},
+                    "syntax": {
+                        "emotion_state_change": '<emotion value="EMOTION"/>',
+                        "emotion_scoped": '<emotion value="EMOTION">TEXT</emotion>',
+                        "speed": '<speed ratio="RATIO"/>',
+                        "volume": '<volume ratio="RATIO"/>',
+                        "break": '<break time="DURATION"/>',
+                        "spell": "<spell>TEXT</spell>",
+                    },
                 }
             },
         },

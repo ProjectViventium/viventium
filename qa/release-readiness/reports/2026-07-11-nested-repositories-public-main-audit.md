@@ -16,9 +16,9 @@
 
 | Repository | Base reviewed | Publication boundary | Result |
 | --- | --- | --- | --- |
-| Parent Viventium | PR #63 merged to public `main` | Public product, installer, compiler, docs, QA, Prompt Workbench, Telegram | PASS/PARTIAL |
+| Parent Viventium | PR #63 merged to public `main` | Public product, installer, compiler, docs, QA, Prompt Workbench, Telegram | PARTIAL |
 | GlassHive | PR #36 merged to public `main` | Public worker runtime and tests | PASS |
-| LibreChat fork | PR #56 merged to public `main` | Public fork source, packages, prompts, scheduling, and tests | PASS/PARTIAL |
+| LibreChat fork | PR #56 merged to public `main` | Public fork source, packages, prompts, scheduling, and tests | PARTIAL |
 
 The audit treated tracked source, untracked candidate files, generated runtime output, component pins,
 and live installed behavior as separate delivery surfaces.

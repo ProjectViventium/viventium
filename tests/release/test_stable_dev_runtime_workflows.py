@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -43,6 +45,7 @@ def minimal_config() -> dict:
             "ports": {
                 "lc_api_port": 3180,
                 "lc_frontend_port": 3190,
+                "sandpack_bundler_port": 3191,
                 "playground_port": 3300,
                 "voice_gateway_health_port": 8301,
                 "rag_api_port": 8110,
@@ -53,9 +56,17 @@ def minimal_config() -> dict:
             "auth": {"allow_registration": True, "allow_password_reset": False},
         },
         "llm": {
-            "activation": {"provider": "groq", "auth_mode": "api_key", "secret_ref": "keychain://viventium/groq_api_key"},
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-groq-test-key",
+            },
             "primary": {"provider": "openai", "auth_mode": "connected_account"},
-            "secondary": {"provider": "anthropic", "auth_mode": "api_key", "secret_ref": "keychain://viventium/anthropic_api_key"},
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-anthropic-test-key",
+            },
         },
         "voice": {"mode": "local", "stt_provider": "whisper_local", "tts_provider": "browser"},
         "integrations": {
@@ -120,6 +131,7 @@ def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) ->
     ports = dev_config["runtime"]["ports"]
     assert ports["lc_api_port"] == 4180
     assert ports["lc_frontend_port"] == 4190
+    assert ports["sandpack_bundler_port"] == 4191
     assert ports["playground_port"] == 4300
     assert ports["voice_gateway_health_port"] == 9301
     assert ports["scheduling_mcp_port"] == 8210
@@ -132,6 +144,36 @@ def test_dev_env_offsets_app_facing_and_runtime_sidecar_ports(tmp_path: Path) ->
         "google_workspace_mcp",
         "ms365_mcp",
     ]
+
+
+def test_dev_env_offsets_default_sandpack_port_for_older_configs(tmp_path: Path) -> None:
+    app_support = tmp_path / "App Support" / "Viventium"
+    config = minimal_config()
+    config["runtime"]["ports"].pop("sandpack_bundler_port")
+    config_path = app_support / "config.yaml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(DEV_RUNTIME),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config_path),
+            "create",
+            "dev",
+        ],
+        check=True,
+    )
+
+    dev_config = yaml.safe_load(
+        (app_support / "dev-envs" / "dev" / "config.yaml").read_text(encoding="utf-8")
+    )
+    assert dev_config["runtime"]["ports"]["sandpack_bundler_port"] == 4191
 
 
 def test_dev_env_shared_singletons_compile_without_duplicate_start_flags(tmp_path: Path) -> None:
@@ -831,7 +873,7 @@ def test_upgrade_check_uses_helper_package_hash_contract(tmp_path: Path) -> None
             "--no-fetch",
             "--json",
         ],
-        check=True,
+        check=False,
         text=True,
         stdout=subprocess.PIPE,
     )
@@ -874,13 +916,737 @@ def test_upgrade_check_blocks_on_helper_rebuild_need(tmp_path: Path) -> None:
             "--no-fetch",
             "--json",
         ],
-        check=True,
+        check=False,
         text=True,
         stdout=subprocess.PIPE,
     )
     payload = json.loads(proc.stdout)
+    assert proc.returncode == 3
     assert payload["helper_needs_rebuild"] is True
     assert "helper_rebuild_needed" in payload["blockers"]
+
+
+def test_upgrade_check_blocks_untracked_parent_work_before_any_mutation(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "components.lock.json").write_text('{"components": []}\n', encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "add", "components.lock.json"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "parent"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    (repo / "untracked-user-work.txt").write_text("preserve me\n", encoding="utf-8")
+    app_support = tmp_path / "absent-app-support"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--no-fetch",
+            "--json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    payload = json.loads(proc.stdout)
+
+    assert proc.returncode == 3
+    assert payload["dirty_checkout"] is True
+    assert "dirty_checkout" in payload["blockers"]
+    assert not app_support.exists()
+
+
+def test_upgrade_check_ignores_directory_named_like_stack_pid_marker(tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("viventium_upgrade_check_stack_marker", UPGRADE_CHECK)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    app_support = tmp_path / "app-support"
+    (app_support / "state" / "runtime" / "isolated" / "detached-launch.pgid").mkdir(parents=True)
+
+    assert module.stack_running(app_support) is False
+
+
+def test_upgrade_check_refuses_to_assume_origin_when_branch_has_no_configured_remote(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    (repo / "tracked.txt").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "fixture"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=repo, check=True)
+    subprocess.run(["git", "push", "origin", "HEAD:refs/heads/master"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    spec = importlib.util.spec_from_file_location("viventium_upgrade_check_remote", UPGRADE_CHECK)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    branch = module.current_branch(repo)
+
+    result = module.observe_remote(repo, branch)
+
+    assert result["error"] == "remote_unavailable"
+    assert result["upstream"] == "<configured-upstream>"
+
+
+def test_upgrade_check_fails_closed_on_dirty_pinned_component(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    component = repo / "component"
+    component.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=component, check=True, stdout=subprocess.PIPE)
+    tracked = component / "tracked.txt"
+    tracked.write_text("pinned\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=component, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "pinned"],
+        cwd=component,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    pinned_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=component,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:ProjectViventium/test-component.git"],
+        cwd=component,
+        check=True,
+    )
+    (repo / "components.lock.json").write_text(
+        json.dumps(
+            {
+                "components": [
+                    {
+                        "name": "LibreChat",
+                        "origin": "https://github.com/ProjectViventium/test-component.git",
+                        "path": "component",
+                        "ref": pinned_commit,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "add", "components.lock.json"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "parent"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    tracked.write_text("local edit\n", encoding="utf-8")
+    (component / "local-note.txt").write_text("untracked local work\n", encoding="utf-8")
+    app_support = tmp_path / "App Support" / "Viventium"
+    app_support.mkdir(parents=True)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--no-fetch",
+            "--json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert proc.returncode == 3
+    assert payload["ready_to_upgrade"] is False
+    assert "component_lock_drift" in payload["blockers"]
+    assert payload["component_lock_drift"] == [
+        {
+            "actual": pinned_commit,
+            "expected": pinned_commit,
+            "name": "LibreChat",
+            "path": "component",
+            "status": "dirty_worktree",
+        }
+    ]
+
+
+def test_upgrade_check_reports_clean_component_head_mismatch_as_refreshable(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    component = repo / "component"
+    component.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=component, check=True, stdout=subprocess.PIPE)
+    tracked = component / "tracked.txt"
+    tracked.write_text("pinned\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=component, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "pinned"],
+        cwd=component,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    pinned_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=component,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    tracked.write_text("new commit\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=component, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "ahead"],
+        cwd=component,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    actual_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=component,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:ProjectViventium/test-component.git"],
+        cwd=component,
+        check=True,
+    )
+    (repo / "components.lock.json").write_text(
+        json.dumps(
+            {
+                "components": [
+                    {
+                        "name": "LibreChat",
+                        "origin": "https://github.com/ProjectViventium/test-component.git",
+                        "path": "component",
+                        "ref": pinned_commit,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "add", "components.lock.json"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "parent"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    app_support = tmp_path / "App Support" / "Viventium"
+    app_support.mkdir(parents=True)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--no-fetch",
+            "--json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert proc.returncode == 0
+    assert payload["ready_to_upgrade"] is True
+    assert payload["update_available"] is True
+    assert payload["component_lock_drift"] == []
+    assert payload["component_refresh_required"] == [
+        {
+            "actual": actual_commit,
+            "expected": pinned_commit,
+            "name": "LibreChat",
+            "path": "component",
+            "status": "head_mismatch",
+        }
+    ]
+
+
+def test_upgrade_check_blocks_unrelated_component_origin_instead_of_refreshing(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    component = repo / "component"
+    component.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=component, check=True, stdout=subprocess.PIPE)
+    (component / "tracked.txt").write_text("local checkout\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=component, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "local"],
+        cwd=component,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    actual_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=component,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    unrelated_origin = tmp_path / "unrelated.git"
+    subprocess.run(["git", "init", "--bare", str(unrelated_origin)], check=True, stdout=subprocess.PIPE)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(unrelated_origin)],
+        cwd=component,
+        check=True,
+    )
+    expected_origin = tmp_path / "expected.git"
+    subprocess.run(["git", "init", "--bare", str(expected_origin)], check=True, stdout=subprocess.PIPE)
+    expected_commit = "1" * 40
+    (repo / "components.lock.json").write_text(
+        json.dumps(
+            {
+                "components": [
+                    {
+                        "name": "LibreChat",
+                        "origin": str(expected_origin),
+                        "path": "component",
+                        "ref": expected_commit,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    spec = importlib.util.spec_from_file_location(
+        "viventium_upgrade_check_unrelated_component_origin",
+        UPGRADE_CHECK,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    blockers, refresh_required = module.component_alignment(repo)
+
+    assert refresh_required == []
+    assert blockers == [
+        {
+            "actual": actual_commit,
+            "expected": expected_commit,
+            "name": "LibreChat",
+            "path": "component",
+            "status": "origin_mismatch",
+        }
+    ]
+
+
+def test_upgrade_check_clean_alignment_exits_successfully(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    (repo / "components.lock.json").write_text('{"components": []}\n', encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "clean"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    app_support = tmp_path / "App Support" / "Viventium"
+    app_support.mkdir(parents=True)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--no-fetch",
+            "--json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert proc.returncode == 0
+    assert payload["ready_to_upgrade"] is True
+    assert payload["blockers"] == []
+
+
+def test_upgrade_check_observes_remote_without_mutating_git_metadata(tmp_path: Path) -> None:
+    origin = tmp_path / "origin.git"
+    seed = tmp_path / "seed"
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "--bare", str(origin)], check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "clone", str(origin), str(seed)], check=True, stdout=subprocess.PIPE)
+    (seed / "components.lock.json").write_text('{"components": []}\n', encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=seed, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "initial"],
+        cwd=seed,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    subprocess.run(["git", "push", "-u", "origin", "HEAD"], cwd=seed, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "clone", str(origin), str(repo)], check=True, stdout=subprocess.PIPE)
+    (seed / "remote-change.txt").write_text("new release\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=seed, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "remote update"],
+        cwd=seed,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    subprocess.run(["git", "push"], cwd=seed, check=True, stdout=subprocess.PIPE)
+    fetch_head = repo / ".git" / "FETCH_HEAD"
+    fetch_head_before = fetch_head.read_bytes() if fetch_head.exists() else None
+    app_support = tmp_path / "does-not-exist" / "Viventium"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert proc.returncode == 0
+    assert payload["update_available"] is True
+    assert payload["remote_history_complete"] is False
+    assert (fetch_head.read_bytes() if fetch_head.exists() else None) == fetch_head_before
+    assert not app_support.exists()
+
+
+def test_upgrade_check_does_not_block_on_unselected_dirty_component(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    component = repo / "glasshive"
+    component.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=component, check=True, stdout=subprocess.PIPE)
+    tracked = component / "tracked.txt"
+    tracked.write_text("pinned\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=component, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "pinned"],
+        cwd=component,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    pinned_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=component,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    tracked.write_text("private local work\n", encoding="utf-8")
+    (repo / "components.lock.json").write_text(
+        json.dumps(
+            {
+                "components": [
+                    {
+                        "name": "LibreChat",
+                        "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
+                        "path": "librechat",
+                        "ref": "1" * 40,
+                    },
+                    {
+                        "name": "GlassHive",
+                        "path": "glasshive",
+                        "ref": pinned_commit,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = repo / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "voice": {"mode": "disabled"},
+                "runtime": {"playground_variant": "modern"},
+                "integrations": {"glasshive": {"enabled": False}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "add", "components.lock.json", "config.yaml"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "parent"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    app_support = tmp_path / "App Support" / "Viventium"
+    app_support.mkdir(parents=True)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "--no-fetch",
+            "--json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert proc.returncode == 0
+    assert payload["component_lock_drift"] == []
+    assert [item["name"] for item in payload["component_refresh_required"]] == ["LibreChat"]
+
+    stock_python_proc = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(app_support),
+            "--config-file",
+            str(config),
+            "--no-fetch",
+            "--json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+
+    stock_python_payload = json.loads(stock_python_proc.stdout)
+    assert stock_python_proc.returncode == 0
+    assert stock_python_payload["component_lock_drift"] == []
+    assert [item["name"] for item in stock_python_payload["component_refresh_required"]] == [
+        "LibreChat"
+    ]
+
+
+def test_upgrade_check_component_selection_parser_handles_canonical_yaml_without_pyyaml(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+voice:
+  mode: 'O''Brien #1'
+runtime:
+  playground_variant: "modern#stable" # real comment
+integrations:
+  glasshive:
+    enabled: false
+  google_workspace:
+    enabled: true
+  ms365:
+    enabled: false
+  openclaw:
+    enabled: false
+  skyvern:
+    enabled: false
+unrelated:
+  owner_note: 'O''Brien # private syntax exercise'
+""".lstrip(),
+        encoding="utf-8",
+    )
+    spec = importlib.util.spec_from_file_location(
+        "viventium_upgrade_check_selection_parser",
+        UPGRADE_CHECK,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.load_component_selection_config(config) == {
+        "voice": {"mode": "O'Brien #1"},
+        "runtime": {"playground_variant": "modern#stable"},
+        "integrations": {
+            "glasshive": {"enabled": False},
+            "google_workspace": {"enabled": True},
+            "ms365": {"enabled": False},
+            "openclaw": {"enabled": False},
+            "skyvern": {"enabled": False},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "integrations:\n  glasshive:\n    enabled: false\n    enabled: true\n",
+        "integrations:\n  glasshive:\n    enabled: [false]\n",
+        "runtime:\n\tplayground_variant: modern\n",
+        "voice:\n  mode: 'unterminated\n",
+    ],
+)
+def test_upgrade_check_component_selection_parser_fails_closed(
+    tmp_path: Path,
+    body: str,
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(body, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "viventium_upgrade_check_selection_parser_invalid",
+        UPGRADE_CHECK,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with pytest.raises(ValueError):
+        module.load_component_selection_config(config)
+
+
+def test_helper_preserves_blocker_details_from_nonzero_upgrade_check() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+    check_section = source[source.index("    func checkForUpdates() {") : source.index("    func startHealWorkflow() {")]
+
+    assert "summary.statusReadable" in check_section
+    assert "result.exitStatus != 0 && !summary.statusReadable" in check_section
+    assert 'blockers.contains("fetch_failed")' in source
+
+
+def test_upgrade_check_rejects_unsafe_component_paths_and_redacts_local_details(tmp_path: Path) -> None:
+    repo = tmp_path / "private-repo-name"
+    repo.mkdir()
+    (repo / "components.lock.json").write_text(
+        json.dumps(
+            {
+                "components": [
+                    {
+                        "name": "LibreChat",
+                        "path": "../outside",
+                        "ref": "1" * 40,
+                    },
+                    {
+                        "name": "agent-starter-react",
+                        "path": "missing",
+                        "ref": "main",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "fixture"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE
+    ).stdout.strip()
+    subprocess.run(["git", "config", f"branch.{branch}.remote", "missing-secret-remote"], cwd=repo, check=True)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(UPGRADE_CHECK),
+            "--repo-root",
+            str(repo),
+            "--app-support-dir",
+            str(tmp_path / "absent"),
+            "--json",
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert proc.returncode == 2
+    assert payload["schema_version"] == 1
+    assert payload["repo_root"] == "<repo>"
+    assert payload["fetch_error"] == "remote_unavailable"
+    assert str(tmp_path) not in proc.stdout
+    assert "missing-secret-remote" not in proc.stdout
+    assert "../outside" not in proc.stdout
+    statuses = {item["status"] for item in payload["component_lock_drift"]}
+    assert {"unsafe_path", "invalid_ref"}.issubset(statuses)
+
+
+def test_upgrade_check_requires_prebuilt_binary_and_digest_for_helper_alignment(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    helper = repo / "apps" / "macos" / "ViventiumHelper"
+    (helper / "Sources" / "ViventiumHelper" / "Resources").mkdir(parents=True)
+    (helper / "prebuilt").mkdir(parents=True)
+    (helper / "Package.swift").write_text("package\n", encoding="utf-8")
+    (helper / "Sources" / "ViventiumHelper" / "ViventiumHelperApp.swift").write_text("source\n", encoding="utf-8")
+    (helper / "Sources" / "ViventiumHelper" / "Resources" / "Info.plist").write_text("plist\n", encoding="utf-8")
+    digest = hashlib.sha256()
+    for relative in (
+        Path("Package.swift"),
+        Path("Sources/ViventiumHelper/ViventiumHelperApp.swift"),
+        Path("Sources/ViventiumHelper/Resources/Info.plist"),
+    ):
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((helper / relative).read_bytes())
+        digest.update(b"\0")
+    (helper / "prebuilt" / "source.sha256").write_text(digest.hexdigest() + "\n", encoding="utf-8")
+
+    spec = importlib.util.spec_from_file_location("viventium_upgrade_check", UPGRADE_CHECK)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.helper_needs_rebuild(repo) is True
+
+
+def test_upgrade_check_git_timeout_returns_only_a_generic_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = importlib.util.spec_from_file_location("viventium_upgrade_check_timeout", UPGRADE_CHECK)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def raise_timeout(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd=["git", "private-remote"], timeout=15)
+
+    monkeypatch.setattr(module.subprocess, "run", raise_timeout)
+    result = module.run_git(tmp_path, "status")
+    assert result.returncode == 124
+    assert result.stdout == ""
+    assert result.stderr == "git_command_failed"
+    assert "private-remote" not in result.stderr
 
 
 def test_password_reset_link_script_closes_mongo_connection() -> None:
@@ -1032,10 +1798,14 @@ def test_helper_keeps_workflow_and_maintenance_actions_under_advanced_menu() -> 
     for top_level_label in [
         'Button("Open")',
         "Button(self.controller.actionLabel)",
-        "Button(self.controller.statusLabel)",
+        "Text(self.controller.statusLabel)",
         'Menu("Advanced")',
     ]:
         assert top_level_label in menu_body
+
+    # Status is informational, so it must not masquerade as a disabled button to
+    # keyboard or assistive-technology users.
+    assert "Button(self.controller.statusLabel)" not in menu_body
 
     for advanced_only in [
         'Button("Check for Updates...")',

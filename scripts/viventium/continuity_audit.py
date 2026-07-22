@@ -8,6 +8,7 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -455,7 +456,26 @@ def emit_json(payload: dict[str, Any], output_path: str | None) -> int:
     if output_path:
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(rendered, encoding="utf-8")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            dir=output.parent,
+            text=True,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(rendered)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.chmod(0o600)
+            os.replace(temporary, output)
+            output.chmod(0o600)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
     else:
         sys.stdout.write(rendered)
     return 0

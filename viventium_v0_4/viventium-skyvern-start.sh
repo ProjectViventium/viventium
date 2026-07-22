@@ -4,7 +4,7 @@
 # Skyvern Browser Agent: AI-powered browser automation with 85%+ success rate
 # Added: 2026-01-28
 #
-# Documentation: docs/requirements_and_learnings/19_Browser_Agent_Skyvern.md
+# Documentation: docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md
 # Source: https://docs.skyvern.com
 #
 # Purpose:
@@ -49,8 +49,8 @@ set -euo pipefail
 if [[ -d "/opt/homebrew/bin" ]]; then
   export PATH="/opt/homebrew/bin:${PATH}"
 fi
-if [[ -d "/opt/homebrew/opt/node@20/bin" ]]; then
-  export PATH="/opt/homebrew/opt/node@20/bin:${PATH}"
+if [[ -d "/opt/homebrew/opt/node@24/bin" ]]; then
+  export PATH="/opt/homebrew/opt/node@24/bin:${PATH}"
 fi
 
 # Colors

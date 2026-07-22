@@ -108,3 +108,23 @@ being misreported as product health:
 
 1. The configured fallback credential is rejected by its provider and needs operator replacement;
    status/error wording is now honest and no credential was fabricated.
+
+## 2026-07-13 Final Runtime Follow-Up
+
+The prior external auth limit is resolved through the supported reconnect flow. This follow-up also
+closed four gaps found by running the feature again rather than treating the earlier report as the
+finish line:
+
+| Check | Result |
+| --- | --- |
+| Active Workbench ownership | PASS: the stack now reuses only same-checkout state, reclaims only a positively identified stale Workbench on the canonical port, and leaves unrelated listeners untouched. |
+| Recent Runs UI | PASS: a React Query key/precedence collision was fixed; two real completed nightly runs appeared with Sol/xHigh, Memory Off, evidence snapshot, artifact quality, and persisted after reload. |
+| Current real nightly output | PASS: latest artifacts passed claim/source grounding and paired JSON/markdown validation; no memory proposals were written. Private topics and source material remain outside this report. |
+| All scheduled agent automations | PASS: supported config now owns an authenticated `openai` / `gpt-5.6-sol` / `xhigh` tuple without changing ordinary chat. A real scheduled synthetic control used that exact route with no fallback. |
+| Connected-account truth | PASS: the false-green condition was traced to a present but unreadable encrypted row. Status now requires decryptability; early provider 401 can refresh/replay once; supported reconnect restored the live route. |
+| QA residue | PASS: exact synthetic retry-loop rows were removed after evidence capture; the final scoped count was zero. |
+| Final independent review follow-up | PASS: an unreferenced duplicate Scheduler POST helper was removed; ordinary-chat no-op, policy-absent dispatch, and second-401 stop guards were added. The newer roughly five-minute runs are additional post-report runs, not the earlier 3m16s run summarized above. |
+
+The final implementation remains structural: no prompt/name/user keyword routing, no generated App
+Support edit as a product fix, no private data in public fixtures, and no nightly insight injection
+into ordinary chat.

@@ -53,6 +53,18 @@ For the manager-readable handbook, start with:
   write-capable path is available, the user-visible answer must say so plainly.
 - Background agents must receive the same user memory context as the main agent when memories are
   enabled, so insights do not regress to fresh-chat behavior.
+- Background agents are specialist evidence/insight producers, not alternate Viventium personas.
+  They do not receive or embody `<viventium_feeling_state>` under either Feelings agent scope. Their
+  observations stay epistemically independent; the conscious main/Phase-B speaking path decides how
+  to synthesize them while embodying the request-pinned state.
+- Emotional Resonance is the high-EQ observation lens: it reads consequential indirect evidence in
+  word choice, cadence, omissions, contradictions, style shifts, and relationship dynamics; it
+  distinguishes observations from inference and uncertainty. It is not a generic warmth,
+  gentleness, comfort, or emotional-support style pass, and it must not claim access to facial or
+  microexpression evidence that was not provided.
+- Red Team remains independent of Feelings and of generic care behavior. Its mandate is adversarial
+  evidence, viability, assumption, and failure-mode analysis; current affect must never soften or
+  redirect that specialist judgment.
 - Output is merged as background insights and can influence a later voiced follow-up in playground
   mode, but raw insight text must remain background-only.
 - Follow-up realizations should still surface shortly after the original request within a
@@ -110,10 +122,17 @@ Model inventory rule:
   `groq / qwen/qwen3.6-27b` as the primary Phase A detector. Qwen thinking must be disabled with
   `reasoning_effort: none`, its reasoning trace must stay hidden, and JSON-object mode plus a fixed
   seed must keep the classifier fast and machine-readable. It must
-  carry provider fallbacks: `xai / grok-4.20-non-reasoning` first, then `openai / gpt-5.4`, then
-  `anthropic / claude-haiku-4-5`. This is a reliability contract for provider outages such as
+  carry provider fallbacks: `xai / grok-4.20-non-reasoning` first, then
+  `anthropic / claude-haiku-4-5`, then `openai / gpt-5.4`. This is a reliability contract for
+  provider outages such as
   activation-provider 403/401/429 responses; it must not change activation intent semantics, add
   runtime keyword heuristics, or silently promote fallback providers into the default fast path.
+- Agent Builder reads activation choices from the runtime model catalog and always includes the
+  persisted provider/model route as a visible configured option. A temporary model-discovery gap
+  therefore cannot make a valid saved route look unset. New attached cortices inherit the most common
+  complete route already configured on that main agent, including its ordered fallbacks, and only
+  fall back to the first discovered runtime model when no activation route exists yet. The built-in
+  runtime env-normalization map must cover every built-in cortex, including Viventium User Help.
 - Phase A OpenAI activation fallback must apply the same reasoning-model sampling guard as Phase B:
   Viventium's configured `gpt-5.4` activation run must not receive `temperature`, `topP`, penalties,
   `n`, or logprob sampling controls.
@@ -463,10 +482,17 @@ Use this order so the fix stays surgical:
 - Phase A fallback reliability must be bounded inside the same activation-detection wait budget.
   Groq remains the first attempted classifier, but a slow primary attempt must not consume the
   entire turn when configured fallbacks are available. Runtime should use per-attempt activation
-  timeouts so xAI/OpenAI/Anthropic fallbacks can rescue provider reachability failures without
-  changing activation semantics. The per-attempt deadline must be enforced independently of the
+  timeouts so the shipped `xAI -> Anthropic Haiku -> OpenAI GPT-5.4` fallback order can rescue
+  provider reachability failures without changing activation semantics. The per-attempt deadline
+  must be enforced independently of the
   provider client's `AbortSignal` behavior; a provider promise that ignores cancellation must still
   yield to the next configured fallback.
+- A provider response that completes but is unparseable or schema-invalid as an activation decision
+  is provider-invalid-response evidence, not a negative activation decision. Runtime must require a
+  boolean activation field and numeric confidence in `[0,1]`, record the typed failure, continue
+  through the configured fallback chain while budget remains, and report terminal exhaustion as
+  provider unavailability. It must never coerce malformed prose, missing fields, string booleans,
+  or out-of-range confidence into a decision.
 - Source-owned activation policy prompts may be inline strings or registry `promptRef` objects.
   The nested LibreChat config schema must accept both, and runtime must resolve the object through
   the canonical prompt registry rather than coercing it to `[object Object]` or requiring validation
@@ -481,7 +507,7 @@ Use this order so the fix stays surgical:
   an environment/provider-reachability failure rather than activation-reasoning evidence. The
   current supported baseline is `groq / qwen/qwen3.6-27b`; the July 2026 change is instead driven
   by Scout's announced shutdown and a same-runtime classifier benchmark.
-  xAI, OpenAI, and Anthropic remain true fallbacks or explicit user-selected overrides. Browser
+  xAI, Anthropic, and OpenAI remain true fallbacks or explicit user-selected overrides. Browser
   QA for activation must record whether VPN/provider reachability was healthy, prove named
   cards are visible, persist after reload, and store successful terminal insights.
 - Activation and execution must be diagnosed separately. A productivity cortex can activate
@@ -562,10 +588,31 @@ Use this order so the fix stays surgical:
   precision, zero semantic false positives/negatives, and zero required/forbidden semantic
   inconsistencies. Five non-required decisions were honestly unavailable after exhausting the
   shared 2-second activation budget, so required recall remained `100%` while overall classifier
-  completion was `99.64%` and release availability remains `PARTIAL`; latency was
+  completion was `99.64%` and availability for that historical run was `PARTIAL`; latency was
   `287/1,457/1,775 ms` p50/p95/max. Four optional allowed-activation overlaps varied across the two
-  repetitions and are reported separately from semantic errors. Direct Qwen and xAI probes for
-  every discovered semantic leak passed after the prompt-boundary repairs. GPT-OSS 120B was retained only as comparison evidence:
+  repetitions and are reported separately from semantic errors. That two-pass run remains useful
+  tail-load history, but it is no longer the current availability verdict. After per-attempt and
+  late-recovery hardening, the 2026-07-14 final exact-runtime gate completed and passed all
+  `63 × 11 = 693` decisions with zero unavailable rows, zero semantic errors, 100% required recall,
+  and 100% activation precision. It recorded 201 primary/provider-attempt timeout-or-error events
+  that were recovered through the configured fallback path, with `735/2,206/2,730 ms` p50/p95/max
+  end-to-end classifier latency. A real Telegram text turn independently showed two slow Qwen
+  detectors timing out at the 1,600 ms attempt boundary and xAI returning both valid negative
+  decisions; the late pass completed all 11 targets without extending the conscious-answer wait.
+  Review-driven regression hardening then made completed-but-unparseable or schema-invalid
+  classifier output a typed `provider_invalid_response`: it retries the same configured fallback
+  chain and can no longer be laundered into a false negative or truthy string coercion.
+  On 2026-07-15, the bank was extended to 67 cases with indirect emotional-subtext positives,
+  explicit-joy negatives, and stricter sibling boundaries for Background Analysis, Pattern
+  Recognition, Confirmation Bias, and Emotional Resonance. The final exact-runtime pass completed
+  all `67 × 11 = 737` decisions with zero false positives, false negatives, inconsistent decisions,
+  or unavailable rows; p50/p95/max end-to-end latency was `551/779/1,319 ms`. All 737 configured
+  Groq/Qwen primary attempts were rejected by the provider during this run and every decision was
+  recovered by the existing xAI fallback. Therefore the semantic/fallback gate is `PASS`, while
+  primary-provider health is `DEGRADED`; this evidence does not justify silently promoting the
+  fallback or changing activation semantics.
+  Direct Qwen and xAI probes for every discovered semantic leak passed after the prompt-boundary
+  repairs. GPT-OSS 120B was retained only as comparison evidence:
   even after simplifying its
   schema it completed `191/220`, passed `186/220`, and produced 28 provider-side JSON validation
   failures, so it is not the primary.
@@ -620,11 +667,23 @@ text mode with audio delivery after the text answer, not voice-call mode.
 `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS` (default 2000 ms) is the **shared fallback** budget; a mode uses
 it only when its own `*_PHASE_A_AWAIT_MS` is unset. `VIVENTIUM_CORTEX_SPECULATIVE_PARALLEL_DETECT` is
 retained only as a **back-compat alias** for `VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC`.
-`VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS` defaults to **4000 ms** and owns the existing non-blocking
+`VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS` defaults to **6000 ms** and owns the existing non-blocking
 recovery pass whenever the fast window has at least one detector timeout, including partial results.
 It does not extend the conscious/main-answer wait. The recovery pass reuses the same activation
 prompts, provider order, direct-action ownership gates, cards, Phase B execution, and persistence
 pipeline, deduplicates fast-pass activations, and executes only newly recovered cortices.
+
+Provider attempts inside those total windows are independently bounded. The compiler defaults
+`VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS` to **1600 ms** and
+`VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS` to **2500 ms**; operators can set the public
+`runtime.background_activation.primary_attempt_timeout_ms` and
+`runtime.background_activation.fallback_attempt_timeout_ms` fields. The total text, voice, or late
+window still wins, so these knobs improve fallback completion without extending a blocking user
+path. If one configured provider fails to initialize without a usable HTTP status, activation
+continues to the next configured fallback; an unavailable middle route must not strand later routes.
+The shipped order is Qwen/Groq primary, then xAI, Anthropic Haiku, and OpenAI. This is structured
+source configuration rather than runtime provider-name branching: it gives the fastest recovery
+routes the first attempt while retaining a broad final fallback, and remains user-configurable.
 
 ### Async OFF — blocking detection with early-exit
 1. Activation Detection runs **first**, blocking the Main Agent answer, up to the mode budget.
@@ -633,7 +692,7 @@ pipeline, deduplicates fast-pass activations, and executes only newly recovered 
    via the notice-mode knob.)
 3. The Main Agent produces **Phase A** with the activation result injected into its instructions.
 4. If the fast pass returns partial or zero activations after a detector timeout, the non-blocking
-   4000 ms late pass retries the same classifier/fallback contract; any new valid activation surfaces through
+   6000 ms late pass retries the same classifier/fallback contract; any new valid activation surfaces through
    cards and **Phase B** without delaying the Main Agent answer.
 
 ### Async ON — speculative parallel with "nevermind" cancel
@@ -754,8 +813,10 @@ LLM routes, where a mid-audio "nevermind" would feel broken.
 - Main Agent text: `gpt-5.6-sol` with `reasoning_effort: medium` and Responses API. Background
   execution uses the Sol/Terra effort map above. Every text route falls back to
   `anthropic / claude-opus-4-8` when that auth path is available.
-- Voice LLM remains `grok-4.3` with `reasoning_effort: none`. Its latency-preserving voice fallback
-  is `gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does not replace the
-  explicit voice route.
+- Voice LLM remains `xai / grok-4.3` with `reasoning_effort: none`. Its latency-preserving voice
+  fallback is `openAI / gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does
+  not replace the explicit voice route. The dedicated route must pass the same recall,
+  tool-ownership, audible-delivery, and persistence gates as the main route. The TTS provider is
+  selected separately and does not determine the Voice LLM.
 - See `qa/modern-playground-voice/reports/2026-05-29-voice-chat-latency-rca-and-fixes.md` for the
   full evidence-based RCA (memory/recall/tool-mass/model-swap disproven as latency causes).

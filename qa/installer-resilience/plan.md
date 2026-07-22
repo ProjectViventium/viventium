@@ -2,6 +2,12 @@
 
 Date: 2026-04-13
 
+> Historical plan. Its Recall-default assumptions and release gates have been superseded by the
+> [living evidence audit](report.md),
+> [current case catalog](cases.md), and
+> [current remediation plan](express-installer-remediation-plan.md). Retain the content below for
+> lifecycle context; do not use it as the current Easy Install acceptance contract.
+
 ## Goal
 
 Make a fresh public install on a new Mac feel aligned, current, and low-friction without requiring
@@ -52,7 +58,7 @@ owner-machine leftovers, manual Mongo surgery, or a follow-up AI debugging sessi
    - base config generation
    - preset normalization
    - Easy Install
-   - Advanced setup
+   - Custom Settings Install
 2. Preserve explicit user opt-out when a user disables recall deliberately.
 3. Add clean-machine QA for both:
    - Docker-capable path -> recall default on

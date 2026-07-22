@@ -1,7 +1,10 @@
 # Voice Chat LLM Override
 
 ## Overview
-Voice calls (LiveKit Playground) can use a different LLM model than text chat. For voice, latency matters more than reasoning depth — users can assign a model such as xAI `grok-4.3` for voice while keeping a different model such as `claude-opus-4-8` for text.
+Voice calls (LiveKit Playground) can use a different LLM model than text chat. Latency matters for
+voice, but a faster route that loses intelligence, recall, relevance, or alignment is a regression.
+Users may assign a dedicated voice model only when it meets the same behavioral acceptance gates as
+the main route.
 
 ## Requirements
 1. Agent entity gains `voice_llm_model` (string|null), `voice_llm_provider` (string|null), and a
@@ -20,14 +23,22 @@ Voice calls (LiveKit Playground) can use a different LLM model than text chat. F
 9. Modern playground disclosures must resolve the effective assistant route from the actual call
    agent and show the concrete provider/model that will answer the call.
 10. Shipped source-of-truth voice routes must seed provider-specific voice parameters explicitly so
-    fresh installs and syncs preserve low-latency behavior without relying on inheritance from the
-    primary model bag. The current local main-agent voice route is `xai / grok-4.3` with
-    `voice_llm_model_parameters.reasoning_effort: "none"`. Anthropic voice routes must instead use
-    a launch-ready Anthropic model exposed in the runtime inventory and set
-    `voice_llm_model_parameters.thinking: false`.
+    fresh installs and syncs preserve the intended behavior without relying on the primary model
+    bag. Source-owned examples and fixtures may use provider-specific routes, but public docs must
+    not infer a user's current provider or saved fallback from local state. Every dedicated route
+    must pass the same recall/tool-ownership and user-grade voice gates as the main route.
 11. Voice model parameters must be normalized to the selected voice provider before the runtime call.
     A provider override must not leak incompatible thinking/reasoning fields from the primary model
     bag into the voice request.
+12. The Agent Builder optional-model panel must clear the prior provider's parameter bag on a real
+    provider change while leaving initial hydration untouched. A mounted panel may briefly observe
+    an empty provider before React Hook Form restores persisted agent values; that empty-to-value
+    transition is hydration, not a user provider change. This prevents both an OpenAI Responses
+    selection from contaminating a subsequently selected xAI Chat Completions route and a persisted
+    route from appearing unset after asynchronous form reset. Because the agent selector remains
+    available while an optional-model panel is open, each optional panel must also be scoped to the
+    form's agent identity. Loading a different agent resets provider-history state; changing the
+    provider within the same agent still clears the old provider's parameters.
 
 ## Activation Conditions (all three required)
 | Condition | Source | Check |

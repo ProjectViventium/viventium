@@ -200,6 +200,7 @@ class EvalRunRequest(BaseModel):
     family: str | None = None
     surface: str | None = None
     promptId: str | None = None
+    caseIds: list[str] = Field(default_factory=list, max_length=100)
 
 
 class EvalCaseDraftRequest(BaseModel):
@@ -656,6 +657,7 @@ def eval_run(
             family=request.family,
             surface=request.surface,
             prompt_id=request.promptId,
+            case_ids=request.caseIds,
         )
     except drafts.ActiveDraftBlockError as exc:
         raise HTTPException(

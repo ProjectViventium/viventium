@@ -39,10 +39,14 @@
 - Surfaces: CLI, helper
 - Preconditions: git checkout with upstream
 - Steps: run `bin/viventium upgrade --check --json`
-- Expected Result: JSON reports update status and blockers without pull, compile, helper install, or restart
-- Forbidden Result: working tree, generated runtime files, helper bundle, or running stack changes
+- Expected Result: JSON reports update status and blockers without fetch/pull, Git metadata writes,
+  App Support creation, compile, helper install, or restart; exit `0`, `2`, or `3` matches the
+  structured result
+- Forbidden Result: `FETCH_HEAD`, working tree, App Support, generated runtime files, helper bundle,
+  or running stack changes
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-14 local implementation QA - passed by CLI smoke and native helper modal QA
+- Last Run: 2026-07-19 automated local-remote and no-App-Support regressions - passed; post-change
+  headed helper modal rerun remains open
 
 ## SDR-005: Helper Update Modal Shows Blocked State Clearly
 
@@ -53,7 +57,8 @@
 - Expected Result: modal reports update is blocked with a clear dirty-checkout reason and does not install or restart
 - Forbidden Result: silent pull/install, ambiguous error, or helper quits while checking
 - Evidence: dated report under `reports/`
-- Last Run: 2026-05-14 local implementation QA - passed by native helper modal QA
+- Last Run: 2026-07-19 source/prebuilt and parser regressions - passed; the last headed native modal
+  evidence is 2026-05-14 and must be rerun for release acceptance
 
 ## SDR-006: Helper Prompt Workbench Stop Is Runtime-Safe
 
@@ -109,6 +114,23 @@
 - Evidence: release regression plus dated feature QA report
 - Last Run: 2026-07-11 local unhappy-path QA - passed; compiler failure returned 1 and both PIDs stayed unchanged
 
+## SDR-010: Upgrade Safety Is Structured And Honest
+
+- Requirement: `50_Stable_Dev_Runtime.md`, `39_Installer_and_Config_Compiler.md`
+- Surfaces: public CLI, managed component checkouts, continuity audit, macOS helper
+- Preconditions: synthetic clean, refresh-required, dirty, malformed, running, and stop-failure
+  states are available
+- Steps: run `upgrade --check --json`, then exercise the mutating upgrade guard in isolated fixtures
+- Expected Result: clean pin differences are refreshable; dirty selected work returns `3`; unselected
+  dirty work does not block; running/no-restart, bad baseline, and stop failure abort before unsafe
+  mutation; helper preserves valid blocker detail
+- Forbidden Result: exit `0` with blockers, fetch during check, dirty component mutation, swallowed stop
+  failure, auto-restart after continuity error, or wording that claims partial state was rolled back
+- Evidence: `test_stable_dev_runtime_workflows.py`, `test_cli_upgrade.py`, rebuilt universal helper
+- Last Run: 2026-07-19 - passed 84/84 across the two complete affected modules; live no-share guest
+  running/no-restart and dirty-selected-component refusal also passed without stopping core services;
+  successful/late-failure and headed helper-dialog lanes remain open
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Stable Dev Runtime. Add narrower feature-specific
@@ -121,6 +143,7 @@ rows before claiming a pass when the feature behavior changes.
 | `STABLEDEV-UC-003` | Start and stop Prompt Workbench from the CLI/helper path and verify it does not start or stop the main Viventium runtime. | `50_Stable_Dev_Runtime.md` / `SDR-006` | CLI prompt-workbench lifecycle, helper submenu, health endpoint, process state | PID/port metadata summary, `/api/health`, process state, helper install inspection, and QA report | Only the managed workbench process is affected; LibreChat/main Viventium stack state is preserved. | 2026-05-15 local CLI/helper integration QA - passed |
 | `STABLEDEV-UC-004` | Leave local prod running while developing and verify the helper does not continuously render user-facing root pages to decide health. | `50_Stable_Dev_Runtime.md` / `SDR-008` | macOS helper, modern playground `/api/health`, helper-launched logs, real browser route check | Helper source/test contract, Playwright health/root checks, sanitized log counts, live port/process snapshot | Local prod stays up, dev/server logs stop accumulating helper root-page probes, and no singleton service is stopped or duplicated. | 2026-05-27 implementation QA - passed with live helper refresh |
 | `STABLEDEV-UC-005` | Promote a checkout with validation enabled while the candidate config or prerequisites are invalid. | `50_Stable_Dev_Runtime.md` / `SDR-009` | `dev-runtime activate-current --validate --restart`, API/Workbench health and PIDs | Compiler/doctor exit, CLI wording, pre/post process identity | Validation fails loudly before stop/restart and the current healthy stack remains untouched. | PASS 2026-07-11; synthetic invalid config returned 1 and pre/post API and Workbench PIDs matched. |
+| `STABLEDEV-UC-006` | Check for and attempt an upgrade from clean, refreshable, dirty, running, and continuity-error states. | `50_Stable_Dev_Runtime.md` / `SDR-004`, `SDR-005`, `SDR-010` | CLI JSON/text, helper modal, disposable running runtime | Exit/status JSON, Git metadata, component state, audit status, process health, helper dialog | Inspection is side-effect-free; safe refresh remains available; blockers stop before mutation with specific guidance; no partial state is called rolled back. | PARTIAL 2026-07-19; 84 affected-module regressions, universal helper rebuild/install, and live no-share running/dirty refusal pass; successful/late-failure update and headed helper dialog remain open. |
 
 ## Release Test Traceability
 

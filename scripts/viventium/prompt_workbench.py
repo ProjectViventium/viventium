@@ -184,6 +184,28 @@ def port_available(port: int) -> bool:
     return True
 
 
+def listener_pids(port: int) -> list[int]:
+    try:
+        completed = subprocess.run(
+            ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    pids: list[int] = []
+    for line in completed.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid > 0 and pid not in pids:
+            pids.append(pid)
+    return pids
+
+
 def process_command(pid: int) -> str:
     try:
         completed = subprocess.run(
@@ -298,11 +320,16 @@ def ensure_assets_built(root: Path, log_file: Path, *, skip_build: bool) -> None
         run_logged(["npm", "run", "build"], cwd=root, env=env, log_file=log_file)
 
 
-def choose_port(app_support_dir: Path, preferred: int) -> int:
+def choose_port(app_support_dir: Path, root: Path, preferred: int) -> int:
     current = read_state(app_support_dir)
     current_port = int(current.get("port") or 0)
     current_pid = int(current.get("pid") or 0)
-    if current_port > 0 and pid_running(current_pid) and http_healthy(current_port):
+    if (
+        current_port > 0
+        and pid_running(current_pid)
+        and process_matches_workbench(current_pid, root)
+        and http_healthy(current_port)
+    ):
         return current_port
 
     for port in [preferred, *range(DEFAULT_PORT, DEFAULT_PORT + 20)]:
@@ -332,7 +359,15 @@ def start_server(args: argparse.Namespace) -> dict[str, Any]:
         return {**current, "started": False}
 
     preferred_port = int(args.port or os.environ.get("VIVENTIUM_PROMPT_WORKBENCH_PORT") or DEFAULT_PORT)
-    port = choose_port(app_support_dir, preferred_port)
+    managed_by_stack = (os.environ.get("VIVENTIUM_PROMPT_WORKBENCH_MANAGED_BY_STACK") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if managed_by_stack:
+        reclaim_stale_managed_workbench_port(preferred_port, root)
+    port = choose_port(app_support_dir, root, preferred_port)
     log_file = log_path(app_support_dir)
     ensure_assets_built(root, log_file, skip_build=args.no_build)
 
@@ -421,6 +456,29 @@ def stop_pid(pid: int, timeout_seconds: int = 10) -> bool:
         except OSError:
             os.kill(pid, signal.SIGKILL)
     return True
+
+
+def reclaim_stale_managed_workbench_port(port: int, root: Path) -> bool:
+    if port_available(port):
+        return False
+
+    reclaimed = False
+    for pid in listener_pids(port):
+        if not process_matches_workbench(pid, root):
+            continue
+        # Only replace a stale listener owned by this checkout. A Workbench from another checkout
+        # is independent local development and must not be terminated to reclaim a canonical port.
+        reclaimed = stop_pid(pid) or reclaimed
+
+    if not reclaimed:
+        return False
+
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if port_available(port):
+            return True
+        time.sleep(0.05)
+    return port_available(port)
 
 
 def stop_server(args: argparse.Namespace) -> dict[str, Any]:

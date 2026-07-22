@@ -32,6 +32,7 @@ BRIDGE_DIR = Path(__file__).resolve().parent.parent
 ENV_E2E = Path(__file__).resolve().parent / ".env.e2e"
 OPENCLAW_DIR = WORKSPACE_ROOT / "viventium_v0_4" / "openclaw"
 OPENCLAW_BIN = OPENCLAW_DIR / "openclaw.mjs"
+OPENCLAW_REQUIRED_VERSION = "2026.7.1-2"
 
 # ── LibreChat ──────────────────────────────────────────────────────────
 LIBRECHAT_URL = "http://localhost:3080"
@@ -167,7 +168,7 @@ def check_openclaw_binary() -> str | None:
             )
             # Version is usually the last line (errors print before it)
             version_line = result.stdout.strip().split("\n")[-1] if result.stdout else ""
-            if result.returncode == 0 and version_line:
+            if result.returncode == 0 and version_line == OPENCLAW_REQUIRED_VERSION:
                 print(f"  OK: OpenClaw {version_line} (local build)")
                 return bin_path
         except Exception as e:
@@ -181,14 +182,15 @@ def check_openclaw_binary() -> str | None:
         )
         if result.returncode == 0:
             version = result.stdout.strip().split("\n")[-1]
-            print(f"  OK: OpenClaw {version} (global)")
-            return "openclaw"
+            if version == OPENCLAW_REQUIRED_VERSION:
+                print(f"  OK: OpenClaw {version} (reviewed runtime)")
+                return "openclaw"
     except FileNotFoundError:
         pass
 
-    print("  FAIL: OpenClaw binary not found")
+    print(f"  FAIL: reviewed OpenClaw {OPENCLAW_REQUIRED_VERSION} binary not found")
     print(f"  Expected at: {OPENCLAW_BIN}")
-    print("  Or install globally: npm install -g openclaw")
+    print("  Run viventium-openclaw-bridge-start.sh native to install the exact reviewed runtime")
     return None
 
 

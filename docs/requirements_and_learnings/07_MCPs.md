@@ -187,6 +187,15 @@ instructions and tool descriptions:
 - idempotency, duplicate-prevention, and callback behavior
 - which details are user-facing and which are diagnostics-only
 
+When a host supports deferred tools, the owning MCP instructions must also explain how to discover
+an absent deferred capability and invoke it in the same model invocation. Viventium keeps the stable
+GlassHive user gateway (`workspace_launch`, `workspace_status`, and `workspace_wait`) eager across
+web, Telegram, and voice while deferring the lower-level operational surface. The host must not
+report GlassHive unavailable merely because a deferred schema is not yet in the callable list.
+The final provider-bound callable set must also be unique by tool name. Dynamic request-scoped
+binding may expose newly discovered schemas, but it must not concatenate those schemas back into
+the same binding source and create duplicate provider functions.
+
 The main Viventium agent prompt may describe orchestration principles, for example "use the
 connected execution tool when real browser/desktop/local work is requested." It must not carry
 manuals for GlassHive worker profiles, Scheduling Cortex CRUD mechanics, or other external MCP

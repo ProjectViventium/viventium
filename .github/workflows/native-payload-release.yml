@@ -1,0 +1,1047 @@
+name: Native Payload Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful same-commit candidate workflow run containing both payload roots
+        required: true
+        type: string
+      release_tag:
+        description: Existing tag selected as the workflow ref
+        required: true
+        type: string
+      release_id:
+        description: Native release identifier embedded in the signed manifest
+        required: true
+        type: string
+      sequence:
+        description: Monotonic anti-downgrade sequence
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-payload-release
+  cancel-in-progress: false
+
+jobs:
+  verify-release-sequence:
+    name: Verify monotonic signed Native release history
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SEQUENCE: ${{ inputs.sequence }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_tag }}
+      - name: Verify the candidate advances every signed Native release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$SEQUENCE" =~ ^[1-9][0-9]{0,8}$ ]]
+          test -s release/native-payload/allowed_signers || {
+            echo "Missing approved Native manifest allowed-signers policy" >&2
+            exit 1
+          }
+          test -s release/native-payload/apple-team-id || {
+            echo "Missing approved Apple Developer ID team policy" >&2
+            exit 1
+          }
+          python scripts/viventium/verify_native_bootstrap_policy.py \
+            --install-script install.sh \
+            --allowed-signers release/native-payload/allowed_signers \
+            --apple-team-id release/native-payload/apple-team-id \
+            --sequence "$SEQUENCE"
+
+          api_root="${RUNNER_TEMP}/native-release-api"
+          history_root="${RUNNER_TEMP}/native-release-history"
+          mkdir -p "$api_root" "$history_root"
+          page=1
+          while :; do
+            page_path="${api_root}/page-${page}.json"
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100&page=${page}" > "$page_path"
+            page_count="$(python - "$page_path" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          if not isinstance(payload, list) or len(payload) > 100:
+              raise SystemExit("GitHub release history response is invalid")
+          print(len(payload))
+          PY
+          )"
+            if [[ "$page_count" -lt 100 ]]; then
+              break
+            fi
+            page=$((page + 1))
+            if [[ "$page" -gt 100 ]]; then
+              echo "Native release history exceeds the bounded review window" >&2
+              exit 1
+            fi
+          done
+
+          python - "$api_root" "$history_root" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          api_root = Path(sys.argv[1])
+          history_root = Path(sys.argv[2])
+          required = {
+              "viventium-native-bootstrap-manifest.json",
+              "viventium-native-bootstrap-manifest.json.sig",
+          }
+          downloads = []
+          index = 0
+          for page in sorted(api_root.glob("page-*.json")):
+              releases = json.loads(page.read_text(encoding="utf-8"))
+              for release in releases:
+                  if not isinstance(release, dict) or not isinstance(release.get("assets"), list):
+                      raise SystemExit("GitHub release history record is invalid")
+                  matching = [asset for asset in release["assets"] if asset.get("name") in required]
+                  if not matching:
+                      continue
+                  names = [asset.get("name") for asset in matching]
+                  if set(names) != required or len(names) != len(required):
+                      raise SystemExit("Published Native release has an incomplete or duplicate bootstrap index")
+                  tag = release.get("tag_name")
+                  if not isinstance(tag, str):
+                      raise SystemExit("Published Native release tag is invalid")
+                  index += 1
+                  entry = history_root / f"{index:06d}"
+                  entry.mkdir()
+                  (entry / "record.json").write_text(
+                      json.dumps({"release_tag": tag}, sort_keys=True, separators=(",", ":")) + "\n",
+                      encoding="utf-8",
+                  )
+                  for asset in matching:
+                      asset_id = asset.get("id")
+                      if isinstance(asset_id, bool) or not isinstance(asset_id, int) or asset_id < 1:
+                          raise SystemExit("Published Native release asset identity is invalid")
+                      downloads.append((asset_id, entry / asset["name"]))
+          with (history_root / "download-plan.tsv").open("w", encoding="utf-8") as plan:
+              for asset_id, destination in downloads:
+                  plan.write(f"{asset_id}\t{destination}\n")
+          PY
+
+          while IFS=$'\t' read -r asset_id destination; do
+            [[ "$asset_id" =~ ^[1-9][0-9]*$ ]]
+            [[ "$destination" == "${history_root}/"* ]]
+            gh api \
+              -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$destination"
+          done < "$history_root/download-plan.tsv"
+          rm "$history_root/download-plan.tsv"
+
+          awk 'NF >= 3 && $1 !~ /^#/ {print "bootstrap@viventium.example", $2, $3}' \
+            release/native-payload/allowed_signers > "$api_root/bootstrap-allowed-signers"
+          test "$(wc -l < "$api_root/bootstrap-allowed-signers" | tr -d '[:space:]')" = 1
+          python scripts/viventium/verify_native_release_sequence.py \
+            --history-root "$history_root" \
+            --allowed-signers "$api_root/bootstrap-allowed-signers" \
+            --candidate-release-tag "$RELEASE_TAG" \
+            --candidate-sequence "$SEQUENCE"
+
+  sign-notarize-package:
+    name: Sign, notarize, and package (${{ matrix.expected_arch }})
+    needs: verify-release-sequence
+    environment: native-payload-release
+    permissions:
+      actions: read # Read the explicitly selected producer run and its artifacts.
+      attestations: write # Emit provenance for the exact signed payload archive.
+      contents: read
+      id-token: write # Authenticate the artifact-attestation request through OIDC.
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: macos-15
+            expected_arch: arm64
+          - runner: macos-15-intel
+            expected_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      EXPECTED_ARCH: ${{ matrix.expected_arch }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SEQUENCE: ${{ inputs.sequence }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12.13"
+      - name: Validate immutable inputs and approved public trust policy
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]]
+          [[ "$RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]]
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SEQUENCE" =~ ^[1-9][0-9]{0,8}$ ]]
+          test -s release/native-payload/allowed_signers || {
+            echo "Missing approved Native manifest allowed-signers policy" >&2
+            exit 1
+          }
+          test -s release/native-payload/apple-team-id || {
+            echo "Missing approved Apple Developer ID team policy" >&2
+            exit 1
+          }
+          test -s release/native-payload/mongodb-redistribution-approved || {
+            echo "Missing approved MongoDB redistribution policy" >&2
+            exit 1
+          }
+          minimum_macos="$(tr -d '[:space:]' < release/native-payload/minimum-macos)"
+          [[ "$minimum_macos" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || {
+            echo "Native minimum-macOS policy is invalid" >&2
+            exit 1
+          }
+          printf 'MINIMUM_MACOS=%s\n' "$minimum_macos" >> "$GITHUB_ENV"
+          apple_team_id="$(tr -d '[:space:]' < release/native-payload/apple-team-id)"
+          [[ "$apple_team_id" =~ ^[A-Z0-9]{10}$ ]] || {
+            echo "Approved Apple Developer ID team policy is invalid" >&2
+            exit 1
+          }
+      - name: Verify candidate provenance and download same-commit payload root
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}" > candidate-run.json
+          python - <<'PY'
+          import json
+          import os
+          import zipfile
+
+          candidate = json.load(open("candidate-run.json", encoding="utf-8"))
+          if candidate["head_sha"] != os.environ["GITHUB_SHA"]:
+              raise SystemExit("candidate run commit does not match the selected release tag")
+          if candidate["head_repository"]["full_name"] != os.environ["GITHUB_REPOSITORY"]:
+              raise SystemExit("candidate run belongs to a different repository")
+          if candidate["path"] != ".github/workflows/native-payload-candidate.yml":
+              raise SystemExit("candidate run does not belong to the approved producer workflow")
+          if candidate["event"] != "workflow_dispatch":
+              raise SystemExit("candidate run was not explicitly dispatched")
+          if candidate["conclusion"] != "success":
+              raise SystemExit("candidate run did not complete successfully")
+          PY
+          gh run download "$CANDIDATE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "native-payload-root-${EXPECTED_ARCH}" \
+            --dir candidate-transport
+          test -f "candidate-transport/native-payload-root-${EXPECTED_ARCH}.tar"
+          test -f "candidate-transport/native-payload-root-${EXPECTED_ARCH}.tar.sha256"
+          test ! -e candidate
+          python scripts/viventium/transport_native_candidate.py unpack \
+            --archive "candidate-transport/native-payload-root-${EXPECTED_ARCH}.tar" \
+            --digest "candidate-transport/native-payload-root-${EXPECTED_ARCH}.tar.sha256" \
+            --output-root candidate-extract
+          mv candidate-extract/candidate candidate
+          rmdir candidate-extract
+          test -d candidate/payload
+          test -d candidate/bootstrap/ViventiumBootstrap.app
+          test -x candidate/bootstrap/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap
+          test -s candidate/payload/release-metadata/apple-code-paths.txt
+          test -s candidate/payload/release-metadata/apple-staple-paths.txt
+          /usr/bin/diff -qr \
+            candidate/payload/runtime/python \
+            candidate/bootstrap/ViventiumBootstrap.app/Contents/Resources/runtime/python
+          python scripts/viventium/verify_native_component_manifest.py \
+            --root candidate/payload/runtime/python \
+            --manifest candidate/payload/release-metadata/python-runtime-manifest.json \
+            --expected-name python
+          python scripts/viventium/verify_native_component_manifest.py \
+            --root candidate/bootstrap/ViventiumBootstrap.app/Contents/Resources/runtime/python \
+            --manifest candidate/bootstrap/ViventiumBootstrap.app/Contents/Resources/python-runtime-manifest.json \
+            --expected-name python
+          /usr/bin/cmp \
+            candidate/payload/release-metadata/python-runtime-manifest.json \
+            candidate/bootstrap/ViventiumBootstrap.app/Contents/Resources/python-runtime-manifest.json
+          python scripts/viventium/verify_native_public_safety.py \
+            --candidate-root candidate \
+            --forbid-prefix "$GITHUB_WORKSPACE" \
+            --forbid-prefix "$RUNNER_TEMP" \
+            --forbid-prefix "$HOME"
+          python scripts/viventium/verify_native_macos_compatibility.py \
+            --candidate-root candidate \
+            --minimum-macos-file release/native-payload/minimum-macos
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts/viventium")
+          import assemble_native_payload
+          import build_native_payload
+
+          payload_root = Path("candidate/payload")
+          build_native_payload._inventory_payload(payload_root)
+          metadata = json.loads((payload_root / "release-metadata/build.json").read_text(encoding="utf-8"))
+          components = json.loads(Path("release/native-payload/components.json").read_text(encoding="utf-8"))
+          schema = json.loads(Path("release/native-payload/data-schema.json").read_text(encoding="utf-8"))
+          tagged_epoch = int(__import__("subprocess").check_output(
+              ["git", "show", "-s", "--format=%ct", os.environ["GITHUB_SHA"]], text=True
+          ).strip())
+          if metadata.get("source_commit") != os.environ["GITHUB_SHA"]:
+              raise SystemExit("candidate build metadata is not bound to the tagged commit")
+          if metadata.get("source_date_epoch") != tagged_epoch:
+              raise SystemExit("candidate source timestamp is not derived from the tagged commit")
+          expected_components = assemble_native_payload.release_component_manifest(
+              components, os.environ["EXPECTED_ARCH"]
+          )
+          if metadata.get("components") != expected_components:
+              raise SystemExit("candidate components are not bound to architecture-specific policy")
+          expected_schema = {key: schema[key] for key in ("minimum", "maximum", "target")}
+          if metadata.get("data_schema") != expected_schema:
+              raise SystemExit("candidate data schema is not bound to code policy")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"NODE_VERSION={components['node']['version']}\n")
+              environment.write(f"DATA_SCHEMA_MINIMUM={schema['minimum']}\n")
+              environment.write(f"DATA_SCHEMA_MAXIMUM={schema['maximum']}\n")
+              environment.write(f"SOURCE_DATE_EPOCH={tagged_epoch}\n")
+          PY
+      - name: Sign nested code, notarize, staple, and build final stable payload
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          NATIVE_MANIFEST_SIGNING_KEY_BASE64: ${{ secrets.NATIVE_MANIFEST_SIGNING_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          for required_name in \
+            APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 \
+            APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD \
+            APPLE_NOTARY_ISSUER_ID \
+            APPLE_NOTARY_KEY_ID \
+            APPLE_NOTARY_KEY_P8_BASE64 \
+            NATIVE_MANIFEST_SIGNING_KEY_BASE64; do
+            if [[ -z "${!required_name:-}" ]]; then
+              echo "Protected release authority is incomplete: ${required_name}" >&2
+              exit 1
+            fi
+          done
+
+          work_root="$(mktemp -d "${RUNNER_TEMP}/native-release.XXXXXX")"
+          keychain_path="${work_root}/release-signing.keychain-db"
+          keychain_password="$(/usr/bin/openssl rand -hex 24)"
+          cleanup() {
+            /usr/bin/security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
+            /bin/rm -rf -- "$work_root"
+          }
+          trap cleanup EXIT
+
+          printf '%s' "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" | /usr/bin/base64 -D > "${work_root}/developer-id.p12"
+          printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | /usr/bin/base64 -D > "${work_root}/AuthKey.p8"
+          printf '%s' "$NATIVE_MANIFEST_SIGNING_KEY_BASE64" | /usr/bin/base64 -D > "${work_root}/manifest-signing-key"
+          chmod 600 "${work_root}/developer-id.p12" "${work_root}/AuthKey.p8" "${work_root}/manifest-signing-key"
+          /usr/bin/security create-keychain -p "$keychain_password" "$keychain_path"
+          /usr/bin/security set-keychain-settings -lut 21600 "$keychain_path"
+          /usr/bin/security unlock-keychain -p "$keychain_password" "$keychain_path"
+          /usr/bin/security list-keychains -d user -s "$keychain_path"
+          /usr/bin/security import "${work_root}/developer-id.p12" \
+            -k "$keychain_path" \
+            -P "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          /usr/bin/security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path" >/dev/null
+          identity_hash="$(/usr/bin/security find-identity -v -p codesigning "$keychain_path" | /usr/bin/awk '/Developer ID Application/ {print $2; exit}')"
+          [[ "$identity_hash" =~ ^[0-9A-F]{40}$ ]] || {
+            echo "Protected Developer ID Application identity is unavailable" >&2
+            exit 1
+          }
+
+          payload_root="$GITHUB_WORKSPACE/candidate/payload"
+          bootstrap_app="$GITHUB_WORKSPACE/candidate/bootstrap/ViventiumBootstrap.app"
+          bootstrap_resources="$bootstrap_app/Contents/Resources"
+          test -d "$bootstrap_resources/runtime/python"
+          test -s "$bootstrap_resources/scripts/native_payload.py"
+          test -s "$bootstrap_resources/scripts/install_native_payload.py"
+          /bin/cp release/native-payload/allowed_signers "$bootstrap_resources/allowed_signers"
+          python - "$bootstrap_resources/release.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          policy = {
+              "schema_version": 1,
+              "release_base": "https://github.com/ProjectViventium/viventium/releases/download",
+              "release_id": os.environ["RELEASE_ID"],
+              "release_tag": os.environ["RELEASE_TAG"],
+              "sequence": int(os.environ["SEQUENCE"]),
+          }
+          Path(sys.argv[1]).write_text(
+              json.dumps(policy, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python - "$payload_root" <<'PY'
+          import sys
+          import subprocess
+          from pathlib import Path, PurePosixPath
+
+          root = Path(sys.argv[1]).resolve()
+          declared = set()
+          for name in ("apple-code-paths.txt", "apple-staple-paths.txt"):
+              metadata = root / "release-metadata" / name
+              entries = [line.strip() for line in metadata.read_text(encoding="utf-8").splitlines() if line.strip()]
+              if not entries:
+                  raise SystemExit(f"{name} must declare at least one path")
+              for entry in entries:
+                  relative = PurePosixPath(entry)
+                  if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+                      raise SystemExit(f"unsafe release metadata path in {name}")
+                  target = (root / relative).resolve()
+                  target.relative_to(root)
+                  if not target.exists() or target.is_symlink():
+                      raise SystemExit(f"missing or unsafe release target in {name}")
+                  if name == "apple-code-paths.txt":
+                      declared.add(entry)
+          uncovered = []
+          app_containers = tuple(path + "/" for path in declared if path.endswith(".app"))
+          for path in root.rglob("*"):
+              if not path.is_file() or path.is_symlink():
+                  continue
+              kind = subprocess.run(
+                  ["/usr/bin/file", "-b", str(path)],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+              )
+              if kind.returncode != 0 or "Mach-O" not in kind.stdout:
+                  continue
+              relative = path.relative_to(root).as_posix()
+              if relative not in declared and not relative.startswith(app_containers):
+                  uncovered.append(relative)
+          if uncovered:
+              raise SystemExit(f"unlisted Mach-O code paths: {uncovered}")
+          PY
+
+          while IFS= read -r relative_path; do
+            [[ -n "$relative_path" ]] || continue
+            /usr/bin/codesign \
+              --force \
+              --options runtime \
+              --timestamp \
+              --sign "$identity_hash" \
+              "$payload_root/$relative_path"
+          done < "$payload_root/release-metadata/apple-code-paths.txt"
+
+          python - "$bootstrap_app" "${work_root}/bootstrap-code-paths.txt" <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          app = Path(sys.argv[1]).resolve()
+          paths = []
+          for path in app.rglob("*"):
+              if not path.is_file() or path.is_symlink():
+                  continue
+              kind = subprocess.run(
+                  ["/usr/bin/file", "-b", str(path)],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+              )
+              if kind.returncode == 0 and "Mach-O" in kind.stdout:
+                  paths.append(path)
+          paths.sort(key=lambda path: (-len(path.relative_to(app).parts), path.as_posix()))
+          Path(sys.argv[2]).write_text(
+              "".join(f"{path}\n" for path in paths), encoding="utf-8"
+          )
+          PY
+          while IFS= read -r code_path; do
+            [[ -n "$code_path" ]] || continue
+            /usr/bin/codesign \
+              --force \
+              --options runtime \
+              --timestamp \
+              --sign "$identity_hash" \
+              "$code_path"
+          done < "${work_root}/bootstrap-code-paths.txt"
+          /usr/bin/codesign \
+            --force \
+            --options runtime \
+            --timestamp \
+            --sign "$identity_hash" \
+            "$bootstrap_app"
+
+          /usr/bin/ditto -c -k --keepParent "$bootstrap_app" "${work_root}/pre-staple-bootstrap.zip"
+          /usr/bin/xcrun notarytool submit "${work_root}/pre-staple-bootstrap.zip" \
+            --key "${work_root}/AuthKey.p8" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait \
+            --output-format json > "${work_root}/bootstrap-notarization.json"
+          python - "${work_root}/bootstrap-notarization.json" <<'PY'
+          import json
+          import sys
+
+          result = json.load(open(sys.argv[1], encoding="utf-8"))
+          if result.get("status") != "Accepted":
+              raise SystemExit("Apple rejected the Native bootstrap")
+          PY
+          /usr/bin/xcrun stapler staple "$bootstrap_app"
+          /usr/bin/xcrun stapler validate "$bootstrap_app"
+          /usr/sbin/spctl --assess --type execute --verbose=2 "$bootstrap_app"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$bootstrap_app"
+          bootstrap_signing_details="$(/usr/bin/codesign -dv --verbose=4 "$bootstrap_app" 2>&1)"
+          bootstrap_team_id="$(printf '%s\n' "$bootstrap_signing_details" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)"
+          test "$bootstrap_team_id" = "$(tr -d '[:space:]' < release/native-payload/apple-team-id)"
+
+          /usr/bin/ditto -c -k --keepParent "$payload_root" "${work_root}/pre-staple-payload.zip"
+          /usr/bin/xcrun notarytool submit "${work_root}/pre-staple-payload.zip" \
+            --key "${work_root}/AuthKey.p8" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait \
+            --output-format json > "${work_root}/pre-staple-notarization.json"
+          python - "${work_root}/pre-staple-notarization.json" <<'PY'
+          import json
+          import sys
+
+          result = json.load(open(sys.argv[1], encoding="utf-8"))
+          if result.get("status") != "Accepted":
+              raise SystemExit("Apple rejected the pre-staple Native payload")
+          PY
+
+          while IFS= read -r relative_path; do
+            [[ -n "$relative_path" ]] || continue
+            target="$payload_root/$relative_path"
+            /usr/bin/xcrun stapler staple "$target"
+            /usr/bin/xcrun stapler validate "$target"
+            /usr/sbin/spctl --assess --type execute --verbose=2 "$target"
+          done < "$payload_root/release-metadata/apple-staple-paths.txt"
+
+          expected_team_id="$(tr -d '[:space:]' < release/native-payload/apple-team-id)"
+          while IFS= read -r relative_path; do
+            [[ -n "$relative_path" ]] || continue
+            target="$payload_root/$relative_path"
+            /usr/bin/codesign --verify --strict --verbose=2 "$target"
+            signing_details="$(/usr/bin/codesign -dv --verbose=4 "$target" 2>&1)"
+            actual_team_id="$(printf '%s\n' "$signing_details" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)"
+            test "$actual_team_id" = "$expected_team_id"
+          done < "$payload_root/release-metadata/apple-code-paths.txt"
+
+          python scripts/viventium/generate_native_compliance.py \
+            --payload-root "$payload_root" \
+            --output-dir "$payload_root/release-metadata" \
+            --mongodb-redistribution-approved release/native-payload/mongodb-redistribution-approved
+          python scripts/viventium/verify_native_compliance.py --payload-root "$payload_root"
+          python scripts/viventium/verify_native_public_safety.py \
+            --candidate-root candidate \
+            --forbid-prefix "$GITHUB_WORKSPACE" \
+            --forbid-prefix "$RUNNER_TEMP" \
+            --forbid-prefix "$HOME"
+
+          output_dir="$GITHUB_WORKSPACE/dist/native/$EXPECTED_ARCH"
+          build_summary="${RUNNER_TEMP}/native-build-summary-${EXPECTED_ARCH}.json"
+          python scripts/viventium/build_native_payload.py \
+            --payload-root "$payload_root" \
+            --output-dir "$output_dir" \
+            --release-id "$RELEASE_ID" \
+            --sequence "$SEQUENCE" \
+            --channel stable \
+            --arch "$EXPECTED_ARCH" \
+            --node-version "$NODE_VERSION" \
+            --minimum-macos "$MINIMUM_MACOS" \
+            --data-schema-minimum "$DATA_SCHEMA_MINIMUM" \
+            --data-schema-maximum "$DATA_SCHEMA_MAXIMUM" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --manifest-signing-key "${work_root}/manifest-signing-key" \
+            > "$build_summary"
+          bootstrap_archive="$output_dir/ViventiumBootstrap-${EXPECTED_ARCH}.zip"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$bootstrap_app" "$bootstrap_archive"
+          bootstrap_sha="$(/usr/bin/shasum -a 256 "$bootstrap_archive" | /usr/bin/awk '{print $1}')"
+          printf '%s  %s\n' "$bootstrap_sha" "$(/usr/bin/basename "$bootstrap_archive")" \
+            > "${bootstrap_archive}.sha256"
+          cp "$payload_root/release-metadata/native-sbom.spdx.json" \
+            "$output_dir/viventium-native-${RELEASE_ID}-${EXPECTED_ARCH}.native-sbom.spdx.json"
+          cp "$payload_root/release-metadata/native-third-party-notices.txt" \
+            "$output_dir/viventium-native-${RELEASE_ID}-${EXPECTED_ARCH}.native-third-party-notices.txt"
+          cp "$payload_root/release-metadata/native-license-scan.json" \
+            "$output_dir/viventium-native-${RELEASE_ID}-${EXPECTED_ARCH}.native-license-scan.json"
+
+          manifest_name="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["manifest"])' "$build_summary")"
+          manifest_path="$output_dir/$manifest_name"
+          artifact_name="$(python - "$manifest_path" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(payload["artifact"]["filename"])
+          PY
+          )"
+          artifact_path="$output_dir/$artifact_name"
+          signature_path="${manifest_path}.sig"
+          test -f "$manifest_path"
+          test -f "$artifact_path"
+          test -f "$signature_path"
+          python - "$manifest_path" "$artifact_path" "$signature_path" "$EXPECTED_ARCH" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts/viventium")
+          import native_payload
+
+          native_payload.verify_candidate(
+              Path(sys.argv[1]),
+              Path(sys.argv[2]),
+              signature_path=Path(sys.argv[3]),
+              allowed_signers_path=Path("release/native-payload/allowed_signers"),
+              expected_arch=sys.argv[4],
+              current_macos=os.environ["MINIMUM_MACOS"],
+          )
+          PY
+
+          /usr/bin/xcrun notarytool submit "$artifact_path" \
+            --key "${work_root}/AuthKey.p8" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait \
+            --output-format json > "${work_root}/final-notarization.json"
+          python - "${work_root}/final-notarization.json" <<'PY'
+          import json
+          import sys
+
+          result = json.load(open(sys.argv[1], encoding="utf-8"))
+          if result.get("status") != "Accepted":
+              raise SystemExit("Apple rejected the final Native payload archive")
+          PY
+      - name: Attest exact release assets
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: dist/native/${{ matrix.expected_arch }}/*
+      - name: Preserve verified release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-payload-release-${{ matrix.expected_arch }}
+          if-no-files-found: error
+          path: dist/native/${{ matrix.expected_arch }}/*
+          retention-days: 7
+
+  sign-bootstrap-manifest:
+    name: Sign non-circular bootstrap index
+    needs: sign-notarize-package
+    environment: native-payload-release
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RELEASE_ID: ${{ inputs.release_id }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SEQUENCE: ${{ inputs.sequence }}
+      NATIVE_MANIFEST_SIGNING_KEY_BASE64: ${{ secrets.NATIVE_MANIFEST_SIGNING_KEY_BASE64 }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+          path: bootstrap-assets
+          pattern: native-payload-release-*
+      - name: Build and sign exact dual-architecture bootstrap index
+        run: |
+          set -euo pipefail
+          test -n "$NATIVE_MANIFEST_SIGNING_KEY_BASE64"
+          work_root="$(mktemp -d "${RUNNER_TEMP}/bootstrap-index.XXXXXX")"
+          trap '/bin/rm -rf -- "$work_root"' EXIT
+          printf '%s' "$NATIVE_MANIFEST_SIGNING_KEY_BASE64" | base64 --decode > "$work_root/signing-key"
+          chmod 600 "$work_root/signing-key"
+          mkdir -p bootstrap-index
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+
+          root = Path("bootstrap-assets")
+          artifacts = {}
+          for arch in ("arm64", "x86_64"):
+              filename = f"ViventiumBootstrap-{arch}.zip"
+              archive = root / filename
+              sidecar = root / f"{filename}.sha256"
+              if not archive.is_file() or not sidecar.is_file():
+                  raise SystemExit(f"missing exact bootstrap asset for {arch}")
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              fields = sidecar.read_text(encoding="utf-8").split()
+              if fields != [digest, filename]:
+                  raise SystemExit(f"bootstrap digest sidecar mismatch for {arch}")
+              with zipfile.ZipFile(archive) as bundle:
+                  uncompressed_size = sum(
+                      item.file_size for item in bundle.infolist() if not item.is_dir()
+                  )
+              if not 1 <= uncompressed_size <= 2 * 1024 * 1024 * 1024:
+                  raise SystemExit(f"bootstrap expansion size is invalid for {arch}")
+              artifacts[arch] = {
+                  "filename": filename,
+                  "sha256": digest,
+                  "size": archive.stat().st_size,
+                  "uncompressed_size": uncompressed_size,
+              }
+          payload = {
+              "schema_version": 1,
+              "release_tag": os.environ["RELEASE_TAG"],
+              "release_id": os.environ["RELEASE_ID"],
+              "sequence": int(os.environ["SEQUENCE"]),
+              "artifacts": artifacts,
+          }
+          Path("bootstrap-index/viventium-native-bootstrap-manifest.json").write_text(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+          )
+          PY
+          public_key="$(ssh-keygen -y -f "$work_root/signing-key")"
+          tracked_key="$(awk 'NF >= 3 {print $2, $3; exit}' release/native-payload/allowed_signers)"
+          test "$public_key" = "$tracked_key"
+          printf 'bootstrap@viventium.example %s\n' "$public_key" > "$work_root/bootstrap-allowed-signers"
+          ssh-keygen -Y sign -f "$work_root/signing-key" -n viventium-bootstrap \
+            bootstrap-index/viventium-native-bootstrap-manifest.json
+          ssh-keygen -Y verify -f "$work_root/bootstrap-allowed-signers" \
+            -I bootstrap@viventium.example -n viventium-bootstrap \
+            -s bootstrap-index/viventium-native-bootstrap-manifest.json.sig \
+            < bootstrap-index/viventium-native-bootstrap-manifest.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-bootstrap-manifest
+          if-no-files-found: error
+          path: bootstrap-index/*
+          retention-days: 7
+
+  verify-installed-artifacts:
+    name: Independent installed-artifact verification (${{ matrix.expected_arch }})
+    needs: [sign-notarize-package, sign-bootstrap-manifest]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: macos-15
+            expected_arch: arm64
+          - runner: macos-15-intel
+            expected_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      EXPECTED_ARCH: ${{ matrix.expected_arch }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SEQUENCE: ${{ inputs.sequence }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12.13"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+          path: verification-assets
+          pattern: native-payload-release-*
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-bootstrap-manifest
+          path: verification-assets
+      - name: Verify, stage, and health-check exact assets
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          test -s release/native-payload/allowed_signers
+          test -s release/native-payload/apple-team-id
+          rm -rf verification-install
+          mkdir -p verification-install
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts/viventium")
+          import native_payload
+
+          assets = Path("verification-assets")
+          install_root = Path("verification-install")
+          manifests = sorted(assets.glob("*.manifest.json"))
+          if len(manifests) != 2:
+              raise SystemExit("expected exactly two architecture manifests")
+          minimum_macos = Path("release/native-payload/minimum-macos").read_text(encoding="utf-8").strip()
+          matching_release = None
+          for manifest in manifests:
+              payload = json.loads(manifest.read_text(encoding="utf-8"))
+              artifact = assets / payload["artifact"]["filename"]
+              candidate = native_payload.verify_candidate(
+                  manifest,
+                  artifact,
+                  signature_path=Path(f"{manifest}.sig"),
+                  allowed_signers_path=Path("release/native-payload/allowed_signers"),
+                  expected_arch=payload["platform"]["arch"],
+                  current_macos=minimum_macos,
+              )
+              release = native_payload.stage_candidate(candidate, artifact, install_root / payload["platform"]["arch"])
+              if payload["platform"]["arch"] == os.environ["EXPECTED_ARCH"]:
+                  matching_release = release
+          if matching_release is None:
+              raise SystemExit("matching architecture release is missing")
+          Path("matching-release.txt").write_text(str(matching_release), encoding="utf-8")
+          PY
+
+          expected_team_id="$(tr -d '[:space:]' < release/native-payload/apple-team-id)"
+          for release_root in verification-install/*/releases/*; do
+            while IFS= read -r relative_path; do
+              [[ -n "$relative_path" ]] || continue
+              target="$release_root/$relative_path"
+              /usr/bin/codesign --verify --strict --verbose=2 "$target"
+              signing_details="$(/usr/bin/codesign -dv --verbose=4 "$target" 2>&1)"
+              actual_team_id="$(printf '%s\n' "$signing_details" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)"
+              test "$actual_team_id" = "$expected_team_id"
+            done < "$release_root/release-metadata/apple-code-paths.txt"
+            while IFS= read -r relative_path; do
+              [[ -n "$relative_path" ]] || continue
+              target="$release_root/$relative_path"
+              /usr/bin/xcrun stapler validate "$target"
+              /usr/sbin/spctl --assess --type execute --verbose=2 "$target"
+            done < "$release_root/release-metadata/apple-staple-paths.txt"
+          done
+
+          matching_release="$(cat matching-release.txt)"
+          test -x "$matching_release/bin/viventium-native-health"
+          python scripts/viventium/verify_native_compliance.py --payload-root "$matching_release"
+          verification_support="${RUNNER_TEMP}/native-installed-${EXPECTED_ARCH}/Application Support/Viventium"
+          cleanup_installed_native() {
+            "$matching_release/bin/viventium-native-stop" --app-support-dir "$verification_support" >/dev/null 2>&1 || true
+          }
+          trap cleanup_installed_native EXIT
+          "$matching_release/bin/viventium-native-install" \
+            --app-support-dir "$verification_support" \
+            --no-open
+          "$matching_release/bin/viventium-native-health" \
+            --app-support-dir "$verification_support"
+          release_identity="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["source_commit"])' "$matching_release/release-metadata/build.json")"
+          python - "$release_identity" <<'PY'
+          import json
+          import sys
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:3190/__viventium_native_health", timeout=5) as response:
+              payload = json.load(response)
+          if payload != {"release": sys.argv[1], "status": "ok"}:
+              raise SystemExit("installed Native release identity probe failed")
+          PY
+          python - "$verification_support" <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          support = Path(sys.argv[1])
+          process_groups = {
+              json.loads(path.read_text(encoding="utf-8"))["pid"]
+              for path in (support / "runtime").glob("*.process.json")
+          }
+          rows = subprocess.run(
+              ["/bin/ps", "-axo", "pgid=,rss="], check=True, capture_output=True, text=True
+          ).stdout.splitlines()
+          rss_kib = sum(int(rss) for row in rows if len((parts := row.split())) == 2 and int(parts[0]) in process_groups for rss in [parts[1]])
+          if rss_kib >= 1572864:
+              raise SystemExit(f"Native idle RSS {rss_kib} KiB exceeds the 1.5 GiB gate")
+          print(json.dumps({"idle_rss_kib": rss_kib}, sort_keys=True))
+          PY
+
+          bootstrap_archive="verification-assets/ViventiumBootstrap-${EXPECTED_ARCH}.zip"
+          test -s "$bootstrap_archive"
+          (cd verification-assets && /usr/bin/shasum -a 256 -c "ViventiumBootstrap-${EXPECTED_ARCH}.zip.sha256")
+          bootstrap_unpack="$(mktemp -d "${RUNNER_TEMP}/bootstrap-verify.XXXXXX")"
+          /usr/bin/ditto -x -k "$bootstrap_archive" "$bootstrap_unpack"
+          bootstrap_app="$bootstrap_unpack/ViventiumBootstrap.app"
+          test -x "$bootstrap_app/Contents/MacOS/ViventiumBootstrap"
+          python scripts/viventium/verify_native_component_manifest.py \
+            --root "$bootstrap_app/Contents/Resources/runtime/python" \
+            --manifest "$bootstrap_app/Contents/Resources/python-runtime-manifest.json" \
+            --expected-name python
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$bootstrap_app"
+          bootstrap_signing_details="$(/usr/bin/codesign -dv --verbose=4 "$bootstrap_app" 2>&1)"
+          bootstrap_team_id="$(printf '%s\n' "$bootstrap_signing_details" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)"
+          test "$bootstrap_team_id" = "$expected_team_id"
+          /usr/bin/xcrun stapler validate "$bootstrap_app"
+          /usr/sbin/spctl --assess --type execute --verbose=2 "$bootstrap_app"
+          "$bootstrap_app/Contents/MacOS/ViventiumBootstrap" --self-check
+          bootstrap_index="verification-assets/viventium-native-bootstrap-manifest.json"
+          bootstrap_index_signature="${bootstrap_index}.sig"
+          awk 'NF >= 3 {print "bootstrap@viventium.example", $2, $3; exit}' \
+            release/native-payload/allowed_signers > "${RUNNER_TEMP}/bootstrap-allowed-signers"
+          /usr/bin/ssh-keygen -Y verify \
+            -f "${RUNNER_TEMP}/bootstrap-allowed-signers" \
+            -I bootstrap@viventium.example \
+            -n viventium-bootstrap \
+            -s "$bootstrap_index_signature" < "$bootstrap_index"
+          payload_manifest="verification-assets/viventium-native-${RELEASE_ID}-${EXPECTED_ARCH}.zip.manifest.json"
+          embedded_policy="$bootstrap_app/Contents/Resources/release.json"
+          python - "$bootstrap_index" "$EXPECTED_ARCH" "$bootstrap_archive" "$embedded_policy" "$payload_manifest" <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          expected_identity = {
+              "release_tag": os.environ["RELEASE_TAG"],
+              "release_id": os.environ["RELEASE_ID"],
+              "sequence": int(os.environ["SEQUENCE"]),
+          }
+          if payload.get("schema_version") != 1 or {
+              key: payload.get(key) for key in expected_identity
+          } != expected_identity:
+              raise SystemExit("signed bootstrap index release policy is inconsistent")
+          record = payload["artifacts"][sys.argv[2]]
+          archive = Path(sys.argv[3])
+          with zipfile.ZipFile(archive) as bundle:
+              uncompressed_size = sum(
+                  item.file_size for item in bundle.infolist() if not item.is_dir()
+              )
+          if record != {
+              "filename": archive.name,
+              "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+              "size": archive.stat().st_size,
+              "uncompressed_size": uncompressed_size,
+          }:
+              raise SystemExit("signed bootstrap index does not match exact archive")
+          embedded = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+          expected_embedded = {
+              "schema_version": 1,
+              "release_base": "https://github.com/ProjectViventium/viventium/releases/download",
+              **expected_identity,
+          }
+          if embedded != expected_embedded:
+              raise SystemExit("signed bootstrap app policy does not match its outer index")
+          signed_payload = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
+          if {
+              "release_id": signed_payload.get("release_id"),
+              "sequence": signed_payload.get("sequence"),
+          } != {
+              "release_id": expected_identity["release_id"],
+              "sequence": expected_identity["sequence"],
+          }:
+              raise SystemExit("signed payload policy does not match its bootstrap index")
+          PY
+
+  create-draft-release:
+    name: Create protected draft release
+    needs: verify-installed-artifacts
+    environment: native-payload-release
+    permissions:
+      actions: read # Verify the exact upstream producer and verification runs.
+      contents: write # Create only the reviewed draft release and its allowlisted assets.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_ID: ${{ inputs.release_id }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+          path: release-assets
+          pattern: native-payload-release-*
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-bootstrap-manifest
+          path: release-assets
+      - name: Require immutable releases and create a complete draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+          immutable_policy="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/immutable-releases")" || {
+            echo "GitHub immutable releases must be enabled before publication" >&2
+            exit 1
+          }
+          IMMUTABLE_POLICY="$immutable_policy" python - <<'PY'
+          import json
+          import os
+
+          policy = json.loads(os.environ["IMMUTABLE_POLICY"])
+          if policy.get("enabled") is not True:
+              raise SystemExit("GitHub immutable releases response did not confirm enabled=true")
+          PY
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to replace assets" >&2
+            exit 1
+          fi
+          allowed_asset_names=(
+            "viventium-native-${RELEASE_ID}-arm64.zip"
+            "viventium-native-${RELEASE_ID}-arm64.zip.manifest.json"
+            "viventium-native-${RELEASE_ID}-arm64.zip.manifest.json.sig"
+            "ViventiumBootstrap-arm64.zip"
+            "ViventiumBootstrap-arm64.zip.sha256"
+            "viventium-native-${RELEASE_ID}-arm64.native-sbom.spdx.json"
+            "viventium-native-${RELEASE_ID}-arm64.native-third-party-notices.txt"
+            "viventium-native-${RELEASE_ID}-arm64.native-license-scan.json"
+            "viventium-native-${RELEASE_ID}-x86_64.zip"
+            "viventium-native-${RELEASE_ID}-x86_64.zip.manifest.json"
+            "viventium-native-${RELEASE_ID}-x86_64.zip.manifest.json.sig"
+            "ViventiumBootstrap-x86_64.zip"
+            "ViventiumBootstrap-x86_64.zip.sha256"
+            "viventium-native-${RELEASE_ID}-x86_64.native-sbom.spdx.json"
+            "viventium-native-${RELEASE_ID}-x86_64.native-third-party-notices.txt"
+            "viventium-native-${RELEASE_ID}-x86_64.native-license-scan.json"
+            "viventium-native-bootstrap-manifest.json"
+            "viventium-native-bootstrap-manifest.json.sig"
+          )
+          assets=()
+          for asset_name in "${allowed_asset_names[@]}"; do
+            asset_path="release-assets/${asset_name}"
+            test -f "$asset_path"
+            assets+=("$asset_path")
+          done
+          actual_asset_count="$(find release-assets -maxdepth 1 -type f | wc -l | tr -d '[:space:]')"
+          test "$actual_asset_count" = "${#allowed_asset_names[@]}"
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --title "Viventium Native ${RELEASE_TAG}" \
+            --notes "Protected draft. Publish only after independent clean-Mac acceptance and release-owner review."

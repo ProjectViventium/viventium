@@ -89,11 +89,16 @@ This service is the **voice bridge** between:
       and control ranges are sourced from
       `viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json`; update that contract
       first when Cartesia changes the documented Sonic-3 surface.
+    - Model-facing syntax forms use neutral `EMOTION`, `RATIO`, `DURATION`, and `TEXT`
+      placeholders from that same contract; do not teach fixed calm/excited performances in code.
   - **xAI standalone TTS**
     - User-facing label: `xAI`
     - Requires: `VIVENTIUM_XAI_TTS_API_KEY` or compatibility `XAI_API_KEY`
     - Optional knobs:
-      - `VIVENTIUM_XAI_TTS_API` (default `tts`; set `voice_agent` only for the legacy Grok Voice Agent adapter)
+      - `VIVENTIUM_XAI_TTS_API` (only active value: `tts`; the compiler preserves a legacy
+        `voice_agent` canonical setting but disables Voice with migration guidance so core upgrades
+        remain available. The worker still rejects `voice_agent` if invoked because xAI Voice Agent
+        is a separate conversational API, not Viventium's TTS renderer.)
       - `VIVENTIUM_XAI_VOICE` (default `Sal`; choices from xAI docs: `Ara`, `Eve`, `Leo`, `Rex`, `Sal`)
       - `VIVENTIUM_XAI_LANGUAGE` (default `en`; `auto` is also supported by xAI)
       - `VIVENTIUM_XAI_TTS_WS_URL` (documented standalone TTS WebSocket: `wss://api.x.ai/v1/tts`)
@@ -103,11 +108,24 @@ This service is the **voice bridge** between:
     - The xAI prompt may use documented xAI speech tags from
       `viventium_v0_4/shared/voice/xai_tts_capabilities.json`. These are not SSML and must not be
       mixed with Cartesia controls.
-  - **xAI Grok Voice Agent legacy mode**
-    - Enable only with `VIVENTIUM_XAI_TTS_API=voice_agent`.
-    - Optional knobs:
-      - `VIVENTIUM_XAI_VOICE_AGENT_WSS_URL` or legacy `VIVENTIUM_XAI_WSS_URL` (default `wss://api.x.ai/v1/realtime`)
-      - `VIVENTIUM_XAI_INSTRUCTIONS` (optional strict prompt override)
+  - **OpenAI TTS**
+    - Default model: `gpt-4o-mini-tts`.
+    - The route is markup-free: provider-control tags are stripped before synthesis.
+    - OpenAI's documented `instructions` side channel is configured once through
+      `VIVENTIUM_OPENAI_TTS_INSTRUCTIONS`; it is not currently recomputed from Feelings per turn.
+  - **ElevenLabs TTS**
+    - Current runtime model: `eleven_turbo_v2_5` (passed explicitly to the LiveKit adapter).
+    - The route is markup-free and SSML parsing remains disabled. Eleven v3 audio tags must not be
+      sent to this v2.5 route.
+    - Stability, similarity, style, speed, and speaker boost are provider settings, currently not
+      recomputed from Feelings per turn.
+
+The cross-provider truth lives in
+`viventium_v0_4/shared/voice/tts_provider_capabilities.json`. Provider-specific xAI and Cartesia
+dialects remain in their dedicated contracts; Local Chatterbox's exact marker set is declared in the
+cross-provider contract. Missing per-turn side-channel wiring is recorded there as a gap rather than
+approximated with unsupported markup. The cross-provider contract is a required shipped artifact;
+the worker exits with an actionable startup error if it is missing or invalid.
 
 - **Turn detection (optional)**
   - `VIVENTIUM_TURN_DETECTION`
@@ -173,6 +191,10 @@ This service is the **voice bridge** between:
     - Logs `[VoiceTTSInput]` at the final TTS provider boundary without requiring broader LLM delta
       logging. These lines preserve leading/trailing spaces in `text_json` and mark whether a chunk
       was forwarded, dropped, suppressed, or a provider control message.
+  - `[VoiceRendering][voice_gateway]` is always-on, metadata-only provider-boundary telemetry.
+    It records the selected provider/model, primary/fallback role, inline-control capability, preserve/
+    strip policy, and structural control result. It never includes prompt, user, or synthesized
+    text; use the opt-in payload logger only when a transcript-level incident requires it.
 
 ### Run
 

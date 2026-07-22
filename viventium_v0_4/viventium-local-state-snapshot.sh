@@ -45,15 +45,17 @@ fi
 APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
 PRIVATE_REPO_DIR="${VIVENTIUM_PRIVATE_REPO_DIR:-$(discover_private_repo_dir "$WORKSPACE_ROOT" "$PROJECT_ROOT" || true)}"
 PRIVATE_HELPER_PATH="${PRIVATE_REPO_DIR:+$PRIVATE_REPO_DIR/viventium_v0_4/viventium-local-state-snapshot.sh}"
+PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-python3}"
 
 usage() {
   cat <<'USAGE'
 Usage:
   ./viventium_v0_4/viventium-local-state-snapshot.sh [options]
 
-This public wrapper always writes a metadata-only continuity manifest under the selected snapshot
-root. When a private companion helper is available, it is invoked first to add the bounded
-secret-bearing payload into the same snapshot root.
+This public wrapper first attempts a complete, secret-excluding logical snapshot of canonical
+config, Mongo history/memory/agents, uploaded files, and schedules. Provider/channel credentials
+are never exported and must be reconnected after restore. If complete capture prerequisites are
+unavailable, it writes an honest metadata-only continuity audit instead.
 
 Options:
   --output-root <path>   Snapshot root. Defaults to ~/Library/Application Support/Viventium/snapshots
@@ -88,22 +90,52 @@ create_manifest_only_snapshot_dir() {
   local output_root="$1"
   local timestamp=""
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  local snapshot_dir="$output_root/$timestamp"
-  mkdir -p "$snapshot_dir"
-  printf '%s\n' "$snapshot_dir" >"$output_root/LATEST_PATH"
+  local snapshot_dir=""
+  snapshot_dir="$(mktemp -d "$output_root/${timestamp}-metadata.XXXXXX")"
+  chmod 700 "$snapshot_dir" >/dev/null 2>&1 || true
+  printf '%s\n' "metadata-only" >"$snapshot_dir/.viventium-metadata-only"
+  chmod 600 "$snapshot_dir/.viventium-metadata-only" >/dev/null 2>&1 || true
   printf '%s\n' "$snapshot_dir"
+}
+
+publish_latest_snapshot_path() {
+  local snapshot_dir="$1"
+  local output_root="$2"
+  local pointer_tmp=""
+  pointer_tmp="$(mktemp "$output_root/.LATEST_PATH.XXXXXX")"
+  chmod 600 "$pointer_tmp" >/dev/null 2>&1 || true
+  printf '%s\n' "$snapshot_dir" >"$pointer_tmp"
+  mv -f "$pointer_tmp" "$output_root/LATEST_PATH"
+}
+
+snapshot_dir_is_within_output_root() {
+  local snapshot_dir="$1"
+  local output_root="$2"
+  local resolved_snapshot=""
+  local resolved_output_root=""
+  [[ -d "$snapshot_dir" && -d "$output_root" ]] || return 1
+  resolved_snapshot="$(cd "$snapshot_dir" && pwd -P)"
+  resolved_output_root="$(cd "$output_root" && pwd -P)"
+  [[ "$resolved_snapshot" == "$resolved_output_root"/* ]]
+}
+
+snapshot_dir_is_structurally_valid_complete_bundle() {
+  local snapshot_dir="$1"
+  "$PYTHON_BIN" "$PROJECT_ROOT/scripts/viventium/continuity_bundle.py" validate \
+    --snapshot-dir "$snapshot_dir" \
+    --json >/dev/null 2>&1
 }
 
 write_continuity_manifest() {
   local snapshot_dir="$1"
   local manifest_path="$snapshot_dir/continuity-manifest.json"
   local runtime_dir="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
-  python3 "$PROJECT_ROOT/scripts/viventium/continuity_audit.py" capture \
+  "$PYTHON_BIN" "$PROJECT_ROOT/scripts/viventium/continuity_audit.py" capture \
     --repo-root "$PROJECT_ROOT" \
     --app-support-dir "$APP_SUPPORT_DIR" \
     --runtime-dir "$runtime_dir" \
     --label "snapshot" \
-    --output "$manifest_path" >/dev/null
+    --output "$manifest_path" >/dev/null || return $?
   printf '%s\n' "$manifest_path"
 }
 
@@ -135,22 +167,71 @@ done
 
 mkdir -p "$OUTPUT_ROOT"
 
+PREVIOUS_SNAPSHOT_DIR="$(find_latest_snapshot_dir "$OUTPUT_ROOT" || true)"
+SNAPSHOT_DIR=""
+SNAPSHOT_KIND="metadata-only"
 if [[ -n "$PRIVATE_HELPER_PATH" && -x "$PRIVATE_HELPER_PATH" ]]; then
   "$PRIVATE_HELPER_PATH" "${ORIGINAL_ARGS[@]}"
+  PRIVATE_SNAPSHOT_DIR="$(find_latest_snapshot_dir "$OUTPUT_ROOT" || true)"
+  if [[ -z "$PRIVATE_SNAPSHOT_DIR" || "$PRIVATE_SNAPSHOT_DIR" == "$PREVIOUS_SNAPSHOT_DIR" ]]; then
+    echo "Private snapshot helper did not record a new snapshot; preserving prior snapshots and capturing a new metadata-only audit." >&2
+  elif ! snapshot_dir_is_within_output_root "$PRIVATE_SNAPSHOT_DIR" "$OUTPUT_ROOT" || \
+    ! snapshot_dir_is_structurally_valid_complete_bundle "$PRIVATE_SNAPSHOT_DIR"; then
+    echo "Private snapshot helper did not create a structurally valid complete bundle; preserving prior snapshots and capturing a new metadata-only audit." >&2
+  else
+    SNAPSHOT_DIR="$PRIVATE_SNAPSHOT_DIR"
+    SNAPSHOT_KIND="private-helper"
+  fi
 fi
 
-SNAPSHOT_DIR="$(find_latest_snapshot_dir "$OUTPUT_ROOT" || true)"
+if [[ -z "$SNAPSHOT_DIR" ]]; then
+  PUBLIC_CAPTURE_STATUS=0
+  PUBLIC_CAPTURE_JSON="$(
+    "$PYTHON_BIN" "$PROJECT_ROOT/scripts/viventium/continuity_bundle.py" capture \
+      --repo-root "$PROJECT_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR" \
+      --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}" \
+      --output-root "$OUTPUT_ROOT" \
+      --json
+  )" || PUBLIC_CAPTURE_STATUS=$?
+  if [[ "$PUBLIC_CAPTURE_STATUS" -eq 0 ]]; then
+    SNAPSHOT_DIR="$(
+      "$PYTHON_BIN" - "$PUBLIC_CAPTURE_JSON" <<'PY'
+import json
+import sys
+print(json.loads(sys.argv[1])["snapshotDir"])
+PY
+    )"
+    if snapshot_dir_is_within_output_root "$SNAPSHOT_DIR" "$OUTPUT_ROOT" && \
+      snapshot_dir_is_structurally_valid_complete_bundle "$SNAPSHOT_DIR"; then
+      SNAPSHOT_KIND="public-complete"
+    else
+      echo "Public complete snapshot did not pass final containment and integrity validation; creating metadata-only evidence." >&2
+      SNAPSHOT_DIR=""
+    fi
+  else
+    echo "Complete snapshot prerequisites are unavailable; creating metadata-only continuity evidence." >&2
+  fi
+fi
+
 if [[ -z "$SNAPSHOT_DIR" ]]; then
   SNAPSHOT_DIR="$(create_manifest_only_snapshot_dir "$OUTPUT_ROOT")"
 fi
 
 MANIFEST_PATH="$(write_continuity_manifest "$SNAPSHOT_DIR")"
+if [[ "$SNAPSHOT_KIND" != "metadata-only" ]] && ! snapshot_dir_is_structurally_valid_complete_bundle "$SNAPSHOT_DIR"; then
+  echo "Complete snapshot failed final post-audit validation; LATEST_PATH was not changed." >&2
+  exit 4
+fi
+publish_latest_snapshot_path "$SNAPSHOT_DIR" "$OUTPUT_ROOT"
 if declare -F public_safe_path_label >/dev/null 2>&1; then
   echo "Continuity manifest written to $(public_safe_path_label "$MANIFEST_PATH")"
 else
   echo "Continuity manifest written."
 fi
 
-if [[ ! -x "$PRIVATE_HELPER_PATH" ]]; then
-  echo "No private companion snapshot helper detected; captured metadata-only continuity snapshot." >&2
+if [[ "$SNAPSHOT_KIND" == "metadata-only" ]]; then
+  echo "Captured a metadata-only continuity audit. No recoverable backup payload was created." >&2
+else
+  echo "Captured a complete continuity snapshot. Account and channel reauthentication is required after restore." >&2
 fi

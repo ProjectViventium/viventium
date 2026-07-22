@@ -14,17 +14,23 @@ services:
       - "viventium.stack=viventium_v0_4"
       - "viventium.service=openclaw-bridge-mcp"
     ports:
-      - "${OPENCLAW_BRIDGE_PORT:-8086}:8086"
+      - "127.0.0.1:${OPENCLAW_BRIDGE_PORT:-8086}:8086"
     environment:
       - OPENCLAW_BRIDGE_PORT=8086
-      - OPENCLAW_BRIDGE_SECRET=${OPENCLAW_BRIDGE_SECRET:-}
+      - OPENCLAW_BRIDGE_SECRET=${OPENCLAW_BRIDGE_SECRET:?OpenClaw bridge secret is required}
       - OPENCLAW_BRIDGE_AUTH_TOKEN=${OPENCLAW_BRIDGE_AUTH_TOKEN:-viventium-bridge-local}
       - OPENCLAW_DATA_DIR=${OPENCLAW_DATA_DIR:-/data/openclaw/users}
       - OPENCLAW_PORT_START=${OPENCLAW_PORT_START:-18789}
       - OPENCLAW_PORT_END=${OPENCLAW_PORT_END:-18999}
       - OPENCLAW_IDLE_TIMEOUT_HOURS=${OPENCLAW_IDLE_TIMEOUT_HOURS:-2}
+      - OPENCLAW_RUNTIME=${OPENCLAW_RUNTIME:-e2b}
+      - OPENCLAW_ALLOW_DIRECT_HOST_EXEC=${OPENCLAW_ALLOW_DIRECT_HOST_EXEC:-false}
       - OPENCLAW_ISOLATION_TIER=${OPENCLAW_ISOLATION_TIER:-direct}
       - OPENCLAW_MODEL=${OPENCLAW_MODEL:-anthropic/claude-sonnet-4-20250514}
+      # VIVENTIUM START: loopback binding alone does not suppress host-name mDNS advertisement.
+      - OPENCLAW_DISABLE_BONJOUR=1
+      - FASTMCP_CHECK_FOR_UPDATES=off
+      # VIVENTIUM END
       # VIVENTIUM START: Channel bridge plugin wiring env.
       - OPENCLAW_CHANNEL_BRIDGE_ENABLED=${OPENCLAW_CHANNEL_BRIDGE_ENABLED:-false}
       - OPENCLAW_CHANNEL_PLUGIN_PATH=${OPENCLAW_CHANNEL_PLUGIN_PATH:-/app/viventium-channel-bridge}

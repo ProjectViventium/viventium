@@ -97,6 +97,60 @@ def _describe_attempt(attempt: ProviderAttempt, exc: BaseException) -> str:
     return " ".join(parts)
 
 
+def _voice_controls_present(text: str) -> bool:
+    """Detect provider-control markup through the owning shared sanitizer.
+
+    Normalize whitespace on the source side because `strip_voice_control_tags` also collapses
+    duplicate horizontal whitespace. This keeps the observation structural instead of treating
+    ordinary formatting as an emotional rendering control.
+    """
+
+    value = text or ""
+    normalized = re.sub(r"[ \t]{2,}", " ", value)
+    return strip_voice_control_tags(value) != normalized
+
+
+def _log_voice_rendering_observation(
+    attempt: ProviderAttempt,
+    *,
+    event: str,
+    mode: str,
+    attempt_index: int,
+    attempt_count: int,
+    controls_present: Optional[bool],
+) -> None:
+    """Emit bounded route/rendering metadata without the synthesized text or credentials."""
+
+    policy = "strip" if attempt.sanitize_voice_markup else "preserve"
+    if controls_present is None:
+        controls_state = "unknown"
+        controls_action = "pending"
+    elif not controls_present:
+        controls_state = "false"
+        controls_action = "none"
+    else:
+        controls_state = "true"
+        controls_action = "stripped" if attempt.sanitize_voice_markup else "preserved"
+    model = re.sub(r"\s+", "_", str(getattr(attempt.tts, "model", "") or "unknown").strip())[:120]
+
+    logger.info(
+        "[VoiceRendering][voice_gateway] event=%s mode=%s provider=%s model=%s role=%s "
+        "attempt=%s attempt_count=%s accepts_inline_controls=%s markup_policy=%s "
+        "controls_present=%s controls_action=%s",
+        event,
+        mode,
+        attempt.label,
+        model,
+        "primary" if attempt_index == 0 else "fallback",
+        attempt_index + 1,
+        attempt_count,
+        str(not attempt.sanitize_voice_markup).lower(),
+        policy,
+        controls_state,
+        controls_action,
+    )
+
+
 def _safe_markup_prefix_end(text: str) -> int:
     """
     Return the prefix length that is safe to sanitize without cutting through a structural token.
@@ -165,6 +219,36 @@ class _BufferedVoiceMarkupSanitizer:
         safe_text = self._buffer[:safe_end]
         self._buffer = self._buffer[safe_end:]
         return strip_voice_control_tags(safe_text)
+
+
+class _StreamingVoiceControlObserver:
+    """Observe only whether streamed text contains controls, with bounded retention."""
+
+    def __init__(self, *, max_pending_chars: int = 512) -> None:
+        self._max_pending_chars = max(16, int(max_pending_chars))
+        self._pending = ""
+        self.controls_present = False
+
+    @property
+    def pending_chars(self) -> int:
+        return len(self._pending)
+
+    def push_text(self, text: str) -> None:
+        if self.controls_present or not text:
+            return
+        candidate = self._pending + text
+        safe_end = _safe_markup_prefix_end(candidate)
+        if safe_end > 0 and _voice_controls_present(candidate[:safe_end]):
+            self.controls_present = True
+            self._pending = ""
+            return
+        self._pending = candidate[safe_end:][-self._max_pending_chars :]
+
+    def finish(self) -> bool:
+        if not self.controls_present and self._pending:
+            self.controls_present = _voice_controls_present(self._pending)
+        self._pending = ""
+        return self.controls_present
 
 
 class _ProviderTextBoundaryNormalizer:
@@ -412,12 +496,14 @@ class _FallbackChunkedStream(ChunkedStream):
 
         errors: list[tuple[str, BaseException]] = []
 
-        for attempt in self._attempts:
+        for attempt_index, attempt in enumerate(self._attempts):
             try:
                 frames = await self._collect_frames(
                     attempt,
                     target_rate=target_rate,
                     target_channels=target_channels,
+                    attempt_index=attempt_index,
+                    attempt_count=len(self._attempts),
                 )
                 if not frames:
                     raise APIError(f"{attempt.label} produced no audio frames")
@@ -427,6 +513,15 @@ class _FallbackChunkedStream(ChunkedStream):
                         self._on_provider_selected(attempt.label, attempt.tts)
                     except Exception:
                         logger.debug("on_provider_selected callback failed", exc_info=True)
+
+                _log_voice_rendering_observation(
+                    attempt,
+                    event="selected",
+                    mode="synthesize",
+                    attempt_index=attempt_index,
+                    attempt_count=len(self._attempts),
+                    controls_present=_voice_controls_present(self._input_text or ""),
+                )
 
                 for frame in frames:
                     output_emitter.push(bytes(frame.data))
@@ -456,6 +551,8 @@ class _FallbackChunkedStream(ChunkedStream):
         *,
         target_rate: int,
         target_channels: int,
+        attempt_index: int,
+        attempt_count: int,
     ) -> list[rtc.AudioFrame]:
         tts_impl = attempt.tts
         conn_options = self._conn_options
@@ -467,6 +564,15 @@ class _FallbackChunkedStream(ChunkedStream):
             )
 
         synth_text = self._input_text or ""
+        controls_present = _voice_controls_present(synth_text)
+        _log_voice_rendering_observation(
+            attempt,
+            event="attempt",
+            mode="synthesize",
+            attempt_index=attempt_index,
+            attempt_count=attempt_count,
+            controls_present=controls_present,
+        )
         if attempt.sanitize_voice_markup:
             synth_text = strip_voice_control_tags(synth_text)
 
@@ -533,17 +639,23 @@ class _FallbackSynthesizeStream(SynthesizeStream):
         attempt: ProviderAttempt,
         input_ch: aio.ChanReceiver[Union[str, SynthesizeStream._FlushSentinel]],
         conn_options: APIConnectOptions,
+        attempt_index: int,
+        attempt_count: int,
     ):
         stream_tts = _build_streaming_tts(attempt.tts)
         stream = stream_tts.stream(conn_options=conn_options)
         text_transform = _BufferedVoiceMarkupSanitizer() if attempt.sanitize_voice_markup else None
         text_boundary = _ProviderTextBoundaryNormalizer()
+        control_observer = _StreamingVoiceControlObserver()
+        input_complete = False
 
         async def _forward_input_task() -> None:
+            nonlocal input_complete
             try:
                 async for data in input_ch:
                     if isinstance(data, str):
                         raw_text = data
+                        control_observer.push_text(raw_text)
                         text = raw_text
                         if text_transform is not None:
                             text = text_transform.push_text(text)
@@ -611,6 +723,7 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                                     tts_impl=stream_tts,
                                 )
                         stream.flush()
+                input_complete = True
             finally:
                 if text_transform is not None:
                     tail = text_transform.end()
@@ -648,6 +761,15 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                     yield audio
         finally:
             await aio.cancel_and_wait(input_task)
+            observed_controls = control_observer.finish()
+            _log_voice_rendering_observation(
+                attempt,
+                event="input_complete" if input_complete else "input_interrupted",
+                mode="stream",
+                attempt_index=attempt_index,
+                attempt_count=attempt_count,
+                controls_present=observed_controls if input_complete or observed_controls else None,
+            )
 
     async def _run(self, output_emitter: AudioEmitter) -> None:
         wrapper_tts: TTS = self._tts  # type: ignore[assignment]
@@ -679,8 +801,16 @@ class _FallbackSynthesizeStream(SynthesizeStream):
 
         input_task = asyncio.create_task(_forward_input_task(), name="fallback_tts_capture_input")
         try:
-            for attempt in self._attempts:
+            for attempt_index, attempt in enumerate(self._attempts):
                 try:
+                    _log_voice_rendering_observation(
+                        attempt,
+                        event="attempt",
+                        mode="stream",
+                        attempt_index=attempt_index,
+                        attempt_count=len(self._attempts),
+                        controls_present=None,
+                    )
                     new_input_ch = aio.Chan[Union[str, SynthesizeStream._FlushSentinel]]()
                     for token in self._pushed_tokens:
                         new_input_ch.send_nowait(token)
@@ -708,6 +838,8 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                         attempt=attempt,
                         input_ch=new_input_ch,
                         conn_options=conn_options,
+                        attempt_index=attempt_index,
+                        attempt_count=len(self._attempts),
                     ):
                         if not selected_reported and self._on_provider_selected is not None:
                             try:
@@ -728,6 +860,15 @@ class _FallbackSynthesizeStream(SynthesizeStream):
                     if resampler is not None:
                         for resampled_frame in resampler.flush():
                             output_emitter.push(resampled_frame.data.tobytes())
+                    if selected_reported:
+                        _log_voice_rendering_observation(
+                            attempt,
+                            event="selected",
+                            mode="stream",
+                            attempt_index=attempt_index,
+                            attempt_count=len(self._attempts),
+                            controls_present=_voice_controls_present("".join(self._pushed_tokens)),
+                        )
                     return
                 except APIError as exc:
                     errors.append((attempt.label, exc))

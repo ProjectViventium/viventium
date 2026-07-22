@@ -539,8 +539,8 @@ def test_all_background_activation_classifiers_keep_provider_fallbacks() -> None
 
     expected_fallbacks = [
         {"provider": "xai", "model": "grok-4.20-non-reasoning"},
-        {"provider": "openai", "model": "gpt-5.4"},
         {"provider": "anthropic", "model": "claude-haiku-4-5"},
+        {"provider": "openai", "model": "gpt-5.4"},
     ]
 
     source_agent_ids = {agent["id"] for agent in bundle.get("backgroundAgents", [])}

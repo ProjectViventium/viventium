@@ -55,6 +55,65 @@ BACKGROUND_CORTEX_FOLLOWUP_SERVICE_PATH = (
 )
 
 
+def test_exact_model_eval_harness_captures_runtime_prompt_and_feelings_telemetry(
+    tmp_path: Path,
+) -> None:
+    log_dir = tmp_path / "runtime-logs"
+    log_dir.mkdir()
+    runtime_log = log_dir / "debug-2026-07-14.log"
+    runtime_log.write_text(
+        "\n".join(
+            [
+                '2026-07-14T22:23:23.852Z info: [PromptFrameTelemetry] {"event":"viventium.prompt_frame","prompt_family":"main_run_create","surface":"web","provid... [truncated]',
+                '2026-07-14T22:23:23.852Z info: [VIVENTIUM][Feelings] {"i":"1","r":"abc12345","p":1,"n":4,"event":"feelings.inject.final_run","enabled":true}',
+                '2026-07-14T22:23:23.853Z info: [VIVENTIUM][Feelings] {"i":"1","r":"abc12345","p":2,"n":4,"injected":true,"presentInFinalRun":true}',
+                '2026-07-14T22:23:23.853Z info: [VIVENTIUM][Feelings] {"i":"1","r":"abc12345","p":3,"n":4,"capsuleOccurrenceCount":1,"placement":"followed_by_runtime_contracts"}',
+                '2026-07-14T22:23:23.853Z info: [VIVENTIUM][Feelings] {"i":"1","r":"abc12345","p":4,"n":4,"trailingInstructionChars":54}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    node_script = """
+process.env.VIVENTIUM_EVAL_RUNTIME_LOG_DIR = process.argv[1];
+const harness = require(process.argv[2]);
+const evidence = harness.summarizePromptFrameDelta({ [process.argv[3]]: 0 });
+process.stdout.write(evidence);
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(log_dir), str(EVAL_SCRIPT), str(runtime_log)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    evidence = json.loads(result.stdout)
+    assert evidence["prompt_frames"] == [
+        {
+            "prompt_family": "main_run_create",
+            "surface": "web",
+            "provider_hash": "missing",
+            "model_hash": "missing",
+            "layer_token_estimates": {},
+            "source_hashes": {},
+            "mcp_instruction_sources": {},
+            "source": "runtime_text_log_truncated",
+        }
+    ]
+    assert evidence["feelings_final_run"] == [
+        {
+            "enabled": True,
+            "injected": True,
+            "presentInFinalRun": True,
+            "capsuleOccurrenceCount": 1,
+            "placement": "followed_by_runtime_contracts",
+            "trailingInstructionChars": 54,
+        }
+    ]
+
+
 def test_exact_model_eval_harness_fails_closed_when_runtime_is_unreachable(tmp_path: Path) -> None:
     private_dir = tmp_path / "private"
     public_report = tmp_path / "public-report.md"
@@ -110,12 +169,14 @@ def test_exact_model_eval_harness_does_not_embed_local_password() -> None:
 
 def test_exact_model_eval_harness_can_filter_one_case(tmp_path: Path) -> None:
     private_dir = tmp_path / "private"
+    public_report = tmp_path / "public-report.md"
     result = subprocess.run(
         [
             "node",
             str(EVAL_SCRIPT),
             "--api-base=http://127.0.0.1:65535",
             f"--output-dir={private_dir}",
+            f"--public-report={public_report}",
             "--no-live",
             "--family=feelings_embodiment_and_reaction",
             "--case=feelings_direct_question_without_state_recap",
@@ -131,6 +192,316 @@ def test_exact_model_eval_harness_can_filter_one_case(tmp_path: Path) -> None:
     assert payload["summary"]["runnablePromptCases"] == 1
     assert payload["summary"]["filters"]["caseId"] == (
         "feelings_direct_question_without_state_recap"
+    )
+
+
+def test_exact_model_eval_harness_accepts_a_bounded_explicit_case_set() -> None:
+    node_script = """
+const assert = require('assert');
+const harness = require(process.argv[1]);
+const args = harness.parseArgs([
+  '--case-ids=case_two,case_one,case_two',
+  '--max-cases=9',
+]);
+assert.deepStrictEqual(args.caseIds, ['case_two', 'case_one']);
+assert.strictEqual(
+  harness.caseMatchesFilters(
+    { id: 'case_one', familyId: 'family', surface: 'telegram', promptRefs: [] },
+    { caseIds: args.caseIds },
+  ),
+  true,
+);
+assert.strictEqual(
+  harness.caseMatchesFilters(
+    { id: 'case_three', familyId: 'family', surface: 'telegram', promptRefs: [] },
+    { caseIds: args.caseIds },
+  ),
+  false,
+);
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_conversation_evidence_only_counts_messages_after_primary_response() -> None:
+    node_script = """
+const assert = require('assert');
+const harness = require(process.argv[1]);
+const messages = [
+  { messageId: 'seed-a', sender: 'Assistant', text: 'Earlier seeded reply.' },
+  { messageId: 'seed-u', sender: 'User', text: 'Earlier seeded prompt.' },
+  { messageId: 'tested-u', sender: 'User', text: 'How you feeling mate?' },
+  { messageId: 'primary-a', sender: 'Assistant', text: 'Primary tested reply.' },
+  { messageId: 'follow-up-a', sender: 'Assistant', text: 'Actual delayed follow-up.' },
+];
+const db = {
+  collection() {
+    return {
+      find() {
+        return {
+          sort() {
+            return { toArray: async () => messages };
+          },
+        };
+      },
+    };
+  },
+};
+(async () => {
+  const evidence = await harness.readConversationEvidence({
+    db,
+    conversationId: 'conversation-1',
+    result: { finalMeta: { responseMessageId: 'primary-a' } },
+  });
+  assert.strictEqual(evidence.delayedMessageCount, 1);
+  assert.strictEqual(evidence.delayedVisibleText, 'Actual delayed follow-up.');
+  assert.ok(!evidence.delayedVisibleText.includes('Earlier seeded reply.'));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_feelings_eval_fixture_builds_clean_synthetic_state_without_lived_trail() -> None:
+    node_script = """
+const assert = require('assert');
+const harness = require(process.argv[1]);
+const configured = harness.buildIsolatedFeelingsFixtureSet({
+  state: {
+    bands: {
+      mood: { baseline: 50, current: 50, halfLifeMinutes: 90, enabled: true },
+      play: { baseline: 50, current: 50, halfLifeMinutes: 90, enabled: true },
+    },
+  },
+  fixture: {
+    current: { play: 72 },
+    nature: { play: 44 },
+    rangePromptOverrides: { play: { level_3: 'Synthetic playful pull.' } },
+  },
+  now: new Date('2026-07-15T12:00:00.000Z'),
+});
+assert.strictEqual(configured.bands.play.current, 72);
+assert.strictEqual(configured.bands.play.baseline, 44);
+assert.strictEqual(configured.bands.mood.current, 50);
+assert.strictEqual(configured.bands.play.updatedAt.toISOString(), '2026-07-15T12:00:00.000Z');
+assert.deepStrictEqual(configured.trail, []);
+assert.deepStrictEqual(configured.processedStimulusKeys, []);
+assert.strictEqual(configured.innerState, null);
+assert.deepStrictEqual(configured.rangePromptOverrides, {
+  play: { level_3: 'Synthetic playful pull.' },
+});
+process.stdout.write('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+
+
+def test_bad_news_eval_distinguishes_melodrama_from_stable_honest_voice() -> None:
+    prompt_bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
+    family = next(
+        row
+        for row in prompt_bank["families"]
+        if row.get("id") == "feelings_embodiment_and_reaction"
+    )
+    test_case = next(
+        row
+        for row in family["cases"]
+        if row.get("id") == "feelings_bad_news_moves_mood_and_writes_natural_line"
+    )
+    rubric = " ".join(test_case["rubric"]).lower()
+
+    assert "profanity" in rubric
+    assert "not by itself melodrama" in rubric
+
+
+def test_exact_model_eval_lease_blocks_concurrent_stateful_runs(tmp_path: Path) -> None:
+    lock_path = tmp_path / "exact-model-eval.lock"
+    node_script = """
+const assert = require('assert');
+const harness = require(process.argv[1]);
+const lockPath = process.argv[2];
+const first = harness.acquireExclusiveEvalLease(lockPath);
+assert.strictEqual(first.acquired, true);
+const second = harness.acquireExclusiveEvalLease(lockPath);
+assert.strictEqual(second.acquired, false);
+assert.strictEqual(second.reason, 'exact_model_eval_already_running');
+first.release();
+const third = harness.acquireExclusiveEvalLease(lockPath);
+assert.strictEqual(third.acquired, true);
+third.release();
+process.stdout.write('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT), str(lock_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+    assert not lock_path.exists()
+    script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert "evalLease = acquireExclusiveEvalLease();" in script_text
+    assert "blockedReason = evalLease.reason;" in script_text
+
+
+def test_semantic_judge_retries_only_transient_transport_failures() -> None:
+    node_script = """
+const harness = require(process.argv[1]);
+const calls = [];
+const callJudge = async () => {
+  calls.push(calls.length + 1);
+  if (calls.length === 1) throw new Error('fetch failed');
+  if (calls.length === 2) return { ok: false, status: 0, error: 'judge_failed:fetch failed' };
+  return { ok: true, status: 200, judgment: {}, finalMeta: { conversationId: 'synthetic' } };
+};
+(async () => {
+  const retried = await harness.callConfiguredJudgeWithRetry({
+    args: {}, token: 'synthetic', prompt: 'synthetic', timeoutMs: 1000, callJudge,
+    wait: async () => {},
+  });
+  const semanticFailure = await harness.callConfiguredJudgeWithRetry({
+    args: {}, token: 'synthetic', prompt: 'synthetic', timeoutMs: 1000,
+    callJudge: async () => ({ ok: false, status: 400, error: 'invalid_shape' }),
+    wait: async () => { throw new Error('must_not_wait'); },
+  });
+  process.stdout.write(JSON.stringify({ retried, semanticFailure, calls }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["calls"] == [1, 2, 3]
+    assert payload["retried"]["ok"] is True
+    assert payload["retried"]["attemptCount"] == 3
+    assert payload["retried"]["conversationIds"] == ["synthetic"]
+    assert payload["semanticFailure"]["attemptCount"] == 1
+
+
+def test_semantic_judge_unavailability_is_not_a_behavior_failure() -> None:
+    node_script = """
+const harness = require(process.argv[1]);
+const reason = harness.semanticJudgeUnavailableReason(
+  { ok: false, status: 401, error: 'openai_responses_http_401' },
+  { ok: false },
+);
+const redacted = harness.scrubForPublic(
+  'Incorrect API key: sk-example********************************suffix',
+);
+process.stdout.write(JSON.stringify({ reason, redacted }));
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "openai_responses_http_401"
+    assert payload["redacted"] == "Incorrect API key: [secret]"
+
+    script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert 'status: "unavailable"' in script_text
+    assert '"blocked_semantic_judge"' in script_text
+    assert "semanticJudgeUnavailableCount" in script_text
+
+
+def test_semantic_judge_result_classification_preserves_valid_failures() -> None:
+    node_script = """
+const harness = require(process.argv[1]);
+const bank = require(process.argv[2]);
+const results = [
+  'feelings_direct_question_without_state_recap',
+  'feelings_low_care_connection_owns_its_stance',
+].map((caseId) => ({
+  caseId,
+  status: 'completed',
+  responseForJudge: 'synthetic answer',
+  eventEvidenceForJudge: '',
+  promptFrameEvidenceForJudge: '',
+  postCaseEvidenceForJudge: '',
+}));
+const args = { semanticJudge: true, timeoutMs: 1000, judgeRoute: 'synthetic' };
+(async () => {
+  const unavailable = await harness.judgeLiveResults(args, bank, results, 'token', {
+    callJudge: async () => ({ ok: false, status: 401, error: 'judge_http_401' }),
+  });
+  const validFailure = await harness.judgeLiveResults(args, bank, [results[0]], 'token', {
+    callJudge: async () => ({
+      ok: true,
+      status: 200,
+      judgment: {
+        pass: false,
+        score: 0.25,
+        failure_mode: 'instruction_not_followed',
+        confidence: 'high',
+        summary: 'synthetic valid verdict',
+        rubric_results: [],
+      },
+    }),
+  });
+  process.stdout.write(JSON.stringify({ unavailable, validFailure }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(EVAL_SCRIPT), str(PROMPT_BANK_PATH)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    unavailable = payload["unavailable"]
+    assert unavailable["blockedReason"] == "semantic_judge_unavailable:judge_http_401"
+    assert unavailable["results"][0]["semanticJudge"]["status"] == "unavailable"
+    assert unavailable["results"][0]["semanticJudge"]["pass"] is None
+    assert "semanticJudge" not in unavailable["results"][1]
+
+    valid_failure = payload["validFailure"]
+    assert valid_failure["blockedReason"] is None
+    assert valid_failure["results"][0]["semanticJudge"]["status"] == "judged"
+    assert valid_failure["results"][0]["semanticJudge"]["pass"] is False
+    assert valid_failure["results"][0]["semanticJudge"]["failureMode"] == (
+        "instruction_not_followed"
     )
 
 
@@ -173,10 +544,84 @@ def test_feelings_voice_eval_cases_cover_expression_restraint_and_plain_tts() ->
     }
     assert feelings_off["fixture"]["feelings"]["enabled"] is False
 
+    cartesia_expressive = cases["feelings_voice_cartesia_positive_expressive"]
+    assert cartesia_expressive["fixture"]["voiceOutput"] == {
+        "requested": True,
+        "provider": "cartesia",
+        "markerExpectation": "present",
+    }
+    assert "voice" not in cartesia_expressive["prompt"].lower()
+    assert "tag" not in cartesia_expressive["prompt"].lower()
+
+    cartesia_restrained = cases["feelings_voice_cartesia_restrained_stays_unmarked"]
+    assert cartesia_restrained["fixture"]["voiceOutput"]["markerExpectation"] == "absent"
+    assert cartesia_restrained["fixture"]["feelings"]["current"]["openness"] <= 10
+
+    chatterbox_expressive = cases["feelings_voice_chatterbox_relief_uses_supported_marker"]
+    assert chatterbox_expressive["fixture"]["voiceOutput"] == {
+        "requested": True,
+        "provider": "local_chatterbox_turbo_mlx_8bit",
+        "markerExpectation": "present",
+    }
+
+    unsupported = cases["feelings_voice_unsupported_provider_stays_markup_free"]
+    assert unsupported["fixture"]["voiceOutput"] == {
+        "requested": True,
+        "provider": "unsupported-provider",
+        "markerExpectation": "absent",
+    }
+
+    eleven_v25 = cases["feelings_voice_eleven_turbo_v2_5_stays_markup_free"]
+    assert eleven_v25["fixture"]["voiceOutput"] == {
+        "requested": True,
+        "provider": "elevenlabs",
+        "markerExpectation": "absent",
+    }
+    assert "eleven_turbo_v2_5" in " ".join(eleven_v25["rubric"])
+    assert "Eleven v3" in " ".join(eleven_v25["rubric"])
+
     script = EVAL_SCRIPT.read_text(encoding="utf-8")
     assert "voiceOutputFixtureFor" in script
     assert "telegramAudioRequested" in script
     assert "validateVoiceMarkerEvidence" in script
+
+
+def test_cross_conversation_recall_eval_enables_and_restores_the_real_preference() -> None:
+    prompt_bank = json.loads(PROMPT_BANK_PATH.read_text(encoding="utf-8"))
+    family = next(row for row in prompt_bank["families"] if row.get("id") == "memory_recall")
+    test_case = next(
+        row
+        for row in family.get("cases") or []
+        if row.get("id") == "cross_conversation_recall_tool_ownership"
+    )
+
+    assert test_case["fixture"]["conversationRecall"] == {"enabled": True}
+    script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
+    assert "patchConversationRecallPreference" in script_text
+    assert "restoreConversationRecallFixture" in script_text
+    assert "conversation_recall_fixture_restore_verification_failed" in script_text
+
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+assert.deepStrictEqual(runner.conversationRecallFixtureFor({{
+  fixture: {{ conversationRecall: {{ enabled: true }} }},
+}}), {{ enabled: true }});
+assert.strictEqual(runner.conversationRecallFixtureFor({{
+  fixture: {{ conversationRecall: {{ enabled: false }} }},
+}}), null);
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
 
 
 def test_exact_model_voice_marker_validation_rejects_unpaired_xai_wrappers() -> None:
@@ -202,6 +647,42 @@ const overlapping = runner.collectVoiceMarkerEvidence('[laugh]');
 assert.strictEqual(overlapping.xai, 1);
 assert.strictEqual(overlapping.chatterbox, 1);
 assert.strictEqual(overlapping.totalKnown, 1);
+
+const cartesia = runner.validateVoiceMarkerEvidence({{
+  fixture: {{
+    voiceOutput: {{ requested: true, provider: 'cartesia', markerExpectation: 'present' }},
+  }},
+}}, '<emotion value="content"/>We did it.');
+assert.deepStrictEqual(cartesia.failures, []);
+assert.strictEqual(cartesia.evidence.providerMarkerCount, 1);
+
+const chatterbox = runner.validateVoiceMarkerEvidence({{
+  fixture: {{
+    voiceOutput: {{ requested: true, provider: 'local_chatterbox_turbo_mlx_8bit', markerExpectation: 'present' }},
+  }},
+}}, '[gasp] We caught it.');
+assert.deepStrictEqual(chatterbox.failures, []);
+
+const plainWithMarkup = runner.validateVoiceMarkerEvidence({{
+  fixture: {{
+    voiceOutput: {{ requested: true, provider: 'openai', markerExpectation: 'absent' }},
+  }},
+}}, '[laugh] This must be stripped.');
+assert.deepStrictEqual(plainWithMarkup.failures, ['voice_openai_unexpected_marker']);
+
+const elevenV3TagOnV25 = runner.validateVoiceMarkerEvidence({{
+  fixture: {{
+    voiceOutput: {{ requested: true, provider: 'elevenlabs', markerExpectation: 'absent' }},
+  }},
+}}, '[curious] The recovery held.');
+assert.deepStrictEqual(elevenV3TagOnV25.failures, ['voice_elevenlabs_unexpected_marker']);
+
+const unsupportedPlain = runner.validateVoiceMarkerEvidence({{
+  fixture: {{
+    voiceOutput: {{ requested: true, provider: 'unsupported-provider', markerExpectation: 'absent' }},
+  }},
+}}, 'Natural wording only.');
+assert.deepStrictEqual(unsupportedPlain.failures, []);
 console.log('OK');
 """
     result = subprocess.run(
@@ -412,6 +893,36 @@ console.log('OK');
     assert result.stdout.strip() == "OK"
 
 
+def test_activation_eval_can_use_a_guarded_non_owner_qa_user_context() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(ACTIVATION_MODEL_EVAL_SCRIPT))});
+(async () => {{
+  const qaUser = {{ _id: {{ toString: () => 'qa-user-id' }}, name: 'Viventium QA', email: 'qa@example.com', role: 'USER', provider: 'local' }};
+  const owner = {{ email: 'owner@example.com' }};
+  const db = {{
+    collection: () => ({{
+      findOne: async (selector) => selector.role === 'ADMIN' ? owner : qaUser,
+    }}),
+  }};
+  const selected = await runner.selectQaUserContext({{ db, qaUserName: 'Viventium QA', qaEmail: '' }});
+  assert.deepStrictEqual(selected.user, {{ id: 'qa-user-id', role: 'USER', provider: 'local' }});
+  assert.strictEqual(selected.public.selectorHash.length, 16);
+  console.log('OK');
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
+
+
 def test_activation_eval_summary_does_not_call_optional_variance_a_semantic_error(
     tmp_path: Path,
 ) -> None:
@@ -461,6 +972,7 @@ def test_exact_model_eval_harness_defaults_semantic_judge_to_local_account_route
     assert "unsupported_semantic_judge_route" in script_text
     assert "local_ephemeral_json_semantic_judge" in script_text
     assert "You are not Viventium" in script_text
+    assert "A rubric item must fail when the evidence quotes or describes behavior that the item forbids" in script_text
     assert 'Range rubric note: if a rubric says "one or two"' in script_text
     assert "Architecture-language note:" in script_text
     assert "Citation marker note:" in script_text
@@ -603,9 +1115,61 @@ def test_exact_model_eval_harness_requires_local_jwt_opt_in(tmp_path: Path) -> N
 def test_exact_model_local_jwt_refuses_owner_or_admin_account_selection() -> None:
     script_text = EVAL_SCRIPT.read_text(encoding="utf-8")
     assert "assertNonOwnerQaSelection" in script_text
-    assert 'findOne({ role: "ADMIN" }' in script_text
+    assert re.search(r'findOne\(\s*\{\s*role:\s*"ADMIN"\s*\}', script_text)
     assert "selected_admin_account_refused" in script_text
     assert re.search(r"assertNonOwnerQaSelection\s*\(", script_text)
+    assert 'args.qaEmail.endsWith(".invalid")' in script_text
+    assert 'userRole === "ADMIN"' in script_text
+    assert "qa_api_login_requires_synthetic_invalid_email" in script_text
+    assert "qa_api_login_refused_admin_account" in script_text
+
+
+def test_exact_model_api_login_accepts_only_non_admin_synthetic_identity() -> None:
+    script = f"""
+const assert = require('assert');
+const runner = require({json.dumps(str(EVAL_SCRIPT))});
+const response = (email, role) => ({{
+  ok: true,
+  status: 200,
+  body: {{ token: 'synthetic-token', user: {{ id: 'synthetic-user', email, role }} }},
+}});
+
+const admin = runner.buildQaApiLoginResult(
+  {{ qaEmail: 'synthetic@example.invalid' }},
+  response('synthetic@example.invalid', 'ADMIN'),
+);
+assert.strictEqual(admin.ok, false);
+assert.strictEqual(admin.reason, 'qa_api_login_refused_admin_account');
+assert.strictEqual(admin.token, null);
+
+const personalDomain = runner.buildQaApiLoginResult(
+  {{ qaEmail: 'qa@example.com' }},
+  response('qa@example.com', 'USER'),
+);
+assert.strictEqual(personalDomain.ok, false);
+assert.strictEqual(personalDomain.reason, 'qa_api_login_requires_synthetic_invalid_email');
+assert.strictEqual(personalDomain.token, null);
+
+const synthetic = runner.buildQaApiLoginResult(
+  {{ qaEmail: 'synthetic@example.invalid' }},
+  response('synthetic@example.invalid', 'USER'),
+);
+assert.strictEqual(synthetic.ok, true);
+assert.strictEqual(synthetic.reason, null);
+assert.strictEqual(synthetic.userId, 'synthetic-user');
+assert.strictEqual(synthetic.public.userRoleClass, 'non_admin');
+console.log('OK');
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
 
 
 def test_native_surface_eval_harness_requires_local_jwt_opt_in() -> None:

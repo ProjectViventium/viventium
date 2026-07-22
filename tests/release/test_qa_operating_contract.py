@@ -126,10 +126,52 @@ USER_GRADE_REQUIRED_FIELDS = [
     "Backend/log/DB confirmation",
     "Final model/runtime wording check",
 ]
+STRICT_RELEASE_VERDICT_PATHS = sorted(
+    {
+        *[path for path in (QA_ROOT / "release-readiness").rglob("*.md") if path.is_file()],
+        *[path for path in (QA_ROOT / "installer-resilience").rglob("*.md") if path.is_file()],
+    }
+)
+VERDICT_WORD_RE = re.compile(r"\b(?:PASS|FAIL|PARTIAL|BLOCKED)\b", re.IGNORECASE)
+ADDITIONAL_VERDICT_RE = re.compile(r"\b(?:PASS|FAIL|PARTIAL|BLOCKED)\b")
+VERDICT_PREFIX_RE = re.compile(r"^(PASS|FAIL|PARTIAL|BLOCKED)(?=$|[\s:;,.—])")
+SUMMARY_VERDICT_RE = re.compile(
+    r"^(?:[-*+]\s+)?(?:\*\*|__)?"
+    r"(?P<label>(?:(?:overall|release|final|qa|publication|review|hosted|current)\s+){0,2}"
+    r"(?:status|result|verdict)|last\s+run|current\s+(?:status|state))"
+    r"(?::(?:\*\*|__)?|(?:\*\*|__):)\s*(?P<value>.+)$",
+    re.IGNORECASE,
+)
+VERDICT_HEADER_RE = re.compile(
+    r"^(?:(?:actual|current|overall|release|final|qa|publication|review|hosted)\s+)?"
+    r"(?:status|result|verdict)\b|^last\s+run\b|^current\s+state\b",
+    re.IGNORECASE,
+)
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _strip_verdict_markdown(value: str) -> str:
+    return value.replace("`", "").replace("**", "").replace("__", "").strip()
+
+
+def _verdict_value_violation(value: str) -> str | None:
+    normalized = _strip_verdict_markdown(value)
+    verdict = VERDICT_PREFIX_RE.match(normalized)
+    if not verdict:
+        found = VERDICT_WORD_RE.search(normalized)
+        if found:
+            return f"verdict token must be exact uppercase at the start: {found.group(0)!r}"
+        return f"verdict field has no standard enum: {normalized!r}"
+
+    remainder = normalized[verdict.end() :].lstrip()
+    if remainder.startswith(("/", "\\", "(", "[", "+", "&", "-")):
+        return f"verdict must not encode a slash, parenthetical, or composite qualifier: {normalized!r}"
+    if ADDITIONAL_VERDICT_RE.search(remainder):
+        return f"verdict must not combine multiple enum values: {normalized!r}"
+    return None
 
 
 def _normalized(path: Path) -> str:
@@ -481,6 +523,116 @@ def test_cataloged_not_yet_run_cases_do_not_stagnate_silently() -> None:
         "Cataloged but unrun QA cases older than 90 days must be run, re-triaged, or moved to "
         "qa/_migration.md:\n" + "\n".join(violations)
     )
+
+
+def test_release_facing_verdict_fields_use_standard_enum() -> None:
+    violations: list[str] = []
+
+    for path in STRICT_RELEASE_VERDICT_PATHS:
+        text = _read(path)
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            summary_verdict = SUMMARY_VERDICT_RE.search(line.strip())
+            if summary_verdict:
+                violation = _verdict_value_violation(summary_verdict.group("value"))
+            else:
+                violation = None
+            if violation:
+                violations.append(
+                    f"{_relative(path)}:{line_number}: summary {violation}"
+                )
+
+        lines = text.splitlines()
+        table_status_columns: list[int] = []
+        for line_number, line in enumerate(lines, start=1):
+            if not line.startswith("|"):
+                table_status_columns = []
+                continue
+
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            is_separator = all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+            if is_separator:
+                continue
+
+            next_is_separator = False
+            if line_number < len(lines) and lines[line_number].startswith("|"):
+                next_cells = [
+                    cell.strip() for cell in lines[line_number].strip().strip("|").split("|")
+                ]
+                next_is_separator = bool(next_cells) and all(
+                    re.fullmatch(r":?-{3,}:?", cell) for cell in next_cells
+                )
+
+            if next_is_separator:
+                table_status_columns = [
+                    index
+                    for index, cell in enumerate(cells)
+                    if VERDICT_HEADER_RE.search(_strip_verdict_markdown(cell))
+                ]
+                continue
+
+            for index in table_status_columns:
+                if index >= len(cells):
+                    continue
+                value = cells[index]
+                violation = _verdict_value_violation(value)
+                if violation:
+                    violations.append(
+                        f"{_relative(path)}:{line_number}: {violation}"
+                    )
+
+    assert not violations, (
+        "Release-facing verdict fields must use PASS, FAIL, PARTIAL, or BLOCKED; put scope and "
+        "evidence qualifiers in the surrounding text:\n" + "\n".join(violations)
+    )
+
+
+def test_release_verdict_parser_rejects_qualified_or_noncanonical_tokens() -> None:
+    for value in [
+        "pass",
+        "Partial 2026-07-22",
+        "PASS/PARTIAL",
+        "FAIL / NOT STARTED",
+        "PASS (supporting only)",
+        "PASS-ONLY",
+        "PARTIAL + BLOCKED",
+        "PARTIAL; source checks PASS but the user path remains open",
+    ]:
+        assert _verdict_value_violation(value), value
+
+    for value in [
+        "PASS",
+        "FAIL. The attempted path did not complete.",
+        "PARTIAL 2026-07-22; the remaining user path is documented.",
+        "BLOCKED; signing authority is unavailable.",
+    ]:
+        assert _verdict_value_violation(value) is None, value
+
+    for header in [
+        "Status",
+        "Result / sanitized pointer",
+        "Actual result",
+        "Verdict",
+        "Last Run",
+        "Current state",
+    ]:
+        assert VERDICT_HEADER_RE.search(header), header
+    for non_verdict_header in ["Expected result", "Visible result", "Resulting origin ref"]:
+        assert not VERDICT_HEADER_RE.search(non_verdict_header), non_verdict_header
+
+    for summary in [
+        "Status: PASS",
+        "- **Review verdict:** PARTIAL",
+        "Overall release status: BLOCKED",
+        "Hosted review result: PASS",
+        "Last run: BLOCKED 2026-07-22",
+    ]:
+        assert SUMMARY_VERDICT_RE.search(summary), summary
+    for non_verdict_summary in [
+        "Expected result: a visible answer",
+        "Test result: 12 passed",
+        "Visible result: the setup screen opens",
+    ]:
+        assert not SUMMARY_VERDICT_RE.search(non_verdict_summary), non_verdict_summary
 
 
 def test_voice_web_search_escaped_case_is_promoted_to_feature_cases() -> None:

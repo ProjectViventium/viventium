@@ -82,6 +82,46 @@ runtime:
     assert "RETRIEVAL_OLLAMA_BASE_URL=http://host.docker.internal:11434" in completed.stdout
 
 
+def test_doctor_config_flag_loader_marks_retired_xai_route_without_remapping(tmp_path: Path) -> None:
+    doctor_text = DOCTOR_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(doctor_text, "load_doctor_config_flags")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+install:
+  mode: native
+voice:
+  mode: hosted
+  tts_provider: xai
+  tts:
+    xai:
+      tts_api: voice_agent
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"PYTHON_BIN='{sys.executable}'\n"
+                f"{function_def}"
+                f"load_doctor_config_flags '{config_path}' '{REPO_ROOT}'\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "VOICE_LEGACY_XAI_ROUTE=1" in completed.stdout
+    assert "VOICE_MODE=hosted" in completed.stdout
+
+
 def test_doctor_check_ollama_embeddings_model_warns_when_model_missing(tmp_path: Path) -> None:
     doctor_text = DOCTOR_PATH.read_text(encoding="utf-8")
     normalize_def = extract_shell_function(doctor_text, "doctor_normalize_ollama_base_url")

@@ -10,7 +10,7 @@
 #
 # Security:
 #   - Default bind: 127.0.0.1 (loopback only)
-#   - MCP bridge auth: OPENCLAW_BRIDGE_SECRET env var (required for non-loopback)
+#   - MCP bridge auth: OPENCLAW_BRIDGE_SECRET env var (required on every bind)
 #   - X-User-Id header trusted only when secret matches
 #
 # Source: openclaw/src/gateway/tools-invoke-http.ts
@@ -19,11 +19,17 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Dict, Optional
+
+# VIVENTIUM START: release runtimes must not call PyPI merely to render a server banner.
+os.environ["FASTMCP_CHECK_FOR_UPDATES"] = "off"
+# VIVENTIUM END
 
 import httpx
 from fastmcp import FastMCP
@@ -91,19 +97,16 @@ def _sanitize_header_value(value: Optional[str]) -> str:
 def _get_user_id() -> str:
     """Get user_id from request headers.
 
-    When OPENCLAW_BRIDGE_SECRET is set, the x-bridge-secret header must
-    match before trusting x-user-id. This prevents header spoofing when
-    the MCP server is exposed beyond loopback.
+    The x-bridge-secret header must match before any caller-controlled
+    identity is trusted. Loopback is a transport boundary, not an
+    authentication boundary: unrelated local processes can reach it.
     """
     headers = _get_request_headers()
 
-    # Verify bridge secret if configured — hard-fail on mismatch to prevent
-    # user-isolation collapse under misconfiguration or exposure.
-    if BRIDGE_SECRET:
-        provided_secret = headers.get("x-bridge-secret", "")
-        if provided_secret != BRIDGE_SECRET:
-            logger.error("Bridge secret mismatch — rejecting request (security: isolation collapse risk)")
-            raise ValueError("Forbidden: invalid bridge secret")
+    provided_secret = headers.get("x-bridge-secret", "")
+    if not BRIDGE_SECRET or not hmac.compare_digest(provided_secret, BRIDGE_SECRET):
+        logger.error("Bridge secret mismatch — rejecting request (security: isolation collapse risk)")
+        raise ValueError("Forbidden: invalid bridge secret")
 
     user_id = _sanitize_header_value(headers.get(HEADER_USER_ID))
     if not user_id:
@@ -113,6 +116,23 @@ def _get_user_id() -> str:
 
 # ============== MCP SERVER ==============
 
+manager: Optional[OpenClawManager] = None
+
+
+@asynccontextmanager
+async def bridge_lifespan(_server):
+    """Start background work only after FastMCP owns a running event loop."""
+    cleanup_task = manager.schedule_cleanup() if manager else None
+    try:
+        yield {}
+    finally:
+        if manager:
+            await manager.stop_all()
+        if cleanup_task:
+            cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup_task
+
 mcp = FastMCP(
     "Viventium OpenClaw Bridge",
     instructions=(
@@ -120,10 +140,10 @@ mcp = FastMCP(
         "multi-channel messaging, cron scheduling, device nodes, canvas, and full "
         "agent delegation. Each user has an isolated OpenClaw environment."
     ),
+    lifespan=bridge_lifespan,
 )
 
-# Global manager instance — created at startup
-manager: Optional[OpenClawManager] = None
+# Global manager instance is created before FastMCP enters its lifespan.
 
 
 def _auth_headers(instance: OpenClawInstance) -> Dict[str, str]:
@@ -687,22 +707,15 @@ async def health_check(request):
 # ============== STARTUP ==============
 
 
-def create_app():
+def create_app(*, host: str = MCP_HOST, port: int = MCP_PORT):
     """Create and configure the MCP server application."""
     global manager
 
-    # Security check: warn if exposed beyond loopback without secret
-    if MCP_HOST != "127.0.0.1" and not BRIDGE_SECRET:
-        logger.warning(
-            "MCP server bound to %s without OPENCLAW_BRIDGE_SECRET. "
-            "X-User-Id header can be spoofed. Set OPENCLAW_BRIDGE_SECRET "
-            "or bind to 127.0.0.1.",
-            MCP_HOST,
-        )
+    if not BRIDGE_SECRET:
+        raise RuntimeError("OPENCLAW_BRIDGE_SECRET is required for every MCP bridge bind")
 
     manager = OpenClawManager()
-    manager.schedule_cleanup()
-    logger.info(f"OpenClaw Bridge MCP server starting on {MCP_HOST}:{MCP_PORT}")
+    logger.info("OpenClaw Bridge MCP server starting on %s:%s", host, port)
     return mcp
 
 
@@ -714,5 +727,5 @@ if __name__ == "__main__":
     parser.add_argument("--host", default=MCP_HOST, help="Host to bind to")
     args = parser.parse_args()
 
-    create_app()
+    create_app(host=args.host, port=args.port)
     mcp.run(transport="streamable-http", host=args.host, port=args.port)

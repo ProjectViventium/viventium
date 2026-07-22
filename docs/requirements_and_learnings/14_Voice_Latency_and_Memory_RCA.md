@@ -364,7 +364,8 @@ Chat Completions live search is deprecated:
 - https://docs.x.ai/developers/model-capabilities/text/reasoning
 - https://docs.x.ai/developers/tools/web-search
 
-Because Viventium's current xAI voice route is Chat Completions, the least-risk immediate fix is to
+Because Viventium's voice route at the time of this May 2026 investigation used xAI Chat
+Completions, the least-risk immediate fix was to
 wire `reasoning_effort: "none"` correctly for the existing route. Replacing the voice route with
 xAI Responses + built-in web search is a larger design change because it changes endpoint semantics,
 tool event handling, citations, retry behavior, and fallback behavior. It is promising for weather
@@ -402,9 +403,14 @@ into the low-risk latency fix.
   count. It intentionally does not log prompt text, message text, auth headers, or provider keys.
 - The voice gateway now supplies a per-turn stream id to LibreChat, so sequential voice turns can be
   correlated and do not depend on conversation id as an implicit stream identifier.
-- The current local source-of-truth main-agent voice route is `xai / grok-4.3` with
-  `voice_llm_model_parameters.reasoning_effort: "none"`; live DB must be synced and verified through
-  the agent sync path rather than by relying on hand-edited runtime state.
+- The current local source-of-truth main-agent voice route remains the dedicated
+  `xai / grok-4.3` profile with `voice_llm_model_parameters.reasoning_effort: "none"`, no Responses
+  flag, and an explicit `openAI / gpt-5.6-terra / none` Responses fallback. July 2026 incident QA
+  found that switching the optional voice provider in Agent Builder could retain the prior
+  provider's parameter bag, allowing OpenAI's Responses flag to contaminate xAI. The shared
+  optional-model panel now clears only that route's parameters after a real provider change while
+  preserving persisted parameters during initial hydration. Live DB must still be synced and
+  verified through the agent sync path rather than by relying on hand-edited runtime state.
 
 ### Microtiming addendum (2026-05-19)
 

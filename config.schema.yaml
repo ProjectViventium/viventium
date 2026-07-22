@@ -16,6 +16,10 @@ properties:
       mode:
         type: string
         enum: [docker, native]
+      experience:
+        type: string
+        description: Fresh-install journey. Omitted configs retain their existing feature state.
+        enum: [express, custom]
   settings:
     type: object
     properties:
@@ -59,6 +63,17 @@ properties:
             type: integer
           auto_worker_profile:
             type: boolean
+      scheduled_agent:
+        type: object
+        properties:
+          provider:
+            type: string
+            enum: [openai]
+          model:
+            type: string
+          reasoning_effort:
+            type: string
+            enum: [xhigh]
       prompt_workbench:
         type: object
         properties:
@@ -201,6 +216,20 @@ properties:
                 enum: [detailed_summary_only, raw_and_summary, raw_only]
       background_followup_window_s:
         type: number
+      background_activation:
+        type: object
+        description: Bounded per-provider attempt budgets inside the shared and late activation-detection windows.
+        properties:
+          primary_attempt_timeout_ms:
+            type: integer
+            minimum: 100
+            maximum: 30000
+            default: 1600
+          fallback_attempt_timeout_ms:
+            type: integer
+            minimum: 100
+            maximum: 30000
+            default: 2500
       glasshive_followup_timeout_s:
         type: number
         description: Seconds that Web, Telegram, and Voice should keep listening for GlassHive worker callbacks after the main response returns.
@@ -221,6 +250,8 @@ properties:
             type: string
           public_livekit_url:
             type: string
+          public_glasshive_origin:
+            type: string
           livekit_node_ip:
             type: string
       ports:
@@ -229,6 +260,8 @@ properties:
           lc_api_port:
             type: integer
           lc_frontend_port:
+            type: integer
+          sandpack_bundler_port:
             type: integer
           playground_port:
             type: integer
@@ -272,7 +305,6 @@ properties:
         required:
           - provider
           - auth_mode
-          - secret_ref
       primary:
         type: object
         required:
@@ -375,6 +407,16 @@ properties:
   integrations:
     type: object
     properties:
+      sequential_thinking:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+      scheduling_cortex:
+        type: object
+        properties:
+          enabled:
+            type: boolean
       code_interpreter:
         type: object
         properties:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import os
 import sqlite3
 import subprocess
@@ -71,6 +72,47 @@ def test_build_service_rows_treats_localhost_api_health_as_running(monkeypatch) 
     assert service_status["LibreChat Frontend"] == "Running"
     assert service_status["LibreChat API"] == "Running"
     assert service_status["Modern Playground"] == "Running"
+
+
+def test_express_service_summary_treats_deferred_playground_as_core_ready(monkeypatch) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "install": {"mode": "native", "experience": "express"},
+        "runtime": {
+            "ports": {
+                "lc_frontend_port": 3190,
+                "lc_api_port": 3180,
+                "playground_port": 3300,
+            }
+        },
+        "llm": {"primary": {"provider": "openai", "auth_mode": "user_provided"}},
+        "voice": {"mode": "disabled"},
+        "integrations": {},
+    }
+
+    monkeypatch.setattr(
+        install_summary,
+        "http_ok",
+        lambda url: url in {"http://localhost:3190", "http://localhost:3180/api/health"},
+    )
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(config, {}, probe_live=True)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["LibreChat Frontend"][0] == "Running"
+    assert services["LibreChat API"][0] == "Running"
+    assert services["Modern Playground"] == (
+        "Deferred",
+        "Disabled by Easy Install; enable Voice when you want the playground.",
+    )
+    assert services["Primary AI"] == (
+        "Add in browser",
+        "Add an OpenAI API key in Settings > Account > Connected Accounts",
+    )
+    heading, _intro, _table_title = install_summary.resolve_summary_heading(True, rows, True)
+    assert heading == "Viventium is ready"
 
 
 def test_build_service_rows_accepts_ipv4_loopback_when_localhost_probe_fails(monkeypatch) -> None:
@@ -715,7 +757,31 @@ def test_build_next_steps_mentions_optional_shell_init(monkeypatch) -> None:
 
     assert any("bin/viventium shell-init" in step for step in steps)
     assert any("viventium" in step and "viv" in step for step in steps)
-    assert any("198.51.100.44:3190" in step for step in steps)
+    assert any("localhost:3190" in step for step in steps)
+    assert all("198.51.100.44:3190" not in step for step in steps)
+
+
+def test_local_only_summary_never_advertises_an_unreachable_lan_url(monkeypatch) -> None:
+    install_summary = load_install_summary_module()
+    config = {
+        "runtime": {
+            "network": {"remote_call_mode": "disabled"},
+            "ports": {"lc_frontend_port": 3190},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "disabled"},
+        "integrations": {},
+    }
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: "198.51.100.44")
+
+    rows = install_summary.build_service_rows(config, {}, probe_live=False)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["LibreChat Frontend"][1] == "http://localhost:3190"
+    assert services["LibreChat Frontend"][0] == "Configured"
+    assert services["LibreChat API"][0] == "Configured"
+    assert all(status != "Ready" for status, _detail in services.values())
+    assert all("198.51.100.44:3190" not in step for step in install_summary.build_next_steps(config, {}))
 
 
 def test_build_next_steps_prioritizes_connected_accounts_when_no_foundation_api_keys(monkeypatch) -> None:
@@ -740,6 +806,28 @@ def test_build_next_steps_prioritizes_connected_accounts_when_no_foundation_api_
     assert "Settings -> Connected Accounts" in notice
     assert "OpenAI" in notice
     assert all("Connected Accounts" not in step for step in steps)
+
+
+def test_easy_install_connected_accounts_notice_only_names_its_openai_route() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "install": {"mode": "native", "experience": "express"},
+        "runtime": {"ports": {"lc_frontend_port": 3190}},
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "user_provided"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "disabled"},
+        "integrations": {},
+    }
+
+    notice = install_summary.build_connected_accounts_notice(config)
+
+    assert notice is not None
+    assert "Connect [bold]OpenAI[/bold]" in notice
+    assert "Anthropic" not in notice
 
 
 def test_build_connected_accounts_notice_matches_anthropic_only_foundation_contract() -> None:
@@ -983,6 +1071,7 @@ def test_build_service_rows_marks_conversation_recall_action_required_after_star
     (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
 
     monkeypatch.setattr(install_summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(install_summary, "http_json_status_up", lambda _url: False)
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
 
     rows = install_summary.build_service_rows(
@@ -1018,6 +1107,7 @@ def test_build_service_rows_marks_conversation_recall_starting_during_cli_operat
     (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
 
     monkeypatch.setattr(install_summary, "http_ok", lambda _url: False)
+    monkeypatch.setattr(install_summary, "http_json_status_up", lambda _url: False)
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
     monkeypatch.setattr(install_summary, "cli_operation_running", lambda _runtime_dir: True)
 
@@ -1115,10 +1205,11 @@ def test_build_service_rows_marks_conversation_recall_running_from_health_endpoi
     state_root.mkdir(parents=True)
     (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
 
-    def fake_http_ok(url: str) -> bool:
-        return url == "http://localhost:8110/health"
-
-    monkeypatch.setattr(install_summary, "http_ok", fake_http_ok)
+    monkeypatch.setattr(
+        install_summary,
+        "http_json_status_up",
+        lambda url: url == "http://localhost:8110/health",
+    )
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
 
     rows = install_summary.build_service_rows(
@@ -1130,6 +1221,42 @@ def test_build_service_rows_marks_conversation_recall_running_from_health_endpoi
     services = {name: (status, detail) for name, status, detail in rows}
 
     assert services["Conversation Recall"] == ("Running", "http://localhost:8110")
+
+
+def test_build_service_rows_rejects_reachable_conversation_recall_semantic_down(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "profile": "isolated",
+            "personalization": {"default_conversation_recall": True},
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {},
+    }
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True)
+    state_root = tmp_path / "state" / "runtime" / "isolated"
+    state_root.mkdir(parents=True)
+    (state_root / "stack-owner.json").write_text('{"command":"start"}\n', encoding="utf-8")
+
+    monkeypatch.setattr(install_summary, "http_json_status_up", lambda _url: False)
+    monkeypatch.setattr(install_summary, "http_ok", lambda url: url == "http://localhost:8110")
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        config,
+        {"RAG_API_URL": "http://localhost:8110"},
+        runtime_dir=runtime_dir,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Conversation Recall"] == ("Action Required", "http://localhost:8110")
 
 
 def test_resolve_summary_heading_reports_live_startup_when_stack_should_be_live(
@@ -1193,7 +1320,7 @@ def test_build_service_rows_reports_auth_posture() -> None:
             },
             "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
         },
-        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
+        "llm": {"primary": {"provider": "openai", "auth_mode": "user_provided"}},
         "voice": {"mode": "local"},
         "integrations": {},
     }
@@ -1203,7 +1330,7 @@ def test_build_service_rows_reports_auth_posture() -> None:
 
     assert services["Primary AI"] == (
         "Action Required",
-        "Connect OpenAI in Settings > Account > Connected Accounts",
+        "Add an OpenAI API key in Settings > Account > Connected Accounts",
     )
     assert services["Account Sign-up"] == ("Closed", "Only existing accounts can sign in")
     assert "password-reset-link" in services["Password Reset"][1]
@@ -1226,6 +1353,7 @@ def test_build_service_rows_does_not_report_connect_openai_when_account_route_is
     }
     runtime_env = {
         "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH": "true",
         "VIVENTIUM_OPENAI_AUTH_MODE": "connected_account",
     }
 
@@ -1236,6 +1364,31 @@ def test_build_service_rows_does_not_report_connect_openai_when_account_route_is
     assert status == "Configured"
     assert "Connect OpenAI" not in detail
     assert "account-scoped route configured" in detail
+
+
+def test_build_service_rows_does_not_call_legacy_account_bridge_ready_without_opt_in() -> None:
+    install_summary = load_install_summary_module()
+    config = {
+        "runtime": {},
+        "llm": {"primary": {"provider": "openai", "auth_mode": "connected_account"}},
+        "voice": {"mode": "disabled"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH": "false",
+        "VIVENTIUM_OPENAI_AUTH_MODE": "connected_account",
+    }
+
+    services = {
+        name: (status, detail)
+        for name, status, detail in install_summary.build_service_rows(
+            config, runtime_env, probe_live=False
+        )
+    }
+    status, detail = services["Primary AI"]
+    assert status == "Action Required"
+    assert "experimental OpenAI account bridge" in detail
 
 
 def test_build_service_rows_finds_repo_local_telegram_pid_files(monkeypatch, tmp_path: Path) -> None:
@@ -1619,6 +1772,43 @@ def test_build_service_rows_reports_default_nightly_routines() -> None:
     )
 
 
+def test_build_service_rows_probes_public_glasshive_through_its_local_upstream(monkeypatch) -> None:
+    install_summary = load_install_summary_module()
+    probed: list[tuple[str, ...]] = []
+
+    def fake_any_http_ok(*urls: str) -> bool:
+        probed.append(urls)
+        return any(url.startswith("http://127.0.0.1:8780") for url in urls)
+
+    monkeypatch.setattr(install_summary, "any_http_ok", fake_any_http_ok)
+    config = {
+        "runtime": {
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {"glasshive": {"enabled": True}},
+    }
+    runtime_env = {
+        "START_GLASSHIVE": "true",
+        "GLASSHIVE_OPERATOR_BASE_URL": "https://glasshive.app.example.test",
+        "GLASSHIVE_PUBLIC_LINKS_ONLY": "true",
+        "GLASSHIVE_UI_PORT": "8780",
+    }
+
+    rows = install_summary.build_service_rows(config, runtime_env, probe_live=True)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["GlassHive"] == (
+        "Running",
+        "https://glasshive.app.example.test | default worker: codex-cli",
+    )
+    glasshive_probes = [urls for urls in probed if any("8780" in url for url in urls)]
+    assert glasshive_probes == [
+        ("http://127.0.0.1:8780", "http://127.0.0.1:8780/health")
+    ]
+
+
 def test_build_service_rows_reports_scheduler_health_and_sanitized_ledger(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1668,7 +1858,11 @@ def test_build_service_rows_reports_scheduler_health_and_sanitized_ledger(
         "SCHEDULING_DB_PATH": str(db_path),
     }
 
-    monkeypatch.setattr(install_summary, "http_ok", lambda url: url == "http://localhost:7110/health")
+    monkeypatch.setattr(
+        install_summary,
+        "scheduler_health_matches",
+        lambda _url, _db_path: (True, ""),
+    )
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
 
     rows = install_summary.build_service_rows(
@@ -1728,7 +1922,11 @@ def test_build_service_rows_marks_scheduler_running_with_ledger_issue(
         "integrations": {},
     }
 
-    monkeypatch.setattr(install_summary, "http_ok", lambda url: url == "http://localhost:7110/health")
+    monkeypatch.setattr(
+        install_summary,
+        "scheduler_health_matches",
+        lambda _url, _db_path: (True, ""),
+    )
     monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
 
     rows = install_summary.build_service_rows(
@@ -1745,6 +1943,113 @@ def test_build_service_rows_marks_scheduler_running_with_ledger_issue(
     assert services["Scheduler"][0] == "Running with issues"
     assert "last status error" in services["Scheduler"][1]
     assert "delivery failed" in services["Scheduler"][1]
+
+
+def test_scheduler_health_requires_expected_service_status_and_ledger_identity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+    db_path = tmp_path / "schedules.db"
+    expected_hash = hashlib.sha256(str(db_path.resolve()).encode("utf-8")).hexdigest()
+
+    for payload in (
+        {"status": "DOWN", "service": "scheduling-cortex", "db_path_sha256": expected_hash},
+        {"status": "ok", "service": "foreign-service", "db_path_sha256": expected_hash},
+        {"status": "ok", "service": "scheduling-cortex", "db_path_sha256": "wrong"},
+    ):
+        monkeypatch.setattr(install_summary, "http_json", lambda _url, value=payload: value)
+        healthy, _reason = install_summary.scheduler_health_matches(
+            "http://localhost:7110/health",
+            db_path,
+        )
+        assert healthy is False
+
+    monkeypatch.setattr(
+        install_summary,
+        "http_json",
+        lambda _url: {
+            "status": "ok",
+            "service": "scheduling-cortex",
+            "db_path_sha256": expected_hash,
+        },
+    )
+    assert install_summary.scheduler_health_matches(
+        "http://localhost:7110/health",
+        db_path,
+    ) == (True, "")
+
+
+def test_build_service_rows_does_not_report_scheduler_running_for_foreign_http_200(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+    db_path = tmp_path / "schedules.db"
+    monkeypatch.setattr(
+        install_summary,
+        "http_json",
+        lambda _url: {
+            "status": "ok",
+            "service": "foreign-service",
+            "db_path_sha256": hashlib.sha256(
+                str(db_path.resolve()).encode("utf-8")
+            ).hexdigest(),
+        },
+    )
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        {
+            "runtime": {
+                "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300}
+            },
+            "llm": {"primary": {"auth_mode": "connected_account"}},
+            "voice": {"mode": "local"},
+            "integrations": {},
+        },
+        {
+            "START_SCHEDULING_MCP": "true",
+            "SCHEDULING_MCP_URL": "http://localhost:7110/mcp",
+            "SCHEDULING_DB_PATH": str(db_path),
+        },
+        runtime_dir=tmp_path,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Scheduler"][0] != "Running"
+    assert "identity" in services["Scheduler"][1].lower()
+
+
+def test_build_service_rows_reports_semantic_memory_hardening_health(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+    monkeypatch.setattr(
+        install_summary,
+        "memory_hardening_status_payload",
+        lambda **_kwargs: {"schedule_health": {"state": "failed", "healthy": False}},
+    )
+
+    rows = install_summary.build_service_rows(
+        {
+            "runtime": {
+                "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300},
+                "memory_hardening": {"enabled": True, "schedule": "0 3 * * *"},
+            },
+            "llm": {"primary": {"auth_mode": "connected_account"}},
+            "voice": {"mode": "local"},
+            "integrations": {},
+        },
+        {},
+        runtime_dir=tmp_path / "runtime",
+        repo_root=REPO_ROOT,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Memory Hardening"][0] == "Action Required"
+    assert "health failed" in services["Memory Hardening"][1]
 
 
 def test_build_brain_setup_rows_reports_guided_and_lab_postures() -> None:
@@ -1779,11 +2084,62 @@ def test_build_brain_setup_rows_reports_guided_and_lab_postures() -> None:
     assert states["Primary AI"][0] == "Needs setup"
     assert states["Transcript Ingest"][0] == "Needs setup"
     assert states["Conversation Recall/RAG"][0] == "Needs setup"
+    assert states["Scheduler"][0] == "Needs setup"
+    assert states["GlassHive"][0] == "Needs setup"
+    assert states["Prompt Workbench"][0] == "Needs setup"
+    assert states["Nightly Reflection"][0] == "Needs setup"
+    assert states["Memory Hardening"][0] == "Needs setup"
     assert states["WhatsApp"][0] == "Not available"
     assert states["Code Interpreter"][0] == "Disabled by choice"
     assert states["Skyvern"][0] == "Disabled by choice"
-    assert states["OpenClaw"][0] == "Disabled by choice"
+    assert states["OpenClaw"][0] == "Not available"
     assert states["Remote Access"][0] == "Disabled by choice"
+
+
+def test_service_summary_does_not_present_lab_only_openclaw_as_configured() -> None:
+    install_summary = load_install_summary_module()
+    config = {
+        "runtime": {
+            "ports": {"lc_frontend_port": 3190, "lc_api_port": 3180, "playground_port": 3300}
+        },
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "disabled"},
+        "integrations": {"openclaw": {"enabled": True}},
+    }
+
+    rows = install_summary.build_service_rows(config, {}, probe_live=False)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["OpenClaw"][0] == "Not available"
+    assert "not shipped" in services["OpenClaw"][1]
+
+
+def test_voice_status_surfaces_retired_xai_route_as_action_required(tmp_path: Path) -> None:
+    install_summary = load_install_summary_module()
+    config = {
+        "install": {"experience": "express"},
+        "voice": {"mode": "hosted", "tts_provider": "xai"},
+        "integrations": {},
+    }
+    runtime_env = {
+        "VIVENTIUM_VOICE_ENABLED": "false",
+        "VIVENTIUM_VOICE_DEGRADED_REASON": "legacy_xai_voice_agent_route_retired",
+    }
+
+    assert install_summary.voice_status(config, runtime_env) == (
+        "Voice disabled: legacy xAI Voice Agent route retired; run Custom Settings Install to "
+        "choose a supported voice provider."
+    )
+    rows = install_summary.build_service_rows(
+        config,
+        runtime_env,
+        runtime_dir=tmp_path / "runtime",
+        repo_root=REPO_ROOT,
+        probe_live=False,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+    assert services["Voice"][0] == "Action Required"
+    assert "legacy xAI Voice Agent route retired" in services["Voice"][1]
 
 
 def test_build_brain_setup_rows_does_not_call_connected_account_route_ready() -> None:
@@ -1829,6 +2185,49 @@ def test_build_brain_setup_rows_does_not_call_unprobed_fallback_ready() -> None:
 
     assert states["Secondary/Fallback AI"][0] == "Configured"
     assert "live provider request" in states["Secondary/Fallback AI"][1]
+
+
+def test_brain_setup_configuration_alone_never_claims_ready() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {
+            "personalization": {"default_conversation_recall": True},
+            "memory_hardening": {"transcripts": {"source_dir": "/synthetic/transcripts"}},
+            "network": {"remote_call_mode": "public_https_edge"},
+        },
+        "llm": {
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "configured-but-unprobed-test-key",
+            },
+            "secondary": {
+                "provider": "anthropic",
+                "auth_mode": "api_key",
+                "secret_value": "configured-but-unprobed-test-key",
+            },
+        },
+        "voice": {"mode": "local"},
+        "integrations": {
+            "web_search": {"enabled": True},
+            "telegram": {"enabled": True},
+            "telegram_codex": {"enabled": True},
+            "google_workspace": {"enabled": True},
+            "ms365": {"enabled": True},
+            "code_interpreter": {"enabled": True},
+            "skyvern": {"enabled": True},
+            "openclaw": {"enabled": True},
+        },
+    }
+
+    rows = install_summary.build_brain_setup_rows(config, {})
+
+    assert rows
+    assert all(state != "Ready" for _name, state, _detail in rows)
+    configured_details = [detail for _name, state, detail in rows if state == "Configured"]
+    assert configured_details
+    assert all("verify" in detail.lower() or "live" in detail.lower() for detail in configured_details)
 
 
 def test_build_connected_accounts_notice_still_prompts_for_connected_account_route() -> None:

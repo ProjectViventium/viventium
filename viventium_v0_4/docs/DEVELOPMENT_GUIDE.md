@@ -27,7 +27,13 @@ Start with:
 ```bash
 ./viventium-librechat-start.sh
 ```
-Starts LibreChat, LiveKit, Agents Playground, and the voice gateway with consistent secrets.
+Starts LibreChat, LiveKit, the Modern Viventium Playground, and the voice gateway with consistent
+secrets.
+The playground is Viventium's modern `agent-starter-react` UI by default.
+
+The old `viventium-start-all.sh` command is a compatibility wrapper for this launcher. It does not
+own a separate LiveKit or dependency-install path, and obsolete `--build`, `--clean`, and
+`--install-deps` arguments fail closed instead of mutating the checkout.
 
 ### Stable Local Prod vs Side-by-Side Dev Env
 

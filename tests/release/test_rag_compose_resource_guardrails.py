@@ -38,3 +38,35 @@ def test_rag_compose_caps_local_resource_defaults() -> None:
     assert "127.0.0.1:${RAG_PORT:-8000}:${RAG_PORT:-8000}" in compose["services"][
         "rag_api"
     ]["ports"]
+
+
+def test_rag_compose_document_override_is_portable_and_keeps_selected_tree_default() -> None:
+    compose_text = RAG_COMPOSE.read_text(encoding="utf-8")
+    compose = yaml.safe_load(compose_text)
+    volumes = compose["services"]["rag_api"]["volumes"]
+
+    expected = {
+        "type": "bind",
+        "source": (
+            "${VIVENTIUM_RAG_DOCUMENT_ROUTE_PATH:-"
+            "./viventium/rag_api_overrides/app/routes/document_routes.py}"
+        ),
+        "target": "/app/app/routes/document_routes.py",
+        "read_only": True,
+    }
+    assert expected in volumes
+    assert "/" + "Users" + "/" not in compose_text
+    assert "/Volumes/" not in compose_text
+
+
+def test_rag_compose_pgdata_uses_portable_long_bind_syntax() -> None:
+    compose_text = RAG_COMPOSE.read_text(encoding="utf-8")
+    compose = yaml.safe_load(compose_text)
+
+    assert {
+        "type": "bind",
+        "source": "${VIVENTIUM_RAG_PGDATA_PATH:-./.rag-pgdata}",
+        "target": "/var/lib/postgresql/data",
+    } in compose["services"]["vectordb"]["volumes"]
+    assert "host-owned by default" in compose_text
+    assert "daemon-owned" in compose_text

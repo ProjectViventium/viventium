@@ -1,5 +1,7 @@
 # Prompt Registry Slice: Exact-Model Completion Baseline
 
+<!-- qa-evidence-exempt: Generated blocked-run baseline retained as a supplemental machine-evaluation artifact, not a dated user-path acceptance report. -->
+
 Generated: 2026-07-11T19:51:31.339Z
 
 ## Status

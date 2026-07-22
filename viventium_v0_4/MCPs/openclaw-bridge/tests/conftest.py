@@ -41,6 +41,7 @@ def clean_env(request, monkeypatch, tmp_path):
     monkeypatch.setenv("OPENCLAW_BRIDGE_SECRET", "test-secret")
     monkeypatch.setenv("OPENCLAW_RUNTIME", "direct")
     monkeypatch.setenv("OPENCLAW_RUNTIME_ALLOW_FALLBACK", "true")
+    monkeypatch.setenv("OPENCLAW_ALLOW_DIRECT_HOST_EXEC", "true")
 
 
 @pytest.fixture
@@ -56,9 +57,11 @@ def fresh_manager(clean_env, tmp_path):
     # Patch module-level constants that were evaluated at first import
     with patch.object(mgr, "DATA_DIR", Path(tmp_path / "users")), \
          patch.object(mgr, "LOG_DIR", Path(tmp_path / "logs")), \
+         patch.object(mgr, "REGISTRY_PATH", Path(tmp_path / "users" / "vm_registry.json")), \
          patch.object(mgr, "PORT_RANGE_START", 29000), \
          patch.object(mgr, "PORT_RANGE_END", 29100), \
          patch.object(mgr, "OPENCLAW_RUNTIME", "direct"), \
+         patch.object(mgr, "OPENCLAW_DIRECT_HOST_EXEC_ALLOWED", True), \
          patch.object(mgr, "OPENCLAW_BIN", "openclaw"), \
          patch.object(mgr, "OPENCLAW_BRIDGE_AUTH_TOKEN", "test-token"), \
          patch.object(mgr, "OPENCLAW_MODEL", "test-model/latest"), \

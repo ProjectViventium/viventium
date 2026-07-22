@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -41,10 +42,22 @@ def workbench_private_root() -> Path:
 
 
 def relative_to_repo(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(REPO_ROOT.resolve()))
-    except ValueError:
-        return str(path)
+    resolved = path.expanduser().resolve()
+    known_roots = (
+        (REPO_ROOT.resolve(), Path()),
+        (LIBRECHAT_ROOT.resolve(), Path("viventium_v0_4") / "LibreChat"),
+    )
+    for root, public_prefix in known_roots:
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            continue
+        return str(public_prefix / relative)
+    # Draft storage keeps the absolute target only in the private application-data
+    # record. Public API responses and patches use a stable opaque label for
+    # explicitly configured/test roots outside the checkout, never a machine path.
+    path_hash = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
+    return str(Path("external-source") / path_hash / resolved.name)
 
 
 def resolve_repo_path(value: str | Path) -> Path:

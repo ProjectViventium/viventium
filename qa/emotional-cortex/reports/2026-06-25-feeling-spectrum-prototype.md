@@ -1,5 +1,7 @@
 # Emotional Cortex — feeling-spectrum prototype browser QA
 
+<!-- qa-evidence-exempt: Historical prototype record retained for design lineage; current user-surface acceptance is recorded in later feature reports. -->
+
 Date: 2026-06-25
 Prototype: `qa/emotional-cortex/prototypes/feeling-spectrum.html`
 Owning requirement: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md` (v4)

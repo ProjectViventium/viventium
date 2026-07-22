@@ -44,14 +44,54 @@ except Exception:
             return cleaned
         return cleaned.strip()
 
-_DEFAULT_LOCAL_CHATTERBOX_MODEL_ID = "mlx-community/chatterbox-turbo-8bit"
-_SUPPORTED_TTS_PROVIDERS = {
-    "openai",
-    "elevenlabs",
-    "cartesia",
-    "xai",
-    "local_chatterbox_turbo_mlx_8bit",
-}
+_TTS_PROVIDER_CAPABILITIES_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "shared"
+    / "voice"
+    / "tts_provider_capabilities.json"
+)
+
+
+def _load_tts_provider_capabilities() -> dict[str, Any]:
+    try:
+        with _TTS_PROVIDER_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        providers = value.get("providers") if isinstance(value, dict) else None
+        if isinstance(providers, dict) and providers:
+            return value
+        raise ValueError("providers must be a non-empty object")
+    except Exception as error:
+        raise RuntimeError(
+            "Required TTS provider capability contract is missing or invalid at "
+            f"{_TTS_PROVIDER_CAPABILITIES_PATH}"
+        ) from error
+
+
+_TTS_PROVIDER_CAPABILITIES = _load_tts_provider_capabilities()
+_TTS_PROVIDER_CONTRACTS = _TTS_PROVIDER_CAPABILITIES.get("providers", {})
+_SUPPORTED_TTS_PROVIDERS = set(_TTS_PROVIDER_CONTRACTS)
+_DEFAULT_LOCAL_CHATTERBOX_MODEL_ID = str(
+    _TTS_PROVIDER_CONTRACTS.get("local_chatterbox_turbo_mlx_8bit", {}).get("default_model") or ""
+).strip()
+_DEFAULT_OPENAI_TTS_MODEL_ID = str(
+    _TTS_PROVIDER_CONTRACTS.get("openai", {}).get("default_model") or ""
+).strip()
+_DEFAULT_OPENAI_TTS_RENDERER_INSTRUCTION = str(
+    _TTS_PROVIDER_CONTRACTS.get("openai", {}).get("default_renderer_instruction") or ""
+).strip()
+_DEFAULT_ELEVENLABS_TTS_MODEL_ID = str(
+    _TTS_PROVIDER_CONTRACTS.get("elevenlabs", {}).get("default_model") or ""
+).strip()
+
+
+def _tts_model_supports_instruction_side_channel(provider: str, model_id: str) -> bool:
+    provider_contract = _TTS_PROVIDER_CONTRACTS.get(provider, {})
+    side_channels = provider_contract.get("side_channels", {})
+    instruction_contract = side_channels.get("instructions", {})
+    supported_models = instruction_contract.get("supported_models", [])
+    return str(model_id or "").strip() in {
+        str(value).strip() for value in supported_models if str(value).strip()
+    }
 
 
 # === VIVENTIUM START ===
@@ -201,6 +241,12 @@ _XAI_TTS_INLINE_TAGS = tuple(
     "exhale",
     "sigh",
 )
+_XAI_TTS_SQUARE_WRAPPER_RE = re.compile(
+    rf"\[\s*(?P<tag>{'|'.join(re.escape(tag) for tag in _XAI_TTS_WRAPPING_TAGS)})\s*\]"
+    rf"(?P<text>[\s\S]*?)"
+    rf"\[\s*/\s*(?P=tag)\s*\]",
+    re.IGNORECASE,
+)
 _XAI_TTS_WRAPPING_TAG_PATTERN = "|".join(
     re.escape(tag) for tag in _XAI_TTS_WRAPPING_TAGS
 )
@@ -307,7 +353,15 @@ _VCT_BRACKET_RE = re.compile(
 _VCT_STAGE_DIRECTION_MIN_ALPHA = 3
 _VCT_STAGE_DIRECTION_MAX_ALPHA = 24
 _VCT_STAGE_DIRECTION_MAX_WORDS = 3
-_CHATTERBOX_MARKERS = frozenset({"laugh", "sigh", "gasp"})
+_CHATTERBOX_MARKERS = frozenset(
+    str(token).strip()[1:-1].strip().lower()
+    for token in (
+        _TTS_PROVIDER_CONTRACTS.get("local_chatterbox_turbo_mlx_8bit", {})
+        .get("inline_controls", {})
+        .get("exact_tokens", [])
+    )
+    if str(token).strip().startswith("[") and str(token).strip().endswith("]")
+)
 _CARTESIA_EMOTION_EVENT_RE = re.compile(
     r'<emotion\s+value=["\']?(?P<wvalue>[^"\'>]+)["\']?\s*>(?P<wtext>[\s\S]*?)</emotion>'
     r"|"
@@ -453,7 +507,20 @@ def _strip_cartesia_markup_for_xai(text: str) -> str:
     """Remove Cartesia-only tags before xAI TTS while preserving xAI speech tags."""
     if not text:
         return ""
-    cleaned = _VCT_SPEAK_RE.sub("", text)
+    # The model occasionally mirrors inline ``[tag]`` syntax for a documented
+    # xAI wrapping control. A complete, paired wrapper already expresses an
+    # unambiguous provider instruction, so canonicalize its grammar instead of
+    # discarding the model-authored delivery choice. Unpaired/unknown bracket
+    # directions still fall through to the existing stripping path.
+    cleaned = _XAI_TTS_SQUARE_WRAPPER_RE.sub(
+        lambda match: (
+            f"<{match.group('tag').lower()}>"
+            f"{match.group('text').strip()}"
+            f"</{match.group('tag').lower()}>"
+        ),
+        text,
+    )
+    cleaned = _VCT_SPEAK_RE.sub("", cleaned)
     cleaned = _VCT_EMOTION_SC_RE.sub("", cleaned)
     cleaned = _VCT_EMOTION_WRAP_RE.sub(r"\1", cleaned)
     cleaned = _VCT_BREAK_RE.sub("", cleaned)
@@ -601,6 +668,7 @@ def summarize_voice_markup(text: str) -> dict[str, int]:
         for tag in _XAI_TTS_INLINE_TAGS
     )
     xai_wrapping = len(list(_VCT_XAI_WRAPPER_RE.finditer(value)))
+    xai_square_wrapping = len(list(_XAI_TTS_SQUARE_WRAPPER_RE.finditer(value)))
     # === VIVENTIUM END ===
     return {
         "laughter": len(_CARTESIA_LAUGHTER_RE.findall(value)),
@@ -611,8 +679,148 @@ def summarize_voice_markup(text: str) -> dict[str, int]:
         "spell": len(_VCT_SPELL_RE.findall(value)),
         "xai_inline": xai_inline,
         "xai_wrapping": xai_wrapping,
-        "xai_total": xai_inline + xai_wrapping,
+        "xai_square_wrapping": xai_square_wrapping,
+        "xai_total": xai_inline + xai_wrapping + xai_square_wrapping,
     }
+
+
+def _voice_rendering_observation(
+    provider: str,
+    text: str,
+    *,
+    route_role: str,
+    model_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Return bounded provider/control metadata without retaining user or prompt text."""
+    normalized_provider = _normalize_tts_provider(provider)
+    markup = summarize_voice_markup(text)
+    cartesia_total = sum(
+        markup[name] for name in ("laughter", "emotion", "break", "speed", "volume", "spell")
+    )
+    chatterbox_counts = {
+        marker: len(re.findall(rf"\[\s*{re.escape(marker)}\s*\]", text or "", re.IGNORECASE))
+        for marker in _CHATTERBOX_MARKERS
+    }
+    chatterbox_total = sum(chatterbox_counts.values())
+    chatterbox_only_total = sum(
+        count for marker, count in chatterbox_counts.items() if marker not in _XAI_TTS_INLINE_TAGS
+    )
+    structural_bracket_total = sum(
+        1
+        for match in _CARTESIA_BRACKET_TOKEN_RE.finditer(text or "")
+        if _is_bracket_stage_direction(match.group(1))
+    )
+    classified_bracket_total = (
+        markup["laughter"]
+        + markup["xai_inline"]
+        + chatterbox_only_total
+        + (markup["xai_square_wrapping"] * 2)
+    )
+    unclassified_bracket_total = max(0, structural_bracket_total - classified_bracket_total)
+    known_control_total = (
+        cartesia_total
+        + markup["xai_total"]
+        + chatterbox_only_total
+        + unclassified_bracket_total
+    )
+    provider_contract = _TTS_PROVIDER_CONTRACTS.get(normalized_provider, {})
+    inline_contract = provider_contract.get("inline_controls", {})
+    capability = str(inline_contract.get("mode") or "unknown")
+    capability_supported = bool(inline_contract.get("supported"))
+
+    if normalized_provider == "xai":
+        compatible_control_count = markup["xai_total"]
+        repairable_control_count = markup["xai_square_wrapping"]
+    elif normalized_provider == "cartesia":
+        compatible_control_count = cartesia_total
+        repairable_control_count = 0
+    elif normalized_provider == "local_chatterbox_turbo_mlx_8bit":
+        compatible_control_count = chatterbox_total
+        repairable_control_count = 0
+    elif capability == "plain_text_only":
+        compatible_control_count = 0
+        repairable_control_count = 0
+    else:
+        capability = "unknown"
+        capability_supported = False
+        compatible_control_count = 0
+        repairable_control_count = 0
+
+    incompatible_control_count = max(0, known_control_total - compatible_control_count)
+    if compatible_control_count:
+        expressive_rendering = "provider_controls_present"
+    elif incompatible_control_count:
+        expressive_rendering = "unsupported_controls_present"
+    elif capability_supported:
+        expressive_rendering = "unmarked_supported_route"
+    else:
+        expressive_rendering = "unmarked_plain_text"
+
+    normalized_role = route_role if route_role in {"primary", "fallback"} else "unknown"
+    normalized_model_id = str(
+        model_id or provider_contract.get("default_model") or "unknown"
+    ).strip()
+    return {
+        "provider": normalized_provider or "unknown",
+        "model_id": normalized_model_id or "unknown",
+        "route_role": normalized_role,
+        "capability": capability,
+        "capability_supported": capability_supported,
+        "compatible_control_count": compatible_control_count,
+        "repairable_control_count": repairable_control_count,
+        "incompatible_control_count": incompatible_control_count,
+        "known_control_count": known_control_total,
+        "expressive_rendering": expressive_rendering,
+    }
+
+
+def _log_voice_rendering_observation(
+    provider: str,
+    text: str,
+    *,
+    route_role: str,
+    model_id: Optional[str] = None,
+    forwarded_text: Optional[str] = None,
+) -> None:
+    input_observation = _voice_rendering_observation(
+        provider,
+        text,
+        route_role=route_role,
+        model_id=model_id,
+    )
+    forwarded_observation = (
+        _voice_rendering_observation(
+            provider,
+            forwarded_text,
+            route_role=route_role,
+            model_id=model_id,
+        )
+        if forwarded_text is not None
+        else input_observation
+    )
+    stripped_controls = max(
+        0,
+        input_observation["known_control_count"] - forwarded_observation["known_control_count"],
+    )
+    normalized_controls = min(
+        input_observation["repairable_control_count"],
+        forwarded_observation["compatible_control_count"],
+    )
+    logger.info(
+        "[VoiceRendering][telegram] provider=%s model=%s role=%s capability=%s "
+        "capability_supported=%s expressive_rendering=%s compatible_controls=%s "
+        "incompatible_controls=%s normalized_controls=%s stripped_controls=%s",
+        forwarded_observation["provider"],
+        forwarded_observation["model_id"],
+        forwarded_observation["route_role"],
+        forwarded_observation["capability"],
+        str(forwarded_observation["capability_supported"]).lower(),
+        forwarded_observation["expressive_rendering"],
+        forwarded_observation["compatible_control_count"],
+        input_observation["incompatible_control_count"],
+        normalized_controls,
+        stripped_controls,
+    )
 
 
 def _cartesia_segments_for_text(text: str, default_emotion: str) -> list[tuple[str, str]]:
@@ -760,7 +968,7 @@ def prepare_tts_text(text: str) -> str:
     cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned)
     cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
     cleaned = cleaned.replace("`", "")
-    cleaned = _EMAIL_RE.sub(" email available ", cleaned)
+    cleaned = _EMAIL_RE.sub(" address available ", cleaned)
     cleaned = _URL_RE.sub(" link available ", cleaned)
     cleaned = _strip_unknown_angle_tags_for_tts(cleaned)
     cleaned = _HEADING_RE.sub("", cleaned)
@@ -1012,6 +1220,19 @@ async def synthesize_speech(
     async def _try_provider(provider: str) -> Optional[bytes]:
         provider = (provider or "").strip().lower()
         variant_override = resolved_selection.get("variant") if provider == provider_primary else None
+        route_role = "primary" if provider == provider_primary else "fallback"
+        provider_model_id = str(
+            _TTS_PROVIDER_CONTRACTS.get(provider, {}).get("default_model") or "unknown"
+        ).strip()
+        if provider == "openai":
+            provider_model_id = (
+                (variant_override or TTS_MODEL or "").strip()
+                or _DEFAULT_OPENAI_TTS_MODEL_ID
+            )
+        elif provider == "elevenlabs":
+            provider_model_id = ELEVENLABS_MODEL or _DEFAULT_ELEVENLABS_TTS_MODEL_ID
+        elif provider == "local_chatterbox_turbo_mlx_8bit":
+            provider_model_id = variant_override or _DEFAULT_LOCAL_CHATTERBOX_MODEL_ID
 
         # === VIVENTIUM START ===
         # Feature: Strip voice control tags for non-Cartesia providers.
@@ -1035,6 +1256,14 @@ async def synthesize_speech(
                 logger.warning("Skipping %s TTS: text empty after voice tag stripping", provider)
                 return None
         # === VIVENTIUM END ===
+
+        _log_voice_rendering_observation(
+            provider,
+            text,
+            route_role=route_role,
+            model_id=provider_model_id,
+            forwarded_text=synth_text,
+        )
 
         # === VIVENTIUM START ===
         # Feature: Cartesia -> fallback provider for Telegram TTS.
@@ -1290,7 +1519,7 @@ async def synthesize_speech(
                 voice_settings["speed"] = speed
 
             # Use turbo_v2_5 as default for speed/cost, fallback to multilingual_v2 for quality
-            default_model = ELEVENLABS_MODEL or "eleven_turbo_v2_5"
+            default_model = ELEVENLABS_MODEL or _DEFAULT_ELEVENLABS_TTS_MODEL_ID
             payload = {
                 "text": synth_text,
                 "model_id": default_model,
@@ -1364,12 +1593,23 @@ async def synthesize_speech(
             logger.warning("Failed to derive audio endpoint for TTS: %s", err)
             return None
 
+        openai_model = (
+            (variant_override or TTS_MODEL or "").strip()
+            or _DEFAULT_OPENAI_TTS_MODEL_ID
+        )
         payload = {
-            "model": (variant_override or TTS_MODEL or "").strip() or TTS_MODEL,
+            "model": openai_model,
             "input": synth_text,
             "voice": TTS_VOICE,
             "response_format": TTS_RESPONSE_FORMAT,
         }
+        if _tts_model_supports_instruction_side_channel("openai", openai_model):
+            renderer_instruction = (
+                os.getenv("VIVENTIUM_OPENAI_TTS_INSTRUCTIONS", "").strip()
+                or _DEFAULT_OPENAI_TTS_RENDERER_INSTRUCTION
+            )
+            if renderer_instruction:
+                payload["instructions"] = renderer_instruction
 
         headers = {
             "Authorization": f"Bearer {api_key_final}",

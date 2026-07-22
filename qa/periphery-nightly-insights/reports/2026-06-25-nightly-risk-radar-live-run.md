@@ -1,5 +1,7 @@
 # 2026-06-25 Nightly Risk Radar Live Run QA
 
+<!-- qa-evidence-exempt: Historical focused live-run record retained as supporting evidence; later reports own complete user-path traceability. -->
+
 ## Summary
 
 Result: `PASS` for the requested nightly risk/blind-spot/opportunity artifact generation path.

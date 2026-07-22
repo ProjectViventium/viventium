@@ -87,6 +87,210 @@ def minimal_compile_config() -> dict:
     }
 
 
+def restored_runtime_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    app_support = tmp_path / "AppSupport"
+    continuity_dir = app_support / "state" / "continuity"
+    continuity_dir.mkdir(parents=True, mode=0o700)
+    app_support.chmod(0o700)
+    (app_support / "state").chmod(0o700)
+    continuity_dir.chmod(0o700)
+
+    config_path = app_support / "config.yaml"
+    write_config(config_path, minimal_compile_config())
+    config_path.chmod(0o600)
+    ledger_path = continuity_dir / "restored-runtime-selection.json"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "profile": "isolated",
+                "targetDatabase": "ViventiumRestoredTest",
+                "generatedRuntimePolicy": "regenerate_from_canonical_config",
+                "helperBindingPolicy": "regenerate_for_target_checkout",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ledger_path.chmod(0o600)
+    return config_path, app_support / "runtime", ledger_path
+
+
+def test_restored_runtime_selection_compiles_the_independent_database(tmp_path: Path) -> None:
+    config_path, output_dir, _ledger_path = restored_runtime_fixture(tmp_path)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_LOCAL_MONGO_DB=ViventiumRestoredTest" in runtime_env
+    assert "VIVENTIUM_LOCAL_MONGO_DB=LibreChatViventium" not in runtime_env
+
+
+def test_restored_runtime_selection_v2_binds_port_and_owned_data_path(tmp_path: Path) -> None:
+    config_path, output_dir, ledger_path = restored_runtime_fixture(tmp_path)
+    mongo_data = tmp_path / "independent-mongo-data"
+    mongo_data.mkdir(mode=0o700)
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "schemaVersion": 2,
+            "targetMongoPort": 37117,
+            "targetMongoDataPath": str(mongo_data),
+            "mongoPersistencePolicy": "target_owned_data_path",
+            "localRuntimeSecretPolicy": "regenerated_for_target",
+        }
+    )
+    local_secret = config_path.parent / "state" / "continuity" / "restored-local-runtime-secret"
+    local_secret.write_text("a" * 64 + "\n", encoding="ascii")
+    local_secret.chmod(0o600)
+    ledger_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    ledger_path.chmod(0o600)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_LOCAL_MONGO_DB=ViventiumRestoredTest" in runtime_env
+    assert "VIVENTIUM_LOCAL_MONGO_PORT=37117" in runtime_env
+    assert f"VIVENTIUM_LOCAL_MONGO_DATA_PATH={mongo_data}" in runtime_env
+    assert f"VIVENTIUM_CALL_SESSION_SECRET={'a' * 64}" in runtime_env
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("schemaVersion", 3, "unsupported version"),
+        ("profile", "compat", "profile does not match"),
+        ("targetDatabase", "unsafe/database", "database is invalid"),
+        ("generatedRuntimePolicy", "reuse_generated", "generated-runtime policy is invalid"),
+        ("helperBindingPolicy", "reuse_source", "helper-binding policy is invalid"),
+    ],
+)
+def test_restored_runtime_selection_rejects_invalid_contract(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    config_path, output_dir, ledger_path = restored_runtime_fixture(tmp_path)
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    payload[field] = value
+    ledger_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    ledger_path.chmod(0o600)
+
+    with pytest.raises(SystemExit, match=message):
+        config_compiler.restored_runtime_database_override(
+            minimal_compile_config(),
+            config_path,
+            output_dir,
+        )
+
+
+def test_restored_runtime_selection_rejects_symlink_and_open_mode(tmp_path: Path) -> None:
+    config_path, output_dir, ledger_path = restored_runtime_fixture(tmp_path)
+    real_ledger = ledger_path.with_name("real-ledger.json")
+    ledger_path.rename(real_ledger)
+    ledger_path.symlink_to(real_ledger)
+
+    with pytest.raises(SystemExit, match="regular non-symlink"):
+        config_compiler.restored_runtime_database_override(
+            minimal_compile_config(),
+            config_path,
+            output_dir,
+        )
+
+    ledger_path.unlink()
+    real_ledger.rename(ledger_path)
+    ledger_path.chmod(0o644)
+    with pytest.raises(SystemExit, match="owner-only"):
+        config_compiler.restored_runtime_database_override(
+            minimal_compile_config(),
+            config_path,
+            output_dir,
+        )
+
+
+def test_restored_runtime_selection_rejects_output_outside_target(tmp_path: Path) -> None:
+    config_path, _output_dir, _ledger_path = restored_runtime_fixture(tmp_path)
+
+    with pytest.raises(SystemExit, match="only into its own App Support runtime"):
+        config_compiler.restored_runtime_database_override(
+            minimal_compile_config(),
+            config_path,
+            tmp_path / "other-runtime",
+        )
+
+
+def test_background_activation_attempt_budgets_are_reliable_and_configurable(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    env = config_compiler.render_runtime_env(
+        config, config_compiler.build_agent_assignments(config)
+    )
+    assert env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] == "1600"
+    assert env["VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS"] == "2500"
+
+    config["runtime"]["background_activation"] = {
+        "primary_attempt_timeout_ms": 1450,
+        "fallback_attempt_timeout_ms": 2250,
+    }
+    configured = config_compiler.render_runtime_env(
+        config, config_compiler.build_agent_assignments(config)
+    )
+    assert configured["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] == "1450"
+    assert configured["VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS"] == "2250"
+    config_compiler.render_service_envs(tmp_path, configured)
+    librechat_env = (tmp_path / "service-env" / "librechat.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS=1450" in librechat_env
+    assert "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS=2250" in librechat_env
+
+
+def test_scheduled_agent_defaults_to_sol_xhigh_and_rejects_partial_policy() -> None:
+    assert config_compiler.resolve_scheduled_agent_settings({}) == {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "xhigh",
+    }
+
+    with pytest.raises(SystemExit, match="must stay xhigh"):
+        config_compiler.resolve_scheduled_agent_settings(
+            {
+                "runtime": {
+                    "scheduled_agent": {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "medium",
+                    }
+                }
+            }
+        )
+
+
 def load_source_of_truth_agents_bundle() -> dict:
     return config_compiler.resolve_source_prompt_refs(
         yaml.safe_load(SOURCE_OF_TRUTH_AGENTS_BUNDLE.read_text(encoding="utf-8"))
@@ -137,6 +341,103 @@ def test_runtime_env_defaults_to_modern_playground_and_keeps_classic_opt_in() ->
 
     assert invalid_env["PLAYGROUND_VARIANT"] == "modern"
     assert invalid_env["VIVENTIUM_PLAYGROUND_VARIANT"] == "modern"
+
+
+def test_native_runtime_env_is_secret_free_relocatable_and_fixed_to_native_ports() -> None:
+    config = minimal_compile_config()
+    source = {
+        "OPENAI_API_KEY": "must-not-ship",
+        "VIVENTIUM_CALL_SESSION_SECRET": "must-not-ship",
+        "VIVENTIUM_PROMPT_BUNDLE_PATH": "/path/to/build/prompt-bundle.json",
+        "VIVENTIUM_MAIN_AGENT_ID": "agent_viventium_main_fixture",
+        "VIVENTIUM_MEMORY_HARDENING_SCHEDULE": "0 3 * * *",
+        "VIVENTIUM_REMOTE_VALUE": "${UNRESOLVED}",
+        "ANTHROPIC_API_KEY": "user_provided",
+        "OTUC_LLM_PROVIDER": "openai",
+        "OTUC_LLM_MODEL": "gpt-5.6-sol",
+        "START_SCHEDULING_MCP": "true",
+    }
+
+    native = config_compiler.render_native_runtime_env(config, source)
+
+    assert native["VIVENTIUM_MAIN_AGENT_ID"] == "agent_viventium_main_fixture"
+    assert native["VIVENTIUM_MEMORY_HARDENING_SCHEDULE"] == "0 3 * * *"
+    assert native["OTUC_LLM_MODEL"] == "gpt-5.6-sol"
+    assert native["START_SCHEDULING_MCP"] == "false"
+    assert native["VIVENTIUM_RUNTIME_PROFILE"] == "native"
+    assert native["VIVENTIUM_INSTALL_MODE"] == "native"
+    assert native["VIVENTIUM_CONNECTED_ACCOUNTS_ENABLED"] == "true"
+    assert native["OPENAI_API_KEY"] == "user_provided"
+    assert native["ANTHROPIC_API_KEY"] == "user_provided"
+    assert native["GROQ_API_KEY"] == "user_provided"
+    assert native["XAI_API_KEY"] == "user_provided"
+    assert native["VIVENTIUM_LC_API_PORT"] == "3180"
+    assert native["VIVENTIUM_LC_FRONTEND_PORT"] == "3190"
+    assert native["VIVENTIUM_PLAYGROUND_PORT"] == "3300"
+    assert native["SANDPACK_BUNDLER_URL"] == "http://127.0.0.1:3191/"
+    assert native["SANDPACK_STATIC_BUNDLER_URL"] == "http://127.0.0.1:3191/"
+    allowed_capability_sentinels = {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GROQ_API_KEY",
+        "XAI_API_KEY",
+    }
+    assert not any(
+        ("SECRET" in key or "TOKEN" in key or "API_KEY" in key)
+        and key not in allowed_capability_sentinels
+        for key in native
+    )
+    assert all(native[key] == "user_provided" for key in allowed_capability_sentinels)
+    assert not any("${" in value for value in native.values())
+    assert {
+        key for key, value in native.items() if value == "user_provided"
+    } == allowed_capability_sentinels
+    assert not any(value.startswith(("/", "~")) for value in native.values())
+
+
+def test_scheduling_cortex_can_be_omitted_from_canonical_native_defaults() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["scheduling_cortex"] = {"enabled": False}
+    config["integrations"]["sequential_thinking"] = {"enabled": False}
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    rendered = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert "scheduling-cortex" not in rendered["mcpServers"]
+    assert "sequential-thinking" not in rendered["mcpServers"]
+    assert env["START_SCHEDULING_MCP"] == "false"
+
+
+def test_missing_legacy_scheduling_key_stays_disabled_during_upgrade() -> None:
+    config = minimal_compile_config()
+    config["integrations"].pop("scheduling_cortex", None)
+    assignments = config_compiler.build_agent_assignments(config)
+    env = config_compiler.render_runtime_env(config, assignments)
+    rendered = yaml.safe_load(config_compiler.render_librechat_yaml(config, assignments, env))
+
+    assert env["START_SCHEDULING_MCP"] == "false"
+    assert "scheduling-cortex" not in rendered["mcpServers"]
+
+
+def test_native_agent_bundle_omits_tools_and_handoffs_owned_by_unavailable_services() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["scheduling_cortex"] = {"enabled": False}
+    config["integrations"]["sequential_thinking"] = {"enabled": False}
+    compiled = config_compiler.render_native_agents_bundle(config, set())
+
+    agent_groups = [compiled["mainAgent"], *compiled.get("backgroundAgents", [])]
+    assert all(
+        "_mcp_" not in tool
+        for agent in agent_groups
+        for tool in agent.get("tools", [])
+    )
+    assert all("web_search" not in agent.get("tools", []) for agent in agent_groups)
+    assert compiled.get("handoffAgents") == []
+    assert compiled["mainAgent"].get("edges") == []
+    direct_servers = compiled["config"]["viventium"]["background_cortices"][
+        "activation_policy"
+    ]["direct_action_mcp_servers"]
+    assert direct_servers == []
 
 
 def test_runtime_env_disables_automatic_mongoose_index_creation() -> None:
@@ -320,6 +621,16 @@ def test_launcher_keeps_glasshive_state_under_runtime_state_root() -> None:
     )
 
 
+def test_launcher_publishes_only_signed_glasshive_surfaces() -> None:
+    script = START_SCRIPT.read_text(encoding="utf-8")
+    prepare_index = script.index("prepare_remote_call_access() {")
+    prepare_body = script[prepare_index : script.index("prewarm_remote_call_access() {", prepare_index)]
+
+    assert '"${GLASSHIVE_PUBLIC_LINKS_ONLY:-false}" == "true"' in prepare_body
+    assert 'helper_args+=(--glasshive-port "$glasshive_port")' in prepare_body
+    assert 'helper_args+=(--public-glasshive-origin "$VIVENTIUM_PUBLIC_GLASSHIVE_URL")' in prepare_body
+
+
 def source_of_truth_built_in_agent_map() -> dict[str, str]:
     bundle = load_source_of_truth_agents_bundle()
     agents = [bundle.get("mainAgent", {})] + list(bundle.get("backgroundAgents", []))
@@ -331,6 +642,26 @@ def source_of_truth_built_in_agent_map() -> dict[str, str]:
         and str(agent.get("name") or "").strip()
         and str(agent.get("id") or "").strip()
     }
+
+
+def test_main_agent_voice_profile_preserves_recall_capable_primary_and_independent_fallback() -> None:
+    main_agent = load_source_of_truth_agents_bundle()["mainAgent"]
+
+    assert main_agent["voice_llm_provider"] == "xai"
+    assert main_agent["voice_llm_model"] == "grok-4.3"
+    assert main_agent["voice_llm_model_parameters"] == {
+        "model": "grok-4.3",
+        "reasoning_effort": "none",
+    }
+    assert main_agent["voice_fallback_llm_provider"] == "openAI"
+    assert main_agent["voice_fallback_llm_model"] == "gpt-5.6-terra"
+    assert main_agent["voice_fallback_llm_model_parameters"] == {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "none",
+        "useResponsesApi": True,
+    }
+    assert main_agent["fallback_llm_provider"] == "anthropic"
+    assert main_agent["fallback_llm_model"] == "claude-opus-4-8"
 
 
 XAI_CURRENT_DEFAULT_MODELS = [
@@ -572,7 +903,9 @@ def test_runtime_config_drift_resolves_expected_mcp_transport_and_rejects_wrong_
     config_path = tmp_path / "config.yaml"
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir()
-    write_config(config_path, minimal_compile_config())
+    config = minimal_compile_config()
+    config["integrations"]["scheduling_cortex"] = {"enabled": True}
+    write_config(config_path, config)
     live_payload = config_compiler.render_current_librechat_config(
         config_path=config_path,
         output_dir=runtime_dir,
@@ -753,6 +1086,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
             },
         },
         "integrations": {
+            "scheduling_cortex": {"enabled": True},
             "telegram": {"enabled": False},
             "google_workspace": {"enabled": False},
             "ms365": {"enabled": False},
@@ -804,14 +1138,17 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in runtime_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in librechat_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in runtime_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180" in runtime_env
     assert "VIVENTIUM_TELEGRAM_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
     assert "VIVENTIUM_REMOTE_CALL_MODE=disabled" in runtime_env
     assert "VIVENTIUM_MAIN_AGENT_ID=agent_viventium_main_95aeb3" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_PROVIDER=openai" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_MODEL=gpt-5.6-sol" in runtime_env
+    assert "VIVENTIUM_SCHEDULED_AGENT_REASONING_EFFORT=xhigh" in runtime_env
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" in runtime_env
     assert "VIVENTIUM_DEFAULT_CONVERSATION_RECALL=false" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_ENABLED=false" in runtime_env
@@ -885,6 +1222,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert librechat_yaml["memory"]["personalize"] is True
     assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
     assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
+    assert librechat_yaml["memory"]["readProfile"]["tokenLimit"] == 2200
+    assert librechat_yaml["memory"]["readProfile"]["keyLimits"]["preferences"] == 600
     assert prompt_bundle["prompt_count"] >= 50
     assert "main.conscious_agent" in prompt_bundle["prompts"]
     assert prompt_bundle["prompts"]["main.identity"]["content_hash"]
@@ -1015,6 +1354,30 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     assert default_host_env["WPR_MODEL_HOST_CODEX_CLI"] == "gpt-5.6-sol"
     assert default_host_env["WPR_CODEX_CLI_REASONING_EFFORT"] == "xhigh"
     assert default_host_env["WPR_CODEX_CLI_XHIGH_ROUTE_PROVEN"] == "true"
+    assert "GLASSHIVE_PUBLIC_LINKS_ONLY" not in default_host_env
+
+    public_host_config = copy.deepcopy(default_host_config)
+    public_host_config["runtime"]["network"] = {
+        "remote_call_mode": "public_https_edge",
+        "public_glasshive_origin": "https://glasshive.app.example.test",
+    }
+    public_host_env = config_compiler.render_runtime_env(
+        public_host_config,
+        config_compiler.build_agent_assignments(public_host_config),
+    )
+    expected_glasshive_secret = config_compiler.scoped_secret(
+        "call-session-test", "glasshive-public-links"
+    )
+    assert public_host_env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_OPERATOR_BASE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_ARTIFACT_BASE_URL"] == "https://glasshive.app.example.test"
+    assert public_host_env["GLASSHIVE_PUBLIC_LINKS_ONLY"] == "true"
+    assert public_host_env["GLASSHIVE_SIGNED_LINK_SECRET"] == expected_glasshive_secret
+    assert public_host_env["GLASSHIVE_SIGNED_LINK_TTL_S"] == "86400"
+    assert "GLASSHIVE_SIGNED_LINK_TTL_SECONDS" not in public_host_env
+    assert public_host_env["GLASSHIVE_LINK_REF_TTL_SECONDS"] == "86400"
+    assert public_host_env["GLASSHIVE_MAX_WATCH_SESSION_DURATION_S"] == "1800"
+    assert public_host_env["GLASSHIVE_UI_PORT"] == "8780"
 
     disabled_host_config = copy.deepcopy(base_config)
     disabled_host_config["integrations"]["glasshive"] = {
@@ -1549,6 +1912,7 @@ def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path
         },
         "voice": {"mode": "disabled"},
         "integrations": {
+            "scheduling_cortex": {"enabled": True},
             "telegram": {"enabled": False},
             "google_workspace": {"enabled": True},
             "ms365": {"enabled": True},
@@ -1864,6 +2228,11 @@ def test_render_librechat_yaml_preserves_defaults_and_overlays_compiled_memory_a
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
     assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
     assert librechat_yaml["viventium"]["background_cortices"]["activation_format"]["brew_begin_tag"]
+    expected_recall_prompt = config_compiler.render_prompt(
+        "main.conversation_recall",
+        config_compiler.load_prompt_registry(),
+    ).rstrip()
+    assert librechat_yaml["viventium"]["conversation_recall"]["prompt"] == expected_recall_prompt
     assert librechat_yaml["balance"]["enabled"] is False
     assert librechat_yaml["balance"]["startBalance"] == 200000
     assert "webSearch" not in librechat_yaml
@@ -2054,6 +2423,177 @@ def test_config_compiler_full_run_requires_groq_activation_credential(tmp_path: 
     assert "Missing required Groq activation credential." in completed.stderr
 
 
+def test_config_compiler_accepts_express_connected_account_without_terminal_provider_secret(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    config["install"]["experience"] = "express"
+    config["llm"]["activation"].pop("secret_value")
+    config["llm"]["activation"]["secret_ref"] = "keychain://viventium/groq_api_key"
+    config["llm"]["primary"] = {
+        "provider": "openai",
+        "auth_mode": "connected_account",
+    }
+    config["runtime"].update(
+        {
+            "memory_hardening": {"enabled": False},
+            "prompt_workbench": {
+                "enabled": False,
+                "seed_nightly": {"enabled": False, "active": False},
+            },
+            "nightly_routines": {"enabled": False, "defaults_version": 1},
+            "personalization": {"default_conversation_recall": False},
+        }
+    )
+    config["integrations"].update(
+        {
+            "glasshive": {"enabled": False, "host_worker": {"enabled": False}},
+            "web_search": {"enabled": False},
+            "code_interpreter": {"enabled": False},
+        }
+    )
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    security = fake_bin / "security"
+    security.write_text("#!/bin/sh\nexit 44\n", encoding="utf-8")
+    security.chmod(0o755)
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}/usr/bin:/bin"},
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    librechat_yaml_text = (output_dir / "librechat.yaml").read_text(encoding="utf-8")
+    librechat_yaml = yaml.safe_load(librechat_yaml_text)
+    assert "VIVENTIUM_INSTALL_MODE=native" in runtime_env
+    assert "VIVENTIUM_INSTALL_EXPERIENCE=express" in runtime_env
+    assert "VIVENTIUM_OPENAI_AUTH_MODE=connected_account" in runtime_env
+    assert "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=true" in runtime_env
+    assert "GROQ_API_KEY=user_provided" in runtime_env
+    assert "OPENAI_API_KEY=user_provided" in runtime_env
+    assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
+    assert "START_GLASSHIVE=false" in runtime_env
+    assert "START_PROMPT_WORKBENCH=false" in runtime_env
+    assert "VIVENTIUM_MEMORY_HARDENING_ENABLED=false" in runtime_env
+    assert "START_RAG_API=false" in runtime_env
+    assert "SEARCH=false" in runtime_env
+    assert "SANDPACK_BUNDLER_URL=http://127.0.0.1:3191/" in runtime_env
+    assert "SANDPACK_STATIC_BUNDLER_URL=http://127.0.0.1:3191/" in runtime_env
+    assert "${GROQ_API_KEY}" in librechat_yaml_text
+    assert "groq" in {
+        endpoint["name"] for endpoint in librechat_yaml["endpoints"]["custom"]
+    }
+    assert "groq" in librechat_yaml["modelSpecs"]["addedEndpoints"]
+
+
+def test_config_compiler_easy_install_defaults_to_browser_api_key_not_direct_subscription_oauth(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    config["install"]["experience"] = "express"
+    config["llm"]["activation"].pop("secret_value")
+    config["llm"]["activation"]["secret_ref"] = "keychain://viventium/groq_api_key"
+    config["llm"]["primary"] = {
+        "provider": "openai",
+        "auth_mode": "user_provided",
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_OPENAI_AUTH_MODE=user_provided" in runtime_env
+    assert "OPENAI_API_KEY=user_provided" in runtime_env
+    assert "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=false" in runtime_env
+
+
+def test_public_minimal_example_compiles_without_preexisting_keychain_state(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "config.yaml"
+    output_dir = tmp_path / "runtime"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    security = fake_bin / "security"
+    security.write_text("#!/bin/sh\nexit 44\n", encoding="utf-8")
+    security.chmod(0o755)
+    env = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}/usr/bin:/bin"}
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/wizard.py"),
+            "--output",
+            str(candidate),
+            "--preset",
+            str(REPO_ROOT / "config.minimal.example.yaml"),
+            "--non-interactive",
+        ],
+        env=env,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(candidate),
+            "--output-dir",
+            str(output_dir),
+        ],
+        env=env,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    normalized = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert normalized["install"]["experience"] == "express"
+    assert normalized["runtime"]["memory_hardening"]["enabled"] is False
+    assert normalized["runtime"]["prompt_workbench"]["enabled"] is False
+    assert normalized["runtime"]["nightly_routines"]["enabled"] is False
+    assert normalized["voice"]["mode"] == "disabled"
+    assert normalized["integrations"]["glasshive"]["enabled"] is False
+    assert "GROQ_API_KEY=user_provided" in runtime_env
+    assert "SEARCH=false" in runtime_env
+
+
+def test_public_config_schema_models_express_as_optional_install_experience() -> None:
+    schema = yaml.safe_load((REPO_ROOT / "config.schema.yaml").read_text(encoding="utf-8"))
+
+    install_schema = schema["properties"]["install"]
+    assert install_schema["properties"]["experience"]["enum"] == ["express", "custom"]
+    assert "experience" not in install_schema["required"]
+    assert "secret_ref" not in schema["properties"]["llm"]["properties"]["activation"]["required"]
+
+
 def test_config_compiler_full_run_accepts_default_groq_activation_without_xai(tmp_path: Path) -> None:
     config = minimal_compile_config()
     config_path = tmp_path / "config.yaml"
@@ -2104,7 +2644,7 @@ def test_config_compiler_full_run_accepts_explicit_xai_activation_override(tmp_p
 
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
     assert "XAI_API_KEY=xai-test" in runtime_env
-    assert "GROQ_API_KEY=" not in runtime_env
+    assert "GROQ_API_KEY=user_provided" in runtime_env
     assert "VIVENTIUM_BACKGROUND_ACTIVATION_PROVIDER=xai" in runtime_env
     assert "VIVENTIUM_BACKGROUND_ACTIVATION_MODEL=grok-4.20-non-reasoning" in runtime_env
 
@@ -2205,10 +2745,10 @@ def test_build_agent_assignments_prefer_gpt56_agents_with_opus48_available_as_fa
     assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
     assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
     assert assignments["support"] == ("openai", "gpt-5.6-terra")
-    assert assignments["memory"] == ("anthropic", "claude-sonnet-4-5")
+    assert assignments["memory"] == ("openai", "gpt-5.4")
 
 
-def test_build_agent_assignments_memory_prefers_anthropic_when_available() -> None:
+def test_build_agent_assignments_memory_follows_anthropic_primary() -> None:
     config = {
         "version": 1,
         "install": {"mode": "native"},
@@ -3350,7 +3890,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in runtime_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in runtime_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in runtime_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in runtime_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in runtime_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in runtime_env
     assert "VIVENTIUM_CORTEX_PHASE_A_NOTICE_MODE=any_activated_on_voice" in librechat_env
@@ -3358,7 +3898,7 @@ def test_config_compiler_emits_background_followup_window_override(tmp_path: Pat
     assert "VIVENTIUM_TEXT_BACKGROUND_AGENT_DETECTION_ASYNC=false" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_AWAIT_MS=690" in librechat_env
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
-    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=4000" in librechat_env
+    assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
 
@@ -4250,6 +4790,77 @@ def test_config_compiler_normalizes_xai_tts_alias_and_prefers_tts_secret(tmp_pat
     assert "VIVENTIUM_XAI_TTS_BIT_RATE=128000" in telegram_env
 
 
+def test_config_compiler_preserves_but_safely_disables_retired_xai_voice_agent_route(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {
+            "log_level": "info",
+            "profile": "isolated",
+            "call_session_secret": {"secret_value": "synthetic-call-secret"},
+        },
+        "llm": {
+            "activation": {
+                "provider": "groq",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-groq-key",
+            },
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "synthetic-openai-key",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {
+            "mode": "hosted",
+            "stt_provider": "openai",
+            "tts_provider": "xai",
+            "tts": {
+                "secret_value": "synthetic-xai-key",
+                "xai": {"tts_api": "voice_agent"},
+            },
+        },
+        "integrations": {},
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "out"
+    write_config(config_path, config)
+    canonical_before = config_path.read_bytes()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Voice disabled: legacy xAI Voice Agent route retired" in (
+        result.stdout + result.stderr
+    )
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
+    assert (
+        "VIVENTIUM_VOICE_DEGRADED_REASON=legacy_xai_voice_agent_route_retired"
+        in runtime_env
+    )
+    assert "VIVENTIUM_XAI_TTS_API=voice_agent" in runtime_env
+    assert "VIVENTIUM_XAI_TTS_API=tts" not in runtime_env
+    assert config_path.read_bytes() == canonical_before
+
+
 def test_config_compiler_disables_rag_bootstrap_when_conversation_recall_default_is_off(tmp_path: Path) -> None:
     config = {
         "version": 1,
@@ -4536,8 +5147,8 @@ def test_config_compiler_enables_connected_accounts_gate_for_openai_and_anthropi
     assert "VIVENTIUM_MEMORY_HARDENING_PROVIDER=openai" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_MODEL=gpt-5.6-sol" in runtime_env
     assert "VIVENTIUM_MEMORY_HARDENING_EFFORT=xhigh" in runtime_env
-    assert librechat_yaml["memory"]["agent"]["provider"] == "anthropic"
-    assert librechat_yaml["memory"]["agent"]["model"] == "claude-sonnet-4-5"
+    assert librechat_yaml["memory"]["agent"]["provider"] == "openai"
+    assert librechat_yaml["memory"]["agent"]["model"] == "gpt-5.4"
     assert librechat_yaml["endpoints"]["anthropic"]["titleEndpoint"] == "anthropic"
     assert librechat_yaml["endpoints"]["anthropic"]["titleModel"] == "claude-sonnet-4-5"
 
@@ -4710,6 +5321,137 @@ def test_config_compiler_falls_back_to_existing_runtime_env_when_keychain_secret
     assert "OPENAI_API_KEY=openai-existing" in runtime_env
     assert f"BOT_TOKEN={VALID_TELEGRAM_EXISTING_TOKEN}" in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-secret-existing" in runtime_env
+
+
+def test_custom_settings_resolves_all_four_provider_keychain_refs_into_source_runtime_only(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    config["install"] = {"mode": "native", "experience": "custom"}
+    config["runtime"]["call_session_secret"] = {"secret_value": "call-session-test"}
+    config["llm"] = {
+        "activation": {
+            "provider": "xai",
+            "auth_mode": "api_key",
+            "secret_ref": "keychain://viventium/x_ai_api_key",
+        },
+        "primary": {
+            "provider": "openai",
+            "auth_mode": "api_key",
+            "secret_ref": "keychain://viventium/openai_api_key",
+        },
+        "secondary": {
+            "provider": "anthropic",
+            "auth_mode": "api_key",
+            "secret_ref": "keychain://viventium/anthropic_api_key",
+        },
+        "extra_provider_keys": {
+            "groq": "keychain://viventium/groq_api_key",
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "runtime"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_config(config_path, config)
+    security = bin_dir / "security"
+    security.write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *viventium/openai_api_key*) printf '%s\\n' synthetic-openai-key ;;\n"
+        "  *viventium/anthropic_api_key*) printf '%s\\n' synthetic-anthropic-key ;;\n"
+        "  *viventium/groq_api_key*) printf '%s\\n' synthetic-groq-key ;;\n"
+        "  *viventium/x_ai_api_key*) printf '%s\\n' synthetic-xai-key ;;\n"
+        "  *) exit 44 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    security.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
+    }
+    for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY", "XAI_API_KEY"):
+        env.pop(key, None)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    service_env = (output_dir / "service-env" / "librechat.env").read_text(encoding="utf-8")
+    native_env = (output_dir / "native-runtime.env").read_text(encoding="utf-8")
+    for provider, secret in {
+        "OPENAI_API_KEY": "synthetic-openai-key",
+        "ANTHROPIC_API_KEY": "synthetic-anthropic-key",
+        "GROQ_API_KEY": "synthetic-groq-key",
+        "XAI_API_KEY": "synthetic-xai-key",
+    }.items():
+        assert f"{provider}={secret}" in runtime_env
+        assert f"{provider}={secret}" in service_env
+        assert f"{provider}=user_provided" in native_env
+        assert secret not in native_env
+
+    assert (output_dir / "runtime.env").stat().st_mode & 0o777 == 0o600
+    assert (output_dir / "service-env" / "librechat.env").stat().st_mode & 0o777 == 0o600
+    assert (output_dir / "native-runtime.env").stat().st_mode & 0o777 == 0o600
+
+
+def test_missing_custom_provider_keychain_ref_preserves_prior_generated_runtime(
+    tmp_path: Path,
+) -> None:
+    config = minimal_compile_config()
+    config["install"] = {"mode": "native", "experience": "custom"}
+    config["llm"]["extra_provider_keys"] = {
+        "groq": "keychain://viventium/groq_api_key",
+    }
+    config_path = tmp_path / "config.yaml"
+    output_dir = tmp_path / "runtime"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    output_dir.mkdir()
+    write_config(config_path, config)
+    prior_runtime = "PRIOR_RUNTIME_SENTINEL=unchanged\n"
+    (output_dir / "runtime.env").write_text(prior_runtime, encoding="utf-8")
+    security = bin_dir / "security"
+    security.write_text("#!/bin/sh\nexit 44\n", encoding="utf-8")
+    security.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
+    }
+    env.pop("GROQ_API_KEY", None)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert "Failed to resolve Keychain secret: viventium/groq_api_key" in completed.stderr
+    assert "synthetic" not in completed.stderr.lower()
+    assert (output_dir / "runtime.env").read_text(encoding="utf-8") == prior_runtime
 
 
 def test_config_compiler_prefers_real_optional_provider_keys_over_placeholders(tmp_path: Path) -> None:
@@ -5190,7 +5932,16 @@ def test_config_compiler_local_voice_browser_maps_to_stable_gateway_tts(tmp_path
     assert "TTS_PROVIDER_PRIMARY=openai" in runtime_env
     assert "VIVENTIUM_OPENAI_TTS_MODEL=gpt-4o-mini-tts" in runtime_env
     assert "VIVENTIUM_OPENAI_TTS_VOICE=coral" in runtime_env
-    assert "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=" in runtime_env
+    assert (
+        "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS='Speak naturally with clear pacing. Keep the delivery "
+        "conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.'"
+        in runtime_env
+    )
+    assert "warm" not in next(
+        line
+        for line in runtime_env.splitlines()
+        if line.startswith("VIVENTIUM_OPENAI_TTS_INSTRUCTIONS=")
+    ).lower()
     assert "VIVENTIUM_OPENAI_TTS_SPEED=1.12" in runtime_env
     assert "TTS_MODEL=gpt-4o-mini-tts" in runtime_env
 

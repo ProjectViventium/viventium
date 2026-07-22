@@ -1,0 +1,438 @@
+name: Native Payload Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-payload-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    name: Assemble relocatable payload (${{ matrix.expected_arch }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: macos-15
+            expected_arch: arm64
+          - runner: macos-15-intel
+            expected_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      EXPECTED_ARCH: ${{ matrix.expected_arch }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12.13"
+      - name: Require the exact architecture and public component policy
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          test -s release/native-payload/components.json
+          test -s release/native-payload/mongodb-redistribution-approved || {
+            echo "MongoDB redistribution approval is not recorded; refusing to assemble a distributable candidate" >&2
+            exit 1
+          }
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          policy = json.loads(Path("release/native-payload/components.json").read_text(encoding="utf-8"))
+          lock = json.loads(Path("components.lock.json").read_text(encoding="utf-8"))
+          lock_state = lock.get("publication_state")
+          policy_state = policy.get("publication_state")
+          if lock_state != "merged" or policy_state != "merged":
+              raise SystemExit("Native candidate pins are not merged release commits")
+          pinned = next(component["ref"] for component in lock["components"] if component["name"] == "LibreChat")
+          if policy["librechat"]["commit"] != pinned:
+              raise SystemExit("Native LibreChat policy and parent component pin disagree")
+          PY
+      - name: Fetch the exact pinned LibreChat component
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/native-selection.yaml" <<'YAML'
+          voice:
+            mode: disabled
+          runtime:
+            playground_variant: modern
+          integrations:
+            glasshive:
+              enabled: false
+            google_workspace:
+              enabled: false
+            ms365:
+              enabled: false
+            openclaw:
+              enabled: false
+            skyvern:
+              enabled: false
+          YAML
+          python scripts/viventium/bootstrap_components.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --config "${RUNNER_TEMP}/native-selection.yaml" \
+            --jobs 1
+          python scripts/viventium/bootstrap_components.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --config "${RUNNER_TEMP}/native-selection.yaml" \
+            --validate-only
+      - name: Fetch and verify pinned Node, Python, and MongoDB archives
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/downloads" "${RUNNER_TEMP}/components"
+          python - "$EXPECTED_ARCH" > "${RUNNER_TEMP}/component-downloads.tsv" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          arch = sys.argv[1]
+          policy = json.loads(Path("release/native-payload/components.json").read_text(encoding="utf-8"))
+          for name in ("node", "python", "mongodb"):
+              record = policy[name]["architectures"][arch]
+              print(name, record["sha256"], record["url"], sep="\t")
+          PY
+          while IFS=$'\t' read -r name digest url; do
+            archive="${RUNNER_TEMP}/downloads/${name}.tar.gz"
+            /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 \
+              --retry 3 --silent --show-error --output "$archive" "$url"
+            actual="$(/usr/bin/shasum -a 256 "$archive" | /usr/bin/awk '{print $1}')"
+            test "$actual" = "$digest"
+            mkdir -p "${RUNNER_TEMP}/components/${name}"
+            /usr/bin/tar -xzf "$archive" -C "${RUNNER_TEMP}/components/${name}" --strip-components=1
+          done < "${RUNNER_TEMP}/component-downloads.tsv"
+
+          python_license_url="$(python -c 'import json; print(json.load(open("release/native-payload/components.json"))["python"]["license_source"]["url"])')"
+          python_license_digest="$(python -c 'import json; print(json.load(open("release/native-payload/components.json"))["python"]["license_source"]["sha256"])')"
+          python_license_commit="$(python -c 'import json; print(json.load(open("release/native-payload/components.json"))["python"]["license_source"]["commit"])')"
+          python_license_archive="${RUNNER_TEMP}/downloads/python-license-source.tar.gz"
+          /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 \
+            --retry 3 --silent --show-error --output "$python_license_archive" "$python_license_url"
+          test "$(/usr/bin/shasum -a 256 "$python_license_archive" | /usr/bin/awk '{print $1}')" = "$python_license_digest"
+          python - "$python_license_archive" "${RUNNER_TEMP}/components/python/python-build-standalone-licenses" "$python_license_commit" <<'PY'
+          import sys
+          import tarfile
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts/viventium")
+          from stage_native_component import PYTHON_STANDALONE_LICENSE_FILES
+
+          archive = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          prefix = f"python-build-standalone-{sys.argv[3]}"
+          destination.mkdir(mode=0o755)
+          with tarfile.open(archive, "r:gz") as source:
+              for name in PYTHON_STANDALONE_LICENSE_FILES:
+                  member = source.getmember(f"{prefix}/{name}")
+                  if not member.isfile() or member.size <= 0 or member.size > 2 * 1024 * 1024:
+                      raise SystemExit(f"unsafe Python license source member: {name}")
+                  stream = source.extractfile(member)
+                  if stream is None:
+                      raise SystemExit(f"missing Python license source member: {name}")
+                  (destination / name).write_bytes(stream.read())
+          PY
+
+          expected_mongo_team="$(python -c 'import json; print(json.load(open("release/native-payload/components.json"))["mongodb"]["publisher_team_id"])')"
+          /usr/bin/codesign --verify --strict --verbose=2 "${RUNNER_TEMP}/components/mongodb/bin/mongod"
+          signing_details="$(/usr/bin/codesign -dv --verbose=4 "${RUNNER_TEMP}/components/mongodb/bin/mongod" 2>&1)"
+          actual_mongo_team="$(printf '%s\n' "$signing_details" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)"
+          test "$actual_mongo_team" = "$expected_mongo_team"
+          test "$("${RUNNER_TEMP}/components/node/bin/node" --version)" = "v24.16.0"
+          "${RUNNER_TEMP}/components/python/bin/python3" --version | /usr/bin/grep -Fx "Python 3.12.13"
+          "${RUNNER_TEMP}/components/mongodb/bin/mongod" --version | /usr/bin/grep -F "v8.0.23"
+      - name: Build and prune the exact LibreChat production runtime
+        run: |
+          set -euo pipefail
+          export PATH="${RUNNER_TEMP}/components/node/bin:$PATH"
+          cd viventium_v0_4/LibreChat
+          npm ci
+          npm run build:packages
+          npm run build:client
+          npm ci --omit=dev --workspace api --include-workspace-root
+          npm ls --omit=dev --workspace api --include-workspace-root
+          node client/scripts/collect-browser-compliance.cjs --verify
+          npm run test:production-runtime-load
+          test ! -e node_modules/@codesandbox/nodebox
+          npm audit --omit=dev --audit-level=moderate
+          test -s api/server/index.js
+          test -s client/dist/index.html
+          test -d packages/api/dist
+          test -d node_modules
+      - name: Compile canonical Native defaults in the trusted build environment
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --requirement scripts/viventium/requirements.txt
+          mkdir -p "${RUNNER_TEMP}/compiled-defaults"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          source = yaml.safe_load(Path("config.minimal.example.yaml").read_text(encoding="utf-8"))
+          source.setdefault("integrations", {}).setdefault("sequential_thinking", {})["enabled"] = False
+          source.setdefault("integrations", {}).setdefault("scheduling_cortex", {})["enabled"] = False
+          Path(os.environ["RUNNER_TEMP"], "native-config.yaml").write_text(
+              yaml.safe_dump(source, sort_keys=False), encoding="utf-8"
+          )
+          PY
+          python scripts/viventium/config_compiler.py \
+            --config "${RUNNER_TEMP}/native-config.yaml" \
+            --output-dir "${RUNNER_TEMP}/compiled-defaults"
+          test -s "${RUNNER_TEMP}/compiled-defaults/librechat.yaml"
+          test -s "${RUNNER_TEMP}/compiled-defaults/prompt-bundle.json"
+          test -s "${RUNNER_TEMP}/compiled-defaults/native-runtime.env"
+          test -s "${RUNNER_TEMP}/compiled-defaults/viventium-agents.yaml"
+          python - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          import yaml
+
+          spec = importlib.util.spec_from_file_location(
+              "native_runtime_candidate_check",
+              Path("scripts/viventium/native_runtime.py"),
+          )
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          compiled = Path(os.environ["RUNNER_TEMP"], "compiled-defaults")
+          module.load_native_runtime_env(compiled / "native-runtime.env")
+          librechat = yaml.safe_load((compiled / "librechat.yaml").read_text(encoding="utf-8"))
+          servers = librechat.get("mcpServers") or {}
+          assert "sequential-thinking" not in servers
+          assert "scheduling-cortex" not in servers
+          agents = yaml.safe_load(
+              (compiled / "viventium-agents.yaml").read_text(encoding="utf-8")
+          )
+          agent_records = [agents["mainAgent"], *(agents.get("backgroundAgents") or [])]
+          assert all(
+              "_mcp_" not in tool
+              for agent in agent_records
+              for tool in (agent.get("tools") or [])
+          )
+          assert all(
+              "web_search" not in (agent.get("tools") or [])
+              for agent in agent_records
+          )
+          assert not (agents.get("handoffAgents") or [])
+          PY
+      - name: Build architecture-specific helper and signed-bootstrap candidate bundles
+        run: |
+          set -euo pipefail
+          bundle_root="${RUNNER_TEMP}/apps"
+          mkdir -p \
+            "$bundle_root/Viventium.app/Contents/MacOS" \
+            "$bundle_root/Viventium.app/Contents/Resources" \
+            "$bundle_root/ViventiumBootstrap.app/Contents/MacOS" \
+            "$bundle_root/ViventiumBootstrap.app/Contents/Resources/runtime" \
+            "$bundle_root/ViventiumBootstrap.app/Contents/Resources/scripts"
+
+          helper_bin="$(swift build --package-path apps/macos/ViventiumHelper -c release --arch "$EXPECTED_ARCH" --show-bin-path)"
+          swift build --package-path apps/macos/ViventiumHelper -c release --arch "$EXPECTED_ARCH"
+          /bin/cp "$helper_bin/ViventiumHelper" "$bundle_root/Viventium.app/Contents/MacOS/ViventiumHelper"
+          /usr/bin/strip -S "$bundle_root/Viventium.app/Contents/MacOS/ViventiumHelper"
+          /usr/bin/codesign --force --sign - "$bundle_root/Viventium.app/Contents/MacOS/ViventiumHelper"
+          /bin/cp apps/macos/ViventiumHelper/Sources/ViventiumHelper/Resources/Info.plist "$bundle_root/Viventium.app/Contents/Info.plist"
+          /bin/cp apps/macos/ViventiumHelper/Sources/ViventiumHelper/Resources/Viventium.icns "$bundle_root/Viventium.app/Contents/Resources/Viventium.icns"
+
+          bootstrap_bin="$(swift build --package-path apps/macos/ViventiumBootstrap -c release --arch "$EXPECTED_ARCH" --show-bin-path)"
+          swift build --package-path apps/macos/ViventiumBootstrap -c release --arch "$EXPECTED_ARCH"
+          /bin/cp "$bootstrap_bin/ViventiumBootstrap" "$bundle_root/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap"
+          /usr/bin/strip -S "$bundle_root/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap"
+          /usr/bin/codesign --force --sign - "$bundle_root/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap"
+          /bin/cp apps/macos/ViventiumBootstrap/Sources/ViventiumBootstrap/Info.plist "$bundle_root/ViventiumBootstrap.app/Contents/Info.plist"
+          /bin/cp scripts/viventium/native_payload.py "$bundle_root/ViventiumBootstrap.app/Contents/Resources/scripts/native_payload.py"
+          /bin/cp scripts/viventium/install_native_payload.py "$bundle_root/ViventiumBootstrap.app/Contents/Resources/scripts/install_native_payload.py"
+      - name: Assemble deterministic relocatable candidate
+        run: |
+          set -euo pipefail
+          source_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          schema_minimum="$(python -c 'import json; print(json.load(open("release/native-payload/data-schema.json"))["minimum"])')"
+          schema_maximum="$(python -c 'import json; print(json.load(open("release/native-payload/data-schema.json"))["maximum"])')"
+          schema_target="$(python -c 'import json; print(json.load(open("release/native-payload/data-schema.json"))["target"])')"
+          python scripts/viventium/assemble_native_payload.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --librechat-root "$GITHUB_WORKSPACE/viventium_v0_4/LibreChat" \
+            --node-root "${RUNNER_TEMP}/components/node" \
+            --python-root "${RUNNER_TEMP}/components/python" \
+            --mongodb-root "${RUNNER_TEMP}/components/mongodb" \
+            --helper-app "${RUNNER_TEMP}/apps/Viventium.app" \
+            --bootstrap-app "${RUNNER_TEMP}/apps/ViventiumBootstrap.app" \
+            --compiled-config-root "${RUNNER_TEMP}/compiled-defaults" \
+            --output-dir "$GITHUB_WORKSPACE/dist/candidate" \
+            --arch "$EXPECTED_ARCH" \
+            --source-commit "$GITHUB_SHA" \
+            --source-date-epoch "$source_epoch" \
+            --data-schema-minimum "$schema_minimum" \
+            --data-schema-maximum "$schema_maximum" \
+            --data-schema-target "$schema_target" \
+            --mode candidate
+      - name: Seal completed app bundles and verify candidate public safety
+        run: |
+          set -euo pipefail
+          candidate_root="$GITHUB_WORKSPACE/dist/candidate"
+          /usr/bin/diff -qr \
+            "$candidate_root/payload/runtime/python" \
+            "$candidate_root/bootstrap/ViventiumBootstrap.app/Contents/Resources/runtime/python"
+          python scripts/viventium/verify_native_component_manifest.py \
+            --root "$candidate_root/payload/runtime/python" \
+            --manifest "$candidate_root/payload/release-metadata/python-runtime-manifest.json" \
+            --expected-name python
+          python scripts/viventium/verify_native_component_manifest.py \
+            --root "$candidate_root/bootstrap/ViventiumBootstrap.app/Contents/Resources/runtime/python" \
+            --manifest "$candidate_root/bootstrap/ViventiumBootstrap.app/Contents/Resources/python-runtime-manifest.json" \
+            --expected-name python
+          /usr/bin/cmp \
+            "$candidate_root/payload/release-metadata/python-runtime-manifest.json" \
+            "$candidate_root/bootstrap/ViventiumBootstrap.app/Contents/Resources/python-runtime-manifest.json"
+          env PYTHONDONTWRITEBYTECODE=1 \
+            "$candidate_root/bootstrap/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap" \
+            --self-check --candidate
+          /usr/bin/codesign --force --sign - "$candidate_root/payload/apps/Viventium.app"
+          /usr/bin/codesign --force --sign - "$candidate_root/bootstrap/ViventiumBootstrap.app"
+          /usr/bin/codesign --verify --strict --verbose=2 "$candidate_root/payload/apps/Viventium.app"
+          /usr/bin/codesign --verify --strict --verbose=2 "$candidate_root/bootstrap/ViventiumBootstrap.app"
+          python scripts/viventium/verify_native_public_safety.py \
+            --candidate-root "$candidate_root" \
+            --forbid-prefix "$GITHUB_WORKSPACE" \
+            --forbid-prefix "$RUNNER_TEMP" \
+            --forbid-prefix "$HOME"
+          python scripts/viventium/verify_native_macos_compatibility.py \
+            --candidate-root "$candidate_root" \
+            --minimum-macos-file release/native-payload/minimum-macos
+      - name: Run target-like install and health smoke without build tools
+        run: |
+          set -euo pipefail
+          support="${RUNNER_TEMP}/native-smoke/Application Support/Viventium"
+          cleanup_native_smoke() {
+            "$GITHUB_WORKSPACE/dist/candidate/payload/bin/viventium-native-stop" \
+              --app-support-dir "$support" >/dev/null 2>&1 || true
+          }
+          trap cleanup_native_smoke EXIT
+          env -i HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
+            "$GITHUB_WORKSPACE/dist/candidate/payload/bin/viventium-native-install" \
+            --app-support-dir "$support" --local-qa --no-start
+          env -i HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
+            "$GITHUB_WORKSPACE/dist/candidate/payload/bin/viventium-native-health" \
+            --app-support-dir "$support" --installed-only
+          env -i HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
+            "$GITHUB_WORKSPACE/dist/candidate/payload/bin/viventium-native-start" \
+            --app-support-dir "$support" --timeout 180
+          /usr/bin/curl --fail --silent --show-error http://127.0.0.1:3190/ >/dev/null
+          /usr/bin/curl --fail --silent --show-error \
+            http://127.0.0.1:3190/api/config > "${RUNNER_TEMP}/connected-accounts-config.json"
+          /usr/bin/curl --fail --silent --show-error \
+            http://127.0.0.1:3190/api/endpoints > "${RUNNER_TEMP}/endpoints.json"
+          python - "${RUNNER_TEMP}/connected-accounts-config.json" "${RUNNER_TEMP}/endpoints.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              startup = json.load(handle)
+          with open(sys.argv[2], encoding="utf-8") as handle:
+              endpoints = json.load(handle)
+          assert startup["viventiumConnectedAccountsEnabled"] is True
+          assert startup["viventiumExperimentalDirectSubscriptionAuth"] is False
+          for endpoint in ("openAI", "anthropic", "groq", "xai"):
+              assert endpoints[endpoint]["userProvide"] is True, endpoint
+          PY
+          test -z "$(/usr/sbin/lsof -nP -a -iTCP:3180 -sTCP:LISTEN -t || true)"
+          first_admin_token="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["token"])' "$support/state/native-first-admin.json")"
+          first_admin_cookie="${RUNNER_TEMP}/first-admin.cookies"
+          /usr/bin/curl --fail --silent --show-error --location \
+            --cookie-jar "$first_admin_cookie" \
+            "http://127.0.0.1:3190/__viventium_native_first_admin?token=${first_admin_token}" \
+            > "${RUNNER_TEMP}/first-admin.html"
+          ! /usr/bin/grep --fixed-strings "$first_admin_token" "${RUNNER_TEMP}/first-admin.html"
+          python - "${RUNNER_TEMP}/first-admin.json" "${RUNNER_TEMP}/first-admin-mismatch.json" <<'PY'
+          import json
+          import sys
+
+          payload = {
+              "email": "native-payload-qa@example.com",
+              "password": "NativePayload-QA-2026!",
+              "confirm_password": "NativePayload-QA-2026!",
+              "name": "Native Payload QA",
+              "username": "native-payload-qa",
+          }
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump(payload, handle)
+          payload["confirm_password"] = "NativePayload-mismatch-2026!"
+          with open(sys.argv[2], "w", encoding="utf-8") as handle:
+              json.dump(payload, handle)
+          PY
+          test "$(/usr/bin/curl --silent --output /dev/null --write-out '%{http_code}' \
+            --cookie "$first_admin_cookie" \
+            -H 'Origin: http://127.0.0.1:3190' \
+            -H 'content-type: application/json' \
+            --data-binary @"${RUNNER_TEMP}/first-admin-mismatch.json" \
+            http://127.0.0.1:3190/__viventium_native_first_admin)" = 400
+          /usr/bin/curl --fail --silent --show-error \
+            --cookie "$first_admin_cookie" \
+            -H 'Origin: http://127.0.0.1:3190' \
+            -H 'content-type: application/json' \
+            --data-binary @"${RUNNER_TEMP}/first-admin.json" \
+            http://127.0.0.1:3190/__viventium_native_first_admin > "${RUNNER_TEMP}/registration.json"
+          test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["status"])' "$support/state/native-first-admin.json")" = closed
+          test "$(/usr/bin/curl --silent --output /dev/null --write-out '%{http_code}' \
+            --cookie "$first_admin_cookie" \
+            -H 'Origin: http://127.0.0.1:3190' -H 'content-type: application/json' \
+            --data-binary @"${RUNNER_TEMP}/first-admin.json" \
+            http://127.0.0.1:3190/__viventium_native_first_admin)" = 409
+          test "$(/usr/bin/curl --silent --output /dev/null --write-out '%{http_code}' \
+            --cookie "$first_admin_cookie" \
+            -H 'Origin: http://192.0.2.10:3190' -H 'content-type: application/json' \
+            --data-binary @"${RUNNER_TEMP}/first-admin.json" \
+            http://127.0.0.1:3190/__viventium_native_first_admin)" = 403
+          test "$(/usr/bin/curl --silent --output /dev/null --write-out '%{http_code}' \
+            -H 'content-type: application/json' --data '{}' \
+            http://127.0.0.1:3190/api/auth/register)" = 403
+          test "$(/usr/bin/curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:3190/register)" = 303
+          test -z "$(/usr/sbin/lsof -nP -a -iTCP:3180 -sTCP:LISTEN -t || true)"
+          /usr/bin/curl --fail --silent --show-error \
+            -H 'content-type: application/json' \
+            --data '{"email":"native-payload-qa@example.com","password":"NativePayload-QA-2026!"}' \
+            http://127.0.0.1:3190/api/auth/login > "${RUNNER_TEMP}/login.json"
+          "$GITHUB_WORKSPACE/dist/candidate/payload/bin/viventium-native-stop" \
+            --app-support-dir "$support"
+          env -i HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
+            "$GITHUB_WORKSPACE/dist/candidate/payload/bin/viventium-native-start" \
+            --app-support-dir "$support" --timeout 180
+          test -z "$(/usr/sbin/lsof -nP -a -iTCP:3180 -sTCP:LISTEN -t || true)"
+          /usr/bin/curl --fail --silent --show-error \
+            -H 'content-type: application/json' \
+            --data '{"email":"native-payload-qa@example.com","password":"NativePayload-QA-2026!"}' \
+            http://127.0.0.1:3190/api/auth/login > "${RUNNER_TEMP}/login-after-restart.json"
+          "$GITHUB_WORKSPACE/dist/candidate/payload/bin/viventium-native-health" \
+            --app-support-dir "$support"
+          env PYTHONDONTWRITEBYTECODE=1 \
+            "$GITHUB_WORKSPACE/dist/candidate/bootstrap/ViventiumBootstrap.app/Contents/MacOS/ViventiumBootstrap" \
+            --self-check --candidate
+          python scripts/viventium/verify_native_public_safety.py \
+            --candidate-root "$GITHUB_WORKSPACE/dist/candidate" \
+            --forbid-prefix "$GITHUB_WORKSPACE" \
+            --forbid-prefix "$RUNNER_TEMP" \
+            --forbid-prefix "$HOME"
+      - name: Pack exact candidate transport without mode or hidden-file loss
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist/candidate-transport"
+          python scripts/viventium/transport_native_candidate.py pack \
+            --candidate-root "$GITHUB_WORKSPACE/dist/candidate" \
+            --archive "$GITHUB_WORKSPACE/dist/candidate-transport/native-payload-root-${EXPECTED_ARCH}.tar" \
+            --digest-output "$GITHUB_WORKSPACE/dist/candidate-transport/native-payload-root-${EXPECTED_ARCH}.tar.sha256"
+      - name: Upload exact candidate transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-payload-root-${{ matrix.expected_arch }}
+          if-no-files-found: error
+          path: dist/candidate-transport/*
+          retention-days: 7
+          compression-level: 6

@@ -16,6 +16,7 @@ from livekit.agents.tts import AudioEmitter, ChunkedStream, SynthesizeStream, TT
 # Ensure voice-gateway root is on sys.path so `import fallback_tts` works
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import fallback_tts as fallback_tts_module  # noqa: E402
 from fallback_tts import FallbackTTS, ProviderAttempt  # noqa: E402
 
 
@@ -23,6 +24,21 @@ def _silence_pcm(*, sample_rate: int, num_channels: int, duration_ms: int) -> by
     samples_per_channel = int(sample_rate * (duration_ms / 1000.0))
     total_samples = samples_per_channel * num_channels
     return b"\x00\x00" * total_samples  # pcm_s16le silence
+
+
+def test_streaming_control_observer_is_bounded_and_detects_split_markup() -> None:
+    observer = fallback_tts_module._StreamingVoiceControlObserver(max_pending_chars=64)
+
+    observer.push_text("Synthetic text " * 10_000)
+    assert observer.pending_chars == 0
+    assert observer.controls_present is False
+
+    observer.push_text("<emo")
+    assert observer.pending_chars == 4
+    observer.push_text('tion value="curiosity"/>Hello')
+
+    assert observer.controls_present is True
+    assert observer.pending_chars == 0
 
 
 class _FakeChunkedStream(ChunkedStream):
@@ -273,6 +289,51 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         # Cartesia should receive the original text with tags intact.
         self.assertEqual(primary.last_synth_text, tagged_text)
 
+    async def test_chunked_rendering_observation_reports_preserved_controls_without_payload(self) -> None:
+        primary = FakeTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(
+            attempts=[ProviderAttempt(label="cartesia", tts=primary)],
+        )
+        private_text = '<emotion value="curiosity"/>Synthetic private sentence.'
+
+        with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+            frame = await wrapper.synthesize(private_text).collect()
+
+        self.assertGreater(len(frame.data), 0)
+        joined = "\n".join(captured.output)
+        self.assertIn("[VoiceRendering][voice_gateway]", joined)
+        self.assertIn("event=attempt", joined)
+        self.assertIn("event=selected", joined)
+        self.assertIn("provider=cartesia", joined)
+        self.assertIn("model=fake", joined)
+        self.assertIn("role=primary", joined)
+        self.assertIn("markup_policy=preserve", joined)
+        self.assertIn("controls_present=true", joined)
+        self.assertNotIn(private_text, joined)
+        self.assertNotIn("Synthetic private sentence", joined)
+
+    async def test_chunked_rendering_observation_reports_fallback_sanitization(self) -> None:
+        primary = FakeTTS(sample_rate=44100, should_fail=True)
+        fallback = FakeTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(
+            attempts=[
+                ProviderAttempt(label="cartesia", tts=primary),
+                ProviderAttempt(label="openai", tts=fallback, sanitize_voice_markup=True),
+            ],
+        )
+
+        with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+            frame = await wrapper.synthesize("[sigh] Synthetic fallback sentence.").collect()
+
+        self.assertGreater(len(frame.data), 0)
+        joined = "\n".join(captured.output)
+        self.assertIn("provider=openai", joined)
+        self.assertIn("role=fallback", joined)
+        self.assertIn("markup_policy=strip", joined)
+        self.assertIn("controls_present=true", joined)
+        self.assertIn("controls_action=stripped", joined)
+        self.assertNotIn("Synthetic fallback sentence", joined)
+
     async def test_streaming_primary_failure_uses_fallback(self) -> None:
         selected: list[str] = []
         primary = FakeStreamingTTS(sample_rate=44100, should_fail=True)
@@ -340,6 +401,31 @@ class TestFallbackTTS(unittest.IsolatedAsyncioTestCase):
         self.assertIn("action=forwarded", joined)
         self.assertIn('text_json=" Next thought."', joined)
         self.assertEqual(tts.last_stream_chunks, ["Good to hear you", " Next thought."])
+
+    async def test_streaming_rendering_observation_is_structural_and_payload_free(self) -> None:
+        tts = FakeStreamingTTS(sample_rate=44100, should_fail=False)
+        wrapper = FallbackTTS(attempts=[ProviderAttempt(label="xai", tts=tts)])
+        private_text = "<soft>Synthetic private sentence.</soft>"
+
+        stream = wrapper.stream()
+        stream.push_text(private_text)
+        stream.end_input()
+
+        with self.assertLogs("voice-gateway.fallback_tts", level="INFO") as captured:
+            async with stream:
+                async for _ in stream:
+                    pass
+
+        joined = "\n".join(captured.output)
+        self.assertIn("[VoiceRendering][voice_gateway]", joined)
+        self.assertIn("event=attempt", joined)
+        self.assertIn("event=input_complete", joined)
+        self.assertIn("event=selected", joined)
+        self.assertIn("provider=xai", joined)
+        self.assertIn("markup_policy=preserve", joined)
+        self.assertIn("controls_present=true", joined)
+        self.assertNotIn(private_text, joined)
+        self.assertNotIn("Synthetic private sentence", joined)
 
     async def test_chunked_provider_input_logs_full_synthesize_text(self) -> None:
         tts = FakeTTS(sample_rate=44100, should_fail=False)

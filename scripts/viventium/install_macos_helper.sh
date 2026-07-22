@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -19,6 +19,7 @@ BUILT_EXECUTABLE="${VIVENTIUM_HELPER_BUILT_EXECUTABLE:-$HELPER_BUILD_DIR/$HELPER
 HELPER_PREBUILT_DIR="${VIVENTIUM_HELPER_PREBUILT_DIR:-$HELPER_PACKAGE_DIR/prebuilt}"
 HELPER_PREBUILT_EXECUTABLE="${VIVENTIUM_HELPER_PREBUILT_EXECUTABLE:-$HELPER_PREBUILT_DIR/${HELPER_EXECUTABLE_NAME}-universal}"
 HELPER_PREBUILT_SOURCE_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_SOURCE_HASH_FILE:-$HELPER_PREBUILT_DIR/source.sha256}"
+HELPER_PREBUILT_BINARY_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_BINARY_HASH_FILE:-$HELPER_PREBUILT_DIR/binary.sha256}"
 HELPER_APP_DIR="${VIVENTIUM_HELPER_APP_DIR:-$HOME/Applications}"
 HELPER_APP_BUNDLE="${VIVENTIUM_HELPER_APP_BUNDLE:-$HELPER_APP_DIR/Viventium.app}"
 LEGACY_HELPER_APP_BUNDLE="${VIVENTIUM_HELPER_LEGACY_APP_BUNDLE:-$HELPER_APP_DIR/Viventium Helper.app}"
@@ -30,6 +31,7 @@ HELPER_LOG_FILE="${VIVENTIUM_HELPER_LOG_FILE:-$APP_SUPPORT_DIR/logs/viventium-he
 HELPER_SCRIPT_DIR="${VIVENTIUM_HELPER_SCRIPT_DIR:-$APP_SUPPORT_DIR/helper-scripts}"
 HELPER_STACK_SCRIPT_COPY="${VIVENTIUM_HELPER_STACK_SCRIPT_COPY:-$HELPER_SCRIPT_DIR/viventium-librechat-start.sh}"
 HELPER_STACK_WRAPPER="${VIVENTIUM_HELPER_STACK_WRAPPER:-$HELPER_SCRIPT_DIR/viventium-stack.sh}"
+HELPER_TRANSACTION_TOOL="$REPO_ROOT/scripts/viventium/helper_bundle_transaction.py"
 HELPER_RUNTIME_REPO_ROOT="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-$REPO_ROOT}"
 SKIP_BUILD="${VIVENTIUM_HELPER_SKIP_BUILD:-0}"
 FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"
@@ -37,6 +39,11 @@ SKIP_CODESIGN="${VIVENTIUM_HELPER_SKIP_CODESIGN:-0}"
 SKIP_LAUNCHCTL="${VIVENTIUM_HELPER_SKIP_LAUNCHCTL:-0}"
 SKIP_LOGIN_ITEM="${VIVENTIUM_HELPER_SKIP_LOGIN_ITEM:-0}"
 OSASCRIPT_TIMEOUT_SECONDS="${VIVENTIUM_HELPER_OSASCRIPT_TIMEOUT_SECONDS:-15}"
+HELPER_OWNER_MARKER_RELATIVE="Contents/Resources/viventium-owner.json"
+HELPER_TRANSACTION_PYTHON=""
+HELPER_DESTINATION_STATE=""
+HELPER_STAGE_STATE=""
+STAGED_APP_BUNDLE=""
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -72,6 +79,85 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
+prepare_helper_app_destination() {
+  local python_bin
+  python_bin="$(resolve_repo_python)"
+  "$python_bin" - "$HELPER_APP_DIR" "$HELPER_APP_BUNDLE" "$LEGACY_HELPER_APP_BUNDLE" \
+    "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_EXECUTABLE_NAME" <<'PY'
+import json
+import os
+import plistlib
+import stat
+import sys
+from pathlib import Path
+
+app_dir = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
+bundles = [Path(os.path.abspath(os.path.expanduser(value))) for value in sys.argv[2:4]]
+bundle_identifier = sys.argv[4]
+executable_name = sys.argv[5]
+uid = os.getuid()
+
+if any(bundle.parent != app_dir for bundle in bundles):
+    raise SystemExit("[viventium] Refusing helper path outside the validated Applications directory")
+
+def real_owned_directory(path: Path, label: str) -> None:
+    metadata = os.lstat(path)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != uid:
+        raise SystemExit(f"[viventium] Refusing unsafe {label}: {path}")
+
+if os.path.lexists(app_dir):
+    real_owned_directory(app_dir, "helper Applications directory")
+else:
+    raise SystemExit(f"[viventium] Helper Applications directory disappeared after capture: {app_dir}")
+
+for bundle in bundles:
+    if not os.path.lexists(bundle):
+        continue
+    metadata = os.lstat(bundle)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != uid:
+        raise SystemExit(f"[viventium] Refusing to replace or remove unsafe helper bundle: {bundle}")
+    for directory in (
+        bundle / "Contents",
+        bundle / "Contents" / "MacOS",
+        bundle / "Contents" / "Resources",
+    ):
+        real_owned_directory(directory, "helper bundle directory")
+    info = bundle / "Contents" / "Info.plist"
+    executable = bundle / "Contents" / "MacOS" / executable_name
+    for path, label in ((info, "Info.plist"), (executable, "executable")):
+        try:
+            child = os.lstat(path)
+        except FileNotFoundError as error:
+            raise SystemExit(f"[viventium] Refusing unrelated application without helper {label}: {bundle}") from error
+        if stat.S_ISLNK(child.st_mode) or not stat.S_ISREG(child.st_mode) or child.st_uid != uid:
+            raise SystemExit(f"[viventium] Refusing unsafe helper {label}: {bundle}")
+    try:
+        with info.open("rb") as handle:
+            installed_identifier = plistlib.load(handle).get("CFBundleIdentifier")
+    except (OSError, plistlib.InvalidFileException) as error:
+        raise SystemExit(f"[viventium] Refusing application with invalid helper Info.plist: {bundle}") from error
+    if installed_identifier != bundle_identifier:
+        raise SystemExit(f"[viventium] Refusing to replace or remove unrelated application: {bundle}")
+    marker = bundle / "Contents" / "Resources" / "viventium-owner.json"
+    if os.path.lexists(marker):
+        marker_metadata = os.lstat(marker)
+        if (
+            stat.S_ISLNK(marker_metadata.st_mode)
+            or not stat.S_ISREG(marker_metadata.st_mode)
+            or marker_metadata.st_uid != uid
+        ):
+            raise SystemExit(f"[viventium] Refusing unsafe helper ownership marker: {bundle}")
+        try:
+            owner = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise SystemExit(f"[viventium] Refusing invalid helper ownership marker: {bundle}") from error
+        if owner.get("product") != bundle_identifier or owner.get("schema_version") != 1:
+            raise SystemExit(f"[viventium] Refusing unrecognized helper ownership marker: {bundle}")
+    # A marker-free bundle with the exact historical bundle ID and executable is
+    # the one supported legacy migration shape. No other application is touched.
+PY
+}
+
 HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT" "$APP_SUPPORT_DIR")"
 HELPER_RUNTIME_ALLOW_PROTECTED=0
 if active_runtime_checkout_allows_repo_root "$APP_SUPPORT_DIR" "$HELPER_RUNTIME_REPO_ROOT"; then
@@ -93,16 +179,32 @@ if repo_root_uses_macos_protected_folder_access "$HELPER_RUNTIME_REPO_ROOT" && [
   echo "[viventium] Binding helper to explicit developer checkout inside a macOS protected folder: $HELPER_RUNTIME_REPO_ROOT" >&2
 fi
 
-mkdir -p "$APP_SUPPORT_DIR" "$APP_SUPPORT_DIR/logs" "$HELPER_APP_DIR" "$LAUNCH_AGENT_DIR"
+HELPER_TRANSACTION_PYTHON="$(resolve_repo_python)"
+HELPER_DESTINATION_STATE="$(
+  "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" capture \
+    --root "$HELPER_APP_DIR" \
+    --current-name "$(basename "$HELPER_APP_BUNDLE")" \
+    --legacy-name "$(basename "$LEGACY_HELPER_APP_BUNDLE")" \
+    --bundle-identifier "$HELPER_BUNDLE_IDENTIFIER" \
+    --executable-name "$HELPER_EXECUTABLE_NAME" \
+    --create-root
+)"
+prepare_helper_app_destination
+mkdir -p "$APP_SUPPORT_DIR" "$APP_SUPPORT_DIR/logs" "$LAUNCH_AGENT_DIR"
 
 write_helper_config() {
   local python_bin
   python_bin="$(resolve_repo_python)"
-  "$python_bin" - <<PY
+  "$python_bin" - "$HELPER_CONFIG_FILE" "$HELPER_RUNTIME_REPO_ROOT" "$APP_SUPPORT_DIR" \
+    "$HELPER_RUNTIME_ALLOW_PROTECTED" <<'PY'
 import json
+import sys
 from pathlib import Path
 
-path = Path(r"""$HELPER_CONFIG_FILE""")
+path = Path(sys.argv[1])
+repo_root = sys.argv[2]
+app_support_dir = sys.argv[3]
+allow_protected = sys.argv[4] == "1"
 path.parent.mkdir(parents=True, exist_ok=True)
 existing = {}
 if path.exists():
@@ -114,9 +216,9 @@ if path.exists():
 config = dict(existing)
 config.update(
     {
-        "repoRoot": r"""$HELPER_RUNTIME_REPO_ROOT""",
-        "appSupportDir": r"""$APP_SUPPORT_DIR""",
-        "allowProtectedRepoRoot": """$HELPER_RUNTIME_ALLOW_PROTECTED""" == "1",
+        "repoRoot": repo_root,
+        "appSupportDir": app_support_dir,
+        "allowProtectedRepoRoot": allow_protected,
         "showInStatusBar": bool(existing.get("showInStatusBar", True)),
     }
 )
@@ -127,15 +229,17 @@ PY
 write_helper_launcher_scripts() {
   local python_bin
   python_bin="$(resolve_repo_python)"
-  "$python_bin" - <<PY
+  "$python_bin" - "$HELPER_RUNTIME_REPO_ROOT" "$APP_SUPPORT_DIR" "$HELPER_SCRIPT_DIR" \
+    "$HELPER_STACK_SCRIPT_COPY" "$HELPER_STACK_WRAPPER" <<'PY'
 from pathlib import Path
 import shlex
+import sys
 
-repo_root = Path(r"""$HELPER_RUNTIME_REPO_ROOT""").resolve()
-app_support_dir = Path(r"""$APP_SUPPORT_DIR""").resolve()
-helper_script_dir = Path(r"""$HELPER_SCRIPT_DIR""").resolve()
-stack_script_copy = Path(r"""$HELPER_STACK_SCRIPT_COPY""").resolve()
-stack_wrapper = Path(r"""$HELPER_STACK_WRAPPER""").resolve()
+repo_root = Path(sys.argv[1]).resolve()
+app_support_dir = Path(sys.argv[2]).resolve()
+helper_script_dir = Path(sys.argv[3]).resolve()
+stack_script_copy = Path(sys.argv[4]).resolve()
+stack_wrapper = Path(sys.argv[5]).resolve()
 source_script = repo_root / "viventium_v0_4" / "viventium-librechat-start.sh"
 bin_viventium = repo_root / "bin" / "viventium"
 
@@ -188,41 +292,43 @@ PY
 }
 
 write_launch_agent_plist() {
-  cat >"$LAUNCH_AGENT_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>ai.viventium.helper</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>$HOME</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>LimitLoadToSessionType</key>
-  <array>
-    <string>Aqua</string>
-  </array>
-	  <key>EnvironmentVariables</key>
-	  <dict>
-	    <key>PATH</key>
-	    <string>$PATH</string>
-	    <key>VIVENTIUM_HELPER_RUNTIME_REPO_ROOT</key>
-	    <string>$HELPER_RUNTIME_REPO_ROOT</string>
-	    <key>VIVENTIUM_PUBLIC_INSTALL_DIR</key>
-	    <string>$(default_public_install_repo_root)</string>
-	  </dict>
-  <key>StandardOutPath</key>
-  <string>$HELPER_LOG_FILE</string>
-  <key>StandardErrorPath</key>
-  <string>$HELPER_LOG_FILE</string>
-</dict>
-</plist>
-PLIST
+  local python_bin public_install_dir
+  python_bin="$(resolve_repo_python)"
+  public_install_dir="$(default_public_install_repo_root)"
+  "$python_bin" - "$LAUNCH_AGENT_PLIST" "$HELPER_APP_BUNDLE" "$HELPER_EXECUTABLE_NAME" \
+    "$HOME" "$PATH" "$HELPER_RUNTIME_REPO_ROOT" "$public_install_dir" "$HELPER_LOG_FILE" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+
+(
+    output_path,
+    helper_bundle,
+    executable_name,
+    home,
+    executable_path,
+    runtime_repo_root,
+    public_install_dir,
+    log_file,
+) = sys.argv[1:]
+payload = {
+    "Label": "ai.viventium.helper",
+    "ProgramArguments": [str(Path(helper_bundle) / "Contents" / "MacOS" / executable_name)],
+    "WorkingDirectory": home,
+    "RunAtLoad": True,
+    "LimitLoadToSessionType": ["Aqua"],
+    "EnvironmentVariables": {
+        "PATH": executable_path,
+        "VIVENTIUM_HELPER_RUNTIME_REPO_ROOT": runtime_repo_root,
+        "VIVENTIUM_PUBLIC_INSTALL_DIR": public_install_dir,
+    },
+    "StandardOutPath": log_file,
+    "StandardErrorPath": log_file,
+}
+path = Path(output_path)
+with path.open("wb") as handle:
+    plistlib.dump(payload, handle, fmt=plistlib.FMT_XML, sort_keys=False)
+PY
 }
 
 register_login_item() {
@@ -270,143 +376,16 @@ APPLESCRIPT
 }
 
 cleanup_legacy_terminal_helper_launchers() {
-  local python_bin
-  python_bin="$(resolve_repo_python)"
-  "$python_bin" - "$APP_SUPPORT_DIR" "$HELPER_SCRIPT_DIR" "$LAUNCH_AGENT_DIR" "$OSASCRIPT_TIMEOUT_SECONDS" <<'PY'
-import os
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-
-app_support_dir = Path(sys.argv[1]).resolve()
-helper_script_dir = Path(sys.argv[2]).resolve()
-launch_agent_dir = Path(sys.argv[3]).resolve()
-timeout = float(sys.argv[4])
-
-legacy_command_markers = (
-    "helper-terminal-run.command",
-    "helper-detached-start.pid.command",
-    "helper-detached-stop.pid.command",
-)
-legacy_history_markers = tuple(
-    str(helper_script_dir / marker)
-    for marker in legacy_command_markers
-)
-legacy_history_markers += tuple(
-    marker.replace(" ", "\\ ")
-    for marker in legacy_history_markers
-)
-
-for stale_script in helper_script_dir.glob("*.command"):
-    try:
-        stale_script.unlink()
-    except FileNotFoundError:
-        pass
-
-
-def scrub_legacy_helper_history(path: Path) -> None:
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return
-    lines = text.splitlines(keepends=True)
-    filtered = [line for line in lines if not any(marker in line for marker in legacy_history_markers)]
-    if filtered == lines:
-        return
-    try:
-        path.write_text("".join(filtered), encoding="utf-8")
-    except OSError:
-        return
-
-
-for history_path in (Path.home() / ".zsh_history",):
-    scrub_legacy_helper_history(history_path)
-
-zsh_sessions_dir = Path.home() / ".zsh_sessions"
-if zsh_sessions_dir.exists():
-    for history_path in zsh_sessions_dir.glob("*"):
-        if history_path.suffix not in {".history", ".historynew", ".session"}:
-            continue
-        scrub_legacy_helper_history(history_path)
-
-
-def terminal_saved_state_contains_legacy_marker(saved_state_dir: Path) -> bool:
-    if not saved_state_dir.exists():
-        return False
-    marker_bytes = [
-        marker.encode("utf-8")
-        for marker in (*legacy_command_markers, *legacy_history_markers)
-    ]
-    for candidate in saved_state_dir.rglob("*"):
-        if not candidate.is_file():
-            continue
-        try:
-            payload = candidate.read_bytes()
-        except OSError:
-            continue
-        if any(marker in payload for marker in marker_bytes):
-            return True
-    return False
-
-
-terminal_saved_state_dir = (
-    Path.home() / "Library" / "Saved Application State" / "com.apple.Terminal.savedState"
-)
-if terminal_saved_state_contains_legacy_marker(terminal_saved_state_dir):
-    shutil.rmtree(terminal_saved_state_dir, ignore_errors=True)
-
-for plist_path in launch_agent_dir.glob("*.plist"):
-    try:
-        text = plist_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        continue
-    if str(helper_script_dir) not in text and not any(marker in text for marker in legacy_command_markers):
-        continue
-    subprocess.run(
-        ["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    try:
-        plist_path.unlink()
-    except FileNotFoundError:
-        pass
-
-escaped_helper_dir = (
-    str(helper_script_dir)
-    .replace("\\", "\\\\")
-    .replace('"', '\\"')
-)
-script = f'''tell application "System Events"
-  repeat with li in every login item
-    set shouldDelete to false
-    try
-      set liPath to POSIX path of (path of li as alias)
-      if liPath contains "{escaped_helper_dir}" then
-        set shouldDelete to true
-      end if
-    end try
-    if shouldDelete then
-      delete li
-    end if
-  end repeat
-end tell
-'''
-try:
-    subprocess.run(
-        ["/usr/bin/osascript"],
-        input=script,
-        text=True,
-        timeout=timeout,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-except subprocess.TimeoutExpired:
-    pass
-PY
+  # Cleanup is intentionally limited to paths owned by Viventium. Never read or
+  # rewrite shell history, terminal session state, or unrelated LaunchAgents.
+  find "$HELPER_SCRIPT_DIR" -maxdepth 1 -type f \
+    \( -name '*.command' -o -name 'helper-detached-*.sh' \) -delete 2>/dev/null || true
+  local legacy_launch_agent="$LAUNCH_AGENT_DIR/ai.viventium.helper.terminal.plist"
+  if [[ -f "$legacy_launch_agent" ]]; then
+    [[ "$SKIP_LAUNCHCTL" == "1" ]] || \
+      launchctl bootout "gui/$UID" "$legacy_launch_agent" >/dev/null 2>&1 || true
+    rm -f "$legacy_launch_agent"
+  fi
   pkill -f "$APP_SUPPORT_DIR/helper-scripts/.*\\.command" >/dev/null 2>&1 || true
 }
 
@@ -439,12 +418,24 @@ PY
 prebuilt_helper_matches_sources() {
   [[ -x "$HELPER_PREBUILT_EXECUTABLE" ]] || return 1
   [[ -f "$HELPER_PREBUILT_SOURCE_HASH_FILE" ]] || return 1
+  prebuilt_helper_binary_matches_digest || return 1
 
   local expected_hash
   local actual_hash
   expected_hash="$(tr -d '[:space:]' < "$HELPER_PREBUILT_SOURCE_HASH_FILE")"
   actual_hash="$(helper_source_hash)"
   [[ -n "$expected_hash" && "$expected_hash" == "$actual_hash" ]]
+}
+
+prebuilt_helper_binary_matches_digest() {
+  [[ -x "$HELPER_PREBUILT_EXECUTABLE" ]] || return 1
+  [[ -f "$HELPER_PREBUILT_BINARY_HASH_FILE" ]] || return 1
+  local expected_hash
+  local actual_hash
+  expected_hash="$(tr -d '[:space:]' < "$HELPER_PREBUILT_BINARY_HASH_FILE" | tr '[:upper:]' '[:lower:]')"
+  [[ "$expected_hash" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+  actual_hash="$(shasum -a 256 "$HELPER_PREBUILT_EXECUTABLE" | awk '{print $1}')"
+  [[ "$expected_hash" == "$actual_hash" ]]
 }
 
 use_prebuilt_helper() {
@@ -556,23 +547,34 @@ PY
 }
 
 install_bundle() {
-  local contents_dir="$HELPER_APP_BUNDLE/Contents"
-  local macos_dir="$contents_dir/MacOS"
-  local resources_dir="$contents_dir/Resources"
-  rm -rf "$LEGACY_HELPER_APP_BUNDLE"
-  rm -rf "$HELPER_APP_BUNDLE"
-  mkdir -p "$macos_dir"
-  mkdir -p "$resources_dir"
-  cp "$BUILT_EXECUTABLE" "$macos_dir/$HELPER_EXECUTABLE_NAME"
-  chmod +x "$macos_dir/$HELPER_EXECUTABLE_NAME"
-  cp "$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/Resources/Info.plist" "$contents_dir/Info.plist"
-  if [[ -f "$HELPER_ICON_RESOURCE" ]]; then
-    cp "$HELPER_ICON_RESOURCE" "$resources_dir/Viventium.icns"
-  fi
+  trap 'rollback_install_transaction $?' ERR
+  trap 'rollback_install_transaction 130' INT TERM
+  local icon_path=""
+  [[ ! -f "$HELPER_ICON_RESOURCE" ]] || icon_path="$HELPER_ICON_RESOURCE"
+  HELPER_STAGE_STATE="$(
+    "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" stage \
+      --destination-state "$HELPER_DESTINATION_STATE" \
+      --built-executable "$BUILT_EXECUTABLE" \
+      --info-plist "$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/Resources/Info.plist" \
+      --icon-path "$icon_path" \
+      --bundle-identifier "$HELPER_BUNDLE_IDENTIFIER" \
+      --executable-name "$HELPER_EXECUTABLE_NAME"
+  )"
+  STAGED_APP_BUNDLE="$(
+    "$HELPER_TRANSACTION_PYTHON" -c \
+      'import json,sys; print(json.loads(sys.argv[1])["app_path"])' \
+      "$HELPER_STAGE_STATE"
+  )"
 }
 
 verify_installed_bundle() {
-  local installed_executable="$HELPER_APP_BUNDLE/Contents/MacOS/$HELPER_EXECUTABLE_NAME"
+  local bundle="${1:-$HELPER_APP_BUNDLE}"
+  if [[ "$bundle" == "$STAGED_APP_BUNDLE" && -n "$HELPER_STAGE_STATE" ]]; then
+    "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" validate-stage \
+      --destination-state "$HELPER_DESTINATION_STATE" \
+      --stage-state "$HELPER_STAGE_STATE"
+  fi
+  local installed_executable="$bundle/Contents/MacOS/$HELPER_EXECUTABLE_NAME"
   [[ -x "$installed_executable" ]] || {
     echo "[viventium] Installed helper executable is missing: $installed_executable" >&2
     exit 1
@@ -608,12 +610,61 @@ verify_installed_bundle() {
 }
 
 sign_installed_bundle() {
+  local bundle="${1:-$HELPER_APP_BUNDLE}"
+  if [[ "$bundle" == "$STAGED_APP_BUNDLE" && -n "$HELPER_STAGE_STATE" ]]; then
+    "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" validate-stage \
+      --destination-state "$HELPER_DESTINATION_STATE" \
+      --stage-state "$HELPER_STAGE_STATE"
+  fi
   [[ "$SKIP_CODESIGN" == "1" ]] && return 0
   [[ -x /usr/bin/codesign ]] || return 0
 
-  if ! /usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_APP_BUNDLE" >/dev/null 2>&1; then
+  if ! /usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$bundle" >/dev/null 2>&1; then
     echo "[viventium] Warning: Viventium helper installed but could not be code signed locally." >&2
   fi
+}
+
+refresh_staged_bundle_state() {
+  HELPER_STAGE_STATE="$(
+    "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" refresh-stage \
+      --destination-state "$HELPER_DESTINATION_STATE" \
+      --stage-state "$HELPER_STAGE_STATE"
+  )"
+}
+
+rollback_install_transaction() {
+  local exit_code="${1:-1}"
+  local rollback_status=0
+  trap - ERR INT TERM
+  set +e
+  if [[ -n "$HELPER_STAGE_STATE" ]]; then
+    "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" rollback-persisted \
+      --destination-state "$HELPER_DESTINATION_STATE" \
+      --stage-state "$HELPER_STAGE_STATE" || rollback_status=$?
+  fi
+  if [[ "$rollback_status" == "0" ]]; then
+    echo "[viventium] Helper installation failed; restored the previously owned helper bundle." >&2
+  else
+    echo "[viventium] Helper installation failed and rollback stopped at a changed filesystem boundary; retained the owned backup for recovery." >&2
+  fi
+  exit "$exit_code"
+}
+
+activate_staged_bundle() {
+  trap 'rollback_install_transaction $?' ERR
+  trap 'rollback_install_transaction 130' INT TERM
+  "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" activate \
+    --destination-state "$HELPER_DESTINATION_STATE" \
+    --stage-state "$HELPER_STAGE_STATE" >/dev/null
+}
+
+commit_install_transaction() {
+  trap - ERR INT TERM
+  "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" commit-persisted \
+    --destination-state "$HELPER_DESTINATION_STATE" \
+    --stage-state "$HELPER_STAGE_STATE" || \
+    echo "[viventium] Warning: an identity-bound helper transaction backup remains for recovery." >&2
+  HELPER_STAGE_STATE=""
 }
 
 stop_existing_helper() {
@@ -647,26 +698,29 @@ install)
     cleanup_legacy_terminal_helper_launchers
     build_helper
     install_bundle
-    verify_installed_bundle
-    sign_installed_bundle
+    verify_installed_bundle "$STAGED_APP_BUNDLE"
+    sign_installed_bundle "$STAGED_APP_BUNDLE"
+    refresh_staged_bundle_state
     write_helper_config
     write_helper_launcher_scripts
     stop_existing_helper
     unregister_login_item || true
     remove_launch_agent
+    activate_staged_bundle
     register_login_item || {
       write_launch_agent_plist
       bootstrap_launch_agent
     }
     launch_helper_app
+    commit_install_transaction
     ;;
   uninstall)
     cleanup_legacy_terminal_helper_launchers
     unregister_login_item || true
     remove_launch_agent
     stop_existing_helper
-    rm -rf "$LEGACY_HELPER_APP_BUNDLE"
-    rm -rf "$HELPER_APP_BUNDLE"
+    "$HELPER_TRANSACTION_PYTHON" "$HELPER_TRANSACTION_TOOL" uninstall \
+      --destination-state "$HELPER_DESTINATION_STATE"
     ;;
   *)
     echo "Unsupported mode: $MODE" >&2

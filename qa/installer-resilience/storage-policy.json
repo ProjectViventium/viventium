@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "qa_vm_prefix": "viventium-qa-",
+  "max_active_qa_vms": 1,
+  "minimum_free_bytes_before_run": 107374182400,
+  "abort_below_free_bytes": 64424509440,
+  "max_host_physical_growth_bytes": 34359738368,
+  "max_docker_physical_growth_during_run_bytes": 17179869184,
+  "max_docker_physical_residual_bytes": 4294967296,
+  "max_docker_logical_growth_from_clean_baseline_bytes": 68719476736,
+  "sample_interval_seconds": 2
+}

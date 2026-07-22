@@ -21,19 +21,38 @@ A local Viventium install can give you:
 - the main `Viventium` agent plus built-in background agents
 - voice calls and the modern playground
 - memory, recall, morning briefings, and scheduling
-- connected accounts for OpenAI / Anthropic where supported
-- optional BYOK provider setup across OpenAI, Anthropic, Groq, xAI, Google, OpenRouter, and more
+- encrypted browser-entered API keys for OpenAI and Anthropic
+- optional BYOK provider setup across Groq, xAI, Google, OpenRouter, and more
+- an explicitly experimental subscription-account compatibility bridge for established setups
 - local web search and code-interpreter-compatible tooling when enabled in config
 
 ## Quick Start
 
-**Current verified install path:** macOS, fresh-clone or repo-local install via `./install.sh`.
+### Easy Install (Recommended)
+
+Easy Install is the guided, native-first product path for a new Mac. It is designed to install the
+useful local core without Docker, open browser setup automatically, and let you securely add an
+OpenAI or Anthropic API key before your first answer. Optional providers, channels, voice, recall,
+and automation come later.
+
+The command below exercises the current source-checkout candidate. It still requires Git and may
+install developer/runtime prerequisites; it is not the finished no-developer-tools Easy Install
+artifact.
+
+**Current source-checkout entrypoint:** copy and run this line on macOS:
 
 ```bash
-git clone https://github.com/ProjectViventium/viventium.git
-cd viventium
-./install.sh
+git clone https://github.com/ProjectViventium/viventium.git && cd viventium && ./install.sh
 ```
+
+Choose **Easy Install** when prompted. The signed/notarized immutable release and pristine-Mac gate
+remain open, so do not treat this source-checkout path as the finished public installer.
+
+### Custom Settings Install
+
+Choose **Custom Settings Install** in the same installer when you deliberately want to select the
+runtime mode, providers, integrations, or optional capabilities during installation. Settings you
+skip can still be added later with `bin/viventium configure`.
 
 On macOS, install also adds `Viventium Helper` to the status bar so you can open, start, stop,
 snapshot the local stack, and open the local Prompt Workbench without going back to Terminal.
@@ -48,11 +67,12 @@ First-run notes:
   depending on opportunistic local Swift builds
 - the helper's `Advanced > Prompt Workbench` submenu can Open, Start, or Stop only the Prompt
   Workbench web app; it does not stop the main Viventium runtime
-- after you create your local account, open `Settings -> Connected Accounts` and connect at least
-  one foundation model account (`OpenAI` or `Anthropic`); if you want Gmail/Drive or Outlook/MS365
-  tasks, connect those service accounts there too
+- after you create your local account, setup should open Connected Accounts automatically; add at
+  least one foundation-model API key (`OpenAI` or `Anthropic`). If you dismiss setup, reopen it from
+  `Settings -> Connected Accounts`. Gmail/Drive and Outlook/MS365 accounts are separate optional
+  connections.
 
-Then start or check the stack:
+If startup does not complete, or you need to check it later:
 
 ```bash
 bin/viventium doctor
@@ -83,7 +103,9 @@ Start here if you want to understand or customize the install surface:
 - [`config.minimal.example.yaml`](./config.minimal.example.yaml): smallest supported example
 - [`config.full.example.yaml`](./config.full.example.yaml): full supported config with inline explanations
 - [`librechat.yaml.example`](./librechat.yaml.example): advanced generated/runtime reference
-- [`.env.example`](./.env.example): advanced compatibility reference
+
+Viventium does not use a repository `.env.example` as a secret-authoring surface. The installer
+compiles machine-local runtime environment files from canonical config and Keychain references.
 
 The canonical machine-local config lives at:
 
@@ -115,13 +137,15 @@ That source-of-truth is expected to carry the real Viventium defaults for:
 
 ## Current Support
 
-The current public-ready install target is:
+The current release target, which is not yet a public-release claim, is:
 
 - macOS
 - local install first
 - Apple Silicon is the primary clean-room target
 
-Intel Macs can still run Viventium, but some local voice/STT choices may need different configuration than Apple Silicon.
+Source contracts and the helper cover Intel, but the exact current payload has not completed its
+Intel install, first-use, and restart acceptance run. Intel support must remain unclaimed until that
+gate passes.
 
 ## Commands
 
@@ -140,7 +164,8 @@ bin/viventium restore
 
 ## Roadmap
 
-The current verified open install path is the repo-local flow above.
+The current source-checkout evaluation path is the repo-local flow above. The finished public path
+still requires the signed/notarized immutable payload and exact clean-machine acceptance.
 
 Planned future install surfaces:
 

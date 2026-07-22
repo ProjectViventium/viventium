@@ -11,6 +11,10 @@ const {
   stripProtectedTextRanges,
   sumForbiddenArtifacts,
 } = require('./voice_artifact_contract.cjs');
+const {
+  artifactCountsForMessages,
+  semanticModelIsHealthy,
+} = require('./tts_artifact_browser_qa.cjs');
 
 const protectedExamples = [
   'The assistant quoted: "no no no no no no" and then explained why.',
@@ -66,6 +70,35 @@ assert.strictEqual(
   sumForbiddenArtifacts(artifactCounts(''), DEFAULT_TTS_FORBIDDEN_ARTIFACT_KEYS),
   0,
   'empty text should have zero artifact count',
+);
+
+assert.strictEqual(
+  artifactCountsForMessages(['I started the worker.', 'Worker completed successfully.'])
+    .adjacentDuplicateWord,
+  0,
+  'separate assistant messages must not create a cross-message duplicate-word artifact',
+);
+
+assert.strictEqual(
+  semanticModelIsHealthy({
+    debugStreamObserved: false,
+    providerCompleted: true,
+    transcriptVisible: true,
+    persistedAssistantCount: 1,
+  }),
+  true,
+  'custom voice prompts must pass semantic health without canned response vocabulary',
+);
+
+assert.strictEqual(
+  semanticModelIsHealthy({
+    debugStreamObserved: false,
+    providerCompleted: true,
+    transcriptVisible: true,
+    persistedAssistantCount: 0,
+  }),
+  false,
+  'provider completion without persisted assistant output is not sufficient evidence',
 );
 
 const conditionKeys = new Set(ARTIFACT_CONDITIONS.map((condition) => condition.key));

@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "install": {
+    "mode": "native",
+    "experience": "express"
+  },
+  "runtime": {
+    "profile": "isolated",
+    "call_session_secret": {
+      "secret_value": "synthetic-call-session-qa"
+    },
+    "memory_hardening": {
+      "enabled": false
+    },
+    "prompt_workbench": {
+      "enabled": false,
+      "seed_nightly": {
+        "enabled": false,
+        "active": false
+      }
+    },
+    "nightly_routines": {
+      "enabled": false,
+      "defaults_version": 1
+    },
+    "personalization": {
+      "default_conversation_recall": false
+    }
+  },
+  "llm": {
+    "activation": {
+      "provider": "groq",
+      "auth_mode": "api_key"
+    },
+    "primary": {
+      "provider": "openai",
+      "auth_mode": "connected_account"
+    },
+    "secondary": {
+      "provider": "none",
+      "auth_mode": "disabled"
+    },
+    "extra_provider_keys": {}
+  },
+  "voice": {
+    "mode": "disabled"
+  },
+  "integrations": {
+    "telegram": {
+      "enabled": false
+    },
+    "google_workspace": {
+      "enabled": false
+    },
+    "ms365": {
+      "enabled": false
+    },
+    "skyvern": {
+      "enabled": false
+    },
+    "openclaw": {
+      "enabled": false
+    },
+    "glasshive": {
+      "enabled": false,
+      "host_worker": {
+        "enabled": false
+      }
+    },
+    "web_search": {
+      "enabled": false
+    },
+    "code_interpreter": {
+      "enabled": false
+    }
+  }
+}

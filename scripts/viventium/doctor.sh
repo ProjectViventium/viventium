@@ -120,6 +120,14 @@ config_path = Path(sys.argv[1])
 config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 install_mode = str(config.get("install", {}).get("mode", "docker")).strip().lower()
 voice_mode = str(config.get("voice", {}).get("mode", "disabled")).strip().lower()
+voice = config.get("voice", {}) or {}
+tts = voice.get("tts", {}) or {}
+xai = tts.get("xai", {}) if isinstance(tts, dict) else {}
+legacy_xai_route = (
+    str(xai.get("tts_api", "") or "").strip().lower() == "voice_agent"
+    if isinstance(xai, dict)
+    else False
+)
 integrations = config.get("integrations", {}) or {}
 runtime = config.get("runtime", {}) or {}
 personalization = runtime.get("personalization", {}) or {}
@@ -127,6 +135,7 @@ retrieval_embeddings = resolve_retrieval_embeddings_settings(config)
 selected = {
     "INSTALL_MODE": install_mode or "docker",
     "VOICE_MODE": voice_mode or "disabled",
+    "VOICE_LEGACY_XAI_ROUTE": "1" if legacy_xai_route else "0",
     "ENABLE_TELEGRAM": "1" if integrations.get("telegram", {}).get("enabled") else "0",
     "ENABLE_GOOGLE_WORKSPACE": "1" if integrations.get("google_workspace", {}).get("enabled") else "0",
     "ENABLE_MS365": "1" if integrations.get("ms365", {}).get("enabled") else "0",
@@ -207,6 +216,10 @@ if [[ -z "$doctor_env_exports" ]]; then
 fi
 eval "$doctor_env_exports"
 
+if [[ "$VOICE_LEGACY_XAI_ROUTE" == "1" ]]; then
+  echo "[doctor] WARN: Voice disabled: legacy xAI Voice Agent route retired. Core Viventium can continue; run Custom Settings Install to choose standalone xAI TTS or another voice provider."
+fi
+
 if [[ "$ENABLE_CONVERSATION_RECALL" == "1" && "$RETRIEVAL_EMBEDDINGS_PROVIDER" == "ollama" ]]; then
   if ! command -v ollama >/dev/null 2>&1; then
     echo "[doctor] ERROR: Conversation Recall is enabled and the configured local embeddings provider is Ollama, but ollama is not installed." >&2
@@ -247,9 +260,9 @@ else
     fi
   done
   node_major="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
-  if [[ "$node_major" != "20" ]]; then
-    echo "[doctor] ERROR: native mode requires the validated node@20 runtime; found $(node -v 2>/dev/null || echo unknown)." >&2
-    echo "[doctor] INFO: Run 'bin/viventium upgrade' to install/use node@20 before starting again." >&2
+  if [[ "$node_major" != "24" ]]; then
+    echo "[doctor] ERROR: native mode requires the validated node@24 LTS runtime; found $(node -v 2>/dev/null || echo unknown)." >&2
+    echo "[doctor] INFO: Run 'bin/viventium upgrade' to install/use node@24 before starting again." >&2
     exit 1
   fi
   if [[ "$ENABLE_SKYVERN" == "1" ]]; then

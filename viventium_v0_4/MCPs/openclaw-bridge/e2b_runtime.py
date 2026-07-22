@@ -16,6 +16,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+OPENCLAW_REQUIRED_VERSION = "2026.7.1-2"
+OPENCLAW_REQUIRED_NODE_VERSION = "v22.23.1"
+OPENCLAW_RUNTIME_LOCK_SHA256 = "e025a05ef3d268747dc293ef54876471d067f22644a8fa26a9139b7d1fe4fbc3"
+OPENCLAW_E2B_RUNTIME_ROOT = "/opt/viventium/openclaw-runtime"
+
 
 def _safe_bool_env(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -151,6 +156,8 @@ MARKER_PATH={shlex.quote(marker_path)}
 LOG_PATH={shlex.quote(log_path)}
 TOKEN={shlex.quote(gateway_token)}
 PORT={self.gateway_port}
+OPENCLAW_BIN={shlex.quote(f"{OPENCLAW_E2B_RUNTIME_ROOT}/node_modules/.bin/openclaw")}
+OPENCLAW_LOCK={shlex.quote(f"{OPENCLAW_E2B_RUNTIME_ROOT}/package-lock.json")}
 
 mkdir -p "$STATE_ROOT"
 
@@ -169,21 +176,21 @@ if probe_gateway; then
   exit 0
 fi
 
-if ! command -v node >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
-    apt-get install -y curl ca-certificates gnupg
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y nodejs
-  else
-    echo "Node.js missing and apt-get unavailable" >&2
-    exit 1
-  fi
+if ! command -v node >/dev/null 2>&1 || [[ "$(node --version)" != "{OPENCLAW_REQUIRED_NODE_VERSION}" ]]; then
+  echo "The E2B template must contain reviewed Node {OPENCLAW_REQUIRED_NODE_VERSION}; runtime installation is disabled." >&2
+  exit 1
 fi
 
-if ! command -v openclaw >/dev/null 2>&1; then
-  npm install -g openclaw@latest
+if [[ ! -f "$OPENCLAW_LOCK" ]] || [[ "$(sha256sum "$OPENCLAW_LOCK" | awk '{{print $1}}')" != "{OPENCLAW_RUNTIME_LOCK_SHA256}" ]]; then
+  echo "The E2B template must contain the reviewed OpenClaw lock at $OPENCLAW_LOCK; no mutable fallback is allowed." >&2
+  exit 1
+fi
+
+OPENCLAW_REPORTED_VERSION="$($OPENCLAW_BIN --version 2>/dev/null || true)"
+if [[ ! -x "$OPENCLAW_BIN" ]] ||
+   [[ "$OPENCLAW_REPORTED_VERSION" != "{OPENCLAW_REQUIRED_VERSION}" && "$OPENCLAW_REPORTED_VERSION" != "OpenClaw {OPENCLAW_REQUIRED_VERSION} ("*")" ]]; then
+  echo "The E2B template's reviewed runtime must provide OpenClaw {OPENCLAW_REQUIRED_VERSION}; no mutable fallback is allowed." >&2
+  exit 1
 fi
 
 cat > "$CONFIG_PATH" <<'JSON'
@@ -198,8 +205,9 @@ fi
 export OPENCLAW_STATE_DIR="$STATE_ROOT"
 export OPENCLAW_CONFIG_PATH="$CONFIG_PATH"
 export OPENCLAW_GATEWAY_TOKEN="$TOKEN"
+export OPENCLAW_DISABLE_BONJOUR=1
 
-nohup openclaw gateway --port "$PORT" --bind loopback --token "$TOKEN" --allow-unconfigured --force > "$LOG_PATH" 2>&1 &
+nohup "$OPENCLAW_BIN" gateway --port "$PORT" --bind loopback --token "$TOKEN" --allow-unconfigured --force > "$LOG_PATH" 2>&1 &
 
 for _ in $(seq 1 90); do
   if probe_gateway; then

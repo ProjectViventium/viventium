@@ -137,7 +137,6 @@ from local_chatterbox_config import (
     build_local_chatterbox_config as shared_build_local_chatterbox_config,
     validate_ref_audio_path as shared_validate_ref_audio_path,
 )
-from xai_grok_voice_tts import XaiGrokVoiceConfig, XaiGrokVoiceTTS
 # === VIVENTIUM START ===
 # Feature: Shared Silero VAD config parity across voice STT paths.
 from silero_vad_config import get_silero_vad_kwargs
@@ -150,7 +149,50 @@ from fallback_tts import FallbackTTS, ProviderAttempt
 
 logger = logging.getLogger("voice-gateway")
 
+_TTS_PROVIDER_CAPABILITIES_PATH = (
+    Path(__file__).resolve().parent.parent / "shared" / "voice" / "tts_provider_capabilities.json"
+)
 _XAI_TTS_CAPABILITIES_PATH = Path(__file__).resolve().parent.parent / "shared" / "voice" / "xai_tts_capabilities.json"
+
+
+def _load_tts_provider_capabilities() -> dict[str, Any]:
+    try:
+        with _TTS_PROVIDER_CAPABILITIES_PATH.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        providers = value.get("providers") if isinstance(value, dict) else None
+        if isinstance(providers, dict) and providers:
+            return value
+        raise ValueError("providers must be a non-empty object")
+    except Exception as error:
+        raise RuntimeError(
+            "Required TTS provider capability contract is missing or invalid at "
+            f"{_TTS_PROVIDER_CAPABILITIES_PATH}"
+        ) from error
+
+
+TTS_PROVIDER_CAPABILITIES = _load_tts_provider_capabilities()
+
+
+def _tts_provider_contract(provider: str) -> dict[str, Any]:
+    providers = TTS_PROVIDER_CAPABILITIES.get("providers")
+    if not isinstance(providers, dict):
+        return {}
+    value = providers.get(provider)
+    return value if isinstance(value, dict) else {}
+
+
+def _tts_provider_accepts_inline_controls_from_contract(provider: str) -> bool:
+    inline = _tts_provider_contract(provider).get("inline_controls")
+    return bool(inline.get("supported")) if isinstance(inline, dict) else False
+
+
+def _tts_provider_default_model(provider: str) -> str:
+    return str(_tts_provider_contract(provider).get("default_model") or "").strip()
+
+
+DEFAULT_OPENAI_TTS_INSTRUCTIONS = str(
+    _tts_provider_contract("openai").get("default_renderer_instruction") or ""
+).strip()
 
 
 def _load_xai_tts_capabilities() -> dict[str, Any]:
@@ -314,16 +356,13 @@ class Env:
     # Example: primary=cartesia, fallback=elevenlabs
     tts_provider_fallback: str  # "" | "elevenlabs" | "openai" | "xai" | "cartesia" | "local_chatterbox_turbo_mlx_8bit"
 
-    # xAI standalone TTS settings, with an explicit legacy Voice Agent mode.
-    xai_tts_api: str
+    # xAI standalone TTS settings.
     xai_tts_api_key: str
     xai_voice: str
     xai_language: str
     xai_tts_ws_url: str
     xai_tts_optimize_streaming_latency: int
-    xai_wss_url: str
     xai_sample_rate: int
-    xai_instructions: str
 
     # ElevenLabs settings
     elevenlabs_voice_id: str
@@ -1096,7 +1135,7 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
     cartesia_api_key = (os.getenv("CARTESIA_API_KEY", "") or "").strip()
     eleven_api_key = ((os.getenv("ELEVEN_API_KEY") or os.getenv("ELEVENLABS_API_KEY")) or "").strip()
     xai_api_key = (env.xai_tts_api_key or os.getenv("XAI_API_KEY", "") or "").strip()
-    xai_runtime_supported = env.xai_tts_api == "voice_agent" or HAS_XAI_TTS
+    xai_runtime_supported = HAS_XAI_TTS
     has_pywhispercpp = importlib.util.find_spec("pywhispercpp") is not None
     has_mlx_audio = importlib.util.find_spec("mlx_audio") is not None
     apple_silicon = sys.platform == "darwin" and platform.machine().lower() == "arm64"
@@ -1147,7 +1186,9 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "isLocal": False,
             "available": bool(openai_api_key),
             "unavailableReason": None if openai_api_key else "OPENAI_API_KEY not set",
-            "acceptsInlineVoiceControls": False,
+            "acceptsInlineVoiceControls": _tts_provider_accepts_inline_controls_from_contract(
+                "openai"
+            ),
             "variantLabel": _provider_variant_type("openai", modality="tts"),
             "variants": _dedupe_variants(env.openai_tts_model, "gpt-4o-mini-tts"),
         },
@@ -1160,7 +1201,9 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "unavailableReason": None
             if HAS_ELEVENLABS and eleven_api_key
             else "ElevenLabs plugin or ELEVEN_API_KEY missing",
-            "acceptsInlineVoiceControls": False,
+            "acceptsInlineVoiceControls": _tts_provider_accepts_inline_controls_from_contract(
+                "elevenlabs"
+            ),
             "variantLabel": _provider_variant_type("elevenlabs", modality="tts"),
             "variants": _dedupe_variants(env.elevenlabs_voice_id, env.elevenlabs_voice_id_fallback),
         },
@@ -1171,7 +1214,9 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "isLocal": False,
             "available": bool(cartesia_api_key),
             "unavailableReason": None if cartesia_api_key else "CARTESIA_API_KEY not set",
-            "acceptsInlineVoiceControls": True,
+            "acceptsInlineVoiceControls": _tts_provider_accepts_inline_controls_from_contract(
+                "cartesia"
+            ),
             "variantLabel": _provider_variant_type("cartesia", modality="tts"),
             "variants": _dedupe_variants(
                 *CARTESIA_VOICE_PRESETS,
@@ -1187,7 +1232,9 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "unavailableReason": None
             if xai_runtime_supported and _is_real_api_key(xai_api_key)
             else "xAI plugin or VIVENTIUM_XAI_TTS_API_KEY/XAI_API_KEY missing",
-            "acceptsInlineVoiceControls": True,
+            "acceptsInlineVoiceControls": _tts_provider_accepts_inline_controls_from_contract(
+                "xai"
+            ),
             "variantLabel": _provider_variant_type("xai", modality="tts"),
             "variants": _dedupe_variants(*XAI_TTS_VOICE_PRESETS, env.xai_voice),
         },
@@ -1200,7 +1247,9 @@ def _build_voice_capability_catalog(env: Env) -> list[dict[str, Any]]:
             "unavailableReason": None
             if apple_silicon and has_mlx_audio
             else "Apple Silicon + mlx-audio required",
-            "acceptsInlineVoiceControls": True,
+            "acceptsInlineVoiceControls": _tts_provider_accepts_inline_controls_from_contract(
+                "local_chatterbox_turbo_mlx_8bit"
+            ),
             "variantLabel": _provider_variant_type("local_chatterbox_turbo_mlx_8bit", modality="tts"),
             "variants": _dedupe_variants(env.mlx_audio_model_id),
         },
@@ -1765,6 +1814,21 @@ def start_health_server() -> None:
 # === VIVENTIUM END ===
 
 def load_env() -> Env:
+    configured_xai_tts_api = (
+        os.getenv("VIVENTIUM_XAI_TTS_API", "tts").strip().lower() or "tts"
+    )
+    if configured_xai_tts_api != "tts":
+        if configured_xai_tts_api == "voice_agent":
+            raise ValueError(
+                "The xAI Voice Agent API is a separate real-time conversational product and is "
+                "not supported as Viventium's TTS renderer. Set VIVENTIUM_XAI_TTS_API=tts to "
+                "use standalone xAI Text-to-Speech (/v1/tts)."
+            )
+        raise ValueError(
+            f"Unsupported VIVENTIUM_XAI_TTS_API={configured_xai_tts_api!r}. "
+            "Set VIVENTIUM_XAI_TTS_API=tts; standalone xAI Text-to-Speech is the only supported route."
+        )
+
     # Determine TTS provider (default to elevenlabs if available, otherwise openai)
     default_tts_provider = "elevenlabs" if HAS_ELEVENLABS else "openai"
     tts_provider = _normalize_voice_provider(
@@ -1838,7 +1902,7 @@ def load_env() -> Env:
     )
     # === VIVENTIUM END ===
     # === VIVENTIUM END ===
-    
+
     return Env(
         livekit_agent_name=os.getenv("LIVEKIT_AGENT_NAME", "librechat-voice-gateway").strip()
         or "librechat-voice-gateway",
@@ -1853,8 +1917,6 @@ def load_env() -> Env:
         tts_provider=tts_provider,
         tts_provider_fallback=tts_provider_fallback,
         # xAI standalone TTS settings (Available: Ara, Eve, Leo, Rex, Sal).
-        # Set VIVENTIUM_XAI_TTS_API=voice_agent only to use the older Grok Voice Agent adapter.
-        xai_tts_api=(os.getenv("VIVENTIUM_XAI_TTS_API", "tts").strip().lower() or "tts"),
         xai_tts_api_key=(os.getenv("VIVENTIUM_XAI_TTS_API_KEY", "").strip() or ""),
         xai_voice=(os.getenv("VIVENTIUM_XAI_VOICE", DEFAULT_XAI_TTS_VOICE).strip() or DEFAULT_XAI_TTS_VOICE),
         xai_language=(os.getenv("VIVENTIUM_XAI_LANGUAGE", DEFAULT_XAI_TTS_LANGUAGE).strip() or DEFAULT_XAI_TTS_LANGUAGE),
@@ -1872,15 +1934,7 @@ def load_env() -> Env:
                 ),
             ),
         ),
-        xai_wss_url=(
-            os.getenv(
-                "VIVENTIUM_XAI_VOICE_AGENT_WSS_URL",
-                os.getenv("VIVENTIUM_XAI_WSS_URL", "wss://api.x.ai/v1/realtime"),
-            ).strip()
-            or "wss://api.x.ai/v1/realtime"
-        ),
         xai_sample_rate=int(float(os.getenv("VIVENTIUM_XAI_SAMPLE_RATE", str(DEFAULT_XAI_TTS_SAMPLE_RATE)))),
-        xai_instructions=(os.getenv("VIVENTIUM_XAI_INSTRUCTIONS", "").strip() or ""),
         # ElevenLabs settings (matching old viventium_v1 config)
         elevenlabs_voice_id=os.getenv("VIVENTIUM_FC_CONSCIOUS_VOICE_ID", "CrmDm7REHG6iBx8uySLf").strip()
         or "CrmDm7REHG6iBx8uySLf",
@@ -1895,16 +1949,19 @@ def load_env() -> Env:
         elevenlabs_voice_style=float(os.getenv("VIVENTIUM_ELEVENLABS_VOICE_STYLE", "0.35")),
         elevenlabs_voice_speed=float(os.getenv("VIVENTIUM_ELEVENLABS_VOICE_SPEED", "0.90")),
         # OpenAI TTS settings (fallback)
-        openai_tts_model=os.getenv("VIVENTIUM_OPENAI_TTS_MODEL", "gpt-4o-mini-tts").strip()
-        or "gpt-4o-mini-tts",
+        openai_tts_model=os.getenv(
+            "VIVENTIUM_OPENAI_TTS_MODEL",
+            _tts_provider_default_model("openai"),
+        ).strip()
+        or _tts_provider_default_model("openai"),
         openai_tts_voice=os.getenv("VIVENTIUM_OPENAI_TTS_VOICE", "coral").strip() or "coral",
         openai_tts_speed=_parse_float_env("VIVENTIUM_OPENAI_TTS_SPEED", 1.12),
         openai_tts_instructions=(
             os.getenv(
                 "VIVENTIUM_OPENAI_TTS_INSTRUCTIONS",
-                "Speak naturally and warmly with clear pacing. Keep the delivery conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.",
+                DEFAULT_OPENAI_TTS_INSTRUCTIONS,
             ).strip()
-            or "Speak naturally and warmly with clear pacing. Keep the delivery conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses."
+            or DEFAULT_OPENAI_TTS_INSTRUCTIONS
         ),
         # Cartesia TTS settings
         cartesia_api_url=os.getenv("VIVENTIUM_CARTESIA_API_URL", "https://api.cartesia.ai/tts/bytes").strip()
@@ -3220,41 +3277,12 @@ async def entrypoint(ctx: JobContext) -> None:
                 return (_build_openai_tts(), actual_voice_provider)
         # === VIVENTIUM END ===
 
-        # TTS (Cartesia, xAI standalone TTS, legacy xAI Grok Voice Agent, ElevenLabs, or OpenAI)
+        # TTS (Cartesia, xAI standalone TTS, ElevenLabs, or OpenAI)
         if provider in {"xai", "x_ai", "grok", "xai_grok_voice"}:
             xai_api_key = (env.xai_tts_api_key or os.getenv("XAI_API_KEY", "") or "").strip()
             if not _is_real_api_key(xai_api_key):
                 logger.warning(
                     "xAI TTS requested but a real VIVENTIUM_XAI_TTS_API_KEY or XAI_API_KEY is not set. Falling back to OpenAI TTS."
-                )
-                actual_voice_provider = "openai"
-                return (_build_openai_tts(), actual_voice_provider)
-
-            if env.xai_tts_api == "voice_agent":
-                _log_selection(
-                    "Using legacy xAI Grok Voice Agent TTS (voice=%s, sample_rate=%s, wss=%s)",
-                    env.xai_voice,
-                    env.xai_sample_rate,
-                    env.xai_wss_url,
-                )
-                return (
-                    XaiGrokVoiceTTS(
-                        config=XaiGrokVoiceConfig(
-                            api_key=xai_api_key,
-                            voice=env.xai_voice,
-                            wss_url=env.xai_wss_url,
-                            sample_rate=env.xai_sample_rate,
-                            num_channels=1,
-                            instructions=env.xai_instructions,
-                        )
-                    ),
-                    actual_voice_provider,
-                )
-
-            if env.xai_tts_api not in {"", "tts"}:
-                logger.warning(
-                    "Unsupported VIVENTIUM_XAI_TTS_API=%s; falling back to OpenAI TTS.",
-                    env.xai_tts_api,
                 )
                 actual_voice_provider = "openai"
                 return (_build_openai_tts(), actual_voice_provider)
@@ -3273,6 +3301,10 @@ async def entrypoint(ctx: JobContext) -> None:
                 env.xai_sample_rate,
                 env.xai_tts_ws_url,
                 env.xai_tts_optimize_streaming_latency,
+            )
+            logger.info(
+                "[VoiceProviderCapability] provider=xai api=tts "
+                "capability=xai_speech_tags selected=true legacy_adapter=false"
             )
             _configure_xai_standalone_tts_plugin(
                 ws_url=env.xai_tts_ws_url,
@@ -3378,6 +3410,7 @@ async def entrypoint(ctx: JobContext) -> None:
             return (
                 elevenlabs.TTS(
                     voice_id=voice_id,
+                    model=_tts_provider_default_model("elevenlabs"),
                     voice_settings=elevenlabs.VoiceSettings(
                         stability=env.elevenlabs_voice_stability,
                         similarity_boost=env.elevenlabs_voice_similarity_boost,

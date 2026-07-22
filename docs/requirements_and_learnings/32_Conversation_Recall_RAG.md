@@ -264,10 +264,38 @@ evidence.
   `metadata.viventium.type="listen_only_transcript"` / `mode="listen_only"` before scoring. This
   prevents ambient transcript text from bypassing the normal recall-corpus exclusion when vector
   recall is unavailable or stale.
+- A matching source message may be expanded with a small, time-bounded window of eligible adjacent
+  turns from the same conversation. This preserves facts split across natural short messages, such
+  as a venue, names, and relationship stated in consecutive turns. Expansion must reuse the same
+  user/provenance/expiry/current-conversation exclusions, remain bounded by turn count and elapsed
+  time, and fall back to the direct source snippet if context lookup fails. It must never cross into
+  another conversation or become a prompt/keyword-specific activation rule.
+- Corpus formatting must preserve a complete bounded user-authored turn under a larger source budget
+  than assistant prose. Long assistant responses may remain clipped, but the user's primary account
+  must not lose its conclusion or follow-up detail merely because it appears late in the turn.
+- Result formatting must keep the matched primary turn inside the final bounded tool result when
+  adjacent context is larger than the result budget. Nearby assistant context may fill remaining
+  space, but it must not consume the prefix and hide the primary source.
+- Source-backed reranking may use structured `isCreatedByUser` provenance as a small tie-breaker so
+  the user's account leads an assistant paraphrase of the same event. Relevance remains authoritative;
+  this is not a blanket user-source override or a prompt-text routing rule.
 - When direct meeting-transcript summaries and derived conversation-recall snippets both return
   results for the same file_search call, ranking must remain evidence-based. Assistant no-access
   or no-memory disclaimers are low-signal derived recall, but direct transcript evidence must not
   receive a blanket source-class override over stronger chat-history evidence.
+- Every authorized resource attached to the file-search call remains eligible; runtime must not
+  choose a corpus from prompt words or inferred intent. After provenance and authorization filters,
+  the global evidence reranker is authoritative across conversation recall, meeting transcripts,
+  and other attached resources.
+- Transcript completeness may reserve a bounded tail slot when mixed resources are returned, but it
+  must not frontload the transcript source class. Transcript evidence may lead only when it already
+  ranks first on the shared evidence score.
+- Active-conversation exclusion must use a concrete conversation identity. A transport placeholder
+  such as `new` must yield to the allocated runtime thread id; it must never mask that id and allow
+  the current prompt or current conversation back into prior-conversation evidence.
+- A verbatim copy of the active file-search question is provenance, not answer evidence. It may be
+  retained at low priority for inspection, but it receives no exact-query bonus and must not outrank
+  substantive evidence from an earlier conversation or another attached corpus.
 
 ### Indexing timing contract
 
@@ -276,6 +304,12 @@ evidence.
   is current.
 - During short indexing lag or prolonged vector outage, degraded lexical recall is the continuity
   contract.
+- Corpus order must follow known same-conversation parent edges before timestamps. User and assistant
+  rows can be initialized in the same request and persisted with the assistant timestamp a few
+  milliseconds earlier than its parent user row. A stable parent-first ordering preserves normal
+  dialogue order without globally rewriting unrelated chronological order.
+- Corpus freshness metadata must use the maximum eligible message timestamp, not the timestamp of the
+  final emitted segment after parent-first ordering.
 
 ### 2026-04-21 continuity incident clarification
 
@@ -312,9 +346,23 @@ query-intent classifier.
 - Runtime may attach recall resources when policy allows.
 - Runtime must not branch on user prompt text to decide whether recall should run.
 - The model decides when to use conversation recall through its system prompt/tool instructions.
+- For explicit prior-conversation questions, the canonical main-agent recall prompt requires the
+  model to call `file_search` itself before claiming it lacks memory or access. It must never tell the
+  user to invoke an internal retrieval tool. One weak retrieval may receive one focused retry; an
+  inconclusive retry must produce an honest, focused clarification instead of invented evidence.
+- Every configured surface-specific model route must pass that same tool-ownership eval. If a
+  dedicated voice route repeatedly skips healthy retrieval, correct the explicit model profile or
+  fallback ordering; do not compensate with proactive injection, prompt-text classifiers, or
+  keyword routing.
+- That behavior is owned once by the prompt registry and referenced from source YAML with
+  `promptRef`. Compiler coverage must prove the generated live prompt matches the canonical registry
+  prompt so an older duplicated inline prompt cannot silently survive a source update.
 - If vector recall is healthy and fresh, runtime may attach a vector-backed recall resource.
 - If vector recall is unavailable, stale, or missing, runtime may still attach a source-only recall
   resource so the normal `file_search` path can degrade honestly.
+- Lexical source-only context expansion is one bounded aggregate operation for the selected matches,
+  not a separate before/after query per match. If that expansion fails or degrades, the primary
+  authorized source hits remain available rather than being discarded with the optional context.
 
 ## Viventium Periphery Retrieval Boundary
 
@@ -595,8 +643,15 @@ A private local benchmark pass over a real local corpus refined the local-first 
     rotated Docker logs
   - PGVector binds only to loopback, defaults to a 512 MiB memory limit, fractional CPU cap, PID
     cap, and rotated Docker logs
-  - the launcher keeps PGVector data on the configured host state path, so applying these runtime
-    guardrails must not delete conversation-recall vector state
+  - the launcher keeps PGVector data on an explicit bind path, host-owned by default, so applying
+    these runtime guardrails must not delete conversation-recall vector state
+  - remote or no-host-share Docker engines may opt into
+    `VIVENTIUM_RAG_PGDATA_PATH_MODE=daemon`; that mode never creates the path on the client Mac and
+    accepts only a nonempty child below `/var/lib/viventium/`, rejecting traversal, control
+    characters, colon delimiters, bare roots, and prefix-confusion paths
+  - both configurable Compose mounts use long bind syntax. A daemon-local document-route mirror is
+    accepted only when it is a readable regular non-symlink file that is byte-identical to the
+    selected LibreChat runtime override; arbitrary daemon-side code cannot be substituted
   - if a very large local corpus exceeds the default caps, the supported recovery is to raise the
     `VIVENTIUM_RAG_*` resource override and restart the local RAG sidecars; until then the existing
     health gate must fail closed rather than pretending vector recall is current
@@ -635,6 +690,11 @@ A private local benchmark pass over a real local corpus refined the local-first 
 - The current product still uses one shared embeddings runtime/model for both recall and file
   search.
 - Split-model recall-vs-file-search embeddings are still not implemented.
+- Complete continuity snapshots intentionally exclude PGVector because it is derived state. A
+  complete snapshot records Recall as `rebuild_required`; independent restore recreates canonical
+  config and Mongo data, writes the rebuild-required marker, and keeps vector-backed Recall stale
+  until a real rebuild from restored canonical source state is completed. Persistent PGVector data
+  across an ordinary supported restart is not a substitute for that independent-restore rebuild.
 
 ## Public-Safe Data Model Notes
 
