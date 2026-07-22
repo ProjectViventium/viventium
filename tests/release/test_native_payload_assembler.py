@@ -1293,7 +1293,9 @@ def test_candidate_workflow_is_exact_dual_arch_relocatable_producer() -> None:
     assert "macos-latest" not in workflow
     assert "curl |" not in workflow
     assert "actions/checkout@v" not in workflow
-    assert 'python-version: "3.12.13"' in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert "Record hosted Python toolchain" in workflow
+    assert "python -VV" in workflow
     assert "glasshive:\n              enabled: false" in workflow
     assert "glasshive: { enabled: false }" not in workflow
     assert "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH=true" not in workflow
