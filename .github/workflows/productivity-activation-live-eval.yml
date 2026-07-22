@@ -1,18 +1,6 @@
 name: Productivity Activation Live Eval
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/productivity-activation-live-eval.yml
-      - components.lock.json
-      - tests/release/test_productivity_activation_live_eval.py
-      - tests/release/test_no_runtime_nlu.py
-      - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
-      - viventium_v0_4/LibreChat/api/server/services/viventium/**
-      - viventium_v0_4/LibreChat/scripts/run-productivity-activation-evals.js
-      - viventium_v0_4/LibreChat/viventium/source_of_truth/*.viventium-agents.yaml
   workflow_dispatch:
 
 permissions:
