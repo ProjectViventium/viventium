@@ -187,7 +187,10 @@ jobs:
           ref: ${{ inputs.release_tag }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12.13"
+          # Resolve an available hosted 3.12 patch; the payload runtime remains separately pinned.
+          python-version: "3.12"
+      - name: Record hosted Python toolchain
+        run: python -VV
       - name: Validate immutable inputs and approved public trust policy
         run: |
           set -euo pipefail
@@ -765,7 +768,10 @@ jobs:
           ref: ${{ inputs.release_tag }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12.13"
+          # Resolve an available hosted 3.12 patch; the payload runtime remains separately pinned.
+          python-version: "3.12"
+      - name: Record hosted Python toolchain
+        run: python -VV
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           merge-multiple: true

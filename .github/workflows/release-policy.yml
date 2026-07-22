@@ -3,6 +3,8 @@ name: Release Policy
 on:
   pull_request:
   push:
+    branches:
+      - main
 
 permissions:
   contents: read

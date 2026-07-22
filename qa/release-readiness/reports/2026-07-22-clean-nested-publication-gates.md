@@ -4,8 +4,10 @@
 
 **Result: PARTIAL.** Eleven clean nested review branches were merged, and the parent manifests are
 repinned to their actual `main` commits. LibreChat's reviewed tree remains exact after merge, with
-local review and all 15 exact hosted checks green; signed-artifact and real-user acceptance gates
-remain open.
+local review and all 15 exact hosted checks green. Parent PR #69 code head `8dc6548e...` matched the
+audited local head and all nine historical checks were green. The final closeout head is governed
+by five distinct required contexts and must pass its hosted rerun before merge; signed-artifact and
+real-user acceptance gates remain open.
 
 This report records the local and hosted gate results for the clean nested publication branches
 that precede the parent Viventium release branch. It contains no credentials, personal paths,
@@ -23,11 +25,13 @@ physical-machine matrices passed.
 | --- | --- | --- | --- |
 | Nested clean-history reconstruction | `PASS` | Eleven clean heads based on their fetched ProjectViventium main tips | No owner-machine ancestry was published. |
 | Nested focused verification | `PASS` | Component results recorded below | Existing dependency trees were mounted read-only where required. |
-| Hosted pull-request and merge identity | `PASS` | Eleven hosted PR heads matched locally; fetched merge commits match GitHub and preserve the audited trees | The organization has one member and the PR author is that same owner. The impossible one-independent-approval rule was replaced with a verified solo-maintainer policy that still requires PRs and resolved conversations, applies to admins, and forbids force-pushes and deletions. |
+| Hosted pull-request and merge identity | `PASS` | Eleven hosted PR heads matched locally; fetched merge commits match GitHub and preserve the audited trees | The organization has one member and the PR author is that same owner. The impossible one-independent-approval rule was replaced with a verified solo-maintainer policy that requires PRs, resolved conversations, and five strict automated gate contexts; applies to admins; and forbids force-pushes and deletions while keeping human approvals at zero. |
 | Parent contract slice | `PARTIAL` | A focused run reported 257 passed | The exact argv was not retained, so this count is supporting history rather than a reproducible release gate. |
 | Complete parent release suite | `PASS` | Final post-merge `python3 -m pytest tests/release/ -q`: 1,542 passed, 11 skipped, 0 failed in 293.15 seconds | Exact audited component trees behind the merged refs and existing compatible dependency/build trees were exposed through temporary zero-copy links, then removed. |
 | Pre-merge pin and payload slice | `PASS` | Historical nine-file release slice: 311 passed in 67.40 seconds | This ran on the final reviewed heads before merge and remains provenance history. |
 | Post-merge pin and payload slice | `PASS` | Recorded five-file release slice: 128 passed in 9.76 seconds; final hosted-ref workflow/manifest slice: 45 passed in 4.24 seconds; full-suite preflight directly checked all 11 merged refs and trees | `components.lock.json` contains all 11 merged refs; the Native policy contains matching merged LibreChat `38527a86...`, whose tree equals reviewed head `44ac1f7a...`. All temporary links were removed. |
+| Parent PR exactness and hosted matrix | `PASS` | Parent PR #69 code head `8dc6548e...` equalled the audited local head; all nine historical checks passed | The final closeout removes duplicate feature-branch push runs, leaving five distinct strict required contexts. The Easy Install jobs materialize the exact pinned LibreChat ref before the suite; the release-policy job verifies all 11 declared refs equal public `main`; the matching local compile matrix passed 500/500. The final exact head and rerun remain a pre-merge hosted gate. |
+| Hosted macOS Python portability | `PASS` | Workflow regression passed 33/33 | Every macOS `actions/setup-python` tool step uses the available `3.12` minor selector and logs the resolved patch; the immutable payload's bundled Python remains independently pinned and verified at `3.12.13`. Feature-branch pushes no longer duplicate pull-request gates, and every required context has an unfiltered PR trigger so unrelated changes cannot deadlock. |
 | Hosted release environments | `PARTIAL` | GitHub settings inspected through the authorized owner session | `productivity-activation-live-eval` permits protected branches only; `native-payload-release` permits `v*` tags only. Both keep required reviewers off for the sole-owner organization and disable administrator bypass. Neither contains secrets, so provider/signing execution remains blocked rather than silently using personal credentials. |
 | Exact modern-playground browser surface | `PASS` | Headed Chromium at exact head `fd778562af199f7fb503bd4a0d106e22c282b16b` | Ten named keyboard stops; 320 px reflow; forced colors; zero retained motion; clean loopback-only browser ledger; reload passed. |
 | Signed installer and physical matrix | `BLOCKED` | No approved signing/notarization authority or complete physical matrix was available | No signed-release claim is made. |
@@ -283,8 +287,8 @@ Final hosted-ref workflow/manifest evidence: 45 passed in 4.24 seconds
   parent suite passed again after the real merge pins were applied. The public-safety checks below
   found no private data in the proposed deltas. The earlier
   257- and 174-test counts remain supporting history because their exact argv was not recorded.
-- Remaining gap or fix: inspect the exact parent PR, build/sign the artifact, prove a real optimized
-  provider answer, and complete the physical matrix.
+- Remaining gap or fix: build/sign the artifact, prove a real optimized provider answer, and
+  complete the physical matrix.
 
 ## Full-View Evidence Checklist
 
@@ -296,10 +300,10 @@ Final hosted-ref workflow/manifest evidence: 45 passed in 4.24 seconds
 | Scripts or harnesses | What ran? | Git ancestry/diff checks, component tests/builds, parent release tests, and public-safety scanners. |
 | Local/external prerequisite state | What was available? | Clean local worktrees, hosted PR/merge metadata, and fetched merge commits; signing authority, real provider account, Intel, and full physical matrix were unavailable. |
 | Logs, DB/state/persistence | What supports the result? | Sanitized test summaries and refetched hosted PR hashes; no user DB or personal runtime state was accessed. |
-| Generated/shipped artifact | What artifact was inspected? | Reproducible Google Workspace DXT only; no signed Viventium installer is claimed. |
+| Generated/shipped artifact | What artifact was inspected? | Reproducible Google Workspace DXT and the tracked universal Viventium helper binary were inspected; the helper is an x86_64/arm64 Mach-O with recorded SHA-256, an unsigned x86_64 slice, and an ad-hoc/linker-signed arm64 slice. Whole-file strict code-signing and Gatekeeper checks fail, so no signed Viventium installer is claimed. |
 | Real user path | What reviewer path ran? | Local CLI diff/history inspection followed by hosted GitHub PR/check/merge inspection and refetch verification. |
 | Visual/UX comparison | What visible product path ran? | No installed GUI path was part of this source-publication gate. |
-| Not run / blocked | What remains? | Parent PR completion, signed/notarized install, provider-backed first answer, and headed physical/Intel fault matrices. |
+| Not run / blocked | What remains? | Signed/notarized install, provider-backed first answer, and headed physical/Intel fault matrices. |
 
 ## User-Grade Evidence
 
@@ -375,14 +379,16 @@ Nested publication completed:
 - every actual post-merge commit SHA was recorded in the parent pin;
 - every merged tree was verified equal to the reviewed local head tree.
 
-Before the parent PR:
+Parent PR source gate completed:
 
-- retain the fresh parent reconstruction based on the fetched parent `origin/main`;
-- retain the actual merged nested SHAs in `components.lock.json` and shipped manifests;
-- preserve the reviewed parent source changes without owner-machine artifacts;
-- retain the complete post-merge parent release-suite pass;
-- complete the candidate privacy scan, generated-output checks, supported local lifecycle paths,
-  and exact hosted parent-PR inspection against that reconstruction.
+- the fresh parent reconstruction remained based on fetched parent `origin/main`;
+- `components.lock.json` and the shipped manifests retained the actual merged nested SHAs;
+- the reviewed parent source changes remained free of owner-machine artifacts;
+- the complete post-merge parent release-suite pass remained part of the evidence;
+- the candidate privacy scan, generated-output checks, recorded source-candidate lifecycle checks,
+  and exact hosted parent-PR inspection completed against that reconstruction;
+- all nine checks on historical code head `8dc6548e...` passed; the final closeout head is governed
+  by five distinct required contexts and its exact rerun must pass before merge.
 
 Before a signed public artifact:
 
@@ -393,8 +399,8 @@ Before a signed public artifact:
   physical Docker/fault matrix;
 - implement and verify the authenticated bootstrap freshness boundary.
 
-Until those later gates pass, the defensible claim is **eleven clean nested changes are merged and
-the parent is repinned to their exact merge commits**, not **public installer released**.
+Until those later gates pass, the defensible claim is **clean source and exact merged component
+pins passed the parent PR gate**, not **signed public installer released**.
 
 ## Public-Safety Review
 

@@ -27,10 +27,14 @@ CURRENT_NODE24_ACTION_PINS = {
 }
 
 
+def _workflow_paths() -> list[Path]:
+    return sorted({*WORKFLOW_ROOT.glob("*.yml"), *WORKFLOW_ROOT.glob("*.yaml")})
+
+
 def _workflow_sources() -> dict[str, str]:
     return {
         path.name: path.read_text(encoding="utf-8")
-        for path in sorted(WORKFLOW_ROOT.glob("*.yml"))
+        for path in _workflow_paths()
     }
 
 
@@ -221,6 +225,63 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
         "tests/release/test_native_release_sequence.py",
     ):
         assert suite in source
+
+
+def test_hosted_setup_python_uses_available_minor_selector() -> None:
+    selectors: list[tuple[str, str, str]] = []
+    for path in _workflow_paths():
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in workflow.get("jobs", {}).items():
+            runner_contract = json.dumps(
+                {
+                    "runs-on": job.get("runs-on", ""),
+                    "matrix": job.get("strategy", {}).get("matrix", {}),
+                }
+            )
+            if "macos" not in runner_contract.lower():
+                continue
+            steps = job.get("steps", [])
+            for step_index, step in enumerate(steps):
+                if not str(step.get("uses", "")).startswith("actions/setup-python@"):
+                    continue
+                selector = str(step.get("with", {}).get("python-version", ""))
+                selectors.append((path.name, job_name, selector))
+                assert selector == "3.12", (
+                    f"{path.name}:{job_name} must use the hosted 3.12 minor selector, "
+                    f"not unsupported selector {selector!r}"
+                )
+                assert step_index + 1 < len(steps), f"{path.name}:{job_name} does not log Python"
+                assert "python -VV" in str(steps[step_index + 1].get("run", "")), (
+                    f"{path.name}:{job_name} must log the resolved hosted Python patch"
+                )
+
+    assert selectors
+
+
+def test_pr_gate_push_triggers_only_default_branch() -> None:
+    workflows = _workflow_sources()
+    required_pr_workflows = (
+        "config-compile.yml",
+        "productivity-activation-contract.yml",
+        "release-policy.yml",
+        "secret-scan.yml",
+    )
+    for workflow_name in required_pr_workflows:
+        trigger_source = workflows[workflow_name].split("\npermissions:", maxsplit=1)[0]
+        assert "\n  pull_request:\n" in trigger_source
+        assert "    paths:" not in trigger_source, (
+            f"{workflow_name}: required pull-request checks must always report"
+        )
+
+    for workflow_name in (
+        "config-compile.yml",
+        "release-policy.yml",
+        "secret-scan.yml",
+    ):
+        trigger_source = workflows[workflow_name].split("\npermissions:", maxsplit=1)[0]
+        assert re.search(r"\n  push:\n    branches:\n      - main\n", trigger_source), (
+            f"{workflow_name}: feature-branch pushes must not duplicate pull-request checks"
+        )
 
 
 def test_changed_release_workflows_do_not_persist_checkout_credentials() -> None:

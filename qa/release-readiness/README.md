@@ -27,7 +27,7 @@
 | Suite | Command or Manual Path | Required When | Last Run |
 | --- | --- | --- | --- |
 | Release tests | `python3 -m pytest tests/release/ -q` in the reviewed stable test environment | Before parent push | PASS 2026-07-22 final post-merge tree: 1,542 passed, 11 skipped, 0 failed in 293.15 seconds |
-| Diff hygiene | `git diff --check` plus public/private pattern scans | Before staging | PARTIAL 2026-07-22: complete parent-candidate inventory, diff hygiene, special-file/binary classification, and public-safety review passed locally; staged/remote parent-PR exactness remains under `REL-008` |
+| Diff hygiene | `git diff --check` plus public/private pattern scans | Before staging | PASS 2026-07-22: complete parent-candidate inventory, staged diff hygiene, special-file/binary classification, and public-safety review passed. Parent PR #69 code head `8dc6548e...` had remote parity and green hosted secret/release-policy checks; the final closeout head and required rerun must be confirmed on the hosted PR before merge. |
 | Browser-visible QA | `node qa/background_agents/evals/run-visible-cards-browser-qa.cjs --headless` with local opt-in env | When background-agent UI behavior changed | PASS 2026-05-11 local / 2026-05-12 UTC; public-safe report saved |
 | Latest-user activation QA | `node qa/background_agents/evals/run-latest-user-activation-browser-qa.cjs --headless` with local opt-in env | When activation history/window behavior changed | PASS 2026-05-11 local / 2026-05-12 UTC; public-safe report saved |
 | Full activation classifier gate | `node qa/background_agents/evals/run-activation-model-evals.cjs --run-live --with-fallbacks --repetitions=1 --concurrency=1 --output-dir=<private-output> --public-report=<public-safe-report>` | Before release while the primary activation model is preview, and after any activation prompt/model/provider/fallback/parser/runtime change | PARTIAL: the fixture-backed parser and fallback contracts pass. A release-candidate live run with dedicated synthetic credentials remains required; owner-account provider health and routing observations are private evidence and are not a public release result. |
@@ -38,7 +38,7 @@
 
 | Requirement / Surface | Cases | Last Full Run |
 | --- | --- | --- |
-| Parent and nested diffs are public-safe before push | `REL-001`, `REL-002` | PARTIAL 2026-07-22; complete local parent-candidate and nested-delta public-safety reviews passed, all 11 nested changes merged with reviewed-tree equality, and parent staging/PR inspection remains open. |
+| Parent and nested diffs are public-safe before push | `REL-001`, `REL-002` | PASS 2026-07-22; complete local parent-candidate and nested-delta public-safety reviews passed, all 11 nested changes merged with reviewed-tree equality, and parent PR #69 code head `8dc6548e...` matched locally with all hosted checks green. The final closeout head and required rerun must be confirmed on the hosted PR before merge. |
 | Nested component commit and parent pin are consistent | `REL-003` | PASS 2026-07-22: both parent manifests declare `merged`; every managed ref equals fetched nested `origin/main`, and every merged tree equals its audited review head. Built, shipped, and installed identity remains separately partial under `REL-008`. |
 | User-visible QA evidence is browser-backed and sanitized | `REL-004` | 2026-05-10 PASS |
 
@@ -68,8 +68,16 @@
   local evidence of 59/59 stream tests and 216/216 Viventium route tests, fresh-context model review,
   and no remaining Claude P0-P3 finding; all 15 hosted checks pass, including actual Redis. Its exact tree
   is merged and pinned at `38527a8651...`.
-- Known gaps: parent PR exactness; rebuilt, signed/notarized payload and installed-artifact equality;
-  pristine exact-artifact install; real
+- Parent PR #69 code head `8dc6548e...` matched the audited local head and reported all nine
+  historical checks green. The final closeout removes duplicate feature-branch push executions,
+  so one arm64 Easy Install core job, one x86_64 job, one secret scan, one release-policy job, and
+  the productivity activation contract form the five distinct strict required contexts. The hosted
+  Easy Install matrix materialized the exact pinned LibreChat ref before testing, while the
+  release-policy job verified all 11 declared refs equal public `main`; the matching local compile
+  matrix passed 500/500. The final exact head and rerun must be confirmed on the hosted PR before
+  merge.
+- Known gaps: rebuilt, signed/notarized payload and installed-artifact equality; pristine
+  exact-artifact install; real
   optimized provider-answer persistence; Intel and native assistive-technology coverage; the wider
   physical fault/Docker matrix; and authenticated bootstrap freshness. Passing
   source suites or opening PRs does not close those gates.

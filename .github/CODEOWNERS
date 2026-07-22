@@ -1,1 +1,1 @@
-# Code ownership is enforced through protected branch review rules.
+# Sole-maintainer repository: pull requests and automated checks are enforced by branch protection.

@@ -85,8 +85,9 @@ external authority.
 
 `scripts/viventium/assemble_native_payload.py --mode local-qa` and
 `scripts/viventium/build_native_payload.py --channel local-qa` create a relocatable local root and a
-deterministic, deflated, explicitly unsigned local artifact. Reproducibility is within the pinned
-build interpreter/toolchain, not a cross-toolchain promise. The verifier accepts the archive only
+deterministic, deflated, explicitly unsigned local artifact. Reproducibility is within the fixed
+and recorded build interpreter/toolchain used by one candidate, not a cross-toolchain promise. The
+verifier accepts the archive only
 with its explicit local-QA override. These paths are useful for assembly, install, archive, staging,
 activation, health, recovery, and rollback tests; they are never public-release evidence.
 

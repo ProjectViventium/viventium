@@ -32,7 +32,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12.13"
+          # Resolve an available hosted 3.12 patch; the payload runtime remains separately pinned.
+          python-version: "3.12"
+      - name: Record hosted Python toolchain
+        run: python -VV
       - name: Require the exact architecture and public component policy
         run: |
           set -euo pipefail

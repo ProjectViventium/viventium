@@ -370,8 +370,8 @@ The same lifecycle must still pass from the final immutable installed artifact b
 immutable-activation, journal/lock, interruption recovery, idempotent re-activation, and health-
 gated rollback boundary. `scripts/viventium/build_native_payload.py` now produces deterministic,
 deflated per-architecture ZIPs and canonical manifests, with a visibly unsigned `local-qa` channel
-and a fail-closed signed `stable` channel. Determinism is guaranteed for the pinned build
-interpreter/toolchain; it is not a cross-interpreter compression claim.
+and a fail-closed signed `stable` channel. Determinism is guaranteed for the fixed and recorded
+build interpreter/toolchain used by one candidate; it is not a cross-interpreter compression claim.
 `assemble_native_payload.py`, the Native supervisor/process guard, and the bundled-Python bootstrap
 source own relocatable target execution. Runtime secrets are generated atomically under
 machine-local App Support state with mode `0600`, PID records bind signals to a release-owned
