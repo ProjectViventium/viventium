@@ -87,6 +87,38 @@ def write_candidate(
     return manifest, artifact, payload
 
 
+@pytest.mark.parametrize("arch", ["arm64", "x86_64"])
+def test_candidate_accepts_each_supported_architecture_explicitly(
+    tmp_path: Path,
+    arch: str,
+) -> None:
+    candidate_root = tmp_path / arch
+    candidate_root.mkdir()
+    module = load_module()
+    manifest, artifact, payload = write_candidate(candidate_root, arch=arch)
+
+    verified = module.verify_candidate(
+        manifest,
+        artifact,
+        allow_unsigned_local_qa=True,
+        expected_arch=arch,
+        current_macos="26.5",
+    )
+
+    assert payload["platform"]["arch"] == arch
+    assert verified.payload["platform"]["arch"] == arch
+
+
+def test_candidate_helper_rejects_an_unsupported_host_architecture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(platform, "machine", lambda: "aarch64")
+
+    with pytest.raises(AssertionError, match="unsupported synthetic payload architecture"):
+        write_candidate(tmp_path)
+
+
 def sign_manifest(module, root: Path, manifest: Path) -> tuple[Path, Path]:
     private_key = root / "release-signing-key"
     subprocess.run(

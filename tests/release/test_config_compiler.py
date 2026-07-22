@@ -1056,6 +1056,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     config = {
         "version": 1,
         "install": {"mode": "docker"},
+        # Keep this test independent of the workstation or hosted-runner timezone.
+        "settings": {"timezone": "Etc/UTC"},
         "runtime": {
             "log_level": "info",
             "profile": "isolated",
@@ -1122,7 +1124,7 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_VOICE_ENABLED=false" in runtime_env
     assert "PLAYGROUND_VARIANT=modern" in runtime_env
     assert "VIVENTIUM_PLAYGROUND_VARIANT=modern" in runtime_env
-    assert "VIVENTIUM_DEFAULT_TIMEZONE=America/Toronto" in runtime_env
+    assert "VIVENTIUM_DEFAULT_TIMEZONE=Etc/UTC" in runtime_env
     assert "VIVENTIUM_VOICE_FAST_LLM_PROVIDER=" not in runtime_env
     assert "VIVENTIUM_CALL_SESSION_SECRET=call-session-test" in runtime_env
     assert "VIVENTIUM_TELEGRAM_SECRET=call-session-test" in runtime_env

@@ -210,6 +210,7 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert "python scripts/viventium/bootstrap_components.py" in source
     assert '--config config.minimal.example.yaml' in source
     assert '--jobs 1' in source
+    assert source.index("bootstrap_components.py") < source.index("python -m pytest")
     for suite in (
         "tests/release/test_continuity_bundle.py",
         "tests/release/test_native_candidate_transport.py",
