@@ -37,10 +37,13 @@ else
     skip "Node.js not found"
 fi
 
-if command -v openclaw &>/dev/null; then
-    pass "OpenClaw binary found"
+OPENCLAW_REQUIRED_VERSION="2026.7.1-2"
+OPENCLAW_VALIDATE_BIN="${OPENCLAW_BIN:-$(command -v openclaw || true)}"
+if [[ -n "$OPENCLAW_VALIDATE_BIN" ]] && [[ -x "$OPENCLAW_VALIDATE_BIN" ]] && \
+   [[ "$($OPENCLAW_VALIDATE_BIN --version 2>/dev/null | tail -n 1)" == "$OPENCLAW_REQUIRED_VERSION" ]]; then
+    pass "Reviewed OpenClaw $OPENCLAW_REQUIRED_VERSION binary found"
 else
-    skip "OpenClaw binary not found (npm install -g openclaw)"
+    skip "Reviewed OpenClaw runtime not found (run ../../viventium-openclaw-bridge-start.sh native)"
 fi
 
 # ------- Python Dependencies -------

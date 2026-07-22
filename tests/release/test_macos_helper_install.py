@@ -5,8 +5,12 @@ import plistlib
 import stat
 import subprocess
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
+import sys
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +39,31 @@ HELPER_INFO_PLIST = (
 PREBUILT_DIR = REPO_ROOT / "apps" / "macos" / "ViventiumHelper" / "prebuilt"
 PREBUILT_EXECUTABLE = PREBUILT_DIR / "ViventiumHelper-universal"
 PREBUILT_SOURCE_HASH = PREBUILT_DIR / "source.sha256"
+PREBUILT_BINARY_HASH = PREBUILT_DIR / "binary.sha256"
 BIN_VIVENTIUM = REPO_ROOT / "bin" / "viventium"
+HELPER_TRANSACTION_MODULE = (
+    REPO_ROOT / "scripts" / "viventium" / "helper_bundle_transaction.py"
+)
+
+
+def _load_helper_transaction_module():
+    spec = importlib.util.spec_from_file_location(
+        "viventium_helper_bundle_transaction",
+        HELPER_TRANSACTION_MODULE,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_helper_menu_exposes_app_identity_and_static_status_semantics() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+
+    assert '.accessibilityLabel("Viventium")' in source
+    assert '.accessibilityValue(self.controller.statusLabel)' in source
+    assert 'Button(self.controller.statusLabel) {}' not in source
 
 
 def _make_fake_executable(path: Path) -> None:
@@ -66,6 +94,34 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
         "#!/usr/bin/env bash\nexit 0\n",
         encoding="utf-8",
     )
+
+
+def _make_existing_app_bundle(
+    path: Path,
+    *,
+    bundle_identifier: str,
+    marker: dict[str, object] | None = None,
+    executable_note: str = "existing-helper",
+) -> Path:
+    executable = path / "Contents" / "MacOS" / "ViventiumHelper"
+    _make_fake_executable(executable)
+    executable.write_text(executable.read_text(encoding="utf-8") + f"# {executable_note}\n", encoding="utf-8")
+    resources = path / "Contents" / "Resources"
+    resources.mkdir(parents=True, exist_ok=True)
+    with (path / "Contents" / "Info.plist").open("wb") as handle:
+        plistlib.dump(
+            {
+                "CFBundleIdentifier": bundle_identifier,
+                "CFBundleExecutable": "ViventiumHelper",
+            },
+            handle,
+        )
+    if marker is not None:
+        (resources / "viventium-owner.json").write_text(
+            json.dumps(marker) + "\n",
+            encoding="utf-8",
+        )
+    return executable
 
 
 def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
@@ -157,11 +213,11 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     assert not legacy_runner.exists()
     assert not stale_detached_runner.exists()
     assert not legacy_launch_agent.exists()
-    assert "helper-terminal-run.command" not in zsh_history.read_text(encoding="utf-8")
-    assert "helper-detached-start.pid.command" not in zsh_history.read_text(encoding="utf-8")
-    assert "helper-terminal-run.command" not in zsh_session_history.read_text(encoding="utf-8")
+    assert "helper-terminal-run.command" in zsh_history.read_text(encoding="utf-8")
+    assert "helper-detached-start.pid.command" in zsh_history.read_text(encoding="utf-8")
+    assert "helper-terminal-run.command" in zsh_session_history.read_text(encoding="utf-8")
     assert "echo keep-me" in zsh_session_history.read_text(encoding="utf-8")
-    assert not terminal_saved_state.exists()
+    assert terminal_saved_state_file.is_file()
     assert str(REPO_ROOT) in helper_config.read_text(encoding="utf-8")
     assert '"showInStatusBar": true' in helper_config.read_text(encoding="utf-8")
     assert stack_wrapper.exists()
@@ -193,8 +249,503 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     assert not app_bundle.exists()
 
 
-def test_install_scrubs_shell_escaped_helper_history_entries(tmp_path: Path) -> None:
-    fake_home = tmp_path / "home with spaces"
+def test_helper_install_and_uninstall_refuse_symlinked_applications_without_touching_external_data(
+    tmp_path: Path,
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    external = tmp_path / "external-applications"
+    external.mkdir()
+    sentinel = external / "personal-app-data.txt"
+    sentinel.write_text("untouched\n", encoding="utf-8")
+    (fake_home / "Applications").symlink_to(external, target_is_directory=True)
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+    }
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+
+    for mode in ("install", "uninstall"):
+        completed = subprocess.run(
+            [
+                str(SCRIPT),
+                mode,
+                "--app-support-dir",
+                str(app_support),
+                "--repo-root",
+                str(REPO_ROOT),
+                "--no-launch",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert completed.returncode != 0
+        assert "Refusing unsafe helper Applications directory" in completed.stderr
+        assert sentinel.read_text(encoding="utf-8") == "untouched\n"
+        assert sorted(path.name for path in external.iterdir()) == ["personal-app-data.txt"]
+
+
+def test_helper_install_and_uninstall_refuse_unrelated_app_bundle(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    unrelated = fake_home / "Applications" / "Viventium.app"
+    _make_existing_app_bundle(
+        unrelated,
+        bundle_identifier="com.example.personal-viventium",
+        executable_note="personal-app",
+    )
+    sentinel = unrelated / "Contents" / "Resources" / "personal-sentinel.txt"
+    sentinel.write_text("untouched\n", encoding="utf-8")
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+    }
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+
+    for mode in ("install", "uninstall"):
+        completed = subprocess.run(
+            [
+                str(SCRIPT),
+                mode,
+                "--app-support-dir",
+                str(app_support),
+                "--repo-root",
+                str(REPO_ROOT),
+                "--no-launch",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert completed.returncode != 0
+        assert "Refusing to replace or remove unrelated application" in completed.stderr
+        assert sentinel.read_text(encoding="utf-8") == "untouched\n"
+        assert "personal-app" in (
+            unrelated / "Contents" / "MacOS" / "ViventiumHelper"
+        ).read_text(encoding="utf-8")
+
+
+def test_helper_transaction_refuses_replaced_applications_directory_without_touching_external_data(
+    tmp_path: Path,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    destination = transaction.capture_destination(applications)
+    original_applications = tmp_path / "Applications.original"
+    applications.rename(original_applications)
+    external = tmp_path / "external-applications"
+    external.mkdir()
+    sentinel = external / "personal-app-data.txt"
+    sentinel.write_text("untouched\n", encoding="utf-8")
+    applications.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(transaction.TransactionSafetyError, match="Applications directory changed"):
+        transaction.stage_bundle(
+            destination,
+            built_executable=REPO_ROOT / "apps" / "macos" / "ViventiumHelper" / "prebuilt" / "ViventiumHelper-universal",
+            info_plist=HELPER_INFO_PLIST,
+            icon_path=None,
+            bundle_identifier="ai.viventium.helper",
+            executable_name="ViventiumHelper",
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "untouched\n"
+    assert sorted(path.name for path in external.iterdir()) == ["personal-app-data.txt"]
+
+
+def test_helper_transaction_creates_missing_applications_relative_to_validated_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    home = tmp_path / "home"
+    home.mkdir()
+    applications = home / "Applications"
+    detached_home = tmp_path / "home.detached"
+    replacement_home = tmp_path / "home.replacement"
+    real_mkdir = os.mkdir
+
+    def swap_parent_before_creation(path, mode=0o777, *, dir_fd=None):
+        if path == "Applications" and dir_fd is not None:
+            home.rename(detached_home)
+            real_mkdir(replacement_home, 0o755)
+            sentinel = replacement_home / "personal-data.txt"
+            sentinel.write_text("untouched\n", encoding="utf-8")
+            replacement_home.rename(home)
+        return real_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(transaction.os, "mkdir", swap_parent_before_creation)
+
+    with pytest.raises(
+        transaction.TransactionSafetyError,
+        match="Applications directory changed during creation",
+    ):
+        transaction.capture_destination(applications, create_root=True)
+
+    assert (home / "personal-data.txt").read_text(encoding="utf-8") == "untouched\n"
+    assert not (home / "Applications").exists()
+    assert (detached_home / "Applications").is_dir()
+
+
+def test_helper_transaction_partial_activation_restores_previous_bundle(
+    tmp_path: Path,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    old_executable = _make_existing_app_bundle(
+        applications / "Viventium.app",
+        bundle_identifier="ai.viventium.helper",
+        marker={"product": "ai.viventium.helper", "schema_version": 1},
+        executable_note="previous-owned-helper",
+    )
+    old_bytes = old_executable.read_bytes()
+    replacement = tmp_path / "replacement" / "ViventiumHelper"
+    _make_fake_executable(replacement)
+    destination = transaction.capture_destination(applications)
+    stage = transaction.stage_bundle(
+        destination,
+        built_executable=replacement,
+        info_plist=HELPER_INFO_PLIST,
+        icon_path=None,
+        bundle_identifier="ai.viventium.helper",
+        executable_name="ViventiumHelper",
+    )
+
+    with pytest.raises(transaction.InjectedTransactionFailure):
+        transaction.activate_bundle(destination, stage, fault_after="current_backup")
+
+    assert old_executable.read_bytes() == old_bytes
+    assert not any(applications.glob(".viventium-helper-*-backup.*"))
+    transaction.cleanup_stage(destination, stage)
+
+
+def test_helper_transaction_persists_activation_before_return_for_shell_recovery(
+    tmp_path: Path,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    old_executable = _make_existing_app_bundle(
+        applications / "Viventium.app",
+        bundle_identifier="ai.viventium.helper",
+        marker={"product": "ai.viventium.helper", "schema_version": 1},
+        executable_note="previous-owned-helper",
+    )
+    old_bytes = old_executable.read_bytes()
+    replacement = tmp_path / "replacement" / "ViventiumHelper"
+    _make_fake_executable(replacement)
+    destination = transaction.capture_destination(applications)
+    stage = transaction.stage_bundle(
+        destination,
+        built_executable=replacement,
+        info_plist=HELPER_INFO_PLIST,
+        icon_path=None,
+        bundle_identifier="ai.viventium.helper",
+        executable_name="ViventiumHelper",
+    )
+
+    transaction.activate_bundle(destination, stage, persist_state=True)
+    transaction.rollback_persisted_activation(destination, stage)
+
+    assert old_executable.read_bytes() == old_bytes
+    assert not any(applications.glob(".viventium-helper-*"))
+
+
+def test_helper_transaction_interrupt_after_persistence_clears_stale_recovery_state(
+    tmp_path: Path,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    old_executable = _make_existing_app_bundle(
+        applications / "Viventium.app",
+        bundle_identifier="ai.viventium.helper",
+        marker={"product": "ai.viventium.helper", "schema_version": 1},
+        executable_note="previous-owned-helper",
+    )
+    old_bytes = old_executable.read_bytes()
+    replacement = tmp_path / "replacement" / "ViventiumHelper"
+    _make_fake_executable(replacement)
+    destination = transaction.capture_destination(applications)
+    stage = transaction.stage_bundle(
+        destination,
+        built_executable=replacement,
+        info_plist=HELPER_INFO_PLIST,
+        icon_path=None,
+        bundle_identifier="ai.viventium.helper",
+        executable_name="ViventiumHelper",
+    )
+
+    with pytest.raises(transaction.InjectedTransactionFailure):
+        transaction.activate_bundle(
+            destination,
+            stage,
+            persist_state=True,
+            fault_after="persistence",
+        )
+    transaction.rollback_persisted_activation(destination, stage)
+
+    assert old_executable.read_bytes() == old_bytes
+    assert not any(applications.glob(".viventium-helper-*"))
+
+
+def test_helper_transaction_private_state_writer_handles_short_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    target = tmp_path / "private-state"
+    target.mkdir()
+    target_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
+    real_write = os.write
+
+    def short_write(descriptor: int, payload: bytes) -> int:
+        return real_write(descriptor, payload[:2])
+
+    monkeypatch.setattr(transaction.os, "write", short_write)
+    try:
+        transaction._write_bytes(target_fd, "state.json", b"complete-payload\n", 0o600)
+    finally:
+        os.close(target_fd)
+
+    assert (target / "state.json").read_bytes() == b"complete-payload\n"
+
+
+def test_helper_transaction_rollback_refuses_replacement_bundle_and_retains_backup(
+    tmp_path: Path,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    old_executable = _make_existing_app_bundle(
+        applications / "Viventium.app",
+        bundle_identifier="ai.viventium.helper",
+        marker={"product": "ai.viventium.helper", "schema_version": 1},
+        executable_note="previous-owned-helper",
+    )
+    old_bytes = old_executable.read_bytes()
+    replacement = tmp_path / "replacement" / "ViventiumHelper"
+    _make_fake_executable(replacement)
+    destination = transaction.capture_destination(applications)
+    stage = transaction.stage_bundle(
+        destination,
+        built_executable=replacement,
+        info_plist=HELPER_INFO_PLIST,
+        icon_path=None,
+        bundle_identifier="ai.viventium.helper",
+        executable_name="ViventiumHelper",
+    )
+    activation = transaction.activate_bundle(destination, stage)
+    activated = applications / "Viventium.app"
+    moved_activated = tmp_path / "activated-candidate"
+    activated.rename(moved_activated)
+    unrelated_executable = _make_existing_app_bundle(
+        activated,
+        bundle_identifier="com.example.personal-viventium",
+        executable_note="personal-app",
+    )
+    unrelated_bytes = unrelated_executable.read_bytes()
+
+    with pytest.raises(transaction.TransactionSafetyError, match="activated helper changed"):
+        transaction.rollback_bundle(destination, activation)
+
+    assert unrelated_executable.read_bytes() == unrelated_bytes
+    assert transaction.backup_contains_identity(activation, destination.current_identity)
+    backup_executable = transaction.current_backup_executable(activation)
+    assert backup_executable.read_bytes() == old_bytes
+
+
+def test_helper_transaction_commit_refuses_in_place_changed_backup_contents(
+    tmp_path: Path,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    _make_existing_app_bundle(
+        applications / "Viventium.app",
+        bundle_identifier="ai.viventium.helper",
+        marker={"product": "ai.viventium.helper", "schema_version": 1},
+        executable_note="previous-owned-helper",
+    )
+    replacement = tmp_path / "replacement" / "ViventiumHelper"
+    _make_fake_executable(replacement)
+    destination = transaction.capture_destination(applications)
+    stage = transaction.stage_bundle(
+        destination,
+        built_executable=replacement,
+        info_plist=HELPER_INFO_PLIST,
+        icon_path=None,
+        bundle_identifier="ai.viventium.helper",
+        executable_name="ViventiumHelper",
+    )
+    activation = transaction.activate_bundle(destination, stage)
+    backup_executable = transaction.current_backup_executable(activation)
+    backup_executable.write_text("personal replacement data\n", encoding="utf-8")
+
+    with pytest.raises(
+        transaction.TransactionSafetyError,
+        match="backup contents changed",
+    ):
+        transaction.commit_bundle(destination, activation)
+
+    assert backup_executable.read_text(encoding="utf-8") == "personal replacement data\n"
+
+
+def test_helper_transaction_uninstall_refuses_in_place_changed_owned_bundle(
+    tmp_path: Path,
+) -> None:
+    transaction = _load_helper_transaction_module()
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    executable = _make_existing_app_bundle(
+        applications / "Viventium.app",
+        bundle_identifier="ai.viventium.helper",
+        marker={"product": "ai.viventium.helper", "schema_version": 1},
+        executable_note="previous-owned-helper",
+    )
+    destination = transaction.capture_destination(applications)
+    executable.write_text("personal replacement data\n", encoding="utf-8")
+
+    with pytest.raises(
+        transaction.TransactionSafetyError,
+        match="bundle contents changed",
+    ):
+        transaction.uninstall_captured(destination)
+
+    assert executable.read_text(encoding="utf-8") == "personal replacement data\n"
+
+
+def test_helper_installer_delegates_bundle_mutations_to_descriptor_safe_transaction() -> None:
+    install_script = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'helper_bundle_transaction.py' in install_script
+    for command in ("capture", "stage", "activate", "rollback", "commit", "uninstall"):
+        assert f'"$HELPER_TRANSACTION_TOOL" {command}' in install_script
+    assert '/bin/rm -rf -- "$HELPER_APP_BUNDLE"' not in install_script
+    assert '/bin/rm -rf -- "$LEGACY_HELPER_APP_BUNDLE"' not in install_script
+    assert '/bin/mv "$HELPER_APP_BUNDLE"' not in install_script
+    assert '/bin/mv "$LEGACY_HELPER_APP_BUNDLE"' not in install_script
+    assert '--create-root' in install_script
+    assert 'rollback-persisted' in install_script
+    assert 'commit-persisted' in install_script
+    assert 'HELPER_ACTIVATION_STATE="$(' not in install_script
+
+
+def test_helper_install_rolls_back_owned_bundle_after_post_activation_failure(
+    tmp_path: Path,
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    app_bundle = fake_home / "Applications" / "Viventium.app"
+    old_executable = _make_existing_app_bundle(
+        app_bundle,
+        bundle_identifier="ai.viventium.helper",
+        marker={"product": "ai.viventium.helper", "schema_version": 1},
+        executable_note="previous-owned-helper",
+    )
+    old_bytes = old_executable.read_bytes()
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    fake_exec.write_text(fake_exec.read_text(encoding="utf-8") + "# replacement-helper\n", encoding="utf-8")
+    locked_launch_agents = fake_home / "locked-launch-agents"
+    locked_launch_agents.mkdir()
+    locked_launch_agents.chmod(0o555)
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+        "VIVENTIUM_HELPER_LAUNCH_AGENT_DIR": str(locked_launch_agents),
+    }
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    try:
+        completed = subprocess.run(
+            [
+                str(SCRIPT),
+                "install",
+                "--app-support-dir",
+                str(app_support),
+                "--repo-root",
+                str(REPO_ROOT),
+                "--no-launch",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    finally:
+        locked_launch_agents.chmod(0o755)
+
+    assert completed.returncode != 0
+    assert "restored the previously owned helper bundle" in completed.stderr
+    assert old_executable.read_bytes() == old_bytes
+    assert not any((fake_home / "Applications").glob(".viventium-helper-*"))
+
+
+def test_helper_install_migrates_only_the_recognized_legacy_bundle(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    legacy = fake_home / "Applications" / "Viventium Helper.app"
+    _make_existing_app_bundle(
+        legacy,
+        bundle_identifier="ai.viventium.helper",
+        executable_note="recognized-legacy-helper",
+    )
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+    }
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--no-launch",
+        ],
+        check=True,
+        env=env,
+    )
+
+    installed = fake_home / "Applications" / "Viventium.app"
+    assert not legacy.exists()
+    owner = json.loads(
+        (installed / "Contents" / "Resources" / "viventium-owner.json").read_text(encoding="utf-8")
+    )
+    assert owner == {"product": "ai.viventium.helper", "schema_version": 1}
+
+
+def test_install_preserves_shell_escaped_helper_history_entries(tmp_path: Path) -> None:
+    fake_home = tmp_path / 'home with spaces & triple-quote-"""'
     fake_home.mkdir(parents=True)
     fake_exec = tmp_path / "build" / "ViventiumHelper"
     _make_fake_executable(fake_exec)
@@ -236,9 +787,16 @@ def test_install_scrubs_shell_escaped_helper_history_entries(tmp_path: Path) -> 
     )
 
     history_text = zsh_history.read_text(encoding="utf-8")
-    assert "helper-detached-start.pid.command" not in history_text
-    assert "helper-terminal-run.command" not in history_text
+    assert "helper-detached-start.pid.command" in history_text
+    assert "helper-terminal-run.command" in history_text
     assert "echo keep-me" in history_text
+    helper_config = json.loads((app_support / "helper-config.json").read_text(encoding="utf-8"))
+    assert helper_config["appSupportDir"] == str(app_support)
+    launch_agent = plistlib.loads(
+        (fake_home / "Library" / "LaunchAgents" / "ai.viventium.helper.plist").read_bytes()
+    )
+    assert launch_agent["WorkingDirectory"] == str(fake_home)
+    assert launch_agent["StandardOutPath"] == str(app_support / "logs" / "viventium-helper.log")
 
 
 def test_install_preserves_hidden_status_bar_preference(tmp_path: Path) -> None:
@@ -618,8 +1176,15 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private nonisolated static func firstHTTPStatus(urls: [URL], timeoutInterval: TimeInterval = 1.5) async -> Int?" in source
     assert 'await self.firstHTTPStatus(urls: self.loopbackCandidateURLs(port: port, path: "/api/health"))' in source
     assert 'await self.firstHTTPStatus(urls: self.loopbackCandidateURLs(port: port, path: "/"))' in source
+    assert "private nonisolated static func artifactRuntimeHealthy(port: Int) async -> Bool" in source
+    assert 'self.loopbackCandidateURLs(port: port, path: "/index.html")' in source
+    assert 'Data("IS_ONPREM:\\"true\\"".utf8)' in source
+    assert "if runtime.requiresArtifactRuntime" in source
+    assert "artifactRuntimeReady = await self.artifactRuntimeHealthy(port: runtime.sandpackPort)" in source
     assert "private nonisolated static func playgroundHealthy(port: Int) async -> Bool" in source
-    assert "let playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)" in source
+    assert "let playgroundReady: Bool" in source
+    assert "if runtime.requiresPlayground" in source
+    assert "playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)" in source
     assert "private var steadyStateHealthSnapshot:" in source
     assert "private let steadyStateHealthRefreshInterval: TimeInterval = 30" in source
     assert "let snapshot = await self.stackHealthSnapshot(" in source
@@ -638,7 +1203,11 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'let escapedCommand = (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)' in source
     assert 'let detachedCommand = """' in source
     assert 'cd \\(escapedAppSupportDir)' in source
-    assert 'nohup \\(escapedCommand) >> \\(escapedLogPath) 2>&1 < /dev/null &' in source
+    assert 'nohup \\(escapedCommand) 2>&1 < /dev/null &' in source
+    assert 'guard let logHandle = self.openPrivateAppendLog(logURL) else {' in source
+    assert 'process.standardOutput = logHandle' in source
+    assert 'process.standardError = logHandle' in source
+    assert '>> \\(escapedLogPath)' not in source
     assert 'try? FileManager.default.removeItem(at: runnerScriptURL)' in source
     assert 'try? FileManager.default.removeItem(at: legacyRunnerScriptURL)' in source
     assert 'process.executableURL = URL(fileURLWithPath: "/bin/bash")' in source
@@ -676,9 +1245,14 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "func createBackupSnapshot() {" in source
     assert 'arguments: ["snapshot"]' in source
     assert 'logFileName: "helper-snapshot.log"' in source
+    assert 'Self.snapshotProofStatus(snapshotPath: snapshotPath)' in source
+    assert 'alert.messageText = "Continuity metadata captured"' in source
+    assert "No recoverable backup payload was created." in source
     assert 'alert.messageText = "Backup snapshot created"' in source
     assert 'alert.messageText = "Backup snapshot failed"' in source
     assert 'private nonisolated static func latestSnapshotPath(appSupportDir: String) -> String?' in source
+    assert 'private enum SnapshotProofStatus' in source
+    assert 'private nonisolated static func snapshotProofStatus(snapshotPath: String?) -> SnapshotProofStatus' in source
     assert '@Published private(set) var transcriptIngestInProgress: Bool = false' in source
     assert '@Published private(set) var transcriptSourceConfigInProgress: Bool = false' in source
     assert "private static let transcriptPartialExitStatus: Int32 = 2" in source
@@ -767,7 +1341,9 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'self.log("Helper exiting after stack stop")' in source
     assert 'Button("Quit") {' in source
     assert 'Button(self.controller.actionLabel) {' in source
-    assert 'Button(self.controller.statusLabel) {}' in source
+    assert 'Text(self.controller.statusLabel)' in source
+    assert '.accessibilityLabel("Viventium status")' in source
+    assert '.accessibilityValue(self.controller.statusLabel)' in source
     assert 'Button(self.controller.backupActionLabel) {' in source
     assert "MenuBarExtra(" in source
     assert "isInserted: Binding(" in source
@@ -856,16 +1432,12 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'self.launchAtLoginEnabled = Self.launchAtLoginIsEnabled()' not in source
     assert "cleanup_legacy_terminal_helper_launchers()" in install_script
     assert '"showInStatusBar": bool(existing.get("showInStatusBar", True)),' in install_script
-    assert 'helper_script_dir.glob("*.command")' in install_script
-    assert 'helper-detached-start.pid.command' in install_script
-    assert 'helper-detached-stop.pid.command' in install_script
-    assert 'legacy_history_markers = tuple(' in install_script
-    assert 'for history_path in (Path.home() / ".zsh_history",):' in install_script
-    assert 'zsh_sessions_dir = Path.home() / ".zsh_sessions"' in install_script
-    assert 'if history_path.suffix not in {".history", ".historynew", ".session"}:' in install_script
-    assert "com.apple.Terminal.savedState" in install_script
-    assert "terminal_saved_state_contains_legacy_marker" in install_script
-    assert "shutil.rmtree(terminal_saved_state_dir, ignore_errors=True)" in install_script
+    assert 'find "$HELPER_SCRIPT_DIR" -maxdepth 1 -type f' in install_script
+    assert 'ai.viventium.helper.terminal.plist' in install_script
+    assert 'Path.home() / ".zsh_history"' not in install_script
+    assert 'Path.home() / ".zsh_sessions"' not in install_script
+    assert "Saved Application State" not in install_script
+    assert "shutil.rmtree(terminal_saved_state_dir, ignore_errors=True)" not in install_script
     assert "allowEarlyFailure: true" in source
     assert "private struct StopCommandOutcome" in source
     assert "let commandBlockedByActiveOperation: Bool" in source
@@ -915,7 +1487,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "private nonisolated static func preferredOpenURLString(" in source
     assert "return self.frontendURLString(host: host, port: runtime.playgroundPort)" in source
     assert "private nonisolated static func userFacingSurfaceHealthy(runtime: RuntimePorts) async -> Bool" in source
-    assert "private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool" in source
+    assert "private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool" not in source
     assert "return await self.frontendHealthy(port: playgroundPort)" not in source
     assert "await self.stackHealthSnapshot(runtime: runtime).healthy" in user_facing_health_section
     assert "await self.playgroundHealthy(port: runtime.playgroundPort)" in source
@@ -984,15 +1556,16 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'HELPER_BUNDLE_IDENTIFIER="${VIVENTIUM_HELPER_BUNDLE_IDENTIFIER:-ai.viventium.helper}"' in install_script
     assert 'SKIP_CODESIGN="${VIVENTIUM_HELPER_SKIP_CODESIGN:-0}"' in install_script
     assert 'HELPER_PREBUILT_SOURCE_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_SOURCE_HASH_FILE:-$HELPER_PREBUILT_DIR/source.sha256}"' in install_script
+    assert 'HELPER_PREBUILT_BINARY_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_BINARY_HASH_FILE:-$HELPER_PREBUILT_DIR/binary.sha256}"' in install_script
     assert 'HELPER_RUNTIME_REPO_ROOT="${VIVENTIUM_HELPER_RUNTIME_REPO_ROOT:-$REPO_ROOT}"' in install_script
     assert 'HELPER_RUNTIME_REPO_ROOT="$(resolve_helper_runtime_repo_root "$REPO_ROOT" "$APP_SUPPORT_DIR")"' in install_script
-    assert '"allowProtectedRepoRoot": """$HELPER_RUNTIME_ALLOW_PROTECTED""" == "1",' in install_script
+    assert 'allow_protected = sys.argv[4] == "1"' in install_script
     assert 'echo "[viventium] Using public-safe helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2' in install_script
     assert 'echo "[viventium] Using configured helper runtime checkout: $HELPER_RUNTIME_REPO_ROOT" >&2' in install_script
     assert 'Refusing to bind the macOS helper to a protected-folder checkout' in install_script
     assert 'VIVENTIUM_HELPER_RUNTIME_REPO_ROOT' in install_script
-    assert '<key>VIVENTIUM_HELPER_RUNTIME_REPO_ROOT</key>' in install_script
-    assert '<key>VIVENTIUM_PUBLIC_INSTALL_DIR</key>' in install_script
+    assert '"VIVENTIUM_HELPER_RUNTIME_REPO_ROOT": runtime_repo_root,' in install_script
+    assert '"VIVENTIUM_PUBLIC_INSTALL_DIR": public_install_dir,' in install_script
     assert 'FORCE_LOCAL_BUILD="${VIVENTIUM_HELPER_FORCE_LOCAL_BUILD:-0}"' in install_script
     assert 'OSASCRIPT_TIMEOUT_SECONDS="${VIVENTIUM_HELPER_OSASCRIPT_TIMEOUT_SECONDS:-15}"' in install_script
     assert 'if [[ "$FORCE_LOCAL_BUILD" != "1" ]] && prebuilt_helper_matches_sources; then' in install_script
@@ -1011,6 +1584,8 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'sys.stderr.write(f"[viventium] Direct helper compile timed out after {timeout:.0f}s\\n")' in install_script
     assert 'helper_source_hash() {' in install_script
     assert 'prebuilt_helper_matches_sources() {' in install_script
+    assert 'prebuilt_helper_binary_matches_digest() {' in install_script
+    assert 'shasum -a 256 "$HELPER_PREBUILT_EXECUTABLE"' in install_script
     assert 'use_prebuilt_helper() {' in install_script
     assert 'local notice="${1:-Using prebuilt helper fallback}"' in install_script
     assert 'echo "[viventium] $notice from $HELPER_PREBUILT_EXECUTABLE" >&2' in install_script
@@ -1024,7 +1599,8 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'strings "$installed_executable" | grep -F -- "Choose Transcripts Folder" >/dev/null' in install_script
     assert 'verify_installed_bundle' in install_script
     assert "sign_installed_bundle() {" in install_script
-    assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$HELPER_APP_BUNDLE"' in install_script
+    assert 'local bundle="${1:-$HELPER_APP_BUNDLE}"' in install_script
+    assert '/usr/bin/codesign --force --sign - --identifier "$HELPER_BUNDLE_IDENTIFIER" "$bundle"' in install_script
     assert 'strings "$installed_executable" | grep -F -- "prompt-workbench" >/dev/null' in install_script
     assert "Installed helper is missing Prompt Workbench support." in install_script
     assert "sign_installed_bundle" in install_script
@@ -1033,8 +1609,12 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert 'echo "[viventium] Prebuilt helper fallback exists but does not match current helper sources" >&2' in install_script
     assert 'echo "[viventium] No matching prebuilt helper fallback found" >&2' in install_script
     assert '"$HELPER_PACKAGE_DIR/Sources/ViventiumHelper/ViventiumHelperApp.swift"' in install_script
-    assert '"repoRoot": r"""$HELPER_RUNTIME_REPO_ROOT""",' in install_script
-    assert 'repo_root = Path(r"""$HELPER_RUNTIME_REPO_ROOT""").resolve()' in install_script
+    assert '"repoRoot": repo_root,' in install_script
+    assert 'repo_root = Path(sys.argv[1]).resolve()' in install_script
+    assert '"$python_bin" - "$HELPER_CONFIG_FILE" "$HELPER_RUNTIME_REPO_ROOT" "$APP_SUPPORT_DIR" \\' in install_script
+    assert '"$python_bin" - "$HELPER_RUNTIME_REPO_ROOT" "$APP_SUPPORT_DIR" "$HELPER_SCRIPT_DIR" \\' in install_script
+    assert 'plistlib.dump(payload, handle, fmt=plistlib.FMT_XML, sort_keys=False)' in install_script
+    assert '<<PY' not in install_script
     assert "Compatibility wrapper written by the installer." in install_script
     assert 'export VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE=1' in install_script
     assert 'bin_viventium = repo_root / "bin" / "viventium"' in install_script
@@ -1100,7 +1680,7 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     assert prebuilt_fallback_offset < direct_compile_offset
 
 
-def test_prebuilt_helper_fallback_matches_current_sources() -> None:
+def test_prebuilt_helper_source_marker_matches_current_sources() -> None:
     assert FALLBACK_BUILD_SCRIPT.exists()
     assert PREBUILT_EXECUTABLE.exists()
     assert PREBUILT_EXECUTABLE.stat().st_size > 0
@@ -1121,3 +1701,63 @@ def test_prebuilt_helper_fallback_matches_current_sources() -> None:
     expected_hash = PREBUILT_SOURCE_HASH.read_text(encoding="utf-8").strip()
 
     assert actual_hash == expected_hash
+
+
+def test_helper_uses_easy_install_required_surface_health_contract() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+
+    assert "let requiresPlayground: Bool" in source
+    assert "(!self.requiresPlayground || self.playgroundReady)" in source
+    assert 'values["VIVENTIUM_INSTALL_EXPERIENCE"] != "express"' in source
+    assert 'let sandpackPort = Int(values["SANDPACK_BUNDLER_LISTEN_PORT"] ?? "") ?? 3191' in source
+    assert 'values["SANDPACK_BUNDLER_URL"] != nil' in source
+    assert "let apiReady = nativeReady && apiSurfaceReady && artifactRuntimeReady" in source
+    assert "if runtime.requiresPlayground" in source
+def test_prebuilt_helper_source_digest_marker_matches_current_sources() -> None:
+    helper_dir = HELPER_PACKAGE.parent
+    source_paths = (
+        HELPER_PACKAGE,
+        HELPER_SOURCE,
+        HELPER_INFO_PLIST,
+    )
+    digest = hashlib.sha256()
+    for path in source_paths:
+        digest.update(path.relative_to(helper_dir).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+
+    assert PREBUILT_EXECUTABLE.is_file()
+    assert PREBUILT_SOURCE_HASH.read_text(encoding="utf-8").strip() == digest.hexdigest()
+    assert PREBUILT_BINARY_HASH.read_text(encoding="utf-8").strip() == hashlib.sha256(
+        PREBUILT_EXECUTABLE.read_bytes()
+    ).hexdigest()
+
+
+def test_helper_update_parser_requires_typed_schema_and_install_does_not_touch_personal_shell_state() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+    install_script = SCRIPT.read_text(encoding="utf-8")
+    parser = source.split("private nonisolated static func updateCheckSummary", 1)[1].split(
+        "private nonisolated static func parseJSONObject", 1
+    )[0]
+
+    assert 'root["schema_version"] as? Int == 1' in parser
+    assert 'root["ready_to_upgrade"] as? Bool' in parser
+    assert 'root["update_available"] as? Bool' in parser
+    assert 'root["blockers"] as? [String]' in parser
+    assert 'root["component_refresh_required"] as? [[String: Any]]' in parser
+    assert 'Path.home() / ".zsh_history"' not in install_script
+    assert 'Path.home() / ".zsh_sessions"' not in install_script
+    assert 'Saved Application State' not in install_script
+
+
+def test_helper_logs_are_opened_owner_only_without_following_symlinks() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+
+    assert "O_NOFOLLOW" in source
+    assert "O_APPEND" in source
+    assert "S_IRUSR | S_IWUSR" in source
+    assert "fstat" in source
+    assert "metadata.st_uid == getuid()" in source
+    assert "metadata.st_nlink == 1" in source
+    assert "FileHandle(forWritingTo: logURL)" not in source

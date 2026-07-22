@@ -213,6 +213,13 @@ of reformatting unrelated cases. The create-new-case form must remain responsive
 click and keyboard input; form text is read at save time so typing does not create source writes or
 intermediate draft churn.
 
+An operator may explicitly check one or more named cases. That additive selection is one bounded
+`caseIds` contract across browser, API, bank selection, dependency lineage, saved run, and canonical
+runner. It overrides the numeric first-N limit, preserves canonical bank order, deduplicates IDs,
+and fails closed when an ID is unknown or excluded by the chosen family/surface/prompt filters.
+The UI must show whether it will run an exact selection or the first N visible cases; it must never
+display named cases while silently executing different family entries.
+
 The former `Frames` tab is now `Prompt Traces`. A prompt trace is local metadata about a prompt run:
 surface, model/provider, assembled layers, token estimates, and routing/decision metadata. The
 public-safe UI must explain that concept plainly and must not expose raw private prompt text or
@@ -380,11 +387,23 @@ Workbench/GlassHive automations use the compiled host-worker tuple, currently `g
 `xhigh` reasoning. Workbench startup reconciles built-in metadata to that tuple; Scheduling Cortex
 projects it into GlassHive; the run ledger and Workbench UI expose the requested/effective route.
 Stale definition metadata or ambient CLI settings must not silently override the compiled tuple.
+Startup reconciliation must update the Scheduler task's authoritative top-level `executor`, not only
+nested Workbench metadata, because dispatch reads the top-level field first.
 
 The built-in nightly reflection must also carry a bounded structured catch-up policy. Its schedule
 timezone controls the real due time, so QA must compare the Workbench `next_run_at` and configured
 timezone before declaring a miss; a safe late tick inside the catch-up window should still queue one
 GlassHive run and show the completed result in Workbench.
+The managed built-in timezone reads the Mac's current system-local IANA timezone during startup
+reconciliation; it must not be pinned by a stale compiled runtime timezone after travel. Unrelated
+Workbench edits must omit schedule fields so they do not silently pin the current city. Once a user
+explicitly edits the schedule or timezone, including explicitly choosing the current local
+timezone, that field becomes fixed and startup reconciliation preserves it with the other
+user-owned schedule fields.
+Legacy managed built-in rows created before timezone-mode metadata existed are migrated by shape:
+an untagged daily `03:00` definition becomes `local` and follows the current Mac timezone, while
+other untagged schedules become `fixed`. This one-time migration prevents a pre-upgrade city from
+remaining frozen after travel without overwriting an explicitly customized schedule.
 
 Pre-assignment GlassHive failures must stay structured. If GlassHive reports host substrate failure
 such as `runtime_dependency_missing`, Scheduling Cortex records that failure class instead of
@@ -765,6 +784,10 @@ workload rather than a conscious-agent reasoning route.
   `BackgroundCortexService.checkCortexActivation` path and resolves registry `promptRef` values from
   the canonical agent bundle. Preview mode makes no model calls; live mode writes private raw
   results and a public-safe aggregate report.
+- A live Workbench activation run must pass the configured non-owner QA-user context, enable the
+  runtime fallback chain, and use the configured late-detection timeout. A generally selected atlas
+  prompt must not accidentally filter activation targets: only a prompt id that exactly matches an
+  `activationTargets[].promptRef` may be forwarded as the activation runner's `prompt-id` filter.
 - The public-safe bank covers all 11 cortex scopes with positive, sibling-negative, latest-turn,
   quoted/hypothetical/negated, strict-output, direct-action, multilingual, typo, combined-intent,
   and prompt-injection scenarios. It uses synthetic transformations inspired by public
@@ -775,6 +798,30 @@ workload rather than a conscious-agent reasoning route.
 - Groq's strict GPT-OSS schema path is not used as the primary/fallback output mode: a real
   220-decision comparison produced 28 provider-side `JSON_VALIDATE_FAILED` responses even with a
   primitive strict schema. JSON-object mode plus Viventium's parser is the measured reliable path.
+- The 2026-07-14 final exact-runtime gate completed and passed all `63 × 11 = 693` decisions with
+  zero unavailable rows, zero false positives/negatives, 100% required recall and activation
+  precision, and the configured fallbacks enabled. Its p50/p95/max classifier latency was
+  `735/2,206/2,730 ms`; tail latency is absorbed by bounded fallback/late recovery rather than by
+  weakening classifier semantics or adding runtime text heuristics.
+- The 2026-07-15 specialist-boundary extension completed and passed all `67 × 11 = 737` decisions
+  with zero unavailable rows or semantic errors and `551/779/1,319 ms` p50/p95/max latency. Every
+  Groq/Qwen primary attempt was rejected during that run, while the declared xAI fallback recovered
+  all 737 decisions. Report semantic correctness and provider health separately: this is a passing
+  classifier/fallback result and a degraded primary-provider result, not evidence to rewrite the
+  configured route.
+- Prompt Workbench owns direct execution families for Emotional Resonance and Red Team. Each family
+  links only its actual specialist execution prompt, invokes that specialist directly, uses an
+  independent semantic judge, and records zero Feelings runtime-context dependencies. Feelings evals
+  separately declare the request-scoped `runtime.feelings.current_state` dependency; versioned run
+  lineage stores the context id, scope, and hashes, never the private state value. An unmapped prompt
+  is displayed as having no managed live row and cannot mutate an unrelated agent.
+- Exact-model behavior and semantic-judge availability are separate gates. Only a valid,
+  schema-checked judge verdict with `pass=false` is a semantic behavior failure. Missing/invalid
+  credentials, provider rejection, timeout/transport failure, unsupported judge route, malformed
+  judge JSON, or invalid judge schema is `blocked_semantic_judge` with an unavailable count; it must
+  never be counted as a failed candidate response. Workbench history and UI expose aggregate counts
+  and the sanitized blocker class, not raw provider bodies, prompts, responses, or credential
+  fragments. Secret scrubbing must also remove provider-returned partially masked tokens.
 
 ### GPT-5.6 conscious and subconscious routes
 
@@ -1082,8 +1129,8 @@ Improvements:
   Cartesia-style emotion parameter, so the xAI branch may only expose documented xAI speech tags and
   natural-language tone guidance.
 - User-facing provider labels should stay simple even when model-facing prompt branches are precise:
-  show `xAI` in voice pickers, while keeping prompt/runtime wording explicit about standalone xAI
-  TTS versus the legacy Grok Voice Agent adapter.
+  show `xAI` in voice pickers, while keeping prompt/runtime wording explicit that the supported
+  renderer is standalone xAI TTS.
 
 Acceptance:
 

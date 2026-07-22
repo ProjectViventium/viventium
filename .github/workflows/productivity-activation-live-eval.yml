@@ -1,16 +1,12 @@
 name: Productivity Activation Live Eval
 
 on:
-  pull_request:
-    paths:
-      - tests/release/test_productivity_activation_live_eval.py
-      - tests/release/test_no_runtime_nlu.py
-      - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
-      - viventium_v0_4/LibreChat/api/server/services/viventium/**
-      - viventium_v0_4/LibreChat/scripts/run-productivity-activation-evals.js
-      - viventium_v0_4/LibreChat/viventium/source_of_truth/*.viventium-agents.yaml
   push:
+    branches:
+      - main
     paths:
+      - .github/workflows/productivity-activation-live-eval.yml
+      - components.lock.json
       - tests/release/test_productivity_activation_live_eval.py
       - tests/release/test_no_runtime_nlu.py
       - viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js
@@ -19,61 +15,136 @@ on:
       - viventium_v0_4/LibreChat/viventium/source_of_truth/*.viventium-agents.yaml
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: productivity-activation-live-eval-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   live-activation-eval:
+    name: Productivity activation live eval
+    if: >-
+      github.ref_protected == true &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      VIVENTIUM_RUN_LIVE_ACTIVATION_EVALS: "1"
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    environment: productivity-activation-live-eval
     steps:
-      - uses: actions/checkout@v4
-
-      - id: detect_librechat_workspace
-        name: Detect LibreChat activation-eval workspace
-        shell: bash
-        run: |
-          if [ -f "viventium_v0_4/LibreChat/package-lock.json" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Skip when nested LibreChat workspace is not part of this checkout
-        if: steps.detect_librechat_workspace.outputs.available != 'true'
-        run: |
-          echo "Skipping live activation eval: nested LibreChat workspace is not present in this checkout."
-
-      - uses: actions/setup-node@v4
-        if: steps.detect_librechat_workspace.outputs.available == 'true'
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          node-version: "20"
+          persist-credentials: false
+
+      - name: Fetch and validate the exact pinned LibreChat component
+        run: |
+          cat > "$RUNNER_TEMP/live-eval-selection.yaml" <<'YAML'
+          voice:
+            mode: disabled
+          runtime:
+            playground_variant: modern
+          integrations:
+            glasshive:
+              enabled: false
+            google_workspace:
+              enabled: false
+            ms365:
+              enabled: false
+            openclaw:
+              enabled: false
+            skyvern:
+              enabled: false
+          YAML
+          python3 scripts/viventium/bootstrap_components.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --config "$RUNNER_TEMP/live-eval-selection.yaml" \
+            --jobs 1
+          python3 scripts/viventium/bootstrap_components.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --config "$RUNNER_TEMP/live-eval-selection.yaml" \
+            --validate-only
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
           cache: npm
           cache-dependency-path: viventium_v0_4/LibreChat/package-lock.json
 
-      - uses: actions/setup-python@v5
-        if: steps.detect_librechat_workspace.outputs.available == 'true'
-        with:
-          python-version: "3.11"
+      - name: Install LibreChat workspace dependencies
+        working-directory: viventium_v0_4/LibreChat
+        run: npm ci --ignore-scripts
 
-      - name: Require activation-eval provider credentials
-        if: steps.detect_librechat_workspace.outputs.available == 'true'
+      - name: Run live activation eval gate
+        env:
+          VIVENTIUM_RUN_LIVE_ACTIVATION_EVALS: "1"
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           test -n "$GROQ_API_KEY" || { echo "::error::Missing GROQ_API_KEY"; exit 1; }
           test -n "$OPENAI_API_KEY" || { echo "::error::Missing OPENAI_API_KEY"; exit 1; }
           test -n "$ANTHROPIC_API_KEY" || { echo "::error::Missing ANTHROPIC_API_KEY"; exit 1; }
 
-      - name: Install LibreChat workspace dependencies
-        if: steps.detect_librechat_workspace.outputs.available == 'true'
-        working-directory: viventium_v0_4/LibreChat
-        run: npm ci
+          output_dir="$RUNNER_TEMP/productivity-activation-eval"
+          set +e
+          node viventium_v0_4/LibreChat/scripts/run-productivity-activation-evals.js \
+            "--output-dir=$output_dir"
+          eval_status=$?
+          set -e
 
-      - name: Install Python test dependencies
-        if: steps.detect_librechat_workspace.outputs.available == 'true'
-        run: python3 -m pip install pytest pyyaml
+          report_path="$output_dir/productivity-activation-eval.json"
+          test -f "$report_path" || {
+            echo "::error::Live activation eval did not produce its JSON report"
+            exit 1
+          }
+          read -r result_count pass_count fail_count unavailable_count < <(
+            node - "$report_path" <<'NODE'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const summary = report.summary || {};
+          console.log([
+            Number(summary.resultCount || 0),
+            Number(summary.passCount || 0),
+            Number(summary.failCount || 0),
+            Number(summary.unavailableCount || 0),
+          ].join(' '));
+          NODE
+          )
 
-      - name: Run live activation eval gate
-        if: steps.detect_librechat_workspace.outputs.available == 'true'
-        run: python3 -m pytest tests/release/test_productivity_activation_live_eval.py -q
+          for count in "$result_count" "$pass_count" "$fail_count" "$unavailable_count"; do
+            [[ "$count" =~ ^[0-9]+$ ]] || {
+              echo "::error::Live activation eval produced invalid scenario counts"
+              exit 1
+            }
+          done
+          test "$result_count" -gt 0 || {
+            echo "::error::Live activation eval produced no scenarios"
+            exit 1
+          }
+          test "$((pass_count + fail_count + unavailable_count))" -eq "$result_count" || {
+            echo "::error::Live activation eval produced inconsistent scenario counts"
+            exit 1
+          }
+          test "$fail_count" -eq 0 || {
+            echo "::error::Live activation eval returned $fail_count wrong activation decisions"
+            exit 1
+          }
+          if [ "$pass_count" -eq "$result_count" ]; then
+            test "$eval_status" -eq 0 || {
+              echo "::error::All scenarios passed but the eval process exited non-zero"
+              exit 1
+            }
+            exit 0
+          fi
+          if [ "$pass_count" -gt 0 ] && [ "$unavailable_count" -gt 0 ]; then
+            echo "::warning::Live activation eval recovered but still saw provider outages"
+            exit 0
+          fi
+          if [ "$unavailable_count" -eq "$result_count" ]; then
+            echo "::error::Live activation eval could not reach any classifier provider"
+            exit 1
+          fi
+          test "$eval_status" -eq 0 || {
+            echo "::error::Live activation eval returned an unclassified mixed failure"
+            exit 1
+          }

@@ -53,7 +53,7 @@ interface Props {
   onManualMerge: (agentId: string, promptId: string) => void;
   onApplyDraft: (draft: DraftRecord) => void;
   onDiscardDraft: (draft: DraftRecord) => void;
-  onRunEval: (options: { maxCases?: number; live?: boolean; family?: string; surface?: string; promptId?: string }) => void;
+  onRunEval: (options: { maxCases?: number; live?: boolean; family?: string; surface?: string; promptId?: string; caseIds?: string[] }) => void;
   onSaveEvalCase: (options: { familyId: string; caseId: string; updatedCase: Record<string, unknown>; create?: boolean }) => void;
 }
 

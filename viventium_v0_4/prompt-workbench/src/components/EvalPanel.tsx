@@ -1,7 +1,19 @@
-import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { FileDiff, FlaskConical, ListChecks, PlusCircle, Play, TrendingUp } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { EvalBank, EvalFamily, EvalRun } from '../types';
+import {
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import {
+  FileDiff,
+  FlaskConical,
+  ListChecks,
+  PlusCircle,
+  Play,
+  TrendingUp,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { EvalBank, EvalFamily, EvalRun } from "../types";
 
 interface Props {
   evalBank?: EvalBank;
@@ -9,8 +21,20 @@ interface Props {
   runs: EvalRun[];
   running: boolean;
   blockedReason?: string;
-  onRun: (options: { maxCases: number; live: boolean; family?: string; surface?: string; promptId: string }) => void;
-  onSaveCase: (options: { familyId: string; caseId: string; updatedCase: Record<string, unknown>; create?: boolean }) => void;
+  onRun: (options: {
+    maxCases: number;
+    live: boolean;
+    family?: string;
+    surface?: string;
+    promptId: string;
+    caseIds?: string[];
+  }) => void;
+  onSaveCase: (options: {
+    familyId: string;
+    caseId: string;
+    updatedCase: Record<string, unknown>;
+    create?: boolean;
+  }) => void;
 }
 
 type EvalRow = {
@@ -22,65 +46,105 @@ type EvalRow = {
   prompt: string;
   rubricItems: string[];
   promptRefs: string[];
+  semanticJudgeRequired: boolean;
   expectedDecision?: string;
   expectedSurface?: string;
-  expectedKey?: 'expected_decision' | 'expected_surface';
+  expectedKey?: "expected_decision" | "expected_surface";
 };
 
 const columnHelper = createColumnHelper<EvalRow>();
 const columns = [
-  columnHelper.accessor('family', { header: 'Eval Family' }),
-  columnHelper.accessor('caseId', { header: 'Case' }),
-  columnHelper.accessor('surface', { header: 'Surface' }),
-  columnHelper.accessor('expected', { header: 'Expected' }),
-  columnHelper.accessor('rubric', { header: 'Rubric Items' }),
+  columnHelper.accessor("family", { header: "Eval Family" }),
+  columnHelper.accessor("caseId", { header: "Case" }),
+  columnHelper.accessor("surface", { header: "Surface" }),
+  columnHelper.accessor("expected", { header: "Expected" }),
+  columnHelper.accessor("rubric", { header: "Rubric Items" }),
 ];
 
-export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedReason, onRun, onSaveCase }: Props) {
-  const rows = useMemo(() => flattenEvalRows(evalBank?.families ?? []), [evalBank]);
-  const families = useMemo(() => Array.from(new Set(rows.map((row) => row.family))), [rows]);
+export function EvalPanel({
+  evalBank,
+  selectedPromptId,
+  runs,
+  running,
+  blockedReason,
+  onRun,
+  onSaveCase,
+}: Props) {
+  const rows = useMemo(
+    () => flattenEvalRows(evalBank?.families ?? []),
+    [evalBank],
+  );
+  const families = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.family))),
+    [rows],
+  );
   const linkedRows = useMemo(
-    () => rows.filter((row) => row.promptRefs.includes(selectedPromptId) || selectedPromptId === 'main.conscious_agent'),
+    () => rows.filter((row) => row.promptRefs.includes(selectedPromptId)),
     [rows, selectedPromptId],
   );
-  const [family, setFamily] = useState('');
-  const [surface, setSurface] = useState('');
+  const [family, setFamily] = useState("");
+  const [surface, setSurface] = useState("");
   const [maxCases, setMaxCases] = useState(1);
+  const [selectedRunCaseIds, setSelectedRunCaseIds] = useState<string[]>([]);
   const [live, setLive] = useState(false);
   const [linkedOnly, setLinkedOnly] = useState(true);
-  const [selectedCaseKey, setSelectedCaseKey] = useState('');
+  const [selectedCaseKey, setSelectedCaseKey] = useState("");
   const [creatingCase, setCreatingCase] = useState(false);
-  const sourceRows = useMemo(() => linkedOnly ? linkedRows : rows, [linkedOnly, linkedRows, rows]);
-  const sourceFamilies = useMemo(() => Array.from(new Set(sourceRows.map((row) => row.family))), [sourceRows]);
+  const sourceRows = useMemo(
+    () => (linkedOnly ? linkedRows : rows),
+    [linkedOnly, linkedRows, rows],
+  );
+  const sourceFamilies = useMemo(
+    () => Array.from(new Set(sourceRows.map((row) => row.family))),
+    [sourceRows],
+  );
   const selectedFamily = family;
-  const targetFamily = selectedFamily || sourceFamilies[0] || families[0] || '';
+  const targetFamily = selectedFamily || sourceFamilies[0] || families[0] || "";
   const visibleRows = useMemo(
-    () => sourceRows.filter((row) => (!selectedFamily || row.family === selectedFamily) && (!surface || row.surface === surface)),
+    () =>
+      sourceRows.filter(
+        (row) =>
+          (!selectedFamily || row.family === selectedFamily) &&
+          (!surface || row.surface === surface),
+      ),
     [sourceRows, selectedFamily, surface],
+  );
+  const semanticJudgeRequired = visibleRows.some(
+    (row) => row.semanticJudgeRequired,
   );
   const selectedCase = creatingCase
     ? undefined
-    : visibleRows.find((row) => `${row.family}/${row.caseId}` === selectedCaseKey) ?? visibleRows[0];
-  const [casePrompt, setCasePrompt] = useState('');
-  const [caseExpected, setCaseExpected] = useState('');
-  const [caseRubric, setCaseRubric] = useState('');
-  const [caseSurface, setCaseSurface] = useState('web');
-  const [caseIdDraft, setCaseIdDraft] = useState('');
+    : (visibleRows.find(
+        (row) => `${row.family}/${row.caseId}` === selectedCaseKey,
+      ) ?? visibleRows[0]);
+  const [casePrompt, setCasePrompt] = useState("");
+  const [caseExpected, setCaseExpected] = useState("");
+  const [caseRubric, setCaseRubric] = useState("");
+  const [caseSurface, setCaseSurface] = useState("web");
+  const [caseIdDraft, setCaseIdDraft] = useState("");
   const newCaseIdRef = useRef<HTMLInputElement | null>(null);
   const newCaseSurfaceRef = useRef<HTMLSelectElement | null>(null);
   const newCasePromptRef = useRef<HTMLTextAreaElement | null>(null);
   const newCaseExpectedRef = useRef<HTMLInputElement | null>(null);
   const newCaseRubricRef = useRef<HTMLTextAreaElement | null>(null);
-  const table = useReactTable({ data: visibleRows, columns, getCoreRowModel: getCoreRowModel() });
-  const promptRuns = runs.filter((run) => run.promptId === selectedPromptId || selectedPromptId === 'main.conscious_agent');
+  const table = useReactTable({
+    data: visibleRows,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+  const promptRuns = runs.filter((run) =>
+    runHasPromptDependency(run, selectedPromptId),
+  );
 
   useEffect(() => {
     if (creatingCase) return;
     if (!visibleRows.length) {
-      if (selectedCaseKey) setSelectedCaseKey('');
+      if (selectedCaseKey) setSelectedCaseKey("");
       return;
     }
-    const selectedKeyStillVisible = visibleRows.some((row) => `${row.family}/${row.caseId}` === selectedCaseKey);
+    const selectedKeyStillVisible = visibleRows.some(
+      (row) => `${row.family}/${row.caseId}` === selectedCaseKey,
+    );
     if (!selectedKeyStillVisible) {
       const firstRow = visibleRows[0];
       setSelectedCaseKey(`${firstRow.family}/${firstRow.caseId}`);
@@ -88,12 +152,21 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
   }, [creatingCase, selectedCaseKey, visibleRows]);
 
   useEffect(() => {
+    const visibleCaseIds = new Set(visibleRows.map((row) => row.caseId));
+    setSelectedRunCaseIds((current) =>
+      current.filter((caseId) => visibleCaseIds.has(caseId)),
+    );
+  }, [visibleRows]);
+
+  useEffect(() => {
     if (creatingCase || !selectedCase) return;
     setCaseIdDraft(selectedCase.caseId);
-    setCaseSurface(selectedCase.surface || 'web');
+    setCaseSurface(selectedCase.surface || "web");
     setCasePrompt(selectedCase.prompt);
-    setCaseExpected(selectedCase.expectedDecision ?? selectedCase.expectedSurface ?? '');
-    setCaseRubric(selectedCase.rubricItems.join('\n'));
+    setCaseExpected(
+      selectedCase.expectedDecision ?? selectedCase.expectedSurface ?? "",
+    );
+    setCaseRubric(selectedCase.rubricItems.join("\n"));
   }, [
     creatingCase,
     selectedCase?.caseId,
@@ -105,14 +178,14 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
   ]);
 
   const beginNewCase = () => {
-    const suffix = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const suffix = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     setCreatingCase(true);
-    setSelectedCaseKey('');
+    setSelectedCaseKey("");
     setCaseIdDraft(`new_eval_case_${suffix}`);
-    setCaseSurface(surface || 'web');
-    setCasePrompt('');
-    setCaseExpected('');
-    setCaseRubric('checks the target behavior clearly');
+    setCaseSurface(surface || "web");
+    setCasePrompt("");
+    setCaseExpected("");
+    setCaseRubric("checks the target behavior clearly");
   };
 
   const cancelNewCase = () => {
@@ -129,10 +202,22 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
         <span>Eval Designer and Results</span>
       </div>
       <div className="eval-summary">
-        <div><strong>{evalBank?.familyCount ?? 0}</strong><span>families</span></div>
-        <div><strong>{linkedRows.length}</strong><span>linked cases</span></div>
-        <div><strong>{humanPromptName(selectedPromptId)}</strong><span>linked prompt</span></div>
-        <div><strong>{promptRuns.length}</strong><span>runs for prompt</span></div>
+        <div>
+          <strong>{evalBank?.familyCount ?? 0}</strong>
+          <span>families</span>
+        </div>
+        <div>
+          <strong>{linkedRows.length}</strong>
+          <span>linked cases</span>
+        </div>
+        <div>
+          <strong>{humanPromptName(selectedPromptId)}</strong>
+          <span>linked prompt</span>
+        </div>
+        <div>
+          <strong>{promptRuns.length}</strong>
+          <span>runs for prompt</span>
+        </div>
       </div>
       {blockedReason && (
         <div className="workflow-callout eval-block">
@@ -142,21 +227,35 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
       )}
       <div className="eval-layout">
         <div className="eval-designer">
-          <h3><ListChecks size={15} /> Run Eval Cases</h3>
+          <h3>
+            <ListChecks size={15} /> Run Eval Cases
+          </h3>
           <label className="inline-toggle">
-            <input type="checkbox" checked={linkedOnly} onChange={(event) => setLinkedOnly(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={linkedOnly}
+              onChange={(event) => setLinkedOnly(event.target.checked)}
+            />
             <span>show only cases linked to this prompt</span>
           </label>
           <label>
             Family
-            <select value={selectedFamily} onChange={(event) => setFamily(event.target.value)}>
+            <select
+              value={selectedFamily}
+              onChange={(event) => setFamily(event.target.value)}
+            >
               <option value="">all linked families</option>
-              {sourceFamilies.map((family) => <option key={family}>{family}</option>)}
+              {sourceFamilies.map((family) => (
+                <option key={family}>{family}</option>
+              ))}
             </select>
           </label>
           <label>
             Surface
-            <select value={surface} onChange={(event) => setSurface(event.target.value)}>
+            <select
+              value={surface}
+              onChange={(event) => setSurface(event.target.value)}
+            >
               <option value="">all</option>
               <option>web</option>
               <option>voice</option>
@@ -170,26 +269,105 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
           </label>
           <label>
             Cases
-            <input type="number" min={1} max={25} value={maxCases} onChange={(event) => setMaxCases(Number(event.target.value || 1))} />
+            <input
+              type="number"
+              min={1}
+              max={Math.max(1, visibleRows.length)}
+              value={maxCases}
+              onChange={(event) => setMaxCases(Number(event.target.value || 1))}
+              disabled={selectedRunCaseIds.length > 0}
+            />
           </label>
+          <div className="eval-case-picker" role="group" aria-label="Cases to run">
+            <div className="eval-case-picker-actions">
+              <span>
+                {selectedRunCaseIds.length
+                  ? `${selectedRunCaseIds.length} exact`
+                  : `first ${maxCases}`}
+              </span>
+              <button
+                type="button"
+                className="toolbar-button compact"
+                onClick={() =>
+                  setSelectedRunCaseIds(visibleRows.map((row) => row.caseId))
+                }
+              >
+                Select visible
+              </button>
+              {selectedRunCaseIds.length > 0 && (
+                <button
+                  type="button"
+                  className="toolbar-button compact"
+                  onClick={() => setSelectedRunCaseIds([])}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="eval-case-picker-list">
+              {visibleRows.map((row) => (
+                <label key={`${row.family}/${row.caseId}`}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Include ${row.caseId}`}
+                    checked={selectedRunCaseIds.includes(row.caseId)}
+                    onChange={(event) =>
+                      setSelectedRunCaseIds((current) =>
+                        event.target.checked
+                          ? [...new Set([...current, row.caseId])]
+                          : current.filter((caseId) => caseId !== row.caseId),
+                      )
+                    }
+                  />
+                  <span>{row.caseId}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           <label className="inline-toggle">
-            <input type="checkbox" checked={live} onChange={(event) => setLive(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={live}
+              onChange={(event) => setLive(event.target.checked)}
+            />
             <span>live exact-model run</span>
           </label>
-          <textarea value={`${visibleRows.length} case(s) selected. ${live ? 'Live eval calls the exact-model harness and records performance.' : 'Preview validates selection only: no model call, no score.'}`} readOnly />
+          <textarea
+            value={`${selectedRunCaseIds.length || Math.min(maxCases, visibleRows.length)} of ${visibleRows.length} case(s) will run. ${selectedRunCaseIds.length ? "Explicit case selection overrides the numeric limit." : "Cases run in bank order up to the numeric limit."} ${live ? "Live eval calls the exact-model harness and records performance." : "Preview validates selection only: no model call, no score."}${semanticJudgeRequired ? " Independent semantic rubric judging is required for live runs in this selection." : ""}`}
+            readOnly
+          />
           <button
             className="toolbar-button primary compact"
             disabled={running}
-            title={blockedReason || (live ? 'Run selected cases through the exact-model harness' : 'Preview selected cases without model calls')}
+            title={
+              blockedReason ||
+              (live
+                ? "Run selected cases through the exact-model harness"
+                : "Preview selected cases without model calls")
+            }
             onClick={() => {
               if (blockedReason) return;
-              onRun({ maxCases, live, family: selectedFamily, surface, promptId: selectedPromptId });
+              onRun({
+                maxCases: selectedRunCaseIds.length || maxCases,
+                live,
+                family: selectedFamily,
+                surface,
+                promptId: selectedPromptId,
+                caseIds: selectedRunCaseIds,
+              });
             }}
           >
             <Play size={15} />
-            {blockedReason ? 'Review draft first' : live ? 'Run live eval' : 'Run preview'}
+            {blockedReason
+              ? "Review draft first"
+              : live
+                ? "Run live eval"
+                : "Run preview"}
           </button>
-          <button className="toolbar-button compact" onClick={() => window.setTimeout(beginNewCase, 0)}>
+          <button
+            className="toolbar-button compact"
+            onClick={() => window.setTimeout(beginNewCase, 0)}
+          >
             <PlusCircle size={15} />
             New eval case
           </button>
@@ -200,49 +378,90 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
-                    <th key={header.id}>{flexRender(header.column.columnDef.header, header.getContext())}</th>
+                    <th key={header.id}>
+                      {flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
+                    </th>
                   ))}
                 </tr>
               ))}
             </thead>
             <tbody>
-              {table.getRowModel().rows.slice(0, 10).map((row) => (
-                <tr
-                  key={row.id}
-                  className={`${selectedCase?.family === row.original.family && selectedCase?.caseId === row.original.caseId ? 'selected' : ''}`}
-                  onClick={() => {
-                    setCreatingCase(false);
-                    setSelectedCaseKey(`${row.original.family}/${row.original.caseId}`);
-                  }}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                  ))}
-                </tr>
-              ))}
+              {table
+                .getRowModel()
+                .rows.slice(0, 10)
+                .map((row) => (
+                  <tr
+                    key={row.id}
+                    className={`${selectedCase?.family === row.original.family && selectedCase?.caseId === row.original.caseId ? "selected" : ""}`}
+                    onClick={() => {
+                      setCreatingCase(false);
+                      setSelectedCaseKey(
+                        `${row.original.family}/${row.original.caseId}`,
+                      );
+                    }}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td key={cell.id}>
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
         <div className="eval-case-editor">
           <div className="editor-title-row">
-            <h3><FileDiff size={15} /> {creatingCase ? 'Create Eval Case' : 'Edit Selected Eval'}</h3>
-            {creatingCase && <button className="toolbar-button compact secondary-action" onClick={cancelNewCase}>Cancel</button>}
+            <h3>
+              <FileDiff size={15} />{" "}
+              {creatingCase ? "Create Eval Case" : "Edit Selected Eval"}
+            </h3>
+            {creatingCase && (
+              <button
+                className="toolbar-button compact secondary-action"
+                onClick={cancelNewCase}
+              >
+                Cancel
+              </button>
+            )}
           </div>
           {selectedCase || creatingCase ? (
             <>
-              <strong>{creatingCase ? targetFamily : selectedCase?.family}/{creatingCase ? caseIdDraft : selectedCase?.caseId}</strong>
+              <strong>
+                {creatingCase ? targetFamily : selectedCase?.family}/
+                {creatingCase ? caseIdDraft : selectedCase?.caseId}
+              </strong>
               <label>
                 Case ID
                 {creatingCase ? (
-                  <input key="create-case-id" ref={newCaseIdRef} defaultValue={caseIdDraft} />
+                  <input
+                    key="create-case-id"
+                    ref={newCaseIdRef}
+                    defaultValue={caseIdDraft}
+                  />
                 ) : (
-                  <input key="edit-case-id" value={caseIdDraft} disabled onChange={(event) => setCaseIdDraft(event.target.value)} />
+                  <input
+                    key="edit-case-id"
+                    value={caseIdDraft}
+                    disabled
+                    onChange={(event) => setCaseIdDraft(event.target.value)}
+                  />
                 )}
               </label>
               <label>
                 Surface
                 {creatingCase ? (
-                  <select key="create-case-surface" ref={newCaseSurfaceRef} defaultValue={caseSurface}>
+                  <select
+                    key="create-case-surface"
+                    ref={newCaseSurfaceRef}
+                    defaultValue={caseSurface}
+                  >
                     <option>web</option>
                     <option>voice</option>
                     <option>telegram</option>
@@ -253,7 +472,11 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
                     <option>transcript_ingest</option>
                   </select>
                 ) : (
-                  <select key="edit-case-surface" value={caseSurface} onChange={(event) => setCaseSurface(event.target.value)}>
+                  <select
+                    key="edit-case-surface"
+                    value={caseSurface}
+                    onChange={(event) => setCaseSurface(event.target.value)}
+                  >
                     <option>web</option>
                     <option>voice</option>
                     <option>telegram</option>
@@ -268,46 +491,88 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
               <label>
                 Prompt
                 {creatingCase ? (
-                  <textarea key="create-case-prompt" ref={newCasePromptRef} defaultValue={casePrompt} />
+                  <textarea
+                    key="create-case-prompt"
+                    ref={newCasePromptRef}
+                    defaultValue={casePrompt}
+                  />
                 ) : (
-                  <textarea key="edit-case-prompt" value={casePrompt} onChange={(event) => setCasePrompt(event.target.value)} />
+                  <textarea
+                    key="edit-case-prompt"
+                    value={casePrompt}
+                    onChange={(event) => setCasePrompt(event.target.value)}
+                  />
                 )}
               </label>
               <label>
-                {selectedCase?.expectedKey === 'expected_surface' ? 'Expected surface' : 'Expected decision'}
+                {selectedCase?.expectedKey === "expected_surface"
+                  ? "Expected surface"
+                  : "Expected decision"}
                 {creatingCase ? (
-                  <input key="create-case-expected" ref={newCaseExpectedRef} defaultValue={caseExpected} />
+                  <input
+                    key="create-case-expected"
+                    ref={newCaseExpectedRef}
+                    defaultValue={caseExpected}
+                  />
                 ) : (
-                  <input key="edit-case-expected" value={caseExpected} onChange={(event) => setCaseExpected(event.target.value)} />
+                  <input
+                    key="edit-case-expected"
+                    value={caseExpected}
+                    onChange={(event) => setCaseExpected(event.target.value)}
+                  />
                 )}
               </label>
               <label>
                 Rubric
                 {creatingCase ? (
-                  <textarea key="create-case-rubric" ref={newCaseRubricRef} defaultValue={caseRubric} />
+                  <textarea
+                    key="create-case-rubric"
+                    ref={newCaseRubricRef}
+                    defaultValue={caseRubric}
+                  />
                 ) : (
-                  <textarea key="edit-case-rubric" value={caseRubric} onChange={(event) => setCaseRubric(event.target.value)} />
+                  <textarea
+                    key="edit-case-rubric"
+                    value={caseRubric}
+                    onChange={(event) => setCaseRubric(event.target.value)}
+                  />
                 )}
               </label>
               <button
                 className="toolbar-button compact"
                 onClick={() => {
-                  const formSurface = creatingCase ? newCaseSurfaceRef.current?.value ?? caseSurface : caseSurface;
-                  const formPrompt = creatingCase ? newCasePromptRef.current?.value ?? casePrompt : casePrompt;
-                  const formExpected = creatingCase ? newCaseExpectedRef.current?.value ?? caseExpected : caseExpected;
-                  const formRubric = creatingCase ? newCaseRubricRef.current?.value ?? caseRubric : caseRubric;
+                  const formSurface = creatingCase
+                    ? (newCaseSurfaceRef.current?.value ?? caseSurface)
+                    : caseSurface;
+                  const formPrompt = creatingCase
+                    ? (newCasePromptRef.current?.value ?? casePrompt)
+                    : casePrompt;
+                  const formExpected = creatingCase
+                    ? (newCaseExpectedRef.current?.value ?? caseExpected)
+                    : caseExpected;
+                  const formRubric = creatingCase
+                    ? (newCaseRubricRef.current?.value ?? caseRubric)
+                    : caseRubric;
                   const updatedCase = {
                     surface: formSurface,
                     prompt: formPrompt,
-                    rubric: formRubric.split('\n').map((line) => line.trim()).filter(Boolean),
+                    rubric: formRubric
+                      .split("\n")
+                      .map((line) => line.trim())
+                      .filter(Boolean),
                     ...(formExpected
-                      ? { [selectedCase?.expectedKey ?? 'expected_decision']: formExpected }
+                      ? {
+                          [selectedCase?.expectedKey ?? "expected_decision"]:
+                            formExpected,
+                        }
                       : {}),
                   };
                   if (creatingCase) {
                     onSaveCase({
                       familyId: targetFamily,
-                      caseId: newCaseIdRef.current?.value.trim() || caseIdDraft.trim(),
+                      caseId:
+                        newCaseIdRef.current?.value.trim() ||
+                        caseIdDraft.trim(),
                       updatedCase,
                       create: true,
                     });
@@ -322,21 +587,99 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
                 }}
               >
                 <FileDiff size={15} />
-                {creatingCase ? 'Save new eval draft' : 'Save eval draft'}
+                {creatingCase ? "Save new eval draft" : "Save eval draft"}
               </button>
             </>
-          ) : <p className="small-copy">Select an eval case to edit.</p>}
+          ) : (
+            <p className="small-copy">Select an eval case to edit.</p>
+          )}
         </div>
         <div className="trend-card">
           <TrendingUp size={16} />
           <strong>Results</strong>
-          <p>Runs stay linked to the selected prompt hash. Public views show sanitized summaries only.</p>
+          <p>
+            Runs stay linked to a versioned dependency manifest. Public views
+            show hashes and contracts, never private runtime values.
+          </p>
           <div className="run-list">
             {promptRuns.slice(0, 5).map((run) => (
               <div className="run-row" key={run.id}>
                 <code>{run.id}</code>
-                <span>{run.live ? 'live exact-model' : 'selection preview'}</span>
-                <small>{run.returnCode === 0 ? 'ok' : `code ${run.returnCode}`} · {run.resultCount ?? run.maxCases} case(s) · {run.live ? 'scored run' : 'no score'}{run.promptHash ? ` · ${run.promptHash}` : ''}</small>
+                <span>
+                  {run.executionTarget
+                    ? `${run.live ? "live" : "preview"} · direct specialist · ${run.executionTarget.promptRef}`
+                    : run.live
+                      ? "live exact-model"
+                      : "selection preview"}
+                </span>
+                <small>
+                  {run.runnerSummary?.status ??
+                    (run.returnCode === 0
+                      ? "ok"
+                      : `code ${run.returnCode}`)}{" "}
+                  · {run.resultCount ?? run.maxCases} result(s) /{" "}
+                  {run.selectedCaseCount ?? run.maxCases} selected ·{" "}
+                  {run.live ? "scored run" : "no score"}
+                  {run.semanticJudgeRequired
+                    ? " · semantic judge required"
+                    : ""}
+                  {(run.runnerSummary?.semanticJudgedCount ?? 0) > 0
+                    ? ` · semantic ${run.runnerSummary?.semanticPassedCount ?? 0}/${run.runnerSummary?.semanticJudgedCount ?? 0} passed`
+                    : ""}
+                  {(run.runnerSummary?.semanticJudgeUnavailableCount ?? 0) > 0
+                    ? ` · judge unavailable ${run.runnerSummary?.semanticJudgeUnavailableCount}`
+                    : ""}
+                  {run.runnerSummary?.blockedReason
+                    ? ` · ${run.runnerSummary.blockedReason}`
+                    : ""}
+                  {run.promptHash ? ` · ${run.promptHash}` : ""}
+                </small>
+                {run.lineageManifest && (
+                  <details>
+                    <summary>Prompt and runtime context dependencies</summary>
+                    <small>
+                      {run.lineageManifest.promptCount ??
+                        run.lineageManifest.promptDependencies.length}{" "}
+                      prompts ·{" "}
+                      {run.lineageManifest.runtimeContextCount ??
+                        run.lineageManifest.runtimeContextDependencies
+                          .length}{" "}
+                      runtime contexts · manifest{" "}
+                      {run.lineageManifest.manifestHash}
+                    </small>
+                    <ul>
+                      {run.lineageManifest.promptDependencies.map(
+                        (dependency) => (
+                          <li key={`prompt-${dependency.id}`}>
+                            <code>{dependency.id}</code>
+                            <span>
+                              {dependency.deliveryKind ??
+                                dependency.status ??
+                                "prompt source"}
+                            </span>
+                          </li>
+                        ),
+                      )}
+                      {run.lineageManifest.runtimeContextDependencies.map(
+                        (dependency) => (
+                          <li key={`runtime-${dependency.id}`}>
+                            <code>
+                              {dependency.tag
+                                ? `<${dependency.tag}>`
+                                : dependency.id}
+                            </code>
+                            <span>
+                              {dependency.lifecycle ??
+                                dependency.status ??
+                                "runtime context"}{" "}
+                              · private value not recorded
+                            </span>
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  </details>
+                )}
               </div>
             ))}
             {!promptRuns.length && <small>No runs yet for this prompt.</small>}
@@ -347,25 +690,43 @@ export function EvalPanel({ evalBank, selectedPromptId, runs, running, blockedRe
   );
 }
 
+function runHasPromptDependency(run: EvalRun, promptId: string) {
+  if (run.promptId === promptId) return true;
+  return Boolean(
+    run.lineageManifest?.promptDependencies.some(
+      (dependency) => dependency.id === promptId,
+    ),
+  );
+}
+
 function humanPromptName(id: string) {
-  const label = id.split('.').slice(1).join(' ') || id;
-  return label.replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const label = id.split(".").slice(1).join(" ") || id;
+  return label
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function flattenEvalRows(families: EvalFamily[]): EvalRow[] {
   return families.flatMap((family) =>
     (family.cases ?? []).map((testCase) => ({
       family: family.id,
-        caseId: testCase.id,
-        surface: testCase.surface,
-        expected: testCase.expected_decision ?? testCase.expected_surface ?? 'rubric',
-        rubric: testCase.rubric?.length ?? 0,
-        prompt: testCase.prompt ?? '',
-        rubricItems: testCase.rubric ?? [],
-        promptRefs: testCase.promptRefs ?? family.promptRefs ?? ['main.conscious_agent'],
-        expectedDecision: testCase.expected_decision,
-        expectedSurface: testCase.expected_surface,
-        expectedKey: testCase.expected_surface ? 'expected_surface' : testCase.expected_decision ? 'expected_decision' : undefined,
-      })),
+      caseId: testCase.id,
+      surface: testCase.surface,
+      expected:
+        testCase.expected_decision ?? testCase.expected_surface ?? "rubric",
+      rubric: testCase.rubric?.length ?? 0,
+      prompt: testCase.prompt ?? "",
+      rubricItems: testCase.rubric ?? [],
+      promptRefs: testCase.promptRefs ?? family.promptRefs ?? [],
+      semanticJudgeRequired:
+        testCase.semanticJudge === true || family.semanticJudge === true,
+      expectedDecision: testCase.expected_decision,
+      expectedSurface: testCase.expected_surface,
+      expectedKey: testCase.expected_surface
+        ? "expected_surface"
+        : testCase.expected_decision
+          ? "expected_decision"
+          : undefined,
+    })),
   );
 }

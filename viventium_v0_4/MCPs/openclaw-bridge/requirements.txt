@@ -2,12 +2,12 @@
 # Dependencies for the OpenClaw Bridge MCP server.
 # Same FastMCP pattern as power-agents-beta.
 # VIVENTIUM END
-fastmcp>=2.0.0
-httpx>=0.27.0
-websockets>=13.0
-starlette>=0.40.0
-uvicorn>=0.30.0
-e2b>=1.4.0
-e2b-desktop>=1.8.0
-pytest>=8.0.0
-pytest-asyncio>=0.24.0
+fastmcp==3.4.4
+httpx==0.28.1
+websockets==16.1.1
+starlette==1.3.1
+uvicorn==0.51.0
+e2b==2.34.0
+e2b-desktop==2.4.1
+pytest==9.1.1
+pytest-asyncio==1.4.0

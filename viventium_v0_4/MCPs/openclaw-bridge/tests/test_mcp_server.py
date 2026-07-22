@@ -8,7 +8,11 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 
 import openclaw_manager as mgr
 
@@ -34,6 +38,35 @@ class TestSecurity:
             with patch("mcp_server.BRIDGE_SECRET", "secret"):
                 with pytest.raises(ValueError, match="Forbidden"):
                     _get_user_id()
+
+    def test_get_user_id_accepts_only_the_exact_secret(self):
+        from mcp_server import _get_user_id
+
+        with patch("mcp_server.BRIDGE_SECRET", "expected-secret"):
+            with patch(
+                "mcp_server._get_request_headers",
+                return_value={"x-bridge-secret": "wrong-secret", "x-user-id": "alice"},
+            ):
+                with pytest.raises(ValueError, match="Forbidden"):
+                    _get_user_id()
+            with patch(
+                "mcp_server._get_request_headers",
+                return_value={"x-bridge-secret": "expected-secret", "x-user-id": "alice"},
+            ):
+                assert _get_user_id() == "alice"
+
+    def test_bridge_secret_comparison_is_constant_time(self):
+        import inspect
+        import mcp_server
+
+        assert "hmac.compare_digest" in inspect.getsource(mcp_server._get_user_id)
+
+    def test_every_startup_requires_bridge_secret_even_on_loopback(self):
+        import mcp_server
+
+        with patch("mcp_server.BRIDGE_SECRET", ""):
+            with pytest.raises(RuntimeError, match="required"):
+                mcp_server.create_app(host="127.0.0.1", port=8086)
 
 
 class TestInvokeTool:
@@ -62,7 +95,9 @@ class TestInvokeTool:
             mock_class.return_value.__aexit__ = AsyncMock(return_value=False)
             with patch.object(mcp_server, "manager", fresh_manager):
                 fresh_manager._set_instance(inst)
-                with patch("mcp_server._get_user_id", return_value="u1"):
+                with patch("mcp_server._get_user_id", return_value="u1"), patch.object(
+                    fresh_manager, "_is_alive", new_callable=AsyncMock, return_value=True
+                ):
                     out = await mcp_server._invoke_tool("cron", {"action": "list"})
 
         call_kwargs = mock_client.post.call_args.kwargs
@@ -101,10 +136,11 @@ class TestInvokeTool:
 
 
 class TestMCPToolRegistration:
-    def test_vm_tools_registered(self):
+    @pytest.mark.asyncio
+    async def test_vm_tools_registered(self):
         from mcp_server import mcp
 
-        tool_names = {t.name for t in mcp._tool_manager._tools.values()}
+        tool_names = {tool.name for tool in await mcp.list_tools()}
         expected = {
             "openclaw_vm_start",
             "openclaw_vm_resume",
@@ -119,6 +155,75 @@ class TestMCPToolRegistration:
             "openclaw_status",
         }
         assert expected.issubset(tool_names)
+
+
+class TestAuthenticatedMCPTransport:
+    @staticmethod
+    def _transport(app, headers: dict[str, str]) -> StreamableHttpTransport:
+        def client_factory(**kwargs):
+            return httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://openclaw-bridge.test",
+                **kwargs,
+            )
+
+        return StreamableHttpTransport(
+            "http://openclaw-bridge.test/mcp",
+            headers=headers,
+            httpx_client_factory=client_factory,
+        )
+
+    @pytest.mark.asyncio
+    async def test_authenticated_initialize_and_tool_call(self):
+        import mcp_server
+
+        fake_manager = MagicMock()
+        fake_manager.list_instances.return_value = []
+        fake_manager.schedule_cleanup.return_value = None
+        fake_manager.stop_all = AsyncMock()
+        app = mcp_server.mcp.http_app()
+        transport = self._transport(
+            app,
+            {"x-bridge-secret": "test-secret", "x-user-id": "synthetic-user"},
+        )
+
+        with patch.object(mcp_server, "manager", fake_manager), patch.object(
+            mcp_server, "BRIDGE_SECRET", "test-secret"
+        ):
+            async with app.router.lifespan_context(app):
+                async with Client(transport) as client:
+                    tools = {tool.name for tool in await client.list_tools()}
+                    result = await client.call_tool("openclaw_vm_list", {})
+
+        assert "openclaw_vm_list" in tools
+        assert result.is_error is False
+        assert "synthetic-user" in str(result.content)
+        fake_manager.list_instances.assert_called_once_with(user_id="synthetic-user")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provided_secret", [None, "wrong-secret"])
+    async def test_missing_or_wrong_secret_rejects_tool_call(self, provided_secret):
+        import mcp_server
+
+        fake_manager = MagicMock()
+        fake_manager.list_instances.return_value = []
+        fake_manager.schedule_cleanup.return_value = None
+        fake_manager.stop_all = AsyncMock()
+        app = mcp_server.mcp.http_app()
+        headers = {"x-user-id": "synthetic-user"}
+        if provided_secret is not None:
+            headers["x-bridge-secret"] = provided_secret
+        transport = self._transport(app, headers)
+
+        with patch.object(mcp_server, "manager", fake_manager), patch.object(
+            mcp_server, "BRIDGE_SECRET", "test-secret"
+        ):
+            async with app.router.lifespan_context(app):
+                async with Client(transport) as client:
+                    with pytest.raises(ToolError, match="Forbidden"):
+                        await client.call_tool("openclaw_vm_list", {})
+
+        fake_manager.list_instances.assert_not_called()
 
 
 class TestToolArgMapping:

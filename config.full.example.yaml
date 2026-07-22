@@ -1,11 +1,18 @@
 version: 1
 install:
   mode: native
+  # Public label: Custom Settings Install. Keep this compatibility value as `custom`.
+  experience: custom
 settings:
   timezone: local
 runtime:
   log_level: info
   profile: isolated
+  background_activation:
+    # Each provider attempt remains bounded by the mode's total Phase A budget. These defaults let
+    # the fast Qwen primary absorb normal tail latency and leave a useful window for a fallback.
+    primary_attempt_timeout_ms: 1600
+    fallback_attempt_timeout_ms: 2500
   playground_variant: modern
   call_session_secret:
     secret_ref: keychain://viventium/call_session_secret
@@ -41,16 +48,19 @@ runtime:
     # Optional browser-facing origins for remote-device access.
     # Leave them blank for automatic Tailscale mode or the public sslip.io fallback.
     # Set them explicitly for NetBird or your own stable public subdomains.
-    # Stable public custom-domain access expects all four of these to be set.
+    # Stable public custom-domain voice access expects the first four to be set. When GlassHive is
+    # enabled, set the fifth origin so returned workspace and artifact links work off this Mac.
     # If you prefer a single namespace, choose an app hostname like app.example.com and use:
     # - https://app.example.com
     # - https://api.app.example.com
     # - https://playground.app.example.com
     # - wss://livekit.app.example.com
+    # - https://glasshive.app.example.com
     public_client_origin: ""
     public_api_origin: ""
     public_playground_origin: ""
     public_livekit_url: ""
+    public_glasshive_origin: ""
     # Optional explicit mesh IP for LiveKit media when the public_livekit_url hostname does not
     # resolve to this Mac's private mesh address on startup. Most Tailscale installs can leave this
     # blank; NetBird operators may want to set it deliberately.
@@ -63,6 +73,12 @@ runtime:
     enabled: true
     defaults_version: 1
     auto_worker_profile: true
+  # Scheduled Viventium-agent runs use a deliberate automation tuple without
+  # changing the lower-latency effort used by ordinary conscious chat.
+  scheduled_agent:
+    provider: openai
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
   prompt_workbench:
     enabled: true
     seed_nightly:
@@ -159,6 +175,7 @@ runtime:
   ports:
     lc_api_port: 3180
     lc_frontend_port: 3190
+    sandpack_bundler_port: 3191
     playground_port: 3300
     voice_gateway_health_port: 8301
     mongo_port: 27117
@@ -181,6 +198,8 @@ llm:
     secret_ref: keychain://viventium/groq_api_key
   primary:
     provider: openai
+    # Experimental legacy bridge for compatible existing installs. New Easy Install users use the
+    # browser-entered encrypted API-key path until the vendor-owned client integration is shipped.
     auth_mode: connected_account
   secondary:
     provider: anthropic
@@ -226,7 +245,7 @@ voice:
   tts:
     voice: coral
     speed: 1.12
-    instructions: Speak naturally and warmly with clear pacing. Keep the delivery conversational and human.
+    instructions: Speak naturally with clear pacing. Keep the delivery conversational, grounded, and human. Avoid robotic emphasis or exaggerated pauses.
 integrations:
   glasshive:
     enabled: true
@@ -296,7 +315,6 @@ integrations:
       api_hash: keychain://viventium/telegram_api_hash
   telegram_codex:
     enabled: false
-    secret_ref: keychain://viventium/telegram_codex_bot_token
     bot_username: your_codex_bot_username
     private_chat_only: true
   google_workspace:
@@ -314,13 +332,13 @@ integrations:
     client_secret:
       secret_ref: keychain://viventium/ms365_client_secret
   skyvern:
-    # Advanced/Lab only. Keep off by default unless the operator explicitly enables it.
+    # Optional/lab-only. Keep off unless the operator explicitly enables it.
     enabled: false
     api_key:
       secret_ref: keychain://viventium/skyvern_api_key
     base_url: http://localhost:8200
   openclaw:
-    # Advanced/Lab only. Keep off by default unless the operator explicitly enables it.
+    # Internal lab-only placeholder; the public installer does not expose it.
     enabled: false
 feature_requests:
   pr:

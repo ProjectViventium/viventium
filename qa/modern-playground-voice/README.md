@@ -38,6 +38,45 @@ chat message.
 - Stack launcher output from:
   - `bin/viventium start --restart`
 
+## Autonomous Off-LAN Media QA
+
+`scripts/livekit_synthetic_audio_qa.js` can reproduce a cellular-style public call without using the
+operator's phone. Run Chromium through an independently routed SOCKS proxy, point the browser at the
+public Playground while keeping DB preflight local, and disable non-proxied UDP:
+
+```bash
+MONGO_URI=mongodb://127.0.0.1:27117/LibreChatViventium \
+VIVENTIUM_QA_BROWSER_PLAYGROUND_URL=https://playground.app.example.com \
+VIVENTIUM_QA_BROWSER_PROXY=socks5://127.0.0.1:19050 \
+VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP=1 \
+node qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js \
+  --audio <synthetic-wav> \
+  --expect "<synthetic transcript>" \
+  --case-id public-browser-off-lan \
+  --result output/playwright/remote-access/public-browser-off-lan.json \
+  --screenshot output/playwright/remote-access/public-browser-off-lan.png
+```
+
+Acceptance requires all of the following, not merely a loaded public page:
+
+- `browserProxyMediaSelected=true`
+- a connected selected ICE pair using TCP or TURN over TCP/TLS
+- the real voice worker is present
+- the expected synthetic transcript persists exactly within the case limit
+- targeted cleanup removes the synthetic user, call session, ingress row, transcript, and linked
+  conversation
+
+The same harness also supports two narrower diagnostics:
+
+- `VIVENTIUM_QA_TURN_PROXY_URL` plus `VIVENTIUM_QA_TURN_PROXY_HOST_RULE` and
+  `VIVENTIUM_QA_FORCE_RELAY=1` force the runtime-issued TURN credentials through an external TCP
+  proxy. This passes only when a relay pair is selected.
+- `VIVENTIUM_QA_PUBLIC_MEDIA_CANDIDATE` plus `VIVENTIUM_QA_PUBLIC_MEDIA_PROXY` rewrite only the
+  named public TCP candidate to a controlled external ingress proxy.
+
+Keep proxy processes, JSON, screenshots, raw candidate addresses, session IDs, and transcripts
+local under `output/`; commit only sanitized status, candidate type/protocol, counts, and conclusions.
+
 ## Escaped Cross-Surface Case
 
 Voice QA must include natural current-data prompts, not only simple greeting/latency prompts. If a

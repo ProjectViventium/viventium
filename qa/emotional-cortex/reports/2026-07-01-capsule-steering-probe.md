@@ -1,5 +1,7 @@
 # Emotional Cortex — capsule steering + truth/safety probe, anchor verification
 
+<!-- qa-evidence-exempt: Historical model-probe ledger retained as supporting evidence; real browser and runtime acceptance are recorded separately. -->
+
 Date: 2026-07-01
 Owning requirement: `docs/requirements_and_learnings/54_Emotional_Cortex_And_Feeling_State.md` (v4)
 Cases touched: `EMO-009` (probe-level evidence, hard gate stays open), `EMO-007`, `EMO-003`,

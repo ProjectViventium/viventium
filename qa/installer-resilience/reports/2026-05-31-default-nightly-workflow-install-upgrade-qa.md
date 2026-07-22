@@ -87,7 +87,7 @@ The minimal path of resistance is:
   - Result after Claude-driven fixes: `365 passed`.
 - Public-safety regression:
   - `tests/release/test_qa_results_public_safety.py`
-  - Result: `1 passed`.
+  - Test evidence: `1 passed`.
 
 ## Result
 

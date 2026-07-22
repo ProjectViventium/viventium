@@ -7,6 +7,7 @@ HELPER_PACKAGE_DIR="${VIVENTIUM_HELPER_PACKAGE_DIR:-$REPO_ROOT/apps/macos/Vivent
 PREBUILT_DIR="${VIVENTIUM_HELPER_PREBUILT_DIR:-$HELPER_PACKAGE_DIR/prebuilt}"
 UNIVERSAL_OUT="${VIVENTIUM_HELPER_PREBUILT_EXECUTABLE:-$PREBUILT_DIR/ViventiumHelper-universal}"
 SOURCE_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_SOURCE_HASH_FILE:-$PREBUILT_DIR/source.sha256}"
+BINARY_HASH_FILE="${VIVENTIUM_HELPER_PREBUILT_BINARY_HASH_FILE:-$PREBUILT_DIR/binary.sha256}"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
@@ -21,6 +22,8 @@ xcrun swiftc -parse-as-library -sdk "$SDK_PATH" -target arm64-apple-macosx13.0 "
 xcrun swiftc -parse-as-library -sdk "$SDK_PATH" -target x86_64-apple-macosx13.0 "$SOURCE_PATH" -o "$X86_64_OUT"
 lipo -create -output "$UNIVERSAL_OUT" "$ARM64_OUT" "$X86_64_OUT"
 chmod +x "$UNIVERSAL_OUT"
+shasum -a 256 "$UNIVERSAL_OUT" | awk '{print $1}' >"$BINARY_HASH_FILE"
+chmod 644 "$BINARY_HASH_FILE"
 
 python3 - "$HELPER_PACKAGE_DIR" "$SOURCE_HASH_FILE" <<'PY'
 import hashlib
@@ -47,3 +50,4 @@ PY
 
 echo "Built fallback helper: $UNIVERSAL_OUT"
 echo "Recorded source hash: $SOURCE_HASH_FILE"
+echo "Recorded binary hash: $BINARY_HASH_FILE"

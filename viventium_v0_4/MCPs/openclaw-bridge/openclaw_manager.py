@@ -5,16 +5,15 @@
 #   - Gateway multiplexes WS+HTTP on a SINGLE port (gateway.port, default 18789)
 #   - Config file: openclaw.json in OPENCLAW_STATE_DIR (~/.openclaw/)
 #   - Config schema: OpenClawConfig (types.openclaw.ts) — no top-level "agent"
-#   - CLI: `openclaw gateway --port PORT --bind loopback --token TOKEN --allow-unconfigured --force`
+#   - CLI: `openclaw gateway --port PORT --bind loopback --token TOKEN --allow-unconfigured`
 #   - bind is a mode: "loopback"|"lan"|"auto"|"custom"|"tailnet" (NOT an IP:PORT)
-#   - No /health HTTP endpoint — health is a WS RPC method
-#   - Readiness probe: POST /tools/invoke with Bearer auth (returns 401/404 when alive)
+#   - Reviewed runtime identity: GET /health -> {"ok":true,"status":"live"}
 #   - Plugin manifest: openclaw.plugin.json (required: id, configSchema)
 #   - Plugin paths: plugins.load.paths in config
 #
 # Added for VM POC:
 #   - VM identity is (user_id, vm_id)
-#   - Runtime selection: OPENCLAW_RUNTIME=e2b|direct (default e2b)
+#   - Runtime selection: OPENCLAW_RUNTIME=e2b|direct (default E2B; direct is explicit)
 #   - E2B sandbox lifecycle support with pause/resume/terminate
 #   - Registry persistence for VM recovery across bridge restarts
 # VIVENTIUM END
@@ -25,8 +24,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
-import signal
+import shlex
+import socket
+import stat
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -59,8 +61,16 @@ IDLE_TIMEOUT_HOURS = float(os.environ.get("OPENCLAW_IDLE_TIMEOUT_HOURS", "2"))
 # Runtime mode.
 OPENCLAW_RUNTIME = os.environ.get("OPENCLAW_RUNTIME", "e2b").strip().lower()
 OPENCLAW_RUNTIME_ALLOW_FALLBACK = os.environ.get(
-    "OPENCLAW_RUNTIME_ALLOW_FALLBACK", "true"
+    "OPENCLAW_RUNTIME_ALLOW_FALLBACK", "false"
 ).strip().lower() in {"1", "true", "yes", "on"}
+OPENCLAW_DIRECT_HOST_EXEC_ALLOWED = os.environ.get(
+    "OPENCLAW_ALLOW_DIRECT_HOST_EXEC", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+# VIVENTIUM START: reviewed runtime and network-discovery privacy contract.
+OPENCLAW_REQUIRED_VERSION = "2026.7.1-2"
+OPENCLAW_DISABLE_BONJOUR = "1"
+# VIVENTIUM END
 
 # Default VM id for backward-compatible single-VM calls.
 OPENCLAW_DEFAULT_VM_ID = os.environ.get("OPENCLAW_DEFAULT_VM_ID", "001")
@@ -114,18 +124,90 @@ LOG_DIR = Path(os.environ.get("OPENCLAW_LOG_DIR", os.path.expanduser("~/.viventi
 # Registry file
 REGISTRY_PATH = DATA_DIR / "vm_registry.json"
 
+_IDENTIFIER_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z", re.ASCII)
+
+
+def normalize_user_id(user_id: str) -> str:
+    """Return a path-safe, stable user identifier or fail closed."""
+    raw = str(user_id).strip().lower()
+    if not _IDENTIFIER_RE.fullmatch(raw):
+        raise ValueError(
+            "User id must be 1-64 ASCII lowercase letters, digits, underscores, or hyphens"
+        )
+    return raw
+
 
 def normalize_vm_id(vm_id: str | None) -> str:
     """Normalize VM ids to a stable human-readable form, e.g. 001."""
-    if not vm_id:
-        return OPENCLAW_DEFAULT_VM_ID
+    if vm_id is None:
+        vm_id = OPENCLAW_DEFAULT_VM_ID
     raw = str(vm_id).strip().lower()
+    if not raw:
+        raise ValueError("VM id must not be empty")
     if raw.startswith("vm-"):
         raw = raw[3:]
     if raw.isdigit():
-        return raw.zfill(3)
-    # keep custom labels but trim
+        raw = raw.zfill(3)
+    if not _IDENTIFIER_RE.fullmatch(raw):
+        raise ValueError(
+            "VM id must be 1-64 ASCII lowercase letters, digits, underscores, or hyphens"
+        )
     return raw
+
+
+def _ensure_private_directory(path: Path) -> Path:
+    """Create or validate an owner-only directory without following a symlink."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        path.mkdir(mode=0o700, parents=True, exist_ok=False)
+        info = path.lstat()
+
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError(f"Refusing unsafe runtime directory: {path}")
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise RuntimeError(f"Refusing unsafe runtime directory ownership or permissions: {path}")
+    return path
+
+
+def _atomic_private_json(path: Path, payload: dict) -> None:
+    """Atomically write secret-bearing JSON as an owner-only regular file."""
+    parent = _ensure_private_directory(path.parent)
+    if path.exists() or path.is_symlink():
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise RuntimeError(f"Refusing unsafe runtime file: {path}")
+        if info.st_uid != os.getuid():
+            raise RuntimeError(f"Refusing runtime file owned by another user: {path}")
+
+    temp_path = parent / f".{path.name}.{secrets.token_hex(8)}.tmp"
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        os.chmod(path, 0o600, follow_symlinks=False)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _open_private_append(path: Path):
+    """Open an owner-only append log without following a symlink."""
+    _ensure_private_directory(path.parent)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        os.close(fd)
+        raise RuntimeError(f"Refusing unsafe runtime log: {path}")
+    os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "a", encoding="utf-8")
 
 
 # ============== DATA CLASSES ==============
@@ -153,6 +235,10 @@ class OpenClawInstance:
 
     created_at: datetime = field(default_factory=datetime.now)
     last_activity: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self) -> None:
+        self.user_id = normalize_user_id(self.user_id)
+        self.vm_id = normalize_vm_id(self.vm_id)
 
     @property
     def key(self) -> Tuple[str, str]:
@@ -234,14 +320,18 @@ class OpenClawManager:
     def __init__(self):
         self.instances: Dict[object, OpenClawInstance] = {}
         self.used_ports: set = set()
+        self._port_reservations: Dict[int, socket.socket] = {}
+        self._owned_processes: Dict[Tuple[str, str], asyncio.subprocess.Process] = {}
         self._vm_locks: Dict[Tuple[str, str], asyncio.Lock] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
 
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _ensure_private_directory(DATA_DIR)
+        _ensure_private_directory(LOG_DIR)
 
         self.registry = VMRegistry(REGISTRY_PATH)
-        self.runtime_mode = OPENCLAW_RUNTIME if OPENCLAW_RUNTIME in {"e2b", "direct"} else "e2b"
+        if OPENCLAW_RUNTIME not in {"e2b", "direct"}:
+            raise ValueError("OPENCLAW_RUNTIME must be direct or e2b")
+        self.runtime_mode = OPENCLAW_RUNTIME
         self.e2b_runtime = E2BRuntimeAdapter(
             gateway_port=OPENCLAW_GATEWAY_PORT,
             default_model=OPENCLAW_MODEL,
@@ -252,6 +342,13 @@ class OpenClawManager:
                 "OPENCLAW_RUNTIME=e2b requested but E2B SDK is unavailable; falling back to direct runtime"
             )
             self.runtime_mode = "direct"
+
+        if self.runtime_mode == "direct" and not OPENCLAW_DIRECT_HOST_EXEC_ALLOWED:
+            raise RuntimeError(
+                "The direct OpenClaw runtime can execute on the host. "
+                "Use the sandboxed OPENCLAW_RUNTIME=e2b default, or explicitly set "
+                "OPENCLAW_ALLOW_DIRECT_HOST_EXEC=true after reviewing that risk."
+            )
 
         self._load_registry()
         self._reconcile_registry()
@@ -269,7 +366,7 @@ class OpenClawManager:
     # ------------------------------------------------------------------
 
     def _instance_key(self, user_id: str, vm_id: str) -> Tuple[str, str]:
-        return (user_id, normalize_vm_id(vm_id))
+        return (normalize_user_id(user_id), normalize_vm_id(vm_id))
 
     def _get_vm_lock(self, user_id: str, vm_id: str) -> asyncio.Lock:
         key = self._instance_key(user_id, vm_id)
@@ -357,9 +454,15 @@ class OpenClawManager:
         remote_map: Dict[Tuple[str, str], Dict] = {}
         for sandbox in remote_sandboxes:
             metadata = sandbox.get("metadata", {}) or {}
-            user_id = str(metadata.get("viventium_user", "")).strip()
-            vm_id = normalize_vm_id(str(metadata.get("viventium_vm_id", "")).strip())
-            if not user_id or not vm_id:
+            try:
+                user_id = normalize_user_id(
+                    str(metadata.get("viventium_user", "")).strip()
+                )
+                vm_id = normalize_vm_id(
+                    str(metadata.get("viventium_vm_id", "")).strip()
+                )
+            except ValueError:
+                logger.warning("Ignoring E2B sandbox with invalid Viventium identity metadata")
                 continue
             remote_map[(user_id, vm_id)] = sandbox
 
@@ -401,14 +504,46 @@ class OpenClawManager:
 
     def _get_free_port(self) -> int:
         for port in range(PORT_RANGE_START, PORT_RANGE_END):
-            if port not in self.used_ports:
-                self.used_ports.add(port)
-                return port
+            if port in self.used_ports:
+                continue
+            reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+                reservation.bind(("127.0.0.1", port))
+                reservation.listen(1)
+            except OSError:
+                reservation.close()
+                continue
+            self.used_ports.add(port)
+            self._port_reservations[port] = reservation
+            return port
         raise RuntimeError("No free ports available for OpenClaw instance")
 
     def _release_port(self, instance: OpenClawInstance):
         if instance.port:
+            reservation = self._port_reservations.pop(instance.port, None)
+            if reservation:
+                reservation.close()
             self.used_ports.discard(instance.port)
+
+    def _reserve_exact_port(self, port: int) -> None:
+        if port in self._port_reservations:
+            return
+        reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+            reservation.bind(("127.0.0.1", port))
+            reservation.listen(1)
+        except OSError as exc:
+            reservation.close()
+            raise RuntimeError(f"OpenClaw port {port} is already in use") from exc
+        self.used_ports.add(port)
+        self._port_reservations[port] = reservation
+
+    def _consume_port_reservation(self, port: int) -> None:
+        reservation = self._port_reservations.pop(port, None)
+        if reservation:
+            reservation.close()
 
     # ------------------------------------------------------------------
     # State directory (direct runtime)
@@ -421,11 +556,13 @@ class OpenClawManager:
         - $STATE_DIR/openclaw.json
         - $STATE_DIR/workspace/
         """
+        user = normalize_user_id(user_id)
         vm = normalize_vm_id(vm_id)
-        user_dir = DATA_DIR / user_id / f"vm-{vm}"
-        user_dir.mkdir(parents=True, exist_ok=True)
-        (user_dir / "workspace").mkdir(exist_ok=True)
-        return user_dir
+        root = _ensure_private_directory(DATA_DIR)
+        user_root = _ensure_private_directory(root / user)
+        state_dir = _ensure_private_directory(user_root / f"vm-{vm}")
+        _ensure_private_directory(state_dir / "workspace")
+        return state_dir
 
     # ------------------------------------------------------------------
     # Config generation (direct runtime)
@@ -499,13 +636,48 @@ class OpenClawManager:
                 }
 
         config_path = state_dir / "openclaw.json"
-        config_path.write_text(json.dumps(config, indent=2))
-        logger.info("Generated config for user %s at %s", user_id, config_path)
+        _atomic_private_json(config_path, config)
+        logger.info("Generated config for user %s", normalize_user_id(user_id))
         return config_path
 
     # ------------------------------------------------------------------
     # Direct runtime lifecycle
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _reviewed_openclaw_command() -> List[str]:
+        """Return the configured command only when it is the exact reviewed runtime."""
+        bin_parts = shlex.split(OPENCLAW_BIN)
+        if not bin_parts:
+            raise RuntimeError("OPENCLAW_BIN is empty")
+        try:
+            result = subprocess.run(
+                [*bin_parts, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(
+                f"OpenClaw reviewed runtime {OPENCLAW_REQUIRED_VERSION} is unavailable; "
+                "run the Viventium OpenClaw launcher."
+            ) from exc
+
+        reported_versions = [
+            line.strip() for line in result.stdout.splitlines() if line.strip()
+        ]
+        version_matches = any(
+            line == OPENCLAW_REQUIRED_VERSION
+            or line.startswith(f"OpenClaw {OPENCLAW_REQUIRED_VERSION} (")
+            for line in reported_versions
+        )
+        if result.returncode != 0 or not version_matches:
+            raise RuntimeError(
+                f"OpenClaw must be the reviewed {OPENCLAW_REQUIRED_VERSION} runtime; "
+                "no mutable or mismatched fallback is allowed."
+            )
+        return bin_parts
 
     async def _start_instance(
         self,
@@ -516,25 +688,29 @@ class OpenClawManager:
         gateway_token: Optional[str] = None,
     ) -> OpenClawInstance:
         """Start an OpenClaw gateway as a local child process (direct runtime)."""
-        token = gateway_token or self._new_gateway_token()
-
-        self._generate_config(user_id, state_dir, port, gateway_token=token)
-
+        user = normalize_user_id(user_id)
         vm = normalize_vm_id(vm_id)
-        log_stdout = open(LOG_DIR / f"{user_id}-{vm}.stdout.log", "a")
-        log_stderr = open(LOG_DIR / f"{user_id}-{vm}.stderr.log", "a")
+        token = gateway_token or self._new_gateway_token()
+        bin_parts = self._reviewed_openclaw_command()
+
+        self._reserve_exact_port(port)
+
+        self._generate_config(user, state_dir, port, gateway_token=token)
+
+        log_stdout = _open_private_append(LOG_DIR / f"{user}-{vm}.stdout.log")
+        log_stderr = _open_private_append(LOG_DIR / f"{user}-{vm}.stderr.log")
 
         env = {**os.environ}
         env["OPENCLAW_STATE_DIR"] = str(state_dir)
         env["OPENCLAW_CONFIG_PATH"] = str(state_dir / "openclaw.json")
         env["OPENCLAW_GATEWAY_TOKEN"] = token
+        env["OPENCLAW_DISABLE_BONJOUR"] = OPENCLAW_DISABLE_BONJOUR
 
         for key in _PROVIDER_ENV_KEYS:
             val = os.environ.get(key, "")
             if val:
                 env[key] = val
 
-        bin_parts = OPENCLAW_BIN.split()
         cmd = [
             *bin_parts,
             "gateway",
@@ -545,12 +721,21 @@ class OpenClawManager:
             "--token",
             token,
             "--allow-unconfigured",
-            "--force",
         ]
 
-        logger.info("Starting OpenClaw (direct) for %s/%s: %s", user_id, vm, " ".join(cmd))
+        logger.info(
+            "Starting reviewed OpenClaw (direct) for %s/%s on loopback port %s",
+            user,
+            vm,
+            port,
+        )
 
+        process = None
         try:
+            # Keep the loopback port reserved until the exact moment the reviewed
+            # child is spawned. If another process wins the remaining race, the
+            # child exits and the identity-specific readiness probe fails closed.
+            self._consume_port_reservation(port)
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=log_stdout,
@@ -559,15 +744,21 @@ class OpenClawManager:
                 cwd=str(state_dir / "workspace"),
             )
         except FileNotFoundError:
-            log_stdout.close()
-            log_stderr.close()
+            self.used_ports.discard(port)
             raise RuntimeError(
                 f"OpenClaw binary not found at '{OPENCLAW_BIN}'. "
-                "Install with: npm install -g openclaw@latest"
+                f"Run the Viventium OpenClaw launcher to install the reviewed {OPENCLAW_REQUIRED_VERSION} runtime."
             )
+        except Exception:
+            self.used_ports.discard(port)
+            raise
+
+        finally:
+            log_stdout.close()
+            log_stderr.close()
 
         instance = OpenClawInstance(
-            user_id=user_id,
+            user_id=user,
             vm_id=vm,
             runtime="direct",
             state="running",
@@ -579,61 +770,73 @@ class OpenClawManager:
             created_at=datetime.now(),
             last_activity=datetime.now(),
         )
+        self._owned_processes[instance.key] = process
 
-        await self._wait_for_ready(instance, timeout=READINESS_TIMEOUT)
+        try:
+            await self._wait_for_ready(instance, timeout=READINESS_TIMEOUT, process=process)
+        except Exception:
+            await self._stop_direct_process(instance)
+            self._release_port(instance)
+            raise
         return instance
 
-    async def _wait_for_ready(self, instance: OpenClawInstance, timeout: int = 45):
-        """Probe readiness via POST /tools/invoke."""
-        if not instance.tools_invoke_url:
-            raise RuntimeError("Instance has no tools_invoke_url")
+    async def _wait_for_ready(
+        self,
+        instance: OpenClawInstance,
+        timeout: int = 45,
+        process: Optional[asyncio.subprocess.Process] = None,
+    ):
+        """Require the reviewed runtime's exact loopback health identity."""
+        if not instance.base_url:
+            raise RuntimeError("Instance has no base_url")
 
         deadline = time.time() + timeout
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {instance.gateway_token or OPENCLAW_BRIDGE_AUTH_TOKEN}",
-        }
-        probe_body = {"tool": "__viventium_probe__", "args": {}}
 
         async with httpx.AsyncClient() as client:
             while time.time() < deadline:
-                try:
-                    resp = await client.post(
-                        instance.tools_invoke_url,
-                        json=probe_body,
-                        headers=headers,
-                        timeout=3,
+                if process is not None and process.returncode is not None:
+                    raise RuntimeError(
+                        f"OpenClaw instance for {instance.user_id}/{instance.vm_id} exited before readiness"
                     )
-                    if resp.status_code in (200, 401, 404):
+                try:
+                    resp = await client.get(f"{instance.base_url}/health", timeout=3)
+                    if resp.status_code == 200 and resp.json() == {"ok": True, "status": "live"}:
                         logger.info(
-                            "OpenClaw instance for %s/%s ready (%s)",
+                            "OpenClaw instance for %s/%s ready",
                             instance.user_id,
                             instance.vm_id,
-                            resp.status_code,
                         )
                         return
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout):
+                except (
+                    httpx.ConnectError,
+                    httpx.ReadTimeout,
+                    httpx.ConnectTimeout,
+                    json.JSONDecodeError,
+                    ValueError,
+                ):
                     pass
                 await asyncio.sleep(1)
 
-        logger.warning(
-            "OpenClaw instance for %s/%s not ready within %ss",
-            instance.user_id,
-            instance.vm_id,
-            timeout,
+        raise RuntimeError(
+            f"OpenClaw instance for {instance.user_id}/{instance.vm_id} not ready within {timeout}s"
         )
 
     async def _stop_direct_process(self, instance: OpenClawInstance):
-        if not instance.pid:
+        process = self._owned_processes.pop(instance.key, None)
+        if process is None or process.pid != instance.pid:
+            # A persisted PID is not proof of ownership after a bridge restart.
+            # Never signal a potentially reused PID; the default E2B runtime
+            # does not have this direct-host lifecycle limitation.
+            instance.pid = None
             return
         try:
-            os.kill(instance.pid, signal.SIGTERM)
-            await asyncio.sleep(2)
+            process.terminate()
             try:
-                os.kill(instance.pid, signal.SIGKILL)
-            except OSError:
-                pass
-        except OSError:
+                await asyncio.wait_for(process.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        except ProcessLookupError:
             pass
         instance.pid = None
 
@@ -761,28 +964,15 @@ class OpenClawManager:
             except Exception:
                 return False
 
-        if not instance.tools_invoke_url:
+        if not instance.base_url or not instance.pid:
             return False
 
         try:
+            os.kill(instance.pid, 0)
             async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    instance.tools_invoke_url,
-                    json={"tool": "__viventium_probe__", "args": {}},
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {instance.gateway_token or OPENCLAW_BRIDGE_AUTH_TOKEN}",
-                    },
-                    timeout=3,
-                )
-                return resp.status_code in (200, 401, 404)
+                resp = await client.get(f"{instance.base_url}/health", timeout=3)
+                return resp.status_code == 200 and resp.json() == {"ok": True, "status": "live"}
         except Exception:
-            if instance.pid:
-                try:
-                    os.kill(instance.pid, 0)
-                    return True
-                except OSError:
-                    return False
             return False
 
     async def stop_instance(self, user_id: str, vm_id: str = OPENCLAW_DEFAULT_VM_ID):
@@ -878,6 +1068,8 @@ class OpenClawManager:
         view_only: bool = False,
     ) -> Dict:
         vm = normalize_vm_id(vm_id)
+        if self.runtime_mode != "e2b":
+            raise RuntimeError("Takeover requires OPENCLAW_RUNTIME=e2b and an active sandbox")
         instance = await self.get_or_create_instance(user_id, vm)
 
         if instance.runtime != "e2b" or not instance.sandbox_id:

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -44,7 +45,7 @@ DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_OPENAI_TTS_VOICE = "coral"
 DEFAULT_OPENAI_TTS_SPEED = "1.12"
 DEFAULT_OPENAI_TTS_INSTRUCTIONS = (
-    "Speak naturally and warmly with clear pacing. Keep the delivery conversational, "
+    "Speak naturally with clear pacing. Keep the delivery conversational, "
     "grounded, and human. Avoid robotic emphasis or exaggerated pauses."
 )
 DEFAULT_CARTESIA_API_VERSION = "2026-03-01"
@@ -73,9 +74,13 @@ DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_BUFFER_SEC = 60
 DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_MS = (
     DEFAULT_GLASSHIVE_MCP_BLOCKING_WAIT_MAX_SEC + DEFAULT_GLASSHIVE_MCP_TRANSPORT_TIMEOUT_BUFFER_SEC
 ) * 1000
+DEFAULT_PUBLIC_GLASSHIVE_LINK_REF_TTL_SECONDS = 86400
+DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS = 1800
 SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
-DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS = "4000"
+DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS = "6000"
+DEFAULT_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS = 1600
+DEFAULT_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS = 2500
 DEFAULT_VIVENTIUM_TIMEZONE = "local"
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
@@ -205,6 +210,13 @@ KEYCHAIN_SERVICE_ENV_FALLBACKS = {
     "viventium/telegram_bot_token": ("BOT_TOKEN",),
     "viventium/telegram_codex_bot_token": ("TELEGRAM_CODEX_BOT_TOKEN",),
     "viventium/x_ai_api_key": ("XAI_API_KEY",),
+}
+
+PROVIDER_API_KEY_ENV_NAMES = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "xai": "XAI_API_KEY",
 }
 
 
@@ -745,6 +757,42 @@ DEFAULT_MEMORY_HARDENING = {
     },
 }
 
+SCHEDULED_AGENT_LAUNCH_READY_MODELS = {"gpt-5.6-sol"}
+DEFAULT_SCHEDULED_AGENT = {
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "xhigh",
+}
+
+
+def resolve_scheduled_agent_settings(config: dict[str, Any]) -> dict[str, str]:
+    runtime = config.get("runtime", {}) or {}
+    raw = runtime.get("scheduled_agent", {}) or {}
+    if not isinstance(raw, dict):
+        raise SystemExit("runtime.scheduled_agent must be an object")
+
+    provider = str(
+        raw.get("provider") or DEFAULT_SCHEDULED_AGENT["provider"]
+    ).strip().lower()
+    model = str(raw.get("model") or DEFAULT_SCHEDULED_AGENT["model"]).strip()
+    effort = str(
+        raw.get("reasoning_effort")
+        or DEFAULT_SCHEDULED_AGENT["reasoning_effort"]
+    ).strip().lower()
+    if provider != "openai":
+        raise SystemExit(
+            "runtime.scheduled_agent.provider must stay openai for the gpt-5.6-sol automation route"
+        )
+    if model not in SCHEDULED_AGENT_LAUNCH_READY_MODELS:
+        raise SystemExit(
+            "runtime.scheduled_agent.model must stay on the launch-ready gpt-5.6-sol automation route"
+        )
+    if effort != "xhigh":
+        raise SystemExit(
+            "runtime.scheduled_agent.reasoning_effort must stay xhigh for public builds"
+        )
+    return {"provider": provider, "model": model, "reasoning_effort": effort}
+
 MEMORY_TRANSCRIPT_RAG_MODES = {"detailed_summary_only", "raw_and_summary", "raw_only"}
 
 FEELINGS_AGENT_SCOPES = {"all_agents", "conscious_agent"}
@@ -912,6 +960,7 @@ PROFILE_DEFAULTS = {
     "isolated": {
         "lc_api_port": 3180,
         "lc_frontend_port": 3190,
+        "sandpack_bundler_port": 3191,
         "playground_port": 3300,
         "voice_gateway_health_port": 8301,
         "mongo_port": 27117,
@@ -930,6 +979,7 @@ PROFILE_DEFAULTS = {
     "compat": {
         "lc_api_port": 3080,
         "lc_frontend_port": 3090,
+        "sandpack_bundler_port": 3091,
         "playground_port": 3000,
         "voice_gateway_health_port": 8300,
         "mongo_port": 27017,
@@ -951,6 +1001,7 @@ DEV_ENV_SCHEDULING_MCP_PORT_OFFSET_BIAS = 100
 RUNTIME_PORT_KEYS = {
     "lc_api_port",
     "lc_frontend_port",
+    "sandpack_bundler_port",
     "playground_port",
     "voice_gateway_health_port",
     "mongo_port",
@@ -976,6 +1027,23 @@ SOURCE_OF_TRUTH_AGENTS_BUNDLE = (
 )
 DEFAULT_VIVENTIUM_AGENT_ICON_URL = "/assets/logo.svg"
 APP_SUPPORT_VIVENTIUM_DIR = Path.home() / "Library" / "Application Support" / "Viventium"
+RESTORED_RUNTIME_SELECTION_RELATIVE_PATH = Path(
+    "state/continuity/restored-runtime-selection.json"
+)
+RESTORED_RUNTIME_SELECTION_V1_KEYS = {
+    "schemaVersion",
+    "profile",
+    "targetDatabase",
+    "generatedRuntimePolicy",
+    "helperBindingPolicy",
+}
+RESTORED_RUNTIME_SELECTION_V2_KEYS = RESTORED_RUNTIME_SELECTION_V1_KEYS | {
+    "targetMongoPort",
+    "targetMongoDataPath",
+    "mongoPersistencePolicy",
+    "localRuntimeSecretPolicy",
+}
+SAFE_MONGO_DATABASE_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _SOURCE_PROMPT_REGISTRY_CACHE: dict[str, Any] | None = None
 PROMPT_AFFECTING_RUNTIME_CONFIG_SECTIONS = (
     "version",
@@ -1038,15 +1106,182 @@ def validate_config(config: dict[str, Any], config_path: Path) -> None:
     if int(config.get("version", 0)) != CONFIG_VERSION:
         raise SystemExit(f"Unsupported config version in {config_path}")
 
+    install_experience = str(config.get("install", {}).get("experience") or "").strip().lower()
+    if install_experience not in {"", "express", "custom"}:
+        raise SystemExit("install.experience must be express or custom when configured.")
+
     activation_provider = normalize_provider_name(config["llm"]["activation"].get("provider"))
     allowed_activation_providers = CURRENT_BACKGROUND_ACTIVATION_PROVIDER_ALIASES | OPTIONAL_BACKGROUND_ACTIVATION_PROVIDER_ALIASES
     if activation_provider not in allowed_activation_providers:
         raise SystemExit(
             "Activation provider must be Groq by default, or xAI only as an explicit override."
         )
-    if not provider_secret(config["llm"]["activation"]):
+    if install_experience != "express" and not provider_secret(config["llm"]["activation"]):
         provider_label = "xAI" if activation_provider == "xai" else "Groq"
         raise SystemExit(f"Missing required {provider_label} activation credential.")
+
+
+def _load_strict_json_object(path: Path) -> dict[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate key")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise SystemExit("Restored runtime selection ledger is invalid.") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit("Restored runtime selection ledger must be a JSON object.")
+    return payload
+
+
+def _require_owner_only_regular_file(path: Path, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"{label} could not be inspected.") from exc
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"{label} must be a regular non-symlink file.")
+    if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise SystemExit(f"{label} must be owner-only and owned by the current user.")
+
+
+def _require_owner_only_directory(path: Path, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"{label} could not be inspected.") from exc
+    if path.is_symlink() or not path.is_dir():
+        raise SystemExit(f"{label} must be a non-symlink directory.")
+    if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise SystemExit(f"{label} must be owner-only and owned by the current user.")
+
+
+def _require_no_symlink_path(path: Path, label: str) -> None:
+    current = path
+    while current.parent != current:
+        try:
+            if current.is_symlink():
+                raise SystemExit(f"{label} contains a symlink.")
+        except OSError as exc:
+            raise SystemExit(f"{label} could not be inspected.") from exc
+        current = current.parent
+
+
+def restored_runtime_selection_overrides(
+    config: dict[str, Any],
+    config_path: Path,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Resolve the database selected by a completed independent restore.
+
+    The restore ledger is executable configuration, so it is accepted only from the canonical
+    App Support-relative location with strict schema, ownership, mode, profile, and output binding.
+    """
+    app_support_dir = config_path.parent
+    ledger_path = app_support_dir / RESTORED_RUNTIME_SELECTION_RELATIVE_PATH
+    if not ledger_path.exists() and not ledger_path.is_symlink():
+        return {}
+
+    if config_path.name != "config.yaml":
+        raise SystemExit("Restored runtime selection requires the canonical config.yaml path.")
+    _require_owner_only_directory(app_support_dir, "Restored App Support directory")
+    _require_owner_only_regular_file(config_path, "Restored canonical config")
+
+    for relative_dir in (Path("state"), Path("state/continuity")):
+        _require_owner_only_directory(
+            app_support_dir / relative_dir,
+            "Restored runtime selection directory",
+        )
+    _require_owner_only_regular_file(ledger_path, "Restored runtime selection ledger")
+
+    expected_output = app_support_dir / "runtime"
+    if output_dir != expected_output:
+        raise SystemExit(
+            "Restored runtime selection may compile only into its own App Support runtime directory."
+        )
+
+    payload = _load_strict_json_object(ledger_path)
+    schema_version = payload.get("schemaVersion")
+    expected_keys = {
+        1: RESTORED_RUNTIME_SELECTION_V1_KEYS,
+        2: RESTORED_RUNTIME_SELECTION_V2_KEYS,
+    }.get(schema_version)
+    if expected_keys is None:
+        raise SystemExit("Restored runtime selection ledger has an unsupported version.")
+    if set(payload) != expected_keys:
+        raise SystemExit("Restored runtime selection ledger has an unsupported schema.")
+
+    configured_profile = str(
+        (config.get("runtime", {}) or {}).get("profile", "isolated") or "isolated"
+    ).strip().lower()
+    if payload.get("profile") != configured_profile:
+        raise SystemExit("Restored runtime selection profile does not match canonical config.")
+    if payload.get("generatedRuntimePolicy") != "regenerate_from_canonical_config":
+        raise SystemExit("Restored runtime selection generated-runtime policy is invalid.")
+    if payload.get("helperBindingPolicy") != "regenerate_for_target_checkout":
+        raise SystemExit("Restored runtime selection helper-binding policy is invalid.")
+
+    target_database = payload.get("targetDatabase")
+    if not isinstance(target_database, str) or not SAFE_MONGO_DATABASE_PATTERN.fullmatch(
+        target_database
+    ):
+        raise SystemExit("Restored runtime selection database is invalid.")
+    overrides: dict[str, Any] = {"database": target_database}
+    if schema_version == 2:
+        target_port = payload.get("targetMongoPort")
+        if (
+            not isinstance(target_port, int)
+            or isinstance(target_port, bool)
+            or not 1 <= target_port <= 65535
+        ):
+            raise SystemExit("Restored runtime selection Mongo port is invalid.")
+        if payload.get("mongoPersistencePolicy") != "target_owned_data_path":
+            raise SystemExit("Restored runtime selection persistence policy is invalid.")
+        if payload.get("localRuntimeSecretPolicy") != "regenerated_for_target":
+            raise SystemExit("Restored runtime selection local-secret policy is invalid.")
+        raw_data_path = payload.get("targetMongoDataPath")
+        if not isinstance(raw_data_path, str) or not raw_data_path.startswith("/"):
+            raise SystemExit("Restored runtime selection Mongo data path is invalid.")
+        mongo_data_path = Path(raw_data_path)
+        _require_no_symlink_path(mongo_data_path, "Restored Mongo data path")
+        _require_owner_only_directory(mongo_data_path, "Restored Mongo data path")
+        if (
+            mongo_data_path.resolve() == app_support_dir.resolve()
+            or app_support_dir.resolve() in mongo_data_path.resolve().parents
+        ):
+            raise SystemExit("Restored Mongo data path must be independent from App Support.")
+        local_secret_path = app_support_dir / "state/continuity/restored-local-runtime-secret"
+        _require_owner_only_regular_file(local_secret_path, "Restored local runtime secret")
+        try:
+            local_secret = local_secret_path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError) as exc:
+            raise SystemExit("Restored local runtime secret could not be read.") from exc
+        if not re.fullmatch(r"[0-9a-f]{64}", local_secret):
+            raise SystemExit("Restored local runtime secret is invalid.")
+        overrides.update(
+            {
+                "port": target_port,
+                "data_path": str(mongo_data_path),
+                "call_session_secret": local_secret,
+            }
+        )
+    return overrides
+
+
+def restored_runtime_database_override(
+    config: dict[str, Any],
+    config_path: Path,
+    output_dir: Path,
+) -> str | None:
+    return restored_runtime_selection_overrides(config, config_path, output_dir).get("database")
 
 
 def is_generated_viventium_runtime_path(path: Path) -> bool:
@@ -1327,6 +1562,7 @@ def has_non_placeholder_env(env: dict[str, str], key: str) -> bool:
 
 def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, str]) -> dict[str, Any]:
     cleaned = copy.deepcopy(payload)
+    removed_custom_endpoints: set[str] = set()
 
     azure_foundry_available = all(
         has_non_placeholder_env(env, key)
@@ -1351,6 +1587,21 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
         anthropic_endpoint = endpoints.get("anthropic")
         if anthropic_endpoint is not None and not anthropic_endpoint_available:
             endpoints.pop("anthropic", None)
+        custom_endpoints = endpoints.get("custom")
+        if isinstance(custom_endpoints, list):
+            retained_custom_endpoints: list[dict[str, Any]] = []
+            for endpoint in custom_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                api_key = str(endpoint.get("apiKey") or "").strip()
+                match = re.fullmatch(r"\$\{([A-Z][A-Z0-9_]*)\}", api_key)
+                if match and not str(env.get(match.group(1), "") or "").strip():
+                    name = str(endpoint.get("name") or "").strip()
+                    if name:
+                        removed_custom_endpoints.add(name)
+                    continue
+                retained_custom_endpoints.append(endpoint)
+            endpoints["custom"] = retained_custom_endpoints
 
     model_specs = cleaned.get("modelSpecs")
     if isinstance(model_specs, dict):
@@ -1377,6 +1628,13 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
                 endpoint
                 for endpoint in added_endpoints
                 if str(endpoint or "").strip() != "anthropic"
+            ]
+            added_endpoints = model_specs["addedEndpoints"]
+        if isinstance(added_endpoints, list) and removed_custom_endpoints:
+            model_specs["addedEndpoints"] = [
+                endpoint
+                for endpoint in added_endpoints
+                if str(endpoint or "").strip() not in removed_custom_endpoints
             ]
 
     speech = cleaned.get("speech")
@@ -1706,6 +1964,13 @@ def current_background_activation_secret(config: dict[str, Any]) -> str:
     """
     llm = config.get("llm", {}) or {}
     activation = llm.get("activation", {}) or {}
+    install_experience = str(
+        (config.get("install", {}) or {}).get("experience") or "legacy"
+    ).strip().lower()
+    if install_experience == "express":
+        return resolve_optional_secret(
+            activation.get("secret_ref") or activation.get("secret_value") or ""
+        )
     return provider_secret(activation)
 
 
@@ -1862,9 +2127,17 @@ def provider_available(node: dict[str, Any]) -> bool:
     if not provider or provider == "none":
         return False
     auth_mode = node.get("auth_mode", "api_key")
-    if auth_mode == "connected_account":
+    if auth_mode in {"connected_account", "user_provided"}:
         return True
     return bool(provider_secret(node))
+
+
+def uses_experimental_direct_subscription_auth(llm: dict[str, Any]) -> bool:
+    """Preserve explicit legacy account bridges without enabling them for new installs."""
+    return any(
+        str(node.get("auth_mode") or "").strip().lower() == "connected_account"
+        for node in (llm.get("primary", {}) or {}, llm.get("secondary", {}) or {})
+    )
 
 
 def enabled_provider_names(config: dict[str, Any]) -> list[str]:
@@ -1885,6 +2158,7 @@ def ensure_user_provided_endpoint_surfaces(env: dict[str, str]) -> None:
     env.setdefault("ANTHROPIC_API_KEY", "user_provided")
     env.setdefault("GOOGLE_KEY", env.get("GOOGLE_API_KEY", "user_provided"))
     env.setdefault("GOOGLE_API_KEY", env.get("GOOGLE_KEY", "user_provided"))
+    env.setdefault("GROQ_API_KEY", "user_provided")
     env.setdefault("XAI_API_KEY", "user_provided")
     env.setdefault("OPENROUTER_API_KEY", "user_provided")
     env.setdefault("PERPLEXITY_API_KEY", "user_provided")
@@ -2045,7 +2319,9 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
     analytical_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     emotional_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     support_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
-    memory_provider = choose_provider(foundation_available, ["anthropic", "openai"], foundation_fallback)
+    # Saved memory follows the configured foundation priority so it does not select a stale fallback
+    # merely because that provider is also present.
+    memory_provider = foundation_available[0]
 
     return {
         "conscious": (conscious_provider, assignment_model(config, conscious_provider, "conscious")),
@@ -2639,7 +2915,15 @@ def build_agent_capabilities(code_interpreter_is_enabled: bool) -> list[str]:
     return [capability for capability in CURATED_AGENT_CAPABILITIES if capability != "execute_code"]
 
 
-def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str, str]]) -> dict[str, str]:
+def render_runtime_env(
+    config: dict[str, Any],
+    assignments: dict[str, tuple[str, str]],
+    *,
+    runtime_database_override: str | None = None,
+    runtime_mongo_port_override: int | None = None,
+    runtime_mongo_data_path_override: str | None = None,
+    runtime_call_session_secret_override: str | None = None,
+) -> dict[str, str]:
     llm = config["llm"]
     voice = config.get("voice", {})
     tts_config = voice.get("tts", {}) or {}
@@ -2652,8 +2936,18 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     prompt_workbench = runtime.get("prompt_workbench", config.get("prompt_workbench", {}) or {}) or {}
     agents = config.get("agents", {}) or {}
     resolved_voice = resolve_voice_settings(config)
-    call_session_secret = nested_secret(runtime, "call_session_secret")
+    call_session_secret = runtime_call_session_secret_override or nested_secret(
+        runtime, "call_session_secret"
+    )
     runtime_profile, profile = resolve_runtime_profile(config)
+    if runtime_database_override is not None:
+        if not SAFE_MONGO_DATABASE_PATTERN.fullmatch(runtime_database_override):
+            raise SystemExit("Runtime database override is invalid.")
+        profile["mongo_db"] = runtime_database_override
+    if runtime_mongo_port_override is not None:
+        if not 1 <= runtime_mongo_port_override <= 65535:
+            raise SystemExit("Runtime Mongo port override is invalid.")
+        profile["mongo_port"] = runtime_mongo_port_override
     playground_variant = str(runtime.get("playground_variant", "modern") or "modern").strip().lower()
     if playground_variant not in {"modern", "classic"}:
         playground_variant = "modern"
@@ -2665,6 +2959,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     feelings = resolve_feelings_settings(config)
     memory_hardening = resolve_memory_hardening_settings(config)
     memory_hardening_model = resolve_memory_hardening_model_tuple(config, memory_hardening)
+    scheduled_agent = resolve_scheduled_agent_settings(config)
     global_settings = config.get("settings", {}) if isinstance(config.get("settings"), dict) else {}
     default_timezone = resolve_timezone_name(
         global_settings.get("timezone")
@@ -2722,6 +3017,12 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
         "VIVENTIUM_INSTALL_MODE": config["install"]["mode"],
+        "VIVENTIUM_INSTALL_EXPERIENCE": str(
+            config.get("install", {}).get("experience") or "legacy"
+        ),
+        "SEARCH": "false"
+        if str(config.get("install", {}).get("experience") or "").strip().lower() == "express"
+        else "true",
         "VIVENTIUM_RUNTIME_PROFILE": runtime_profile,
         "VIVENTIUM_PLAYGROUND_VARIANT": playground_variant,
         "PLAYGROUND_VARIANT": playground_variant,
@@ -2730,6 +3031,8 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_USE_GENERATED_LIBRECHAT_YAML": "1",
         "VIVENTIUM_LC_API_PORT": str(profile["lc_api_port"]),
         "VIVENTIUM_LC_FRONTEND_PORT": str(profile["lc_frontend_port"]),
+        "SANDPACK_BUNDLER_URL": f"http://127.0.0.1:{profile['sandpack_bundler_port']}/",
+        "SANDPACK_STATIC_BUNDLER_URL": f"http://127.0.0.1:{profile['sandpack_bundler_port']}/",
         "VIVENTIUM_PLAYGROUND_PORT": str(profile["playground_port"]),
         "VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT": str(profile["voice_gateway_health_port"]),
         "VIVENTIUM_LOCAL_MONGO_PORT": str(profile["mongo_port"]),
@@ -2785,6 +3088,9 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         if has_model_overrides(config)
         else "false",
         "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH": "true",
+        "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH": "true"
+        if uses_experimental_direct_subscription_auth(llm)
+        else "false",
         "VIVENTIUM_DEFAULT_CONVERSATION_RECALL": "true"
         if default_conversation_recall
         else "false",
@@ -2901,6 +3207,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_TELEGRAM_BACKEND": "librechat",
         "VIVENTIUM_TELEGRAM_AGENT_ID": default_main_agent_id,
         "VIVENTIUM_MAIN_AGENT_ID": default_main_agent_id,
+        "VIVENTIUM_SCHEDULED_AGENT_PROVIDER": scheduled_agent["provider"],
+        "VIVENTIUM_SCHEDULED_AGENT_MODEL": scheduled_agent["model"],
+        "VIVENTIUM_SCHEDULED_AGENT_REASONING_EFFORT": scheduled_agent[
+            "reasoning_effort"
+        ],
         "START_GOOGLE_MCP": "true" if integrations.get("google_workspace", {}).get("enabled") and not shared_google_mcp else "false",
         "START_MS365_MCP": "true" if integrations.get("ms365", {}).get("enabled") and not shared_ms365_mcp else "false",
         "VIVENTIUM_SHARED_GOOGLE_MCP": "true" if shared_google_mcp else "false",
@@ -2909,7 +3220,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_SHARED_SEARXNG": "true" if shared_searxng else "false",
         "VIVENTIUM_SHARED_FIRECRAWL": "true" if shared_firecrawl else "false",
         "START_GLASSHIVE": "true" if glasshive_is_enabled else "false",
-        "START_SCHEDULING_MCP": "true",
+        "START_SCHEDULING_MCP": "true" if integrations.get("scheduling_cortex", {}).get("enabled", False) else "false",
         "START_RAG_API": start_rag_api,
         "START_SKYVERN": "true" if integrations.get("skyvern", {}).get("enabled") else "false",
         "START_TELEGRAM": "true" if telegram_is_enabled else "false",
@@ -2957,6 +3268,15 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         "VIVENTIUM_RAG_EMBEDDINGS_MODEL": retrieval_embeddings["model"],
         "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
     }
+    if config.get("install", {}).get("mode") != "native":
+        env.update(
+            {
+                "SANDPACK_BUNDLER_LISTEN_HOST": "127.0.0.1",
+                "SANDPACK_BUNDLER_LISTEN_PORT": str(profile["sandpack_bundler_port"]),
+            }
+        )
+    if runtime_mongo_data_path_override is not None:
+        env["VIVENTIUM_LOCAL_MONGO_DATA_PATH"] = runtime_mongo_data_path_override
 
     if openid_settings["enabled"]:
         required_openid = {
@@ -3011,10 +3331,15 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["OLLAMA_BASE_URL"] = retrieval_embeddings["ollama_base_url"]
 
     if glasshive_is_enabled:
+        public_glasshive_origin = str(
+            network.get("public_glasshive_origin", "") or ""
+        ).strip().rstrip("/")
         glasshive_operator_base_url = str(
             glasshive_enterprise["operator_base_url"]
             if glasshive_enterprise["enabled"]
-            else integrations.get("glasshive", {}).get("operator_base_url") or "http://127.0.0.1:8780"
+            else public_glasshive_origin
+            or integrations.get("glasshive", {}).get("operator_base_url")
+            or "http://127.0.0.1:8780"
         ).rstrip("/")
         if glasshive_enterprise["enabled"]:
             env["GLASSHIVE_MCP_URL"] = str(glasshive_enterprise["mcp_url"])
@@ -3090,6 +3415,25 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
                 / "glasshive"
                 / "runtime_phase1.db"
             )
+            if public_glasshive_origin:
+                env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] = public_glasshive_origin
+                env["GLASSHIVE_ARTIFACT_BASE_URL"] = public_glasshive_origin
+                env["GLASSHIVE_PUBLIC_LINKS_ONLY"] = "true"
+                env["GLASSHIVE_SIGNED_LINK_SECRET"] = scoped_secret(
+                    call_session_secret,
+                    "glasshive-public-links",
+                )
+                env["GLASSHIVE_SIGNED_LINK_TTL_S"] = str(
+                    DEFAULT_PUBLIC_GLASSHIVE_LINK_REF_TTL_SECONDS
+                )
+                env["GLASSHIVE_LINK_REF_TTL_SECONDS"] = str(
+                    DEFAULT_PUBLIC_GLASSHIVE_LINK_REF_TTL_SECONDS
+                )
+                env["GLASSHIVE_MAX_WATCH_SESSION_DURATION_S"] = str(
+                    DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS
+                )
+                env["GLASSHIVE_COOKIE_SECURE"] = "true"
+                env["GLASSHIVE_UI_PORT"] = "8780"
         env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(LIBRECHAT_UPLOADS_DIR)
         env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(LIBRECHAT_UPLOADS_DIR)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
@@ -3150,6 +3494,7 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
     public_playground_origin = str(network.get("public_playground_origin", "") or "").strip()
     public_livekit_url = str(network.get("public_livekit_url", "") or "").strip()
+    public_glasshive_origin = str(network.get("public_glasshive_origin", "") or "").strip()
     livekit_node_ip = str(network.get("livekit_node_ip", "") or "").strip()
     remote_call_mode = normalize_remote_call_mode(network)
 
@@ -3165,19 +3510,25 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         env["VIVENTIUM_PUBLIC_PLAYGROUND_URL"] = public_playground_origin
     if public_livekit_url:
         env["VIVENTIUM_PUBLIC_LIVEKIT_URL"] = public_livekit_url
+    if public_glasshive_origin and glasshive_is_enabled and not glasshive_enterprise["enabled"]:
+        env["VIVENTIUM_PUBLIC_GLASSHIVE_URL"] = public_glasshive_origin.rstrip("/")
     if livekit_node_ip:
         env["LIVEKIT_NODE_IP"] = livekit_node_ip
 
     primary = llm["primary"]
     secondary = llm.get("secondary", {})
     if primary["provider"] == "openai" and primary["auth_mode"] == "api_key":
-        env["OPENAI_API_KEY"] = provider_secret(primary)
+        env["OPENAI_API_KEY"] = provider_secret(primary) or "user_provided"
+    if primary["provider"] == "openai" and primary["auth_mode"] == "user_provided":
+        env["OPENAI_API_KEY"] = "user_provided"
     if secondary.get("provider") == "openai" and secondary.get("auth_mode") == "api_key":
-        env["OPENAI_API_KEY"] = provider_secret(secondary)
+        env["OPENAI_API_KEY"] = provider_secret(secondary) or env["OPENAI_API_KEY"]
     if primary["provider"] == "anthropic" and primary["auth_mode"] == "api_key":
-        env["ANTHROPIC_API_KEY"] = provider_secret(primary)
+        env["ANTHROPIC_API_KEY"] = provider_secret(primary) or "user_provided"
+    if primary["provider"] == "anthropic" and primary["auth_mode"] == "user_provided":
+        env["ANTHROPIC_API_KEY"] = "user_provided"
     if secondary.get("provider") == "anthropic" and secondary.get("auth_mode") == "api_key":
-        env["ANTHROPIC_API_KEY"] = provider_secret(secondary)
+        env["ANTHROPIC_API_KEY"] = provider_secret(secondary) or env["ANTHROPIC_API_KEY"]
     if primary["provider"] == "x_ai" and primary["auth_mode"] == "api_key":
         env["XAI_API_KEY"] = provider_secret(primary)
     if secondary.get("provider") == "x_ai" and secondary.get("auth_mode") == "api_key":
@@ -3339,10 +3690,31 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     env["VIVENTIUM_VOICE_PHASE_A_AWAIT_MS"] = "690"
     env["VIVENTIUM_TEXT_PHASE_A_AWAIT_MS"] = "1300"
     env["VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS"] = "2000"
+    background_activation = runtime.get("background_activation") or {}
+    if not isinstance(background_activation, dict):
+        fail("runtime.background_activation must be an object")
+    env["VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS"] = str(
+        bounded_int_or_default(
+            background_activation.get("primary_attempt_timeout_ms"),
+            DEFAULT_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS,
+            "runtime.background_activation.primary_attempt_timeout_ms",
+            minimum=100,
+            maximum=30000,
+        )
+    )
+    env["VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS"] = str(
+        bounded_int_or_default(
+            background_activation.get("fallback_attempt_timeout_ms"),
+            DEFAULT_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS,
+            "runtime.background_activation.fallback_attempt_timeout_ms",
+            minimum=100,
+            maximum=30000,
+        )
+    )
     # When the fast window times out with zero activations, reuse the existing non-blocking late
     # detector so a provider tail-latency spike does not silently erase an otherwise valid cortex.
     # This is a total background budget across the configured fallback chain and never extends the
-    # main-answer wait. Four seconds covers the evaluated Qwen tail plus bounded fallbacks.
+    # main-answer wait. Six seconds covers the evaluated Qwen tail plus bounded fallbacks.
     env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] = DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS
     env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "true"
     env["VIVENTIUM_VOICE_LOG_LATENCY"] = "1"
@@ -3526,8 +3898,19 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
     if "xai" in {resolved_voice["tts_provider"], resolved_voice["tts_provider_fallback"]}:
         xai_config = xai_tts_settings(tts_config)
         configured_tts_api = str(xai_config.get("tts_api", "") or "").strip().lower()
+        if configured_tts_api == "voice_agent":
+            env["VIVENTIUM_VOICE_ENABLED"] = "false"
+            env["VIVENTIUM_VOICE_DEGRADED_REASON"] = (
+                "legacy_xai_voice_agent_route_retired"
+            )
+            print(
+                "Voice disabled: legacy xAI Voice Agent route retired. The canonical config was "
+                "preserved and no substitute provider was selected. Run Custom Settings Install "
+                "to choose standalone xAI TTS or another voice provider.",
+                file=sys.stderr,
+            )
         if configured_tts_api and configured_tts_api not in {"tts", "voice_agent"}:
-            raise SystemExit("xAI voice calls support tts_api values 'tts' or 'voice_agent'")
+            raise SystemExit("xAI voice calls support only tts_api: tts")
         configured_voice = str(
             xai_config.get("voice_id") or xai_config.get("voice") or ""
         ).strip()
@@ -3662,12 +4045,11 @@ def render_runtime_env(config: dict[str, Any], assignments: dict[str, tuple[str,
         resolved = resolve_secret(secret_value)
         if not resolved:
             continue
-        if provider_name == "openai":
-            env.setdefault("OPENAI_API_KEY", resolved)
-        elif provider_name == "anthropic":
-            env.setdefault("ANTHROPIC_API_KEY", resolved)
-        elif provider_name in {"x_ai", "xai"}:
-            env.setdefault("XAI_API_KEY", resolved)
+        provider_api_key_env = PROVIDER_API_KEY_ENV_NAMES.get(
+            normalize_provider_name(provider_name)
+        )
+        if provider_api_key_env:
+            env.setdefault(provider_api_key_env, resolved)
         elif provider_name == "openrouter":
             env["OPENROUTER_API_KEY"] = resolved
         elif provider_name == "perplexity":
@@ -3751,6 +4133,167 @@ def dump_env(path: Path, env: dict[str, str]) -> None:
     path.chmod(0o600)
 
 
+def render_native_runtime_env(config: dict[str, Any], env: dict[str, str]) -> dict[str, str]:
+    """Return the secret-free, relocatable behavior contract shipped in Native payloads."""
+    allowed_plain_keys = {
+        "DEBUG_LOGGING",
+        "MONGO_AUTO_INDEX",
+        "OTUC_ACTIVATION_LLM",
+        "OTUC_ACTIVATION_PROVIDER",
+        "OTUC_LLM_MODEL",
+        "OTUC_LLM_PROVIDER",
+        "PLAYGROUND_VARIANT",
+        "SAFE_MODE",
+        "SEARCH",
+        "TTS_PROVIDER_PRIMARY",
+    }
+    denied_keys = {
+        "VIVENTIUM_BOOTSTRAP_REGISTRATION_ONCE",
+        "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH",
+        "VIVENTIUM_LOCAL_SUBSCRIPTION_AUTH",
+        "VIVENTIUM_REGISTRATION_APPROVAL",
+    }
+    denied_name_fragments = ("SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "API_KEY")
+    denied_suffixes = ("_DIR", "_FILE", "_ORIGIN", "_PATH", "_PORT", "_ROOT", "_URL")
+    native: dict[str, str] = {}
+    for key, raw_value in sorted(env.items()):
+        if key in denied_keys or any(fragment in key for fragment in denied_name_fragments):
+            continue
+        if key.endswith(denied_suffixes) or key.endswith("_USER_EMAIL"):
+            continue
+        if not (key.startswith("VIVENTIUM_") or key in allowed_plain_keys):
+            continue
+        value = str(raw_value)
+        if (
+            not value
+            or value == "user_provided"
+            or "${" in value
+            or "\n" in value
+            or value.startswith(("/", "~"))
+        ):
+            continue
+        native[key] = value
+
+    native.update(
+        {
+            "VIVENTIUM_RUNTIME_PROFILE": "native",
+            "VIVENTIUM_INSTALL_MODE": "native",
+            "VIVENTIUM_INSTALL_EXPERIENCE": "express",
+            "VIVENTIUM_CONNECTED_ACCOUNTS_ENABLED": "true",
+            "OPENAI_API_KEY": "user_provided",
+            "ANTHROPIC_API_KEY": "user_provided",
+            "GROQ_API_KEY": "user_provided",
+            "XAI_API_KEY": "user_provided",
+            "VIVENTIUM_LC_API_PORT": "3180",
+            "VIVENTIUM_LC_FRONTEND_PORT": "3190",
+            "VIVENTIUM_PLAYGROUND_PORT": "3300",
+            "SANDPACK_BUNDLER_URL": "http://127.0.0.1:3191/",
+            "SANDPACK_STATIC_BUNDLER_URL": "http://127.0.0.1:3191/",
+        }
+    )
+    for key in env:
+        if key.startswith("START_"):
+            native[key] = "false"
+    if config.get("install", {}).get("mode") != "native":
+        raise SystemExit("native-runtime.env may be generated only for install.mode=native")
+    return native
+
+
+def render_native_agents_bundle(
+    config: dict[str, Any], available_mcp_servers: set[str]
+) -> dict[str, Any]:
+    """Compile agents against the services that the exact Native payload can provide."""
+    if config.get("install", {}).get("mode") != "native":
+        raise SystemExit("Native agent defaults may be generated only for install.mode=native")
+    bundle = copy.deepcopy(load_source_of_truth_agents_bundle())
+    if not bundle:
+        raise SystemExit("Native agent defaults require the source-of-truth agent bundle")
+    web_search_is_enabled = resolve_web_search_settings(config)["enabled"] == "true"
+
+    def tool_is_available(tool: object) -> bool:
+        name = str(tool or "").strip()
+        if not name:
+            return False
+        if name == "web_search" and not web_search_is_enabled:
+            return False
+        if "_mcp_" not in name:
+            return True
+        return name.rsplit("_mcp_", 1)[1] in available_mcp_servers
+
+    disabled_handoff_ids: set[str] = set()
+    for group_name in ("mainAgent", "backgroundAgents", "handoffAgents"):
+        raw_group = bundle.get(group_name)
+        agents = [raw_group] if isinstance(raw_group, dict) else raw_group
+        if not isinstance(agents, list):
+            continue
+        retained_agents: list[dict[str, Any]] = []
+        for raw_agent in agents:
+            if not isinstance(raw_agent, dict):
+                continue
+            agent = raw_agent
+            original_tools = agent.get("tools") if isinstance(agent.get("tools"), list) else []
+            agent["tools"] = [tool for tool in original_tools if tool_is_available(tool)]
+            for options_name in ("tool_options", "tool_kwargs"):
+                options = agent.get(options_name)
+                if isinstance(options, dict):
+                    agent[options_name] = {
+                        key: value for key, value in options.items() if tool_is_available(key)
+                    }
+            if (
+                group_name == "handoffAgents"
+                and any("_mcp_" in str(tool) for tool in original_tools)
+                and not agent["tools"]
+            ):
+                agent_id = str(agent.get("id") or "").strip()
+                if agent_id:
+                    disabled_handoff_ids.add(agent_id)
+                continue
+            retained_agents.append(agent)
+        if isinstance(raw_group, dict):
+            bundle[group_name] = retained_agents[0] if retained_agents else {}
+        else:
+            bundle[group_name] = retained_agents
+
+    for group_name in ("mainAgent", "backgroundAgents", "handoffAgents"):
+        raw_group = bundle.get(group_name)
+        agents = [raw_group] if isinstance(raw_group, dict) else raw_group
+        if not isinstance(agents, list):
+            continue
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            edges = agent.get("edges")
+            if isinstance(edges, list):
+                agent["edges"] = [
+                    edge
+                    for edge in edges
+                    if not isinstance(edge, dict)
+                    or str(edge.get("to") or "").strip() not in disabled_handoff_ids
+                ]
+            agent_ids = agent.get("agent_ids")
+            if isinstance(agent_ids, list):
+                agent["agent_ids"] = [
+                    agent_id
+                    for agent_id in agent_ids
+                    if str(agent_id or "").strip() not in disabled_handoff_ids
+                ]
+
+    activation_policy = (
+        ((bundle.get("config") or {}).get("viventium") or {})
+        .get("background_cortices", {})
+        .get("activation_policy", {})
+    )
+    direct_servers = activation_policy.get("direct_action_mcp_servers")
+    if isinstance(direct_servers, list):
+        activation_policy["direct_action_mcp_servers"] = [
+            server
+            for server in direct_servers
+            if isinstance(server, dict)
+            and str(server.get("server") or "").strip() in available_mcp_servers
+        ]
+    return bundle
+
+
 def build_interface_config(
     default_main_agent_id: str,
     code_interpreter_is_enabled: bool,
@@ -3825,15 +4368,9 @@ def build_mcp_servers(
 ) -> dict[str, Any]:
     integrations = config.get("integrations", {}) or {}
     lc_api_port = profile["lc_api_port"]
-    servers: dict[str, Any] = {
-        "sequential-thinking": {
-            "type": "stdio",
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-            "timeout": 300000,
-            "chatMenu": True,
-        },
-        "scheduling-cortex": {
+    servers: dict[str, Any] = {}
+    if integrations.get("scheduling_cortex", {}).get("enabled", False):
+        servers["scheduling-cortex"] = {
             "type": "streamable-http",
             "url": "${SCHEDULING_MCP_URL}",
             "headers": {
@@ -3845,8 +4382,15 @@ def build_mcp_servers(
             "timeout": 120000,
             "serverInstructions": True,
             "viventiumTrustedServerInstructions": True,
-        },
-    }
+        }
+    if integrations.get("sequential_thinking", {}).get("enabled", True):
+        servers["sequential-thinking"] = {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+            "timeout": 300000,
+            "chatMenu": True,
+        }
 
     if glasshive_enabled(config):
         glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
@@ -4092,6 +4636,10 @@ def render_librechat_yaml(
         payload.get("mcpServers", {}) if isinstance(payload.get("mcpServers"), dict) else {},
         generated["mcpServers"],
     )
+    if not (config.get("integrations", {}) or {}).get("scheduling_cortex", {}).get("enabled", False):
+        payload["mcpServers"].pop("scheduling-cortex", None)
+    if not (config.get("integrations", {}) or {}).get("sequential_thinking", {}).get("enabled", True):
+        payload["mcpServers"].pop("sequential-thinking", None)
     if web_search_is_enabled:
         web_search_payload: dict[str, Any] = {
             "safeSearch": 1,
@@ -4174,6 +4722,8 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS",
         "VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS",
         "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS",
+        "VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS",
+        "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS",
         "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD",
         "VIVENTIUM_VOICE_LOG_LATENCY",
         "OPENID_CLIENT_ID",
@@ -4595,8 +5145,21 @@ def render_current_librechat_config(
     config = load_yaml(config_path)
     validate_config(config, config_path)
     assignments = build_agent_assignments(config)
-    env = render_runtime_env(config, assignments)
-    prompt_bundle_path = (output_dir or APP_SUPPORT_VIVENTIUM_DIR / "runtime") / "prompt-bundle.json"
+    compiled_output_dir = output_dir or APP_SUPPORT_VIVENTIUM_DIR / "runtime"
+    runtime_overrides = restored_runtime_selection_overrides(
+        config,
+        config_path,
+        compiled_output_dir,
+    )
+    env = render_runtime_env(
+        config,
+        assignments,
+        runtime_database_override=runtime_overrides.get("database"),
+        runtime_mongo_port_override=runtime_overrides.get("port"),
+        runtime_mongo_data_path_override=runtime_overrides.get("data_path"),
+        runtime_call_session_secret_override=runtime_overrides.get("call_session_secret"),
+    )
+    prompt_bundle_path = compiled_output_dir / "prompt-bundle.json"
     env["VIVENTIUM_PROMPT_BUNDLE_PATH"] = str(prompt_bundle_path)
     return yaml.safe_load(render_librechat_yaml(config, assignments, env)) or {}
 
@@ -4616,7 +5179,19 @@ def check_runtime_config_drift(
     config = load_yaml(config_path.expanduser().resolve())
     validate_config(config, config_path.expanduser().resolve())
     assignments = build_agent_assignments(config)
-    runtime_env = render_runtime_env(config, assignments)
+    runtime_overrides = restored_runtime_selection_overrides(
+        config,
+        config_path.expanduser().resolve(),
+        compiled_output_dir,
+    )
+    runtime_env = render_runtime_env(
+        config,
+        assignments,
+        runtime_database_override=runtime_overrides.get("database"),
+        runtime_mongo_port_override=runtime_overrides.get("port"),
+        runtime_mongo_data_path_override=runtime_overrides.get("data_path"),
+        runtime_call_session_secret_override=runtime_overrides.get("call_session_secret"),
+    )
     compiled_now = resolve_runtime_config_placeholders(
         render_current_librechat_config(
             config_path=config_path.expanduser().resolve(),
@@ -4772,11 +5347,26 @@ def main() -> None:
     validate_config(config, config_path)
 
     assignments = build_agent_assignments(config)
-    env = render_runtime_env(config, assignments)
+    runtime_overrides = restored_runtime_selection_overrides(config, config_path, output_dir)
+    env = render_runtime_env(
+        config,
+        assignments,
+        runtime_database_override=runtime_overrides.get("database"),
+        runtime_mongo_port_override=runtime_overrides.get("port"),
+        runtime_mongo_data_path_override=runtime_overrides.get("data_path"),
+        runtime_call_session_secret_override=runtime_overrides.get("call_session_secret"),
+    )
     prompt_bundle_path = output_dir / "prompt-bundle.json"
     env["VIVENTIUM_PROMPT_BUNDLE_PATH"] = str(prompt_bundle_path)
     prompt_bundle = build_prompt_bundle()
     librechat_yaml = render_librechat_yaml(config, assignments, env)
+    native_agents_bundle = None
+    if config["install"]["mode"] == "native":
+        rendered_librechat = yaml.safe_load(librechat_yaml) or {}
+        native_agents_bundle = render_native_agents_bundle(
+            config,
+            set((rendered_librechat.get("mcpServers") or {}).keys()),
+        )
     summary = {
         "config": str(config_path),
         "output_dir": str(output_dir),
@@ -4797,6 +5387,12 @@ def main() -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     dump_env(output_dir / "runtime.env", env)
+    if config["install"]["mode"] == "native":
+        dump_env(output_dir / "native-runtime.env", render_native_runtime_env(config, env))
+        (output_dir / "viventium-agents.yaml").write_text(
+            yaml.safe_dump(native_agents_bundle, sort_keys=False),
+            encoding="utf-8",
+        )
     dump_env(output_dir / "runtime.local.env", {})
     (output_dir / "librechat.yaml").write_text(librechat_yaml, encoding="utf-8")
     prompt_bundle_path.write_text(

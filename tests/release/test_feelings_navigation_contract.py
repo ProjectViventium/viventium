@@ -30,6 +30,26 @@ HELPER_INFO_PLIST = (
 PREBUILT_DIR = REPO_ROOT / "apps" / "macos" / "ViventiumHelper" / "prebuilt"
 PREBUILT_EXECUTABLE = PREBUILT_DIR / "ViventiumHelper-universal"
 PREBUILT_SOURCE_HASH = PREBUILT_DIR / "source.sha256"
+SIDE_NAV = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "client"
+    / "src"
+    / "hooks"
+    / "Nav"
+    / "useSideNavLinks.ts"
+)
+ACCOUNT_MENU = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "client"
+    / "src"
+    / "components"
+    / "Nav"
+    / "AccountSettings.tsx"
+)
 
 
 def _source_digest() -> str:
@@ -52,7 +72,7 @@ def test_status_bar_exposes_direct_feelings_navigation_for_running_and_stopped_s
     assert 'alert.addButton(withTitle: "Start and Open Feelings")' in source
     assert "Start Viventium now and open Feelings in your browser?" in source
     assert re.search(
-        r"private func startStack\(openWhenReady: Bool, openPath: String\? = nil, launchReason:",
+        r"private func startStack\(\s*openWhenReady: Bool,\s*openPath: String\? = nil,\s*launchReason:",
         source,
     )
     assert "self.openBrowser(path: openPath)" in source
@@ -71,3 +91,17 @@ def test_prebuilt_helper_matches_source_and_contains_feelings_menu_contract() ->
     assert "Open Feelings" in strings
     assert "Start and Open Feelings" in strings
     assert "/feelings" in strings
+
+
+def test_feelings_is_discoverable_from_both_navigation_surfaces_with_one_gate() -> None:
+    side_nav = SIDE_NAV.read_text(encoding="utf-8")
+    account_menu = ACCOUNT_MENU.read_text(encoding="utf-8")
+
+    for source in (side_nav, account_menu):
+        assert "startupConfig?.viventiumFeelingsAvailable !== false" in source
+        assert "navigate('/feelings')" in source
+        assert "com_nav_feelings" in source
+
+    assert "Feelings discovery in ordinary chat controls" in side_nav
+    assert "=== VIVENTIUM START ===" in side_nav
+    assert "=== VIVENTIUM END ===" in side_nav

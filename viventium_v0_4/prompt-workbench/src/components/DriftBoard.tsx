@@ -13,7 +13,10 @@ interface Props {
 
 export function DriftBoard({ status, selectedPromptId, reviewToken, pushBlockReason, onImport, onPushReviewed, onManualMerge }: Props) {
   const rows = status?.agents ?? [];
-  const active = rows.find((row) => row.sourcePromptId === selectedPromptId) ?? rows[0];
+  const active = rows.find((row) => row.sourcePromptId === selectedPromptId);
+  const visibleRows = active
+    ? [active, ...rows.filter((row) => row.agentId !== active.agentId)]
+    : rows;
   const promptForAction = active?.sourcePromptId ?? selectedPromptId;
   const pushBlocked = Boolean(pushBlockReason) || rows.some((row) => row.state === 'live-ahead' || row.state === 'conflict');
 
@@ -26,19 +29,25 @@ export function DriftBoard({ status, selectedPromptId, reviewToken, pushBlockRea
       <div className="abc-grid">
         <div>
           <small>Live</small>
-          <strong>{active?.liveTextAvailable ? 'available' : 'not pulled'}</strong>
+          <strong>{active ? active.liveTextAvailable ? 'available' : 'not pulled' : 'not managed here'}</strong>
         </div>
         <div>
           <small>Source</small>
-          <strong>{active?.sourceChars ? `${active.sourceChars.toLocaleString()} chars` : 'pending'}</strong>
+          <strong>{active?.sourceChars ? `${active.sourceChars.toLocaleString()} chars` : 'prompt registry'}</strong>
         </div>
         <div>
           <small>Evaluated</small>
           <strong>{humanPromptName(selectedPromptId)}</strong>
         </div>
       </div>
+      {!active && (
+        <div className="workflow-callout compact" role="status">
+          <strong>No managed live row for this prompt</strong>
+          <span>This source unit is delivered through another owning layer. Live Drift actions stay disabled until an exact managed-agent row exists.</span>
+        </div>
+      )}
       <div className="drift-list">
-        {rows.slice(0, 6).map((row) => (
+        {visibleRows.slice(0, 12).map((row) => (
           <div key={row.agentId} className={`drift-row ${row.state}`}>
             <span>{driftIcon(row.state)}</span>
             <div>

@@ -6,6 +6,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_shared_voice_capability_contracts_match_librechat_mirrors() -> None:
+    parent = ROOT / "viventium_v0_4" / "shared" / "voice"
+    librechat = ROOT / "viventium_v0_4" / "LibreChat" / "shared" / "voice"
+
+    for name in (
+        "tts_provider_capabilities.json",
+        "cartesia_sonic3_capabilities.json",
+        "xai_tts_capabilities.json",
+    ):
+        assert (librechat / name).read_bytes() == (parent / name).read_bytes(), name
 _agent_starter_react_dir = Path(
     os.environ.get("VIVENTIUM_AGENT_STARTER_REACT_DIR", ROOT / "viventium_v0_4" / "agent-starter-react")
 ).expanduser()
@@ -34,6 +46,16 @@ CALL_SESSION_VOICE_SETTINGS_ROUTE_FILE = (
 NEXT_CONFIG_FILE = AGENT_STARTER_REACT_ROOT / "next.config.ts"
 TS_CONFIG_FILE = AGENT_STARTER_REACT_ROOT / "tsconfig.json"
 START_SCRIPT = ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+VOICE_GATEWAY_WORKER = ROOT / "viventium_v0_4" / "voice-gateway" / "worker.py"
+RETIRED_XAI_VOICE_AGENT_ADAPTER = (
+    ROOT / "viventium_v0_4" / "voice-gateway" / "xai_grok_voice_tts.py"
+)
+TTS_PROVIDER_CAPABILITIES = (
+    ROOT / "viventium_v0_4" / "shared" / "voice" / "tts_provider_capabilities.json"
+)
+SYNTHETIC_AUDIO_QA_SCRIPT = (
+    ROOT / "qa" / "modern-playground-voice" / "scripts" / "livekit_synthetic_audio_qa.js"
+)
 TYPESCRIPT_FILE = AGENT_STARTER_REACT_ROOT / "node_modules" / "typescript" / "lib" / "typescript.js"
 
 
@@ -409,6 +431,65 @@ def test_modern_playground_prewarm_is_bounded_and_warning_only() -> None:
     assert "call-session-state?callSessionId=viventium-prewarm" in content
     assert "GET intentionally exercises the Next.js route module compile without issuing a token." in content
     assert "connection-details route did not prewarm before timeout" in content
+
+
+def test_xai_voice_runtime_exposes_only_standalone_tts() -> None:
+    launcher = START_SCRIPT.read_text()
+    worker = VOICE_GATEWAY_WORKER.read_text()
+    capabilities = json.loads(TTS_PROVIDER_CAPABILITIES.read_text())
+
+    assert not RETIRED_XAI_VOICE_AGENT_ADAPTER.exists()
+    assert "VIVENTIUM_XAI_WSS_URL" not in launcher
+    assert "VIVENTIUM_XAI_INSTRUCTIONS" not in launcher
+    assert "_build_legacy_xai_voice_agent_tts" not in worker
+    assert capabilities["providers"]["xai"]["runtime_models"] == [
+        {"id": "xai-tts", "api_route": "tts", "legacy": False}
+    ]
+
+
+def test_synthetic_audio_qa_can_force_an_external_relay_media_path() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_EXTERNAL_TURN_URLS" in content
+    assert "VIVENTIUM_QA_EXTERNAL_TURN_USERNAME" in content
+    assert "VIVENTIUM_QA_EXTERNAL_TURN_CREDENTIAL" in content
+    assert "VIVENTIUM_QA_FORCE_RELAY" in content
+    assert "installExternalTurnProbe" in content
+    assert "collectRtcEvidence" in content
+    assert 'iceTransportPolicy: forceRelay ? "relay"' in content
+    assert "selectedCandidatePairs" in content
+    assert "externalTurnConfigured" in content
+    assert "openrelayprojectsecret" not in content
+
+
+def test_synthetic_audio_qa_can_tunnel_public_tcp_candidates_for_off_lan_qa() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_PUBLIC_MEDIA_CANDIDATE" in content
+    assert "VIVENTIUM_QA_PUBLIC_MEDIA_PROXY" in content
+    assert "rewriteRemoteCandidate" in content
+    assert "publicCandidateRewriteCount" in content
+    assert "externalTcpMediaSelected" in content
+
+
+def test_synthetic_audio_qa_can_force_livekit_turn_tls_through_an_off_lan_proxy() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_TURN_PROXY_URL" in content
+    assert "VIVENTIUM_QA_TURN_PROXY_HOST_RULE" in content
+    assert "turnProxyConfigured" in content
+    assert "turnTlsRelaySelected" in content
+    assert "configuration?.iceServers" in content
+
+
+def test_synthetic_audio_qa_can_run_the_entire_browser_from_an_off_lan_proxy() -> None:
+    content = SYNTHETIC_AUDIO_QA_SCRIPT.read_text()
+
+    assert "VIVENTIUM_QA_BROWSER_PLAYGROUND_URL" in content
+    assert "VIVENTIUM_QA_BROWSER_PROXY" in content
+    assert "VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP" in content
+    assert "browserProxyConfigured" in content
+    assert "browserProxyMediaSelected" in content
 
 
 def test_call_session_hooks_normalize_transient_fetch_failures_and_retry_initial_loads() -> None:

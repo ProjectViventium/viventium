@@ -15,6 +15,14 @@ MUST_NOT_EXIST = [
     / "services"
     / "viventium"
     / "liveEmailIntent.js",
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "LibreChat"
+    / "api"
+    / "server"
+    / "services"
+    / "viventium"
+    / "telegramToolGuard.js",
 ]
 
 SERVICE_SCAN_ROOT = (
@@ -87,6 +95,8 @@ FORBIDDEN_TOKENS = [
     "hasExplicitProductivityRequest",
     "isProviderOnlyProductivityClarification",
     "reduceMessagesForProductivitySpecialist",
+    "shouldSkipTelegramTools",
+    "VIVENTIUM_TELEGRAM_TOOL_GUARD_",
 ]
 FORBIDDEN_TEST_HELPER_RE = re.compile(
     r"""

@@ -11,14 +11,21 @@
 | `MPV-UC-005` | Open a modern-playground call page while voice settings are cold, slow, or temporarily unavailable. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-007` | Modern Playground browser page plus launcher/runtime logs | Browser network timing, visible CTA state, retry copy, Next.js route compile logs, call-session DB counts | Start chat remains available, settings loading is bounded/retryable, and cold-route compile is prewarmed on launcher startup. | 2026-05-18 PASS for pre-call gate and bounded settings load; full microphone join not rerun |
 | `MPV-UC-006` | Speak a thought, pause for `0.7s` to `1.5s`, then continue speaking in the same LiveKit call. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-008` | Modern Playground browser with fake microphone WAV, LiveKit, voice worker, Mongo | Voice gateway timing logs, Listen-Only ingress record, Mongo transcript message count, synthetic fixture manifest | Both endpointed STT segments are persisted as one continued transcript turn/message inside the continuation window. | 2026-05-18 PASS with synthetic TTS/fake-mic QA |
 | `MPV-UC-007` | Click Start chat once and wait for the call to connect. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-009` | Modern Playground browser page, LiveKit, voice gateway logs | Button state, browser console/network, LiveKit microphone publish, publisher job assignment, call-session DB state | One click starts the call, duplicate clicks are disabled, and the microphone turns on after room connect. | 2026-05-18 PASS for one-click visible UI and duplicate-request prevention; full fresh spoken-turn remains under broader call cases |
-| `MPV-UC-008` | Install or bootstrap with the default voice-capable configuration. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-010` | Installer/bootstrap component selection and launcher help | `bootstrap_components.select_components`, compiled runtime env, launcher flags | Default selection includes `agent-starter-react` and excludes `agents-playground`; classic UI appears only after explicit classic selection. | 2026-05-19 automated release case added |
+| `MPV-UC-008` | Install or bootstrap with the default voice-capable configuration. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-010` | Installer/bootstrap component selection and launcher help | Component selector, compiled runtime env, exact `/api/health` identity, launcher flags | Default selection includes `agent-starter-react` and excludes `agents-playground`; classic UI appears only after explicit classic selection; stale or wrong listeners are rejected. | PASS 2026-07-21: exact identity verifier and real browser show the modern Viventium UI; wrong variant and stale source refs are rejected; final installed-artifact rerun remains a release gate |
 | `MPV-UC-011` | Reload a linked chat after provider overload was recovered by visible assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-011` | LibreChat browser conversation | DB content parts, recovered error-class metadata, renderer tests, runtime logs | Recovered answer is visible, stale provider error card is not visible, refresh keeps the clean state. | 2026-05-21 PASS in `reports/2026-05-21-recovered-provider-error-card-cleanup.md` |
 | `MPV-UC-012` | Hear a streamed voice answer whose model deltas split punctuation from the phrase. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-012` | Modern Playground call with xAI/Cartesia/fallback TTS as available | Voice gateway exact TTS debug logs, transcript, provider metrics, buffer unit tests | The assistant speaks naturally, never says a standalone period as "dot", and preserves delayed question/exclamation prosody; transcript remains readable. | 2026-05-25 PASS automated regression; live audible rerun pending after runtime restart |
-| `MPV-UC-013` | Hear a streamed voice answer when model text contains links, emails, references, markdown, or provider markup. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-013` | Modern Playground call with current TTS route and fallback route | Voice gateway `llm_delta`, `tts_emit`, provider request logs when available, sanitizer/unit tests | TTS receives speech-safe phrase chunks; plain providers do not receive raw tags; provider-supported controls are preserved only on capable routes. | 2026-05-21 PASS; live browser QA plus provider metrics |
+| `MPV-UC-013` | Hear a streamed voice answer when model text contains links, emails, references, markdown, or provider markup. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-013` | Modern Playground call with current TTS route and fallback route | Voice gateway `llm_delta`, `tts_emit`, `[VoiceRendering][voice_gateway]`, provider request logs when available, sanitizer/unit tests | TTS receives speech-safe phrase chunks; plain providers do not receive raw tags; provider-supported controls are preserved only on capable routes. | PARTIAL 2026-07-15: prior live browser/artifact path passed; metadata-only provider/fallback rendering regression passes, but a post-change audible provider-matrix run remains required |
 | `MPV-UC-014` | Verify a voice/TTS fix after adding logs or instrumentation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-014` | Modern Playground call, active voice runtime, logs, DB/state | Runtime artifact proof, audible/delivered voice evidence, sanitized transcript evidence, exact TTS/provider-input logs, DB/state, owning code | The changed runtime is proven active and the post-change call demonstrates the intended audible behavior; instrumentation alone is not accepted. | 2026-05-22 PASS for local Whisper barge-in runtime/browser/log proof |
 | `MPV-UC-015` | Interrupt a local Whisper assistant reply while it is speaking. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-015` | Modern Playground call with local `pywhispercpp` STT | Visible transcript, audible behavior, voice gateway interruption policy/state logs, generated runtime config, DB call-session route | A sustained one-word or short-phrase barge-in pauses/interrupts the agent without waiting for final local Whisper text; AssemblyAI word-guard defaults remain unchanged. | 2026-05-22 PASS in `reports/2026-05-22-local-whisper-bargein-qa.md` |
 | `MPV-UC-016` | Open the Listening picker, select `AssemblyAI` → `Universal-3 Pro streaming (u3-rt-pro)`, then start a call and speak. | `docs/requirements_and_learnings/06_Voice_Calls.md` (AssemblyAI Streaming Engine Selection) / `MPV-017` | Modern Playground browser, voice gateway worker, LiveKit, `ASSEMBLYAI_API_KEY` configured | Listening dropdown options, voice gateway `connecting to AssemblyAI model=...` log, `/capabilities` payload, transcript, worker STT-selection tests | `Universal-3 Pro streaming (u3-rt-pro)` is selectable, the call connects, and the worker runs the selected `u3-rt-pro` engine with a real STT transcript. | 2026-05-29 PARTIAL: automated plumbing PASS + live `/capabilities` shows `u3-rt-pro` `available=True` + real-browser confirm that the picker lists and applies `Universal-3 Pro streaming (u3-rt-pro)`; only the audible-call transcript remains |
 | `MPV-UC-017` | Receive a streamed answer whose server emits growing text snapshots instead of pure incremental token deltas. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-018` | Modern Playground browser, voice gateway stream, LibreChat voice route, Mongo/chat reload | Gateway chunks, visible transcript, persisted assistant text/content parts, follow-up decision metadata | The assistant text appears once, `{NTA}` remains silent, and the linked LibreChat chat reload never shows malformed control tags or adjacent duplicate words. | 2026-05-30 PARTIAL PASS in `reports/2026-05-30-cumulative-delta-snapshot-rca.md`; artifact fixed and linked chat cleaned on read, but healthy primary-provider stream rerun blocked by local provider failures |
+| `MPV-UC-021` | In a real call, ask the agent to launch a synthetic GlassHive browser task, then speak a terse status/wait request and a deferred artifact request. | `docs/requirements_and_learnings/06_Voice_Calls.md`, `docs/requirements_and_learnings/07_MCPs.md` / `MPV-021`, `AGCFG-005`, `MPV-014` | Authenticated Modern Playground call and linked LibreChat conversation | audible audio, transcript, provider-bound tools, scoped `tool_search`, Mongo tool-call parts, GlassHive run/events, runtime logs, linked-chat reload | Voice uses the same eager launch/status/wait gateway as web and Telegram, discovers deferred artifacts in the same invocation, and speaks a truthful result without a false unavailable claim. | PASS 2026-07-13: real launch/wait/file creation plus a real deferred-discovery call that invoked scoped `tool_search` and `workspace_artifacts` in the same turn; transcript, persistence, and nonzero audio passed |
+| `MPV-UC-022` | Ask the configured voice model to recall a prior browser event while conversation recall and transcript fixtures are both available. | `docs/requirements_and_learnings/32_Conversation_Recall_RAG.md`, `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` / `MPV-022`, `MPV-014` | isolated browser, Modern Playground, linked LibreChat conversation | audible audio, expanded file-search sources, provider/controller logs, fixture DB/search state, runtime config | Voice answers from the strongest prior-chat evidence, does not cite the active prompt or blend an unrelated transcript, persists after reload, and does not crash in final-run telemetry. | PASS-AUTOMATED/PARTIAL 2026-07-14; focused ranking/controller fixtures pass, but isolated-account audible/persistence acceptance is NOT RUN |
+| `MPV-UC-023` | Open a public call from outside a synthetic lab LAN and speak. | `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` / `MPV-023`, `MPV-014`, `REMOTE-004` | Public Playground browser, LiveKit lab media, voice worker | selected ICE pair, generated/runtime node address, LiveKit/worker logs, fixture transcript row, cleanup | The browser selects a public media path, the worker receives audio, and the expected transcript is delivered; a loaded page alone is not accepted. | NOT RUN for this public candidate; requires an isolated lab edge/router and synthetic account |
+| `MPV-UC-024` | Upgrade or start with the unsupported legacy xAI `voice_agent` TTS compatibility value configured. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-024` | Config compiler and voice-gateway startup | Compiler/runtime error, capability contract, source inventory, standalone xAI provider tests | Startup fails closed with an actionable migration to `tts`; it explains that Voice Agent is a separate conversational API and never silently remaps the setting. | PASS automated 2026-07-15; wording corrected against current xAI documentation 2026-07-20; post-change installed-runtime restart intentionally not run in this source-only slice |
+| `MPV-UC-025` | Enable Docker-backed Voice after install, then upgrade from an older Viventium-managed LiveKit container. | `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md` / `MPV-025` | Full-stack launcher and Docker LiveKit runtime | Optional runtime lock, container image/source labels, health, TURN config, Docker disk usage | Exact multi-arch digest starts; an exact managed container is reused; a stale managed container is replaced; unrelated/external LiveKit is not deleted. | PARTIAL 2026-07-21: real arm64 Docker pull/start/health/restart, stale replacement, external preservation, and cleanup pass; Intel, TURN selected-pair, and microphone/TCC remain |
+| `MPV-UC-026` | Open the Modern Playground URL directly without first opening Voice from a conversation. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-027` | Modern Playground browser with no call-session parameters or standalone agent | Visible CTA/help text, console, network requests, exact `/api/health` identity | The start action stays disabled and immediately explains that Voice must be opened from a Viventium conversation; the page does not contact personal/provider state. | PASS 2026-07-21: isolated headed Chromium showed the recovery guidance, exact modern identity, zero console warnings/errors, and no non-loopback/backend requests. |
+| `MPV-UC-028` | Open the Modern Playground directly using keyboard navigation, a narrow viewport, forced colors, and Reduce Motion. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `MPV-028` | Modern Playground direct-entry browser page | `qa/modern-playground-voice/scripts/direct-entry-accessibility-browser-qa.cjs`; named focus order, viewport bounds/overflow, computed motion durations, console/network, exact source identity | Recovery guidance and controls remain perceivable and keyboard-operable; tall content scrolls downward without clipping; Reduce Motion removes retained animation/transition durations; requests stay loopback-only. | PASS 2026-07-22 against exact reviewed head: headed Chromium passed ten named keyboard stops, `320 x 760` reflow, forced colors, zero horizontal overflow, zero retained motion durations, and first-graphic `y=40`. VoiceOver, real call/audio, and exact signed installed artifact remain separate blocked rows. |
 
 ## MPV-001 Authenticated Call Launch
 
@@ -331,7 +338,7 @@
   and does not clone, install, start, or pin the old `agents-playground` UI unless classic mode is
   explicitly selected.
 - Surfaces: `bootstrap_components.py`, config compiler output, `bin/viventium start`, full-stack
-  launcher help/flags.
+  launcher help/flags, legacy `viventium-start-all.sh` compatibility entrypoint.
 - Preconditions: public checkout with `components.lock.json`; default or minimal public config.
 - Steps:
   1. Run the component-selection release tests for no-config, voice-enabled modern, explicit
@@ -340,18 +347,34 @@
      `VIVENTIUM_PLAYGROUND_VARIANT`.
   3. Inspect launcher flag handling to confirm no supplied playground flag resolves to modern and
      `--classic-playground` is the only old-UI opt-in.
-  4. During release review, confirm `components.lock.json` pins only the nested repos intentionally
-     shipped in the default runtime path.
+  4. Start the modern candidate with its exact 40-character source ref, verify `/api/health`, then
+     prove that a classic identity and a stale modern source ref are both rejected.
+  5. During release review, confirm `components.lock.json` identifies the reviewed modern commit and
+     that default component selection does not fetch the separately inventoried classic fallback.
+  6. Execute the legacy launcher's safe argument mapping against a synthetic canonical launcher and
+     prove that no arguments selects modern, `--no-playground` maps to `--skip-playground`, and the
+     old dependency/build mutation flags fail before delegation.
 - Expected Result: Default and no-config component selection includes `agent-starter-react` and
   excludes `agents-playground`. Voice-disabled selection excludes both playground repos. Explicit
-  classic selection includes `agents-playground` and excludes `agent-starter-react`.
+  classic selection includes `agents-playground` and excludes `agent-starter-react`. The legacy
+  wrapper owns no LiveKit image, package installation, environment mutation, broad process cleanup,
+  or alternative runtime logic.
 - Forbidden Result: old `agents-playground` is selected by default, cloned because config is absent,
-  started by the launcher without an explicit classic flag, or pinned into a default release solely
-  because a local fallback branch exists.
+  or started by the launcher without an explicit classic flag. Merely inventorying its reviewed
+  fallback commit in the complete component lock must not activate or fetch it. A legacy command
+  must not run a floating `livekit/livekit-server`, install `livekit-server-sdk`, or append secrets
+  to a tracked-checkout `.env` file.
 - Evidence: `tests/release/test_bootstrap_components.py`,
   `tests/release/test_config_compiler.py`,
-  `tests/release/test_voice_playground_dispatch_contract.py`
-- Last Run: 2026-05-19 automated release case added; targeted run required before release merge.
+  `tests/release/test_voice_playground_dispatch_contract.py`,
+  `tests/release/test_optional_runtime_provenance.py`
+- Last Run: PASS 2026-07-21. A clean modern candidate served an exact source-bound identity; the
+  verifier rejected classic and stale-source identities. Real Chromium showed `Viventium Voice
+  Assistant`, the Viventium home view, and expanded Listening providers after refresh. Focused
+  identity, selector, compiler, CLI, and legacy-wrapper tests passed. The compatibility wrapper now
+  delegates to the canonical locked runtime and rejects mutation-only options. See
+  `reports/2026-07-21-modern-playground-default-release-regression.md`. Final installed-artifact
+  identity remains part of the release-wide alignment gate.
 
 ## MPV-011 Recovered Provider Error Cards Stay Hidden
 
@@ -445,9 +468,12 @@
      labels, markdown links, code fences, split citation markers, detached `turn<N><kind><N>` ids,
      and voice-control tags in streamed model deltas.
   3. Inspect `llm_delta` debug lines to confirm the raw model/debug side may contain artifacts.
-  4. Inspect `tts_emit` debug lines and provider request logs when available.
+  4. Inspect `tts_emit` debug lines and provider request logs when available; correlate the turn with
+     metadata-only `[VoiceRendering][voice_gateway]` attempt/input/selection events.
   5. Verify plain-provider/fallback routes strip voice-control tags, while provider-capable routes
-     preserve only supported voice controls and still remove generic non-speech scaffolding.
+     preserve only supported voice controls and still remove generic non-speech scaffolding. The
+     metadata event must identify primary versus fallback and `preserved` versus `stripped` without
+     containing the synthetic transcript.
   6. Verify the transcript display remains free of provider markup and the selected model/provider
      was not silently changed to make the test pass.
 - Expected Result: TTS-bound chunks contain natural speech or deterministic placeholders such as
@@ -474,7 +500,9 @@
   wired `_LibreChatLLMStream._run` SSE regression reproducing `clearedis`, `what'syour`,
   `thisthem`, `tryingto`, and `somethingbefore`-style splits without emitting those joins; browser
   QA provider metrics completed but exact debug chunks are still blocked by the same instrumentation
-  gap.
+  gap. 2026-07-15 automated provider-boundary regressions additionally prove metadata-only
+  attempt/input/selection events for preserved expressive controls and stripped plain-provider
+  fallback controls; a runtime reload plus post-change audible provider-matrix call is still open.
 
 ## MPV-014 Voice Fixes Need Post-Change User-Grade Proof
 
@@ -745,16 +773,19 @@
      4.3 voice parameter bag.
   3. Confirm inherited `useResponsesApi` and primary `reasoning` are absent from the resolved voice
      request, while an explicit voice-level xAI Responses selection remains supported.
-  4. Reload the active LibreChat API from the patched checkout.
-  5. Start an authenticated Modern Playground call in real Chrome, open the transcript, and send a
+  4. Mount the optional voice panel while its watched provider is temporarily empty, then hydrate
+     the persisted xAI provider/model/parameter bag as an agent switch or async form reset would.
+  5. Reload the active LibreChat API from the patched checkout.
+  6. Start an authenticated Modern Playground call in real Chrome, open the transcript, and send a
      short synthetic typed voice turn.
-  6. Confirm visible assistant text, delivered browser audio, xAI TTS metrics, token-bearing LLM
+  7. Confirm visible assistant text, delivered browser audio, xAI TTS metrics, token-bearing LLM
      stream completion, and persisted assistant text. Compare the result with the escaped failure's
      no-token timeout.
 - Expected Result: Grok 4.3 produces visible text and xAI audio without a provider error; the voice
   override logs or regression evidence show Chat Completions provenance (`useResponsesApi` unset)
   unless the voice profile explicitly opted into xAI Responses.
 - Forbidden Result: the GPT-5.6 primary's Responses setting silently changes the xAI voice request;
+  transient empty-to-value hydration clears the persisted voice parameter bag or appears unset;
   the call waits for the provider timeout with zero token events; the fix changes Grok 4.3 or xAI
   Eve to a different configured route; public evidence exposes credentials, account identifiers,
   raw call ids, or local paths.
@@ -765,14 +796,27 @@
   seconds with token events, displayed the requested synthetic sentence, and delivered 1.61 seconds
   of unmuted xAI audio. Focused voice-override tests passed 13/13; adjacent provider suites,
   packages API checks, and the full voice gateway also passed. Claude Opus 4.8 found no must-fix
-  issue in the parameter-provenance design.
+  issue in the parameter-provenance design. Reconfirmed 2026-07-14 after an escaped Agent Builder
+  provider-switch regression: switching OpenAI Responses to xAI now clears the OpenAI parameter
+  bag, live/source config remains `xai/grok-4.3` plus the OpenAI Terra voice fallback, and the fresh
+  real-Chrome call reached xAI Chat Completions with `reasoning_effort=none`, no Responses flag,
+  HTTP 200, visible persisted text, and non-cancelled xAI audio. ClaudeViv then identified the
+  mounted empty-to-value hydration edge; the guard now preserves that restored parameter bag. Its
+  final review also prompted a reachable agent-switch check: optional route panels are now keyed to
+  the form agent id, so switching agents while the panel remains open cannot reuse the previous
+  agent's provider history. In the real signed-in browser, a second agent received an unsaved OpenAI
+  selection while the panel remained open; returning to the original agent and reloading preserved
+  xAI/Grok/None with Responses disabled and the OpenAI Terra fallback. Mongo showed the original
+  route unchanged and the second agent still unset. The focused component/helper suites pass 17/17.
+  A final max-effort ClaudeViv review confirmed all five post-delta claims and found no must-fix
+  defect in the agent-scoped lifecycle boundary.
 
 ## MPV-020 Cross-Conversation Memory And Recall From Telegram
 
 - Requirement: `20_Memory_System.md` ordered saved memory and
   `32_Conversation_Recall_RAG.md` hybrid recall; reuse the audible acceptance gate in `MPV-014`.
-- Preconditions: real Chrome profile already authenticated; real Telegram bot; synthetic durable
-  marker and separate natural-event marker; pre-run state captured for cleanup.
+- Preconditions: dedicated isolated browser and channel QA accounts; synthetic durable marker and
+  separate natural-event marker; fixture state captured for cleanup.
 - Steps:
   1. Send both synthetic turns in Telegram and prove the durable marker advances a memory revision
      while the natural event is absent from saved memory but present in recall-eligible history.
@@ -785,10 +829,291 @@
   evidence; audio and transcript agree.
 - Forbidden Result: typed-only API proof, fake browser/audio, same-conversation history, a model
   guess without retrieval evidence, or synthetic state left behind.
-- Last Run: ADDED 2026-07-11; real Chrome/Telegram/voice acceptance required.
+- Last Run: PASS-AUTOMATED/PARTIAL 2026-07-14. Synthetic writer, retrieval, prompt-frame,
+  persistence, and cleanup regressions pass. The dedicated isolated channel-to-browser-to-audible-
+  voice journey is NOT RUN and no personal profile/channel history is public evidence.
+
+## MPV-021 Spoken GlassHive Gateway And Deferred Discovery
+
+- Requirement: `06_Voice_Calls.md` same-agent/same-permission contract, `07_MCPs.md` MCP-owned
+  discovery contract, `AGCFG-005`, and the post-change audible gate in `MPV-014`.
+- Preconditions: the active runtime is the checkout under test; authenticated Modern Playground;
+  healthy GlassHive; synthetic public-safe task; no private browser/account interaction.
+- Steps:
+  1. Start a real call and prove the agent participant and microphone/audio path are active.
+  2. Speak a request to open `https://example.com`, record the exact heading, and save a public-safe
+     workspace note.
+  3. After launch, speak a terse status or wait request.
+  4. Ask for artifacts so the host must discover the deferred `workspace_artifacts` capability with
+     `tool_search` scoped to `glasshive-workers-projects` and invoke it in the same turn.
+  5. Verify nonzero delivered audio, visible transcript, linked-chat persistence/reload, provider-
+     bound launch/status/wait definitions, Mongo tool-call parts, GlassHive run/events, and logs.
+- Expected Result: the audible answer and transcript agree with real GlassHive state; launch,
+  status/wait, and deferred discovery work without channel-specific routing or a false unavailable
+  claim.
+- Forbidden Result: typed-only proof, silent/zero-byte audio, source/tests/logs substituted for the
+  call, voice using different agent permissions, a deferred schema reported unavailable without
+  scoped discovery, or private data in evidence.
+- Last Run: PASS 2026-07-13 for the real Modern Playground launch/wait/file journey and a separate
+  real deferred-artifact request. The worker completed and created the exact synthetic note;
+  transcript, TTS provider metrics, linked persistence, 17 unique eager provider-bound tools, and
+  artifact checks passed. On the deferred request the same voice turn invoked scoped `tool_search`,
+  rebound with 22 provider tools, invoked `workspace_artifacts`, rendered the visible transcript,
+  persisted the tool parts without error, and delivered nonzero audio. The observed one-shot stream
+  duration was 8.187 seconds and delivered audio duration was 4.478 seconds. The generic custom-
+  prompt acceptance harness also passed after its semantic-health gate was corrected to use
+  provider completion plus visible and persisted output rather than canned response vocabulary.
+  These are acceptance observations, not percentile measurements.
+
+## MPV-022 Mixed-Corpus Recall Must Stay Grounded On The Configured Voice Route
+
+- Requirement: `32_Conversation_Recall_RAG.md` mixed-resource ranking and active-thread exclusion,
+  `34_Voice_Chat_LLM_Override.md` route ownership, and the audible post-change gate in `MPV-014`.
+- User Outcome: A fresh voice call remembers an earlier chat event accurately even when meeting
+  transcripts are also searchable, without treating its own question as prior evidence.
+- Surfaces: isolated browser, Agent Builder, Modern Playground, LibreChat voice controller and
+  `file_search`, linked-chat source detail, Mongo, Meilisearch, recall metadata, voice gateway.
+- Preconditions: authenticated isolated QA browser; configured synthetic voice route; recall
+  enabled; synthetic prior event in a separate fixture conversation; saved memory unchanged.
+- Steps:
+  1. Confirm Agent Builder still shows the configured voice model and continuity toggles.
+  2. Enter a synthetic event in an ordinary browser conversation and wait for aligned recall
+     source/upload digests.
+  3. Start a fresh call and ask the agent to search prior conversations for the event details.
+  4. Confirm `file_search` executes, the prior chat ranks before unrelated transcripts, and the
+     active thread/prompt is absent from returned evidence.
+  5. Hear the answer, open the linked chat's tool detail, refresh it, and correlate the visible
+     result with provider, controller, TTS, Mongo, and recall evidence.
+  6. Remove the synthetic event/call and verify zero residual state across Mongo, Meilisearch,
+     saved memory, and rebuilt recall.
+- Expected Result: configured xAI Chat Completions returns only the grounded prior-event fields;
+  source detail and answer persist after refresh; xAI TTS delivers non-cancelled audio.
+- Forbidden Result: a provider/model flip; inherited Responses transport; final-run Feelings
+  `ReferenceError`; transcript source-class override; blended unrelated meeting details; current
+  prompt as evidence; silent or typed-only acceptance; or residual synthetic state.
+- Evidence: `fileSearch.test.js`, agent controller/feelings/voice tests, focused Prompt Workbench
+  recall eval, isolated browser/audible call when run, linked-chat refresh, provider/TTS logs, and
+  fixture DB/search cleanup.
+- Last Run: PASS-AUTOMATED/PARTIAL 2026-07-14. File-search regressions passed 49/49 and adjacent
+  controller/feelings/voice suites passed 178/178. Isolated-account audible delivery, detail-state
+  persistence, and runtime cleanup are NOT RUN.
+
+## MPV-023 Public Call Must Establish Off-LAN Media
+
+- Requirement: `docs/requirements_and_learnings/47_Remote_Access_and_Tunneling.md` and the
+  post-change user-grade proof gate in `MPV-014`.
+- User Outcome: opening a Telegram `/call` link away from home starts a real voice session instead
+  of loading settings and then failing with `could not establish pc connection`.
+- Surfaces: public Playground HTTPS, public LiveKit signaling and TCP/UDP media, voice gateway,
+  Mongo call-session/transcript state, canonical and generated runtime config.
+- Preconditions: local-prod runtime compiled from canonical config; synthetic public-safe audio and
+  session; independently routed browser path; local-only raw evidence.
+- Steps:
+  1. Prove the active LiveKit process advertises the intended public media address and that the
+     public HTTPS and TCP media ports are externally reachable.
+  2. Route Chromium's public page/signaling traffic through an off-LAN SOCKS proxy and disable
+     non-proxied UDP so LAN media cannot satisfy the case.
+  3. Start the call with the synthetic microphone fixture and require connected TCP ICE pairs.
+  4. Verify the voice worker joins, expected STT transcript persists once, and the visible call UI
+     remains active.
+  5. Correlate LiveKit selected-pair logs, worker activity, DB persistence, generated config, and
+     targeted synthetic cleanup.
+  6. Test TURN/TLS independently when it is relied on; a listener, certificate, or gathered relay
+     candidate does not pass unless a relay pair is selected.
+  7. Test the same public hostname from the serving Wi-Fi separately and report NAT loopback/split
+     DNS as its own network prerequisite.
+- Expected Result: the off-LAN public browser selects LiveKit TCP media, the worker receives the
+  fixture, the expected transcript is delivered, and synthetic records are cleaned.
+- Forbidden Result: private-only server candidates; page/settings/signaling-only acceptance;
+  assuming TURN works because its TLS listener is reachable; hiding same-Wi-Fi NAT failure inside
+  the application result; retaining synthetic users, sessions, messages, or ingress rows.
+- Evidence: isolated lab Playwright evidence, sanitized selected-pair summary, synthetic transcript,
+  fixture cleanup ledger, and generated-config alignment.
+- Last Run: NOT RUN for this public candidate. A dedicated isolated lab edge/router and synthetic
+  account are required; non-lab network observations are excluded from public evidence.
+
+## MPV-024 Unsupported Voice-Agent-As-TTS Compatibility Route Fails Closed
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md` xAI standalone TTS contract.
+- User Outcome: Old configuration cannot silently run a different xAI product or be mistaken for
+  the supported standalone TTS renderer.
+- Surfaces: config compiler, generated runtime env, voice-gateway startup, shared provider/model
+  contract, xAI prompt dialect.
+- Steps:
+  1. Compile a synthetic config with `voice.tts.xai.tts_api: voice_agent`.
+  2. Start the worker unit boundary with `VIVENTIUM_XAI_TTS_API=voice_agent`.
+  3. Verify both fail with an actionable migration to `tts`, without starting or remapping a route.
+  4. Verify the shared xAI runtime model list contains only `xai-tts` at `/v1/tts`, the legacy
+     adapter source/test are absent, and the prompt branch still exposes only documented standalone
+     xAI TTS controls.
+- Expected Result: unsupported legacy TTS configuration fails closed; supported standalone xAI TTS remains
+  selectable and capability-aligned.
+- Forbidden Result: `/v1/realtime` starts; the setting silently becomes `/v1/tts`; legacy adapter
+  instructions or catalog entries remain active; standalone xAI tag coverage regresses.
+- Evidence: `test_config_compiler_rejects_retired_xai_grok_voice_agent_route`,
+  `test_load_env_rejects_retired_xai_voice_agent_route`,
+  `test_xai_voice_runtime_exposes_only_standalone_tts`, voice provider contract tests, and
+  `surfacePrompts.spec.js`.
+- Last Run: PASS automated 2026-07-15. The failure-first runtime test was RED before the worker
+  guard and GREEN after; compiler/runtime rejection, source absence, one-model catalog, and
+  standalone prompt contract pass. No local installed runtime was restarted in this source-only
+  slice.
+
+## MPV-025 LiveKit Docker Runtime Is Immutable And Upgrade-Safe
+
+- Requirement: `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md` and
+  `docs/requirements_and_learnings/52_Voice_Component_Fork_Modification_Inventory.md`.
+- User Outcome: Enabling Voice or upgrading cannot silently run a floating or older LiveKit server.
+- Surfaces: optional runtime manifest, full-stack launcher, Viventium-managed LiveKit container,
+  TURN configuration, and Docker storage.
+- Steps:
+  1. Verify the optional runtime manifest records the exact version, upstream source commit,
+     multi-architecture index digest, child digests, provenance class, license, and signature truth.
+  2. Start from no image/container and prove the exact reference is pulled and becomes healthy.
+  3. Restart and prove the exact managed container is reused without churn.
+  4. Seed an older synthetic Viventium-managed container and prove it is replaced without volumes.
+  5. Bind an unrelated or explicitly configured external LiveKit endpoint and prove Viventium does
+     not delete or relabel it.
+  6. Exercise v1.13 TURN configuration with TTL-aware credentials and classify any legacy no-TTL
+     configuration as migration-required rather than healthy.
+  7. Record logical and physical Docker disk usage before and after; remove only named QA resources.
+- Expected Result: runtime identity matches the immutable lock; exact containers are stable; stale
+  managed containers upgrade automatically; external/unrelated state is preserved; TURN and storage
+  evidence are truthful.
+- Forbidden Result: `latest` or an unqualified repository name; treating the nested placeholder SHA
+  as the Docker artifact; silently reusing a stale managed container; deleting unrelated resources;
+  calling digest provenance a publisher signature; or accepting TURN from a listening port alone.
+- Evidence: `release/optional-runtime-components.json`,
+  `tests/release/test_optional_runtime_provenance.py`, sanitized container inspect/health evidence,
+  TURN selected-pair evidence, and a bounded cleanup ledger.
+- Last Run: PARTIAL 2026-07-21. Eight focused provenance/identity tests and launcher syntax pass.
+  After a validated continuity backup and controlled Docker recovery, the exact index digest pulled
+  and ran on arm64; health and same-container restart passed; the real launcher replaced a stale
+  managed source label and preserved an unrelated healthy external container. All named synthetic
+  containers were deleted and the volume count stayed unchanged. Intel, TURN selected-pair, and
+  microphone/TCC remain NOT RUN. See
+  `reports/2026-07-21-livekit-immutable-runtime-docker-qa.md`.
+
+## MPV-026 Custom Settings Never Runs An Unverified Native LiveKit Binary
+
+- Requirement: `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md` and
+  `docs/requirements_and_learnings/52_Voice_Component_Fork_Modification_Inventory.md`.
+- User Outcome: Enabling Voice from Custom Settings cannot silently execute an unrelated or stale
+  `livekit`/`livekit-server` binary inherited from the user's shell.
+- Surfaces: `scripts/viventium/native_stack.sh`, full-stack launcher, Custom Settings Native/source
+  runtime, exact Docker runtime, and deliberately configured external LiveKit endpoint.
+- Steps:
+  1. Put synthetic `livekit` and `livekit-server` executables first on `PATH`.
+  2. Start the launcher with Native install mode and Voice enabled.
+  3. Verify the launch path ignores both executables and selects the exact digest-pinned Docker
+     artifact when Docker is available.
+  4. Repeat with `--skip-docker`, no reachable configured endpoint, and confirm startup fails before
+     either executable runs.
+  5. Verify the failure explains the supported choices: enable Docker, configure
+     `LIVEKIT_API_HOST`, or use `--skip-livekit` to start without Voice.
+  6. Configure an unreachable explicit endpoint and occupy the unconfigured default port in separate
+     runs; verify both fail without starting Docker, adopting the listener, or deleting it.
+  7. Directly request LiveKit from the early Native dependency stack and verify it fails before
+     starting other dependencies or installing/executing a local server binary; the supported CLI
+     must keep delegating Voice startup to the full launcher.
+- Expected Result: only the exact managed Docker artifact or an explicitly configured reachable
+  external endpoint can own LiveKit startup; the no-Docker missing-endpoint path is actionable.
+- Forbidden Result: any `command -v livekit*` discovery, `PATH` executable launch, silent fallback,
+  implicit Docker fallback from an unhealthy explicit endpoint, adoption/deletion of an unrelated
+  listener, floating Docker image, or success message for an unverified runtime.
+- Evidence: `tests/release/test_optional_runtime_provenance.py`,
+  `tests/release/test_native_stack_helpers.py`, both shell syntax checks, and exact Docker/external
+  endpoint QA under `MPV-025`.
+- Last Run: 2026-07-21 PASS for source contract and shell syntax. The regression was RED while the
+  launcher still accepted arbitrary `PATH` binaries and GREEN after removing that fallback. Exact
+  Docker behavior remains covered by `MPV-025`; a signed native macOS LiveKit artifact does not
+  exist and is not claimed.
+
+## MPV-027 Direct Playground Entry Explains The Safe Recovery Path
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`.
+- User Outcome: A non-technical user who opens the voice URL directly understands why the call
+  cannot start and what to do next.
+- Surfaces: Modern Playground browser home view and exact `/api/health` identity.
+- Steps:
+  1. Start the current modern candidate on an isolated loopback port with synthetic secrets, an
+     unreachable loopback backend, and no standalone agent name.
+  2. Open the root URL in headed Chromium without call-session query parameters.
+  3. Verify the primary action is disabled and the adjacent help text says to open Voice from a
+     Viventium conversation.
+  4. Inspect console and requests, refresh, and verify the exact modern source identity.
+- Expected Result: refusal is actionable, branded, stable after refresh, and local-only.
+- Forbidden Result: a disabled `Open from Viventium` button with no explanation; a generic LiveKit
+  page; an automatic provider/backend request; raw error text; or adoption of a stale listener.
+- Evidence: `tests/release/test_playground_identity.py` and
+  `reports/2026-07-21-modern-playground-default-release-regression.md`.
+- Last Run: PASS 2026-07-21. The regression test failed before the guidance was added and passed
+  afterward; headed Chromium showed the guidance with no console warning/error or external request.
+
+## MPV-028 Direct Playground Entry Is Inclusive At Narrow And Reduced-Motion Settings
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md`.
+- User Outcome: A keyboard or reduced-motion user can understand and configure the direct voice
+  surface without clipped content or unnecessary motion.
+- Surfaces: Modern Playground direct browser entry, viewport layout, forced colors, focus order, and
+  motion preferences.
+- Steps:
+  1. Open the isolated modern candidate in headed Chromium and traverse every enabled control with
+     Tab.
+  2. Apply a `320 x 760` viewport, forced colors, dark scheme, and Reduce Motion.
+  3. Verify named focus targets, zero horizontal overflow, a non-negative top bound for the first
+     setup graphic, downward document growth, and zero retained animation/transition durations.
+  4. Inspect console and request destinations.
+- Expected Result: controls are named and keyboard reachable; tall content begins in the viewport
+  and scrolls downward; Reduce Motion removes motion durations; only loopback assets load.
+- Forbidden Result: a setup surface centered above the viewport, unnamed focus target, horizontal
+  scroll, retained transform/opacity motion, external request, or console warning/error.
+- Evidence: `tests/release/test_playground_identity.py` and
+  `qa/installer-resilience/reports/2026-07-21-accessibility-and-fault-matrix-closeout.md`.
+- Last Run: PASS 2026-07-21 for the isolated source page. Headed Chromium first reproduced nine
+  retained transition durations and a clipped top graphic, then passed after the fixes with zero
+  motion durations, zero horizontal overflow, and the first graphic at `y=40`. VoiceOver, an actual
+  call/microphone, and the exact signed installed artifact remain separate blocked rows.
+
+## MPV-029 Call Start Fails Safely Before Durable Session Creation
+
+- Requirement: `docs/requirements_and_learnings/06_Voice_Calls.md` and
+  `docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md`.
+- User Outcome: Starting Voice never adopts a stale playground, buffers an unbounded health
+  response, or exposes raw server diagnostics; recoverable failure copy tells the user what to do.
+- Surfaces: LibreChat call button, `POST /api/viventium/calls`, and modern/classic `/api/health`.
+- Steps:
+  1. Build both playground variants with exact synthetic 40-character source refs and inspect the
+     compiled health route rather than trusting source text.
+  2. Attempt call creation against wrong-variant, stale-source, oversized declared, oversized
+     chunked, malformed, and unreachable health responses.
+  3. Verify no durable call session is created and the button renders concise inline recovery copy
+     linked to the retry button for assistive technology.
+  4. Verify the response body is bounded while streaming and an oversized `Content-Length` is
+     rejected before the body is read.
+  5. Separately verify LiveKit server, registered gateway worker, selected STT/TTS provider, and an
+     audible synthetic call before promoting this case to full release `PASS`.
+- Expected Result: compiled source identity cannot be changed by runtime environment drift; unsafe
+  responses fail closed before persistence; the user sees actionable public-safe inline copy.
+- Forbidden Result: runtime identity echo, unbounded `response.text()`, raw JSON alert, durable call
+  session creation after a failed guard, or a claim that playground health proves end-to-end Voice.
+- Evidence: `tests/release/test_playground_identity.py`,
+  `tests/release/test_voice_call_startup_guard.py`, LibreChat call route/component tests, and
+  `reports/2026-07-21-modern-playground-default-release-regression.md`.
+- Last Run: 2026-07-22 `PARTIAL`. Both clean hosted playground heads built successfully and their
+  compiled routes contained only the build-time source refs. Exact modern-playground head
+  `fd778562af199f7fb503bd4a0d106e22c282b16b` also passed headed Chromium keyboard, 320 px,
+  forced-colors, reduced-motion, loopback-only, and reload checks. Corrected LibreChat review head
+  `44ac1f7a...` passed 59 stream tests, 216 Viventium route tests, and all 15 hosted checks, including
+  actual Redis. The headed retry/error path, registered LiveKit worker, selected provider readiness,
+  and audible synthetic call remain unrun; end-to-end Voice readiness is not claimed.
 
 ## Release Test Traceability
 
+- `tests/release/test_voice_call_startup_guard.py`
+- `tests/release/test_playground_identity.py`
+- `tests/release/test_optional_runtime_provenance.py`
+- `tests/release/test_playground_loopback_contract.py`
 - `tests/release/test_voice_playground_dispatch_contract.py`
 - `tests/release/test_config_compiler.py` (`VIVENTIUM_ASSEMBLYAI_STT_MODEL` default + override)
 - `viventium_v0_4/voice-gateway/tests/test_worker_stt_assemblyai.py` (AssemblyAI engine selection)

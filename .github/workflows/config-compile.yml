@@ -3,18 +3,70 @@ name: Config Compile
 on:
   pull_request:
   push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: config-compile-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
-    runs-on: macos-latest
+    name: Easy Install core (${{ matrix.expected_arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            expected_arch: arm64
+          - runner: macos-15-intel
+            expected_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      EXPECTED_ARCH: ${{ matrix.expected_arch }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          python-version: "3.11"
+          persist-credentials: false
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          # Resolve the newest available 3.12 patch for each hosted macOS architecture.
+          python-version: "3.12"
+      - name: Record hosted Python toolchain
+        run: python -VV
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
       - run: python -m pip install -r scripts/viventium/requirements.txt pytest
-      - run: >
-          python -m pytest tests/release/test_config_compiler.py -q -k
-          "renders_structured_telegram_bot_api_settings or
-          renders_managed_local_telegram_bot_api_settings or
-          rejects_conflicting_managed_and_explicit_telegram_bot_api_settings"
+      - name: Fetch and validate the exact pinned LibreChat component
+        run: |
+          python scripts/viventium/bootstrap_components.py \
+            --repo-root "$PWD" \
+            --config config.minimal.example.yaml \
+            --jobs 1
+      - name: Run cross-architecture installer and payload policy suites
+        run: |
+          python -m pytest \
+            tests/release/test_config_compiler.py \
+            tests/release/test_continuity_bundle.py \
+            tests/release/test_install_experience_labels.py \
+            tests/release/test_macos_helper_install.py \
+            tests/release/test_native_candidate_transport.py \
+            tests/release/test_native_component_manifest.py \
+            tests/release/test_native_component_staging.py \
+            tests/release/test_native_continuity.py \
+            tests/release/test_native_macos_compatibility.py \
+            tests/release/test_native_payload.py \
+            tests/release/test_native_payload_assembler.py \
+            tests/release/test_native_payload_builder.py \
+            tests/release/test_native_public_safety.py \
+            tests/release/test_native_release_sequence.py \
+            tests/release/test_native_stack_helpers.py \
+            tests/release/test_ci_release_workflows.py \
+            -q

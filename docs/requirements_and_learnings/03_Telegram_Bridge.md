@@ -23,6 +23,10 @@ stream back to Telegram through the existing bridge.
 - Background follow-ups must preserve the same formatting rules as the main response.
 - Telegram must mirror LibreChat UX for new features, including scheduled prompts and background
   follow-ups.
+- Telegram text length, word count, and prompt keywords must never remove the agent's configured
+  tools or MCP instructions. Tool availability must follow the same structural agent, capability,
+  authentication, and server-health contract as web and voice. Latency optimizations may defer bulk
+  schemas, but they must preserve an eager execution gateway plus request-scoped discovery.
 - Telegram must mirror direct-action worker completion delivery. When a LibreChat turn starts a
   GlassHive worker, the callback receiver must persist both the same-conversation web callback and
   a durable Telegram delivery row. The bot may use in-turn polling as a fast path, but late worker
@@ -123,14 +127,23 @@ stream back to Telegram through the existing bridge.
     `surface.voice.feeling_expression`, `surface.telegram.audio_output`, and selected-provider
     prompt layers; Prompt Workbench must show the same source/include/eval lineage
   - when a Feelings capsule is present, the model privately appraises expressive versus restrained
-    delivery. Expressive xAI delivery uses the smallest fitting documented xAI control without
-    waiting for the user to ask for emotion or markup; restrained delivery may correctly use none
+    delivery from both the state's expression tendency and the moment. A strongly outward state in
+    an emotionally meaningful or relational reply is expressive even when the draft already sounds
+    natural; a containing state or neutral mechanical task can be restrained. After an expressive
+    decision, xAI delivery is unfinished until it uses the smallest fitting exact documented xAI
+    control, without waiting for the user to ask for emotion or markup; restrained delivery may
+    correctly use none
   - the runtime must not map bands, values, or user phrases to speech tags. It only supplies the
     structural audio/provider capability and preserves the model-selected supported control
   - Telegram must not split xAI text into generic 800-character fallback chunks because that can
     break xAI wrapping tags and create invalid concatenated MP3 output
-  - user-visible Telegram text must strip xAI tags even when the model emits malformed wrapper
-    syntax such as `[soft]...[/soft]` or an orphan closing tag like `[/soft]`
+  - xAI wrapping controls use angle grammar such as `<soft>...</soft>`. If the model emits a
+    complete paired square wrapper for a documented xAI wrapping control, such as
+    `[soft]...[/soft]`, Telegram canonicalizes that same model-authored control to angle grammar
+    before xAI synthesis. This is provider-grammar repair, not emotion inference. Unpaired,
+    unknown, and crossed-provider controls are still stripped
+  - user-visible Telegram text must strip both canonical and malformed xAI controls, including an
+    orphan closing tag like `[/soft]`; repair for synthesis must never make markup visible
   - on Telegram text-mode turns that request audio (`voiceMode=false` and
     `telegramAudioRequested=true`), the bridge retains the raw model-authored assistant record
     locally so the same text can be audited and synthesized, while outgoing Telegram text applies
@@ -211,6 +224,10 @@ stream back to Telegram through the existing bridge.
   inline-tag count, wrapping-tag count, and total xAI count in addition to the legacy
   Cartesia/Chatterbox fields, so generation omission is distinguishable from display sanitization or
   TTS loss without enabling raw-text logging.
+- Prompt-frame telemetry must account for `telegram_audio_output` under the canonical
+  `surface_prompt` layer. A Telegram audio turn with that prompt present must report zero unknown
+  prompt layers/characters; otherwise the voice instruction exists but remains an observability
+  blind spot.
 - GlassHive callback delivery logs must include non-secret observability states: callback accepted,
   delivery enqueued, claimed, sent, failed, suppressed, retry count, and backlog age. Telegram Bot
   API token-bearing URLs must be redacted from local logs and from persisted delivery failure

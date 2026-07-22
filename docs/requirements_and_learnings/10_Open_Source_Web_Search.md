@@ -42,7 +42,7 @@ LibreChat config (`viventium_v0_4/LibreChat/librechat.yaml`):
     - keep local Conversation Recall off by default
     - explain that both can be enabled later through `bin/viventium configure` after Docker Desktop
       is installed
-    - advanced/custom install paths may still choose hosted or Docker-backed search explicitly
+    - Custom Settings Install may still choose hosted or Docker-backed search explicitly
 - Firecrawl expects a valid `fc-` API key format (or UUID). LibreChat sends `FIRECRAWL_API_KEY`.
 - If Firecrawl expects a different API version, update `FIRECRAWL_VERSION` and
   `FIRECRAWL_API_URL` together to keep v0.4 and v0.3 aligned.

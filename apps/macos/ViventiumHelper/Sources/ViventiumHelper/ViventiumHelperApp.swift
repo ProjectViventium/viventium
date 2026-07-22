@@ -1,4 +1,5 @@
 import AppKit
+import CoreFoundation
 import Darwin
 import Foundation
 import SwiftUI
@@ -8,6 +9,7 @@ private struct HelperConfig: Codable, Equatable {
     let appSupportDir: String
     var allowProtectedRepoRoot: Bool?
     var showInStatusBar: Bool?
+    var nativeRuntime: Bool? = nil
 }
 
 private struct ActiveRuntimeCheckout: Decodable {
@@ -38,10 +40,11 @@ private struct StackHealthSnapshot {
     let apiReady: Bool
     let frontendReady: Bool
     let playgroundReady: Bool
+    let requiresPlayground: Bool
     let optionalSurfacesReady: Bool
 
     var coreHealthy: Bool {
-        self.apiReady && self.frontendReady && self.playgroundReady
+        self.apiReady && self.frontendReady && (!self.requiresPlayground || self.playgroundReady)
     }
 
     var healthy: Bool {
@@ -136,6 +139,7 @@ final class HelperController: ObservableObject {
         }
     }
     @Published private(set) var snapshotInProgress: Bool = false
+    @Published private(set) var nativeRestoreInProgress: Bool = false
     @Published private(set) var transcriptIngestInProgress: Bool = false
     @Published private(set) var transcriptSourceConfigInProgress: Bool = false
     @Published private(set) var promptWorkbenchActionInProgress: Bool = false
@@ -205,12 +209,17 @@ final class HelperController: ObservableObject {
         self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
     }
 
+    var nativeRuntimeMode: Bool {
+        self.config?.nativeRuntime == true
+    }
+
     var backupActionLabel: String {
         self.snapshotInProgress ? "Creating Backup..." : "Create Backup Snapshot"
     }
 
     var backupActionDisabled: Bool {
-        self.snapshotInProgress || self.stackState.actionBusy || self.config == nil || self.configUsesProtectedRepoRoot
+        self.snapshotInProgress || self.nativeRestoreInProgress || self.stackState.actionBusy || self.config == nil ||
+            (self.configUsesProtectedRepoRoot && !self.nativeRuntimeMode)
     }
 
     var transcriptIngestActionLabel: String {
@@ -383,7 +392,7 @@ final class HelperController: ObservableObject {
             alert.runModal()
             return
         }
-        guard !Self.configUsesProtectedRepoRoot(config) else {
+        guard self.nativeRuntimeMode || !Self.configUsesProtectedRepoRoot(config) else {
             self.presentProtectedCheckoutAlert(action: "create a backup")
             return
         }
@@ -402,16 +411,32 @@ final class HelperController: ObservableObject {
                 logFileName: "helper-snapshot.log"
             )
             let snapshotPath = Self.latestSnapshotPath(appSupportDir: config.appSupportDir)
+            let snapshotProof = Self.snapshotProofStatus(snapshotPath: snapshotPath)
             await MainActor.run {
                 self.snapshotInProgress = false
                 if exitStatus == 0 {
-                    self.log("Manual backup snapshot completed")
                     let alert = NSAlert()
-                    alert.messageText = "Backup snapshot created"
-                    alert.informativeText =
-                        snapshotPath.map { "Saved to \($0)" } ??
-                        "The snapshot completed, but the latest snapshot path was not recorded."
-                    alert.alertStyle = .informational
+                    switch snapshotProof {
+                    case .metadataOnly:
+                        self.log("Continuity metadata captured without a backup payload")
+                        alert.messageText = "Continuity metadata captured"
+                        alert.informativeText = snapshotPath.map {
+                            "Saved metadata to \($0). No recoverable backup payload was created."
+                        } ?? "No recoverable backup payload was created, and the metadata path was not recorded."
+                        alert.alertStyle = .warning
+                    case .complete:
+                        self.log("Manual backup snapshot completed")
+                        alert.messageText = "Backup snapshot created"
+                        alert.informativeText =
+                            snapshotPath.map { "Saved to \($0)" } ??
+                            "The snapshot completed, but the latest snapshot path was not recorded."
+                        alert.alertStyle = .informational
+                    case .invalid:
+                        self.log("Snapshot command returned without valid complete-bundle proof")
+                        alert.messageText = "Backup snapshot failed"
+                        alert.informativeText = "The snapshot did not contain valid complete-bundle proof. No backup was published; check helper-snapshot.log."
+                        alert.alertStyle = .warning
+                    }
                     if snapshotPath != nil {
                         alert.addButton(withTitle: "Reveal")
                     }
@@ -429,6 +454,81 @@ final class HelperController: ObservableObject {
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
                 }
+            }
+        }
+    }
+
+    func restoreNativeSnapshot() {
+        guard self.nativeRuntimeMode, let config else {
+            let alert = NSAlert()
+            alert.messageText = "Native restore is unavailable"
+            alert.informativeText = "Reinstall the signed Viventium helper, then try again."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        guard !self.nativeRestoreInProgress && !self.snapshotInProgress else {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Viventium Backup"
+        panel.message = "Choose a complete Native backup snapshot."
+        panel.prompt = "Choose Backup"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, let selected = panel.url else {
+            return
+        }
+        let snapshotPath = selected.path
+        guard case .complete = Self.snapshotProofStatus(snapshotPath: snapshotPath) else {
+            let alert = NSAlert()
+            alert.messageText = "This is not a complete backup"
+            alert.informativeText = "Choose a snapshot containing valid recoverable proof. Continuity metadata alone cannot be restored."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        let confirm = NSAlert()
+        confirm.messageText = "Restore this Viventium backup?"
+        confirm.informativeText = "Viventium will validate and stage the backup before replacing local chats, files, and schedules. If activation fails, it will attempt to restore the prior local state. You will need to reset the local browser password, reconnect accounts, and rebuild Recall."
+        confirm.alertStyle = .warning
+        confirm.addButton(withTitle: "Restore Backup")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        self.nativeRestoreInProgress = true
+        self.log("Native backup restore requested")
+        Task.detached(priority: .userInitiated) {
+            let exitStatus = Self.runCLI(
+                repoRoot: config.repoRoot,
+                appSupportDir: config.appSupportDir,
+                arguments: ["restore", snapshotPath],
+                logFileName: "helper-restore.log"
+            )
+            await MainActor.run {
+                self.nativeRestoreInProgress = false
+                let alert = NSAlert()
+                if exitStatus == 0 {
+                    self.log("Native backup restore completed")
+                    alert.messageText = "Backup restored"
+                    alert.informativeText = "Reset the local browser password, reconnect accounts, and rebuild Recall before normal use."
+                    alert.alertStyle = .informational
+                } else {
+                    self.log("Native backup restore failed with status \(exitStatus)")
+                    alert.messageText = "Backup restore failed"
+                    alert.informativeText = "Viventium refused the backup or could not prove a complete rollback. Check helper-restore.log before retrying; the immutable installed release was not replaced."
+                    alert.alertStyle = .warning
+                }
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
             }
         }
     }
@@ -660,7 +760,7 @@ final class HelperController: ObservableObject {
             await MainActor.run {
                 self.workflowActionInProgress = false
                 let alert = NSAlert()
-                if result.exitStatus != 0 {
+                if result.exitStatus != 0 && !summary.statusReadable {
                     alert.messageText = "Could not check for updates"
                     alert.informativeText = "Viventium could not complete the update check. Check helper-update-check.log, then try again."
                     alert.alertStyle = .warning
@@ -996,7 +1096,11 @@ final class HelperController: ObservableObject {
         }
     }
 
-    private func startStack(openWhenReady: Bool, openPath: String? = nil, launchReason: String = "manual") {
+    private func startStack(
+        openWhenReady: Bool,
+        openPath: String? = nil,
+        launchReason: String = "manual"
+    ) {
         self.cancelDelayedQuitWatch()
         guard let config else {
             self.log("Start requested without helper config")
@@ -1206,7 +1310,9 @@ final class HelperController: ObservableObject {
             return
         }
         let runtime = self.envParser.readRuntime(appSupportDir: config.appSupportDir)
-        let host = LocalNetworkAddressResolver.currentHost() ?? "localhost"
+        let host = runtime.nativeRuntime
+            ? "127.0.0.1"
+            : (LocalNetworkAddressResolver.currentHost() ?? "localhost")
         self.openURLString = Self.frontendURLString(host: host, port: runtime.frontendPort)
         self.refreshLaunchAtLoginState(force: force)
         self.refreshWorkflowStatus(config: config)
@@ -1583,7 +1689,8 @@ final class HelperController: ObservableObject {
                 repoRoot: self.normalizedFileSystemPath(config.repoRoot),
                 appSupportDir: config.appSupportDir,
                 allowProtectedRepoRoot: config.allowProtectedRepoRoot,
-                showInStatusBar: config.showInStatusBar
+                showInStatusBar: config.showInStatusBar,
+                nativeRuntime: config.nativeRuntime
             )
         }
         let resolvedRepoRoot = self.resolveSafeRuntimeRepoRoot(config.repoRoot)
@@ -1594,7 +1701,8 @@ final class HelperController: ObservableObject {
             repoRoot: resolvedRepoRoot,
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: false,
-            showInStatusBar: config.showInStatusBar
+            showInStatusBar: config.showInStatusBar,
+            nativeRuntime: config.nativeRuntime
         )
     }
 
@@ -1619,7 +1727,8 @@ final class HelperController: ObservableObject {
             repoRoot: normalizedRepoRoot,
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: activeCheckout.allowProtectedFolderAccess == true,
-            showInStatusBar: config.showInStatusBar
+            showInStatusBar: config.showInStatusBar,
+            nativeRuntime: config.nativeRuntime
         )
     }
 
@@ -1743,20 +1852,67 @@ final class HelperController: ObservableObject {
     private nonisolated static func makeNamedHelperLogURL(appSupportDir: String, logFileName: String) -> URL {
         let logDir = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("logs", isDirectory: true)
-        try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         return logDir.appendingPathComponent(logFileName)
+    }
+
+    private nonisolated static func privateDirectoryMetadata(_ path: String) -> stat? {
+        var metadata = stat()
+        guard lstat(path, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFDIR,
+              metadata.st_uid == getuid(),
+              metadata.st_mode & 0o077 == 0
+        else {
+            return nil
+        }
+        return metadata
+    }
+
+    private nonisolated static func ensurePrivateLogDirectory(_ logURL: URL) -> Bool {
+        let logDirectory = logURL.deletingLastPathComponent()
+        if self.privateDirectoryMetadata(logDirectory.path) != nil {
+            return true
+        }
+        guard errno == ENOENT,
+              self.privateDirectoryMetadata(logDirectory.deletingLastPathComponent().path) != nil,
+              mkdir(logDirectory.path, S_IRWXU) == 0 || errno == EEXIST,
+              self.privateDirectoryMetadata(logDirectory.path) != nil
+        else {
+            return false
+        }
+        return true
+    }
+
+    private nonisolated static func openPrivateAppendLog(_ logURL: URL) -> FileHandle? {
+        guard self.ensurePrivateLogDirectory(logURL) else {
+            return nil
+        }
+        let descriptor = Darwin.open(
+            logURL.path,
+            O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            return nil
+        }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFREG,
+              metadata.st_uid == getuid(),
+              metadata.st_nlink == 1,
+              metadata.st_mode & 0o077 == 0,
+              fchmod(descriptor, S_IRUSR | S_IWUSR) == 0
+        else {
+            Darwin.close(descriptor)
+            return nil
+        }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     private nonisolated static func appendHelperLog(_ url: URL?, _ message: String) {
         guard let url, let data = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".data(using: .utf8) else {
             return
         }
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? data.write(to: url, options: .atomic)
-            return
-        }
-        guard let handle = try? FileHandle(forWritingTo: url) else {
-            try? data.write(to: url, options: .atomic)
+        guard let handle = self.openPrivateAppendLog(url) else {
             return
         }
         defer {
@@ -1764,6 +1920,7 @@ final class HelperController: ObservableObject {
         }
         _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: data)
+        try? handle.synchronize()
     }
 
     private nonisolated static func loopbackCandidateURLs(port: Int, path: String) -> [URL] {
@@ -1816,6 +1973,25 @@ final class HelperController: ObservableObject {
         return (200..<400).contains(status)
     }
 
+    private nonisolated static func artifactRuntimeHealthy(port: Int) async -> Bool {
+        for url in self.loopbackCandidateURLs(port: port, path: "/index.html") {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 1.5
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    continue
+                }
+                if data.range(of: Data("IS_ONPREM:\"true\"".utf8)) != nil {
+                    return true
+                }
+            } catch {
+                continue
+            }
+        }
+        return false
+    }
+
     private nonisolated static func playgroundHealthy(port: Int) async -> Bool {
         guard let status = await self.firstHTTPStatus(urls: self.loopbackCandidateURLs(port: port, path: "/api/health")) else {
             return false
@@ -1823,15 +1999,58 @@ final class HelperController: ObservableObject {
         return (200..<400).contains(status)
     }
 
+    private nonisolated static func nativeReleaseHealthy(port: Int) async -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/__viventium_native_health") else {
+            return false
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 1.5
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  value["status"] as? String == "ok",
+                  let release = value["release"] as? String,
+                  release.count == 40 else {
+                return false
+            }
+            return release.allSatisfy { $0.isHexDigit }
+        } catch {
+            return false
+        }
+    }
+
     private nonisolated static func stackHealthSnapshot(
         runtime: RuntimePorts,
         appSupportDir: String? = nil
     ) async -> StackHealthSnapshot {
-        let apiReady = await self.apiHealthy(port: runtime.apiPort)
-        let frontendReady = apiReady ? await self.frontendHealthy(port: runtime.frontendPort) : false
-        // Voice-call deep links land on the dedicated modern playground. Probe it separately so
-        // the helper can still prefer that surface when it is the only user-facing surface ready.
-        let playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)
+        let nativeReady = runtime.nativeRuntime
+            ? await self.nativeReleaseHealthy(port: runtime.frontendPort)
+            : true
+        // Native intentionally exposes no TCP listener on its private API port. Probe the
+        // API through the release-validated loopback proxy; source/Docker runtimes retain
+        // their direct API-port health check.
+        let apiHealthPort = runtime.nativeRuntime ? runtime.frontendPort : runtime.apiPort
+        let apiSurfaceReady = await self.apiHealthy(port: apiHealthPort)
+        let artifactRuntimeReady: Bool
+        if runtime.requiresArtifactRuntime {
+            artifactRuntimeReady = await self.artifactRuntimeHealthy(port: runtime.sandpackPort)
+        } else {
+            artifactRuntimeReady = true
+        }
+        let apiReady = nativeReady && apiSurfaceReady && artifactRuntimeReady
+        let frontendSurfaceReady = runtime.nativeRuntime
+            ? nativeReady
+            : await self.frontendHealthy(port: runtime.frontendPort)
+        let frontendReady = apiReady && frontendSurfaceReady
+        // Easy Install deliberately defers voice/playground. Other installs retain the three-surface
+        // health contract and voice-call deep-link fallback.
+        let playgroundReady: Bool
+        if runtime.requiresPlayground {
+            playgroundReady = await self.playgroundHealthy(port: runtime.playgroundPort)
+        } else {
+            playgroundReady = false
+        }
         let optionalSurfacesReady = self.optionalSurfacesReady(
             runtime: runtime,
             appSupportDir: appSupportDir
@@ -1840,6 +2059,7 @@ final class HelperController: ObservableObject {
             apiReady: apiReady,
             frontendReady: frontendReady,
             playgroundReady: playgroundReady,
+            requiresPlayground: runtime.requiresPlayground,
             optionalSurfacesReady: optionalSurfacesReady
         )
     }
@@ -1862,20 +2082,6 @@ final class HelperController: ObservableObject {
             return false
         }
         return true
-    }
-
-    private nonisolated static func stackHealthy(apiPort: Int, frontendPort: Int, playgroundPort: Int) async -> Bool {
-        await self.stackHealthSnapshot(
-            runtime: RuntimePorts(
-                apiPort: apiPort,
-                frontendPort: frontendPort,
-                playgroundPort: playgroundPort,
-                runtimeProfile: "isolated",
-                startTelegram: false,
-                startTelegramCodex: false,
-                managedStopCheckURLs: []
-            )
-        ).healthy
     }
 
     private nonisolated static func frontendURLString(host: String, port: Int) -> String {
@@ -2091,14 +2297,36 @@ final class HelperController: ObservableObject {
     }
 
     private nonisolated static func rotateHelperLogIfNeeded(_ url: URL, maxBytes: UInt64 = 25 * 1024 * 1024) {
-        guard self.fileSize(url) > maxBytes else {
+        guard self.ensurePrivateLogDirectory(url) else {
+            return
+        }
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFREG,
+              metadata.st_uid == getuid(),
+              metadata.st_nlink == 1,
+              metadata.st_mode & 0o077 == 0,
+              UInt64(metadata.st_size) > maxBytes
+        else {
             return
         }
         let rotatedURL = url.deletingPathExtension()
             .appendingPathExtension("previous")
             .appendingPathExtension(url.pathExtension)
-        try? FileManager.default.removeItem(at: rotatedURL)
-        try? FileManager.default.moveItem(at: url, to: rotatedURL)
+        var rotatedMetadata = stat()
+        if lstat(rotatedURL.path, &rotatedMetadata) == 0 {
+            guard rotatedMetadata.st_mode & S_IFMT == S_IFREG,
+                  rotatedMetadata.st_uid == getuid(),
+                  rotatedMetadata.st_nlink == 1,
+                  rotatedMetadata.st_mode & 0o077 == 0,
+                  Darwin.unlink(rotatedURL.path) == 0
+            else {
+                return
+            }
+        } else if errno != ENOENT {
+            return
+        }
+        _ = Darwin.rename(url.path, rotatedURL.path)
     }
 
     private nonisolated static func launchFailureMarkerSeen(startLogURL: URL?, startLogOffset: UInt64) -> Bool {
@@ -2188,8 +2416,8 @@ final class HelperController: ObservableObject {
             "/bin",
             "/usr/sbin",
             "/sbin",
-            "/opt/homebrew/opt/node@20/bin",
-            "/usr/local/opt/node@20/bin",
+            "/opt/homebrew/opt/node@24/bin",
+            "/usr/local/opt/node@24/bin",
             "/opt/homebrew/opt/python@3.12/libexec/bin",
             "/usr/local/opt/python@3.12/libexec/bin",
             "/Applications/Docker.app/Contents/Resources/bin",
@@ -2392,9 +2620,15 @@ final class HelperController: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.currentDirectoryURL = URL(fileURLWithPath: repoRoot, isDirectory: true)
-        process.arguments = ["\(repoRoot)/bin/viventium", "--app-support-dir", appSupportDir] + arguments
+        let manager = FileManager.default
+        if manager.fileExists(atPath: "\(repoRoot)/bin/viventium-native-start") {
+            process.arguments = ["\(repoRoot)/bin/viventium"] + arguments
+        } else {
+            process.arguments = ["\(repoRoot)/bin/viventium", "--app-support-dir", appSupportDir] + arguments
+        }
         var environment = self.makeCLIEnvironment()
         environment["PWD"] = repoRoot
+        environment["VIVENTIUM_APP_SUPPORT_DIR"] = appSupportDir
         for (key, value) in environmentOverrides {
             environment[key] = value
         }
@@ -2402,14 +2636,11 @@ final class HelperController: ObservableObject {
         process.standardInput = FileHandle.nullDevice
 
         if let logFileName {
-            let logDir = URL(fileURLWithPath: appSupportDir, isDirectory: true)
-                .appendingPathComponent("logs", isDirectory: true)
-            try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
-            let logURL = logDir.appendingPathComponent(logFileName)
-            if !FileManager.default.fileExists(atPath: logURL.path) {
-                FileManager.default.createFile(atPath: logURL.path, contents: Data())
-            }
-            if let handle = try? FileHandle(forWritingTo: logURL) {
+            let logURL = self.makeNamedHelperLogURL(
+                appSupportDir: appSupportDir,
+                logFileName: logFileName
+            )
+            if let handle = self.openPrivateAppendLog(logURL) {
                 _ = try? handle.seekToEnd()
                 process.standardOutput = handle
                 process.standardError = handle
@@ -2486,7 +2717,9 @@ final class HelperController: ObservableObject {
         }
         let logURL = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName)
         self.rotateHelperLogIfNeeded(logURL)
-        let logPath = logURL.path
+        guard let logHandle = self.openPrivateAppendLog(logURL) else {
+            return nil
+        }
         let pidFileURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
             .appendingPathComponent("runtime/\(pidFileName)")
         let runnerScriptURL = URL(fileURLWithPath: self.helperDetachedCommandScriptPath(
@@ -2509,7 +2742,6 @@ final class HelperController: ObservableObject {
         try? FileManager.default.removeItem(at: runnerScriptURL)
         try? FileManager.default.removeItem(at: legacyRunnerScriptURL)
         let escapedAppSupportDir = self.shellQuoted(appSupportDir)
-        let escapedLogPath = self.shellQuoted(logPath)
         let escapedPidPath = self.shellQuoted(pidFileURL.path)
         let escapedCommand = (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)
             .map(self.shellQuoted)
@@ -2517,7 +2749,7 @@ final class HelperController: ObservableObject {
         let detachedCommand = """
 set -euo pipefail
 cd \(escapedAppSupportDir)
-nohup \(escapedCommand) >> \(escapedLogPath) 2>&1 < /dev/null &
+nohup \(escapedCommand) 2>&1 < /dev/null &
 pid=$!
 printf '%s\\n' "$pid" > \(escapedPidPath)
 """
@@ -2532,9 +2764,8 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
             environmentOverrides: environmentOverrides
         )
         process.standardInput = FileHandle.nullDevice
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
+        process.standardOutput = logHandle
+        process.standardError = logHandle
 
         do {
             try process.run()
@@ -2544,16 +2775,6 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         }
 
         guard process.terminationStatus == 0 else {
-            if
-                let outputData = try? outputPipe.fileHandleForReading.readToEnd(),
-                let output = String(data: outputData, encoding: .utf8),
-                !output.isEmpty
-            {
-                try? output.data(using: .utf8)?.write(
-                    to: URL(fileURLWithPath: logPath),
-                    options: .atomic
-                )
-            }
             return nil
         }
 
@@ -2703,43 +2924,88 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         let message: String
         let updateAvailable: Bool
         let blockers: [String]
+        let statusReadable: Bool
     }
 
     private nonisolated static func updateCheckSummary(stdout: String) -> UpdateCheckSummary {
         guard
-            let root = self.parseJSONObject(stdout)
+            let root = self.parseJSONObject(stdout),
+            root["schema_version"] as? Int == 1,
+            self.jsonValueIsStrictInteger(root["schema_version"]),
+            let readyToUpgrade = root["ready_to_upgrade"] as? Bool,
+            let updateAvailable = root["update_available"] as? Bool,
+            let blockers = root["blockers"] as? [String],
+            let behind = root["commits_behind"] as? Int,
+            self.jsonValueIsStrictInteger(root["commits_behind"]),
+            let componentRefresh = root["component_refresh_required"] as? [[String: Any]]
         else {
             return UpdateCheckSummary(
                 title: "Could not read update check",
                 message: "The update check did not return readable status.",
                 updateAvailable: false,
-                blockers: ["invalid_json"]
+                blockers: ["invalid_json"],
+                statusReadable: false
             )
         }
-        let updateAvailable = (root["update_available"] as? Bool) ?? false
-        let blockers = (root["blockers"] as? [String]) ?? []
+        if !readyToUpgrade && blockers.isEmpty {
+            return UpdateCheckSummary(
+                title: "Could not read update check",
+                message: "The update check returned an inconsistent readiness result.",
+                updateAvailable: false,
+                blockers: ["invalid_readiness"],
+                statusReadable: false
+            )
+        }
+        if blockers.contains("fetch_failed") {
+            return UpdateCheckSummary(
+                title: "Could not check for updates",
+                message: "Viventium could not reach the configured Git remote. Check the network connection and helper-update-check.log, then try again.",
+                updateAvailable: updateAvailable,
+                blockers: blockers,
+                statusReadable: true
+            )
+        }
+        if blockers == ["native_signed_bootstrap_required"] {
+            return UpdateCheckSummary(
+                title: "Signed Native updater required",
+                message: "Native cannot update itself from source. Run a freshly verified publisher-signed Viventium Bootstrap when a release is available.",
+                updateAvailable: false,
+                blockers: blockers,
+                statusReadable: true
+            )
+        }
         if !blockers.isEmpty {
             return UpdateCheckSummary(
                 title: "Update blocked",
                 message: "Viventium found blockers: \(blockers.joined(separator: ", ")). Resolve them, then check again.",
                 updateAvailable: updateAvailable,
-                blockers: blockers
+                blockers: blockers,
+                statusReadable: true
             )
         }
         if updateAvailable {
-            let behind = (root["commits_behind"] as? Int) ?? 0
+            let message: String
+            if !componentRefresh.isEmpty && behind == 0 {
+                message = "Viventium found \(componentRefresh.count) managed component(s) ready to refresh to their pinned versions."
+            } else if !componentRefresh.isEmpty {
+                message = "Viventium is \(behind) commit(s) behind and found \(componentRefresh.count) managed component(s) ready to refresh."
+            } else {
+                message = "Viventium is \(behind) commit(s) behind the configured upstream branch."
+            }
             return UpdateCheckSummary(
                 title: "Update available",
-                message: "Viventium is \(behind) commit(s) behind the configured upstream branch.",
+                message: message,
                 updateAvailable: true,
-                blockers: []
+                blockers: [],
+                statusReadable: true
             )
         }
         return UpdateCheckSummary(
             title: "Viventium is up to date",
             message: "No updates were found for the current branch.",
             updateAvailable: false,
-            blockers: []
+            blockers: [],
+            statusReadable: true
         )
     }
 
@@ -2751,6 +3017,13 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
             return nil
         }
         return root
+    }
+
+    private nonisolated static func jsonValueIsStrictInteger(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else {
+            return false
+        }
+        return CFGetTypeID(number) != CFBooleanGetTypeID()
     }
 
     private nonisolated static func workflowStatusLabel(appSupportDir: String) -> String? {
@@ -2988,6 +3261,27 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         return value
     }
 
+    private enum SnapshotProofStatus {
+        case metadataOnly
+        case complete
+        case invalid
+    }
+
+    private nonisolated static func snapshotProofStatus(snapshotPath: String?) -> SnapshotProofStatus {
+        guard let snapshotPath else {
+            return .invalid
+        }
+        let manager = FileManager.default
+        if manager.fileExists(atPath: "\(snapshotPath)/.viventium-metadata-only") {
+            return .metadataOnly
+        }
+        if manager.fileExists(atPath: "\(snapshotPath)/.viventium-recoverable"),
+           manager.fileExists(atPath: "\(snapshotPath)/recoverable-manifest.json") {
+            return .complete
+        }
+        return .invalid
+    }
+
     private func openBrowser(path: String? = nil) {
         guard let baseURL = URL(string: self.openURLString) else { return }
         let url = path.map {
@@ -3001,10 +3295,14 @@ private struct RuntimePorts: Equatable {
     let apiPort: Int
     let frontendPort: Int
     let playgroundPort: Int
+    let sandpackPort: Int
+    let requiresArtifactRuntime: Bool
     let runtimeProfile: String
+    let requiresPlayground: Bool
     let startTelegram: Bool
     let startTelegramCodex: Bool
     let managedStopCheckURLs: [String]
+    let nativeRuntime: Bool
 }
 
 private struct RuntimeEnvParser {
@@ -3013,15 +3311,22 @@ private struct RuntimeEnvParser {
         let apiPort = Int(values["VIVENTIUM_LC_API_PORT"] ?? "") ?? 3180
         let frontendPort = Int(values["VIVENTIUM_LC_FRONTEND_PORT"] ?? "") ?? 3190
         let playgroundPort = Int(values["VIVENTIUM_PLAYGROUND_PORT"] ?? "") ?? 3300
+        let sandpackPort = Int(values["SANDPACK_BUNDLER_LISTEN_PORT"] ?? "") ?? 3191
+        let requiresArtifactRuntime = values["SANDPACK_BUNDLER_URL"] != nil ||
+            values["SANDPACK_BUNDLER_LISTEN_PORT"] != nil
         let runtimeProfile = values["VIVENTIUM_RUNTIME_PROFILE"] ?? "isolated"
         return RuntimePorts(
             apiPort: apiPort,
             frontendPort: frontendPort,
             playgroundPort: playgroundPort,
+            sandpackPort: sandpackPort,
+            requiresArtifactRuntime: requiresArtifactRuntime,
             runtimeProfile: runtimeProfile,
+            requiresPlayground: values["VIVENTIUM_INSTALL_EXPERIENCE"] != "express",
             startTelegram: self.boolValue(values["START_TELEGRAM"]),
             startTelegramCodex: self.boolValue(values["START_TELEGRAM_CODEX"]),
-            managedStopCheckURLs: self.managedStopCheckURLs(values: values)
+            managedStopCheckURLs: self.managedStopCheckURLs(values: values),
+            nativeRuntime: runtimeProfile == "native"
         )
     }
 
@@ -3388,10 +3693,26 @@ struct ViventiumHelperApp: App {
             .disabled(self.controller.actionDisabled)
             if self.controller.showsStatusRow {
                 Divider()
-                Button(self.controller.statusLabel) {}
-                    .disabled(true)
+                Text(self.controller.statusLabel)
+                    .accessibilityLabel("Viventium status")
+                    .accessibilityValue(self.controller.statusLabel)
             }
             Menu("Advanced") {
+                if self.controller.nativeRuntimeMode {
+                    Text("Install updates with a new signed Viventium Bootstrap")
+                        .help("The immutable Easy Install edition does not run source updates or Custom Settings Install commands.")
+                    Button(self.controller.backupActionLabel) {
+                        self.controller.createBackupSnapshot()
+                    }
+                    .help("Create a complete, owner-only local Native backup without copying account credentials.")
+                    .disabled(self.controller.backupActionDisabled)
+                    Button("Restore from Backup...") {
+                        self.controller.restoreNativeSnapshot()
+                    }
+                    .help("Validate, stage, and transactionally restore a complete Native backup.")
+                    .disabled(self.controller.backupActionDisabled)
+                    Text("Source-only tools are unavailable in Native")
+                } else {
                 Button("Check for Updates...") {
                     self.controller.checkForUpdates()
                 }
@@ -3462,6 +3783,7 @@ struct ViventiumHelperApp: App {
                 }
                 .help("Choose the local folder where Viventium reads meeting transcripts.")
                 .disabled(self.controller.transcriptSourceActionDisabled)
+                }
                 Divider()
                 Toggle(
                     "Start Viventium at Login",
@@ -3488,6 +3810,8 @@ struct ViventiumHelperApp: App {
         } label: {
             Text(self.controller.menuGlyph)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
+                .accessibilityLabel("Viventium")
+                .accessibilityValue(self.controller.statusLabel)
         }
 
         Settings {

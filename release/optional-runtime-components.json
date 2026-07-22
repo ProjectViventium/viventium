@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "livekit_server": {
+    "version": "v1.13.4",
+    "source_commit": "0b3fd288e3ef3263ec475ba0d78cf3ad77459981",
+    "image": "livekit/livekit-server:v1.13.4@sha256:189f7c81b704a36642bc5c7e2d3e1ae83744627c11978a23a251bf19fbec64e0",
+    "architectures": {
+      "amd64": "sha256:f63579e294b6dbf38e0e6151a24a5b425e9293e75e6d41959f470c957248b8a7",
+      "arm64": "sha256:47ab4893a92f9c90dc3bc20eb005582db1af41462ec47ef8be0d259de769e155"
+    },
+    "provenance": "slsa-v1-per-platform",
+    "publisher_signature": "not_provided",
+    "license": "Apache-2.0",
+    "notice_required": true
+  }
+}

@@ -12,6 +12,7 @@ Use stable `AGCFG-NNN` IDs for agent config continuity cases.
 | `AGCFG-002` | Public QA evidence is sanitized and reproducible | A PR reviewer can verify the behavior without private/local data | QA report, git diff, logs summary, generated artifacts | Public-safety scan plus relevant release tests | NOT YET RUN (cataloged 2026-05-17; next feature run required) |
 | `AGCFG-003` | Web Search capability state matches runtime/provider readiness | Agent Builder, source/live/generated config, persisted agent state, status output | sync compare, generated config inspection, browser UI, logs/state | FAIL (escaped 2026-05-18; config-capability rerun pending) |
 | `AGCFG-004` | Deferred tool configuration survives sync and discoveries bind in the same invocation without cross-request leakage. | Recall stays eager while large operational schemas remain available on demand. | source/live agent config, sync compare, event-driven tool binding | sync and binding regressions plus live compare/reload | PASS-AUTOMATED 2026-07-11; live sync/reload proof pending |
+| `AGCFG-005` | Every channel preserves an eager GlassHive gateway and scoped deferred discovery without semantic prompt guards. | Short and long requests can launch or check GlassHive from web, channel, and voice without a false unavailable claim. | source/fixture agent config, LibreChat web, isolated channel, Modern Playground voice, MCP/logs/state | release/Jest regressions plus isolated cross-surface QA | PASS-AUTOMATED/PARTIAL 2026-07-13; gateway/discovery regressions pass, dedicated isolated-channel parity NOT RUN |
 
 ## `AGCFG-001` - Core User Flow
 
@@ -54,6 +55,7 @@ rows before claiming a pass when the feature behavior changes.
 | `AGCFG-UC-002` | On QA report, git diff, logs summary, generated artifacts, create or review the public QA evidence record with setup/auth/config, empty-state, degraded-dependency, and privacy checks. | owning requirement for `AGCFG-002` / `AGCFG-002` | QA report, git diff, logs summary, generated artifacts | Source, owning requirement doc, case steps, logs, DB/state, generated config, and shipped artifact evidence that apply to AGCFG-002. | The user sees an honest setup, retry, or degraded-state result for AGCFG-002; no fake success is accepted. | NOT YET RUN (cataloged 2026-05-18; next feature run required) |
 | `AGCFG-UC-003` | Compare Agent Builder's Web Search enabled state against generated config and actual provider readiness after a search failure. | `docs/requirements_and_learnings/37_LibreChat_v083_Config_Alignment.md` / `AGCFG-003` | Agent Builder browser UI, sync compare, generated config, status output | Live agent state, source-of-truth bundle, generated LibreChat YAML, provider health/status, persisted tool-call state | Capability UI, runtime config, and provider readiness are either all healthy or the degraded gap is explicit before user-facing search claims. | FAIL (escaped 2026-05-18; rerun pending) |
 | `AGCFG-UC-004` | Ask Viv to recall history and then use a deferred operational tool in the same turn after agent sync/reload. | `37_LibreChat_v083_Config_Alignment.md` / `AGCFG-004` | Chrome chat, agent compare/sync, runtime logs | A/B/C drift, prompt-frame tool counts, binding logs, visible tool result | Recall stays available eagerly and the discovered operational tool works in the same invocation without another request's tools leaking in. | PASS-AUTOMATED 2026-07-11; live proof pending |
+| `AGCFG-UC-005` | Send one synthetic long GlassHive request followed by a terse status request through an isolated channel, then repeat the launch/status contract in isolated web and voice surfaces. | `03_Telegram_Bridge.md`, `07_MCPs.md`, `37_LibreChat_v083_Config_Alignment.md` / `AGCFG-005`, `TR-008`, `MPV-014` | isolated channel, browser, Modern Playground call | provider-bound tool names, `tool_search`/tool calls, visible and audible results, fixture content parts, GlassHive run/events, runtime logs, restart/reload evidence | All three channels expose the eager launch/status/wait gateway; deferred tools remain discoverable in the same invocation; no channel claims GlassHive is unavailable while the server is healthy. | PASS-AUTOMATED/PARTIAL 2026-07-13; structural gateway/discovery tests pass, isolated three-surface proof NOT RUN |
 
 ## `AGCFG-003` - Web Search Capability State Must Match Runtime Readiness
 
@@ -92,3 +94,25 @@ rows before claiming a pass when the feature behavior changes.
   default push over unreviewed live drift.
 - Evidence: source/live/generated A/B/C compare, dry-run, sync tests, binding tests, runtime logs.
 - Last run: PASS-AUTOMATED 2026-07-11; live compare/reload proof pending.
+
+## `AGCFG-005` - Cross-Surface GlassHive Gateway Parity
+
+- Compare source, live, and pending agent state before sync; verify only the reviewed gateway/tool
+  instruction changes are pending.
+- Preserve `workspace_launch`, `workspace_status`, and `workspace_wait` as eager definitions on every
+  Agents-pipeline surface; keep the remaining operational schemas deferred.
+- Remove semantic Telegram keyword/length gates. Only structural capability, OAuth, server-health,
+  and explicit configuration state may limit tool availability.
+- For a needed deferred GlassHive operation, require scoped `tool_search` and same-invocation use.
+- Replay the exact long-then-short Telegram incident shape, then run equivalent web and audible voice
+  journeys with synthetic public-safe work.
+- Expected: the connected server, provider-bound gateway, actual tool call, visible/audible result,
+  Mongo tool content, GlassHive run state, logs, and latency all agree.
+- Forbidden: MCP UI registration is treated as execution proof; a short turn receives zero agent/MCP
+  definitions; the model reports GlassHive unavailable without scoped discovery or an explicit server
+  error; supporting logs/tests substitute for a required real surface.
+- Evidence: A/B/C compare, dry-run and reload, provider-binding logs, Mongo content-part counts,
+  GlassHive SQLite/events, sanitized screenshots/transcripts/audio observation, restart persistence,
+  and p50/p95 timing where the harness supports repeated runs.
+- Last run: PASS-AUTOMATED/PARTIAL 2026-07-13; eager/deferred binding and failure-state
+  regressions pass. A dedicated isolated channel/web/voice replay is NOT RUN.

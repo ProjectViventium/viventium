@@ -67,13 +67,13 @@ export function ScheduledPromptsPanel({
     enabled: Boolean(authQuery.data?.admin),
   });
   const schedulesQuery = useQuery({
-    queryKey: ["scheduledPrompts"],
+    queryKey: ["scheduledPrompts", "panel"],
     queryFn: getScheduledPrompts,
     enabled: Boolean(authQuery.data?.admin),
     refetchInterval: 10_000,
   });
   const schedules =
-    scheduledPrompts ?? schedulesQuery.data?.scheduledPrompts ?? [];
+    schedulesQuery.data?.scheduledPrompts ?? scheduledPrompts ?? [];
   const [selectedId, setSelectedId] = useState<string>("");
   const selected =
     schedules.find((item) => item.id === selectedId) ??
@@ -199,7 +199,8 @@ export function ScheduledPromptsPanel({
   const saveMutation = useMutation({
     mutationFn: () => {
       const payload = draftPayload(draft, {
-        includeSchedule: !isUserLevelSchedule || scheduleTouched,
+        // VIVENTIUM: preserve managed-local timezone mode on unrelated edits.
+        includeSchedule: !draft.id || scheduleTouched,
         includeMemoryWriteMode: !isUserLevelSchedule,
       });
       return draft.id

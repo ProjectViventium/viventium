@@ -4,10 +4,10 @@
 # OpenClaw Bridge: MCP bridge to OpenClaw Gateway capabilities
 # Added: 2026-02-12
 #
-# Documentation: docs/requirements_and_learnings/28_OpenClaw_Integration.md
+# Documentation: docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md
 #
 # Purpose:
-# - Start the OpenClaw Bridge MCP server for LibreChat integration
+# - Start the standalone OpenClaw Bridge MCP lab server; LibreChat client wiring is not shipped
 # - Manages per-user OpenClaw Gateway instances
 # - Provides tools: exec, browser, message, cron, nodes, canvas, agent
 #
@@ -28,9 +28,11 @@
 #   ANTHROPIC_API_KEY              - API key for OpenClaw agent
 #   OPENCLAW_BRIDGE_PORT           - MCP server port (default: 8086)
 #   OPENCLAW_BRIDGE_AUTH_TOKEN     - Auth token for gateway communication
-#   OPENCLAW_RUNTIME               - direct | e2b (default: e2b for VM POC)
+#   OPENCLAW_RUNTIME               - e2b | direct (default: e2b sandbox)
+#   OPENCLAW_ALLOW_DIRECT_HOST_EXEC - explicit true opt-in required for direct host execution
 #   OPENCLAW_ISOLATION_TIER        - deprecated alias for OPENCLAW_RUNTIME
 #   OPENCLAW_MODEL                 - Default model for OpenClaw agent
+#   OPENCLAW_DISABLE_BONJOUR       - Must remain 1 to prevent host-name mDNS advertisement
 #
 # === VIVENTIUM END ===
 #
@@ -130,7 +132,241 @@ export OPENCLAW_PORT_END="${OPENCLAW_PORT_END:-18999}"
 export OPENCLAW_IDLE_TIMEOUT_HOURS="${OPENCLAW_IDLE_TIMEOUT_HOURS:-2}"
 export OPENCLAW_RUNTIME="${OPENCLAW_RUNTIME:-${OPENCLAW_ISOLATION_TIER:-e2b}}"
 export OPENCLAW_ISOLATION_TIER="${OPENCLAW_ISOLATION_TIER:-$OPENCLAW_RUNTIME}"
+export OPENCLAW_ALLOW_DIRECT_HOST_EXEC="${OPENCLAW_ALLOW_DIRECT_HOST_EXEC:-false}"
 export OPENCLAW_MODEL="${OPENCLAW_MODEL:-anthropic/claude-sonnet-4-20250514}"
+export OPENCLAW_DISABLE_BONJOUR=1
+export FASTMCP_CHECK_FOR_UPDATES=off
+
+# VIVENTIUM START: one reviewed OpenClaw graph for every local launch.
+OPENCLAW_REQUIRED_VERSION="2026.7.1-2"
+OPENCLAW_REQUIRED_NODE_VERSION="22.23.1"
+OPENCLAW_RUNTIME_LOCK_SHA256="e025a05ef3d268747dc293ef54876471d067f22644a8fa26a9139b7d1fe4fbc3"
+OPENCLAW_RUNTIME_LOCK_DIR="$OPENCLAW_BRIDGE_DIR/openclaw-runtime-lock"
+OPENCLAW_PYTHON_LOCK_SHA256="a63f4d082895912c25805bc7e2dd8b2c5e7c7a694bb09c6bea170e556407038c"
+OPENCLAW_PYTHON_LOCK="$OPENCLAW_BRIDGE_DIR/requirements.lock"
+
+openclaw_version_matches() {
+  local binary="$1"
+  [[ -x "$binary" ]] || return 1
+  local reported
+  reported="$("$binary" --version 2>/dev/null || true)"
+  [[ "$reported" == "$OPENCLAW_REQUIRED_VERSION" || "$reported" == "OpenClaw $OPENCLAW_REQUIRED_VERSION ("*")" ]]
+}
+
+ensure_locked_node_runtime() {
+  local runtime_parent="$OPENCLAW_DATA_DIR/node-runtime"
+  local runtime_root="$runtime_parent/$OPENCLAW_REQUIRED_NODE_VERSION"
+  local runtime_node="$runtime_root/bin/node"
+  local runtime_npm="$runtime_root/bin/npm"
+
+  if [[ -x "$runtime_node" && -x "$runtime_npm" ]] &&
+     [[ "$($runtime_node --version 2>/dev/null)" == "v$OPENCLAW_REQUIRED_NODE_VERSION" ]] &&
+     [[ "$($runtime_npm --version 2>/dev/null)" == "10.9.8" ]]; then
+    export PATH="$runtime_root/bin:$PATH"
+    return 0
+  fi
+  if [[ -e "$runtime_root" ]]; then
+    log_error "The managed OpenClaw Node runtime is incomplete: $runtime_root"
+    log_error "Move that one runtime directory aside, then retry so Viventium can rebuild it safely."
+    return 1
+  fi
+
+  local os_name arch_name archive_sha
+  case "$(uname -s)" in
+    Darwin) os_name="darwin" ;;
+    Linux) os_name="linux" ;;
+    *) log_error "The OpenClaw native runtime supports macOS and Linux only."; return 1 ;;
+  esac
+  case "$(uname -m)" in
+    arm64|aarch64) arch_name="arm64" ;;
+    x86_64|amd64) arch_name="x64" ;;
+    *) log_error "Unsupported OpenClaw native architecture: $(uname -m)"; return 1 ;;
+  esac
+  case "$os_name-$arch_name" in
+    darwin-arm64) archive_sha="ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953" ;;
+    darwin-x64) archive_sha="b8da981b8a0b1241b70249204916da76c63573ddf5814dbd2d1e41069105cb81" ;;
+    linux-arm64) archive_sha="543fa39e57d4c07855939459a323f4deb9a79dd1bb45e6e99458b0f2de10db8d" ;;
+    linux-x64) archive_sha="7a8cb04b4a1df4eaf432125324b81b29a088e73570a23259a8de1c65d07fc129" ;;
+  esac
+
+  mkdir -p "$runtime_parent"
+  local staging archive_name archive_path
+  staging="$(mktemp -d "$runtime_parent/.install-${OPENCLAW_REQUIRED_NODE_VERSION}.XXXXXX")"
+  archive_name="node-v${OPENCLAW_REQUIRED_NODE_VERSION}-${os_name}-${arch_name}.tar.gz"
+  archive_path="$staging/$archive_name"
+  if ! curl --fail --silent --show-error --location \
+       "https://nodejs.org/dist/v${OPENCLAW_REQUIRED_NODE_VERSION}/${archive_name}" \
+       --output "$archive_path" ||
+     ! printf '%s  %s\n' "$archive_sha" "$archive_path" | shasum -a 256 -c - ||
+     ! tar -xzf "$archive_path" -C "$staging" --strip-components=1 ||
+     ! [[ "$($staging/bin/node --version 2>/dev/null)" == "v$OPENCLAW_REQUIRED_NODE_VERSION" ]] ||
+     ! [[ "$($staging/bin/npm --version 2>/dev/null)" == "10.9.8" ]]; then
+    rm -rf -- "$staging"
+    log_error "The exact reviewed Node runtime could not be installed; no fallback was used."
+    return 1
+  fi
+  rm -f -- "$archive_path"
+  if ! mv "$staging" "$runtime_root"; then
+    rm -rf -- "$staging"
+    log_error "The managed OpenClaw Node runtime could not be activated."
+    return 1
+  fi
+  export PATH="$runtime_root/bin:$PATH"
+}
+
+ensure_locked_openclaw_runtime() {
+  local runtime_parent="$OPENCLAW_DATA_DIR/runtime"
+  local runtime_root="$runtime_parent/$OPENCLAW_REQUIRED_VERSION"
+  local runtime_bin="$runtime_root/node_modules/.bin/openclaw"
+
+  if openclaw_version_matches "$runtime_bin"; then
+    export OPENCLAW_BIN="$runtime_bin"
+    return 0
+  fi
+  if [[ -e "$runtime_root" ]]; then
+    log_error "The managed OpenClaw runtime is incomplete or has the wrong version: $runtime_root"
+    log_error "Move that one runtime directory aside, then retry so Viventium can rebuild it safely."
+    return 1
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    log_error "Node/npm is required to install the optional OpenClaw runtime."
+    return 1
+  fi
+  if [[ ! -f "$OPENCLAW_RUNTIME_LOCK_DIR/package.json" || ! -f "$OPENCLAW_RUNTIME_LOCK_DIR/package-lock.json" ]]; then
+    log_error "The reviewed OpenClaw runtime lock is missing; refusing a mutable fallback."
+    return 1
+  fi
+
+  local actual_lock_sha
+  actual_lock_sha="$(shasum -a 256 "$OPENCLAW_RUNTIME_LOCK_DIR/package-lock.json" | awk '{print $1}')"
+  if [[ "$actual_lock_sha" != "$OPENCLAW_RUNTIME_LOCK_SHA256" ]]; then
+    log_error "The OpenClaw runtime lock failed its integrity check; refusing installation."
+    return 1
+  fi
+
+  mkdir -p "$runtime_parent"
+  local staging
+  staging="$(mktemp -d "$runtime_parent/.install-${OPENCLAW_REQUIRED_VERSION}.XXXXXX")"
+  if ! /bin/cp "$OPENCLAW_RUNTIME_LOCK_DIR/package.json" "$OPENCLAW_RUNTIME_LOCK_DIR/package-lock.json" "$staging/" ||
+     ! npm ci --omit=dev --prefix "$staging" ||
+     ! openclaw_version_matches "$staging/node_modules/.bin/openclaw"; then
+    rm -rf -- "$staging"
+    log_error "The exact reviewed OpenClaw runtime could not be installed; no fallback was used."
+    return 1
+  fi
+  if ! mv "$staging" "$runtime_root"; then
+    rm -rf -- "$staging"
+    log_error "The managed OpenClaw runtime could not be activated."
+    return 1
+  fi
+  export OPENCLAW_BIN="$runtime_bin"
+}
+
+ensure_locked_python_runtime() {
+  local runtime_parent="$OPENCLAW_DATA_DIR/python-runtime"
+  local runtime_root="$runtime_parent/$OPENCLAW_PYTHON_LOCK_SHA256"
+  local runtime_python="$runtime_root/bin/python"
+
+  if [[ -x "$runtime_python" ]] && "$runtime_python" -c \
+     'from importlib.metadata import version; assert version("fastmcp") == "3.4.4"' 2>/dev/null; then
+    export OPENCLAW_PYTHON_BIN="$runtime_python"
+    return 0
+  fi
+  if [[ -e "$runtime_root" ]]; then
+    log_error "The managed OpenClaw Python runtime is incomplete: $runtime_root"
+    log_error "Move that one runtime directory aside, then retry so Viventium can rebuild it safely."
+    return 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    log_error "Python 3 is required to install the optional OpenClaw bridge runtime."
+    return 1
+  fi
+  if [[ ! -f "$OPENCLAW_PYTHON_LOCK" ]]; then
+    log_error "The reviewed OpenClaw Python lock is missing; refusing a mutable fallback."
+    return 1
+  fi
+
+  local actual_lock_sha
+  actual_lock_sha="$(shasum -a 256 "$OPENCLAW_PYTHON_LOCK" | awk '{print $1}')"
+  if [[ "$actual_lock_sha" != "$OPENCLAW_PYTHON_LOCK_SHA256" ]]; then
+    log_error "The OpenClaw Python lock failed its integrity check; refusing installation."
+    return 1
+  fi
+
+  mkdir -p "$runtime_parent"
+  local staging
+  staging="$(mktemp -d "$runtime_parent/.install-${OPENCLAW_PYTHON_LOCK_SHA256}.XXXXXX")"
+  if ! python3 -m venv "$staging" ||
+     ! "$staging/bin/python" -m pip install --disable-pip-version-check --require-hashes -r "$OPENCLAW_PYTHON_LOCK" ||
+     ! "$staging/bin/python" -c 'from importlib.metadata import version; assert version("fastmcp") == "3.4.4"'; then
+    rm -rf -- "$staging"
+    log_error "The exact reviewed OpenClaw Python runtime could not be installed; no fallback was used."
+    return 1
+  fi
+  if ! mv "$staging" "$runtime_root"; then
+    rm -rf -- "$staging"
+    log_error "The managed OpenClaw Python runtime could not be activated."
+    return 1
+  fi
+  export OPENCLAW_PYTHON_BIN="$runtime_python"
+}
+
+ensure_bridge_secret() {
+  if [[ -n "${OPENCLAW_BRIDGE_SECRET:-}" ]]; then
+    if [[ ! "$OPENCLAW_BRIDGE_SECRET" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      log_error "OPENCLAW_BRIDGE_SECRET must be a 64-character hexadecimal secret."
+      return 1
+    fi
+    export OPENCLAW_BRIDGE_SECRET
+    return 0
+  fi
+  local secret_path="$OPENCLAW_DATA_DIR/.bridge-secret"
+  if [[ -L "$OPENCLAW_DATA_DIR" ]]; then
+    log_error "The OpenClaw data directory cannot be a symlink."
+    return 1
+  fi
+  mkdir -p "$OPENCLAW_DATA_DIR"
+  chmod 700 "$OPENCLAW_DATA_DIR"
+  if [[ -L "$secret_path" || ( -e "$secret_path" && ! -f "$secret_path" ) ]]; then
+    log_error "The OpenClaw bridge secret path must be a regular file, never a symlink."
+    return 1
+  fi
+  if [[ ! -e "$secret_path" ]]; then
+    if [[ ! -x /usr/bin/openssl ]]; then
+      log_error "OpenSSL is required to create the local OpenClaw bridge secret."
+      return 1
+    fi
+    local generated_secret staging_secret
+    generated_secret="$(/usr/bin/openssl rand -hex 32)"
+    staging_secret="$(mktemp "$OPENCLAW_DATA_DIR/.bridge-secret.XXXXXX")"
+    chmod 600 "$staging_secret"
+    printf '%s\n' "$generated_secret" > "$staging_secret"
+    if ! ln "$staging_secret" "$secret_path" 2>/dev/null; then
+      rm -f -- "$staging_secret"
+      if [[ -L "$secret_path" || ! -f "$secret_path" ]]; then
+        log_error "The OpenClaw bridge secret path changed while it was being created."
+        return 1
+      fi
+    else
+      rm -f -- "$staging_secret"
+    fi
+  fi
+  local secret_owner secret_mode secret_bytes
+  secret_owner="$(stat -f '%u' "$secret_path" 2>/dev/null || true)"
+  secret_mode="$(stat -f '%Lp' "$secret_path" 2>/dev/null || true)"
+  secret_bytes="$(wc -c < "$secret_path" | tr -d ' ')"
+  if [[ "$secret_owner" != "$(id -u)" || "$secret_mode" != "600" || "$secret_bytes" != "65" ]]; then
+    log_error "The OpenClaw bridge secret must be owned by the current user, mode 600, and exactly 64 hexadecimal characters."
+    return 1
+  fi
+  IFS= read -r OPENCLAW_BRIDGE_SECRET < "$secret_path"
+  if [[ ! "$OPENCLAW_BRIDGE_SECRET" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    log_error "The local OpenClaw bridge secret is invalid; refusing to start."
+    return 1
+  fi
+  export OPENCLAW_BRIDGE_SECRET
+}
+# VIVENTIUM END
 
 # ----------------------------
 # Show help
@@ -195,13 +431,14 @@ show_status() {
     echo "  Health: $health"
   fi
 
-  # Check OpenClaw binary
-  if command -v openclaw >/dev/null 2>&1; then
+  # Check the managed exact OpenClaw binary; a random global install is not accepted.
+  local managed_openclaw="$OPENCLAW_DATA_DIR/runtime/$OPENCLAW_REQUIRED_VERSION/node_modules/.bin/openclaw"
+  if openclaw_version_matches "$managed_openclaw"; then
     local oc_version
-    oc_version=$(openclaw --version 2>/dev/null || echo "unknown")
+    oc_version=$("$managed_openclaw" --version 2>/dev/null || echo "unknown")
     log_success "OpenClaw binary: $oc_version"
   else
-    log_warn "OpenClaw binary: not installed (run: npm install -g openclaw@latest)"
+    log_warn "OpenClaw binary: reviewed runtime not installed (run this launcher with 'native')"
   fi
 
   echo ""
@@ -219,6 +456,7 @@ show_status() {
   fi
   echo "  Idle Timeout:    ${OPENCLAW_IDLE_TIMEOUT_HOURS}h"
   echo "  Model:           $OPENCLAW_MODEL"
+  echo "  Bonjour:         disabled"
   echo ""
 }
 
@@ -261,6 +499,7 @@ build_images() {
 # ----------------------------
 start_services() {
   require_docker
+  ensure_bridge_secret
 
   echo ""
   echo -e "${CYAN}========================================${NC}"
@@ -282,7 +521,7 @@ start_services() {
   echo -e "  Idle Timeout:     ${GREEN}${OPENCLAW_IDLE_TIMEOUT_HOURS}h${NC}"
   echo -e "  Model:            ${GREEN}$OPENCLAW_MODEL${NC}"
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-    echo -e "  Anthropic Key:    ${GREEN}${ANTHROPIC_API_KEY:0:8}...${NC}"
+    echo -e "  Anthropic Key:    ${GREEN}Configured${NC}"
   fi
   echo ""
 
@@ -344,24 +583,21 @@ start_native() {
     log_warn "ANTHROPIC_API_KEY not set — OpenClaw agent tools may not work"
   fi
 
-  # Ensure OpenClaw is installed
-  if ! command -v openclaw >/dev/null 2>&1; then
-    log_info "OpenClaw not found. Installing globally..."
-    npm install -g openclaw@latest
-  fi
+  ensure_bridge_secret
 
-  # Ensure Python deps
-  if ! python3 -c "import fastmcp" 2>/dev/null; then
-    log_info "Installing Python dependencies..."
-    pip3 install -r "$OPENCLAW_BRIDGE_DIR/requirements.txt"
-  fi
+  # Install or reuse only the reviewed app-owned runtimes and dependency graphs.
+  ensure_locked_node_runtime
+  ensure_locked_openclaw_runtime
+
+  # Install or reuse the reviewed app-owned Python dependency graph.
+  ensure_locked_python_runtime
 
   mkdir -p "$OPENCLAW_DATA_DIR"
 
   log_info "Starting MCP server natively on port $OPENCLAW_BRIDGE_PORT..."
   cd "$OPENCLAW_BRIDGE_DIR"
 
-  python3 mcp_server.py --port "$OPENCLAW_BRIDGE_PORT" --host 127.0.0.1 \
+  "$OPENCLAW_PYTHON_BIN" mcp_server.py --port "$OPENCLAW_BRIDGE_PORT" --host 127.0.0.1 \
     2>&1 | tee "$LOG_DIR/openclaw-bridge-native.log"
 }
 
@@ -391,10 +627,10 @@ show_final_status() {
   echo -e "  ${CYAN}MCP Endpoint:${NC}    http://localhost:$OPENCLAW_BRIDGE_PORT/mcp"
   echo -e "  ${CYAN}Health Check:${NC}    http://localhost:$OPENCLAW_BRIDGE_PORT/health"
   echo ""
-  echo -e "${CYAN}In LibreChat:${NC}"
-  echo "  1. Click 'Integrations' button in chat input"
-  echo "  2. Find 'openclaw-bridge' and click 'Initialize'"
-  echo "  3. Status should change to 'Connected'"
+  echo -e "${YELLOW}Standalone lab status:${NC}"
+  echo "  The current public Viventium config does not register this bridge in LibreChat."
+  echo "  Starting the bridge alone does not make OpenClaw available in chat."
+  echo "  Client secret delivery and lifecycle QA must land before that path is supported."
   echo ""
   echo -e "${CYAN}Available MCP tools:${NC}"
   echo "  - openclaw_vm_start/resume/stop/terminate/list/status/takeover"

@@ -20,6 +20,7 @@ except Exception as exc:  # pragma: no cover - release env always carries PyYAML
 APP_FACING_PORT_KEYS = (
     "lc_api_port",
     "lc_frontend_port",
+    "sandpack_bundler_port",
     "playground_port",
     "voice_gateway_health_port",
 )
@@ -97,10 +98,12 @@ def create_env(args: argparse.Namespace) -> int:
         raise SystemExit("runtime.ports must be a mapping in config.yaml")
 
     offset = int(args.port_offset)
+    runtime_profile = str(runtime.get("profile") or "isolated").strip().lower()
+    if "sandpack_bundler_port" not in ports:
+        ports["sandpack_bundler_port"] = 3191 if runtime_profile == "isolated" else 3091
     for key in APP_FACING_PORT_KEYS:
         if key in ports:
             ports[key] = int(ports[key]) + offset
-    runtime_profile = str(runtime.get("profile") or "isolated").strip().lower()
     scheduling_base = ports.get("scheduling_mcp_port")
     if scheduling_base in (None, ""):
         scheduling_base = SCHEDULING_MCP_PORT_DEFAULTS.get(runtime_profile, 7110)

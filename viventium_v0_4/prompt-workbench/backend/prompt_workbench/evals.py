@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,12 +21,47 @@ from .promptfoo_adapter import prompt_bank_to_promptfoo
 from . import drafts
 
 
+RUNTIME_CONTEXT_CONTRACTS: dict[str, dict[str, str]] = {
+    "runtime.feelings.current_state": {
+        "id": "runtime.feelings.current_state",
+        "kind": "runtime_context",
+        "tag": "viventium_feeling_state",
+        "lifecycle": "request_scoped",
+        "owner": "feelings_runtime",
+        "valuePolicy": "private_value_not_recorded",
+        "roleContract": "eligible conscious/speaking synthesis context; not specialist-worker demeanor",
+    }
+}
+
+RUNNER_SUMMARY_COUNT_FIELDS = {
+    "resultCount",
+    "completedCount",
+    "failedCount",
+    "semanticJudgedCount",
+    "semanticPassedCount",
+    "semanticFailedCount",
+    "semanticJudgeUnavailableCount",
+    "duplicateResponseQualityFailureCount",
+    "unresolvedAsyncQualityFailureCount",
+}
+
+
 def _live_eval_timeout_seconds(max_cases: int, runner: Path) -> int:
     if runner == ACTIVATION_MODEL_EVAL_SCRIPT:
         return 600
     # One exact-model case can consume two 120 s main-model attempts plus a 120 s semantic
-    # judge. Keep cleanup margin without letting a whole Workbench run exceed one hour.
-    return max(420, min(3600, max(1, max_cases) * 420))
+    # judge. Preserve that per-case cleanup margin across a selected suite; the previous
+    # one-hour cap killed healthy 30-case runs before they could write their evidence.
+    return max(420, min(14_400, max(1, max_cases) * 420))
+
+
+def _activation_eval_timeout_ms() -> int:
+    raw = (os.getenv("VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS") or "6000").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 6000
+    return max(1000, min(60_000, value))
 
 
 def eval_bank_summary() -> dict[str, Any]:
@@ -60,6 +96,7 @@ def run_exact_model_eval(
     family: str | None = None,
     surface: str | None = None,
     prompt_id: str | None = None,
+    case_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     drafts.assert_no_active_blocking_drafts(
         "Eval preview",
@@ -67,71 +104,104 @@ def run_exact_model_eval(
         include_eval_drafts=True,
         all_prompt_drafts=live or prompt_id in {None, "main.conscious_agent"},
     )
+    requested_case_ids = _normalize_case_ids(case_ids)
+    effective_max_cases = len(requested_case_ids) if requested_case_ids else max_cases
+    bank = load_eval_bank()
+    selected = _selected_eval_cases(
+        bank,
+        family=family,
+        surface=surface,
+        prompt_id=prompt_id,
+        case_ids=requested_case_ids,
+        max_cases=effective_max_cases,
+    )
+    selected_case_ids = [str(row["case"].get("id") or "") for row in selected]
+    missing_case_ids = [case_id for case_id in requested_case_ids if case_id not in selected_case_ids]
+    if missing_case_ids:
+        raise ValueError(
+            "Explicit eval case IDs do not match the current family, surface, or prompt filters: "
+            + ", ".join(missing_case_ids)
+        )
+    semantic_judge_required = any(
+        row["family"].get("semanticJudge") is True
+        or row["case"].get("semanticJudge") is True
+        for row in selected
+    )
+    execution_target = _background_execution_target(
+        bank, family, selected=selected
+    )
+    lineage_manifest = _eval_lineage_manifest(
+        selected, execution_target=execution_target
+    )
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir = workbench_private_root() / "eval-runs" / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
     prompt_hash = _prompt_hash(prompt_id)
     if not live:
-        bank = load_eval_bank()
-        filtered_cases = []
-        for family_row in bank.get("families") or []:
-            if family and family_row.get("id") != family:
-                continue
-            family_prompt_refs = {str(item) for item in (family_row.get("promptRefs") or family_row.get("prompt_refs") or [])}
-            for case in family_row.get("cases") or []:
-                if surface and case.get("surface") != surface:
-                    continue
-                case_prompt_refs = {str(item) for item in (case.get("promptRefs") or case.get("prompt_refs") or [])}
-                if (
-                    prompt_id
-                    and prompt_id != "main.conscious_agent"
-                    and prompt_id not in family_prompt_refs
-                    and prompt_id not in case_prompt_refs
-                ):
-                    continue
-                filtered_cases.append(
-                    {"family": family_row.get("id"), "case": case.get("id"), "surface": case.get("surface")}
-                )
-        cases = filtered_cases[:max_cases]
+        cases = [
+            {
+                "family": row["family"].get("id"),
+                "case": row["case"].get("id"),
+                "surface": row["case"].get("surface"),
+            }
+            for row in selected
+        ]
         record = {
             "id": run_id,
             "mode": "synthetic-no-live-preview",
             "returnCode": 0,
             "resultCount": len(cases),
+            "selectedCaseCount": len(cases),
             "cases": cases,
             "stdoutTail": "Synthetic no-live eval preview loaded the prompt bank and selected cases without live model execution.",
             "stderrTail": "",
             "outputDir": str(output_dir),
             "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "live": False,
-            "maxCases": max_cases,
+            "maxCases": effective_max_cases,
             "family": family,
             "surface": surface,
             "promptId": prompt_id,
             "promptHash": prompt_hash,
             "selectedCaseIds": [case["case"] for case in cases],
+            "lineageManifest": lineage_manifest,
+            "executionTarget": execution_target,
+            "semanticJudgeRequired": semantic_judge_required,
         }
         (output_dir / "workbench-run.json").write_text(
             json.dumps(record, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return _public_run_record(record)
-    runner = _eval_runner(bank=load_eval_bank(), family=family, prompt_id=prompt_id)
+    runner = _eval_runner(bank=bank, family=family, prompt_id=prompt_id)
     cmd = [
         "node",
         str(runner),
         f"--prompt-bank={PROMPT_BANK_PATH}",
         f"--output-dir={output_dir}",
         f"--public-report={output_dir / 'public-safe-report.md'}",
-        f"--max-cases={max_cases}",
+        f"--max-cases={effective_max_cases}",
         "--run-live" if live else "--no-live",
     ]
     if family:
         cmd.append(f"--family={family}")
+    if requested_case_ids:
+        cmd.append(f"--case-ids={','.join(requested_case_ids)}")
     if surface:
         cmd.append(f"--surface={surface}")
-    if prompt_id:
+    if prompt_id and _runner_accepts_prompt_filter(
+        runner=runner,
+        bank=bank,
+        family=family,
+        prompt_id=prompt_id,
+    ):
         cmd.append(f"--prompt-id={prompt_id}")
+    if execution_target:
+        cmd.append(f"--agent-id={execution_target['agentId']}")
+    if execution_target or semantic_judge_required:
+        # Direct specialist cases use qualitative evidence/uncertainty rubrics. A transport-only
+        # completion would not evaluate the behavior the selected eval contract claims to measure.
+        cmd.append("--semantic-judge")
     child_env: dict[str, str] | None = None
     if runner == EXACT_MODEL_EVAL_SCRIPT:
         # A live run is an explicit action from the authenticated, loopback-only Workbench.
@@ -140,7 +210,19 @@ def run_exact_model_eval(
         cmd.append("--local-jwt-fallback")
         child_env = os.environ.copy()
         child_env["VIVENTIUM_QA_ALLOW_LOCAL_JWT"] = "1"
-    timeout_seconds = _live_eval_timeout_seconds(max_cases, runner)
+    elif runner == ACTIVATION_MODEL_EVAL_SCRIPT:
+        # Activation evals must exercise the same identity-aware classifier and fallback chain as
+        # the runtime. The runner resolves the configurable QA selector from its inherited env and
+        # refuses owner/admin selection; missing QA config is a visible failed run.
+        cmd.extend(
+            [
+                "--qa-user-context",
+                "--with-fallbacks",
+                f"--timeout-ms={_activation_eval_timeout_ms()}",
+            ]
+        )
+        child_env = os.environ.copy()
+    timeout_seconds = _live_eval_timeout_seconds(effective_max_cases, runner)
     try:
         result = subprocess.run(
             cmd,
@@ -162,27 +244,316 @@ def run_exact_model_eval(
         stdout = stdout.decode("utf-8", errors="replace")
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
+    runner_summary = _public_runner_summary(stdout)
+    actual_result_count = (
+        runner_summary.get("resultCount")
+        if runner_summary and isinstance(runner_summary.get("resultCount"), int)
+        else len(selected)
+    )
     record = {
         "id": run_id,
-        "command": _safe_command(cmd),
+        "command": _safe_command(cmd, private_paths=(output_dir,)),
         "returnCode": return_code,
-        "stdoutTail": _sanitize_output(stdout[-4000:]),
-        "stderrTail": _sanitize_output(stderr[-4000:]),
+        "stdoutTail": _sanitize_output(stdout[-4000:], private_paths=(output_dir,)),
+        "stderrTail": _sanitize_output(stderr[-4000:], private_paths=(output_dir,)),
         "timeoutSeconds": timeout_seconds,
         "outputDir": str(output_dir),
         "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "live": live,
-        "maxCases": max_cases,
+        "maxCases": effective_max_cases,
         "family": family,
         "surface": surface,
         "promptId": prompt_id,
         "promptHash": prompt_hash,
+        "selectedCaseIds": [str(row["case"].get("id") or "") for row in selected],
+        "selectedCaseCount": len(selected),
+        "resultCount": actual_result_count,
+        "runnerSummary": runner_summary,
+        "lineageManifest": lineage_manifest,
+        "executionTarget": execution_target,
+        "semanticJudgeRequired": semantic_judge_required,
     }
     (output_dir / "workbench-run.json").write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return _public_run_record(record)
+
+
+def _selected_eval_cases(
+    bank: dict[str, Any],
+    *,
+    family: str | None,
+    surface: str | None,
+    prompt_id: str | None,
+    case_ids: list[str] | None,
+    max_cases: int,
+) -> list[dict[str, dict[str, Any]]]:
+    selected: list[dict[str, dict[str, Any]]] = []
+    explicit_case_ids = set(case_ids or [])
+    for family_row in bank.get("families") or []:
+        if not isinstance(family_row, dict):
+            continue
+        if family and family_row.get("id") != family:
+            continue
+        family_prompt_refs = _prompt_refs(family_row)
+        for case in family_row.get("cases") or []:
+            if not isinstance(case, dict):
+                continue
+            if explicit_case_ids and str(case.get("id") or "") not in explicit_case_ids:
+                continue
+            if surface and case.get("surface") != surface:
+                continue
+            # An explicitly selected family is the execution target. Otherwise the selected prompt
+            # filters the bank to families/cases that actually declare it as a dependency.
+            if (
+                prompt_id
+                and not family
+                and prompt_id not in family_prompt_refs
+                and prompt_id not in _prompt_refs(case)
+            ):
+                continue
+            selected.append({"family": family_row, "case": case})
+            if len(selected) >= max(1, max_cases):
+                return selected
+    return selected
+
+
+def _normalize_case_ids(case_ids: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_case_id in case_ids or []:
+        case_id = str(raw_case_id).strip()
+        if not case_id or case_id in seen:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", case_id):
+            raise ValueError("Eval case IDs may contain only letters, numbers, dot, colon, underscore, or hyphen")
+        seen.add(case_id)
+        normalized.append(case_id)
+    if len(normalized) > 100:
+        raise ValueError("At most 100 explicit eval case IDs may be selected")
+    return normalized
+
+
+def _eval_lineage_manifest(
+    selected: list[dict[str, dict[str, Any]]],
+    *,
+    execution_target: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    from . import prompt_service
+    from scripts.viventium.prompt_registry import load_prompt_registry
+
+    family_ids: set[str] = set()
+    case_ids: list[str] = []
+    root_prompt_ids: set[str] = set()
+    runtime_context_ids: set[str] = set()
+    for row in selected:
+        family = row["family"]
+        case = row["case"]
+        family_ids.add(str(family.get("id") or ""))
+        case_ids.append(str(case.get("id") or ""))
+        root_prompt_ids.update(_prompt_refs(family))
+        root_prompt_ids.update(_prompt_refs(case))
+        runtime_context_ids.update(_runtime_context_refs(family))
+        runtime_context_ids.update(_runtime_context_refs(case))
+        fixture = case.get("fixture") or {}
+        if isinstance(fixture, dict) and "feelings" in fixture:
+            runtime_context_ids.add("runtime.feelings.current_state")
+
+    registry = load_prompt_registry(prompt_service.PROMPTS_ROOT)
+    prompt_dependencies: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, str]] = []
+
+    def visit(prompt_id: str, *, direct: bool) -> None:
+        existing = prompt_dependencies.get(prompt_id)
+        if existing:
+            if direct:
+                existing["direct"] = True
+            return
+        entry = registry.get(prompt_id)
+        if not entry:
+            prompt_dependencies[prompt_id] = {
+                "id": prompt_id,
+                "kind": "prompt",
+                "status": "missing",
+                "direct": direct,
+            }
+            return
+        try:
+            rendered = prompt_service._render_prompt_preview(prompt_id, registry)
+            rendered_hash = _sha(rendered)
+        except Exception:
+            rendered_hash = None
+        delivery = prompt_service.prompt_delivery_contract(prompt_id, entry.metadata)
+        prompt_dependencies[prompt_id] = {
+            "id": prompt_id,
+            "kind": "prompt",
+            "status": "available",
+            "direct": direct,
+            "path": prompt_service.relative_to_repo(entry.path),
+            "contentHash": entry.content_hash,
+            "bodyHash": _sha(entry.body),
+            "renderedHash": rendered_hash,
+            "deliveryKind": delivery["kind"],
+            "deliveryTarget": delivery["target"],
+        }
+        for include_id in entry.metadata.get("includes") or []:
+            include = str(include_id)
+            edges.append({"from": prompt_id, "to": include, "kind": "includes"})
+            visit(include, direct=False)
+
+    for prompt_id in sorted(root_prompt_ids):
+        visit(prompt_id, direct=True)
+
+    runtime_dependencies: list[dict[str, Any]] = []
+    for context_id in sorted(runtime_context_ids):
+        contract = RUNTIME_CONTEXT_CONTRACTS.get(context_id)
+        if not contract:
+            runtime_dependencies.append(
+                {
+                    "id": context_id,
+                    "kind": "runtime_context",
+                    "status": "unknown_contract",
+                }
+            )
+            continue
+        public_contract: dict[str, Any] = dict(contract)
+        public_contract["contractHash"] = _sha(
+            json.dumps(contract, sort_keys=True, separators=(",", ":"))
+        )
+        runtime_dependencies.append(public_contract)
+
+    manifest: dict[str, Any] = {
+        "schemaVersion": 1,
+        "familyIds": sorted(item for item in family_ids if item),
+        "caseIds": [item for item in case_ids if item],
+        "rootPromptIds": sorted(root_prompt_ids),
+        "promptDependencies": sorted(
+            prompt_dependencies.values(), key=lambda row: str(row.get("id") or "")
+        ),
+        "runtimeContextDependencies": runtime_dependencies,
+        "includeEdges": sorted(
+            edges,
+            key=lambda row: (row["from"], row["to"]),
+        ),
+    }
+    if execution_target:
+        manifest["executionTarget"] = execution_target
+    manifest["promptCount"] = len(manifest["promptDependencies"])
+    manifest["runtimeContextCount"] = len(runtime_dependencies)
+    manifest["manifestHash"] = _sha(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+    )
+    return manifest
+
+
+def _background_execution_target(
+    bank: dict[str, Any],
+    family_id: str | None,
+    *,
+    selected: list[dict[str, dict[str, Any]]],
+) -> dict[str, str] | None:
+    candidate_ids = (
+        {family_id}
+        if family_id
+        else {
+            str(row["family"].get("id") or "")
+            for row in selected
+            if row["family"].get("runner") == "background_execution"
+        }
+    )
+    candidate_ids.discard("")
+    if not candidate_ids:
+        return None
+    families = [
+        row
+        for row in bank.get("families") or []
+        if isinstance(row, dict)
+        and row.get("id") in candidate_ids
+        and row.get("runner") == "background_execution"
+    ]
+    if len(families) > 1:
+        raise ValueError(
+            "Select one background execution family so Workbench can target one specialist agent"
+        )
+    family = next(
+        (
+            row for row in families
+        ),
+        None,
+    )
+    if not family:
+        return None
+    target = family.get("executionTarget") or family.get("execution_target")
+    if not isinstance(target, dict):
+        raise ValueError(
+            "Background execution eval requires a structured executionTarget"
+        )
+    agent_id = str(target.get("agentId") or target.get("agent_id") or "").strip()
+    prompt_ref = str(
+        target.get("promptRef") or target.get("prompt_ref") or ""
+    ).strip()
+    if not agent_id or not prompt_ref or prompt_ref not in _prompt_refs(family):
+        raise ValueError(
+            "Background execution eval requires a structured executionTarget with an agentId and declared promptRef"
+        )
+    return {
+        "mode": "direct_background_agent",
+        "agentId": agent_id,
+        "promptRef": prompt_ref,
+    }
+
+
+def _prompt_refs(row: dict[str, Any]) -> set[str]:
+    return {
+        str(item)
+        for item in (row.get("promptRefs") or row.get("prompt_refs") or [])
+        if str(item)
+    }
+
+
+def _runtime_context_refs(row: dict[str, Any]) -> set[str]:
+    return {
+        str(item)
+        for item in (
+            row.get("runtimeContextRefs")
+            or row.get("runtime_context_refs")
+            or []
+        )
+        if str(item)
+    }
+
+
+def _sha(value: str, length: int = 16) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
+
+
+def _public_runner_summary(stdout: str) -> dict[str, Any] | None:
+    """Keep only aggregate eval evidence; never copy paths or private artifacts into the UI."""
+
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", stdout)
+    parsed: dict[str, Any] | None = None
+    for start in reversed([match.start() for match in re.finditer(r"[\[{]", text)]):
+        try:
+            candidate = json.loads(text[start:].strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            parsed = candidate
+            break
+    if not parsed:
+        return None
+
+    public: dict[str, Any] = {}
+    for key in ("status", "blockedReason"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value:
+            public[key] = _sanitize_output(value)
+    for key in RUNNER_SUMMARY_COUNT_FIELDS:
+        value = parsed.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            public[key] = value
+    return public or None
 
 
 def _eval_runner(
@@ -200,6 +571,42 @@ def _eval_runner(
             if prompt_id in set(row.get("promptRefs") or row.get("prompt_refs") or []):
                 return ACTIVATION_MODEL_EVAL_SCRIPT
     return EXACT_MODEL_EVAL_SCRIPT
+
+
+def _runner_accepts_prompt_filter(
+    *, runner: Path, bank: dict[str, Any], family: str | None, prompt_id: str
+) -> bool:
+    if runner != ACTIVATION_MODEL_EVAL_SCRIPT:
+        if not family:
+            return True
+        selected = next(
+            (
+                row
+                for row in bank.get("families") or []
+                if isinstance(row, dict) and row.get("id") == family
+            ),
+            None,
+        )
+        if not selected:
+            return False
+        refs = _prompt_refs(selected)
+        for case in selected.get("cases") or []:
+            if isinstance(case, dict):
+                refs.update(_prompt_refs(case))
+        return prompt_id in refs
+    for row in bank.get("families") or []:
+        if row.get("runner") != "background_activation":
+            continue
+        if family and row.get("id") != family:
+            continue
+        target_refs = {
+            str(target.get("promptRef") or target.get("prompt_ref") or "")
+            for target in row.get("activationTargets") or row.get("activation_targets") or []
+            if isinstance(target, dict)
+        }
+        if prompt_id in target_refs:
+            return True
+    return False
 
 
 def get_eval_run(run_id: str) -> dict[str, Any]:
@@ -227,7 +634,17 @@ def list_eval_runs(limit: int = 12) -> list[dict[str, Any]]:
 def list_eval_runs_for_prompt(prompt_id: str, limit: int = 8) -> list[dict[str, Any]]:
     rows = []
     for run in list_eval_runs(limit=50):
-        if run.get("promptId") == prompt_id or (prompt_id == "main.conscious_agent" and not run.get("promptId")):
+        manifest_prompts = {
+            str(row.get("id") or "")
+            for row in (
+                (run.get("lineageManifest") or {}).get("promptDependencies") or []
+            )
+            if isinstance(row, dict)
+        }
+        if (
+            run.get("promptId") == prompt_id
+            or prompt_id in manifest_prompts
+        ):
             rows.append(run)
         if len(rows) >= limit:
             break
@@ -296,8 +713,6 @@ def promptfoo_config(prompt_id: str) -> dict[str, Any]:
 def _public_family(family: dict[str, Any]) -> dict[str, Any]:
     row = dict(family)
     prompt_refs = [str(item) for item in (row.get("promptRefs") or row.get("prompt_refs") or [])]
-    if "main.conscious_agent" not in prompt_refs:
-        prompt_refs.append("main.conscious_agent")
     row["promptRefs"] = sorted(set(prompt_refs))
     cases = []
     for case in row.get("cases") or []:
@@ -447,9 +862,17 @@ def _public_run_record(record: dict[str, Any]) -> dict[str, Any]:
     public["privateOutputAvailable"] = bool(output_dir)
     public["artifactName"] = Path(output_dir).name if output_dir else None
     if "command" in public:
-        public["command"] = _safe_command([str(item) for item in public.get("command") or []])
-    public["stdoutTail"] = _sanitize_output(str(public.get("stdoutTail") or ""))
-    public["stderrTail"] = _sanitize_output(str(public.get("stderrTail") or ""))
+        public["command"] = _safe_command(
+            [str(item) for item in public.get("command") or []],
+            private_paths=((Path(output_dir),) if output_dir else ()),
+        )
+    private_paths = (Path(output_dir),) if output_dir else ()
+    public["stdoutTail"] = _sanitize_output(
+        str(public.get("stdoutTail") or ""), private_paths=private_paths
+    )
+    public["stderrTail"] = _sanitize_output(
+        str(public.get("stderrTail") or ""), private_paths=private_paths
+    )
     return public
 
 
@@ -473,14 +896,24 @@ def _prompt_hash(prompt_id: str | None) -> str | None:
         return None
 
 
-def _safe_command(cmd: list[str]) -> list[str]:
+def _redact_private_paths(text: str, private_paths: tuple[Path, ...] = ()) -> str:
+    values = {str(Path.home()), str(workbench_private_root())}
+    values.update(str(Path(path).expanduser().resolve(strict=False)) for path in private_paths)
+    for value in sorted((item for item in values if item), key=len, reverse=True):
+        text = text.replace(value, "<private>")
+    return text
+
+
+def _safe_command(
+    cmd: list[str], *, private_paths: tuple[Path, ...] = ()
+) -> list[str]:
     return [
-        item.replace(str(Path.home()), "~") if isinstance(item, str) else item
+        _redact_private_paths(item, private_paths) if isinstance(item, str) else item
         for item in cmd
     ]
 
 
-def _sanitize_output(text: str) -> str:
+def _sanitize_output(text: str, *, private_paths: tuple[Path, ...] = ()) -> str:
     import re
     from scripts.viventium.prompt_registry import PRIVATE_PATTERN_RULES
 
@@ -488,4 +921,4 @@ def _sanitize_output(text: str) -> str:
     text = re.sub(r'("userId"\s*:\s*")[0-9a-f]{12,32}(")', r'\1<user-id>\2', text, flags=re.I)
     for label, pattern in PRIVATE_PATTERN_RULES:
         text = pattern.sub(f"<{label}>", text)
-    return text.replace(str(Path.home()), "~")
+    return _redact_private_paths(text, private_paths)

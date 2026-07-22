@@ -122,6 +122,204 @@ def test_rag_compose_waits_for_vectordb_readiness() -> None:
     assert "healthcheck" in services["rag_api"]
 
 
+def _rag_route_path_probe(
+    tmp_path: Path,
+    *,
+    override_exists: bool,
+    override_matches: bool,
+) -> subprocess.CompletedProcess[str]:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    start = source.index("prepare_rag_document_route_path() {")
+    end = source.index("\n}\n\n_start_rag_api_locked()", start) + 3
+    function_source = source[start:end]
+
+    selected_route = (
+        tmp_path
+        / "selected-librechat"
+        / "viventium"
+        / "rag_api_overrides"
+        / "app"
+        / "routes"
+        / "document_routes.py"
+    )
+    selected_route.parent.mkdir(parents=True)
+    selected_route.write_text("# selected route\n", encoding="utf-8")
+
+    override = tmp_path / "guest-safe" / "document_routes.py"
+    if override_exists:
+        override.parent.mkdir(parents=True)
+        override.write_text(
+            "# selected route\n" if override_matches else "# unrelated route\n",
+            encoding="utf-8",
+        )
+
+    script = f"""
+set -euo pipefail
+LIBRECHAT_DIR={subprocess.list2cmdline([str(tmp_path / 'selected-librechat')])}
+VIVENTIUM_RAG_DOCUMENT_ROUTE_PATH={subprocess.list2cmdline([str(override)])}
+log_error() {{ printf '%s\\n' "$*" >&2; }}
+{function_source}
+prepare_rag_document_route_path
+printf '%s\\n' "$VIVENTIUM_RAG_DOCUMENT_ROUTE_PATH"
+"""
+    return subprocess.run(
+        ["/bin/bash", "-c", script],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_launcher_accepts_only_readable_byte_identical_rag_route_override(tmp_path: Path) -> None:
+    accepted = _rag_route_path_probe(tmp_path, override_exists=True, override_matches=True)
+    assert accepted.returncode == 0, accepted.stderr
+    assert accepted.stdout.strip() == str(
+        (tmp_path / "guest-safe" / "document_routes.py").resolve()
+    )
+
+    missing = _rag_route_path_probe(tmp_path / "missing", override_exists=False, override_matches=True)
+    assert missing.returncode != 0
+    assert "readable regular file" in missing.stderr
+
+    mismatched = _rag_route_path_probe(
+        tmp_path / "mismatched",
+        override_exists=True,
+        override_matches=False,
+    )
+    assert mismatched.returncode != 0
+    assert "does not match the selected LibreChat runtime" in mismatched.stderr
+
+
+def test_launcher_prepares_rag_route_before_compose_inspection() -> None:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    start_block = source.split("_start_rag_api_locked() {", 1)[1].split(
+        "start_rag_api() {", 1
+    )[0]
+
+    assert "prepare_rag_document_route_path" in start_block
+    assert start_block.index("prepare_rag_document_route_path") < start_block.index(
+        "rag_api_compose_state"
+    )
+
+
+def _rag_pgdata_path_probe(
+    tmp_path: Path,
+    *,
+    mode: str,
+    path: str,
+) -> subprocess.CompletedProcess[str]:
+    function_source = _launcher_slice(
+        "prepare_rag_pgdata_path() {",
+        "prepare_rag_document_route_path() {",
+    )
+    script = f"""
+set -euo pipefail
+VIVENTIUM_RAG_PGDATA_PATH_MODE={subprocess.list2cmdline([mode])}
+VIVENTIUM_RAG_PGDATA_PATH={subprocess.list2cmdline([path])}
+log_error() {{ printf '%s\\n' "$*" >&2; }}
+{function_source}
+prepare_rag_pgdata_path
+printf 'ok\\n'
+"""
+    return subprocess.run(
+        ["/bin/bash", "-c", script],
+        check=False,
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+
+
+def test_launcher_rag_pgdata_path_mode_separates_host_and_daemon_ownership(
+    tmp_path: Path,
+) -> None:
+    host_path = tmp_path / "host-owned" / "rag-pgdata"
+    host = _rag_pgdata_path_probe(
+        tmp_path,
+        mode="host",
+        path=str(host_path),
+    )
+    assert host.returncode == 0, host.stderr
+    assert host_path.is_dir()
+
+    daemon_path = Path("/var/lib/viventium/vdqa-rag-pgdata")
+    assert not daemon_path.exists()
+    daemon = _rag_pgdata_path_probe(
+        tmp_path,
+        mode="daemon",
+        path=str(daemon_path),
+    )
+    assert daemon.returncode == 0, daemon.stderr
+    assert not daemon_path.exists()
+
+
+def test_launcher_rag_daemon_pgdata_path_fails_closed_for_unsafe_values(
+    tmp_path: Path,
+) -> None:
+    for unsafe_path in (
+        "",
+        ".",
+        "relative/path",
+        "/",
+        "/etc",
+        "/usr/lib/viventium/rag",
+        "/var",
+        "/tmp/rag",
+        "/var/lib/viventium",
+        "/var/lib/viventium-qa",
+        "/var/lib/viventium-qa/vdqa-rag-pgdata",
+        "/var/lib/viventium-other/rag",
+        "/var/lib/viventium/../tmp/rag",
+        "/var/lib/viventium/a:b",
+    ):
+        completed = _rag_pgdata_path_probe(
+            tmp_path,
+            mode="daemon",
+            path=unsafe_path,
+        )
+        assert completed.returncode != 0, unsafe_path
+        assert "safe absolute daemon path" in completed.stderr
+
+    invalid_mode = _rag_pgdata_path_probe(
+        tmp_path,
+        mode="remote",
+        path="/var/lib/viventium/rag-pgdata",
+    )
+    assert invalid_mode.returncode != 0
+    assert "must be host or daemon" in invalid_mode.stderr
+
+
+def test_launcher_rag_daemon_pgdata_path_accepts_only_owned_namespaces(
+    tmp_path: Path,
+) -> None:
+    for safe_path in (
+        "/var/lib/viventium/rag-pgdata",
+        "/var/lib/viventium/profiles/dev/rag-pgdata",
+        "/var/lib/viventium/vdqa-rag-pgdata",
+    ):
+        completed = _rag_pgdata_path_probe(
+            tmp_path,
+            mode="daemon",
+            path=safe_path,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+
+def test_launcher_prepares_rag_pgdata_before_compose_inspection() -> None:
+    source = LAUNCHER_PATH.read_text(encoding="utf-8")
+    start_block = source.split("_start_rag_api_locked() {", 1)[1].split(
+        "start_rag_api() {", 1
+    )[0]
+
+    assert 'mkdir -p "$VIVENTIUM_RAG_PGDATA_PATH"' not in source.split(
+        "prepare_rag_pgdata_path() {", 1
+    )[0]
+    assert "prepare_rag_pgdata_path" in start_block
+    assert start_block.index("prepare_rag_pgdata_path") < start_block.index(
+        "rag_api_compose_state"
+    )
+
+
 def test_launcher_serializes_rag_compose_and_stops_on_phantom_state() -> None:
     source = LAUNCHER_PATH.read_text(encoding="utf-8")
 
@@ -272,6 +470,8 @@ RAG_COMPOSE_UNRECOVERABLE_EXIT=75
 RESTART_DOCKER_SERVICES=false
 docker() {{ return 0; }}
 ensure_docker_daemon_for_service() {{ return 0; }}
+prepare_rag_pgdata_path() {{ return 0; }}
+prepare_rag_document_route_path() {{ return 0; }}
 ensure_ollama_for_rag() {{ return 0; }}
 ensure_ollama_embedding_model_for_rag() {{ return 0; }}
 rag_api_compose_state() {{ printf 'phantom\n'; }}

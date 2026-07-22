@@ -10,22 +10,38 @@ if [[ -f "$COMMON_SH" ]]; then
   source "$COMMON_SH"
 fi
 
-CONFIG_HOME=""
+CONFIG_HOME="${VIVENTIUM_DEFAULT_CONFIG_HOME:-${VIVENTIUM_APP_SUPPORT_DIR:-}}"
+CONFIG_HOME_EXPLICIT=false
+TARGET_CONFIG_HOME=""
+TARGET_CONFIG_HOME_EXPLICIT=false
+TARGET_REPO_ROOT=""
+TARGET_MONGO_URI=""
+TARGET_MONGO_DATA_PATH=""
 SNAPSHOT_DIR=""
 APPLY_TELEGRAM=false
 ALLOW_OLDER_SNAPSHOT=false
 MARK_RECALL_STALE=false
+VALIDATE_ONLY=false
+VALIDATION_PYTHON="${VIVENTIUM_PYTHON_BIN:-python3}"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/viventium/restore.sh --config-home <path> [options]
+  scripts/viventium/restore.sh --target-config-home <path> [options]
 
 Options:
+  --target-config-home <path> Empty independent App Support target for restore.
+  --target-repo-root <path>   Fresh independent Viventium checkout that will own restored uploads.
+  --target-mongo-uri <uri>    Empty credential-free loopback Mongo database for the independent target.
+  --target-mongo-data-path <path>
+                              Owner-only independent Mongo data directory. Supplying it makes the
+                              restored target restartable with the same pinned persistence store.
+  --config-home <path>        Legacy alias for --target-config-home.
   --snapshot-dir <path>       Snapshot directory to inspect.
-  --apply-telegram            Restore Telegram user configs from the snapshot.
-  --allow-older-snapshot      Allow applying a snapshot whose continuity state is older than live.
-  --mark-recall-stale         Write the recall rebuild-required marker after restore follow-through.
+  --apply-telegram            Reserved; channel credentials always require reauthentication.
+  --allow-older-snapshot      Reserved; unchecksummed legacy age metadata is not trusted.
+  --mark-recall-stale         Compatibility flag; transactional restore always marks Recall stale.
+  --validate-only             Validate bundle completeness and hashes without changing target state.
 USAGE
 }
 
@@ -33,6 +49,25 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --config-home)
       CONFIG_HOME="${2:-}"
+      CONFIG_HOME_EXPLICIT=true
+      TARGET_CONFIG_HOME_EXPLICIT=true
+      shift 2
+      ;;
+    --target-config-home)
+      TARGET_CONFIG_HOME="${2:-}"
+      TARGET_CONFIG_HOME_EXPLICIT=true
+      shift 2
+      ;;
+    --target-repo-root)
+      TARGET_REPO_ROOT="${2:-}"
+      shift 2
+      ;;
+    --target-mongo-uri)
+      TARGET_MONGO_URI="${2:-}"
+      shift 2
+      ;;
+    --target-mongo-data-path)
+      TARGET_MONGO_DATA_PATH="${2:-}"
       shift 2
       ;;
     --snapshot-dir)
@@ -51,6 +86,10 @@ while [[ $# -gt 0 ]]; do
       MARK_RECALL_STALE=true
       shift
       ;;
+    --validate-only)
+      VALIDATE_ONLY=true
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -62,8 +101,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -n "$TARGET_CONFIG_HOME" && "$CONFIG_HOME_EXPLICIT" == "true" && "$TARGET_CONFIG_HOME" != "$CONFIG_HOME" ]]; then
+  echo "Use either --target-config-home or --config-home, not two different restore targets." >&2
+  exit 1
+fi
+if [[ -n "$TARGET_CONFIG_HOME" ]]; then
+  CONFIG_HOME="$TARGET_CONFIG_HOME"
+fi
 if [[ -z "$CONFIG_HOME" ]]; then
-  echo "Missing --config-home" >&2
+  echo "Missing --target-config-home" >&2
   exit 1
 fi
 
@@ -78,149 +124,89 @@ if [[ -z "$SNAPSHOT_DIR" ]]; then
 fi
 
 if [[ ! -d "$SNAPSHOT_DIR" ]]; then
-  echo "Snapshot directory not found: $SNAPSHOT_DIR" >&2
+  echo "Snapshot directory was not found; select an existing verified Viventium bundle." >&2
   exit 1
 fi
 
-RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$CONFIG_HOME/runtime}"
-RUNTIME_ENV="$RUNTIME_DIR/runtime.env"
-RUNTIME_PROFILE="${VIVENTIUM_RUNTIME_PROFILE:-$(awk -F= '/^VIVENTIUM_RUNTIME_PROFILE=/{print $2}' "$RUNTIME_ENV" 2>/dev/null | head -n 1 || true)}"
-if [[ -z "$RUNTIME_PROFILE" ]]; then
-  RUNTIME_PROFILE="isolated"
+if [[ -f "$SNAPSHOT_DIR/.viventium-metadata-only" ]]; then
+  echo "Selected snapshot is a metadata-only continuity audit, not a recoverable backup; restore is refused." >&2
+  echo "Review available snapshots and rerun with --snapshot-dir pointing to a complete bundle candidate." >&2
+  exit 1
 fi
 
-if declare -F continuity_audit_dir >/dev/null 2>&1; then
-  AUDIT_DIR="$(continuity_audit_dir "$CONFIG_HOME")"
-else
-  AUDIT_DIR="$CONFIG_HOME/state/continuity"
-fi
-mkdir -p "$AUDIT_DIR"
-
-if declare -F recall_rebuild_required_file >/dev/null 2>&1; then
-  RECALL_MARKER_FILE="$(recall_rebuild_required_file "$CONFIG_HOME" "$RUNTIME_PROFILE")"
-else
-  RECALL_MARKER_FILE="$CONFIG_HOME/state/runtime/$RUNTIME_PROFILE/continuity/recall-rebuild-required.json"
-fi
-
-TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-LIVE_MANIFEST="$AUDIT_DIR/restore-live-$TIMESTAMP.json"
-COMPARISON_PATH="$AUDIT_DIR/restore-compare-$TIMESTAMP.json"
-SNAPSHOT_MANIFEST="$SNAPSHOT_DIR/continuity-manifest.json"
-SNAPSHOT_LABEL="$SNAPSHOT_DIR"
-LIVE_MANIFEST_LABEL="$LIVE_MANIFEST"
-COMPARISON_LABEL="$COMPARISON_PATH"
-RECALL_MARKER_LABEL="$RECALL_MARKER_FILE"
-if declare -F public_safe_path_label >/dev/null 2>&1; then
-  SNAPSHOT_LABEL="$(public_safe_path_label "$SNAPSHOT_DIR")"
-  LIVE_MANIFEST_LABEL="$(public_safe_path_label "$LIVE_MANIFEST")"
-  COMPARISON_LABEL="$(public_safe_path_label "$COMPARISON_PATH")"
-  RECALL_MARKER_LABEL="$(public_safe_path_label "$RECALL_MARKER_FILE")"
-fi
-
-SNAPSHOT_FILE_COUNT="$(
-  find "$SNAPSHOT_DIR" -type f 2>/dev/null | wc -l | tr -d ' '
-)"
-echo "[restore] Inspecting snapshot root: $SNAPSHOT_LABEL"
-echo "[restore] Snapshot payload summary: ${SNAPSHOT_FILE_COUNT:-0} files"
-
-python3 "$REPO_ROOT/scripts/viventium/continuity_audit.py" capture \
-  --repo-root "$REPO_ROOT" \
-  --app-support-dir "$CONFIG_HOME" \
-  --runtime-dir "$RUNTIME_DIR" \
-  --label "restore-live" \
-  --output "$LIVE_MANIFEST" >/dev/null
-echo "[restore] Live continuity audit: $LIVE_MANIFEST_LABEL"
-
-# Legacy snapshots may legitimately predate continuity manifests. Treat that as an operator-visible
-# warning, not an automatic hard failure, unless a real older-surface comparison proves rollback.
-COMPARE_STATUS="warning"
-if [[ -f "$SNAPSHOT_MANIFEST" ]]; then
-  python3 "$REPO_ROOT/scripts/viventium/continuity_audit.py" compare \
-    --snapshot-manifest "$SNAPSHOT_MANIFEST" \
-    --live-manifest "$LIVE_MANIFEST" \
-    --output "$COMPARISON_PATH" >/dev/null
-  COMPARE_STATUS="$(
-    python3 - "$COMPARISON_PATH" <<'PY'
-import json
+OVERLAP_STATUS="$("$VALIDATION_PYTHON" - "$SNAPSHOT_DIR" "$CONFIG_HOME" <<'PY'
+import os
 import sys
-from pathlib import Path
 
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-print(payload.get("status") or "warning")
+snapshot = os.path.realpath(sys.argv[1])
+target = os.path.realpath(sys.argv[2])
+common = os.path.commonpath([snapshot, target])
+print("unsafe" if common in {snapshot, target} else "separate")
 PY
 )"
-  echo "[restore] Continuity comparison: $COMPARISON_LABEL"
-  python3 - "$COMPARISON_PATH" <<'PY'
+if [[ "$OVERLAP_STATUS" != "separate" ]]; then
+  echo "Snapshot and restore target overlap; restore is refused before changing target state." >&2
+  exit 3
+fi
+
+BUNDLE_VALIDATION_STATUS=0
+BUNDLE_VALIDATION_JSON="$(
+  "$VALIDATION_PYTHON" "$REPO_ROOT/scripts/viventium/continuity_bundle.py" validate \
+    --snapshot-dir "$SNAPSHOT_DIR" \
+    --json
+)" || BUNDLE_VALIDATION_STATUS=$?
+if [[ "$BUNDLE_VALIDATION_STATUS" -ne 0 ]]; then
+  BUNDLE_VALIDATION_MESSAGE="$(
+    "$VALIDATION_PYTHON" - "$BUNDLE_VALIDATION_JSON" <<'PY'
 import json
 import sys
-from pathlib import Path
 
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-older = payload.get("olderSurfaces") or []
-warnings = payload.get("warnings") or []
-errors = payload.get("errors") or []
-status = payload.get("status") or "warning"
-print(f"[restore] Continuity status: {status}")
-if older:
-    print("[restore] Older snapshot surfaces: " + ", ".join(older))
-for warning in warnings:
-    print(f"[restore] Warning: {warning}")
-for error in errors:
-    print(f"[restore] Error: {error}")
+try:
+    payload = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError):
+    print("bundle validation did not return readable status")
+else:
+    print(str(payload.get("message") or "bundle validation failed"))
 PY
-  if [[ "$COMPARE_STATUS" == "error" && "$ALLOW_OLDER_SNAPSHOT" != "true" ]]; then
-    echo "[restore] Refusing to apply an older continuity snapshot without --allow-older-snapshot." >&2
-    exit 1
-  fi
-else
-  echo "[restore] No continuity manifest found in the snapshot; age comparison is unavailable." >&2
+  )"
+  echo "Selected snapshot is not a structurally valid complete Viventium bundle candidate: $BUNDLE_VALIDATION_MESSAGE." >&2
+  echo "Restore was refused before creating or changing target state." >&2
+  exit "$BUNDLE_VALIDATION_STATUS"
 fi
-
-if [[ "$APPLY_TELEGRAM" == "true" && -d "$SNAPSHOT_DIR/telegram/user_configs" ]]; then
-  target="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-$REPO_ROOT/viventium_v0_4/telegram-viventium/TelegramVivBot/user_configs}"
-  backup_dir="$AUDIT_DIR/restore-backups/$TIMESTAMP/telegram-user_configs"
-  backup_dir_label="$backup_dir"
-  target_label="$target"
-  if declare -F public_safe_path_label >/dev/null 2>&1; then
-    backup_dir_label="$(public_safe_path_label "$backup_dir")"
-    target_label="$(public_safe_path_label "$target")"
-  fi
-  if [[ -d "$target" ]]; then
-    mkdir -p "$backup_dir"
-    if ! cp -R "$target"/. "$backup_dir/" 2>/dev/null; then
-      echo "[restore] Failed to back up current Telegram user configs to $backup_dir_label" >&2
-      exit 1
-    fi
-    echo "[restore] Backed up current Telegram user configs to $backup_dir_label"
-  fi
-  mkdir -p "$target"
-  cp -R "$SNAPSHOT_DIR/telegram/user_configs"/. "$target/"
-  echo "[restore] Telegram user configs restored to $target_label"
-fi
-
-if [[ "$MARK_RECALL_STALE" == "true" ]]; then
-  mkdir -p "$(dirname "$RECALL_MARKER_FILE")"
-  python3 - "$RECALL_MARKER_FILE" "$SNAPSHOT_LABEL" "$TIMESTAMP" <<'PY'
+if [[ "$VALIDATE_ONLY" == "true" ]]; then
+  BUNDLE_RECOVERABLE="$("$VALIDATION_PYTHON" - "$BUNDLE_VALIDATION_JSON" <<'PY'
 import json
 import sys
-from pathlib import Path
-
-marker_path = Path(sys.argv[1])
-snapshot_label = sys.argv[2]
-captured_at = sys.argv[3]
-payload = {
-    "schemaVersion": 1,
-    "reason": "restore-follow-through",
-    "snapshotLabel": snapshot_label,
-    "capturedAt": captured_at,
-}
-marker_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+print("true" if json.loads(sys.argv[1]).get("recoverable") is True else "false")
 PY
-  echo "[restore] Wrote recall rebuild-required marker to $RECALL_MARKER_LABEL"
+)"
+  if [[ "$BUNDLE_RECOVERABLE" == "true" ]]; then
+    echo "Complete bundle structure, logical data, and transactional restore contract validation passed; target state was not changed."
+  else
+    echo "Bundle structure and payload-integrity validation passed, but this legacy candidate is not independently restore-ready; target state was not changed."
+  fi
+  exit 0
 fi
 
-echo "[restore] Manual restore follow-ups:"
-echo "  - Mongo archives: use viventium_v0_4/viventium-db-restore-from-export.sh"
-echo "  - Skyvern dump: import <selected snapshot>/skyvern/skyvern.postgres.sql.gz into the Skyvern Postgres container"
-echo "  - Rebuild runtime files: bin/viventium compile-config"
-echo "  - If you restore Mongo or recall-derived state, rerun this command with --mark-recall-stale before trusting vector-backed recall"
+if [[ "$APPLY_TELEGRAM" == "true" || "$ALLOW_OLDER_SNAPSHOT" == "true" ]]; then
+  echo "[restore] Legacy channel/age apply options are not accepted; credentials require reauthentication and bundle hashes are authoritative." >&2
+  echo "[restore] Target state was not changed." >&2
+  exit 4
+fi
+if [[ "$TARGET_CONFIG_HOME_EXPLICIT" != "true" || -z "$TARGET_REPO_ROOT" || -z "$TARGET_MONGO_URI" ]]; then
+  echo "[restore] Apply requires an explicit empty independent App Support target, fresh target checkout, and empty loopback Mongo database." >&2
+  echo "[restore] Target state was not changed." >&2
+  exit 4
+fi
+
+RESTORE_ARGS=(
+  restore
+  --snapshot-dir "$SNAPSHOT_DIR"
+  --target-config-home "$CONFIG_HOME"
+  --target-repo-root "$TARGET_REPO_ROOT"
+  --target-mongo-uri "$TARGET_MONGO_URI"
+)
+if [[ -n "$TARGET_MONGO_DATA_PATH" ]]; then
+  RESTORE_ARGS+=(--target-mongo-data-path "$TARGET_MONGO_DATA_PATH")
+fi
+exec "$VALIDATION_PYTHON" "$REPO_ROOT/scripts/viventium/continuity_bundle.py" "${RESTORE_ARGS[@]}"

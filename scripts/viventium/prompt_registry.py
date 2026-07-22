@@ -259,14 +259,20 @@ def resolve_prompt_refs(value: Any, registry: dict[str, PromptEntry]) -> Any:
 
 
 def build_prompt_bundle(root: Path | str | None = None) -> dict[str, Any]:
-    prompt_root = Path(root or DEFAULT_PROMPT_ROOT)
+    prompt_root = Path(root or DEFAULT_PROMPT_ROOT).resolve()
     registry = load_prompt_registry(prompt_root)
     prompts: dict[str, Any] = {}
     for prompt_id, entry in sorted(registry.items()):
         metadata = dict(entry.metadata)
+        try:
+            prompt_path = entry.path.resolve().relative_to(prompt_root).as_posix()
+        except ValueError as error:
+            raise PromptRegistryError(
+                f"Prompt escapes the registry root: {prompt_id}"
+            ) from error
         prompts[prompt_id] = {
             "id": prompt_id,
-            "path": _relative_to_repo(entry.path),
+            "path": prompt_path,
             "metadata": metadata,
             "body": entry.body,
             "content_hash": entry.content_hash,
@@ -275,7 +281,7 @@ def build_prompt_bundle(root: Path | str | None = None) -> dict[str, Any]:
 
     return {
         "schema_version": 1,
-        "prompt_root": _relative_to_repo(prompt_root),
+        "prompt_root": ".",
         "prompt_count": len(prompts),
         "prompts": prompts,
     }

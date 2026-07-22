@@ -1,0 +1,16 @@
+{
+  "name": "@project-viventium/openclaw-runtime-lock",
+  "version": "2026.7.1-2",
+  "private": true,
+  "description": "Reproducible dependency root for Viventium's reviewed OpenClaw runtime",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.22.3 <23"
+  },
+  "dependencies": {
+    "openclaw": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1-2.tgz"
+  },
+  "overrides": {
+    "fast-uri": "3.1.3"
+  }
+}

@@ -1,5 +1,7 @@
 # GlassHive Host Workers First-Principles Path Coverage Audit
 
+<!-- qa-evidence-exempt: Historical coverage audit retained as planning evidence; it is not itself a completed user-surface acceptance run. -->
+
 Date: 2026-06-25
 Status: PASS/PARTIAL
 

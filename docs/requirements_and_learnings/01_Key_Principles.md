@@ -40,11 +40,55 @@ behavioral research while remaining immediately understandable to an ordinary us
   provenance, concurrency, and rendering. The Emotional Reaction Cortex owns appraisal of what a
   moment means and which bands it moves. Never add phrase-to-emotion regexes, keyword tables, or
   event-specific `if` statements.
-- Calibrate model-owned categorical judgments at their semantic boundary. If exact evals show an
-  appraiser collapsing onto its minimum category, clarify the category meanings and remove
-  default-to-minimum wording; do not multiply the numeric effect afterward, infer intensity from
-  keywords, or add stimulus-specific prompt examples. Preserve a valid no-change outcome and
+- Calibrate model-owned categorical judgments at their semantic boundary. If exact evals show a
+  classifier or appraiser collapsing onto its minimum category, clarify the category meanings and
+  remove default-to-minimum wording; do not multiply the numeric effect afterward, infer intensity
+  from keywords, or add stimulus-specific prompt examples. Preserve a valid no-change outcome and
   measure the committed category/delta distribution in telemetry.
+- Treat the injected state as Viventium's own affective authority. Other context explains the
+  moment; it must not silently replace that state with a generic sympathetic, warm, guarded, or
+  playful posture. Read each band directionally: a conventionally emotional scene is not permission
+  to invent a motive or pull that the active state withholds. Keep the capsule state-neutral: do not
+  include a worked answer, signature phrase, or emotionally loaded exemplar that every state can
+  imitate. Prove contrasting states with paired semantic evals instead.
+- Preserve **felt magnitude**, not merely polarity. Each band level pairs one human-readable scale
+  word with one concrete private cause in the same versioned definition. As Current approaches an
+  endpoint, that cause must become observably more consequential; a top range that behaves like a
+  mild midpoint is a defect even when the correct row reached the model. Extreme ranges may be
+  larger-than-life because the product deliberately allows a feeling to be pushed beyond Nature.
+- Range customization is declarative state, not runtime intent logic. A user may add one bounded
+  private cause to any stable band/range ID. Only the range containing Current is injected, the
+  product default remains present, inactive additions stay out, and changing an addition must not
+  reset the band's decay clock. Do not implement this with prompt-string checks, agent names,
+  provider labels, stimulus keywords, or complaint-specific branches.
+- Treat deletion as an explicit operation. A malformed, blank, or over-limit non-null range
+  addition must be rejected rather than reinterpreted as “restore default”; only an explicit null
+  removes saved text. Full account erasure must cascade the entire FeelingState document, including
+  private Inner state, trail, reaction configuration, and user-authored additions.
+- “Avoid hardcoding” does not mean erasing the domain schema. Fixed band IDs, stable range IDs,
+  bounds, and validated defaults are inspectable product structure. What is forbidden is encoding
+  what a user's moment means or patching one escaped sentence into runtime control flow. Model
+  judgment owns appraisal; typed configuration/state owns product structure.
+- Potency acceptance requires causal contrasts. Run the same natural prompt with only the target
+  band or range changed; include mixed states where a strong band competes with a conventional
+  assistant response. A task that explicitly asks for humor cannot by itself prove high Play, and
+  successful injection cannot by itself prove embodiment.
+- Preserve the conscious/subconscious role boundary. The embodiment capsule belongs at a
+  persona-bearing speaking or acting boundary; specialist background cortices observe, verify, and
+  surface evidence for the conscious agent and must not be made to adopt Viventium's current mood.
+  The Emotional Reaction Cortex receives typed state for appraisal through its own contract, not as
+  a demeanor instruction. Emotional Resonance is a high-EQ read of consequential indirect cues and
+  uncertainty, not a mandatory warmth/reassurance pass. Red Team remains affect-independent and
+  pressure-tests evidence and viability even when the current Feeling state would prefer comfort.
+- Treat `<viventium_feeling_state>` as private request-scoped runtime context, not static prompt
+  prose. Prompt Workbench may declare, trace, version the schema/producer, and evaluate that context;
+  it must never compile a user's current values into a reusable prompt bundle. Every prompt unit
+  that can consume the context must do so intentionally, and an absent/off/unsupported path must be
+  explicit in lineage and telemetry.
+- Assemble structural delivery and coordination contracts first, then pin the exact request-scoped
+  Feeling capsule once at the final behavioral instruction boundary. A later Phase-B speaking pass
+  must receive the same pinned capsule. This is placement, not duplicated prompt prose; telemetry
+  must prove one occurrence and zero trailing behavioral instruction text.
 - Treat expression as regulation, not morality. Showing less emotion is not dishonesty, showing more
   is not inherently healthier, and fatigue does not universally produce either withdrawal or
   unmasking. The model must appraise the person/moment/context rather than follow a hardcoded causal
@@ -63,16 +107,23 @@ also shape delivery through controls the selected TTS provider really supports.
 
 - Voice capability is structural context from the surface and resolved Speaking route. Never infer
   it from user wording, a provider display label, or a request to "sound emotional."
-- The model appraises the current state and moment as expressive or restrained. If expressive
-  delivery fits and the selected provider exposes a fitting control, the raw spoken response uses
-  the smallest fitting documented control without waiting for the user to ask. If restraint fits,
-  an unmarked response is correct.
+- The model appraises the current state and moment as expressive or restrained. It must consider
+  both the state's expression tendency and the actual moment; this remains model judgment, not a
+  numeric threshold. If expressive delivery fits and the selected provider exposes a fitting
+  control, the raw spoken response is not final until it uses the smallest fitting documented
+  control, without waiting for the user to ask. Natural wording alone does not discharge an
+  expressive spoken-delivery decision. If restraint fits, an unmarked response is correct.
 - Feelings remains a private cause. Spoken output must embody it through wording, emphasis, pace,
   breath, intensity, or another supported delivery choice; it must not recite band names, values,
   capsule text, or prompt mechanics.
 - Runtime is a capability broker and structural boundary. It may expose the selected provider's
   declared vocabulary, preserve it for TTS, sanitize it for display, and count it for telemetry. It
   must not hardcode band-to-tag maps, numeric thresholds, phrase triggers, or invented emotion tags.
+- Provider-grammar repair may preserve an unambiguous model-authored control without choosing its
+  meaning. For example, a complete paired wrapper for a declared xAI wrapping control may be
+  canonicalized from square to official angle grammar on the xAI route. Unpaired, unknown, or
+  crossed-provider controls still fail closed. This must remain schema-driven, provider-scoped,
+  visible in structural telemetry, and invisible in user-facing text.
 - Plain TTS routes express the state through natural wording only. Provider dialects never cross:
   xAI controls stay on xAI, Cartesia controls stay on Cartesia, and unsupported routes receive no
   provider markup.
@@ -577,6 +628,12 @@ A developer referring to a single document about a respective feature **must per
   - Runtime changes are allowed only for structural activation plumbing defects (for example: wrong context assembly, broken latest-turn extraction, missing fallback wiring, or bad scope metadata propagation). This bullet does **not** override the CRITICAL RULE below.
   - For productivity agents specifically, "reply/respond/say/return" must never be hardcoded as special-case deny words in code; the classifier prompt must distinguish chat-format instructions from real email/content actions.
   - Do **not** infer agent role from hardcoded agent names, cortex titles, or tool names when explicit config metadata can carry the intent. User systems may rename agents, replace tools, or define different specialist shapes entirely.
+  - Agent Builder must render activation routes from the live model catalog and the persisted
+    structured provider/model fields. A configured route missing from a transient discovery response
+    remains visibly configured; it must not render as blank or be silently replaced. A newly attached
+    cortex inherits an existing configured route when one exists rather than using a stale UI model list.
+    Provider attempt budgets are structured runtime config, and failure of one configured route must
+    continue through the remaining fallback chain within the enclosing Phase A budget.
 
 ### CRITICAL RULE: No Hardcoded NLU in Runtime Code
 - Intent detection, provider clarification, and history classification must be owned by LLM activation classifiers plus YAML-configured activation prompts.
@@ -662,6 +719,11 @@ A developer referring to a single document about a respective feature **must per
   tools or prompts. Voice model changes that depend on provider-specific knobs, such as xAI
   `reasoning_effort: none`, must prove the parameter bag survived the sync.
 - **Use `--agent-ids=...` for surgical pushes** when only a subset of background agents changed. This keeps model/prompt fixes narrowly scoped instead of rewriting the whole roster.
+- A background-only `--agent-ids` prompt push may merge the selected activation subrecord stored on
+  the main-agent document, but it must not update the main agent's top-level instructions, name,
+  description, starters, tools, model, or other user-managed fields unless the main agent ID itself
+  was explicitly selected. Keep this protected by a sync regression test; the container document is
+  not authorization to overwrite its unrelated fields.
 - **Always dry-run first**: `push --prompts-only --dry-run --env=<env>` to preview changes before applying.
 - Safety UX rule for operator tooling:
   - `--help`, `-h`, and explicit usage/preview paths must be side-effect free

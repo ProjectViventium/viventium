@@ -248,6 +248,9 @@ Fix:
   tags for user-visible text:
   - well-formed angle wrappers preserve inner text
   - orphan angle wrapper tags are removed
+  - paired square wrappers remain hidden from display; on an xAI synthesis route, the TTS boundary
+    canonicalizes a paired documented wrapper to the official angle grammar so the model-authored
+    delivery is not silently discarded, while unpaired or unknown controls remain stripped
   - square pseudo-wrapper tags such as `[soft]` and `[/soft]` are removed
 - xAI Telegram TTS cleanup strips malformed square pseudo-wrapper tags before calling xAI REST TTS.
   Well-formed documented xAI tags remain available for xAI synthesis.

@@ -1,7 +1,217 @@
 # Installer Resilience QA
 
-This QA record captures the April 7, 2026 installer hardening work for two clean-machine failure
-classes:
+## Current Easy Install Audit Package
+
+The current installer/new-user acceptance package is maintained through the case catalog and dated,
+public-safe results below:
+
+- [Native payload production integration QA](reports/2026-07-19-native-payload-production-integration.md);
+- [Native Bootstrap Finder UX QA](reports/2026-07-20-native-bootstrap-finder-ux.md);
+- [isolated Easy Install Docker core and failure/removal delta QA](reports/2026-07-20-isolated-easy-docker-delta-qa.md);
+- [stable synthetic OpenAI API-key lifecycle QA](reports/2026-07-20-synthetic-openai-api-key-lifecycle-qa.md);
+- [stable synthetic Anthropic API-key lifecycle QA](reports/2026-07-20-synthetic-anthropic-api-key-lifecycle-qa.md);
+- [stable synthetic Groq and Grok API-key lifecycle QA](reports/2026-07-20-synthetic-groq-grok-api-key-lifecycle-qa.md);
+- [provider-lifecycle compiler and browser-persistence gap audit](reports/2026-07-21-synthetic-provider-lifecycle-gap-audit.md);
+- [experimental OpenAI compatibility-bridge QA](reports/2026-07-20-synthetic-openai-connected-account-lifecycle-qa.md);
+- [locally available installer/delivery lifecycle inventory](installer-lifecycle-inventory-2026-07-18.md);
+- [open-source installer and onboarding research](open-source-installer-research-2026-07-18.md);
+- [phased remediation plan](express-installer-remediation-plan.md);
+- [initial Fable 5 Extra review](fable-review-2026-07-18.md) and
+  [final remediation reconciliation](fable-final-remediation-review-2026-07-18.md);
+- [Claude Fable 5 Extra Easy Install review reconciliation](claude-final-express-review-2026-07-18.md);
+- [physical MacBook Air Easy Install + Docker handoff](macbook-air-docker-qa-handoff.md);
+- [storage-bounded disposable QA policy](storage-policy.json), enforced by `INST-032`;
+- [umbrella reusable case catalog](cases.md), including discrete release gates through `INST-032` and links to
+  narrower feature owners.
+
+Current decision: **PARTIAL for the local Easy Install Native source candidate; not ready for a
+public-release claim**. A disposable macOS VM now passes the stable browser-entered API-key lifecycle
+for OpenAI, Anthropic, Groq, and Grok:
+registration, encrypted local key save, two useful answers, refresh/restart persistence, invalid-key,
+quota, outage and network repair, local Disconnect with no subsequent provider request, and key re-add.
+The earlier source-candidate install/rerun/restart/reinstall and Feelings evidence remains supporting
+lineage. The exact signed payload, truly vanilla no-developer-tools machine, public full-payload restore,
+Developer ID/Keychain/Gatekeeper, wider fault/accessibility/network matrices, physical Docker
+comparison and shipped/installed-artifact alignment remain open; merged source-to-pin alignment now
+passes.
+The reconstructed parent candidate passed `python3 -m pytest tests/release/ -q` on 2026-07-22 with
+1,542 passed, 11 skipped, and 0 failed in 293.15 seconds against temporary zero-copy links to all 11
+clean audited component trees after the actual merge refs were pinned. The current post-merge
+workflow/manifest/payload/public-safety slice passed 128/128 in 9.76 seconds before the final hosted-
+ref gate; that gate's focused workflow/manifest slice passed 45/45 in 4.24 seconds. The recorded 311/311
+slice remains pre-merge provenance history. The prior 174-pass run against rejected LibreChat
+`a2553962...` remains supporting history because
+its exact argv was not retained. All 11 nested changes are merged; fetched `origin/main` refs match
+the hosted merge commits, every merge tree equals its audited review head, and
+`components.lock.json` contains all 11 merged refs. The Native policy contains the same merged
+LibreChat ref. LibreChat reviewed head `44ac1f7a...` passes 59 stream and 216 Viventium
+route tests locally, separate fresh-context model and Claude Desktop reviews pass, and all 15 exact hosted checks pass,
+including actual Redis; its exact tree is merged and pinned at `38527a8651...`. No source suite can
+replace committed built/shipped/installed alignment, the blocked signed artifact, or physical user
+paths.
+
+The Finder-launched Native Bootstrap now has a source-built AppKit Easy Install window and compiled
+headless-forwarding contracts. Its local synthetic headed run is still `BLOCKED` because the desktop
+was locked; visible Cancel/Retry/success, VoiceOver, Reduce Motion, and the exact signed/notarized app
+remain open under `INST-020` / `INST-023`.
+
+The isolated Docker delta now passes core source-candidate install/start, Connected Accounts and
+Feelings discovery, daemon-loss preflight/recovery, target-scoped failed-start cleanup, and
+preserve-data uninstall. It does not close Docker Desktop GUI/Keychain/TCC, Recall/RAG, physical
+power/resource, supported component-bootstrap, or exact shipped-artifact gates.
+Historical scenarios below are supporting lineage, not substitutes for the current owning cases and
+report.
+
+Files dated before 2026-07-19 can retain “Express” in their filename or quoted historical result.
+Current public product copy and all new evidence use **Easy Install** and **Custom Settings Install**;
+the internal `express` / `custom` values remain compatibility identifiers.
+
+## Storage guard for disposable-machine QA
+
+Run source, unit, compiler, and browser-harness checks first. Freeze the candidate before acquiring
+the storage lease. The guard state root must be an owner-only directory outside the public repo; it
+contains machine-local Docker IDs and must never be copied into public QA evidence.
+
+```bash
+python3 scripts/viventium/qa_storage_guard.py prepare \
+  --run-id arm64-pristine \
+  --vm-name viventium-qa-arm64-pristine \
+  --candidate /path/to/frozen-viventium-candidate \
+  --state-root /path/to/private-evidence/qa-storage-guard \
+  --policy qa/installer-resilience/storage-policy.json \
+  --tart /path/to/tart \
+  --docker /path/to/docker \
+  --docker-disk "~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
+
+python3 scripts/viventium/qa_storage_guard.py clone \
+  --run-id arm64-pristine \
+  --state-root /path/to/private-evidence/qa-storage-guard \
+  --source-vm macos-base
+
+python3 scripts/viventium/qa_storage_guard.py run \
+  --run-id arm64-pristine \
+  --state-root /path/to/private-evidence/qa-storage-guard \
+  -- /path/to/reviewed-qa-driver --synthetic
+
+python3 scripts/viventium/qa_storage_guard.py cleanup \
+  --run-id arm64-pristine \
+  --confirm-run-id arm64-pristine \
+  --state-root /path/to/private-evidence/qa-storage-guard
+```
+
+Do not start a second run when the guard says `CLEANUP_REQUIRED`. Review the persistent receipt,
+remove only receipt-owned synthetic leftovers, and rerun the exact cleanup. Cleanup will not release
+the lease while a post-baseline Docker container, volume, or image remains. Never use a global Tart or
+Docker prune as recovery. The automated contract uses fake executables only; it does not count as the
+final real disposable-Mac acceptance run. A guarded driver must also leave its exact process group
+empty; a background grandchild is terminated and turns the run into `CLEANUP_REQUIRED` even when the
+leader itself exited successfully.
+
+## Disposable Easy Install Native browser QA
+
+After creating a synthetic account in a disposable runtime, run the repeatable user-path harness:
+
+```bash
+VIVENTIUM_QA_CLIENT_BASE=http://127.0.0.1:13190 \
+VIVENTIUM_QA_EMAIL='<synthetic-email>' \
+VIVENTIUM_QA_PASSWORD='<synthetic-password>' \
+node qa/installer-resilience/scripts/express-native-browser-qa.cjs
+```
+
+Add `--register` only on an empty disposable runtime. The harness requires a synthetic `.invalid`
+identity, refuses non-loopback targets and production/CI use, verifies the stable API-key dialog
+open/cancel/retry path without entering a credential, and stops before provider use. Screenshots
+stay in its temporary private evidence directory.
+
+### Full synthetic provider API-key lifecycle
+
+The supported `INST-017` Easy Install path is
+`qa/installer-resilience/scripts/openai-api-key-lifecycle-qa.cjs`. Point only the disposable runtime
+at its loopback stub. OpenAI, Groq, and Grok use the OpenAI-compatible routes; Anthropic uses its
+native Messages route and `x-api-key` authentication. Keep direct subscription authentication disabled.
+The harness enters a synthetic key through the selected provider card, renders two useful answers, checks
+refresh and runtime-restart persistence, and exercises invalid-key, quota, provider-outage, network,
+local Disconnect, no-provider-call-after-Disconnect, and re-add recovery paths. It blocks every
+non-loopback browser request. After valid/invalid entry, refresh, restart, Disconnect, and re-add it
+also scans cookies, local/session storage, Cache Storage, and IndexedDB for the synthetic keys. It
+writes screenshots plus a secret-free ledger outside the public repository; the ledger records only
+the number of residue checks, never a key or storage dump.
+
+```bash
+VIVENTIUM_QA_CLIENT_BASE=http://127.0.0.1:3190 \
+VIVENTIUM_QA_EMAIL='api-key-qa@example.invalid' \
+VIVENTIUM_QA_PASSWORD='<synthetic-password>' \
+VIVENTIUM_QA_PROVIDER=anthropic \
+VIVENTIUM_QA_RESTART_ARGV_JSON='["/path/to/disposable-restart"]' \
+VIVENTIUM_QA_PRIVATE_EVIDENCE_DIR='/path/outside/public-repo/api-key-lifecycle' \
+node qa/installer-resilience/scripts/openai-api-key-lifecycle-qa.cjs --headed
+```
+
+Use `--register` only for an empty disposable database. `VIVENTIUM_QA_PROVIDER` accepts `openai`,
+`anthropic`, `groq`, or `xai` and defaults to `openai`. A provider-stub self-test is supporting
+evidence only: `VIVENTIUM_QA_PROVIDER=anthropic node
+qa/installer-resilience/scripts/openai-api-key-lifecycle-qa.cjs --self-test`.
+The fail-closed browser-persistence guard has a secret-free offline regression:
+`node qa/installer-resilience/scripts/openai-api-key-lifecycle-qa.cjs --storage-self-test`.
+That self-test proves the guard rejects synthetic local-storage and IndexedDB residue; it does not
+replace the headed lifecycle on the exact candidate.
+
+### Full synthetic OpenAI experimental account-bridge lifecycle
+
+`INST-017` owns a second, stricter browser harness for the explicitly enabled legacy compatibility
+bridge:
+`qa/installer-resilience/scripts/openai-connected-account-lifecycle-qa.cjs`. It uses a synthetic
+local user and a provider stub bound only to `127.0.0.1`. Playwright intercepts the one expected
+`https://auth.openai.com/oauth/authorize` navigation and renders a local grant/deny page before any
+provider request is sent; every other non-loopback browser request is blocked. The OAuth token,
+refresh, and Codex Responses SSE endpoints are loopback stubs. No real provider, cloud account,
+credential, or personal state is used.
+
+This is not the Easy Install default or an official OpenAI integration. Easy Install uses the
+browser-entered encrypted API-key path proven in the stable-path report above.
+OpenAI provider-side revocation is unsupported by the experimental bridge: OpenAI's official
+Codex CLI guidance says no public endpoint exists for automated key deletion. The product must label
+its action **Disconnect**, explain that it deletes Viventium's locally stored credential, and direct
+users who need provider-side invalidation to their OpenAI account controls. The harness proves that
+Disconnect deletes local access and prevents another provider request; it does not invent a remote
+revocation call.
+
+Before starting the disposable runtime, point only the QA runtime at the stub port:
+
+```bash
+VIVENTIUM_OPENAI_OAUTH_TOKEN_URL=http://127.0.0.1:14660/oauth/token
+VIVENTIUM_OPENAI_CODEX_BASE_URL=http://127.0.0.1:14660/backend-api/codex
+VIVENTIUM_CONNECTED_ACCOUNTS_RETURN_ORIGIN=http://127.0.0.1:3190
+VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=true
+```
+
+The integrated runtime must carry those values itself; setting them only on the browser process is
+not evidence. Then run the harness with synthetic `.invalid` credentials and a no-shell restart argv:
+
+```bash
+VIVENTIUM_QA_CLIENT_BASE=http://127.0.0.1:3190 \
+VIVENTIUM_QA_EMAIL='connected-account-qa@example.invalid' \
+VIVENTIUM_QA_PASSWORD='<synthetic-password>' \
+VIVENTIUM_QA_PROVIDER_PORT=14660 \
+VIVENTIUM_QA_RESTART_ARGV_JSON='["/path/to/viventium/bin/viventium","restart"]' \
+node qa/installer-resilience/scripts/openai-connected-account-lifecycle-qa.cjs --register --headed
+```
+
+Run `node qa/installer-resilience/scripts/openai-connected-account-lifecycle-qa.cjs --self-test`
+without a runtime to verify the local token/refresh/Responses stub. The full path covers deny, popup
+cancel, grant, two useful answers, browser refresh, runtime restart, proactive expiry refresh,
+early-401 refresh, failed-refresh repair guidance, reconnect, local Disconnect, post-disconnect
+answer refusal without provider contact, and regrant. Raw screenshots and the sanitized run ledger
+stay in a mode-restricted temporary directory outside the public repo; console output replaces that
+path with `<private>`.
+
+Current execution truth is recorded in
+`reports/2026-07-20-synthetic-openai-connected-account-lifecycle-qa.md`. The harness and contracts
+are ready, but the browser lifecycle remains `NOT RUN` until the integrated LibreChat candidate is
+available in the stopped disposable VM.
+
+This QA record also captures the April 7, 2026 installer hardening work for these clean-machine
+failure classes:
 
 1. optional public remote access must not abort local startup
 2. the macOS helper must default to the shipped matching prebuilt binary on clean installs when

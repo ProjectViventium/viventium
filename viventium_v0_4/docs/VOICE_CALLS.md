@@ -6,12 +6,12 @@ Added: 2026-01-09
 # Voice Calls (LiveKit + Voice Gateway)
 
 This document explains how voice calls are integrated and how they preserve the same background-agent behavior as text chat.
-The design intentionally opens the LiveKit Agents Playground instead of rebuilding a custom call UI.
+The design intentionally opens the Viventium Modern Playground (`agent-starter-react`) instead of rebuilding a second call UI.
 
 ## High-Level Flow
 1. User clicks the call button in LibreChat.
 2. `POST /api/viventium/calls` creates a short-lived call session and returns a Playground deep-link.
-3. The LiveKit Agents Playground connects to the room using `roomName` + `callSessionId`.
+3. The Viventium Modern Playground connects to the room using `roomName` + `callSessionId`.
 4. LiveKit dispatches the voice gateway agent to the room.
 5. Voice Gateway streams audio → LibreChat `/api/viventium/voice/chat` and speaks the response.
 6. Background insights are surfaced after the main response (same contract as text).
@@ -97,8 +97,14 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
 - When a configured public playground origin is in use, `api/connection-details` may return the
   configured public LiveKit WSS URL instead.
 - Public-browser voice access also depends on the non-HTTP media path:
-  - direct LiveKit TCP/UDP media when the network allows it
-  - TURN/TLS fallback when the public HTTPS edge is enabled
+  - a reachable direct LiveKit TCP/UDP candidate, or a TURN relay pair that is actually selected
+  - TURN/TLS listener and relay-candidate checks are insufficient when the relay UDP range is not
+    configured and forwarded
+- Public acceptance requires an off-LAN selected ICE pair, real worker join, and delivered synthetic
+  media/transcript. Page render and signaling alone are not a working call.
+- Same-Wi-Fi use of the public hostname is a separate router NAT-loopback or trusted split-DNS case.
+- `qa/remote-access/cases.md` `REMOTE-004` and `qa/modern-playground-voice/cases.md` `MPV-023`
+  are the reusable regression gates.
 
 ## Key Code Paths
 - Call button: `LibreChat/client/src/components/Viventium/CallButton.tsx`
@@ -331,8 +337,8 @@ Voice-mode instructions are injected by `buildVoiceModeInstructions(voiceProvide
   without requiring broader LLM/display delta logging.
 
 ### xAI
-- xAI is the user-facing provider label for standalone xAI TTS. The older Grok Voice Agent adapter
-  remains opt-in only via `VIVENTIUM_XAI_TTS_API=voice_agent`.
+- xAI is the user-facing provider label for standalone xAI TTS. `/v1/tts` is the only supported
+  synthesis route; the retired Grok Voice Agent setting fails closed with migration guidance.
 - Inline tags: `[pause]`, `[long-pause]`, `[hum-tune]`, `[laugh]`, `[chuckle]`, `[giggle]`,
   `[cry]`, `[tsk]`, `[tongue-click]`, `[lip-smack]`, `[breath]`, `[inhale]`, `[exhale]`,
   `[sigh]`.
@@ -527,7 +533,7 @@ Added: 2026-01-11
 - `VIVENTIUM_CARTESIA_WS_URL`
 - `VIVENTIUM_CARTESIA_MAX_BUFFER_DELAY_MS` (default `120` for live voice)
 - `VIVENTIUM_CARTESIA_SEGMENT_SILENCE_MS`
-- `VIVENTIUM_XAI_TTS_API` (default `tts`; `voice_agent` is legacy)
+- `VIVENTIUM_XAI_TTS_API` (only supported value: `tts`; retired values fail closed)
 - `VIVENTIUM_XAI_VOICE` (default `Sal`; supported xAI TTS voices are `Ara`, `Eve`, `Leo`, `Rex`, `Sal`)
 - `VIVENTIUM_XAI_LANGUAGE` (default `en`)
 - `VIVENTIUM_XAI_TTS_WS_URL` (standalone TTS WebSocket endpoint)
@@ -571,19 +577,19 @@ Added: 2026-01-11
 - Live call LLM selection follows the agent primary model by default and only changes when the agent
   has an explicit Voice Chat Model configured.
 - Voice transport settings such as STT/TTS provider selection do not change the call LLM route.
-- The user-facing hosted provider label is `xAI`; the underlying transport uses standalone xAI TTS
-  by default through `livekit-plugins-xai`; the older
-  Grok Voice Agent adapter is retained only behind `VIVENTIUM_XAI_TTS_API=voice_agent`.
+- The user-facing hosted provider label is `xAI`; the only supported transport is standalone xAI
+  TTS through `livekit-plugins-xai`.
 - Standalone xAI LiveKit calls request `optimize_streaming_latency=1` on the websocket by default
   and can disable it with `VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=0`.
 - With `VIVENTIUM_VOICE_LOG_LATENCY=1`, inspect `assistant_turn_metrics` for LiveKit
   `llm_node_ttft`, `tts_node_ttfb`, and `e2e_latency`; inspect `tts_provider_metrics` for
   provider-level TTS first-byte/audio-duration timing.
 - Recommended Speaking order is Local Chatterbox first when available, then xAI Voice as the
-  preferred hosted general-purpose route. As of 2026-05-07, the official xAI TTS pricing page lists
-  $4.20 per 1M TTS characters, materially below the effective public Cartesia bundled-character
-  cost from Cartesia's pricing page, and local QA found the route fast and high quality. Cartesia
-  remains the expressive Sonic-3 route when its emotion/SSML-like controls are specifically needed.
+  preferred hosted general-purpose route. As of 2026-07-16, the official xAI TTS model page lists
+  $15 per 1M TTS characters; Cartesia now publishes credit/minute plan pricing, so do not preserve
+  the earlier character-price comparison. Local QA found the xAI route fast and high quality.
+  Cartesia remains the expressive Sonic-3 route when its emotion/SSML-like controls are specifically
+  needed.
 - xAI speech tags are documented in `viventium_v0_4/shared/voice/xai_tts_capabilities.json`.
   They are not SSML and must not be mixed with Cartesia Sonic-3 tags.
 - Per-call voice-route overrides recompute the effective turn-taking defaults from the final STT

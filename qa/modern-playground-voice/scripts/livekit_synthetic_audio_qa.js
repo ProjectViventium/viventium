@@ -22,6 +22,21 @@ const { chromium } = librechatRequire("playwright");
 const { MongoClient, ObjectId } = librechatRequire("mongodb");
 const OUTPUT_ROOT = path.join(ROOT, "output");
 
+function envFlag(name, fallback = false) {
+  const value = String(process.env[name] || "").trim().toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+  return ["1", "true", "yes", "on"].includes(value);
+}
+
+function commaSeparatedEnv(name) {
+  return String(process.env[name] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 function shortHash(value) {
   return crypto
     .createHash("sha256")
@@ -31,11 +46,22 @@ function shortHash(value) {
 }
 
 function parseArgs(argv) {
+  const defaultPlaygroundUrl =
+    process.env.PLAYGROUND_URL || "http://localhost:3300";
   const args = {
     audio: "",
     expect: "",
     caseId: "synthetic-audio",
-    playgroundUrl: process.env.PLAYGROUND_URL || "http://localhost:3300",
+    playgroundUrl: defaultPlaygroundUrl,
+    browserPlaygroundUrl:
+      process.env.VIVENTIUM_QA_BROWSER_PLAYGROUND_URL ||
+      defaultPlaygroundUrl,
+    browserProxy: String(
+      process.env.VIVENTIUM_QA_BROWSER_PROXY || "",
+    ).trim(),
+    disableNonProxiedUdp: envFlag(
+      "VIVENTIUM_QA_DISABLE_NON_PROXIED_UDP",
+    ),
     agentName: process.env.LIVEKIT_AGENT_NAME || "librechat-voice-gateway",
     waitMs: Number(process.env.VIVENTIUM_SYNTHETIC_AUDIO_QA_WAIT_MS || 90000),
     minTokenRatio: Number(
@@ -49,6 +75,26 @@ function parseArgs(argv) {
     allowNonLocalMongo: false,
     result: "",
     screenshot: "",
+    externalTurnUrls: commaSeparatedEnv("VIVENTIUM_QA_EXTERNAL_TURN_URLS"),
+    externalTurnUsername: String(
+      process.env.VIVENTIUM_QA_EXTERNAL_TURN_USERNAME || "",
+    ).trim(),
+    externalTurnCredential: String(
+      process.env.VIVENTIUM_QA_EXTERNAL_TURN_CREDENTIAL || "",
+    ).trim(),
+    forceRelay: envFlag("VIVENTIUM_QA_FORCE_RELAY"),
+    publicMediaCandidate: String(
+      process.env.VIVENTIUM_QA_PUBLIC_MEDIA_CANDIDATE || "",
+    ).trim(),
+    publicMediaProxy: String(
+      process.env.VIVENTIUM_QA_PUBLIC_MEDIA_PROXY || "",
+    ).trim(),
+    turnProxyUrl: String(
+      process.env.VIVENTIUM_QA_TURN_PROXY_URL || "",
+    ).trim(),
+    turnProxyHostRule: String(
+      process.env.VIVENTIUM_QA_TURN_PROXY_HOST_RULE || "",
+    ).trim(),
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -99,6 +145,35 @@ function parseArgs(argv) {
   args.audio = path.resolve(args.audio);
   if (!fs.existsSync(args.audio)) {
     throw new Error(`audio file does not exist: ${args.audio}`);
+  }
+  const externalTurnFieldCount = [
+    args.externalTurnUrls.length > 0,
+    Boolean(args.externalTurnUsername),
+    Boolean(args.externalTurnCredential),
+  ].filter(Boolean).length;
+  if (externalTurnFieldCount > 0 && externalTurnFieldCount < 3) {
+    throw new Error(
+      "External TURN QA requires URLs, username, and credential together",
+    );
+  }
+  if (
+    args.forceRelay &&
+    externalTurnFieldCount !== 3 &&
+    !args.turnProxyUrl
+  ) {
+    throw new Error(
+      "VIVENTIUM_QA_FORCE_RELAY requires external TURN credentials or a TURN proxy",
+    );
+  }
+  if (Boolean(args.publicMediaCandidate) !== Boolean(args.publicMediaProxy)) {
+    throw new Error(
+      "Public media QA requires candidate and proxy endpoints together",
+    );
+  }
+  if (Boolean(args.turnProxyUrl) !== Boolean(args.turnProxyHostRule)) {
+    throw new Error(
+      "TURN proxy QA requires a proxy URL and Chromium host rule together",
+    );
   }
   if (args.result) {
     args.result = resolveOutputPath(args.result, "--result");
@@ -358,6 +433,264 @@ async function waitForTranscript(db, seeded, expected, waitMs, minTokenRatio) {
   };
 }
 
+async function installExternalTurnProbeAndPublicMediaProxy(page, args) {
+  if (
+    !args.externalTurnUrls.length &&
+    !args.publicMediaCandidate &&
+    !args.turnProxyUrl &&
+    !args.browserProxy
+  ) {
+    return false;
+  }
+  await page.addInitScript(
+    ({
+      turnUrls,
+      username,
+      credential,
+      forceRelay,
+      publicMediaCandidate,
+      publicMediaProxy,
+      turnProxyUrl,
+    }) => {
+      const OriginalRTCPeerConnection = globalThis.RTCPeerConnection;
+      if (!OriginalRTCPeerConnection) {
+        return;
+      }
+
+      function parseEndpoint(value) {
+        const separator = value.lastIndexOf(":");
+        if (separator <= 0) {
+          return null;
+        }
+        const address = value.slice(0, separator);
+        const port = Number(value.slice(separator + 1));
+        return address && Number.isInteger(port) && port > 0
+          ? { address, port }
+          : null;
+      }
+
+      const targetEndpoint = parseEndpoint(publicMediaCandidate);
+      const proxyEndpoint = parseEndpoint(publicMediaProxy);
+
+      function rewriteRemoteCandidate(candidateValue) {
+        if (!targetEndpoint || !proxyEndpoint || !candidateValue) {
+          return { candidate: candidateValue, matched: false, allowed: true };
+        }
+        const prefix = candidateValue.startsWith("a=") ? "a=" : "";
+        const fields = candidateValue.slice(prefix.length).trim().split(/\s+/);
+        const protocol = String(fields[2] || "").toLowerCase();
+        const address = fields[4] || "";
+        const port = Number(fields[5] || 0);
+        if (
+          protocol !== "tcp" ||
+          address !== targetEndpoint.address ||
+          port !== targetEndpoint.port
+        ) {
+          return { candidate: candidateValue, matched: false, allowed: false };
+        }
+        fields[4] = proxyEndpoint.address;
+        fields[5] = String(proxyEndpoint.port);
+        return {
+          candidate: `${prefix}${fields.join(" ")}`,
+          matched: true,
+          allowed: true,
+        };
+      }
+
+      function rewriteRemoteSdp(sdp, entry) {
+        if (!targetEndpoint || !proxyEndpoint || !sdp) {
+          return sdp;
+        }
+        const lines = sdp.split(/\r?\n/);
+        const rewritten = [];
+        for (const line of lines) {
+          if (!line.startsWith("a=candidate:")) {
+            rewritten.push(line);
+            continue;
+          }
+          const result = rewriteRemoteCandidate(line);
+          if (!result.allowed) {
+            continue;
+          }
+          if (result.matched) {
+            entry.publicCandidateRewriteCount += 1;
+          }
+          rewritten.push(result.candidate);
+        }
+        return rewritten.join("\r\n");
+      }
+
+      const peerConnections = [];
+      Object.defineProperty(globalThis, "__viventiumQaPeerConnections", {
+        value: peerConnections,
+        configurable: true,
+      });
+
+      function QaRTCPeerConnection(configuration, constraints) {
+        const nextConfiguration = { ...(configuration || {}) };
+        let turnProxyCredentialsAvailable = false;
+        if (turnUrls.length) {
+          Object.assign(nextConfiguration, {
+            iceServers: [{ urls: turnUrls, username, credential }],
+            iceTransportPolicy: forceRelay ? "relay" : configuration?.iceTransportPolicy,
+          });
+        }
+        if (turnProxyUrl) {
+          const dynamicTurnServer = (configuration?.iceServers || []).find(
+            (server) => server?.username && server?.credential,
+          );
+          turnProxyCredentialsAvailable = Boolean(dynamicTurnServer);
+          Object.assign(nextConfiguration, {
+            iceServers: [
+              {
+                ...(dynamicTurnServer || {}),
+                urls: turnProxyUrl,
+              },
+            ],
+            iceTransportPolicy: forceRelay ? "relay" : configuration?.iceTransportPolicy,
+          });
+        }
+        const peerConnection = new OriginalRTCPeerConnection(
+          nextConfiguration,
+          constraints,
+        );
+        const entry = {
+          peerConnection,
+          states: [],
+          localCandidateTypes: [],
+          publicCandidateRewriteCount: 0,
+          turnProxyCredentialsAvailable,
+        };
+        const originalSetRemoteDescription =
+          peerConnection.setRemoteDescription.bind(peerConnection);
+        peerConnection.setRemoteDescription = (description) => {
+          if (!description?.sdp || !targetEndpoint || !proxyEndpoint) {
+            return originalSetRemoteDescription(description);
+          }
+          return originalSetRemoteDescription({
+            type: description.type,
+            sdp: rewriteRemoteSdp(description.sdp, entry),
+          });
+        };
+        const originalAddIceCandidate =
+          peerConnection.addIceCandidate.bind(peerConnection);
+        peerConnection.addIceCandidate = (candidate) => {
+          if (!candidate?.candidate || !targetEndpoint || !proxyEndpoint) {
+            return originalAddIceCandidate(candidate);
+          }
+          const rewritten = rewriteRemoteCandidate(candidate.candidate);
+          if (!rewritten.allowed) {
+            return Promise.resolve();
+          }
+          if (rewritten.matched) {
+            entry.publicCandidateRewriteCount += 1;
+          }
+          const nextCandidate = candidate.toJSON
+            ? candidate.toJSON()
+            : { ...candidate };
+          nextCandidate.candidate = rewritten.candidate;
+          return originalAddIceCandidate(nextCandidate);
+        };
+        const recordState = () => {
+          entry.states.push({
+            connectionState: peerConnection.connectionState,
+            iceConnectionState: peerConnection.iceConnectionState,
+            iceGatheringState: peerConnection.iceGatheringState,
+          });
+        };
+        peerConnection.addEventListener("connectionstatechange", recordState);
+        peerConnection.addEventListener("iceconnectionstatechange", recordState);
+        peerConnection.addEventListener("icecandidate", (event) => {
+          const match = event.candidate?.candidate?.match(/\btyp\s+([a-z]+)/i);
+          if (match) {
+            entry.localCandidateTypes.push(match[1].toLowerCase());
+          }
+        });
+        recordState();
+        peerConnections.push(entry);
+        return peerConnection;
+      }
+
+      QaRTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
+      Object.setPrototypeOf(QaRTCPeerConnection, OriginalRTCPeerConnection);
+      globalThis.RTCPeerConnection = QaRTCPeerConnection;
+      if (globalThis.webkitRTCPeerConnection) {
+        globalThis.webkitRTCPeerConnection = QaRTCPeerConnection;
+      }
+    },
+    {
+      turnUrls: args.externalTurnUrls,
+      username: args.externalTurnUsername,
+      credential: args.externalTurnCredential,
+      forceRelay: args.forceRelay,
+      publicMediaCandidate: args.publicMediaCandidate,
+      publicMediaProxy: args.publicMediaProxy,
+      turnProxyUrl: args.turnProxyUrl,
+    },
+  );
+  return true;
+}
+
+async function collectRtcEvidence(page) {
+  return page.evaluate(async () => {
+    const entries = globalThis.__viventiumQaPeerConnections || [];
+    const evidence = [];
+    for (const entry of entries) {
+      const peerConnection = entry.peerConnection;
+      const stats = await peerConnection.getStats().catch(() => null);
+      const byId = new Map();
+      if (stats) {
+        stats.forEach((stat) => byId.set(stat.id, stat));
+      }
+      const selectedPairIds = new Set();
+      for (const stat of byId.values()) {
+        if (stat.type === "transport" && stat.selectedCandidatePairId) {
+          selectedPairIds.add(stat.selectedCandidatePairId);
+        }
+        if (
+          stat.type === "candidate-pair" &&
+          stat.state === "succeeded" &&
+          (stat.nominated || stat.selected)
+        ) {
+          selectedPairIds.add(stat.id);
+        }
+      }
+      const selectedCandidatePairs = [];
+      for (const pairId of selectedPairIds) {
+        const pair = byId.get(pairId);
+        const local = pair ? byId.get(pair.localCandidateId) : null;
+        const remote = pair ? byId.get(pair.remoteCandidateId) : null;
+        if (!pair) {
+          continue;
+        }
+        selectedCandidatePairs.push({
+          state: pair.state || "",
+          nominated: Boolean(pair.nominated || pair.selected),
+          localCandidateType: local?.candidateType || "",
+          remoteCandidateType: remote?.candidateType || "",
+          protocol: local?.protocol || remote?.protocol || "",
+          localRelayProtocol: local?.relayProtocol || "",
+          remoteRelayProtocol: remote?.relayProtocol || "",
+        });
+      }
+      evidence.push({
+        connectionState: peerConnection.connectionState,
+        iceConnectionState: peerConnection.iceConnectionState,
+        iceGatheringState: peerConnection.iceGatheringState,
+        signalingState: peerConnection.signalingState,
+        localCandidateTypes: [...new Set(entry.localCandidateTypes)],
+        publicCandidateRewriteCount: entry.publicCandidateRewriteCount || 0,
+        turnProxyCredentialsAvailable: Boolean(
+          entry.turnProxyCredentialsAvailable,
+        ),
+        selectedCandidatePairs,
+        states: entry.states,
+      });
+    }
+    return evidence;
+  });
+}
+
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const mongoUri = process.env.MONGO_URI;
@@ -390,6 +723,18 @@ async function run() {
     transcriptCountWithinLimit: true,
     activeJobPresent: false,
     micToggleClicked: false,
+    externalTurnConfigured: args.externalTurnUrls.length > 0,
+    forceRelay: args.forceRelay,
+    externalRelaySelected: false,
+    publicMediaProxyConfigured: Boolean(args.publicMediaCandidate),
+    publicCandidateRewriteCount: 0,
+    externalTcpMediaSelected: false,
+    turnProxyConfigured: Boolean(args.turnProxyUrl),
+    turnTlsRelaySelected: false,
+    browserProxyConfigured: Boolean(args.browserProxy),
+    browserProxyMediaSelected: false,
+    disableNonProxiedUdp: args.disableNonProxiedUdp,
+    rtcPeerConnections: [],
     cleanup: null,
     errors: [],
   };
@@ -412,23 +757,40 @@ async function run() {
           `voiceSettings=${result.proxyPreflight.voiceSettings.status}`,
       );
     }
-    const url = new URL(args.playgroundUrl);
+    const url = new URL(args.browserPlaygroundUrl);
     url.searchParams.set("agentName", args.agentName);
     url.searchParams.set("callSessionId", seeded.callSessionId);
     url.searchParams.set("roomName", seeded.roomName);
     url.searchParams.set("autoConnect", "0");
 
-    browser = await chromium.launch({
+    const chromiumArgs = [
+      "--use-fake-ui-for-media-stream",
+      "--use-fake-device-for-media-stream",
+      `--use-file-for-fake-audio-capture=${args.audio}`,
+    ];
+    if (args.turnProxyHostRule) {
+      chromiumArgs.push(
+        `--host-resolver-rules=${args.turnProxyHostRule}`,
+      );
+    }
+    if (args.disableNonProxiedUdp) {
+      chromiumArgs.push(
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+      );
+    }
+    const launchOptions = {
       headless: !args.headed,
-      args: [
-        "--use-fake-ui-for-media-stream",
-        "--use-fake-device-for-media-stream",
-        `--use-file-for-fake-audio-capture=${args.audio}`,
-      ],
+      args: chromiumArgs,
+    };
+    if (args.browserProxy) {
+      launchOptions.proxy = { server: args.browserProxy };
+    }
+    browser = await chromium.launch({
+      ...launchOptions,
     });
     const context = await browser.newContext();
     await context.grantPermissions(["microphone"], {
-      origin: args.playgroundUrl,
+      origin: args.browserPlaygroundUrl,
     });
     const page = await context.newPage();
     page.on("console", (message) => {
@@ -439,6 +801,7 @@ async function run() {
     page.on("pageerror", (error) => {
       pageErrors.push(String(error?.message || error));
     });
+    await installExternalTurnProbeAndPublicMediaProxy(page, args);
 
     await page.goto(url.toString(), {
       waitUntil: "domcontentloaded",
@@ -499,6 +862,44 @@ async function run() {
     result.activeJobPresent = Boolean(
       sessionAfter?.activeJobId || sessionAfter?.activeWorkerId,
     );
+    result.rtcPeerConnections = await collectRtcEvidence(page);
+    result.externalRelaySelected = result.rtcPeerConnections.some((peer) =>
+      peer.selectedCandidatePairs.some(
+        (pair) => pair.localCandidateType === "relay",
+      ),
+    );
+    result.publicCandidateRewriteCount = result.rtcPeerConnections.reduce(
+      (count, peer) => count + peer.publicCandidateRewriteCount,
+      0,
+    );
+    result.externalTcpMediaSelected = result.rtcPeerConnections.some(
+      (peer) =>
+        peer.publicCandidateRewriteCount > 0 &&
+        peer.selectedCandidatePairs.some(
+          (pair) =>
+            pair.protocol === "tcp" &&
+            ["connected", "completed"].includes(peer.iceConnectionState),
+        ),
+    );
+    result.turnTlsRelaySelected = result.rtcPeerConnections.some(
+      (peer) =>
+        peer.turnProxyCredentialsAvailable &&
+        peer.selectedCandidatePairs.some(
+          (pair) =>
+            pair.localCandidateType === "relay" &&
+            (pair.protocol === "tcp" ||
+              ["tcp", "tls"].includes(pair.localRelayProtocol)),
+        ),
+    );
+    result.browserProxyMediaSelected = result.rtcPeerConnections.some(
+      (peer) =>
+        ["connected", "completed"].includes(peer.iceConnectionState) &&
+        peer.selectedCandidatePairs.some(
+          (pair) =>
+            pair.protocol === "tcp" ||
+            ["tcp", "tls"].includes(pair.localRelayProtocol),
+        ),
+    );
 
     if (args.screenshot) {
       fs.mkdirSync(path.dirname(args.screenshot), {
@@ -524,6 +925,10 @@ async function run() {
       result.transcriptCount > 0 &&
       result.transcriptCountWithinLimit &&
       result.transcriptMatchedExpected &&
+      (!result.externalTurnConfigured || result.externalRelaySelected) &&
+      (!result.publicMediaProxyConfigured || result.externalTcpMediaSelected) &&
+      (!result.turnProxyConfigured || result.turnTlsRelaySelected) &&
+      (!result.browserProxyConfigured || result.browserProxyMediaSelected) &&
       pageErrors.length === 0;
   } catch (error) {
     result.errors.push(String(error?.stack || error));

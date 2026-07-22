@@ -96,7 +96,22 @@ def workbench_context(prompt_id: str) -> dict[str, Any]:
     from . import drafts, evals, sync_engine
 
     sync_status = sync_engine.get_status()
-    sync_row = next((row for row in sync_status.get("agents") or [] if row.get("sourcePromptId") == prompt_id), None)
+    delivery = prompt_delivery_contract(prompt_id, entry.metadata)
+    sync_row = _sync_row_for_prompt(
+        prompt_id,
+        delivery=delivery,
+        sync_rows=sync_status.get("agents") or [],
+    )
+    runtime_bundle = (
+        runtime_prompt_bundle_status(prompt_id)
+        if delivery["kind"] == "compiled_runtime"
+        else None
+    )
+    delivery["state"] = (
+        sync_row.get("state")
+        if sync_row
+        else (runtime_bundle or {}).get("promptState") or "not-mapped"
+    )
     return {
         "promptId": prompt_id,
         "path": relative_to_repo(entry.path),
@@ -108,9 +123,65 @@ def workbench_context(prompt_id: str) -> dict[str, Any]:
         "evalRuns": evals.list_eval_runs_for_prompt(prompt_id, limit=8),
         "qaCoverage": qa_coverage_for_prompt(prompt_id),
         "sync": sync_row,
-        "runtimePromptBundle": runtime_prompt_bundle_status(prompt_id),
+        "delivery": delivery,
+        "runtimePromptBundle": runtime_bundle,
         "relatedConfig": related_config_for_prompt(prompt_id),
     }
+
+
+def prompt_delivery_contract(
+    prompt_id: str, metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Describe the real delivery owner without claiming current runtime state."""
+
+    if metadata is None:
+        metadata = load_prompt_registry(PROMPTS_ROOT)[prompt_id].metadata
+    target = str(metadata.get("target") or "")
+    managed = (
+        target in {"main.instructions", "main.instructions.section"}
+        or target.startswith("mainAgent.")
+        or target.startswith("backgroundAgents.")
+        or target.startswith("handoffAgents.")
+    )
+    if managed:
+        return {
+            "kind": "managed_agent",
+            "label": "Managed agent record",
+            "statusSource": "agent_sync",
+            "target": target,
+        }
+    return {
+        "kind": "compiled_runtime",
+        "label": "Compiled runtime prompt bundle",
+        "statusSource": "prompt_bundle_drift",
+        "target": target,
+    }
+
+
+def _sync_row_for_prompt(
+    prompt_id: str,
+    *,
+    delivery: dict[str, Any],
+    sync_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    exact = next(
+        (row for row in sync_rows if row.get("sourcePromptId") == prompt_id), None
+    )
+    if exact or delivery.get("kind") != "managed_agent":
+        return exact
+    if str(delivery.get("target") or "") in {
+        "main.instructions",
+        "main.instructions.section",
+    }:
+        return next(
+            (
+                row
+                for row in sync_rows
+                if row.get("sourcePromptId") == "main.conscious_agent"
+            ),
+            None,
+        )
+    return None
 
 
 def _prompt_context_drafts(drafts_module: Any, prompt_id: str) -> list[dict[str, Any]]:

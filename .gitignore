@@ -101,25 +101,25 @@ viventium_v0_3_py/archive/**/*
 # These repos have their own git history and are pushed separately by git-helper.sh.
 # List each repo individually so that any NEW directory added alongside them
 # (e.g. power-agents-beta) is tracked by the main repo by default.
-/viventium-private-user/
-/viventium-private/
-/viventium-enterprise-deploy/
-/private-companion-repo/
-/.private-companion-repo/
-/enterprise-deployment-repo/
-/.enterprise-deployment-repo/
-viventium_v0_4/LibreChat/
-viventium_v0_4/agents-playground/
-viventium_v0_4/livekit/
-viventium_v0_4/cartesia-voice-agent/
-viventium_v0_4/agent-starter-react/
-viventium_v0_4/MCPs/ms-365-mcp-server/
-viventium_v0_4/MCPs/google_workspace_mcp/
-viventium_v0_4/MCPs/yt_transcript/
-viventium_v0_4/openclaw/
-viventium_v0_4/skyvern-source/
-viventium_v0_4/GlassHive/
-viventium_v0_3_py/interfaces/livekit-playground/
+/viventium-private-user
+/viventium-private
+/viventium-enterprise-deploy
+/private-companion-repo
+/.private-companion-repo
+/enterprise-deployment-repo
+/.enterprise-deployment-repo
+/viventium_v0_4/LibreChat
+/viventium_v0_4/agents-playground
+/viventium_v0_4/livekit
+/viventium_v0_4/cartesia-voice-agent
+/viventium_v0_4/agent-starter-react
+/viventium_v0_4/MCPs/ms-365-mcp-server
+/viventium_v0_4/MCPs/google_workspace_mcp
+/viventium_v0_4/MCPs/yt_transcript
+/viventium_v0_4/openclaw
+/viventium_v0_4/skyvern-source
+/viventium_v0_4/GlassHive
+/viventium_v0_3_py/interfaces/livekit-playground
 
 # Private/stateful paths that must not be added again
 viventium_v0_4/docker/skyvern/postgres-data/

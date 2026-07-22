@@ -21,7 +21,15 @@ honest separation between:
 - `netbird_selfhosted_mesh` can publish secure app/API/playground/LiveKit signaling origins through
   the local Caddy edge and serve those pages successfully over HTTPS.
 - `public_https_edge` can publish secure app/API/playground/LiveKit signaling origins through the
-  local Caddy edge, expose the required router mappings, and generate TURN/TLS-ready LiveKit state.
+  local Caddy edge, expose the required router mappings, and generate LiveKit state whose claimed
+  media paths are actually reachable.
+- Public voice is accepted only when an independently routed browser selects an off-LAN ICE pair,
+  the real worker joins, and a synthetic microphone turn persists. Page render, HTTPS, signaling,
+  TURN/TLS listener, and relay-candidate allocation are supporting evidence only.
+- TURN is a fallback only after a bounded relay UDP range is configured/forwarded and a forced-relay
+  run selects a relay pair.
+- Same-Wi-Fi public-host access is recorded separately; off-LAN success does not prove router NAT
+  loopback or split DNS.
 - if `public_https_edge` cannot claim the required public ports, the local install must keep running
   and `bin/viventium status` must show an action-required remote-access error instead of pretending
   the whole install failed
@@ -72,7 +80,13 @@ honest separation between:
   - `tests/release/test_config_compiler.py`
   - `tests/release/test_install_summary.py`
   - `tests/release/test_remote_call_tunnel.py`
+  - `tests/release/test_voice_playground_dispatch_contract.py`
   - `tests/release/test_wizard.py`
+- Reusable case and browser/media evidence:
+  - `qa/remote-access/cases.md` (`REMOTE-004`)
+  - `qa/modern-playground-voice/cases.md` (`MPV-023`)
+  - `qa/modern-playground-voice/scripts/livekit_synthetic_audio_qa.js`
+  - isolated lab evidence for `REMOTE-003` / `REMOTE-004` is required before release acceptance
 - LibreChat regression tests:
   - `viventium_v0_4/LibreChat/api/server/routes/viventium/__tests__/calls.spec.js`
   - `viventium_v0_4/LibreChat/client/src/utils/devProxy.spec.ts`
@@ -104,13 +118,15 @@ honest separation between:
 4. Verify the localhost-vs-public call-launch and `connection-details` origin split.
 5. Verify secure-origin app/API/playground health through the remote edge under test.
 6. Run browser QA against the local chat and modern-playground voice flow after remote access is enabled.
+   For public voice, route the browser independently from the serving LAN, disable non-proxied UDP,
+   and require selected ICE/media, worker join, transcript persistence, and cleanup.
 7. Run `bin/viventium status` and confirm it reports the live outside URL plus the current auth posture.
 8. If the instance is publicly reachable, close browser sign-up and keep browser password reset off unless
    real email delivery is configured. Verify the local operator reset-link command still works.
 9. Run targeted automated regression tests for helper/preflight/wizard/status/call-launch/proxy behavior.
 10. Run preflight for Tailscale, NetBird, and public-edge configs and record any required manual attention.
 11. If `public_https_edge` is active, capture at least one non-local fetch proof of the public app or
-   playground surface.
+   playground surface, then run `REMOTE-004` / `MPV-023`; the fetch alone is not call acceptance.
 12. Do not use a full-tunnel VPN on the same serving host as the only "outside network" proof.
     Use a separate device or disable the VPN on the serving host first.
 13. If `public_https_edge` is active through UPnP/NAT-PMP, inspect the live router table or the
@@ -132,3 +148,21 @@ honest separation between:
     private/loopback target and confirming rejection.
 21. Record the full `tests/release/` result and clearly separate pre-existing unrelated failures
     from this feature slice.
+
+## 2026-07-15 Escaped Public-Media Regression
+
+- Failure: a cellular browser loaded the public Playground and completed signaling but could not
+  establish its peer connection because the server exposed private-only usable media candidates.
+- History decision: the LAN-address default remains valid for local-first use; public off-LAN voice
+  is a different case and requires a public candidate or proven relay. This incident does not
+  overwrite the local behavior.
+- Recovery: canonical machine-local config set the public LiveKit node address, then compiled and
+  restarted. No application runtime code changed.
+- Proof: the autonomous browser harness used an independently routed real browser, selected public
+  TCP media, joined the real worker, delivered a synthetic microphone phrase, confirmed one
+  persisted transcript, and removed all synthetic DB state.
+- Remaining: same-Wi-Fi public-host access is blocked by the router's missing NAT loopback/split-DNS
+  route. TURN remains unaccepted until its relay range is forwarded and a relay pair is selected.
+- Regression gate: changes to config compilation, LiveKit generation, public origins, router
+  mappings, Telegram `/call`, the modern Playground, or the voice gateway must rerun `REMOTE-004`
+  and `MPV-023`.

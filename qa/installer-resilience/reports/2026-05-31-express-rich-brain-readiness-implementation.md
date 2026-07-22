@@ -41,9 +41,9 @@ development pass.
 ## Checks Run
 
 - `uv run --with pytest --with PyYAML --with jsonschema --with pydantic --with fastapi --with croniter python -m pytest tests/release/test_brain_readiness.py tests/release/test_wizard.py tests/release/test_install_summary.py tests/release/test_config_compiler.py tests/release/test_preflight.py tests/release/test_default_nightly_routines.py tests/release/test_prompt_workbench.py -q`
-  - Result: 320 passed, 17 skipped.
+  - Test evidence: 320 passed, 17 skipped.
 - `bin/viventium status`
-  - Result: core web surfaces reachable; new Brain Setup table rendered.
+  - Runtime evidence: core web surfaces reachable; new Brain Setup table rendered.
   - Scheduler row correctly reported `Running with issues` from a sanitized existing ledger state
     with latest status `error` and delivery outcome `failed`.
 - `git diff --check` scoped to touched implementation/docs/QA files.
@@ -70,7 +70,7 @@ development pass.
 
 ## Remaining Release Gates
 
-- Run a clean public entrypoint Express install in a new directory or separate Mac.
+- Run a clean public-entrypoint Easy Install in a new directory or separate Mac.
 - Run browser first-admin Brain Setup with Playwright:
   connect later, connect provider, enable Recall/RAG, add transcript folder, open Workbench.
 - Prove the full visible nightly chain on the clean install:

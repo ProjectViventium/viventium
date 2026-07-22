@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,13 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT_PATH = REPO_ROOT / "scripts/viventium/preflight.py"
+COMMON_PATH = REPO_ROOT / "scripts/viventium/common.sh"
+DOCTOR_PATH = REPO_ROOT / "scripts/viventium/doctor.sh"
+LAUNCHER_PATH = REPO_ROOT / "viventium_v0_4/viventium-librechat-start.sh"
+SKYVERN_LAUNCHER_PATH = REPO_ROOT / "viventium_v0_4/viventium-skyvern-start.sh"
+HELPER_APP_PATH = (
+    REPO_ROOT / "apps/macos/ViventiumHelper/Sources/ViventiumHelper/ViventiumHelperApp.swift"
+)
 YAML_SITE_PACKAGES = str(Path(yaml.__file__).resolve().parents[1])
 
 
@@ -231,6 +240,186 @@ def test_preflight_uses_runtime_probes_for_brew_prereqs(
     assert target.status == "missing"
     assert target.install_kind == "brew_formula"
     assert target.formula == formula
+
+
+def test_express_native_keeps_mongodb_but_defers_meilisearch_and_heavy_services(
+    monkeypatch,
+) -> None:
+    module = load_preflight_module()
+
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda _command: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native", "experience": "express"},
+            "runtime": {
+                "personalization": {"default_conversation_recall": False},
+                "prompt_workbench": {"enabled": False},
+            },
+            "voice": {"mode": "disabled"},
+            "integrations": {
+                "glasshive": {"enabled": False, "host_worker": {"enabled": False}},
+                "web_search": {"enabled": False},
+                "code_interpreter": {"enabled": False},
+            },
+        }
+    )
+    keys = {item.key for item in items}
+
+    assert "mongod" in keys
+    assert "meilisearch" not in keys
+    assert "livekit" not in keys
+    assert "glasshive_host_worker_cli_auth" not in keys
+    assert "docker_desktop" not in keys
+
+
+def test_express_native_uses_pinned_vendor_mongodb_archive_instead_of_homebrew_tap(
+    monkeypatch,
+) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(module, "mongod_runtime_ready", lambda: False)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "pnpm_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "uv_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda _command: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native", "experience": "express"},
+            "runtime": {"personalization": {"default_conversation_recall": False}},
+            "voice": {"mode": "disabled"},
+            "integrations": {},
+        }
+    )
+    mongo = next(item for item in items if item.key == "mongod")
+
+    assert mongo.install_kind == "mongodb_native_archive"
+    assert mongo.formula == ""
+    assert "8.0.23" in mongo.label
+
+
+def test_express_native_does_not_adopt_an_arbitrary_path_mongod(monkeypatch) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "mongod_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "mongodb_native_runtime_ready", lambda: False, raising=False)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "pnpm_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "uv_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda _command: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native", "experience": "express"},
+            "runtime": {"personalization": {"default_conversation_recall": False}},
+            "voice": {"mode": "disabled"},
+            "integrations": {},
+        }
+    )
+    mongo = next(item for item in items if item.key == "mongod")
+
+    assert mongo.status == "missing"
+    assert mongo.install_kind == "mongodb_native_archive"
+
+
+def test_custom_native_preserves_existing_homebrew_mongodb_install_boundary(monkeypatch) -> None:
+    module = load_preflight_module()
+    monkeypatch.setattr(module, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(module, "mongod_runtime_ready", lambda: False)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "pnpm_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "uv_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "command_exists", lambda _command: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native", "experience": "custom"},
+            "runtime": {"personalization": {"default_conversation_recall": False}},
+            "voice": {"mode": "disabled"},
+            "integrations": {},
+        }
+    )
+    mongo = next(item for item in items if item.key == "mongod")
+
+    assert mongo.install_kind == "brew_formula"
+    assert mongo.formula == "mongodb/brew/mongodb-community@8.0"
+
+
+def _write_mongodb_test_archive(path: Path, members: dict[str, tuple[bytes, int]]) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        for name, (content, mode) in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            info.mode = mode
+            archive.addfile(info, io.BytesIO(content))
+
+
+def test_mongodb_archive_extractor_selects_only_runtime_and_license_files(tmp_path: Path) -> None:
+    module = load_preflight_module()
+    archive = tmp_path / "mongodb.tgz"
+    _write_mongodb_test_archive(
+        archive,
+        {
+            "mongodb-test/LICENSE-Community.txt": (b"license", 0o644),
+            "mongodb-test/MPL-2": (b"mpl", 0o644),
+            "mongodb-test/README": (b"readme", 0o644),
+            "mongodb-test/THIRD-PARTY-NOTICES": (b"notices", 0o644),
+            "mongodb-test/bin/mongod": (b"synthetic-mongod", 0o755),
+            "mongodb-test/bin/mongos": (b"not-needed", 0o755),
+            "mongodb-test/bin/install_compass": (b"forbidden-installer", 0o755),
+        },
+    )
+    destination = tmp_path / "runtime"
+
+    module.extract_mongodb_native_archive(archive, destination)
+
+    assert (destination / "bin" / "mongod").read_bytes() == b"synthetic-mongod"
+    assert (destination / "LICENSE-Community.txt").read_bytes() == b"license"
+    assert (destination / "THIRD-PARTY-NOTICES").read_bytes() == b"notices"
+    assert not (destination / "bin" / "mongos").exists()
+    assert not (destination / "bin" / "install_compass").exists()
+
+
+def test_mongodb_archive_extractor_rejects_traversal_and_links(tmp_path: Path) -> None:
+    module = load_preflight_module()
+    traversal = tmp_path / "traversal.tgz"
+    _write_mongodb_test_archive(
+        traversal,
+        {
+            "mongodb-test/bin/mongod": (b"synthetic-mongod", 0o755),
+            "../escape": (b"escape", 0o644),
+        },
+    )
+    with pytest.raises(SystemExit, match="unsafe path"):
+        module.extract_mongodb_native_archive(traversal, tmp_path / "traversal-output")
+    assert not (tmp_path / "escape").exists()
+
+    links = tmp_path / "links.tgz"
+    with tarfile.open(links, "w:gz") as archive:
+        info = tarfile.TarInfo("mongodb-test/bin/mongod")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "/tmp/escape"
+        archive.addfile(info)
+    with pytest.raises(SystemExit, match="links or special files"):
+        module.extract_mongodb_native_archive(links, tmp_path / "links-output")
 
 
 def test_preflight_checks_glasshive_host_worker_required_clis(monkeypatch, tmp_path: Path) -> None:
@@ -620,7 +809,7 @@ integrations:
 
     assert completed.returncode == 1
     assert "Viventium Preflight" in completed.stdout
-    assert "node@20" in completed.stdout
+    assert "node@24" in completed.stdout
     assert "pnpm" in completed.stdout
     assert "uv" in completed.stdout
     assert "ffmpeg" in completed.stdout
@@ -1000,7 +1189,7 @@ integrations:
     assert "Docker Desktop" not in completed.stdout
 
 
-def test_preflight_requires_validated_node20_when_newer_node_is_present(tmp_path: Path) -> None:
+def test_preflight_requires_validated_node24_when_newer_node_is_present(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -1039,8 +1228,28 @@ voice:
     )
 
     assert completed.returncode == 1
-    assert "node@20" in completed.stdout
+    assert "node@24" in completed.stdout
     assert "validated Node runtime" in completed.stdout
+
+
+def test_supported_node_major_is_consistent_across_install_and_launcher_layers() -> None:
+    sources = {
+        "preflight": PREFLIGHT_PATH.read_text(encoding="utf-8"),
+        "shared path": COMMON_PATH.read_text(encoding="utf-8"),
+        "doctor": DOCTOR_PATH.read_text(encoding="utf-8"),
+        "launcher": LAUNCHER_PATH.read_text(encoding="utf-8"),
+        "Skyvern launcher": SKYVERN_LAUNCHER_PATH.read_text(encoding="utf-8"),
+        "macOS helper": HELPER_APP_PATH.read_text(encoding="utf-8"),
+    }
+
+    for layer, source in sources.items():
+        assert "node@24" in source, f"{layer} must select the supported Node 24 runtime"
+        assert "node@20" not in source, f"{layer} still selects the EOL Node 20 runtime"
+
+    launcher = sources["launcher"]
+    assert "ensure_validated_node24_runtime" in launcher
+    assert '[[ "$major" == "24" ]]' in launcher
+    assert '[[ "$major" != "24"' in launcher
 
 
 def test_preflight_treats_existing_docker_app_as_installed_for_ms365(tmp_path: Path) -> None:
@@ -1134,11 +1343,11 @@ def test_install_brew_formulas_accepts_runtime_when_homebrew_returns_nonzero(mon
 
     monkeypatch.setattr(preflight, "run_checked", fake_run_checked)
     monkeypatch.setattr(preflight, "refresh_brew_paths", lambda: None)
-    monkeypatch.setattr(preflight, "formula_usable", lambda formula: formula == "node@20")
+    monkeypatch.setattr(preflight, "formula_usable", lambda formula: formula == "node@24")
 
-    preflight.install_brew_formulas(["node@20"])
+    preflight.install_brew_formulas(["node@24"])
 
-    assert calls == [["brew", "install", "node@20"]]
+    assert calls == [["brew", "install", "node@24"]]
 
 
 def test_install_brew_formulas_retries_when_installed_binary_cannot_execute(monkeypatch) -> None:
@@ -1231,6 +1440,34 @@ def test_docker_daemon_ready_uses_bounded_timeout(monkeypatch: pytest.MonkeyPatc
 
     assert preflight.docker_daemon_ready() is False
     assert calls == [(["/fake/docker", "ps"], 1.5)]
+
+
+def test_docker_install_mode_fails_preflight_when_selected_daemon_is_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = load_preflight_module()
+
+    monkeypatch.setattr(preflight, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(preflight, "command_exists", lambda _command: True)
+    monkeypatch.setattr(preflight, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(preflight, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(preflight, "pnpm_runtime_ready", lambda: True)
+    monkeypatch.setattr(preflight, "uv_runtime_ready", lambda: True)
+    monkeypatch.setattr(preflight, "docker_desktop_installed", lambda: True)
+    monkeypatch.setattr(preflight, "docker_daemon_ready", lambda: False)
+
+    items = preflight.build_preflight_items(
+        {
+            "install": {"mode": "docker", "experience": "express"},
+            "voice": {"mode": "disabled"},
+            "integrations": {"glasshive": {"enabled": False}},
+        }
+    )
+
+    docker_daemon = next(item for item in items if item.key == "docker_daemon")
+    assert docker_daemon.status == "missing"
+    assert docker_daemon.install_kind == "manual"
+    assert docker_daemon.manual_command == "open -a Docker"
 
 
 def test_docker_desktop_installed_ignores_stray_docker_cli(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -109,6 +109,16 @@ names must not appear in the health payload or public QA evidence.
 ### LibreChat Channel
 - Scheduler generation is canonical.
 - Runs should flow through the existing scheduler-authenticated internal routes.
+- Scheduled `viventium_agent` generation uses the compiler-owned
+  `runtime.scheduled_agent` execution tuple. The current product policy is
+  `openai` / `gpt-5.6-sol` / `xhigh`; it is attached only by Scheduling Cortex and accepted only
+  on the scheduler-secret-authenticated route. LibreChat applies it after loading the persisted
+  agent, so stale agent model settings cannot dilute the scheduled run and ordinary interactive
+  chat keeps its independent effort setting.
+- Provider, model, and effort form one atomic tuple. A partially configured tuple fails before
+  model generation. Dispatch and runtime logs/ledgers retain the effective tuple without exposing
+  credentials or private prompt text. Runtime code must not select this policy from task names,
+  prompt wording, agent display names, or user identity.
 - Conversation policy can be `new` or `same`.
 - Scheduled prompts and delayed checks are injected as main-agent work, not delivered as raw
   scheduler text. The main agent/follow-up adjudication path decides whether the result is useful
@@ -230,7 +240,9 @@ Rules:
 - Ordinary chat must not inspect periphery. On-demand/deep-review use follows list then read, and
   stale/legacy/failed-quality material is treated as historical uncertainty.
 - Workbench/GlassHive automation dispatch takes the compiled `gpt-5.6-sol` / `xhigh` tuple ahead of
-  stale persisted metadata and fails closed when no configured tuple exists.
+  stale persisted metadata. An incomplete tuple fails closed; a fully absent tuple remains a
+  backward-compatible no-override state for unmanaged legacy launch paths, while supported installs
+  always compile the current policy.
 
 ### Telegram Channel
 - Scheduled Telegram delivery should reuse the canonical scheduler-generated final/follow-up text.

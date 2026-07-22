@@ -2,6 +2,7 @@ from pathlib import Path
 from io import BytesIO
 import importlib.util
 import json
+import logging
 import sys
 import types
 import wave
@@ -16,6 +17,17 @@ if str(TELEGRAM_ROOT) not in sys.path:
     sys.path.insert(0, str(TELEGRAM_ROOT))
 
 from TelegramVivBot.utils import tts as tts_module
+
+
+def test_tts_capability_contract_fails_loudly_when_required_artifact_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    missing_contract = tmp_path / "missing-tts-provider-capabilities.json"
+    monkeypatch.setattr(tts_module, "_TTS_PROVIDER_CAPABILITIES_PATH", missing_contract)
+
+    with pytest.raises(RuntimeError, match="TTS provider capability contract"):
+        tts_module._load_tts_provider_capabilities()
 
 
 def _load_voice_gateway_sse_module():
@@ -108,7 +120,8 @@ def test_prepare_tts_text_strips_shared_artifacts_without_breaking_word_boundari
     assert "visit example.com" in cleaned
     assert "Good to hear you. Next." in cleaned
     assert "Persian. If you mean coolest, read brief." in cleaned
-    assert "email available" in cleaned
+    assert "address available" in cleaned
+    assert "email email" not in cleaned
 
 
 def test_prepare_tts_text_matches_livekit_common_artifact_cleanup():
@@ -154,6 +167,128 @@ def test_prepare_tts_text_strips_unknown_tags_but_preserves_provider_voice_contr
     assert "<custom" not in cleaned
     assert "</custom>" not in cleaned
     assert "Hello there." in cleaned
+
+
+@pytest.mark.parametrize(
+    ("provider", "text", "expected"),
+    [
+        (
+            "xai",
+            "<whisper>Keep this close.</whisper> [sigh]",
+            {
+                "capability": "xai_speech_tags",
+                "capability_supported": True,
+                "compatible_control_count": 2,
+                "incompatible_control_count": 0,
+                "expressive_rendering": "provider_controls_present",
+            },
+        ),
+        (
+            "cartesia",
+            '<emotion value="sad"/><break time="DURATION"/>Stay here.',
+            {
+                "capability": "cartesia_sonic3_ssml",
+                "capability_supported": True,
+                "compatible_control_count": 2,
+                "incompatible_control_count": 0,
+                "expressive_rendering": "provider_controls_present",
+            },
+        ),
+        (
+            "local_chatterbox_turbo_mlx_8bit",
+            "[gasp] That changed fast.",
+            {
+                "capability": "chatterbox_nonverbal_markers",
+                "capability_supported": True,
+                "compatible_control_count": 1,
+                "incompatible_control_count": 0,
+                "expressive_rendering": "provider_controls_present",
+            },
+        ),
+        (
+            "openai",
+            "<whisper>Do not forward this tag.</whisper>",
+            {
+                "capability": "plain_text_only",
+                "capability_supported": False,
+                "compatible_control_count": 0,
+                "incompatible_control_count": 1,
+                "expressive_rendering": "unsupported_controls_present",
+            },
+        ),
+        (
+            "elevenlabs",
+            "[curious] This Eleven v3 tag is not valid on the configured v2.5 route.",
+            {
+                "capability": "plain_text_only",
+                "capability_supported": False,
+                "compatible_control_count": 0,
+                "incompatible_control_count": 1,
+                "expressive_rendering": "unsupported_controls_present",
+            },
+        ),
+        (
+            "unsupported-provider",
+            "[laugh] Unknown route.",
+            {
+                "capability": "unknown",
+                "capability_supported": False,
+                "compatible_control_count": 0,
+                "incompatible_control_count": 1,
+                "expressive_rendering": "unsupported_controls_present",
+            },
+        ),
+    ],
+)
+def test_voice_rendering_observation_is_provider_capability_driven(provider, text, expected):
+    observation = tts_module._voice_rendering_observation(
+        provider,
+        text,
+        route_role="fallback" if provider == "openai" else "primary",
+    )
+
+    assert {key: observation[key] for key in expected} == expected
+    assert observation["route_role"] == ("fallback" if provider == "openai" else "primary")
+
+
+def test_voice_rendering_observability_logs_only_structural_metadata(caplog):
+    private_text = "Private sentence <whisper>spoken quietly</whisper> [sigh]"
+
+    with caplog.at_level(logging.INFO, logger=tts_module.__name__):
+        tts_module._log_voice_rendering_observation(
+            "xai",
+            private_text,
+            route_role="primary",
+        )
+
+    line = next(message for message in caplog.messages if "[VoiceRendering][telegram]" in message)
+    assert "provider=xai" in line
+    assert "model=xai-tts" in line
+    assert "role=primary" in line
+    assert "capability=xai_speech_tags" in line
+    assert "expressive_rendering=provider_controls_present" in line
+    assert private_text not in line
+    assert "Private sentence" not in line
+
+
+def test_voice_rendering_observability_distinguishes_normalization_from_stripping(caplog):
+    private_text = "[laugh-speak]Private playful sentence.[/laugh-speak]"
+    forwarded_text = "<laugh-speak>Private playful sentence.</laugh-speak>"
+
+    with caplog.at_level(logging.INFO, logger=tts_module.__name__):
+        tts_module._log_voice_rendering_observation(
+            "xai",
+            private_text,
+            route_role="primary",
+            forwarded_text=forwarded_text,
+        )
+
+    line = next(message for message in caplog.messages if "[VoiceRendering][telegram]" in message)
+    assert "compatible_controls=1" in line
+    assert "normalized_controls=1" in line
+    assert "stripped_controls=0" in line
+    assert private_text not in line
+    assert "Private playful sentence" not in line
 
 
 def test_prepare_tts_text_strips_bare_turn_citation_shells():
@@ -482,6 +617,7 @@ async def test_synthesize_speech_chatterbox_strips_unsupported_voice_controls(mo
 @pytest.mark.asyncio
 async def test_synthesize_speech_openai_direct_path_applies_common_speech_safety(monkeypatch):
     seen = {}
+    monkeypatch.delenv("VIVENTIUM_OPENAI_TTS_INSTRUCTIONS", raising=False)
     monkeypatch.setitem(
         sys.modules,
         "config",
@@ -529,6 +665,54 @@ async def test_synthesize_speech_openai_direct_path_applies_common_speech_safety
     )
     assert "turn0search4" not in seen["payload"]["input"]
     assert "Sources:" not in seen["payload"]["input"]
+    assert seen["payload"]["instructions"] == (
+        tts_module._TTS_PROVIDER_CONTRACTS["openai"]["default_renderer_instruction"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_synthesize_speech_openai_legacy_model_omits_unsupported_instructions(monkeypatch):
+    seen = {}
+    monkeypatch.setenv("VIVENTIUM_OPENAI_TTS_INSTRUCTIONS", "Use a deliberately visible override.")
+    monkeypatch.setitem(
+        sys.modules,
+        "config",
+        _fake_config(
+            API_KEY="openai-key",
+            BASE_URL="https://api.openai.com/v1",
+            TTS_MODEL="tts-1",
+            TTS_PROVIDER_PRIMARY="openai",
+            TTS_PROVIDER_FALLBACK="",
+        ),
+    )
+
+    class _Response:
+        content = b"mp3-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, headers=None, json=None, **_kwargs):
+            seen["payload"] = json
+            return _Response()
+
+    monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
+
+    voice_bytes = await tts_module.synthesize_speech("Hello.", "conv-1")
+
+    assert voice_bytes == b"mp3-bytes"
+    assert seen["payload"]["model"] == "tts-1"
+    assert "instructions" not in seen["payload"]
 
 
 @pytest.mark.asyncio
@@ -703,7 +887,7 @@ async def test_synthesize_speech_xai_prefers_tts_specific_key_and_saved_voice(mo
 
 
 @pytest.mark.asyncio
-async def test_synthesize_speech_xai_strips_malformed_square_wrapper_tags(monkeypatch):
+async def test_synthesize_speech_xai_repairs_paired_square_wrapper_tags(monkeypatch):
     seen = {}
 
     monkeypatch.setitem(
@@ -742,15 +926,17 @@ async def test_synthesize_speech_xai_strips_malformed_square_wrapper_tags(monkey
     monkeypatch.setattr(tts_module.httpx, "AsyncClient", _Client)
 
     voice_bytes = await tts_module.synthesize_speech(
-        "<soft>Morning. You have warmth.[/soft] If needed.",
+        "[laugh-speak]Morning. You have warmth.[/laugh-speak] If needed.",
         "conv-1",
         voice_route={"tts": {"provider": "xai", "variant": "Eve"}},
     )
 
     assert voice_bytes == b"mp3-bytes"
-    assert seen["payload"]["text"] == "Morning. You have warmth. If needed."
-    assert "<soft>" not in seen["payload"]["text"]
-    assert "[/soft]" not in seen["payload"]["text"]
+    assert seen["payload"]["text"] == (
+        "<laugh-speak>Morning. You have warmth.</laugh-speak> If needed."
+    )
+    assert "[laugh-speak]" not in seen["payload"]["text"]
+    assert "[/laugh-speak]" not in seen["payload"]["text"]
 
 
 @pytest.mark.asyncio
@@ -1072,8 +1258,16 @@ def test_summarize_voice_markup_counts_structural_markers():
         "spell": 1,
         "xai_inline": 2,
         "xai_wrapping": 1,
+        "xai_square_wrapping": 0,
         "xai_total": 3,
     }
+
+
+def test_summarize_voice_markup_includes_square_wrappers_in_xai_total():
+    summary = tts_module.summarize_voice_markup("[soft]Quietly.[/soft]")
+
+    assert summary["xai_square_wrapping"] == 1
+    assert summary["xai_total"] == 1
 
 
 def test_cartesia_emotion_normalization_uses_shared_sonic3_list():
@@ -1156,14 +1350,23 @@ def test_strip_cartesia_markup_for_xai_strips_cartesia_only_bracket_aliases():
     assert "[clears throat]" not in cleaned
 
 
-def test_strip_cartesia_markup_for_xai_strips_every_malformed_wrapping_tag():
+def test_strip_cartesia_markup_for_xai_repairs_paired_square_wrapping_tags():
     for tag in tts_module._XAI_TTS_WRAPPING_TAGS:
         cleaned = tts_module._strip_cartesia_markup_for_xai(
             f"<{tag}>Keep this.</{tag}> [{tag}] tail [/{tag}] done."
         )
-        assert cleaned == f"<{tag}>Keep this.</{tag}> tail done."
+        assert cleaned == f"<{tag}>Keep this.</{tag}> <{tag}>tail</{tag}> done."
         assert f"[{tag}]" not in cleaned
         assert f"[/{tag}]" not in cleaned
+
+
+def test_strip_cartesia_markup_for_xai_still_strips_unpaired_square_wrapping_tags():
+    assert (
+        tts_module._strip_cartesia_markup_for_xai(
+            "[laugh-speak]Keep this plain. Then [soft]continue."
+        )
+        == "Keep this plain. Then continue."
+    )
 
 
 def test_xai_fallback_wrapping_vocabulary_covers_documented_tags():

@@ -17,6 +17,7 @@ Use stable `QASYS-NNN` IDs for QA-system structure, traceability, evidence, and 
 | `QASYS-007` | Public QA records are tracked or intentionally private/ignored | Fresh clones and public exports have reproducible QA context | `qa/`, `.gitignore`, release tests | Git ignored/tracked review plus public-safety scan | 2026-05-17 pass |
 | `QASYS-008` | Full-view evidence gate blocks hand-waved completion | Agents must name unrun user paths as blocked/partial | Agent docs, QA templates, dated reports | `test_qa_operating_contract.py` plus report-template review | 2026-05-18 pass |
 | `QASYS-009` | Product-wide natural user use-case checklist is mandatory | QA starts from all features and obvious user actions, not one symptom | `45_Runtime_Feature_QA_Map.md`, `qa/feature-user-use-case-checklist.md`, `qa/*/cases.md` | `test_qa_operating_contract.py` plus feature checklist review | 2026-05-18 pass |
+| `QASYS-010` | Hosted release policy executes the QA ownership contract | A PR cannot silently add an orphaned release test or remove a living QA owner | `.github/workflows/release-policy.yml`, `qa/release-test-owners.yaml`, `tests/release/` | `test_ci_release_workflows.py`, hosted `test_qa_operating_contract.py::test_release_tests_have_central_qa_ownership` | 2026-07-21 pass locally; hosted run begins when the reviewed branch is published |
 
 ## Natural User Use Case Checklist
 

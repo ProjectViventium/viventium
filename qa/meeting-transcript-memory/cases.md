@@ -84,11 +84,9 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   are missing, or after a derived vector rebuild without a scoped repair/reseed.
 - Evidence to capture: redacted RAG health, primary QA count unchanged check, QA-account source counts,
   file_search source attachments, and public-safe recovery note.
-- Last run: PASS 2026-07-11
-  ([owner import report](reports/2026-07-11-owner-private-transcript-import-and-recall.md)); QA found
-  the vector API process alive without its PGVector dependency, restored only the missing declared
-  dependency, completed two bounded transcript-only repair batches, proved all eight new summaries
-  with direct authenticated document checks, and then passed browser source-card and persistence QA.
+- Last run: PASS-DEGRADED-AUTOMATED / USER-PATH NOT RUN 2026-07-18; synthetic unreachable-RAG
+  fixtures fail closed and prohibit browser signoff. Isolated browser transcript recall/source-card
+  acceptance remains NOT RUN.
 
 ## MTM-007: Chronological Recent Transcript Summary Must Use Inventory Context
 
@@ -191,10 +189,9 @@ Use synthetic transcript fixtures and public-safe placeholders only.
   transcript artifacts, or lets the assistant claim no transcript evidence exists.
 - Evidence to capture: vector-presence error count/reasons, content hashes requeued, stale-artifact
   count, and follow-up health check.
-- Last run: PASS 2026-07-11
-  ([owner import report](reports/2026-07-11-owner-private-transcript-import-and-recall.md)); one
-  bounded repair batch recorded inconclusive vector-presence checks without destructive repair, the
-  next batch recorded zero presence errors, and direct checks proved all eight target summaries.
+- Last run: PASS-DEGRADED-AUTOMATED / USER-PATH NOT RUN 2026-07-18; synthetic vector-presence
+  errors produce no destructive repair or false no-transcript claim. Isolated live-health/browser
+  follow-up remains NOT RUN.
 
 ## MTM-014: Live Browser QA Must Select A Real Connected QA Account
 
@@ -284,7 +281,7 @@ Use synthetic transcript fixtures and public-safe placeholders only.
 
 ## MTM-019: Installer Transcript Ingest Readiness
 
-- Scenario: A new Express or Advanced user either has no transcript folder yet, chooses a valid
+- Scenario: A new Easy Install or Custom Settings Install user either has no transcript folder yet, chooses a valid
   folder during setup, or tries a missing folder.
 - Expected outcome: Installer/status marks an empty source as `Needs setup`, persists a valid folder
   only through canonical `runtime.memory_hardening.transcripts.source_dir`, compiles the generated
@@ -324,10 +321,10 @@ rows before claiming a pass when the feature behavior changes.
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |
 | --- | --- | --- | --- | --- | --- | --- |
 | `MEETING-UC-001` | Ask a browser chat question that should use processed meeting transcript memory, then inspect visible answer sources and backend evidence. | `MTM-001`-`MTM-009`, `MTM-015`, `MTM-016`, `MTM-020` | Browser chat, file/source cards, processed transcript index, and sanitized logs | Model-facing file/source order, stored source order, visible source cards, memory hardening output, and dated QA report | The answer is grounded in processed transcript evidence, not attached raw files or unrelated memory, and sources are visible. Identity/person-role claims are not invented from transcript-only evidence. | PASS 2026-07-11 ([owner import report](reports/2026-07-11-owner-private-transcript-import-and-recall.md)); exact-summary-first source order and answer quality were visually verified in a real browser |
-| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock/provider/vector runtime is missing, stale, or degraded. | `MTM-010`-`MTM-017`, `MTM-020`, and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, model/vector telemetry, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, tries configured model fallbacks, processes bounded backfill batches, and does not fabricate transcript recall or identity. | PASS 2026-07-11 ([owner import report](reports/2026-07-11-owner-private-transcript-import-and-recall.md)); missing vector dependency and inconclusive presence checks recovered without destructive work |
+| `MEETING-UC-002` | Try transcript ingest or recall when the sidecar/index/lock/provider/vector runtime is missing, stale, or degraded. | `MTM-010`-`MTM-017`, `MTM-020`, and degraded-state cases | CLI ingest/dry-run, browser chat degraded state, and sanitized logs | Stale-lock fixture, dry-run exit status, run summary, lock cleanup, model/vector telemetry, logs, and QA report | The system clears stale locks when safe, reports degraded prerequisites honestly, tries configured model fallbacks, processes bounded backfill batches, and does not fabricate transcript recall or identity. | PASS-DEGRADED-AUTOMATED/PARTIAL 2026-07-18; failure fixtures pass, isolated RAG/browser proof NOT RUN |
 | `MEETING-UC-003` | After ingest/repair, rerun the browser recall question and compare persistence/state across refresh or retry. | `MTM-001`-`MTM-017`, `MTM-020` | Browser chat, persisted message/source state, transcript index, and logs | Stored source order, visible source cards, memory hardening summary, and dated QA report | Recall remains grounded after retry/refresh and final wording matches persisted evidence; corrected chat memory outranks stale transcript-derived identity. | PASS 2026-07-11 ([owner import report](reports/2026-07-11-owner-private-transcript-import-and-recall.md)); all eight target vectors were present and the grounded answer/source cards survived conversation reopen |
 | `MEETING-UC-004` | Choose a transcripts folder from the status-bar helper, then ingest transcripts. | `MTM-018` | macOS helper menu/picker, CLI config patcher, generated runtime env, and transcript ingest summary | Picker visible state, config backup, runtime env value, source-folder-hash filter, bounded ingest output, and dated QA report | The chosen folder is persisted through canonical config for this install without hardcoded owner data, and ingest processes the current folder only. | PASS 2026-05-22; see `qa/meeting-transcript-memory/reports/2026-05-22-transcript-folder-picker-batching-qa.md` |
-| `MEETING-UC-005` | During Express/Advanced setup, leave transcript ingest pending, choose a valid folder, and try a missing folder. | `39_Installer_and_Config_Compiler.md` / `MTM-019`, `INST-004` | installer wizard, `bin/viventium status`, generated env, transcript source CLI | Wizard choices, canonical config, generated env, status row, source-folder-hash readiness, public-safety scan. | Empty source is pending, valid source is configured, missing source is not marked ready, and no private path or transcript text is published. | PARTIAL 2026-05-31; automated wizard/status coverage added, user-grade clean install remains |
+| `MEETING-UC-005` | During Easy Install or Custom Settings Install, leave transcript ingest pending, choose a valid folder, and try a missing folder. | `39_Installer_and_Config_Compiler.md` / `MTM-019`, `INST-004` | installer wizard, `bin/viventium status`, generated env, transcript source CLI | Wizard choices, canonical config, generated env, status row, source-folder-hash readiness, public-safety scan. | Empty source is pending, valid source is configured, missing source is not marked ready, and no private path or transcript text is published. | PARTIAL 2026-05-31; automated wizard/status coverage added, user-grade clean install remains |
 
 ## Release Test Traceability
 

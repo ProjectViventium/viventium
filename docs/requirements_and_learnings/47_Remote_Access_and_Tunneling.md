@@ -41,7 +41,13 @@ The default public-safe local-install story remains:
 
 - `remote_call_mode: disabled`
 - localhost browser access for the web UI and modern playground
+- explicit loopback listeners for app-facing services; a localhost URL alone is not proof of the
+  bind address
 - no implied support for raw LAN-IP voice access from another device
+
+The modern Playground's Next process binds to `127.0.0.1` explicitly in every mode. Supported
+remote modes publish it through their authenticated/trusted HTTPS ingress; they do not change the
+underlying Next listener to `0.0.0.0` or `[::]`.
 
 Remote access is a deliberate operator opt-in because browsers require trusted HTTPS/WSS origins,
 and LiveKit media still needs a real network path for TCP/UDP beyond just an HTTP reverse proxy.
@@ -127,6 +133,7 @@ Runtime contract:
   - `VIVENTIUM_PUBLIC_SERVER_URL`
   - `VIVENTIUM_PUBLIC_PLAYGROUND_URL`
   - `VIVENTIUM_PUBLIC_LIVEKIT_URL`
+  - `VIVENTIUM_PUBLIC_GLASSHIVE_URL` when GlassHive is enabled and a dedicated public origin is configured
 - `LIVEKIT_NODE_IP` is derived automatically from the local node's Tailscale IPv4
 - browser origins stay on the node's `*.ts.net` hostname rather than raw mesh IPs
 
@@ -220,8 +227,8 @@ Runtime contract:
   - `VIVENTIUM_PUBLIC_SERVER_URL`
   - `VIVENTIUM_PUBLIC_PLAYGROUND_URL`
   - `VIVENTIUM_PUBLIC_LIVEKIT_URL`
-- `LIVEKIT_NODE_IP` defaults to the discovered LAN IPv4 so same-machine and same-LAN playground
-  callers keep working when public access is enabled.
+- `LIVEKIT_NODE_IP` defaults to the discovered LAN IPv4 for local-first installs. A direct public
+  edge is not accepted for off-LAN calling while that private-only candidate remains active.
 - Operators can set `runtime.network.livekit_node_ip` explicitly when they want LiveKit to
   advertise a public/mesh media address for direct TCP/UDP paths and have already validated that
   the local browser path still works in their network.
@@ -242,6 +249,10 @@ Config contract:
   - `runtime.network.public_api_origin`
   - `runtime.network.public_playground_origin`
   - `runtime.network.public_livekit_url`
+- externally usable GlassHive workspace/artifact links additionally require:
+  - `runtime.network.public_glasshive_origin`
+  - the compiler-owned signed-link-only mode; the local GlassHive operator port must never be
+    published without this boundary
 
 Operational requirements:
 
@@ -249,9 +260,13 @@ Operational requirements:
 - router support for either:
   - UPnP / NAT-PMP auto-mapping, or
   - manual forwarding of `80/tcp`, `443/tcp`, LiveKit TCP media, LiveKit UDP media, and TURN/TLS
+- if embedded TURN is relied on for acceptance, a bounded `turn.relay_range_start` /
+  `turn.relay_range_end` and the matching forwarded UDP range; forwarding only the TURN/TLS
+  listener does not expose the allocated relay candidates
 - a public IPv4 path to this machine, or an operator-managed edge that forwards those ports
 - for the durable public answer:
-  - operator-owned DNS pointing the app/API/playground/LiveKit subdomains at the current public IP
+  - operator-owned DNS pointing the app/API/playground/LiveKit and optional GlassHive subdomains at
+    the current public IP
 - do not run a full-tunnel VPN on the same Mac that is serving the public edge unless the VPN is
   explicitly split-routed to keep the local LAN and the host's own public IP off the tunnel
 
@@ -282,12 +297,25 @@ Hostname guidance:
   - `https://api.example.com`
   - `https://playground.example.com`
   - `wss://livekit.example.com`
+  - `https://glasshive.example.com` when externally usable GlassHive links are enabled
 - If you prefer to keep one visible namespace in front, choose an app hostname such as
   `app.example.com` and then derive:
   - `https://app.example.com`
   - `https://api.app.example.com`
   - `https://playground.app.example.com`
   - `wss://livekit.app.example.com`
+  - `https://glasshive.app.example.com`
+
+Same-network note:
+
+- Public custom domains resolve to the router's public address. A phone on the same Wi-Fi can use
+  those URLs only when the router supports NAT loopback/hairpinning (or split-horizon DNS sends the
+  names back through an equivalent trusted HTTPS edge).
+- A public link working over cellular while timing out on the same Wi-Fi is evidence of missing NAT
+  loopback, not evidence that Caddy, public DNS, or the public edge is down.
+- The immediate user test is to turn Wi-Fi off and use cellular. The durable LAN fix is router NAT
+  loopback/split DNS, or a supported private-mesh mode such as Tailscale. Plain LAN HTTP is not a
+  substitute for browser microphone, LiveKit WSS, or signed public-link security.
 - The helper intentionally rejects reusing one hostname for different surface ports because that
   would blur routing ownership and create brittle mixed-surface assumptions.
 
@@ -301,11 +329,13 @@ Durability note:
 
 Operator recipe for a stable public link:
 
-1. Create four DNS records that point at the current public IPv4 of the home network:
+1. Create four voice/app DNS records that point at the current public IPv4 of the home network:
    - `app.<your-domain>`
    - `api.<your-domain>`
    - `playground.<your-domain>`
    - `livekit.<your-domain>`
+   If GlassHive is enabled and its returned links must work externally, also create
+   `glasshive.<your-domain>`.
 2. Set explicit origins in `~/Library/Application Support/Viventium/config.yaml`:
    ```yaml
    runtime:
@@ -315,9 +345,13 @@ Operator recipe for a stable public link:
        public_api_origin: "https://api.<your-domain>"
        public_playground_origin: "https://playground.<your-domain>"
        public_livekit_url: "wss://livekit.<your-domain>"
+       livekit_node_ip: "<public IPv4>" # direct-public media until dual-candidate config is exposed
+       public_glasshive_origin: "https://glasshive.<your-domain>" # optional; GlassHive only
    ```
 3. Ensure the router forwards `80/tcp`, `443/tcp`, `7889/tcp`, `7890/udp`, and `5349/tcp` to this
-   Mac, or allow the helper to manage those mappings through UPnP/NAT-PMP.
+   Mac, or allow the helper to manage those mappings through UPnP/NAT-PMP. If TURN is part of the
+   promised fallback, configure a bounded relay UDP range and forward that range too; `5349/tcp`
+   alone is not a complete TURN media path.
 4. Restart Viventium. The local Caddy edge will request real certificates for the configured
    hostnames, the launcher will republish those URLs back into the runtime, and leased UPnP
    mappings will be refreshed automatically while the runtime stays up.
@@ -386,6 +420,49 @@ Learnings from public-edge validation:
   current public IP, and the current mapping lease state after startup.
 - That state file must fail closed: any startup-time helper failure must leave an explicit `last_error`
   instead of reusing a stale healthy mapping snapshot from an earlier run.
+
+## Public-Media Decision And Synthetic Lab Contract
+
+The April and May network behaviors describe different supported cases rather than a single rule
+that should overwrite the other:
+
+- The LAN-address default remains correct for local-first installs, localhost callers, and private
+  networks where clients can reach the host directly.
+- An arbitrary off-LAN browser using `public_https_edge` is a separate case. It needs a reachable
+  public LiveKit media candidate or a proven relay path; a private-only candidate cannot satisfy
+  that product promise.
+- The config-only recovery for an already deployed direct-public edge is an explicit public
+  `runtime.network.livekit_node_ip`, followed by compile and restart. Generated runtime files are
+  evidence, not the authoring surface.
+- The prior assumption that advertised TURN/TLS was sufficient fallback was documentation and QA
+  drift. A TLS listener and relay-candidate allocation do not prove media unless the allocated relay
+  range is reachable and the browser selects a relay pair.
+- A public hostname that works off-LAN but times out on the serving Wi-Fi is a separate router
+  hairpin/split-DNS topology issue. It must not be misreported as either a dead public edge or a
+  completed same-Wi-Fi fix.
+
+Product, development, and operations consequences:
+
+- The public-call promise covers usable media and a delivered voice turn, not merely a public page,
+  certificate, signaling session, or listening port.
+- A direct-public recovery may stay config-only and preserve the self-hosted deployment shape, but
+  it is not accepted until an isolated lab browser selects the intended media path and the worker
+  receives the synthetic fixture.
+- An explicit public node address creates an operator maintenance obligation when the public IP
+  changes. DNS and canonical config must be updated, recompiled, restarted, and revalidated.
+- Any future change to the compiler, launcher, LiveKit generation, public origins, router mappings,
+  Telegram call links, modern playground, or voice gateway is inside this regression's blast radius
+  and must rerun `REMOTE-004` and `MPV-023`.
+
+Prioritized hardening, separate from the config-only incident recovery:
+
+1. Expose the official dual internal/external LiveKit candidate fields through canonical config and
+   the compiler so local and public routes do not depend on a single advertised address.
+2. If TURN remains a product fallback, expose a bounded relay UDP range, map it through the router,
+   and require a selected relay pair in acceptance.
+3. Provide or document a trusted same-Wi-Fi route through router NAT loopback, split-horizon DNS plus
+   HTTPS, or a supported private mesh. Do not weaken the browser security boundary with plain LAN
+   HTTP.
 
 ## Directory Discovery Layer
 
@@ -517,8 +594,18 @@ LiveKit media is still separate:
   mesh/public address when the target browser network can reach it
 - the private mesh or public network path must still allow the LiveKit TCP/UDP media ports, or the
   TURN/TLS fallback, to reach this Mac
-- `public_https_edge` also advertises TURN/TLS so remote browsers have a standards-based TCP/TLS
-  fallback when direct UDP is not available
+- `public_https_edge` also advertises TURN/TLS, but a listening TLS port alone does not prove the
+  fallback works: LiveKit's configured TURN relay UDP range must also be reachable through the
+  router/firewall. Until that range is explicitly configured, forwarded, and tested, direct public
+  LiveKit TCP/UDP is the required path rather than an assumed fallback.
+- Off-LAN acceptance must prove a selected external ICE pair and delivered media/transcript. A
+  public call page returning `200`, a successful signaling WebSocket, or a TURN/TLS certificate
+  check is supporting evidence only.
+- The preferred dual-network LiveKit shape is `rtc.use_external_ip: true` with
+  `rtc.advertise_internal_ip: true`; behind a router without public-IP self-ping, also use
+  `rtc.skip_external_ip_validation: true`. The runtime generator does not yet expose those fields,
+  so the current config-only direct-public recovery uses an explicit public
+  `runtime.network.livekit_node_ip` and records same-Wi-Fi NAT-loopback limitations separately.
 - a single-IP zero-cost home deployment is still bounded by the operator's router, ISP, and egress
   policy; the strongest reliability comes from explicit custom domains plus forwarded LiveKit media
   and TURN ports
@@ -532,7 +619,9 @@ Private mesh access remains the easiest operator-owned answer for the operator's
 Remote-access acceptance lives in:
 
 - `qa/remote-access/README.md`
+- `qa/remote-access/cases.md`
 - `qa/remote-access/report.md`
+- `qa/modern-playground-voice/cases.md`
 
 Minimum acceptance expectations:
 
@@ -543,7 +632,12 @@ Minimum acceptance expectations:
 - at least one real voice-session QA proving the localhost path still works after remote access is
   enabled
 - external public fetch proof for the public app or playground surface when `public_https_edge` is
-  active
+  active, plus a selected off-LAN ICE pair, real worker join, delivered synthetic media/transcript,
+  and targeted state cleanup under `REMOTE-004` / `MPV-023`
+- a forced TURN mode that passes only when a relay pair is selected whenever TURN is claimed as a
+  fallback
+- same-Wi-Fi public-host access recorded independently from off-LAN acceptance so router hairpin or
+  split-DNS gaps cannot be hidden by either result
 - stable custom-domain validation when operator-controlled DNS is available
 - directory registration only accepts verified HTTPS origins with valid signatures
 - the directory redirect remains redirect-only, preserves query strings, and rejects unknown users

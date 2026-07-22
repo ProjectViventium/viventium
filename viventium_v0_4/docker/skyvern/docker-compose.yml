@@ -2,7 +2,7 @@
 # Purpose: Skyvern AI browser agent for advanced browser automation (85%+ success rate)
 # Source: Based on official Skyvern docker-compose.yml from https://github.com/Skyvern-AI/skyvern
 # Added: 2026-01-28
-# Documentation: docs/requirements_and_learnings/19_Browser_Agent_Skyvern.md
+# Documentation: docs/requirements_and_learnings/39_Installer_and_Config_Compiler.md
 #
 # Services:
 #   - postgres: Database for Skyvern task state
@@ -22,7 +22,7 @@
 
 services:
   postgres:
-    image: postgres:14-alpine
+    image: postgres@sha256:f1341c01408dc7278e9d365ed4f860cd3f87dd16b4464ac326fc0f422083a579
     container_name: viventium-skyvern-postgres
     restart: always
     volumes:
@@ -39,7 +39,7 @@ services:
       retries: 5
 
   skyvern:
-    image: public.ecr.aws/skyvern/skyvern:latest
+    image: public.ecr.aws/skyvern/skyvern@sha256:ad58d950f1c8cc3bc2d442228f701243b80b84494f11bbb066347ed034006e77
     container_name: viventium-skyvern
     restart: on-failure
     env_file:
@@ -72,7 +72,7 @@ services:
       retries: 5
 
   skyvern-ui:
-    image: public.ecr.aws/skyvern/skyvern-ui:latest
+    image: public.ecr.aws/skyvern/skyvern-ui@sha256:fe43d2b11476e5d24b98b40ff9d88a1bdb89888f4ab8103336205fb204d5ef07
     container_name: viventium-skyvern-ui
     restart: on-failure
     ports:

@@ -135,7 +135,12 @@ def refresh_ledger_after_reconcile(*, private_root: Path | None = None) -> dict[
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(ledger, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     path.chmod(0o600)
-    return {"status": "updated", "recordCount": len(records), "ledgerPath": str(path)}
+    return {
+        "status": "updated",
+        "recordCount": len(records),
+        "ledgerAvailable": True,
+        "ledgerName": path.name,
+    }
 
 
 def load_ledger(*, private_root: Path | None = None) -> dict[str, Any]:
@@ -208,14 +213,20 @@ def _agent_rows(*, source: dict[str, Any], live: dict[str, Any] | None, ledger: 
         )
     )
 
-    source_agents = {str(agent.get("id") or agent.get("agent_id")): agent for agent in source.get("agents") or []}
-    live_agents = {str(agent.get("id") or agent.get("agent_id")): agent for agent in (live or {}).get("agents") or []}
+    source_agents = {
+        str(agent.get("id") or agent.get("agent_id")): agent
+        for agent in _background_agents(source)
+    }
+    live_agents = {
+        str(agent.get("id") or agent.get("agent_id")): agent
+        for agent in _background_agents(live or {})
+    }
     for agent_id in sorted(set(source_agents) | set(live_agents)):
         if not agent_id or agent_id == "None":
             continue
         source_agent = source_agents.get(agent_id) or {}
         live_agent = live_agents.get(agent_id) or {}
-        prompt_id = _guess_source_prompt_id(source_agent)
+        prompt_id = _source_prompt_id_for_background_agent(agent_id, source_agent)
         rows.append(
             _row_for_agent(
                 agent_id=agent_id,
@@ -227,6 +238,23 @@ def _agent_rows(*, source: dict[str, Any], live: dict[str, Any] | None, ledger: 
                 records=records,
             )
         )
+    return rows
+
+
+def _background_agents(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the canonical source shape while retaining legacy artifact compatibility."""
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key in ("backgroundAgents", "agents"):
+        for candidate in bundle.get(key) or []:
+            if not isinstance(candidate, dict):
+                continue
+            agent_id = str(candidate.get("id") or candidate.get("agent_id") or "")
+            if not agent_id or agent_id in seen:
+                continue
+            seen.add(agent_id)
+            rows.append(candidate)
     return rows
 
 
@@ -263,20 +291,38 @@ def _row_for_agent(
     }
 
 
-def _guess_source_prompt_id(agent: dict[str, Any]) -> str | None:
+def _source_prompt_id_for_background_agent(
+    agent_id: str, agent: dict[str, Any]
+) -> str | None:
     from scripts.viventium.prompt_registry import load_prompt_registry, render_prompt
+
+    try:
+        registry = load_prompt_registry()
+    except Exception:
+        return None
+
+    target_candidates = {
+        f"backgroundAgents.{agent_id}.instructions",
+        f"agents.{agent_id}.instructions",
+    }
+    for prompt_id, entry in registry.items():
+        if str(entry.metadata.get("target") or "") in target_candidates:
+            return prompt_id
 
     instructions = agent.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         return None
     try:
-        registry = load_prompt_registry()
         normalized = instructions.strip()
         for prompt_id in sorted(registry):
-            if render_prompt(prompt_id, registry).strip() == normalized:
+            try:
+                rendered = render_prompt(prompt_id, registry).strip()
+            except Exception:
+                continue
+            if rendered == normalized:
                 return prompt_id
     except Exception:
-        return None
+        pass
     return None
 
 
@@ -287,7 +333,7 @@ def _live_text_from_latest_bundle(agent_id: str) -> str | None:
     main = live.get("mainAgent") or {}
     if str(main.get("id") or "") == agent_id:
         return str(main.get("instructions") or "")
-    for agent in live.get("agents") or []:
+    for agent in _background_agents(live):
         if str(agent.get("id") or agent.get("agent_id") or "") == agent_id:
             return str(agent.get("instructions") or "")
     return None
@@ -325,15 +371,22 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
 
-def _sanitize_output(text: str) -> str:
+def _redact_private_paths(text: str, private_paths: tuple[Path, ...] = ()) -> str:
+    values = {str(Path.home()), str(workbench_private_root())}
+    values.update(str(Path(path).expanduser().resolve(strict=False)) for path in private_paths)
+    for value in sorted((item for item in values if item), key=len, reverse=True):
+        text = text.replace(value, "<private>")
+    return text
+
+
+def _sanitize_output(text: str, *, private_paths: tuple[Path, ...] = ()) -> str:
     from scripts.viventium.prompt_registry import PRIVATE_PATTERN_RULES
 
     text = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "<email>", text, flags=re.I)
     text = re.sub(r'("userId"\s*:\s*")[0-9a-f]{12,32}(")', r'\1<user-id>\2', text, flags=re.I)
     for label, pattern in PRIVATE_PATTERN_RULES:
         text = pattern.sub(f"<{label}>", text)
-    text = text.replace(str(Path.home()), "~")
-    return text
+    return _redact_private_paths(text, private_paths)
 
 
 def _sanitize_json(value: Any) -> Any:
@@ -354,8 +407,10 @@ def _sanitize_json(value: Any) -> Any:
     return value
 
 
-def _safe_command(cmd: list[str]) -> list[str]:
-    return [item.replace(str(Path.home()), "~") for item in cmd]
+def _safe_command(
+    cmd: list[str], *, private_paths: tuple[Path, ...] = ()
+) -> list[str]:
+    return [_redact_private_paths(item, private_paths) for item in cmd]
 
 
 def _review_token(result: dict[str, Any]) -> str:

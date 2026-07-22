@@ -76,6 +76,12 @@ background-cortex behavior.
 - Listen-Only Mode must be a listening-only voice behavior that saves ambient transcript records without
   producing an assistant response.
 - Only one LiveKit worker may speak for a call session at a time.
+- Provider-bound function schemas must be unique by callable name. Request-scoped dynamic tool
+  binding must not feed the same schema back into its own event-driven merge; providers that reject
+  duplicate function names must receive the same unique tool set as providers that tolerate them.
+- A recoverable initialization failure in an optional handoff participant must remove that
+  participant and its incident graph edges before compilation. The healthy main agent must not fail
+  with an unknown-node graph error because an unrelated connected account needs reconnection.
 
 ## Public-Safe Specifications
 
@@ -83,8 +89,16 @@ background-cortex behavior.
 - The main agent provider/model is the default LLM for live voice calls.
 - The agent may optionally expose a dedicated Voice Call LLM via explicit `voice_llm_provider` and
   `voice_llm_model` fields.
+- A dedicated Voice Call LLM must pass the same prompt-owned recall/tool-ownership acceptance case
+  as the text route. Lower latency is not parity when explicit prior-conversation questions skip
+  healthy retrieval and produce an unsupported no-memory answer.
 - If the Voice Call LLM is unset, runtime must use the agent's primary provider/model exactly as
   selected in Agent Builder.
+- When a user changes the provider of an optional Voice Call or fallback route in Agent Builder,
+  the prior provider's parameter bag must be cleared before the new route is rendered or saved.
+  Initial form hydration, including a mounted panel's transient empty-to-persisted-provider reset,
+  must preserve the persisted route exactly. OpenAI-only settings such as `useResponsesApi` must
+  never survive a real switch from OpenAI to xAI or another provider.
 - A dedicated Voice Call LLM may inherit provider-neutral generation settings, but it must not
   inherit a provider-specific API transport from the primary route. In particular, an OpenAI
   primary's `useResponsesApi` selection must not silently switch an xAI Voice Call LLM from its
@@ -159,6 +173,14 @@ background-cortex behavior.
   enabled browser voice UI for voice-capable installs and launcher starts. The old/classic
   `agents-playground` UI is default-off and must not be cloned, installed, started, or pinned into
   the default runtime path unless the operator explicitly selects the classic playground variant.
+- Modern-playground setup and recovery must remain keyboard-operable at narrow or zoomed viewports,
+  must grow taller content downward rather than centering it above the viewport, and must remove
+  animation, transition, and smooth-scroll motion when the browser reports Reduce Motion.
+- Legacy launcher policy: `viventium_v0_4/viventium-start-all.sh` is a compatibility wrapper only.
+  It delegates to `viventium-librechat-start.sh` with the modern playground selected, translates
+  the old `--no-playground` flag, and fails closed on the obsolete dependency/build mutation flags.
+  It must not carry a second LiveKit image, runtime dependency installer, process cleanup strategy,
+  or playground implementation.
 
 ### Listen-Only Mode
 - Product name: **Listen-Only Mode**.
@@ -258,6 +280,10 @@ background-cortex behavior.
 - The Start Chat gesture must be single-flight. The first click owns connection, dispatch
   preparation, room join, and post-connect microphone enablement; the UI must disable duplicate
   start clicks and show startup/microphone progress instead of requiring a second click.
+- A user who opens the Modern Playground directly, without an authenticated Viventium call session
+  or an explicitly configured standalone agent, must see why the start action is unavailable and
+  how to recover. The page must say to open Voice from a Viventium conversation; a disabled button
+  without guidance is not an acceptable fail-closed state.
 - The microphone may be technically disabled during the pre-connect phase only to avoid LiveKit's
   pre-connect publish timeout. After the room is connected, Viventium must automatically publish the
   user's microphone as part of the same start gesture unless the browser denies microphone access.
@@ -299,16 +325,46 @@ background-cortex behavior.
   scaffolding, unknown angle tags, and stray spaces before punctuation. This cleanup must preserve
   leading whitespace needed for provider continuation and must not silently change the selected
   model or provider.
+- Email-address replacement must remain natural on both speech and linked-chat persistence paths:
+  an input such as `Email qa@example.com` becomes `Email address available`, never the adjacent
+  duplicate `Email email available`.
 - Provider voice controls are capability-scoped at the TTS boundary. Routes whose capability
   metadata declares inline voice-control support may keep known provider controls for synthesis;
   routes without that capability, including OpenAI/ElevenLabs plain TTS and fallbacks, must strip
   voice-control tags/stage directions before synthesis while preserving spoken inner text.
+- The provider/model classification is versioned in
+  `viventium_v0_4/shared/voice/tts_provider_capabilities.json`. Runtime capability APIs, prompt
+  builders, fallback sanitization, and tests must agree with it. A capable route names an exact
+  provider dialect contract or exact tokens; a markup-free route declares an empty token set and a
+  strip policy. Do not infer generic capabilities from a provider brand. This JSON contract is a
+  required shipped artifact: Telegram and the voice gateway must fail startup with an actionable
+  error if it is missing or invalid rather than silently producing an empty provider/model table.
+- OpenAI `gpt-4o-mini-tts` supports the Speech API `instructions` side channel, not documented
+  inline SSML/emotion tags. Both the LiveKit and Telegram renderers currently supply one shared,
+  stable, affect-neutral instruction, configurable through `VIVENTIUM_OPENAI_TTS_INSTRUCTIONS`;
+  dynamic per-turn Feelings-to-`instructions` rendering is an explicit open gap. `tts-1` and
+  `tts-1-hd` do not support that instructions field and must omit it. See the
+  official [OpenAI Text-to-Speech guide](https://developers.openai.com/api/docs/guides/text-to-speech)
+  and [Speech API reference](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create).
+- Viventium's current ElevenLabs route is pinned explicitly to `eleven_turbo_v2_5`, uses static
+  voice settings, and leaves SSML parsing disabled, so its model-facing text is markup-free.
+  Eleven v3 natural-language audio tags are model-specific and must not be taught to or preserved
+  for the v2.5 route. Dynamic per-turn use of an applicable ElevenLabs side channel is also an open
+  gap, not a reason to invent inline tags. See the official
+  [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert) and
+  [model-specific prompting guidance](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/best-practices).
 - Feeling-aware spoken expression is also capability-scoped. When the request contains the private
-  Feelings capsule, the model decides from the state and moment whether delivery should be
-  expressive or restrained. Expressive delivery on a capable route uses the smallest fitting
-  documented provider control without an explicit user request; restrained delivery may remain
-  unmarked, and plain TTS remains markup-free. Runtime must not translate bands, values, or user
-  phrases into tags.
+  Feelings capsule, the model decides from both the state's expression tendency and the moment
+  whether delivery should be expressive or restrained. A strongly outward state in an emotionally
+  meaningful or relational reply is expressive even when plain wording already carries tone; a
+  containing state or neutral mechanical task can be restrained. Once expressive delivery is
+  selected on a capable route, the raw response is unfinished until it uses the smallest fitting
+  exact documented provider control without an explicit user request. Restrained delivery may
+  remain unmarked, and plain TTS remains markup-free. Runtime must not translate bands, values, or
+  user phrases into tags or replace model judgment with a numeric threshold.
+- Feelings may shape delivery, but they do not own Viventium's stable voice traits. Honesty and
+  permission for natural profanity remain persona/voice-style truth and must not rise or fall with
+  a Feeling band.
 - The shared `surface.voice.feeling_expression` prompt owns that cross-surface rule. Voice-call and
   Telegram-audio prompts include it alongside exactly one resolved provider dialect. Prompt
   registry, compiled bundle, runtime fallback, and Prompt Workbench eval references must remain in
@@ -378,6 +434,9 @@ background-cortex behavior.
   `<emotion>`, `<speed>`, `<volume>`, `<break>`, and `<spell>` tags, plus the `[laughter]`
   nonverbal marker. Future Cartesia model/provider upgrades should add a new provider/model
   capability contract or update this one, then wire prompts/runtime from that contract.
+- Model-facing Cartesia syntax must also come from that contract. Capability forms use neutral
+  placeholders such as `EMOTION`, `RATIO`, `DURATION`, and `TEXT`; prompts reveal the valid values
+  and ranges for the selected Sonic-3 route without teaching one fixed calm/excited performance.
 - Runtime must validate provider-control config against the shared contract before making Cartesia
   requests. Out-of-range speed/volume should be clamped with a warning instead of causing a
   provider 4xx or silently diverging between Telegram and LiveKit.
@@ -425,6 +484,16 @@ background-cortex behavior.
   `[laughter]`, emotion, break, speed, volume, and spell counts; xAI fields include inline,
   wrapping, and total counts. Incidents must be able to distinguish generation omission from
   downstream loss without dumping private transcript text.
+- Telegram emits one always-on metadata-only `[VoiceRendering][telegram]` event per provider
+  attempt. It records the bounded provider/model, primary/fallback role, declared control capability,
+  whether compatible controls reached that provider, incompatible/stripped control counts, and the
+  unmarked/controlled result. It must never record prompt text, user text, or synthesized text.
+- LiveKit call synthesis emits the parallel always-on metadata-only
+  `[VoiceRendering][voice_gateway]` event for provider attempts, completed inputs, and selections.
+  It records provider/model, primary/fallback role, markup preserve/strip policy, and the structural
+  control outcome (`preserved`, `stripped`, `none`, or `pending`) without recording the response
+  text or credentials. This event is the provider/fallback audit surface; opt-in `[VoiceTTSInput]`
+  payload logging remains a separate incident-debug tool.
 - When a TTS provider does not support native incremental text input, runtime may adapt it to an
   incremental streaming surface, but native continuation/WebSocket APIs are the preferred contract
   for voice-first providers.
@@ -641,18 +710,16 @@ background-cortex behavior.
   must widen the structural runtime contract, not hardcode one reproduced sentence shape.
 
 ### xAI Standalone TTS Contract
-- xAI is a first-class TTS provider separate from the older Grok Voice Agent API adapter. The
-  user-facing provider label is **xAI**; engineering docs may still call the underlying API
-  "standalone xAI TTS" when the distinction from the legacy Voice Agent adapter matters.
+- xAI is a first-class TTS provider. The user-facing provider label is **xAI**; the only supported
+  synthesis route is standalone xAI TTS at `/v1/tts`.
 - Recommendation order for Speaking providers:
   - Local Chatterbox remains the preferred first choice when available because it is local and
     covered.
   - After Local Chatterbox, xAI Voice is the recommended hosted voice route for general use because
-    as of 2026-05-07 the official xAI TTS pricing page lists $4.20 per 1M TTS input characters
-    (`https://docs.x.ai/developers/models/text-to-speech`), materially below the effective public
-    Cartesia bundled-character cost from Cartesia's published pricing (`https://cartesia.ai/pricing`),
-    and local QA found it fast and high quality. Keep this as product guidance, not a runtime
-    default flip.
+    local QA found it fast and high quality. As of 2026-07-16, the official xAI TTS model page lists
+    $15 per 1M TTS input characters (`https://docs.x.ai/developers/models/text-to-speech`). Cartesia
+    now publishes credit/minute plan pricing (`https://cartesia.ai/pricing`), so do not preserve the
+    old character-price comparison. Keep this as product guidance, not a runtime default flip.
   - Cartesia remains the recommended expressive/Sonic-3 route when the use case specifically needs
     Cartesia emotion controls, `[laughter]`, or Sonic-3 SSML-like markup.
 - Default xAI voice calls use standalone TTS:
@@ -661,8 +728,14 @@ background-cortex behavior.
   - the LiveKit websocket includes `optimize_streaming_latency=1` by default; operators may set
     `VIVENTIUM_XAI_TTS_OPTIMIZE_STREAMING_LATENCY=0` to disable the query parameter for provider
     compatibility testing
-  - legacy Grok Voice Agent routing is allowed only when explicitly configured with
-    `VIVENTIUM_XAI_TTS_API=voice_agent`
+  - `VIVENTIUM_XAI_TTS_API` supports only `tts` for active synthesis. When an existing canonical
+    config still contains the formerly public `voice_agent` value, compilation preserves that file,
+    disables only Voice, emits `legacy_xai_voice_agent_route_retired`, and lets the core upgrade
+    continue. Status and doctor direct the user to Custom Settings Install; no substitute provider
+    is selected until the user explicitly chooses one.
+  - [xAI Voice Agent](https://docs.x.ai/developers/models/voice-agent-api) remains a separate
+    real-time conversational API; Viventium does not ship or select it as a text-to-speech
+    renderer, so the `/v1/realtime` adapter is absent from this route
 - Inter-word spacing into xAI is a TTS-input formatting requirement, not a sanitization concern:
   - `livekit-plugins-xai` streams synthesis text to `wss://api.x.ai/v1/tts` as per-word
     `text.delta` frames and the xAI server concatenates those frames verbatim. The plugin tokenizes
@@ -692,12 +765,17 @@ background-cortex behavior.
   - Cartesia routes may preserve Cartesia Sonic-3 SSML-like tags and `[laughter]`
   - xAI routes may preserve xAI speech tags but must strip Cartesia-only tags and Cartesia-only
     bracket aliases before xAI synthesis
+  - a complete paired square wrapper for a documented xAI wrapping control is canonicalized to
+    the official angle form before xAI synthesis so the model's explicit delivery choice survives;
+    this structural repair does not choose an emotion or control, and unpaired/unknown wrappers
+    remain stripped
   - OpenAI/ElevenLabs fallbacks strip all provider voice-control markup before synthesis
   - LiveKit call-history and displayed assistant text strip provider markup while preserving spoken
     inner text; Telegram's local raw generation record and sanitized outgoing bubble follow the
     separate contract in `03_Telegram_Bridge.md`
-  - display sanitizers must also strip malformed xAI wrapper remnants such as `[soft]...[/soft]`
-    and orphan closing tags like `[/soft]`; malformed provider markup is never user-facing text
+  - display sanitizers must strip canonical controls and malformed xAI wrapper remnants such as
+    `[soft]...[/soft]` and orphan closing tags like `[/soft]`; provider markup is never
+    user-facing text
 - Telegram voice-note and always-voice replies must use the same saved Speaking route as the modern
   playground for xAI TTS too. The resolved xAI route variant is the xAI `voice_id`, and Telegram
   must prefer `VIVENTIUM_XAI_TTS_API_KEY` over a generic `XAI_API_KEY` just like the LiveKit
@@ -715,8 +793,15 @@ background-cortex behavior.
   those origins must be explicitly allowed as Next dev origins instead of relying on implicit
   cross-origin tolerance.
 - Public-browser access also needs the non-HTTP media path:
-  - direct LiveKit TCP/UDP media where available
-  - TURN/TLS fallback when the public HTTPS edge is active
+  - a reachable direct LiveKit TCP/UDP candidate, or a TURN relay pair that is actually selected
+  - a listening TURN/TLS port or allocated relay candidate is not fallback proof unless the bounded
+    relay UDP range is reachable
+- Public acceptance must prove an off-LAN selected ICE pair, the real worker joining, and delivered
+  synthetic media/transcript. A loaded page, healthy settings API, certificate, or signaling
+  WebSocket is supporting evidence only.
+- Same-Wi-Fi access through the public hostname is a separate NAT-loopback/split-DNS result and must
+  not be inferred from off-LAN success.
+- `REMOTE-004` and `MPV-023` are the reusable escaped-regression gates for this path.
 - The stable public answer for arbitrary browsers is the public HTTPS edge with explicit custom
   domains; private mesh modes remain separate operator-owned access modes for enrolled devices.
 

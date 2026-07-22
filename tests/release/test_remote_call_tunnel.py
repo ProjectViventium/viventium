@@ -861,6 +861,7 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
         api_port=3180,
         playground_port=3300,
         livekit_port=7888,
+        glasshive_port=8780,
         livekit_tcp_port=7889,
         livekit_udp_port=7890,
         livekit_turn_tls_port=5349,
@@ -868,6 +869,7 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
         public_api_origin="",
         public_playground_origin="",
         public_livekit_url="",
+        public_glasshive_origin="",
         livekit_node_ip="",
         caddy_data_dir="",
         provider="public_https_edge",
@@ -892,6 +894,7 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
                 "api.203.0.113.42.sslip.io",
                 "playground.203.0.113.42.sslip.io",
                 "livekit.203.0.113.42.sslip.io",
+                "glasshive.203.0.113.42.sslip.io",
             ],
             4443,
             5,
@@ -901,6 +904,7 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert saved["public_api_url"] == "https://api.203.0.113.42.sslip.io"
     assert saved["public_playground_url"] == "https://playground.203.0.113.42.sslip.io"
     assert saved["public_livekit_url"] == "wss://livekit.203.0.113.42.sslip.io"
+    assert saved["public_glasshive_url"] == "https://glasshive.203.0.113.42.sslip.io"
     assert saved["livekit_node_ip"] == "192.168.50.10"
     assert saved["directory_instance_id"] == "instance-123"
     assert saved["directory_public_key_fingerprint"] == "sha256:test-fingerprint"
@@ -912,10 +916,44 @@ def test_cmd_start_public_https_edge_autogenerates_sslip_origins_and_media_mappi
     assert "handle /.well-known/viventium-instance.json" in written_configs[config_path]
     assert "instance-123" in written_configs[config_path]
     assert "PUBLIC-KEY" in written_configs[config_path]
+    assert "glasshive.203.0.113.42.sslip.io" in written_configs[config_path]
+    assert "reverse_proxy 127.0.0.1:8780" in written_configs[config_path]
     assert saved["livekit_turn_domain"] == "livekit.203.0.113.42.sslip.io"
     assert saved["livekit_turn_tls_port"] == 5349
     assert saved["livekit_turn_cert_file"] == "/tmp/livekit-turn.crt"
     assert saved["livekit_turn_key_file"] == "/tmp/livekit-turn.key"
+
+
+def test_public_https_edge_rebuilds_when_requested_glasshive_surface_is_missing() -> None:
+    module = load_module()
+    args = types.SimpleNamespace(
+        client_port=3190,
+        api_port=3180,
+        playground_port=3300,
+        livekit_port=7888,
+        glasshive_port=8780,
+        public_client_origin="https://app.example.test",
+        public_api_origin="https://api.app.example.test",
+        public_playground_origin="https://playground.app.example.test",
+        public_livekit_url="wss://livekit.app.example.test",
+        public_glasshive_origin="https://glasshive.app.example.test",
+    )
+    state = {
+        "provider": "public_https_edge",
+        "client": {"target": "http://localhost:3190", "public_url": "https://app.example.test"},
+        "api": {"target": "http://localhost:3180", "public_url": "https://api.app.example.test"},
+        "playground": {
+            "target": "http://localhost:3300",
+            "public_url": "https://playground.app.example.test",
+        },
+        "livekit": {
+            "target": "http://localhost:7888",
+            "public_url": "https://livekit.app.example.test",
+            "public_ws_url": "wss://livekit.app.example.test",
+        },
+    }
+
+    assert module.state_matches_requested_public_edge_surfaces(args, state) is False
 
 
 def test_cmd_start_public_https_edge_preserves_explicit_livekit_node_ip(monkeypatch, tmp_path: Path) -> None:
@@ -1059,6 +1097,22 @@ def test_render_caddyfile_can_serve_directory_instance_document() -> None:
     assert "handle /.well-known/viventium-instance.json" in caddyfile
     assert 'header Content-Type application/json' in caddyfile
     assert 'respond "{\\"app\\":\\"Viventium\\"}" 200' in caddyfile
+
+
+def test_render_caddyfile_redacts_opaque_glasshive_refs_from_runtime_errors() -> None:
+    module = load_module()
+
+    caddyfile = module.render_caddyfile(
+        admin_port=2019,
+        surfaces=[("glasshive.example.com", 8780)],
+        tls_internal=False,
+        http_port=4080,
+        https_port=4443,
+    )
+
+    assert "request>uri regexp" in caddyfile
+    assert "(?:r|v1/link-refs)" in caddyfile
+    assert "request>headers>Referer delete" in caddyfile
 
 
 def test_parse_args_uses_remote_tunnel_timeout_env(monkeypatch) -> None:

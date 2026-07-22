@@ -2,11 +2,14 @@
 
 ## Overview
 LibreChat injects citation markers into model output (e.g., `\ue202turn0search0`) so the web UI can
-render rich sources. Surfaces that do not run the LibreChat citation renderer (Telegram and
-agents-playground) must **strip** these markers to avoid user-visible noise.
+render rich sources. Surfaces that do not run the LibreChat citation renderer (Telegram and the
+voice playground UIs) must **strip** these markers to avoid user-visible noise.
 
 ## Core Requirements
-- Telegram and agents-playground must **never** show raw citation markers.
+- Telegram and the default Viventium Modern Playground (`agent-starter-react`) must **never** show
+  raw citation markers.
+- The classic `agents-playground`, when explicitly selected as the default-off fallback, must also
+  **never** show raw citation markers.
 - Sanitization must handle both literal escape sequences (`\ue202`) and actual Unicode characters
   (U+E202) emitted by different models.
 - Sanitization must also strip bare marker strings without a backslash (e.g., `ue202turn0search0`).
@@ -23,14 +26,14 @@ agents-playground) must **strip** these markers to avoid user-visible noise.
 - **Telegram TTS sanitization**:
   - `viventium_v0_4/telegram-viventium/TelegramVivBot/utils/tts.py`
   - Function: `prepare_tts_text(...)` (strips citations before speech)
-- **Agents playground sanitization**:
-  - `viventium_v0_4/agents-playground/src/utils/citations.ts`
-  - Function: `stripCitations(...)`
-  - Applied in `viventium_v0_4/agents-playground/src/components/chat/ChatMessage.tsx`
-- **Modern playground sanitization (agent-starter-react)**:
+- **Modern playground sanitization (`agent-starter-react`, default)**:
   - `viventium_v0_4/agent-starter-react/lib/citations.ts`
   - Function: `stripCitations(...)`
   - Applied in `viventium_v0_4/agent-starter-react/components/app/chat-transcript.tsx`
+- **Classic playground sanitization (`agents-playground`, explicit opt-in fallback)**:
+  - `viventium_v0_4/agents-playground/src/utils/citations.ts`
+  - Function: `stripCitations(...)`
+  - Applied in `viventium_v0_4/agents-playground/src/components/chat/ChatMessage.tsx`
 - **Voice gateway sanitization** (LiveKit voice + playground):
   - `viventium_v0_4/voice-gateway/sse.py`
   - Function: `sanitize_voice_text(...)`
@@ -44,7 +47,8 @@ agents-playground) must **strip** these markers to avoid user-visible noise.
 
 ## Use Cases
 - Telegram responses during background cortex follow-ups.
-- Agents-playground chat display (voice playground UI).
+- Viventium Modern Playground chat display (default browser voice UI).
+- Classic `agents-playground` chat display when the default-off fallback is explicitly selected.
 - Voice gateway TTS output (avoid speaking citations).
 - Telegram voice responses (avoid speaking citations).
 

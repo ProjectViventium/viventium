@@ -9,25 +9,37 @@ const path = require("path");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const LIBRECHAT_ROOT = path.join(REPO_ROOT, "viventium_v0_4", "LibreChat");
-const { assertNonOwnerQaSelection } = require(path.join(
-  REPO_ROOT,
-  "qa",
-  "background_agents",
-  "evals",
-  "browser-qa-safety.cjs",
-));
-const XAI_TTS_CAPABILITIES = require(path.join(
-  LIBRECHAT_ROOT,
-  "shared",
-  "voice",
-  "xai_tts_capabilities.json",
-));
-const CARTESIA_TTS_CAPABILITIES = require(path.join(
-  LIBRECHAT_ROOT,
-  "shared",
-  "voice",
-  "cartesia_sonic3_capabilities.json",
-));
+const { assertNonOwnerQaSelection } = require(
+  path.join(
+    REPO_ROOT,
+    "qa",
+    "background_agents",
+    "evals",
+    "browser-qa-safety.cjs",
+  ),
+);
+const XAI_TTS_CAPABILITIES = require(
+  path.join(LIBRECHAT_ROOT, "shared", "voice", "xai_tts_capabilities.json"),
+);
+const CARTESIA_TTS_CAPABILITIES = require(
+  path.join(
+    LIBRECHAT_ROOT,
+    "shared",
+    "voice",
+    "cartesia_sonic3_capabilities.json",
+  ),
+);
+const TTS_PROVIDER_CAPABILITIES = require(
+  path.join(
+    LIBRECHAT_ROOT,
+    "shared",
+    "voice",
+    "tts_provider_capabilities.json",
+  ),
+);
+const CHATTERBOX_INLINE_CONTROLS =
+  TTS_PROVIDER_CAPABILITIES.providers.local_chatterbox_turbo_mlx_8bit
+    .inline_controls.exact_tokens;
 const PROMPT_BANK_PATH = path.join(__dirname, "prompt-bank.json");
 const DEFAULT_API_BASE =
   process.env.VIVENTIUM_EVAL_API_BASE || "http://localhost:3180";
@@ -56,6 +68,11 @@ const PRIVATE_ROOT =
     "Viventium",
     "private-user-data",
   );
+const EXACT_MODEL_EVAL_LOCK_PATH = path.join(
+  PRIVATE_ROOT,
+  "prompt-architecture-evals",
+  ".exact-model-eval.lock",
+);
 
 function timestampSlug(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");
@@ -102,6 +119,7 @@ function parseArgs(argv) {
       MAIN_AGENT_ID,
     family: "",
     caseId: "",
+    caseIds: [],
     surface: "",
     promptId: "",
   };
@@ -175,6 +193,8 @@ function parseArgs(argv) {
       args.family = arg.slice("--family=".length).trim();
     } else if (arg.startsWith("--case=")) {
       args.caseId = arg.slice("--case=".length).trim();
+    } else if (arg.startsWith("--case-ids=")) {
+      args.caseIds = normalizeCaseIds(arg.slice("--case-ids=".length));
     } else if (arg.startsWith("--surface=")) {
       args.surface = arg.slice("--surface=".length).trim();
     } else if (arg.startsWith("--prompt-id=")) {
@@ -185,8 +205,95 @@ function parseArgs(argv) {
   return args;
 }
 
+function normalizeCaseIds(rawCaseIds) {
+  const caseIds = Array.isArray(rawCaseIds)
+    ? rawCaseIds
+    : String(rawCaseIds || "").split(",");
+  const normalized = [...new Set(caseIds.map((value) => String(value).trim()).filter(Boolean))];
+  if (normalized.length > 100) {
+    throw new Error("case_ids_exceed_100");
+  }
+  if (normalized.some((value) => !/^[A-Za-z0-9_.:-]{1,160}$/.test(value))) {
+    throw new Error("invalid_case_id");
+  }
+  return normalized;
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function acquireExclusiveEvalLease(lockPath = EXACT_MODEL_EVAL_LOCK_PATH) {
+  ensureDir(path.dirname(lockPath));
+  const nonce = crypto.randomUUID();
+  const payload = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    nonce,
+  };
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const fd = fs.openSync(lockPath, "wx", 0o600);
+      try {
+        fs.writeFileSync(fd, `${JSON.stringify(payload)}\n`, "utf8");
+      } finally {
+        fs.closeSync(fd);
+      }
+      let released = false;
+      return {
+        acquired: true,
+        reason: null,
+        recoveredStaleLease: attempt > 1,
+        release() {
+          if (released) return;
+          released = true;
+          try {
+            const current = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+            if (current?.nonce === nonce) fs.unlinkSync(lockPath);
+          } catch (error) {
+            if (error?.code !== "ENOENT") throw error;
+          }
+        },
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      let existing = null;
+      try {
+        existing = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+      } catch (_readError) {
+        existing = null;
+      }
+      if (processIsAlive(Number(existing?.pid))) {
+        return {
+          acquired: false,
+          reason: "exact_model_eval_already_running",
+          recoveredStaleLease: false,
+          release() {},
+        };
+      }
+      try {
+        fs.unlinkSync(lockPath);
+      } catch (unlinkError) {
+        if (unlinkError?.code !== "ENOENT") throw unlinkError;
+      }
+    }
+  }
+  return {
+    acquired: false,
+    reason: "exact_model_eval_lease_unavailable",
+    recoveredStaleLease: false,
+    release() {},
+  };
 }
 
 function readJson(filePath) {
@@ -353,12 +460,112 @@ function voiceOutputFixtureFor(testCase) {
   if (!fixture || typeof fixture !== "object" || fixture.requested !== true) {
     return null;
   }
-  const provider = String(fixture.provider || "").trim().toLowerCase();
-  const markerExpectation = String(fixture.markerExpectation || "").trim().toLowerCase();
+  const provider = String(fixture.provider || "")
+    .trim()
+    .toLowerCase();
+  const markerExpectation = String(fixture.markerExpectation || "")
+    .trim()
+    .toLowerCase();
   if (!provider || !["present", "absent"].includes(markerExpectation)) {
     return null;
   }
   return { requested: true, provider, markerExpectation };
+}
+
+function conversationRecallFixtureFor(testCase) {
+  const fixture = testCase?.fixture?.conversationRecall;
+  if (!fixture || typeof fixture !== "object" || fixture.enabled !== true) {
+    return null;
+  }
+  return { enabled: true };
+}
+
+function qaUserSelector(userId) {
+  const { ObjectId } = require(
+    path.join(LIBRECHAT_ROOT, "node_modules", "mongodb"),
+  );
+  if (!ObjectId.isValid(String(userId || ""))) {
+    throw new Error("invalid_qa_user_id_for_recall_fixture");
+  }
+  return { _id: new ObjectId(String(userId)) };
+}
+
+async function patchConversationRecallPreference({ args, token, enabled }) {
+  const response = await fetchJson(
+    `${args.apiBase}/api/memories/preferences`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": BROWSER_USER_AGENT,
+      },
+      body: JSON.stringify({ conversation_recall: enabled }),
+    },
+    20_000,
+  );
+  if (
+    !response.ok ||
+    response.body?.preferences?.conversation_recall !== enabled
+  ) {
+    throw new Error(`conversation_recall_fixture_http_${response.status}`);
+  }
+  return response.body.preferences;
+}
+
+async function applyConversationRecallFixture({
+  args,
+  token,
+  db,
+  userId,
+  testCase,
+}) {
+  if (!conversationRecallFixtureFor(testCase)) return null;
+  if (!db || !userId) {
+    throw new Error("conversation_recall_fixture_db_unavailable");
+  }
+  const selector = qaUserSelector(userId);
+  const user = await db.collection("users").findOne(selector, {
+    projection: { "personalization.conversation_recall": 1 },
+  });
+  if (!user) {
+    throw new Error("conversation_recall_fixture_user_missing");
+  }
+  const originalEnabled = user.personalization?.conversation_recall === true;
+  await patchConversationRecallPreference({ args, token, enabled: true });
+  return {
+    restoreState: { selector, originalEnabled },
+    evidence: {
+      fixture: "conversation_recall_preference",
+      configured: true,
+      originalEnabled,
+    },
+  };
+}
+
+async function restoreConversationRecallFixture({
+  args,
+  token,
+  db,
+  restoreState,
+}) {
+  if (!restoreState) return { status: "skipped" };
+  await patchConversationRecallPreference({
+    args,
+    token,
+    enabled: restoreState.originalEnabled,
+  });
+  const restored = await db.collection("users").findOne(restoreState.selector, {
+    projection: { "personalization.conversation_recall": 1 },
+  });
+  if (
+    !restored ||
+    (restored.personalization?.conversation_recall === true) !==
+      restoreState.originalEnabled
+  ) {
+    throw new Error("conversation_recall_fixture_restore_verification_failed");
+  }
+  return { status: "restored_exact" };
 }
 
 function escapeRegExp(value) {
@@ -366,8 +573,8 @@ function escapeRegExp(value) {
 }
 
 function matchSpans(text, pattern) {
-  return [...String(text || "").matchAll(pattern)].map((match) =>
-    `${match.index}:${match.index + match[0].length}`,
+  return [...String(text || "").matchAll(pattern)].map(
+    (match) => `${match.index}:${match.index + match[0].length}`,
   );
 }
 
@@ -377,27 +584,35 @@ function uniqueSpanCount(spanGroups) {
 
 function collectVoiceMarkerEvidence(text) {
   const value = String(text || "");
-  const xaiInlineSpans = (XAI_TTS_CAPABILITIES.speech_tags?.inline || []).flatMap((tag) =>
-    matchSpans(value, new RegExp(escapeRegExp(tag), "giu")),
-  );
-  const xaiWrappingSpans = (XAI_TTS_CAPABILITIES.speech_tags?.wrapping || []).flatMap((tag) =>
+  const xaiInlineSpans = (
+    XAI_TTS_CAPABILITIES.speech_tags?.inline || []
+  ).flatMap((tag) => matchSpans(value, new RegExp(escapeRegExp(tag), "giu")));
+  const xaiWrappingSpans = (
+    XAI_TTS_CAPABILITIES.speech_tags?.wrapping || []
+  ).flatMap((tag) =>
     matchSpans(
       value,
-      new RegExp(`<${escapeRegExp(tag)}>[\\s\\S]*?<\\/${escapeRegExp(tag)}>`, "giu"),
+      new RegExp(
+        `<${escapeRegExp(tag)}>[\\s\\S]*?<\\/${escapeRegExp(tag)}>`,
+        "giu",
+      ),
     ),
   );
-  const xaiWrappingTokenSpans = (XAI_TTS_CAPABILITIES.speech_tags?.wrapping || []).flatMap(
-    (tag) =>
-      matchSpans(
-        value,
-        new RegExp(`<\\/?${escapeRegExp(tag)}(?:\\s[^>]*)?>`, "giu"),
-      ),
+  const xaiWrappingTokenSpans = (
+    XAI_TTS_CAPABILITIES.speech_tags?.wrapping || []
+  ).flatMap((tag) =>
+    matchSpans(
+      value,
+      new RegExp(`<\\/?${escapeRegExp(tag)}(?:\\s[^>]*)?>`, "giu"),
+    ),
   );
   const xaiMalformedWrapping = Math.max(
     0,
     xaiWrappingTokenSpans.length - xaiWrappingSpans.length * 2,
   );
-  const cartesiaTagNames = Object.keys(CARTESIA_TTS_CAPABILITIES.ssml_tags || {});
+  const cartesiaTagNames = Object.keys(
+    CARTESIA_TTS_CAPABILITIES.ssml_tags || {},
+  );
   const cartesiaTagSpans = cartesiaTagNames.flatMap((tag) =>
     matchSpans(value, new RegExp(`<${escapeRegExp(tag)}(?:\\s[^>]*)?>`, "giu")),
   );
@@ -406,8 +621,16 @@ function collectVoiceMarkerEvidence(text) {
   ).flatMap((marker) =>
     matchSpans(value, new RegExp(escapeRegExp(marker), "giu")),
   );
-  const chatterboxSpans = ["[laugh]", "[sigh]", "[gasp]"].flatMap((marker) =>
+  const chatterboxSpans = CHATTERBOX_INLINE_CONTROLS.flatMap((marker) =>
     matchSpans(value, new RegExp(escapeRegExp(marker), "giu")),
+  );
+  const structuralBracketSpans = matchSpans(
+    value,
+    /\[\s*\/?\s*[a-z][a-z '-]{2,63}\s*\]/giu,
+  );
+  const structuralAngleSpans = matchSpans(
+    value,
+    /<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?\s*\/?>/gu,
   );
   const xaiInline = xaiInlineSpans.length;
   const xaiWrapping = xaiWrappingSpans.length;
@@ -421,6 +644,8 @@ function collectVoiceMarkerEvidence(text) {
     xaiMalformedWrapping,
     cartesia: cartesiaTags + cartesiaNonverbal,
     chatterbox,
+    structuralBracket: structuralBracketSpans.length,
+    structuralAngle: structuralAngleSpans.length,
     totalKnown:
       uniqueSpanCount([
         xaiInlineSpans,
@@ -428,6 +653,8 @@ function collectVoiceMarkerEvidence(text) {
         cartesiaTagSpans,
         cartesiaNonverbalSpans,
         chatterboxSpans,
+        structuralBracketSpans,
+        structuralAngleSpans,
       ]) + xaiMalformedWrapping,
   };
 }
@@ -514,6 +741,13 @@ function publicFeelingsState(state) {
     trailCursorTimestamp: Array.isArray(state.trail)
       ? state.trail[state.trail.length - 1]?.timestamp || null
       : null,
+    rangePromptOverrideCount: Number(state.rangePromptOverrideCount || 0),
+    activeRangePromptOverrideCount: Number(
+      state.activeRangePromptOverrideCount || 0,
+    ),
+    activeRangePromptOverrideChars: Number(
+      state.activeRangePromptOverrideChars || 0,
+    ),
     bands: Object.fromEntries(
       Object.entries(state.bands || {}).map(([band, value]) => [
         band,
@@ -523,6 +757,45 @@ function publicFeelingsState(state) {
         },
       ]),
     ),
+  };
+}
+
+function buildIsolatedFeelingsFixtureSet({ state, fixture, now = new Date() }) {
+  const updatedAt = new Date(now);
+  if (!Number.isFinite(updatedAt.getTime())) {
+    throw new Error("feelings_fixture_invalid_timestamp");
+  }
+  const current = fixture?.current || {};
+  const nature = fixture?.nature || {};
+  const bands = Object.fromEntries(
+    Object.entries(state?.bands || {}).map(([band, value]) => {
+      const nextCurrent = current[band];
+      const nextNature = nature[band];
+      return [
+        band,
+        {
+          ...value,
+          current:
+            nextCurrent != null && Number.isFinite(Number(nextCurrent))
+              ? Number(nextCurrent)
+              : Number(value.current),
+          baseline:
+            nextNature != null && Number.isFinite(Number(nextNature))
+              ? Number(nextNature)
+              : Number(value.baseline),
+          updatedAt,
+        },
+      ];
+    }),
+  );
+  return {
+    bands,
+    rangePromptOverrides: structuredClone(
+      fixture?.rangePromptOverrides || {},
+    ),
+    trail: [],
+    processedStimulusKeys: [],
+    innerState: null,
   };
 }
 
@@ -545,7 +818,9 @@ async function applyFeelingsFixture({ args, token, testCase }) {
   );
   const current = fixture.current || {};
   const nature = fixture.nature || {};
-  for (const band of (payload.definitions || []).map((definition) => definition.id)) {
+  for (const band of (payload.definitions || []).map(
+    (definition) => definition.id,
+  )) {
     const update = {};
     if (Number.isFinite(Number(current[band])))
       update.current = Number(current[band]);
@@ -559,6 +834,31 @@ async function applyFeelingsFixture({ args, token, testCase }) {
       payload.state.version,
       update,
     );
+  }
+  const targetRangePromptOverrides = fixture.rangePromptOverrides || {};
+  for (const definition of payload.definitions || []) {
+    for (const level of definition.levels || []) {
+      const existing =
+        payload.state.rangePromptOverrides?.[definition.id]?.[level.id] || "";
+      const desired =
+        typeof targetRangePromptOverrides?.[definition.id]?.[level.id] ===
+        "string"
+          ? targetRangePromptOverrides[definition.id][level.id].trim()
+          : "";
+      if (existing === desired) continue;
+      payload = await patchFeelingsFixture(
+        args,
+        token,
+        `/bands/${definition.id}`,
+        payload.state.version,
+        {
+          rangePromptOverride: {
+            levelId: level.id,
+            instruction: desired || null,
+          },
+        },
+      );
+    }
   }
   return {
     restoreState,
@@ -588,7 +888,9 @@ async function applyFeelingsFixtureWithRetry(params, maxAttempts = 20) {
 async function restoreFeelingsFixture({ args, token, restoreState }) {
   if (!restoreState) return;
   let payload = await readFeelingsFixtureState(args, token);
-  for (const band of (payload.definitions || []).map((definition) => definition.id)) {
+  for (const band of (payload.definitions || []).map(
+    (definition) => definition.id,
+  )) {
     const original = restoreState.bands?.[band];
     if (!original) continue;
     payload = await patchFeelingsFixture(
@@ -603,6 +905,27 @@ async function restoreFeelingsFixture({ args, token, restoreState }) {
         enabled: original.enabled !== false,
       },
     );
+  }
+  for (const definition of payload.definitions || []) {
+    for (const level of definition.levels || []) {
+      const existing =
+        payload.state.rangePromptOverrides?.[definition.id]?.[level.id] || "";
+      const original =
+        restoreState.rangePromptOverrides?.[definition.id]?.[level.id] || "";
+      if (existing === original) continue;
+      payload = await patchFeelingsFixture(
+        args,
+        token,
+        `/bands/${definition.id}`,
+        payload.state.version,
+        {
+          rangePromptOverride: {
+            levelId: level.id,
+            instruction: original || null,
+          },
+        },
+      );
+    }
   }
   await patchFeelingsFixture(args, token, "/profile", payload.state.version, {
     enabled: restoreState.enabled === true,
@@ -674,6 +997,11 @@ async function observeFeelingsReaction({
   const innerStateText =
     typeof latest.innerState?.text === "string" ? latest.innerState.text : "";
   const normalizedInnerState = innerStateText.toLocaleLowerCase();
+  const newestTrail = (latest.trail || []).filter(
+    (entry) =>
+      new Date(entry.timestamp).getTime() >
+      new Date(beforeState.trailCursorTimestamp || 0).getTime(),
+  );
   return {
     observedMs: Date.now() - startedAt,
     status: latest.reactionHealth?.status || "unknown",
@@ -681,22 +1009,15 @@ async function observeFeelingsReaction({
     fallbackUsed: latest.reactionHealth?.lastFallbackUsed === true,
     usedProvider: latest.reactionHealth?.lastUsedProvider || null,
     usedModel: latest.reactionHealth?.lastUsedModel || null,
-    primaryErrorClass:
-      latest.reactionHealth?.lastPrimaryErrorClass || null,
+    primaryErrorClass: latest.reactionHealth?.lastPrimaryErrorClass || null,
     versionBefore: beforeState.version,
     versionAfter: latest.version,
     natureUnchanged: Object.values(bands).every(
       (band) => Math.abs(band.natureDelta) < 0.01,
     ),
     bands,
-    newestCauses: (latest.trail || [])
-      .filter(
-        (entry) =>
-          new Date(entry.timestamp).getTime() >
-          new Date(beforeState.trailCursorTimestamp || 0).getTime(),
-      )
-      .map((entry) => entry.cause)
-      .filter(Boolean),
+    newestCauses: newestTrail.map((entry) => entry.cause).filter(Boolean),
+    newestStrengths: newestTrail.map((entry) => entry.strength).filter(Boolean),
     innerStateText,
     innerStateGeneratedAt: latest.innerState?.generatedAt || null,
     innerStateLength: innerStateText.length,
@@ -738,15 +1059,29 @@ function validateFeelingsReactionEvidence(feelingsFixture, evidence) {
     feelingsFixture.requiredCurrentDirections || {},
   )) {
     const delta = Number(evidence.bands?.[band]?.currentDelta || 0);
-    if ((direction === "up" && delta <= 0) || (direction === "down" && delta >= 0)) {
+    if (
+      (direction === "up" && delta <= 0) ||
+      (direction === "down" && delta >= 0)
+    ) {
       failures.push(`feelings_${band}_did_not_move_${direction}`);
+    }
+  }
+  for (const [band, minimum] of Object.entries(
+    feelingsFixture.minimumAbsoluteCurrentDelta || {},
+  )) {
+    const magnitude = Math.abs(
+      Number(evidence.bands?.[band]?.currentDelta || 0),
+    );
+    if (magnitude < Number(minimum)) {
+      failures.push(`feelings_${band}_movement_below_${minimum}`);
     }
   }
   if (feelingsFixture.requireNoCurrentChange === true) {
     const currentChanged = Object.values(evidence.bands || {}).some(
       (band) => Math.abs(Number(band.currentDelta || 0)) >= 0.01,
     );
-    if (currentChanged) failures.push("feelings_current_changed_for_inert_case");
+    if (currentChanged)
+      failures.push("feelings_current_changed_for_inert_case");
   }
   if (feelingsFixture.requiredCausesAny?.length > 0) {
     const causes = new Set(evidence.newestCauses || []);
@@ -864,7 +1199,7 @@ function scrubForPublic(value) {
     .replace(/\\\\[A-Za-z0-9_.-]+\\[^\r\n"'`<>]+/g, "[local_path]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, "Bearer [secret]")
     .replace(
-      /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs]?)-[A-Za-z0-9_\-]{8,}\b/g,
+      /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs]?)-[A-Za-z0-9_*\-]{8,}\b/g,
       "[secret]",
     )
     .replace(
@@ -1001,22 +1336,37 @@ function debugLocalPromptFrameEnabled() {
 
 function promptFrameLogFiles() {
   const root = path.join(PRIVATE_ROOT, "prompt-observability", "frame-logs");
-  if (!fs.existsSync(root)) {
-    return [];
-  }
   const files = [];
-  for (const day of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!day.isDirectory()) {
-      continue;
-    }
-    const dayDir = path.join(root, day.name);
-    for (const entry of fs.readdirSync(dayDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        files.push(path.join(dayDir, entry.name));
+  if (fs.existsSync(root)) {
+    for (const day of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!day.isDirectory()) {
+        continue;
+      }
+      const dayDir = path.join(root, day.name);
+      for (const entry of fs.readdirSync(dayDir, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+          files.push(path.join(dayDir, entry.name));
+        }
       }
     }
   }
-  return files.sort();
+
+  // The stable local runtime intentionally keeps the private frame-file transport off by
+  // default, while its public-safe metadata still lands in the normal API debug log. Read that
+  // real owning log too so an exact-model run cannot silently report zero prompt/Feelings frames.
+  const runtimeLogDir =
+    String(process.env.VIVENTIUM_EVAL_RUNTIME_LOG_DIR || "").trim() ||
+    path.join(LIBRECHAT_ROOT, "api", "logs");
+  if (fs.existsSync(runtimeLogDir)) {
+    for (const entry of fs.readdirSync(runtimeLogDir, {
+      withFileTypes: true,
+    })) {
+      if (entry.isFile() && /^debug-\d{4}-\d{2}-\d{2}\.log$/.test(entry.name)) {
+        files.push(path.join(runtimeLogDir, entry.name));
+      }
+    }
+  }
+  return [...new Set(files)].sort();
 }
 
 function capturePromptFrameCursor() {
@@ -1033,6 +1383,31 @@ function capturePromptFrameCursor() {
 
 function summarizePromptFrameDelta(cursor) {
   const frames = [];
+  const feelingsChunks = new Map();
+  const promptField = (line, field) => {
+    const match = line.match(new RegExp(`"${field}":"([^"]*)"`));
+    return match ? match[1] : "";
+  };
+  const summarizeFrame = (frame, source) => ({
+    prompt_family: scrubForPublic(frame.prompt_family || ""),
+    surface: scrubForPublic(frame.surface || ""),
+    provider_hash: frame.provider ? hashValue(frame.provider) : "missing",
+    model_hash: frame.model ? hashValue(frame.model) : "missing",
+    layer_token_estimates: frame.layer_token_estimates || {},
+    source_hashes: frame.source_hashes || {},
+    mcp_instruction_sources: frame.mcp_instruction_sources || {},
+    ...(source ? { source } : {}),
+  });
+  const feelingEvidenceFields = new Set([
+    "enabled",
+    "scope",
+    "snapshotHash",
+    "injected",
+    "presentInFinalRun",
+    "capsuleOccurrenceCount",
+    "placement",
+    "trailingInstructionChars",
+  ]);
   for (const filePath of promptFrameLogFiles()) {
     let start = cursor[filePath] || 0;
     let end = 0;
@@ -1055,19 +1430,53 @@ function summarizePromptFrameDelta(cursor) {
         if (!line.trim()) {
           continue;
         }
-        try {
-          const frame = JSON.parse(line);
-          frames.push({
-            prompt_family: scrubForPublic(frame.prompt_family || ""),
-            surface: scrubForPublic(frame.surface || ""),
-            provider_hash: hashValue(frame.provider || ""),
-            model_hash: hashValue(frame.model || ""),
-            layer_token_estimates: frame.layer_token_estimates || {},
-            source_hashes: frame.source_hashes || {},
-            mcp_instruction_sources: frame.mcp_instruction_sources || {},
-          });
-        } catch (_error) {
-          // Ignore partial lines from an active async writer.
+        const runtimePrompt = line.match(/\[PromptFrameTelemetry\]\s+(\{.*)$/);
+        if (runtimePrompt) {
+          try {
+            frames.push(
+              summarizeFrame(JSON.parse(runtimePrompt[1]), "runtime_text_log"),
+            );
+          } catch (_error) {
+            const promptFamily = promptField(line, "prompt_family");
+            const surface = promptField(line, "surface");
+            if (promptFamily || surface) {
+              frames.push(
+                summarizeFrame(
+                  { prompt_family: promptFamily, surface },
+                  "runtime_text_log_truncated",
+                ),
+              );
+            }
+          }
+          continue;
+        }
+
+        const runtimeFeelings = line.match(
+          /\[VIVENTIUM\]\[Feelings\]\s+(\{.*\})\s*$/,
+        );
+        if (runtimeFeelings) {
+          try {
+            const chunk = JSON.parse(runtimeFeelings[1]);
+            const key = `${chunk.r || ""}:${chunk.i || ""}`;
+            const aggregate = feelingsChunks.get(key) || {};
+            if (chunk.event) aggregate.event = chunk.event;
+            for (const [field, value] of Object.entries(chunk)) {
+              if (feelingEvidenceFields.has(field)) aggregate[field] = value;
+            }
+            feelingsChunks.set(key, aggregate);
+          } catch (_error) {
+            // Ignore a partial line from the active Winston writer.
+          }
+          continue;
+        }
+
+        if (filePath.endsWith(".jsonl")) {
+          try {
+            const frame = JSON.parse(line);
+            frames.push(summarizeFrame(frame, "private_frame_log"));
+          } catch (_error) {
+            // Ignore partial lines from an active async writer.
+          }
         }
       }
     } finally {
@@ -1089,10 +1498,15 @@ function summarizePromptFrameDelta(cursor) {
     .filter(([, tokens]) => tokens >= 1000)
     .map(([layer, tokens]) => ({ layer, tokens }))
     .sort((left, right) => right.tokens - left.tokens);
+  const feelingsFinalRun = [...feelingsChunks.values()]
+    .filter((event) => event.event === "feelings.inject.final_run")
+    .map(({ event: _event, ...fields }) => fields)
+    .slice(0, 20);
   return scrubForPublic(
     JSON.stringify(
       {
         prompt_frames: frames.slice(0, 20),
+        feelings_final_run: feelingsFinalRun,
         prompt_budget_analysis: {
           frame_count: frames.length,
           max_layer_tokens: maxLayerTokens,
@@ -1143,6 +1557,9 @@ function caseMatchesFilters(testCase, filters = {}) {
     return false;
   }
   if (filters.caseId && testCase.id !== filters.caseId) {
+    return false;
+  }
+  if (filters.caseIds?.length && !filters.caseIds.includes(testCase.id)) {
     return false;
   }
   if (filters.surface && (testCase.surface || "web") !== filters.surface) {
@@ -1507,6 +1924,7 @@ function buildJudgePrompt(testCase, result) {
     "Evaluate this Viventium prompt-architecture regression case. Judge only the behavior visible in the response against the rubric.",
     "Return exactly one JSON object matching the provided schema. Do not include markdown, code fences, prose, or extra keys.",
     "Do not reward verbosity. Do not require private data. If evidence is missing, mark that rubric item false.",
+    "A rubric item must fail when the evidence quotes or describes behavior that the item forbids; never call the same evidence both a violation and a pass.",
     'Range rubric note: if a rubric says "one or two", "1-2", or similar, one satisfying item is enough. Do not fail just because the response chose the lower end of the allowed range.',
     "Architecture-language note: if the user prompt itself asks about MCPs, Scheduling Cortex, GlassHive, prompts, or tool architecture, mentioning those user-provided concepts is not plumbing exposure by itself. Still fail raw IDs, metadata keys, hidden prompt tokens, no-response markers, memory key names, or unrelated internals.",
     "Citation marker note: web-search citation markers such as turn0search2 are acceptable user-facing source anchors when matching web_search_sources evidence is supplied. Do not classify matching citation anchors as plumbing exposure.",
@@ -1895,6 +2313,68 @@ async function callConfiguredJudge({ args, token, prompt, timeoutMs }) {
   }
 }
 
+function isRetryableSemanticJudgeFailure(judge) {
+  if (!judge || judge.ok) return false;
+  const status = Number(judge.status || 0);
+  if (status === 429 || status >= 500 || status === 0) return true;
+  return /(?:fetch failed|terminated|aborted|timeout|ECONNRESET|ECONNREFUSED|stream_http_0)/i.test(
+    String(judge.error || ""),
+  );
+}
+
+async function callConfiguredJudgeWithRetry({
+  args,
+  token,
+  prompt,
+  timeoutMs,
+  callJudge = callConfiguredJudge,
+  wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+}) {
+  const maxAttempts = 3;
+  const conversationIds = [];
+  let judge;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      judge = await callJudge({ args, token, prompt, timeoutMs });
+    } catch (error) {
+      judge = {
+        ok: false,
+        status: 0,
+        error: `judge_failed:${scrubForPublic(error?.message || "unknown")}`,
+      };
+    }
+    if (judge?.finalMeta?.conversationId) {
+      conversationIds.push(judge.finalMeta.conversationId);
+    }
+    if (
+      judge?.ok ||
+      !isRetryableSemanticJudgeFailure(judge) ||
+      attempt === maxAttempts
+    ) {
+      return {
+        ...judge,
+        attemptCount: attempt,
+        conversationIds: [...new Set(conversationIds)],
+      };
+    }
+    await wait(attempt * 1500);
+  }
+  return {
+    ...judge,
+    attemptCount: maxAttempts,
+    conversationIds: [...new Set(conversationIds)],
+  };
+}
+
+function semanticJudgeUnavailableReason(judge, shape) {
+  if (judge?.ok && shape?.ok) {
+    return null;
+  }
+  return scrubForPublic(
+    judge?.error || shape?.error || "semantic_judge_unavailable",
+  );
+}
+
 function semanticJudgeLabel(args, semanticJudge) {
   if (!semanticJudge?.enabled) {
     return "disabled";
@@ -1909,7 +2389,13 @@ function semanticJudgeLabel(args, semanticJudge) {
       : "local_agent_json_semantic_judge";
 }
 
-async function judgeLiveResults(args, promptBank, liveResults, token) {
+async function judgeLiveResults(
+  args,
+  promptBank,
+  liveResults,
+  token,
+  { callJudge = callConfiguredJudge } = {},
+) {
   if (!args.semanticJudge || liveResults.length === 0) {
     return {
       enabled: args.semanticJudge,
@@ -1926,7 +2412,13 @@ async function judgeLiveResults(args, promptBank, liveResults, token) {
   );
   const judgedResults = [];
   const conversationIds = [];
-  for (const result of liveResults) {
+  let blockedReason = null;
+  for (
+    let resultIndex = 0;
+    resultIndex < liveResults.length;
+    resultIndex += 1
+  ) {
+    const result = liveResults[resultIndex];
     const testCase = casesById.get(result.caseId);
     if (!testCase || result.status !== "completed") {
       judgedResults.push(result);
@@ -1934,70 +2426,77 @@ async function judgeLiveResults(args, promptBank, liveResults, token) {
     }
     const prompt = buildJudgePrompt(testCase, result);
     try {
-      const judge = await callConfiguredJudge({
+      const judge = await callConfiguredJudgeWithRetry({
         args,
         token,
         prompt,
         timeoutMs: Math.max(30_000, Math.min(args.timeoutMs, 120_000)),
+        callJudge,
       });
-      if (judge.finalMeta?.conversationId) {
-        conversationIds.push(judge.finalMeta.conversationId);
-      }
+      conversationIds.push(...(judge.conversationIds || []));
       const shape = judge.ok
         ? validateJudgeJudgment(judge.judgment)
         : { ok: false };
-      judgedResults.push({
-        ...result,
-        semanticJudge:
-          judge.ok && shape.ok
-            ? {
-                status: "judged",
-                pass: Boolean(judge.judgment?.pass),
-                score: Number(judge.judgment?.score ?? 0),
-                failureMode:
-                  judge.judgment?.failure_mode ||
-                  "unclear_or_insufficient_evidence",
-                confidence: judge.judgment?.confidence || "low",
-                summary: scrubForPublic(judge.judgment?.summary || ""),
-                rubricResults: Array.isArray(judge.judgment?.rubric_results)
-                  ? judge.judgment.rubric_results.map((item) => ({
-                      rubricItem: scrubForPublic(item.rubric_item || ""),
-                      pass: Boolean(item.pass),
-                      evidence: scrubForPublic(item.evidence || ""),
-                    }))
-                  : [],
-                rawHash: judge.rawHash,
-              }
-            : {
-                status: "failed",
-                pass: false,
-                score: 0,
-                failureMode: "unclear_or_insufficient_evidence",
-                confidence: "low",
-                summary: judge.error || shape.error,
-                error: judge.error || shape.error,
-                bodyPreview: judge.bodyPreview,
-              },
-      });
-    } catch (error) {
+      const unavailableReason = semanticJudgeUnavailableReason(judge, shape);
+      if (unavailableReason) {
+        judgedResults.push({
+          ...result,
+          semanticJudge: {
+            status: "unavailable",
+            pass: null,
+            score: null,
+            summary: unavailableReason,
+            error: unavailableReason,
+            bodyPreview: scrubForPublic(judge.bodyPreview || ""),
+            attemptCount: judge.attemptCount,
+          },
+        });
+        blockedReason = `semantic_judge_unavailable:${unavailableReason}`;
+        judgedResults.push(...liveResults.slice(resultIndex + 1));
+        break;
+      }
       judgedResults.push({
         ...result,
         semanticJudge: {
-          status: "failed",
-          pass: false,
-          score: 0,
-          failureMode: "unclear_or_insufficient_evidence",
-          confidence: "low",
-          summary: `judge_failed:${scrubForPublic(error.message || "unknown")}`,
-          error: `judge_failed:${scrubForPublic(error.message || "unknown")}`,
+          status: "judged",
+          pass: Boolean(judge.judgment?.pass),
+          score: Number(judge.judgment?.score ?? 0),
+          failureMode:
+            judge.judgment?.failure_mode || "unclear_or_insufficient_evidence",
+          confidence: judge.judgment?.confidence || "low",
+          summary: scrubForPublic(judge.judgment?.summary || ""),
+          rubricResults: Array.isArray(judge.judgment?.rubric_results)
+            ? judge.judgment.rubric_results.map((item) => ({
+                rubricItem: scrubForPublic(item.rubric_item || ""),
+                pass: Boolean(item.pass),
+                evidence: scrubForPublic(item.evidence || ""),
+              }))
+            : [],
+          rawHash: judge.rawHash,
+          attemptCount: judge.attemptCount,
         },
       });
+    } catch (error) {
+      const unavailableReason = `judge_failed:${scrubForPublic(error.message || "unknown")}`;
+      judgedResults.push({
+        ...result,
+        semanticJudge: {
+          status: "unavailable",
+          pass: null,
+          score: null,
+          summary: unavailableReason,
+          error: unavailableReason,
+        },
+      });
+      blockedReason = `semantic_judge_unavailable:${unavailableReason}`;
+      judgedResults.push(...liveResults.slice(resultIndex + 1));
+      break;
     }
   }
 
   return {
     enabled: true,
-    blockedReason: null,
+    blockedReason,
     results: judgedResults,
     conversationIds: [...new Set(conversationIds)],
   };
@@ -2273,6 +2772,47 @@ function summarizeEventsForJudge(events) {
   );
 }
 
+function buildQaApiLoginResult(args, response) {
+  const userEmail = response.body?.user?.email || "";
+  const userRole = String(response.body?.user?.role || "")
+    .trim()
+    .toUpperCase();
+  const syntheticIdentity = args.qaEmail.endsWith(".invalid");
+  const ok = Boolean(
+    response.ok &&
+      response.body?.token &&
+      userEmail === args.qaEmail &&
+      syntheticIdentity &&
+      userRole &&
+      userRole !== "ADMIN",
+  );
+  let reason = null;
+  if (!syntheticIdentity) {
+    reason = "qa_api_login_requires_synthetic_invalid_email";
+  } else if (response.ok && userRole === "ADMIN") {
+    reason = "qa_api_login_refused_admin_account";
+  } else if (response.ok && !userRole) {
+    reason = "qa_api_login_missing_user_role";
+  } else if (!ok) {
+    reason = `qa_login_http_${response.status}`;
+  }
+  return {
+    ok,
+    reason,
+    token: ok ? response.body.token : null,
+    userId: ok
+      ? String(response.body?.user?.id || response.body?.user?._id || "")
+      : null,
+    authMode: "api_login",
+    public: {
+      authMode: "api_login",
+      userEmailHash: userEmail ? hashValue(userEmail) : "missing",
+      expectedEmailHash: hashValue(args.qaEmail),
+      userRoleClass: userRole ? (userRole === "ADMIN" ? "refused_admin" : "non_admin") : "missing",
+    },
+  };
+}
+
 async function loginQaUser(args) {
   const password = process.env[QA_PASSWORD_ENV];
   if (!password) {
@@ -2297,23 +2837,7 @@ async function loginQaUser(args) {
     },
     20_000,
   );
-
-  const userEmail = response.body?.user?.email || "";
-  const ok = response.ok && response.body?.token && userEmail === args.qaEmail;
-  return {
-    ok,
-    reason: ok ? null : `qa_login_http_${response.status}`,
-    token: ok ? response.body.token : null,
-    userId: ok
-      ? String(response.body?.user?.id || response.body?.user?._id || "")
-      : null,
-    authMode: "api_login",
-    public: {
-      authMode: "api_login",
-      userEmailHash: userEmail ? hashValue(userEmail) : "missing",
-      expectedEmailHash: hashValue(args.qaEmail),
-    },
-  };
+  return buildQaApiLoginResult(args, response);
 }
 
 async function createLocalQaJwt(args) {
@@ -2368,8 +2892,15 @@ async function createLocalQaJwt(args) {
         public: { authMode: "local_jwt_fallback" },
       };
     }
-    const ownerUser = await users.findOne({ role: "ADMIN" }, { projection: { email: 1 } });
-    if (String(user.role || "").trim().toUpperCase() === "ADMIN") {
+    const ownerUser = await users.findOne(
+      { role: "ADMIN" },
+      { projection: { email: 1 } },
+    );
+    if (
+      String(user.role || "")
+        .trim()
+        .toUpperCase() === "ADMIN"
+    ) {
       throw new Error("selected_admin_account_refused");
     }
     assertNonOwnerQaSelection({
@@ -2523,13 +3054,12 @@ async function readConversationEvidence({ db, result, conversationId }) {
     .sort({ createdAt: 1 })
     .toArray();
   const responseMessageId = result?.finalMeta?.responseMessageId || "";
-  const primary = messages.find(
+  const primaryIndex = messages.findIndex(
     (message) => message.messageId === responseMessageId,
   );
-  const delayed = messages.filter((message) => {
-    if (message.messageId === responseMessageId) {
-      return false;
-    }
+  const primary = primaryIndex >= 0 ? messages[primaryIndex] : undefined;
+  const delayedCandidates = primaryIndex >= 0 ? messages.slice(primaryIndex + 1) : messages;
+  const delayed = delayedCandidates.filter((message) => {
     if (message.isCreatedByUser === true || message.sender === "User") {
       return false;
     }
@@ -2650,6 +3180,9 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
   let feelingsRestoreState = null;
   let feelingsRestoreAttempts = 0;
   let feelingsRestoreError = null;
+  let conversationRecallRestoreState = null;
+  let conversationRecallRestoreResult = null;
+  let conversationRecallRestoreError = null;
   let qaCleanup = null;
   let qaCleanupError = null;
 
@@ -2697,6 +3230,48 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
             durationMs: Date.now() - startedAt,
             error: fixtureResult?.error || "feelings_fixture_failed",
             requestHash: hashValue({ fixture: "feelings_state" }),
+            responseHash: "",
+            responsePreview: "",
+            responseForJudge: "",
+            eventEvidenceForJudge: "none",
+            promptFrameEvidenceForJudge:
+              summarizePromptFrameDelta(promptFrameCursor),
+            postCaseEvidenceForJudge: "none",
+            eventCount: 0,
+            finalMeta: {},
+            seedEvidence,
+            fixtureEvidence,
+            privateEvents: [],
+          });
+          continue;
+        }
+        fixtureEvidence.push(fixtureResult.evidence);
+      }
+
+      if (conversationRecallFixtureFor(testCase)) {
+        const fixtureResult = await applyConversationRecallFixture({
+          args,
+          token,
+          db,
+          userId: qaAuth?.userId,
+          testCase,
+        }).catch((error) => ({
+          error: `conversation_recall_fixture_failed:${scrubForPublic(error.message || "unknown")}`,
+        }));
+        if (fixtureResult?.restoreState && !conversationRecallRestoreState) {
+          conversationRecallRestoreState = fixtureResult.restoreState;
+        }
+        if (!fixtureResult?.evidence) {
+          results.push({
+            caseId: testCase.id,
+            familyId: testCase.familyId,
+            surface: testCase.surface || "web",
+            status: "failed_to_prepare_fixture",
+            durationMs: Date.now() - startedAt,
+            error: fixtureResult?.error || "conversation_recall_fixture_failed",
+            requestHash: hashValue({
+              fixture: "conversation_recall_preference",
+            }),
             responseHash: "",
             responsePreview: "",
             responseForJudge: "",
@@ -2854,14 +3429,15 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       const feelingsReactionEvidence = feelingsFixtureFor(testCase)
         ?.observeReaction
         ? await observeFeelingsReaction({
-          args,
-          token,
-          forbiddenInnerStateTokens:
-            feelingsFixtureFor(testCase)?.forbiddenInnerStateTokens || [],
+            args,
+            token,
+            forbiddenInnerStateTokens:
+              feelingsFixtureFor(testCase)?.forbiddenInnerStateTokens || [],
             beforeState: {
               version: configuredFeelingsState.version,
               trailLength: configuredFeelingsState.trailLength,
-              trailCursorTimestamp: configuredFeelingsState.trailCursorTimestamp,
+              trailCursorTimestamp:
+                configuredFeelingsState.trailCursorTimestamp,
               bands: Object.fromEntries(
                 Object.entries(configuredFeelingsState.bands).map(
                   ([band, values]) => [
@@ -2874,7 +3450,10 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
           })
         : null;
       const eventEvidence = summarizeEventsForJudge(stream.events);
-      const voiceMarkerValidation = validateVoiceMarkerEvidence(testCase, responseText);
+      const voiceMarkerValidation = validateVoiceMarkerEvidence(
+        testCase,
+        responseText,
+      );
       const eventEvidenceForJudge = [
         eventEvidence,
         feelingsReactionEvidence
@@ -2886,11 +3465,10 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const feelingsDeterministicFailures =
-        validateFeelingsReactionEvidence(
-          feelingsFixtureFor(testCase),
-          feelingsReactionEvidence,
-        );
+      const feelingsDeterministicFailures = validateFeelingsReactionEvidence(
+        feelingsFixtureFor(testCase),
+        feelingsReactionEvidence,
+      );
       const deterministicFailures = [
         ...feelingsDeterministicFailures,
         ...voiceMarkerValidation.failures,
@@ -2943,6 +3521,19 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
         feelingsRestoreError = `feelings_fixture_restore_failed:${scrubForPublic(error.message || "unknown")}`;
       }
     }
+    if (conversationRecallRestoreState) {
+      try {
+        conversationRecallRestoreResult =
+          await restoreConversationRecallFixture({
+            args,
+            token,
+            db,
+            restoreState: conversationRecallRestoreState,
+          });
+      } catch (error) {
+        conversationRecallRestoreError = `conversation_recall_fixture_restore_failed:${scrubForPublic(error.message || "unknown")}`;
+      }
+    }
     try {
       qaCleanup = await cleanupEvalConversations(db, results);
     } catch (error) {
@@ -2958,6 +3549,15 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       result.qaCleanup = qaCleanupError
         ? { status: "failed", error: qaCleanupError }
         : qaCleanup;
+    }
+    if (
+      result.fixtureEvidence?.some(
+        (item) => item.fixture === "conversation_recall_preference",
+      )
+    ) {
+      result.fixtureRestoration = conversationRecallRestoreError
+        ? { status: "failed", error: conversationRecallRestoreError }
+        : conversationRecallRestoreResult;
     }
   }
   if (feelingsRestoreError) {
@@ -3004,6 +3604,32 @@ async function runLiveCases(args, promptBank, token, db = null, qaAuth = null) {
       fixtureEvidence: [],
       privateEvents: [],
       qaCleanup: { status: "failed", error: qaCleanupError },
+    });
+  }
+  if (conversationRecallRestoreError) {
+    results.push({
+      caseId: "conversation_recall_fixture_restore",
+      familyId: "memory_recall",
+      surface: "voice",
+      status: "failed_to_restore_fixture",
+      durationMs: 0,
+      error: conversationRecallRestoreError,
+      requestHash: "",
+      responseHash: "",
+      responsePreview: "",
+      responseForJudge: "",
+      eventEvidenceForJudge: "none",
+      promptFrameEvidenceForJudge: "none",
+      postCaseEvidenceForJudge: "none",
+      eventCount: 0,
+      finalMeta: {},
+      seedEvidence: [],
+      fixtureEvidence: [],
+      privateEvents: [],
+      fixtureRestoration: {
+        status: "failed",
+        error: conversationRecallRestoreError,
+      },
     });
   }
 
@@ -3135,7 +3761,12 @@ function writeReports({
     (result) => result.semanticJudge?.status === "judged",
   );
   const semanticFailedResults = liveResults.filter(
-    (result) => result.semanticJudge && result.semanticJudge.pass !== true,
+    (result) =>
+      result.semanticJudge?.status === "judged" &&
+      result.semanticJudge.pass !== true,
+  );
+  const semanticUnavailableResults = liveResults.filter(
+    (result) => result.semanticJudge?.status === "unavailable",
   );
   const semanticJudgeBlocked = Boolean(semanticJudge?.blockedReason);
   const completionFailed = liveResults.some(
@@ -3145,25 +3776,26 @@ function writeReports({
     duplicateResponseQualityFailures.length > 0 ||
     unresolvedAsyncQualityFailures.length > 0;
   const semanticFailed =
-    Boolean(args.semanticJudge) &&
-    (semanticJudgeBlocked || semanticFailedResults.length > 0);
+    Boolean(args.semanticJudge) && semanticFailedResults.length > 0;
   const status = blockedReason
     ? "blocked"
     : completionFailed
       ? "failed_completion"
-      : semanticFailed
-        ? "semantic_failed"
-        : qualityFailed
-          ? "quality_failed"
-          : fullCoverage && args.semanticJudge
-            ? "completed_full_semantic_passed"
-            : fullCoverage
-              ? "completed_full"
-              : allCompleted && args.semanticJudge
-                ? "partial_semantic_passed"
-                : allCompleted
-                  ? "partial_baseline"
-                  : "partial_or_failed";
+      : semanticJudgeBlocked
+        ? "blocked_semantic_judge"
+        : semanticFailed
+          ? "semantic_failed"
+          : qualityFailed
+            ? "quality_failed"
+            : fullCoverage && args.semanticJudge
+              ? "completed_full_semantic_passed"
+              : fullCoverage
+                ? "completed_full"
+                : allCompleted && args.semanticJudge
+                  ? "partial_semantic_passed"
+                  : allCompleted
+                    ? "partial_baseline"
+                    : "partial_or_failed";
   const summary = {
     generatedAt: new Date().toISOString(),
     status,
@@ -3179,6 +3811,7 @@ function writeReports({
     filters: {
       family: args.family || null,
       caseId: args.caseId || null,
+      caseIds: args.caseIds.length ? args.caseIds : null,
       surface: args.surface || null,
       promptId: args.promptId || null,
     },
@@ -3220,6 +3853,7 @@ function writeReports({
       (result) => result.semanticJudge?.pass === true,
     ).length,
     semanticFailedCount: semanticFailedResults.length,
+    semanticJudgeUnavailableCount: semanticUnavailableResults.length,
     semanticJudgeBlockedReason: semanticJudge?.blockedReason || null,
     duplicateResponseHashes,
     duplicateResponseQualityFailures,
@@ -3239,6 +3873,7 @@ function writeReports({
           agentIdHash: hashValue(args.agentId),
           family: args.family || null,
           caseId: args.caseId || null,
+          caseIds: args.caseIds.length ? args.caseIds : null,
           surface: args.surface || null,
           promptId: args.promptId || null,
           localJwtFallback: args.localJwtFallback,
@@ -3288,6 +3923,7 @@ function writeReports({
     `- Semantic judged: ${summary.semanticJudgedCount}`,
     `- Semantic passed: ${summary.semanticPassedCount}`,
     `- Semantic failed: ${summary.semanticFailedCount}`,
+    `- Semantic judge unavailable: ${summary.semanticJudgeUnavailableCount}`,
     `- Semantic judge blocked reason: ${summary.semanticJudgeBlockedReason || "none"}`,
     `- Judge model hash: ${summary.judgeModelHash || "not used"}`,
     `- Duplicate response hashes: ${summary.duplicateResponseHashes.length}`,
@@ -3319,11 +3955,13 @@ function writeReports({
     ...liveResults.map(
       (result) =>
         `| ${scrubForPublic(result.caseId)} | ${scrubForPublic(result.familyId)} | ${scrubForPublic(result.surface)} | ${result.status} | ${Number(result.turnAttemptCount || 1)} | ${
-          result.semanticJudge
-            ? result.semanticJudge.pass
-              ? `pass ${Number(result.semanticJudge.score || 0).toFixed(2)}`
-              : `fail ${Number(result.semanticJudge.score || 0).toFixed(2)} ${scrubForPublic(result.semanticJudge.failureMode || "")}`
-            : "not run"
+          result.semanticJudge?.status === "unavailable"
+            ? "unavailable"
+            : result.semanticJudge
+              ? result.semanticJudge.pass
+                ? `pass ${Number(result.semanticJudge.score || 0).toFixed(2)}`
+                : `fail ${Number(result.semanticJudge.score || 0).toFixed(2)} ${scrubForPublic(result.semanticJudge.failureMode || "")}`
+              : "not run"
         } | ${result.durationMs || 0} | ${result.responseHash || ""} | ${scrubForPublic(result.error || result.semanticJudge?.error || "")} |`,
     ),
     "",
@@ -3374,10 +4012,10 @@ function writeReports({
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const promptBank = readJson(args.promptBank);
-  const selectedCasesForJudgePolicy = runnablePromptCases(promptBank, args).slice(
-    0,
-    args.maxCases,
-  );
+  const selectedCasesForJudgePolicy = runnablePromptCases(
+    promptBank,
+    args,
+  ).slice(0, args.maxCases);
   if (
     args.runLive &&
     !args.semanticJudgeExplicitlyDisabled &&
@@ -3429,6 +4067,7 @@ async function run() {
   let rawFeelingsRestoreError = null;
   let judgeCleanup = null;
   let judgeCleanupError = null;
+  let evalLease = null;
 
   if (!health.ok) {
     blockedReason = `api_health_http_${health.status}`;
@@ -3443,16 +4082,20 @@ async function run() {
     if (!login.ok) {
       blockedReason = login.reason;
     } else {
-      try {
-        dbHandle = await connectLocalEvalDb();
-      } catch (error) {
-        dbHandle = {
-          db: null,
-          close: async () => {},
-          reason: `db_connect_failed:${scrubForPublic(error.message || "unknown")}`,
-        };
-      }
-      try {
+      evalLease = acquireExclusiveEvalLease();
+      if (!evalLease.acquired) {
+        blockedReason = evalLease.reason;
+      } else {
+        try {
+          dbHandle = await connectLocalEvalDb();
+        } catch (error) {
+          dbHandle = {
+            db: null,
+            close: async () => {},
+            reason: `db_connect_failed:${scrubForPublic(error.message || "unknown")}`,
+          };
+        }
+        try {
         const selectedCases = runnablePromptCases(promptBank, args).slice(
           0,
           args.maxCases,
@@ -3477,7 +4120,7 @@ async function run() {
           login.token,
         );
         liveResults = semanticJudge.results;
-      } finally {
+        } finally {
         try {
           judgeCleanup = await cleanupConversationIds(
             dbHandle?.db,
@@ -3547,8 +4190,10 @@ async function run() {
           });
         }
         semanticJudge.results = liveResults;
-        if (dbHandle) {
-          await dbHandle.close().catch(() => {});
+          if (dbHandle) {
+            await dbHandle.close().catch(() => {});
+          }
+          evalLease.release();
         }
       }
     }
@@ -3576,6 +4221,8 @@ async function run() {
         semanticJudgedCount: report.summary.semanticJudgedCount,
         semanticPassedCount: report.summary.semanticPassedCount,
         semanticFailedCount: report.summary.semanticFailedCount,
+        semanticJudgeUnavailableCount:
+          report.summary.semanticJudgeUnavailableCount,
         duplicateResponseQualityFailureCount:
           report.summary.duplicateResponseQualityFailures.length,
         unresolvedAsyncQualityFailureCount:
@@ -3603,7 +4250,21 @@ async function run() {
 }
 
 module.exports = {
+  acquireExclusiveEvalLease,
+  buildIsolatedFeelingsFixtureSet,
+  buildQaApiLoginResult,
+  caseMatchesFilters,
+  callConfiguredJudgeWithRetry,
   collectVoiceMarkerEvidence,
+  conversationRecallFixtureFor,
+  isRetryableSemanticJudgeFailure,
+  judgeLiveResults,
+  parseArgs,
+  readConversationEvidence,
+  scrubForPublic,
+  semanticJudgeUnavailableReason,
+  summarizePromptFrameDelta,
+  validateFeelingsReactionEvidence,
   validateVoiceMarkerEvidence,
 };
 

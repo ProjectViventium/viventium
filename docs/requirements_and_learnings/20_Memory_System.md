@@ -1,7 +1,7 @@
 # Memory System: v0_3 vs v0_4 Analysis + Improvement Notes
 
-**Document Version:** 2.8
-**Date:** 2026-05-05
+**Document Version:** 2.9
+**Date:** 2026-07-15
 **Owner:** Viventium Core
 **Scope:** High-level comparison of memory UX in v0_3 (Python) vs v0_4 (LibreChat), with public-safe lessons and implementation notes.
 
@@ -356,10 +356,11 @@ installer/compiler ownership layer instead of inheriting historical template def
 - The compiler must assign `memory.agent.provider` and `memory.agent.model` from actually available
   foundation auth (`openai` / `anthropic`), including connected-account auth.
 - Do not silently leave the memory writer on xAI when xAI was never configured for that install.
-- Current compiler policy prefers Anthropic for the memory writer when Anthropic is available, and
-  otherwise falls back to OpenAI.
-- QA and docs must reflect that exact compiler rule instead of assuming memory follows some separate
-  generic foundation ordering contract.
+- The memory writer follows the configured foundation priority: the primary available foundation
+  provider is selected first and the configured secondary remains the fallback. It must not invert
+  that priority merely because a secondary provider is also available.
+- QA must cover OpenAI-primary, Anthropic-primary, single-provider, and connected-account variants,
+  then prove that the generated provider/model initializes and completes a real writer run.
 - Source-of-truth templates may still carry historical defaults, but generated runtime files are the
   product contract users actually run.
 
@@ -407,6 +408,10 @@ both code and QA:
   provider token cannot silently regress in one resolver while still appearing valid in another.
 - If the memory writer fails before it starts, the system cannot rely on prompt rules like
   “NO DATA LOSS” or contradiction cleanup because the memory agent never gets to run.
+- The agent client must supply the complete memory-store interface expected by the shared memory
+  processor. In particular, writer snapshots require the revision-bearing
+  `getAllUserMemoryStates` method; supplying only the legacy visible-memory methods is an
+  initialization failure, not a successful no-op.
 - Connected-account OpenAI Codex routes are a second runtime contract inside the memory writer:
   - top-level `instructions` must be present on Responses requests
   - `system` / `developer` messages must not remain inside Responses `input`
@@ -481,16 +486,40 @@ both code and QA:
 - Detached memory writing is asynchronous relative to the visible answer, but it is not lossy.
   Turns for one user must run FIFO without coalescing or dropping an intermediate Telegram, web, or
   voice turn. Different users may continue in parallel.
-- Each writer run must use one memory snapshot for both prompt construction and expected revisions.
+- Each writer run must use one state query for both prompt construction and expected revisions; two
+  separately timed reads are not one snapshot even when they call the same store.
   A later write or delete may apply only if the key still has that revision; creation of an absent
   key uses the same atomic contract and the unique user/key index.
+- Delete is a hidden retained tombstone, not physical row removal. The same user/key record and
+  monotonic revision survive delete/recreate cycles, so stale writes, stale deletes, and stale
+  absent-key creates cannot pass through an ABA revision reset. User-visible reads and prompt
+  formatting exclude tombstones; internal CAS snapshots include them.
+- The Memories panel is part of the same concurrency contract. GET responses expose the current
+  revision, and edit, rename, and delete submit that revision. A stale panel action returns a
+  refresh-and-retry conflict instead of bypassing the chat/Telegram/voice writer guard. Rename is
+  one atomic revision-guarded row update; it must not create a target row and compensate later. If
+  the requested target key is occupied by a hidden tombstone, both records remain unchanged and the
+  user receives a truthful choose-another-key conflict; refreshing cannot make that reserved key
+  available.
 - A revision conflict preserves the newer value and records a public-safe failed-write audit event.
   Audit logs may contain per-process hashes, key names, outcomes, and error classes, but not raw user,
   conversation, message, or memory values.
 - Hardener proposals capture expected revisions when the proposal is created. Apply and replay fail
   closed for missing or stale revisions. Rollback reverses only the exact post-apply revisions
   produced by that run; a newer live write is preserved and reported as a conflict. Legacy rollback
-  snapshots without post-apply revision state are not applied destructively.
+  snapshots without post-apply revision state are not applied destructively. Schema-v2 rollback
+  remains compatible only for revision-safe write-only entries. A v2 snapshot containing any
+  delete/tombstone transition or a mixed write/delete batch fails closed because it cannot prove a
+  safe inverse operation.
+- Successful set and delete artifacts carry their post-write revision, including the hidden
+  tombstone revision produced by a delete. The client may apply only an artifact newer than its
+  cached revision and always refetches authoritative state afterward. Delete artifacts and updates
+  for keys absent from the visible cache do not optimistically recreate or erase cache entries;
+  authoritative refetch reconciles tombstones. Missing, duplicate, or delayed revisions cannot
+  regress the visible cache.
+- Online proposal apply fails closed when legacy duplicate rows make one key's revision ambiguous.
+  Duplicate migration is an explicit offline repair, never an unguarded delete/recreate inside the
+  normal apply path.
 
 ### 2.7 Strict Memory Rules
 
@@ -654,6 +683,21 @@ The April 13, 2026 remote QA pass added another concrete continuity boundary:
   2. the adapted non-stream JSON preserves the tool call in `output`
   3. the tool artifact reaches the durable memory store in a real browser flow
 
+#### 2.9.6 Storage-policy rejection is not a successful memory run
+
+- A completed model/provider call does not prove that durable memory changed. The storage layer can
+  still reject the proposed full-key replacement because it exceeds a key or global token budget.
+- A model-correctable budget rejection may receive one bounded correction attempt when no operation
+  from the rejected batch was applied. The retry must use structured policy data, preserve unrelated
+  facts, and keep the configured token limits unchanged.
+- Never retry a rejected batch after any operation in that batch applied; doing so could replay a
+  partial write against stale revisions.
+- Only the final attempt's memory artifact may reach the user-visible stream. If the correction is
+  still rejected, the detached writer must return and log a structured failure instead of reporting
+  success.
+- Real acceptance for a near-full key requires a revision advance and durable cross-conversation
+  recall, not merely an assistant acknowledgement or a completed provider request.
+
 ---
 
 ## Part 3: Public-Safe QA Notes
@@ -732,6 +776,11 @@ Product contract:
   performs a dry-run and writes the marker; the next scheduled run can apply
 - the batch hardener must not rewrite `working`, because `working` is owned by the current
   conversation
+- every reviewed proposal apply path, including nightly hardening and Prompt Workbench governed
+  apply, must protect `working` and every proposal-written key from same-pass deterministic
+  maintenance. Model proposals are already policy-validated and budgeted; immediately re-compacting
+  a freshly written key can discard the evidence-backed detail that was just consolidated.
+  Maintenance remains available for eligible untouched stale or over-budget keys.
 - model output is a proposal only; database writes go through the existing memory methods and
   shared memory policy
 - raw proposals and rollback snapshots stay under App Support state
@@ -762,7 +811,10 @@ Product contract:
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
   auth, preferring Codex/OpenAI `gpt-5.6-sol` at `xhigh` when OpenAI is available. Anthropic
   `claude-opus-4-8` at `xhigh` remains the launch-ready route for an Anthropic-only install or an
-  explicit operator override; fallback attempts must remain visible and must not masquerade as Sol
+  explicit operator override; fallback attempts must remain visible and must not masquerade as Sol.
+  Scheduled receipts record requested and effective provider/model/effort. Any successful run with
+  a different provider, model, or effort is `execution_mismatch`, and an incomplete tuple is
+  `execution_unverified`; neither is healthy until the operator accepts or repairs it.
 - the OpenAI/Codex hardening path must pass a Codex/OpenAI-compatible structured output schema and
   the configured reasoning effort to the Codex CLI, matching the compiler-emitted tuple and
   configurable fallback list instead of relying on stale internal hardener fallbacks. The
@@ -801,6 +853,9 @@ Product rules:
 
 - `memory.readProfile` in `librechat.yaml` owns the chat-time memory read budget, key priority
   order, per-key read caps, and short cache TTL.
+- The bounded profile must still preserve the complete governed `preferences` key. Truncating an
+  additive preference value to head/tail excerpts can hide a newly stored fact in the middle and
+  violates the requirement that saved memory work without conversation recall.
 - The chat-time read path must call `getAllUserMemories` and format the bounded profile directly.
   It must not initialize the writer agent or run deterministic maintenance before the main model
   starts.

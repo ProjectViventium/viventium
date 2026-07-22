@@ -1,0 +1,4 @@
+# Public QA prose in this already-published commit contains the boolean
+# `hasFinalResult=true`; it is not a credential. Keep the exact fingerprint so
+# every other finding, including other lines in the same file, remains fatal.
+fc5fc9abf48fcf05871a2e7d17c57fe08e2fc97e:qa/glasshive_watch_desktop/reports/2026-06-16-worker-capability-and-delivery-story.md:generic-api-key:87

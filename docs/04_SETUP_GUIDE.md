@@ -1,28 +1,33 @@
 # Setup Guide
 
-This guide reflects the supported public-facing setup surface.
+This guide reflects the current source-checkout setup candidate. It does not claim that the pending
+signed/notarized immutable Easy Install artifact is publicly released.
 
-## Supported Target
+## Current Release Target
 
-- macOS only for the public install path
+- macOS only for the current release candidate
 - Apple Silicon is the primary clean-room acceptance target
 
 ## Primary Flow
 
-Run the installer:
+From a Viventium source checkout, run the installer:
 
 ```bash
 ./install.sh
 ```
 
-Recommended mode today for the most reliable first run:
+Choose **Easy Install** for the recommended first run. It uses the native local core, keeps remote
+access local-only, and defers Docker, Voice, Recall, channels, and automation until after a working
+provider-backed answer. The internal runtime/profile values are implementation details, not choices
+a new user needs to understand.
 
-- `native`
-- `isolated` profile
-- modern LiveKit playground default (`agent-starter-react`)
-- classic `agents-playground` default-off; install/start it only with an explicit classic playground
-  selection
-- keep remote access optional on first run unless you actively need it
+Choose **Custom Settings Install** only when you deliberately want to select runtimes, providers,
+integrations, or optional capabilities during installation. Skipped settings remain available later
+through `bin/viventium configure`.
+
+The current source-checkout path still requires Git and may install developer/runtime prerequisites.
+The finished Easy Install contract removes those prerequisites through a verified immutable payload;
+that release gate remains open.
 
 Headless configuration flow:
 
@@ -49,13 +54,24 @@ Generated machine-local runtime files:
 - `~/Library/Application Support/Viventium/runtime/runtime.local.env`
 - `~/Library/Application Support/Viventium/state/runtime/<profile>/librechat.generated.yaml`
 
-Before component bootstrap and doctor, the installer should now run one aggregated preflight screen:
+Before component bootstrap and doctor, the installer runs one aggregated preflight screen:
 
 - detect every missing prerequisite at once
 - show one batch install plan
 - install the missing native or Docker prerequisites in one pass after one confirmation prompt
 
-Then validate and start:
+After the core starts, browser setup opens automatically:
+
+1. create the first local administrator;
+2. continue to Connected Accounts;
+3. add one OpenAI or Anthropic API key through the encrypted user-key path;
+4. verify the provider and send the first message.
+
+If automatic handoff is dismissed, reopen it from `Settings -> Connected Accounts`. A saved
+credential is not called `Ready` until its live test succeeds. Optional Gmail/Drive, Outlook/MS365,
+Groq, Grok/xAI, channels, Voice, and Recall setup must not block the first useful answer.
+
+If setup or startup does not complete, validate and retry with:
 
 ```bash
 bin/viventium doctor
@@ -141,18 +157,47 @@ Capture the current continuity metadata without taking a full payload snapshot:
 bin/viventium continuity-audit
 ```
 
-Inspect or apply restore actions:
+Validate a snapshot without changing a target:
 
 ```bash
-bin/viventium restore --snapshot-dir <path>
+bin/viventium restore \
+  --snapshot-dir <path> \
+  --target-config-home <empty-app-support-path> \
+  --validate-only
+```
+
+Restore a current-format complete bundle into a fresh independent source install:
+
+```bash
+mkdir -m 700 <empty-owner-only-mongo-data-path>
+
+bin/viventium restore \
+  --snapshot-dir <path> \
+  --target-config-home <empty-app-support-path> \
+  --target-repo-root <fresh-viventium-checkout> \
+  --target-mongo-uri mongodb://127.0.0.1:<port>/<new-empty-database> \
+  --target-mongo-data-path <empty-owner-only-mongo-data-path>
+
+<fresh-viventium-checkout>/bin/viventium \
+  --app-support-dir <empty-app-support-path> start
 ```
 
 Restore notes:
 
-- snapshots always include a metadata-only `continuity-manifest.json`
-- restore refuses an older snapshot by default unless you pass `--allow-older-snapshot`
-- if you restore Mongo or other recall-derived state, rerun restore with `--mark-recall-stale`
-  before trusting vector-backed recall again, then clear the marker intentionally after rebuild
+- complete snapshots include sanitized config, allowlisted logical chat/memory/agent/account data,
+  local uploads, schedules, hashes/counts, and a separate metadata-only continuity audit
+- provider/channel/browser secrets and passwords are not migrated; reconnect accounts and use the
+  supported password recovery path after restore
+- Recall/RAG indexes are derived and are not trusted from the bundle; restore automatically writes
+  the rebuild-required marker, which must be cleared intentionally only after rebuild
+- restore never overwrites an existing App Support target, uploads directory, or nonempty Mongo DB
+- the owner-only Mongo data path makes the independent restore restartable on its selected loopback
+  port; omitting it retains the inspection/compatibility contract but not the restart-safe `v2` ledger
+- bundles are owner-only but not self-encrypted; keep them on an encrypted host/external volume
+- target start regenerates runtime files from canonical config plus the strict restore-selection ledger;
+  helper binding must still be regenerated for the fresh target
+- use the target checkout's local `password-reset-link <restored-user-email>` command to recover a
+  restored browser user; provider and channel accounts must be reconnected separately
 
 ## What the New Surface Does
 

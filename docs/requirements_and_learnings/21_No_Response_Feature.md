@@ -17,7 +17,7 @@ When `{NTA}` is produced, it is treated as intentional silence:
 - No Telegram message is sent
 - No voice TTS is spoken
 - No LibreChat UI bubble is rendered
-- No LiveKit Agents Playground chat transcript is rendered (voice calls)
+- No Viventium Modern Playground (`agent-starter-react`) chat transcript is rendered (voice calls)
 
 ---
 
@@ -94,7 +94,7 @@ but surfaces suppress them so the user experiences "no message".
   - Prevents fallback speech from being used when `{NTA}` is explicitly returned
 - `viventium_v0_4/voice-gateway/librechat_llm.py`
   - Suppresses the **main streamed voice-call reply** when it is no-response-only (`{NTA}` / strict variants)
-  - Buffers early deltas so `{NTA}` never flashes in the LiveKit Playground UI during streaming
+  - Buffers early deltas so `{NTA}` never flashes in the Viventium Modern Playground UI during streaming
 
 ### Scheduling Cortex (Telegram dispatch)
 

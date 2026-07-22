@@ -19,6 +19,7 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 | `GHWATCH-009` | LibreChat callback result persists into visible conversation state without raw tool plumbing. | User sees the final worker result after refresh/reopen. | LibreChat web conversation, callback outbox, message store | `LibreChat/api/server/routes/viventium/__tests__/glasshive.spec.js` plus authenticated browser QA | PARTIAL 2026-06-22 docs audit: legacy authenticated-browser evidence is not cited as public acceptance; rerun with text-only public summary before full release coverage. |
 | `GHWATCH-010` | Worker desktop browser starts with clean browser chrome by default. | User sees the worker browser without a bookmark bar or unsupported `--no-sandbox` warning. | Docker workstation container, worker browser process, noVNC desktop view | `runtime_phase1/tests/test_docker_sandbox.py` plus disposable Docker worker and Playwright noVNC QA | PARTIAL 2026-06-22 docs audit: clean-browser RCA and tests are useful, but current acceptance needs a fresh text/DOM/process summary without public visual media. |
 | `GHWATCH-011` | Docker/workstation runs expose active-run heartbeat and desktop-prime evidence without noisy warning UX. | User/operator can tell whether a quiet worker is still running, finished, timed out, or missing visible desktop priming evidence. | Docker CLI runtime, Watch/Steer status, worker runtime description, run evidence | `runtime_phase1/tests/test_profile_runtime.py`, `test_docker_sandbox.py`, `test_run_evidence.py`, focused API tests, local Docker smoke, and Playwright Watch UI QA | PASS 2026-06-27 local: active-run heartbeat/final status, timeout status, desktop-prime marker, runtime description pass-through, evidence result, Watch UI running/completed states, artifact preview/download route evidence, and cleanup passed; see `reports/2026-06-27-docker-heartbeat-prime-local-qa.md`. |
+| `GHWATCH-012` | Signed public-ref links expose only opaque, expiring workspace/artifact refs. | User can open a generated link remotely without exposing the local operator/control plane. | Synthetic lab GlassHive origin, `/r/{ref}`, `/v1/link-refs/{ref}`, Watch / Steer, artifact preview/download | UI server tests plus Playwright and isolated external-fetch QA | PASS-AUTOMATED/PARTIAL 2026-07-15; signed-ref boundary regressions pass, isolated `example.test` lab browser proof is NOT RUN |
 
 ## `GHWATCH-001` - Core User Flow
 
@@ -286,6 +287,28 @@ Use stable `GHWATCH-NNN` IDs for glasshive watch desktop cases.
 - Last run: PASS 2026-06-27 local. See
   `qa/glasshive_watch_desktop/reports/2026-06-27-docker-heartbeat-prime-local-qa.md`.
 
+## `GHWATCH-012` - Signed Public-Ref Boundary
+
+- Requirement: `public_glasshive_origin` publishes only opaque workspace/artifact refs, never the unauthenticated local operator surface.
+- Risk covered: GlassHive returns localhost links off-device, or a Caddy route makes the launcher and worker control APIs public without owner authentication.
+- Preconditions: isolated lab public-link mode is compiled with a synthetic worker and artifact,
+  an `example.test` origin, and no route to a personal operator/control plane.
+- Steps:
+  1. Generate workspace watch, artifact open, and artifact download links through the real runtime/MCP result path.
+  2. Verify every user-visible link uses the configured public origin plus `/r/{ref}` or `/v1/link-refs/{ref}`, with no localhost, raw worker id, or raw signed token.
+  3. Verify unauthenticated `/`, `/docs`, `/api/bootstrap`, raw worker/control routes, and raw `/v1/signed-links/{token}` fail closed.
+  4. Open `/r/{ref}` in a real browser, verify redirect to a tokenless Watch / Steer URL,
+     expanded/detail state, and refresh persistence for the bounded session. Verify the workspace ref
+     remains valid for 24 hours while each open renews only a bounded 30-minute browser session.
+  5. Open and download the opaque artifact refs and verify the synthetic marker/hash.
+  6. Correlate generated config, Caddy route, local UI/runtime logs, and short-ref DB summary without recording the ref/token.
+- Expected result: remote users with an opaque ref can use only its scoped workspace/artifact path; public control-plane browsing is denied; links expire per config.
+- Forbidden result: localhost/raw-token output, public launcher/API access without a signed session, an artifact ref that requires hidden headers, or a test-only mock presented as external browser acceptance.
+- Evidence to capture: sanitized URL shapes, external status matrix, browser DOM/detail/refresh summary, artifact marker/hash, config key summary, and test output.
+- Automation: `frontends/glass-drive-ui/tests/test_server.py`, `tests/release/test_config_compiler.py`, `tests/release/test_remote_call_tunnel.py`, and `tests/release/test_install_summary.py`.
+- Last run: PASS-AUTOMATED/PARTIAL 2026-07-15. Signed-ref generation/validation, TTL, artifact,
+  and control-route denial regressions pass. Isolated lab external-browser/refresh proof is NOT RUN.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Glasshive Watch Desktop. Add narrower feature-specific
@@ -304,3 +327,4 @@ rows before claiming a pass when the feature behavior changes.
 | `GHWATCH-UC-009` | Reopen a GlassHive-backed LibreChat conversation after completion and verify the final result appears. | callback visibility / `GHWATCH-009` | Authenticated LibreChat web conversation, callback outbox, Mongo/message store | Outbox delivered row, message/conversation metadata, browser DOM/text summary, callback test. | The final callback result is visible after refresh/reopen and no raw tool plumbing leaks. | PARTIAL 2026-06-22 docs audit; legacy authenticated-browser media is not current public acceptance evidence. |
 | `GHWATCH-UC-010` | Open the live worker desktop browser and inspect the browser chrome before doing work. | clean worker browser chrome / `GHWATCH-010` | Docker workstation browser through noVNC | Docker security option, Chromium process args, profile preferences, DOM/text summary, console/network state. | The browser has no bookmark bar and no unsupported `--no-sandbox` warning banner. | PARTIAL 2026-06-22 docs audit; legacy media-backed evidence is not current public acceptance evidence. |
 | `GHWATCH-UC-011` | Start a Docker/workstation worker run, then inspect status/evidence while it is quiet or complete. | active-run heartbeat and prime evidence / `GHWATCH-011` | Docker CLI runtime, Watch/Steer status, runtime description | `active-run.json`, transcript progress, evidence result, desktop-prime marker, artifact marker, Playwright Watch UI DOM text, artifact route headers/content, cleanup state. | The operator can tell whether the worker is running, completed, timed out, or lacking prime evidence without raw-token leaks or warning clutter. | PASS 2026-06-27 local; see `qa/glasshive_watch_desktop/reports/2026-06-27-docker-heartbeat-prime-local-qa.md`. |
+| `GHWATCH-UC-012` | Open a generated workspace ref and artifact ref from an isolated lab GlassHive hostname, then refresh the workspace. | signed public-ref boundary / `GHWATCH-012` | Isolated external browser, Watch / Steer, artifact preview/download | Synthetic status matrix, browser DOM/detail/refresh, fixture marker/hash, generated lab config | Opaque refs work while root/control/raw-token routes fail closed. | PASS-AUTOMATED/PARTIAL 2026-07-15; boundary regressions pass, isolated lab external-browser proof NOT RUN |

@@ -102,18 +102,51 @@ def iso_z(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def local_timezone_name() -> str:
-    tz = os.environ.get("TZ", "").strip()
-    if tz:
-        return tz
+def _valid_timezone_name(value: str) -> bool:
     try:
-        localtime = os.path.realpath("/etc/localtime")
+        ZoneInfo(value)
+    except (ValueError, ZoneInfoNotFoundError):
+        return False
+    return True
+
+
+def local_timezone_name() -> str:
+    for candidate_path in (Path("/etc/localtime"), Path("/var/db/timezone/localtime")):
+        try:
+            resolved = os.path.realpath(candidate_path)
+        except OSError:
+            continue
         marker = "/zoneinfo/"
-        if marker in localtime:
-            return localtime.split(marker, 1)[1]
+        if marker in resolved:
+            candidate = resolved.split(marker, 1)[1]
+            if _valid_timezone_name(candidate):
+                return candidate
+
+    try:
+        candidate = Path("/etc/timezone").read_text(encoding="utf-8").strip()
     except OSError:
-        pass
-    return time.tzname[time.localtime().tm_isdst > 0] or "local"
+        candidate = ""
+    if candidate and _valid_timezone_name(candidate):
+        return candidate
+
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["/usr/sbin/systemsetup", "-gettimezone"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=2,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        match = re.search(r"Time Zone:\s*(\S+)", result.stdout if result else "")
+        if match and _valid_timezone_name(match.group(1)):
+            return match.group(1)
+
+    tzinfo = datetime.now().astimezone().tzinfo
+    candidate = str(getattr(tzinfo, "key", "") or getattr(tzinfo, "zone", "")).strip()
+    return candidate if candidate and _valid_timezone_name(candidate) else "UTC"
 
 
 def configured_timezone(env: dict[str, str]) -> tuple[str, object]:
@@ -123,7 +156,8 @@ def configured_timezone(env: dict[str, str]) -> tuple[str, object]:
     try:
         return name, ZoneInfo(name)
     except (ValueError, ZoneInfoNotFoundError):
-        return local_timezone_name(), datetime.now().astimezone().tzinfo or timezone.utc
+        fallback = local_timezone_name()
+        return fallback, ZoneInfo(fallback)
 
 
 def public_hash(value: object, length: int = 16) -> str:
@@ -200,7 +234,7 @@ def start_trigger_event(args: argparse.Namespace, env: dict[str, str]) -> tuple[
     if not trigger_source:
         return None
     fired_at = utc_now()
-    local_fired_at = fired_at.astimezone()
+    local_fired_at = fired_at.astimezone(ZoneInfo(local_timezone_name()))
     event_id = f"{trigger_source}-{fired_at.strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}"
     payload: dict[str, object] = {
         "schemaVersion": TRIGGER_EVENT_SCHEMA_VERSION,
@@ -217,6 +251,9 @@ def start_trigger_event(args: argparse.Namespace, env: dict[str, str]) -> tuple[
         "pid": os.getpid(),
         "repo_root_hash": public_hash(getattr(args, "repo_root", "")),
         "runtime_dir_hash": public_hash(getattr(args, "runtime_dir", "")),
+        "requested_provider": str(env.get("VIVENTIUM_MEMORY_HARDENING_PROVIDER") or "").strip(),
+        "requested_model": str(env.get("VIVENTIUM_MEMORY_HARDENING_MODEL") or "").strip(),
+        "requested_effort": str(env.get("VIVENTIUM_MEMORY_HARDENING_EFFORT") or "").strip(),
     }
     path = trigger_events_dir(args.app_support_dir) / f"{event_id}.json"
     write_json_private(path, payload)
@@ -255,6 +292,9 @@ def finish_trigger_event(
     if latest_summary:
         payload["run_id"] = latest_summary.get("run_id")
         payload["run_status"] = latest_summary.get("status")
+        payload["effective_provider"] = latest_summary.get("provider")
+        payload["effective_model"] = latest_summary.get("model")
+        payload["effective_effort"] = latest_summary.get("effort")
     write_json_private(path, payload)
     return exit_code
 
@@ -321,6 +361,7 @@ def desired_launch_agent_payload(
         [
             str(Path.home() / ".local" / "bin"),
             str(Path.home() / ".codex" / "bin"),
+            "/Applications/ChatGPT.app/Contents/Resources",
             "/Applications/Codex.app/Contents/Resources",
             "/opt/homebrew/bin",
             "/opt/homebrew/sbin",
@@ -407,7 +448,9 @@ def write_schedule_lifecycle_receipt(
         "schemaVersion": SCHEDULE_LIFECYCLE_SCHEMA_VERSION,
         "event_id": event_id,
         "recorded_at_utc": iso_z(now),
-        "recorded_at_local": now.astimezone().isoformat(timespec="milliseconds"),
+        "recorded_at_local": now.astimezone(ZoneInfo(local_timezone_name())).isoformat(
+            timespec="milliseconds"
+        ),
         "action": action,
         "status": status,
         "label": LAUNCH_AGENT_LABEL,
@@ -896,6 +939,10 @@ def run_status(
         health_state = "not_loaded"
     elif schedule_health.get("missed_expected_window"):
         health_state = "missed"
+    elif schedule_health.get("execution_mismatch"):
+        health_state = "execution_mismatch"
+    elif schedule_health.get("execution_unverified"):
+        health_state = "execution_unverified"
     elif latest.get("status") == "failed" or (
         latest.get("exit_code") not in {None, 0}
     ):

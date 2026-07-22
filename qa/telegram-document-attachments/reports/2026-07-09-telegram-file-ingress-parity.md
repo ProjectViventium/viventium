@@ -1,5 +1,7 @@
 # 2026-07-09 Telegram File Ingress Parity QA
 
+<!-- qa-evidence-exempt: Historical focused attachment-parity record retained as supporting evidence; full release acceptance remains feature-owned. -->
+
 ## Status
 
 PASS for the Telegram file-ingress contract tested in local runtime: grouped photos, grouped files,

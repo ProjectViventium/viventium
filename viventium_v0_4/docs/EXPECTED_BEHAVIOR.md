@@ -16,13 +16,16 @@ This document defines the system behavior that must remain true regardless of fu
 ## Text Chat Contract (Primary)
 
 ### Case A: No background agents activate
-1. Phase A activation detection runs for all configured background agents (2s total budget).
+1. Phase A activation detection runs for all configured background agents inside the mode's fast
+   window (text 1300 ms, voice 690 ms by default; the shared 2000 ms value is a fallback when a
+   mode-specific value is unset).
 2. No activation events are emitted.
 3. Main agent responds normally.
 4. No follow-up is created.
 
 ### Case B: One or more background agents activate
-1. Phase A activation detection runs for all configured background agents (2s total budget).
+1. Phase A activation detection runs for all configured background agents inside the same
+   mode-specific fast window.
 2. Activated agent metadata (name, one-line description, reason, confidence, activation scope, and
    direct-action scope coverage) is collated.
 3. Activation awareness is injected into the main agent system prompt.
@@ -49,11 +52,30 @@ This document defines the system behavior that must remain true regardless of fu
 - Follow-up appears only once all activated agents are done, and only once per user turn.
 
 ## Activation Detection Rules
-- 2s total time budget per user turn.
+- Text and voice use independent fast windows. Their shipped defaults are 1300 ms and 690 ms;
+  `VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS=2000` is only the shared fallback when a mode-specific value
+  is unset.
+- A timed-out or partial fast pass may continue through the 6000 ms non-blocking late-recovery
+  window. Late recovery never extends the conscious answer wait, deduplicates completed decisions,
+  and executes only newly recovered cortices.
 - Each background agent has its own activation config:
-  - `enabled`, `provider`, `model`, `prompt`, `confidence_threshold`, `cooldown_ms`, `max_history`.
+  - `enabled`, `provider`, `model`, ordered `fallbacks`, `prompt`, `confidence_threshold`,
+    `cooldown_ms`, `max_history`, and failure visibility.
 - Activation detection should use fast/low-latency models where possible.
+- Per-provider attempt budgets default to 1600 ms for the primary and 2500 ms for fallbacks, remain
+  configurable through `runtime.background_activation`, and never exceed the enclosing Phase A
+  window. A failed middle provider must not prevent a later configured fallback from being tried.
+- Completed but unparseable or schema-invalid classifier output is a typed
+  provider-invalid-response failure. The decision requires a boolean activation field and numeric
+  confidence in `[0,1]`; invalid output retries configured fallbacks while budget remains and must
+  never be coerced into a valid activation decision.
+- The shipped resilient order is Qwen/Groq primary, then xAI, Anthropic Haiku, and OpenAI. This puts
+  the two fastest configured recovery routes before the broader but slower final fallback.
 - Cooldown is enforced per user+agent to prevent rapid re-activation spam.
+- Agent Builder must show the persisted activation provider/model even when that pair is temporarily
+  absent from model discovery. Its selectable list comes from the runtime model catalog, not a stale
+  hardcoded menu; attaching a new cortex inherits the existing configured activation route when one
+  exists.
 
 ## Follow-up Rules
 - Only one follow-up per user turn.
@@ -70,6 +92,39 @@ This document defines the system behavior that must remain true regardless of fu
 ## Export Behavior
 Conversation exports must render background events as readable text (not raw JSON).
 
+## Feelings Affect Contract
+
+- Feelings is nine typed bands with independent Current and Nature values. External reactions may
+  move Current only; Nature changes only through an explicit user edit/reset path.
+- Each band exposes five stable ranges. One definition object pairs each range's bounds, UI word,
+  and concrete felt cause. Endpoint causes must produce stronger observable pulls than midpoint
+  causes; reaching the model is not enough if an extreme behaves mildly.
+- A user may save one bounded additive cause for any band/range. The default cause remains, only the
+  range containing Current is injected, inactive additions stay out, and editing one does not reset
+  the band's decay clock. Runtime validates typed IDs and text length but never interprets the prose.
+- The speaking capsule is Viventium's private causal state. It shapes motivation, attention,
+  action, wording, and expression without being announced, summarized, or copied into an answer.
+- Structural voice, time, activation-awareness, and no-response contracts assemble first. The exact
+  request-pinned capsule is then moved to the final behavioral instruction boundary exactly once;
+  the visible Phase-B speaking pass follows the same rule. Delivery code may still constrain the
+  transport, but no later persona instruction may replace the active state with a generic role posture.
+- A salient premise can focus a motive that exists but cannot create one the state withholds. Low
+  Care therefore cannot silently become tending/protective concern, and low Connection cannot
+  silently become a pull toward closeness. Curiosity, Vigilance, competence, and other independent
+  motives may still shape the answer.
+- On a direct question about its own state, Viventium gives one lived first-person sentence made
+  only from a present desire, attention, image, impulse, or action. It does not lead with feeling
+  labels, state denial, capsule mechanics, a generic empathy preface, or a canned example.
+- QA must compare the same prompt under contrasting target ranges, including mixed states where a
+  conventional Care/Connection response could hide high Play or another intense band. An
+  explicitly playful task is insufficient evidence that high Play caused the behavior.
+- The Emotional Reaction Cortex is detached from the conscious answer, writes schema-validated
+  Current deltas and typed causes, and generates the display-only one-line Inner state in the same
+  call. It never moves Nature or feeds Viventium's affect-colored reply back as the stimulus.
+- Reaction strength is model-owned: trace=`slight`, unmistakable shift=`clear`, major shift=`strong`,
+  with no change valid for an inert moment. Runtime applies the typed 3/8/15 deltas without keyword
+  intensity rules or post-hoc amplification.
+
 ## Voice Parity Rules
 - Voice calls must follow the same non-blocking contract as text chat.
 - After the main response, voice should speak only a persisted main-agent follow-up message.
@@ -77,9 +132,21 @@ Conversation exports must render background events as readable text (not raw JSO
 - Empty voice follow-up generation for a normal follow-up stays silent; fallback insight text is
   reserved for explicit replacement/deferred-primary flows that own the user-visible answer.
 - Background processing should never interrupt or block speech generation.
+- When a real spoken surface carries a Feelings capsule, the model appraises the state and moment as
+  expressive or restrained. A strongly outward state in an emotionally meaningful or relational
+  reply is expressive even when plain wording already carries tone; a containing state or neutral
+  mechanical task can be restrained. Runtime must not replace this judgment with band thresholds,
+  phrase matching, or band-to-tag maps.
+- After an expressive decision on a capable provider, the raw spoken response is incomplete until
+  it includes the smallest fitting exact supported control. Restrained, Feelings-off, and plain-TTS
+  routes remain valid and markup-free.
 - Voice-mode prompt instructions are provider-aware via `buildVoiceModeInstructions(voiceProvider)`:
   - Cartesia: `<emotion value="..."/>` (self-closing), `[laughter]`, `<break>`, `<speed>`, `<volume>`, recommended emotion list.
-  - xAI: `[laugh]`, `[sigh]`, `[gasp]`, `[whisper]`, `[hmm]`, `[chuckle]` — no SSML.
+  - xAI: the inline and paired wrapping tags declared by
+    `shared/voice/xai_tts_capabilities.json` (for example `[laugh]`, `[sigh]`, `[breath]`,
+    `<soft>...</soft>`, and `<build-intensity>...</build-intensity>`) — provider-specific controls,
+    not SSML. The prompt, display sanitizer, Telegram TTS, and voice gateway consume the same
+    capability vocabulary rather than maintaining ad hoc lists.
   - Chatterbox: `[laugh]`, `[sigh]`, `[gasp]` — no SSML.
   - ElevenLabs/OpenAI: no tags at all (explicit prohibition).
 - Voice control tags (SSML + bracket nonverbals) must be stripped from: (1) playground transcript display, (2) follow-up text before DB persistence, (3) fallback TTS input.

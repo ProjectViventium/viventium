@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import secrets
+import stat
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -44,14 +47,50 @@ class VMRegistry:
 
     def __init__(self, path: Path):
         self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_private_parent()
+        self._validate_registry_path()
+
+    def _ensure_private_parent(self) -> None:
+        parent = self.path.parent
+        try:
+            info = parent.lstat()
+        except FileNotFoundError:
+            parent.mkdir(mode=0o700, parents=True, exist_ok=False)
+            info = parent.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError(f"Refusing unsafe registry directory: {parent}")
+        if info.st_uid != os.getuid():
+            raise RuntimeError(f"Refusing registry directory owned by another user: {parent}")
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            os.chmod(parent, 0o700, follow_symlinks=False)
+
+    def _validate_registry_path(self) -> None:
+        try:
+            info = self.path.lstat()
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise RuntimeError(f"Refusing unsafe registry file: {self.path}")
+        if info.st_uid != os.getuid():
+            raise RuntimeError(f"Refusing registry file owned by another user: {self.path}")
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            os.chmod(self.path, 0o600, follow_symlinks=False)
 
     def _read(self) -> Dict:
+        self._validate_registry_path()
         if not self.path.exists():
             return {"version": 1, "records": []}
         try:
-            payload = json.loads(self.path.read_text())
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(self.path, flags)
+            with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                    raise RuntimeError(f"Refusing unsafe registry file: {self.path}")
+                payload = json.load(handle)
         except Exception as exc:
+            if isinstance(exc, RuntimeError):
+                raise
             logger.warning("Failed to parse VM registry at %s: %s", self.path, exc)
             return {"version": 1, "records": []}
         if not isinstance(payload, dict):
@@ -61,9 +100,23 @@ class VMRegistry:
         return payload
 
     def _write(self, payload: Dict) -> None:
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
-        tmp.replace(self.path)
+        self._ensure_private_parent()
+        self._validate_registry_path()
+        tmp = self.path.parent / f".{self.path.name}.{secrets.token_hex(8)}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self.path)
+            os.chmod(self.path, 0o600, follow_symlinks=False)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
 
     def list_records(self, user_id: Optional[str] = None) -> List[VMRegistryRecord]:
         payload = self._read()

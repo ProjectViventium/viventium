@@ -16,13 +16,21 @@ release_tests:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_cli_upgrade.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_ci_release_workflows.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_common_sh.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_config_settings.py:
     qa_owner: qa/meeting-transcript-memory/cases.md
+  tests/release/test_config_transaction.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_connected_accounts_onboarding_contract.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_config_compiler.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_continuity_audit.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_continuity_bundle.py:
     qa_owner: qa/continuity-ops/cases.md
   tests/release/test_cursor_claude_bridge.py:
     qa_owner: qa/release-readiness/cases.md
@@ -31,6 +39,8 @@ release_tests:
   tests/release/test_detached_librechat_supervision.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_feelings_contract.py:
+    qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_feelings_navigation_contract.py:
     qa_owner: qa/emotional-cortex/cases.md
   tests/release/test_directory_link.py:
     qa_owner: qa/installer-resilience/cases.md
@@ -41,6 +51,8 @@ release_tests:
   tests/release/test_git_helper.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_install_summary.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_install_experience_labels.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_installer_ui.py:
     qa_owner: qa/installer-resilience/cases.md
@@ -62,14 +74,48 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_native_stack_helpers.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_native_bootstrap_ui.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_candidate_transport.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_component_manifest.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_component_staging.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_macos_compatibility.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_continuity.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_native_payload.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_release_sequence.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_payload_assembler.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_payload_builder.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_native_public_safety.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_no_runtime_nlu.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_ollama_embeddings_prereqs.py:
     qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_optional_runtime_provenance.py:
+    qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_openclaw_bridge_release_truth.py:
+    qa_owner: qa/release-readiness/cases.md
   tests/release/test_openai_model_inventory.py:
     qa_owner: qa/config-alignment/cases.md
+  tests/release/test_openai_api_key_lifecycle_qa.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_openai_connected_account_lifecycle_qa.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_periphery_eval_harness.py:
     qa_owner: qa/periphery-nightly-insights/cases.md
+  tests/release/test_playground_loopback_contract.py:
+    qa_owner: qa/modern-playground-voice/cases.md
+  tests/release/test_playground_identity.py:
+    qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_preflight.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_private_repo_resolution_contract.py:
@@ -90,6 +136,8 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_qa_operating_contract.py:
     qa_owner: qa/qa-system-audit/cases.md
+  tests/release/test_qa_storage_guard.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_qa_results_public_safety.py:
     qa_owner: qa/qa-system-audit/cases.md
   tests/release/test_rag_api_override_contract.py:
@@ -98,6 +146,8 @@ release_tests:
     qa_owner: qa/conversation-recall-rag/cases.md
   tests/release/test_remote_call_tunnel.py:
     qa_owner: qa/remote-access/cases.md
+  tests/release/test_sandpack_runtime_contract.py:
+    qa_owner: qa/installer-resilience/cases.md
   tests/release/test_scheduled_glasshive_prompts.py:
     qa_owner: qa/prompt-workbench/cases.md
   tests/release/test_scheduling_mcp_supervision.py:
@@ -112,11 +162,19 @@ release_tests:
     qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_telegram_lazy_startup_contract.py:
     qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_telegram_launchctl_ownership.py:
+    qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_telegram_media_prereqs.py:
     qa_owner: qa/telegram-media-prereqs/cases.md
   tests/release/test_telegram_transcription_error_contract.py:
     qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_upgrade_transaction.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_voice_call_startup_guard.py:
+    qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_playground_dispatch_contract.py:
     qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_wizard.py:
+    qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_express_launcher_summary.py:
     qa_owner: qa/installer-resilience/cases.md

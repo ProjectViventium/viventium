@@ -13,7 +13,8 @@ Use this before pulling a newer upstream version of a voice component. Do not tr
 Included upstream fork boundaries:
 - `viventium_v0_4/agent-starter-react` (`livekit-examples/agent-starter-react`): modern playground / active browser voice UI.
 - `viventium_v0_4/agents-playground` (`livekit/agents-playground`): legacy/classic playground retained only as an explicit opt-in fallback/reference; default installs and starts must not spend resources on it.
-- `viventium_v0_4/livekit` (`livekit/livekit`): LiveKit server component fork placeholder; runtime normally uses installed LiveKit server.
+- `viventium_v0_4/livekit` (`livekit/livekit`): LiveKit server component fork placeholder; runtime
+  uses the exact locked Docker server or a deliberately configured external endpoint.
 - `viventium_v0_4/cartesia-voice-agent` (`livekit-examples/cartesia-voice-agent`): Cartesia example component fork placeholder; active Cartesia route lives in Viventium voice gateway/shared config.
 
 Excluded from this fork-replay inventory:
@@ -31,6 +32,22 @@ Excluded from this fork-replay inventory:
 - Default release policy: `agent-starter-react` is the default enabled LiveKit playground for
   voice-capable installs. `agents-playground` is default-off and may be replayed, pinned, or started
   only for an explicit classic-playground opt-in path.
+- Runtime identity is separate from source inventory. Modern and classic playgrounds expose an
+  exact `/api/health` identity containing `surface`, `variant`, and the 40-character build source
+  ref. The launcher must validate that identity before reusing a listener.
+- `viventium_v0_4/viventium-start-all.sh` is retained only as a compatibility redirect to the
+  canonical `viventium-librechat-start.sh`. It explicitly selects `agent-starter-react`, may
+  translate safe legacy arguments, and must reject obsolete build/dependency mutation arguments.
+  A second LiveKit startup implementation or floating image in that wrapper is a release blocker.
+- The `livekit` nested repo remains a source-audit placeholder and does not govern the running
+  server. The supported Docker runtime is locked in `release/optional-runtime-components.json` to
+  `livekit/livekit-server:v1.13.4@sha256:189f7c81b704a36642bc5c7e2d3e1ae83744627c11978a23a251bf19fbec64e0`,
+  whose upstream source revision is `0b3fd288e3ef3263ec475ba0d78cf3ad77459981`. The release has
+  immutable digest integrity and per-platform SLSA provenance; no publisher/Cosign signature was
+  found, so documentation must not call it publisher-signed. No Viventium-verified v1.13.4 macOS
+  server artifact exists: Custom Settings startup must not discover or run `livekit` or
+  `livekit-server` from `PATH`. It may use only the locked Docker runtime or a deliberately
+  configured reachable external endpoint; otherwise it fails closed with a no-Voice path.
 
 
 ## Checklist Legend
@@ -45,7 +62,7 @@ Excluded from this fork-replay inventory:
 | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |
 | `agent-starter-react` | modern playground / active browser voice UI | `livekit-examples/agent-starter-react` | `62c4654086d2` | `c6aaa5abe202` | `cee4acfd969c` | `12 / 7` | 99 | 6745 | 9950 |
 | `agents-playground` | legacy/classic playground retained as fallback/reference | `livekit/agents-playground` | `ee0b50c9f8c6` | `019b7abf4094` | `b6e09509fe36` | `1 / 2` | 38 | 12021 | 4875 |
-| `livekit` | LiveKit server component fork placeholder; runtime normally uses installed LiveKit server | `livekit/livekit` | `9674ac48ab46` | `b1c51ce14454` | `37eb7a327647` | `1 / 72` | 384 | 14 | 135707 |
+| `livekit` | LiveKit server source-audit placeholder; not an executable runtime | `livekit/livekit` | `9674ac48ab46` | `b1c51ce14454` | `37eb7a327647` | `1 / 72` | 384 | 14 | 135707 |
 | `cartesia-voice-agent` | Cartesia example component fork placeholder; active Cartesia route lives in Viventium voice gateway/shared config | `livekit-examples/cartesia-voice-agent` | `177fa9225ebf` | `23a86abe21c6` | `c6873f2f7efb` | `1 / 1` | 46 | 14 | 8673 |
 
 ## High-Level Findings
