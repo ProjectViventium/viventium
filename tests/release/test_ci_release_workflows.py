@@ -440,10 +440,8 @@ def test_live_activation_eval_is_protected_and_scopes_secrets_to_the_eval_step()
 
     assert "\n  pull_request:" not in trigger_source
     assert "\n  pull_request_target:" not in trigger_source
-    assert re.search(r"\n  push:\n    branches:\n      - main\n", trigger_source)
+    assert "\n  push:" not in trigger_source
     assert "\n  workflow_dispatch:" in trigger_source
-    assert "      - components.lock.json" in trigger_source
-    assert "      - .github/workflows/productivity-activation-live-eval.yml" in trigger_source
     assert "environment: productivity-activation-live-eval" in source
     assert "github.ref_protected == true" in source
     assert "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" in source
