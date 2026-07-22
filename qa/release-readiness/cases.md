@@ -162,10 +162,10 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
   unprotected ref/direct write to reach the live job.
 - Evidence to capture: RED/GREEN static test output, workflow diff, and sanitized hosted policy
   inspection without secret values.
-- Last run: PARTIAL 2026-07-22. The split workflow, disabled npm lifecycle hooks, step-scoped secret
-  boundary, public-main ref gate, macOS Python selector provenance, duplicate PR/push-run prevention,
-  always-reporting required PR contexts, and pass/failure/outage shell semantics pass 33/33
-  workflow tests. The current
+- Last run: PARTIAL 2026-07-22. The split workflow, dispatch-only trigger lock, disabled npm lifecycle
+  hooks, step-scoped secret boundary, public-main ref gate, macOS Python selector provenance,
+  duplicate PR/push-run prevention, always-reporting required PR contexts, and pass/failure/outage
+  shell semantics pass 33/33 workflow tests. The current
   LibreChat pin is merged at `38527a8651...`, whose tree equals corrected audited head
   `44ac1f7a...`.
   Hosted inspection created the named live-eval environment, limited it to protected branches,
