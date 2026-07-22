@@ -437,7 +437,9 @@ def test_pull_request_workflows_never_reference_repository_secrets() -> None:
 def test_live_activation_eval_is_protected_and_scopes_secrets_to_the_eval_step() -> None:
     source = _workflow_sources()["productivity-activation-live-eval.yml"]
     trigger_source = source.split("\npermissions:", maxsplit=1)[0]
+    workflow = yaml.load(source, Loader=yaml.BaseLoader)
 
+    assert set(workflow["on"]) == {"workflow_dispatch"}
     assert "\n  pull_request:" not in trigger_source
     assert "\n  pull_request_target:" not in trigger_source
     assert "\n  push:" not in trigger_source

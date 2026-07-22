@@ -145,9 +145,9 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Steps:
   1. Confirm every `pull_request`/`pull_request_target` workflow contains no `secrets.*` reference.
   2. Confirm the secretless PR contract runs without provider credentials or npm lifecycle.
-  3. Confirm the live workflow accepts only protected-default-branch push/manual events and targets
-     the named protected environment; confirm it fetches and validates the exact parent-pinned
-     LibreChat commit rather than skipping an absent nested checkout.
+  3. Confirm the live workflow accepts only an explicit owner/manual dispatch from the protected
+     default branch and targets the named protected environment; confirm it fetches and validates
+     the exact parent-pinned LibreChat commit rather than skipping an absent nested checkout.
   4. Confirm dependency installation completes before provider secrets are injected into the one
      live-eval step, and confirm the live workflow disables npm lifecycle scripts and does not
      install Python packages.
