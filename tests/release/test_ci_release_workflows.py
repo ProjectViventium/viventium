@@ -204,7 +204,8 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
 
     assert "actions/setup-node@" in source
     assert 'node-version: "24"' in source
-    assert 'python-version: "3.12.13"' in source
+    assert 'python-version: "3.12"' in source
+    assert 'python-version: "3.12.' not in source
     for suite in (
         "tests/release/test_continuity_bundle.py",
         "tests/release/test_native_candidate_transport.py",
