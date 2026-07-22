@@ -160,7 +160,14 @@ def _prepare(
         "--state-root",
         str(tmp_path / "guard-state"),
         "--policy",
-        str(policy or _policy(tmp_path, minimum_free_bytes_before_run=1)),
+        str(
+            policy
+            or _policy(
+                tmp_path,
+                minimum_free_bytes_before_run=1,
+                abort_below_free_bytes=1,
+            )
+        ),
         "--tart",
         str(tart),
         "--docker",
