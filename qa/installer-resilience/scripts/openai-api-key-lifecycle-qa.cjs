@@ -118,6 +118,25 @@ function parseQAProvider() {
   return provider;
 }
 
+function parseRuntimeProviderTarget(qaProvider, providerPort) {
+  const envName = {
+    openai: "OPENAI_REVERSE_PROXY",
+    anthropic: "ANTHROPIC_REVERSE_PROXY",
+    groq: "GROQ_BASE_URL",
+    xai: "XAI_BASE_URL",
+  }[qaProvider.slug];
+  const raw = process.env[envName] || "";
+  if (!raw) {
+    fail(`Set ${envName} to the synthetic loopback provider before lifecycle QA`);
+  }
+  const target = assertLoopbackUrl(raw, envName);
+  const targetPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+  if (targetPort !== providerPort) {
+    fail(`${envName} must use the same port as VIVENTIUM_QA_PROVIDER_PORT`);
+  }
+  return target.origin;
+}
+
 function parseRestartArgv(required) {
   const raw = process.env.VIVENTIUM_QA_RESTART_ARGV_JSON || "";
   if (!raw) {
@@ -159,12 +178,15 @@ function assertSafeInputs({ requireRestart }) {
   if (password.length < 12) {
     fail("VIVENTIUM_QA_PASSWORD must be a synthetic value of at least 12 characters");
   }
+  const providerPort = parseProviderPort();
+  const qaProvider = parseQAProvider();
   return {
     clientBase,
     email,
     password,
-    providerPort: parseProviderPort(),
-    qaProvider: parseQAProvider(),
+    providerPort,
+    qaProvider,
+    runtimeProviderTarget: parseRuntimeProviderTarget(qaProvider, providerPort),
     restartArgv: parseRestartArgv(requireRestart),
   };
 }
@@ -848,6 +870,12 @@ async function runBrowserLifecycle(inputs) {
       }
     });
 
+    // Force the disposable backend to inherit the verified loopback provider target before any
+    // credential is saved or prompt can be sent. This closes the backend-egress gap that a
+    // browser-only network fence cannot cover.
+    await runRestart(inputs.restartArgv);
+    await waitForRuntime(inputs.clientBase);
+
     if (process.argv.includes("--register")) {
       await register(page, inputs);
     }
@@ -988,6 +1016,9 @@ async function runBrowserLifecycle(inputs) {
     await startFreshConversation(page, inputs.clientBase);
     await selectChatProvider(page, inputs.qaProvider);
     const requestsBeforeDisconnectedSend = provider.state.chatRequests;
+    const recoveryButtonsBefore = await page
+      .getByRole("button", { name: "Connected Accounts", exact: true })
+      .count();
     const disconnectedInput = page.getByTestId("text-input");
     await disconnectedInput.fill("Do not contact the provider while disconnected.");
     await page.getByTestId("send-button").click();
@@ -1005,11 +1036,9 @@ async function runBrowserLifecycle(inputs) {
     }
     mark("disconnect_prevents_provider_request");
 
-    const disconnectedMessage = page.locator('[aria-label^="Message "]').last();
-    const recovery = disconnectedMessage.getByRole("button", {
-      name: "Connected Accounts",
-      exact: true,
-    });
+    const recovery = page
+      .getByRole("button", { name: "Connected Accounts", exact: true })
+      .nth(recoveryButtonsBefore);
     await recovery.waitFor({ state: "visible", timeout: 25_000 });
     await page.screenshot({
       path: path.join(evidenceDir, "03-missing-key-one-click-recovery.png"),

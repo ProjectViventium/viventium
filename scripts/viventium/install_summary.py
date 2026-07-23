@@ -1395,7 +1395,11 @@ def build_brain_setup_rows(
     config: dict[str, Any],
     runtime_env: dict[str, str],
 ) -> list[tuple[str, str, str]]:
-    keys = tuple(FEATURE_BY_KEY)
+    # Internal/lab-only features remain in the readiness registry for release gates, but exposing
+    # an unavailable experiment in the user-facing Easy Install checklist adds noise and implies
+    # that the user should care about it. Explicit legacy configuration still appears in the live
+    # service summary so an existing operator receives honest repair guidance.
+    keys = tuple(key for key in FEATURE_BY_KEY if key not in UNAVAILABLE_KEYS)
     return [
         (feature_label(key), *brain_setup_state(key, config, runtime_env))
         for key in keys

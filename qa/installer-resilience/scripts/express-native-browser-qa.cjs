@@ -74,6 +74,7 @@ async function login(page) {
     state: "visible",
     timeout: 20_000,
   });
+  await page.waitForURL((url) => !url.searchParams.has("setup"), { timeout: 10_000 });
 }
 
 async function main() {

@@ -630,7 +630,7 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     assert 'case "$POST_UPGRADE_CONTINUITY_STATUS" in' in upgrade_section
     assert "error|unknown|*)" in upgrade_section
     assert "cleanup_cli_lock" in restart_section
-    assert "launch_stack_detached" in restart_section
+    assert "VIVENTIUM_DETACHED_INHERIT_CLI_LOCK=1 launch_stack_detached" in restart_section
     assert "wait_for_install_stack_health" in restart_section
     assert 'echo "Restarting Viventium..."' in restart_section
     assert "install_waiting_on_surfaces" in restart_section
@@ -638,6 +638,18 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     assert "if ! restart_stack_after_upgrade; then" in upgrade_section
     assert '"$REPO_ROOT/bin/viventium" \\' not in autorestart_section
     assert "        start" not in autorestart_section
+
+
+def test_upgrade_restart_lock_handoff_is_one_time_and_bound_to_the_parent_owner() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    acquire = extract_shell_function(cli_source, "acquire_cli_lock")
+    launch = extract_shell_function(cli_source, "launch_stack_detached")
+
+    assert "VIVENTIUM_CLI_LOCK_OWNER_PID" in acquire
+    assert "VIVENTIUM_CLI_LOCK_INHERITED_ONCE" in acquire
+    assert '"$existing_pid" != "${VIVENTIUM_CLI_LOCK_OWNER_PID:-}"' in acquire
+    assert 'env["VIVENTIUM_CLI_LOCK_INHERITED_ONCE"] = "1"' in launch
+    assert 'env.pop("VIVENTIUM_CLI_LOCK_HELD", None)' in launch
 
 
 def test_upgrade_stop_failure_is_terminal_and_not_suppressed() -> None:
@@ -686,6 +698,26 @@ def test_pre_upgrade_audit_does_not_mutate_bootstrap_python_before_checkpoint() 
 
     assert "VIVENTIUM_CONTINUITY_AUDIT_SKIP_PYTHON_REFRESH" in capture
     assert "VIVENTIUM_CONTINUITY_AUDIT_SKIP_PYTHON_REFRESH=1" in pre_audit
+
+
+def test_upgrade_selects_an_existing_requirements_ready_product_python() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    bootstrap_selection = cli_source.split('maybe_reexec_active_runtime_checkout "$COMMAND" "$@"', 1)[0]
+
+    assert 'PYTHON_BIN="$(resolve_upgrade_transaction_python)"' in bootstrap_selection
+    selection = extract_shell_function(cli_source, "resolve_upgrade_transaction_python")
+    assert "resolve_existing_product_python yaml" in selection
+    assert "python_has_module \"$candidate\" yaml" in selection
+    assert "Run bin/viventium preflight --apply, then retry the upgrade." in bootstrap_selection
+
+
+def test_same_component_source_refresh_does_not_create_a_migration_handoff() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    prepare = extract_shell_function(cli_source, "prepare_agent_migration_state")
+
+    no_op = 'if [[ "$predecessor_ref" == "$successor_ref" ]]; then'
+    assert no_op in prepare
+    assert prepare.index(no_op) < prepare.index("agent_migration_state.py")
 
 
 def test_continuity_error_disables_automatic_restart() -> None:
@@ -2820,13 +2852,12 @@ exit 1
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "selected-python.txt").read_text(encoding="utf-8") == "python3.12"
     pending = config_path.parent / "state" / "runtime" / "agent-managed-migration-pending.json"
-    assert pending.is_file()
-    assert stat.S_IMODE(pending.stat().st_mode) == 0o600
+    assert not pending.exists(), "same-source refresh must not create a migration handoff"
     assert "VIVENTIUM_AGENT_PREDECESSOR_SOURCE_REF" not in (
         config_path.parent / "runtime" / "runtime.env"
     ).read_text(encoding="utf-8")
 
-    refused = subprocess.run(
+    repeated = subprocess.run(
         [
             str(repo_root / "bin" / "viventium"),
             "--app-support-dir",
@@ -2841,8 +2872,8 @@ exit 1
         capture_output=True,
         env={**dict(os.environ), "TEST_ROOT": str(tmp_path)},
     )
-    assert refused.returncode != 0
-    assert "prior managed-agent migration has not finished" in refused.stderr
+    assert repeated.returncode == 0, repeated.stderr
+    assert not pending.exists(), "idempotent same-source refresh must stay migration-free"
 
 
 def test_upgrade_restart_stops_running_stack_before_bootstrap(tmp_path: Path) -> None:

@@ -30,11 +30,11 @@
   "llm": {
     "activation": {
       "provider": "groq",
-      "auth_mode": "api_key"
+      "auth_mode": "user_provided"
     },
     "primary": {
       "provider": "openai",
-      "auth_mode": "connected_account"
+      "auth_mode": "user_provided"
     },
     "secondary": {
       "provider": "none",

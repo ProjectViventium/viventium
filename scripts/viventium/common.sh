@@ -360,6 +360,36 @@ resolve_repo_python() {
   return 1
 }
 
+resolve_existing_product_python() {
+  local required_module="${1:-}"
+  local preferred="${VIVENTIUM_PYTHON_BIN:-}"
+  local bootstrap_python="$(bootstrap_python_root)/bin/python3"
+  local fallback=""
+  local candidate=""
+  local candidates=()
+
+  [[ -n "$preferred" ]] && candidates+=("$preferred")
+  candidates+=("$bootstrap_python")
+  fallback="$(resolve_repo_python 2>/dev/null || true)"
+  [[ -n "$fallback" ]] && candidates+=("$fallback")
+
+  for candidate in "${candidates[@]}"; do
+    if [[ "$candidate" == */* ]]; then
+      [[ -x "$candidate" ]] || continue
+    elif ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    python_runs_inline_script "$candidate" || continue
+    if [[ -n "$required_module" ]] && ! python_has_module "$candidate" "$required_module"; then
+      continue
+    fi
+    printf '%s\n' "$candidate"
+    return 0
+  done
+
+  return 1
+}
+
 bootstrap_python_root() {
   local app_support_dir="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
   printf '%s\n' "${VIVENTIUM_BOOTSTRAP_PYTHON_ROOT:-$app_support_dir/state/bootstrap-python}"

@@ -10,6 +10,49 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_resolve_existing_product_python_prefers_ready_bootstrap_without_mutating_it(
+    tmp_path: Path,
+) -> None:
+    bootstrap_root = tmp_path / "bootstrap-python"
+    bootstrap_python = bootstrap_root / "bin" / "python3"
+    bootstrap_python.parent.mkdir(parents=True)
+    bootstrap_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == \"-\" ]]; then\n"
+        "  payload=\"$(cat)\"\n"
+        "  if [[ \"$payload\" == *'find_spec(\"yaml\")'* ]]; then exit 0; fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    bootstrap_python.chmod(0o755)
+    before = bootstrap_python.stat().st_mtime_ns
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f"source '{REPO_ROOT / 'scripts/viventium/common.sh'}' && "
+                "resolve_existing_product_python yaml"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+        env={
+            **dict(os.environ),
+            "VIVENTIUM_BOOTSTRAP_PYTHON_ROOT": str(bootstrap_root),
+        },
+    )
+
+    assert completed.stdout.strip() == str(bootstrap_python)
+    assert bootstrap_python.stat().st_mtime_ns == before
+
+
 def test_ensure_python_module_retries_with_break_system_packages(tmp_path: Path) -> None:
     marker = tmp_path / "yaml-installed"
     fake_base_python = tmp_path / "python3.12"

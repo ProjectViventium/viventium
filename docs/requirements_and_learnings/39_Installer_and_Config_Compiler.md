@@ -405,6 +405,40 @@ runtime-restart persistence, invalid/quota/outage/network repair, local disconne
 provider contact, and key re-add. This proves the integrated disposable source-runtime path only.
 The same lifecycle must still pass from the final immutable installed artifact before release.
 
+### Source Easy Install Acceptance — 2026-07-23
+
+The supported non-Docker source entrypoint now passes the complete isolated acceptance sequence in
+`INST-033`: one headless Easy Install command, first browser setup, provider connection, two useful
+answers, refresh, process restart, warm reinstall, established-user upgrade, continuity checks, and
+owned uninstall. The run used only synthetic accounts and loopback providers under an isolated
+support root. It did not read or modify an owner installation, personal database, browser profile,
+Keychain, or conversation history.
+
+The source runtime now preserves the installing user's optimized public configuration rather than
+falling back to historical defaults:
+
+- the compiler provisions the Groq and xAI base URLs consumed by the generated LibreChat source of
+  truth, and their custom endpoints retain the full user-scoped endpoint configuration when the
+  Background Cortex initializes them;
+- the literal `user_provided` capability marker is never treated as a credential; saved encrypted
+  per-user keys remain the authority for browser-connected OpenAI, Anthropic, Groq, and Grok/xAI;
+- Settings > Channels provides the complete Telegram, Slack Socket Mode, and official WhatsApp
+  Business Cloud API setup, test, repair, pairing, disconnect, and status surfaces; optional
+  channel failure cannot block first chat;
+- the collapsed responsive navigation cannot leave an invisible sidebar intercepting the account
+  and Channels controls; and
+- lab-only OpenClaw is absent from public Easy Install setup and status output.
+
+The shipped LibreChat source for this acceptance is immutable commit
+`85a2e326cd5672f00c927984f00a92c9b3f07f9c`, pinned by both the parent component lock and Native
+payload component manifest. Its product tree was reviewed at PR 72 head `b0ee2394...`, where all 14
+required hosted checks passed, and the squash-merge product tree was byte-equivalent. A six-line
+PR 73 follow-up made fork-only Docker Hub and Locize publishing explicitly opt-in; its Locize
+post-merge workflow now skips instead of failing when credentials are absent. This source-path PASS
+does not substitute for a separately signed and
+notarized immutable Native artifact, nor does it claim vendor-side Telegram, Slack, or Meta account
+approval without credentials owned by the installing user.
+
 `scripts/viventium/native_payload.py` and its tests implement the signed-manifest, hostile-archive,
 immutable-activation, journal/lock, interruption recovery, idempotent re-activation, and health-
 gated rollback boundary. `scripts/viventium/build_native_payload.py` now produces deterministic,
