@@ -1031,6 +1031,12 @@ compile_config() {
   local compile_status=0
   refresh_repo_python
   ensure_app_support_layout "$APP_SUPPORT_DIR"
+  if [[ -e "$GENERATED_ENV" || -L "$GENERATED_ENV" ]]; then
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/agent_migration_state.py" import-legacy \
+      --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR" \
+      --runtime-env "$GENERATED_ENV" >/dev/null
+  fi
   export VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"
   prepare_runtime_exports
   "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
@@ -4146,6 +4152,42 @@ fast_forward_current_branch_to_target() {
   git -C "$REPO_ROOT" merge --ff-only "$target_head"
 }
 
+capture_agent_source_ref() {
+  local source_json=""
+  source_json="$(
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/agent_migration_state.py" source-ref \
+      --repo-root "$REPO_ROOT"
+  )" || return 1
+  "$PYTHON_BIN" -c '
+import json, re, sys
+value = str(json.loads(sys.argv[1]).get("source_ref") or "")
+if not re.fullmatch(r"[a-f0-9]{40}", value):
+    raise SystemExit("Upgrade source identity is invalid.")
+print(value, end="")
+' "$source_json"
+}
+
+ensure_no_pending_agent_migration() {
+  local pending_state="$APP_SUPPORT_DIR/state/runtime/agent-managed-migration-pending.json"
+  if [[ -e "$pending_state" || -L "$pending_state" ]]; then
+    echo "Upgrade refused because the prior managed-agent migration has not finished." >&2
+    echo "Run bin/viventium start to finish it, then retry the upgrade." >&2
+    return 1
+  fi
+}
+
+prepare_agent_migration_state() {
+  local predecessor_ref="$1"
+  local successor_ref="$2"
+  local transaction_id="${UPGRADE_TRANSACTION_DIR##*/}"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/agent_migration_state.py" prepare \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --predecessor-ref "$predecessor_ref" \
+    --successor-ref "$successor_ref" \
+    --transaction-id "$transaction_id" >/dev/null
+}
+
 if [[ $# -gt 0 ]]; then
   PARSED_ARGS=()
   parse_global_options "$@"
@@ -4358,6 +4400,7 @@ case "$COMMAND" in
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     acquire_cli_lock "$COMMAND"
     recover_interrupted_upgrade_transaction
+    ensure_no_pending_agent_migration
     if [[ ! -f "$CONFIG_FILE" ]]; then
       echo "Missing config: $CONFIG_FILE" >&2
       echo "Run: bin/viventium install" >&2
@@ -4429,6 +4472,7 @@ PY
       echo "Review $(display_safe_path "$PRE_UPGRADE_CONTINUITY_AUDIT") before changing the installed runtime." >&2
       exit 1
     fi
+    UPGRADE_AGENT_PREDECESSOR_SOURCE_REF="$(capture_agent_source_ref)"
     UPGRADE_TARGET_HEAD=""
     if [[ "$SKIP_PULL" != "1" ]]; then
       # Fetch updates Git metadata only; if the network fails, the still-running
@@ -4480,6 +4524,10 @@ PY
       --runtime-dir "$UPGRADE_CANDIDATE_RUNTIME" \
       --repo-root "$REPO_ROOT" \
       --lock-file "$LOCK_FILE"
+    UPGRADE_AGENT_SUCCESSOR_SOURCE_REF="$(capture_agent_source_ref)"
+    prepare_agent_migration_state \
+      "$UPGRADE_AGENT_PREDECESSOR_SOURCE_REF" \
+      "$UPGRADE_AGENT_SUCCESSOR_SOURCE_REF"
     upgrade_transaction_checkpoint "candidate_validated"
     upgrade_transaction_activate_candidate
     upgrade_transaction_checkpoint "candidate_activated"

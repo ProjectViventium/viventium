@@ -66,6 +66,17 @@ def test_helper_menu_exposes_app_identity_and_static_status_semantics() -> None:
     assert 'Button(self.controller.statusLabel) {}' not in source
 
 
+def test_native_start_failure_surfaces_owner_recovery_instead_of_docker_guidance() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+
+    assert "private nonisolated static func startFailureGuidance(" in source
+    assert "Native first-admin owner verification did not complete" in source
+    assert "Restore or promote that administrator" in source
+    assert "Advanced > Restore from Backup" in source
+    start_section = source[source.index("private func startStack(") : source.index("private func stopStack(")]
+    assert start_section.count("Self.startFailureGuidance(") == 2
+
+
 def _make_fake_executable(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

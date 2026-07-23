@@ -36,6 +36,11 @@ SERVICE_PORTS = {
     "frontend-proxy": (3190, 3191),
 }
 SANDPACK_INDEX_SHA256 = "ace51687532a2e9cbfcc11d790bc96b250c477cfa3545ab285915b9eca8e7aa6"
+NATIVE_OWNER_RECOVERY_MESSAGE = (
+    "Native first-admin owner verification did not complete because the recorded administrator "
+    "identity is unavailable. Restore or promote the recorded administrator, or restore the "
+    "latest Viventium backup, then retry; protected owner state was not changed."
+)
 
 
 @contextmanager
@@ -316,6 +321,12 @@ def required_assets(root: Path) -> tuple[Path, ...]:
         root / "runtime" / "defaults" / "viventium-agents.yaml",
         root / "runtime" / "librechat" / "scripts" / "viventium-seed-agents.js",
         root / "runtime" / "librechat" / "scripts" / "viventium-reconcile-user-defaults.js",
+        root
+        / "runtime"
+        / "librechat"
+        / "viventium"
+        / "source_of_truth"
+        / "managed-agent-baseline-migration.json",
         root / "runtime" / "librechat" / "config" / "issue-password-reset-link.js",
         root / "release-metadata" / "build.json",
     )
@@ -735,6 +746,17 @@ def ensure_first_admin_state(support: Path) -> dict[str, object]:
     elif "token" in value:
         raise RuntimeError_("Closed Native first-admin state retains a token")
     return value
+
+
+def require_closed_admin_user_id(first_admin: dict[str, object]) -> str:
+    """Return the protected owner ID without rejecting registration's closed transition state."""
+    admin_user_id = first_admin.get("admin_user_id")
+    if (
+        not isinstance(admin_user_id, str)
+        or re.fullmatch(r"[a-fA-F0-9]{24}", admin_user_id) is None
+    ):
+        raise RuntimeError_(NATIVE_OWNER_RECOVERY_MESSAGE)
+    return admin_user_id
 
 
 def install(args: argparse.Namespace, *, _lock_held: bool = False) -> None:
@@ -1659,6 +1681,7 @@ def run_native_maintenance(
     env: dict[str, str],
     required_service: str | None = None,
     root: Path | None = None,
+    public_failure_message: str | None = None,
 ) -> None:
     owned_pid: int | None = None
     if required_service is not None:
@@ -1683,12 +1706,15 @@ def run_native_maintenance(
                 f"Native {required_service} ownership changed during maintenance"
             )
     if completed.returncode != 0:
+        if public_failure_message:
+            raise RuntimeError_(public_failure_message)
         raise RuntimeError_(f"Native {label.replace('-', ' ')} failed; inspect {log_path.name}")
 
 
 def verify_default_agent(root: Path, support: Path, env: dict[str, str]) -> None:
     librechat = root / "runtime" / "librechat"
     mongo_uri = mongodb_uri(support)
+    admin_user_id = require_closed_admin_user_id(ensure_first_admin_state(support))
     run_native_maintenance(
         "default-agent-verification",
         [
@@ -1697,6 +1723,8 @@ def verify_default_agent(root: Path, support: Path, env: dict[str, str]) -> None
             str(librechat),
             mongo_uri,
             str(root / "runtime" / "defaults" / "viventium-agents.yaml"),
+            admin_user_id,
+            str(support / "state" / "agent-managed-baseline.json"),
         ],
         support,
         cwd=librechat,
@@ -1715,6 +1743,7 @@ def maintain_native_identity(
     """Seed user-owned defaults only after the real first admin exists."""
     if first_admin.get("status") != "closed":
         return
+    admin_user_id = require_closed_admin_user_id(first_admin)
     librechat = root / "runtime" / "librechat"
     run_native_maintenance(
         "user-default-reconciliation",
@@ -1734,6 +1763,8 @@ def maintain_native_identity(
             str(root / "runtime" / "node" / "bin" / "node"),
             "scripts/viventium-seed-agents.js",
             f"--bundle={root / 'runtime' / 'defaults' / 'viventium-agents.yaml'}",
+            f"--owner-id={admin_user_id}",
+            f"--managed-baseline={support / 'state' / 'agent-managed-baseline.json'}",
             "--public",
         ],
         support,
@@ -1838,12 +1869,18 @@ def start(
                 str(support / "state" / "native-first-admin.json"),
                 str(librechat),
                 mongo_uri,
+                str(root / "runtime" / "defaults" / "viventium-agents.yaml"),
             ],
             support,
             cwd=librechat,
             env=env,
             required_service="mongodb",
             root=root,
+            public_failure_message=(
+                "Native first-admin owner verification did not complete. Restore or promote the "
+                "recorded administrator, or restore the latest Viventium backup, then retry; "
+                "otherwise inspect native-first-admin-recovery.log before retrying."
+            ),
         )
         first_admin = ensure_first_admin_state(support)
         env["ALLOW_REGISTRATION"] = "true" if first_admin["status"] == "open" else "false"

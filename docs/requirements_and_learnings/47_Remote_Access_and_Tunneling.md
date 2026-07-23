@@ -249,6 +249,11 @@ Config contract:
   - `runtime.network.public_api_origin`
   - `runtime.network.public_playground_origin`
   - `runtime.network.public_livekit_url`
+- Official WhatsApp Business Cloud callbacks may reuse `runtime.network.public_api_origin`. An Easy
+  Install administrator who operates an equivalent stable public edge may instead enter that API
+  origin under **Settings > Channels > WhatsApp > Public Viventium HTTPS address**. Viventium
+  validates a public HTTPS origin and generates the connection-specific callback path; the setting
+  does not provision DNS, TLS, a tunnel, a Meta app, or provider approval.
 - externally usable GlassHive workspace/artifact links additionally require:
   - `runtime.network.public_glasshive_origin`
   - the compiler-owned signed-link-only mode; the local GlassHive operator port must never be

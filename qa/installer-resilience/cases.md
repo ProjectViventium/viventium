@@ -161,7 +161,10 @@ These cases are intentionally separate so one broad `PARTIAL` cannot hide a miss
   window changes `--self-check` behavior.
 - Automation: `tests/release/test_native_bootstrap_ui.py` plus the signed-bundled-Python and candidate
   workflow contracts in `tests/release/test_native_payload_assembler.py`.
-- Last run: PARTIAL 2026-07-21. The 48-test Native payload suite proves phase-aware cancellation,
+- Last run: PARTIAL 2026-07-22. The Native bootstrap cancellation regression now also covers the
+  macOS/Python 3.14 `EPERM` liveness race after a process-group leader exits: the installer treats
+  the still-existing group as alive and continues bounded cleanup rather than abandoning its owned
+  descendant. The 48-test Native payload suite proves phase-aware cancellation,
   pre-publish staging cleanup, and durable-health recovery; the 7-test bootstrap suite compiles the
   AppKit package and proves an owned synthetic descendant receives termination. Source contracts,
   exact headless forwarding, bounded status-announcement semantics, a universal hash-aligned helper,
@@ -350,11 +353,12 @@ These cases are intentionally separate so one broad `PARTIAL` cannot hide a miss
 | Primary AI | OpenAI API key guided for the intended optimized Easy Install path; readiness waits for a live request and visible answer | key saved but untested, live probe, first visible Viventium answer, restart persistence, invalid/revoked/quota/network repair | `qa/connected-accounts-handoff/` |
 | Secondary/fallback AI | Guided optional | skipped visible state, fallback configured, provider failure wording | `qa/connected-accounts-handoff/` |
 | Voice | Custom Settings Install only | local Apple Silicon path, hosted guided path, disabled/setup-pending state, provider auth missing | `qa/modern-playground-voice/` |
-| Telegram | Custom Settings Install only | token validation, Keychain-only storage, polling conflict, self-test | `qa/telegram-runtime/` |
+| Telegram | Guided browser setup; Custom Settings operator adapter remains supported | encrypted token, pairing, two-turn delivery, Keychain compatibility, polling ownership/conflict, restart, repair, disconnect | `qa/telegram-runtime/`, `qa/channel-connections/` |
 | Telegram Codex | Custom Settings Install only | separate token, missing token pending, polling conflict | `qa/telegram-runtime/` |
 | Google Workspace MCP | Custom Settings Install only | pending OAuth, configured endpoint, expired token/action required | `qa/mcp-oauth/` |
 | Microsoft 365 MCP | Custom Settings Install only | pending OAuth, Docker/prereq missing, endpoint/action required | `qa/mcp-oauth/` |
-| WhatsApp | Not available | unavailable wording; no generated config or fake status | `qa/installer-resilience/` |
+| Slack | Guided browser Socket Mode setup | manifest, encrypted tokens, pairing, missing scope, threaded/direct delivery, restart, repair, disconnect | `qa/channel-connections/` |
+| WhatsApp | Guided Business Cloud setup | encrypted credentials, public HTTPS edge, callback verification, HMAC/tenant scope, idempotent delivery, restart, repair, disconnect | `qa/channel-connections/` |
 | Code Interpreter | Off by default | disabled by choice, Custom Settings Install or later configure opt-in only, no public default-on example | `qa/installer-resilience/` until a dedicated owner exists |
 | Skyvern | Off by default | disabled by choice, Custom Settings Install or later configure opt-in only, no public default-on example | `qa/installer-resilience/` |
 | OpenClaw | Off by default | disabled by choice; the standalone bridge remains lab-only and must not claim LibreChat client wiring until authenticated initialize/tool-call and lifecycle acceptance are shipped | `qa/installer-resilience/` |
@@ -545,7 +549,8 @@ feature-owner results; it does not replace their detailed matrices.
   2. Read prerequisite/time/privacy/cost disclosure and exercise missing-prerequisite recovery.
   3. Complete install, live health, first local account, and preferred provider connection.
   4. Send a synthetic first prompt and inspect the visible answer, details, logs, and persisted turn.
-  5. Skip and later add optional Telegram; confirm honest unsupported Slack/WhatsApp states.
+  5. Skip and later add optional channels; confirm setup, provider activation, worker readiness, and
+     real delivery remain distinct, actionable states.
   6. Discover Feelings from ordinary chat, use it, return, refresh, restart services, and restart the
      machine.
   7. Snapshot, uninstall/preserve, restore into disposable state, and verify visible continuity.
@@ -613,7 +618,8 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   3. Reauthenticate/reconfigure without deleting unrelated state.
   4. Disconnect, upstream revoke where supported, and separately delete the local secret.
   5. Inspect Keychain references, browser storage, config, logs, diagnostics, and reports for leakage.
-  6. Verify Groq API and xAI API/Grok wording; verify unsupported Slack/WhatsApp is not configurable.
+  6. Verify Groq API and xAI API/Grok wording; verify Slack/WhatsApp setup, failure, repair, and
+     delivery states are specific and truthful.
 - Expected result: user sees privacy/cost/data destination, current capabilities, live state, and a
   specific recovery action; raw secrets exist only in approved secret storage.
 - Forbidden result: consumer subscription presented as API entitlement, plaintext secret, embedded
@@ -628,8 +634,10 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   and re-add. Custom Settings compiler tests now prove all four Keychain references map to their own
   source/service env values while Native output remains sentinel-only; a missing reference preserves
   the prior generated runtime. The added browser-residue guard passes its fail-closed offline test,
-  but has not run headed. Provider-side revocation/real accounts, native Keychain/TCC, Telegram,
-  Google/Microsoft, Slack, and WhatsApp remain open.
+  but has not run headed. Existing compiler coverage continues to protect the operator Telegram
+  `0600` service env; browser channels are owned by LibreChat rather than parent compiler secrets.
+  Provider-side revocation/real accounts, native Keychain/TCC, external Telegram delivery,
+  Google/Microsoft, Slack delivery, and WhatsApp webhook delivery remain open.
 
 ## `INST-011` - Isolated Platform And Failure Matrix
 
@@ -901,7 +909,8 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
 
 - Requirement: compile and ship a strict secret-free Native behavior environment; start children
   without inheriting host credentials; close backend registration synchronously after the one-time
-  first admin; reconcile the new user's defaults; seed and verify the exact bundled default agent.
+  first admin; resolve that exact admin by immutable ID; seed and verify the full built-in agent
+  graph; and three-way upgrade untouched managed fields without overwriting real user edits.
 - Expected outcome: invalid direct registration proves the gate is initially controlled, direct
   registration returns `403` after first-admin success and after restart, login persists, the exact
   default-agent ID exists once in MongoDB, and child environments contain no host provider keys.
@@ -912,8 +921,10 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   from YAML alone without DB verification.
 - Evidence to capture: compiled/installed env key policy and modes, assembled default hashes, process
   environment allowlist, zero TCP listener on `3180` before/after/restart, proxy `3190` result, first-admin
-  state, post-prune execution of the built `@librechat/api` entrypoint, login after restart,
-  maintenance logs, exact agent DB count, health result, and browser view.
+  state without email, post-prune execution of the built `@librechat/api` entrypoint, login after
+  restart, real-admin author/owner ACL rows for every shipped agent, managed-baseline hash/drift,
+  interrupted three-way reseed, maintenance logs, exact agent DB count, health result, and browser
+  view.
 - Last run: FAIL 2026-07-20 for the provisional exact local-QA payload. A fresh compile produced 167
   accepted behavior-only keys and no enabled external services; canonical Native MCP servers were
   empty and the compiled agent bundle retained only `file_search` on the main agent with no
@@ -1046,7 +1057,7 @@ rows before claiming a pass when the feature behavior changes.
 | `INST-UC-008` | Run the public bootstrap against empty, valid, unrelated, dirty, offline, corrupt, and interrupted targets. | `39_Installer_and_Config_Compiler.md` / `INST-007` | Public one-command entrypoint, release manifest, component checkout, helper/installed runtime | Target before/after, identity verification, signature/digest, journal, pins/build/install versions | Only verified Viventium targets mutate; exact immutable release installs or resumes safely. | PARTIAL 2026-07-19; wrong-origin, tracked-dirty, and clean local-ahead targets are rejected; relocatable local assembly/install plus deterministic compressed build and verified activation pass; unprovisioned Native hand-off refuses fallback; exact dual-arch build, signed/notarized public bootstrap, live download/interruption, and installed-artifact alignment remain blocked |
 | `INST-UC-009` | As a novice on a clean supported Mac, complete one command through first answer, optional channel, Feelings, restart, and restore. | `39_Installer_and_Config_Compiler.md` / `INST-008` | Terminal installer, helper, browser account/provider/chat, Telegram, Feelings, restart/restore | Timestamped UX ledger, visible output/details, logs, DB/state, config, pins/artifacts, persistence, final wording | Minimal truthful choices produce a useful persistent result; every failure/recovery preserves progress. | PARTIAL 2026-07-21; isolated source-candidate install and four-provider browser lifecycles now include persistent useful answers, while account-menu Feelings, restart/reinstall/recovery, preserve-data uninstall, and independent provisional restore pass in their scoped lanes. Optional channel, right-control Feelings, exact signed artifact, and one uninterrupted end-to-end novice run remain open. |
 | `INST-UC-010` | Inspect setup/status before config, after config, after live success, and across each failure class. | `39_Installer_and_Config_Compiler.md` / `INST-009` | Install summary, Brain Setup, CLI status, helper, integration UI | Shared structured state, self-test, visible cards, logs, refresh/restart | Configured is distinct from Ready; exact failure and one repair action agree everywhere. | PARTIAL 2026-07-19; configured-only states no longer claim Ready; live error taxonomy/timestamps and every cross-surface state remain open |
-| `INST-UC-011` | Connect/test/reauth/repair/disconnect/revoke/delete each supported provider or channel using synthetic accounts. | `39_Installer_and_Config_Compiler.md` / `INST-010` | Browser connected accounts, Keychain, Telegram, Google, Microsoft, status/diagnostics | Adapter manifest, least scopes, live requests, failure states, secret scan, restart | Secure capability-scoped lifecycle works; unsupported channels remain honest; Groq and xAI/Grok are unambiguous. | PARTIAL 2026-07-21; headed Chromium passed stable OpenAI, Anthropic, Groq, and Grok API-key add, two answers, refresh/restart, invalid/quota/outage/network repair, local Disconnect with zero subsequent provider contact, and re-add. The new browser-residue check is offline-only; native Keychain/TCC, provider-side revoke, Telegram, Google/Microsoft, Slack, and WhatsApp remain open. |
+| `INST-UC-011` | Connect/test/reauth/repair/disconnect/revoke/delete each supported provider or channel using synthetic accounts. | `39_Installer_and_Config_Compiler.md` / `INST-010` | Browser connected accounts/channels, Keychain, Telegram, Slack, WhatsApp, Google, Microsoft, status/diagnostics | Adapter manifest, least scopes, live requests, pairing, inbound/outbound delivery, failure states, secret scan, restart | Secure capability-scoped lifecycle works; provider activation and worker states are truthful; Groq and xAI/Grok are unambiguous. | PARTIAL 2026-07-22; headed Chromium previously passed OpenAI, Anthropic, Groq, and Grok API-key lifecycles. Channel source implementation is under combined browser/runtime QA; native Keychain/TCC, provider-side revoke, real synthetic Telegram/Slack/WhatsApp delivery, and Google/Microsoft remain open. |
 | `INST-UC-012` | Exercise every supported platform/prerequisite/resource/network/interruption/recovery combination in isolation. | `39_Installer_and_Config_Compiler.md` / `INST-011` | Disposable macOS matrix, optional Linux subsystem harness, install journal, rollback/uninstall | Environment policy, checkpoints, visible errors, stage ledger, filesystem/services/artifacts | Failures are bounded, specific, resumable, and preserve prior good state. | PARTIAL 2026-07-21; disposable Native/Docker lanes and a 300-case synthetic fault/native slice cover important install, restart, rollback, ownership, concurrency, daemon, and preserve-data paths. Wider resources/network, signed helper/Keychain/TCC, Intel, physical power/sleep, headed Docker Desktop, and exact artifact remain open. |
 | `INST-UC-013` | From ordinary chat, discover Feelings in the right control panel and recover signed-out/missing/degraded setup states. | `54_Emotional_Cortex_And_Feeling_State.md` / `INST-012` | Built/installed LibreChat in real browser, side panel, login, connected accounts, Feelings | Browser/a11y evidence, startup config, provider state, persistence, logs/DB, nested pin/artifact | Feelings is discoverable without a URL; guidance preserves place/draft and gives one clear connection action. | PARTIAL 2026-07-21; authenticated account-menu keyboard discovery, nine-band UI, refresh/restart persistence, provider-free load, 320 px/reduced-motion behavior, and failure/retry pass. The ordinary-chat right-control link is source-tested but has not run on the real browser surface; operator-disabled/degraded setup, signed artifact, and installed identity remain open. |
 | `INST-UC-014` | Confirm local-only services work on loopback but are unreachable on non-loopback interfaces without remote access. | local privacy contract / `INST-013` | Exact built/installed runtime, socket table, host and second-LAN-machine probes, firewall states | Launcher args, generated config, helper/status, access logs, restart, remote-access mode | Explicit loopback binding is independent of firewall; remote modes expose only their declared authenticated ingress. | PARTIAL 2026-07-19; disposable Easy Install API/web/Mongo/scheduler sockets and non-loopback probes plus localhost-only status wording pass; second-host/firewall/optional-service/remote-mode coverage remains open |

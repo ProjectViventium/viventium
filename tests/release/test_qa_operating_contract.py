@@ -130,6 +130,8 @@ STRICT_RELEASE_VERDICT_PATHS = sorted(
     {
         *[path for path in (QA_ROOT / "release-readiness").rglob("*.md") if path.is_file()],
         *[path for path in (QA_ROOT / "installer-resilience").rglob("*.md") if path.is_file()],
+        *[path for path in (QA_ROOT / "channel-connections").rglob("*.md") if path.is_file()],
+        QA_ROOT / "agent-config-continuity" / "cases.md",
     }
 )
 VERDICT_WORD_RE = re.compile(r"\b(?:PASS|FAIL|PARTIAL|BLOCKED)\b", re.IGNORECASE)
@@ -635,6 +637,27 @@ def test_release_verdict_parser_rejects_qualified_or_noncanonical_tokens() -> No
         assert not SUMMARY_VERDICT_RE.search(non_verdict_summary), non_verdict_summary
 
 
+def test_current_agent_continuity_reports_use_standard_summary_verdicts() -> None:
+    report_root = QA_ROOT / "agent-config-continuity" / "reports"
+    paths = sorted(report_root.glob("2026-07-22-*.md"))
+    assert paths, "Expected dated agent-continuity release reports"
+
+    violations: list[str] = []
+    for path in paths:
+        for line_number, line in enumerate(_read(path).splitlines(), start=1):
+            summary_verdict = SUMMARY_VERDICT_RE.search(line.strip())
+            if not summary_verdict:
+                continue
+            violation = _verdict_value_violation(summary_verdict.group("value"))
+            if violation:
+                violations.append(f"{_relative(path)}:{line_number}: {violation}")
+
+    assert not violations, (
+        "Current agent-continuity report summaries must use a standard verdict enum:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_voice_web_search_escaped_case_is_promoted_to_feature_cases() -> None:
     owners = [
         "web-search",
@@ -652,7 +675,11 @@ def test_voice_web_search_escaped_case_is_promoted_to_feature_cases() -> None:
             "SearXNG/Firecrawl",
             "web_search",
             "persisted",
-            "FAIL (escaped 2026-05-18",
+            (
+                "FAIL; escaped 2026-05-18"
+                if owner == "agent-config-continuity"
+                else "FAIL (escaped 2026-05-18"
+            ),
         ]:
             assert phrase in text, f"Missing escaped voice/web-search case phrase {phrase!r} in {owner}"
 
@@ -931,10 +958,17 @@ def test_cataloged_case_rows_do_not_look_like_completed_runs() -> None:
     violations: list[str] = []
     for cases_path in sorted(QA_ROOT.glob("*/cases.md")):
         for line_number, line in enumerate(_read(cases_path).splitlines(), start=1):
-            if "cataloged" in line and "NOT YET RUN" not in line:
+            if (
+                "cataloged" in line
+                and "NOT YET RUN" not in line
+                and not re.search(r"\bBLOCKED(?:\s|;|$)", line)
+            ):
                 violations.append(f"{_relative(cases_path)}:{line_number}: {line.strip()}")
 
-    assert not violations, "Cataloged-only cases must be marked NOT YET RUN:\n" + "\n".join(violations)
+    assert not violations, (
+        "Cataloged-only cases must be marked NOT YET RUN or BLOCKED:\n"
+        + "\n".join(violations)
+    )
 
 
 def test_background_agent_browser_loop_case_entrypoint_is_pinned() -> None:

@@ -153,7 +153,8 @@ test, and repair action.
 AnythingLLM's guided Telegram flow is the strongest current reference. The Viventium flow should:
 
 1. open or explain BotFather with numbered steps and optional QR/deep link;
-2. accept a hidden token directly into Keychain;
+2. accept a hidden token into LibreChat's server-encrypted channel record (the established Custom
+   Settings operator path may continue using Keychain);
 3. validate it with `getMe`;
 4. use long polling for local Easy Install;
 5. pair or allowlist explicit users/chats;
@@ -165,21 +166,32 @@ AnythingLLM's guided Telegram flow is the strongest current reference. The Viven
 Telegram documents that polling and webhooks are mutually exclusive in the
 [Bot API](https://core.telegram.org/bots/api).
 
-### 2. Slack — Custom Settings Install first
+### 2. Slack — guided Easy Install connection after first answer
 
 Slack Socket Mode avoids a public inbound URL for a local runtime, but it still requires creating a
-Slack app, an app-level token, bot OAuth, and granular scopes. The first supported version should be
-part of Custom Settings Install and disclose those steps. A truly one-click public Slack install later requires a hosted
-OAuth/public-app boundary.
+Slack app, an app-level token with `connections:write`, bot OAuth, and granular scopes. Viventium
+should generate the least-privilege manifest, guide those provider-owned steps in Settings, and use
+Slack's focused official `@slack/socket-mode` and `@slack/web-api` packages rather than maintaining a
+custom WebSocket reconnect/ack implementation. This keeps local setup free of a public request URL.
+A future truly one-click workspace install still requires a reviewed hosted OAuth/public-app
+boundary; Easy Install must not pretend a local app can grant its own Slack permissions.
 
 - [Slack OAuth installation](https://docs.slack.dev/authentication/installing-with-oauth/)
 - [Slack Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/)
 
-### 3. WhatsApp Business Cloud — Custom Settings Install/later
+### 3. WhatsApp Business Cloud — guided Easy Install connection after first answer
 
 Do not promise consumer WhatsApp Easy Install setup and do not rely on unofficial personal-account
-libraries. Official support needs Meta business/application onboarding, tokens, and public webhook
-infrastructure. Until that complete boundary, the correct product state is `unsupported`.
+libraries. Official support uses Meta's Cloud API and needs a Meta business portfolio, WhatsApp
+Business Account, business phone number, app credentials, and a stable public HTTPS webhook. The
+Settings flow can guide and validate those provider-owned steps, but must stay action-required until
+the callback challenge succeeds. POST delivery must verify `X-Hub-Signature-256`, WABA and phone
+scope; acknowledge only after durable enqueue; and deduplicate the provider message ID before a
+single reply. The official payload shape identifies `object`, WABA `entry.id`, `field`, and
+`metadata.phone_number_id`, so accepting only the phone field is not a sufficient tenant boundary.
+
+- [Meta WhatsApp Cloud API](https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api)
+- [Meta webhook payload reference](https://www.postman.com/meta/whatsapp-business-platform/folder/tduohwq/webhook-payload-reference)
 
 ### 4. Groq and xAI/Grok
 

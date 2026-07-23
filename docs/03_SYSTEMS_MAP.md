@@ -17,6 +17,20 @@ Key directories:
 - `viventium_v0_4/agent-starter-react/` (modern playground)
 - `viventium_v0_4/livekit/` (LiveKit server repo)
 
+Connected-channel ownership inside LibreChat:
+
+- Settings/API lifecycle: `client/src/components/Nav/SettingsTabs/Account/ConnectedChannels/` and
+  `api/server/routes/viventium/channels.js`
+- encrypted connection, pairing, and transport contracts: `packages/api/src/channels/` plus the
+  channel models in `packages/data-schemas/src/`
+- in-process Telegram Bot API, Slack Socket Mode, and WhatsApp Business Cloud workers:
+  `api/server/services/viventium/channelAdminService.js`, protected by durable delivery queues and
+  cross-process worker leases
+- reasoning path: authenticated channel envelope -> Viventium gateway -> existing LibreChat
+  `AgentController`/Main Agent pipeline; channel workers do not call a model directly
+- Native Easy Install channel turns keep that same signed gateway route but use the owner-checked
+  mode-`0600` `VIVENTIUM_NATIVE_API_SOCKET`; source profiles retain the loopback HTTP transport
+
 Feelings ownership inside LibreChat:
 
 - compiler/env contract: root `config.schema.yaml`, examples, and `scripts/viventium/config_compiler.py`

@@ -53,6 +53,27 @@ stream back to Telegram through the existing bridge.
 - Do not embed private machine names, private paths, or owner-only debugging notes into the public
   contract.
 
+## Easy Install And Connected-Channel Ownership
+
+- Easy Install exposes Telegram under **Settings > Channels** after core chat is usable. The
+  admin-entered token is encrypted server-side in the local database; it is not written to browser
+  storage, canonical YAML, `runtime.env`, or a service env.
+- LibreChat owns the browser connection record and the in-process Telegram text worker. Incoming
+  text enters the existing Viventium gateway and Main Agent pipeline; the channel worker does not
+  call a model directly.
+- Bot setup remains admin-only, while each signed-in user creates their own one-use pairing code
+  and sends it to the bot in a private chat. The code binds that Telegram identity only to the
+  authenticated Viventium user who created it; pairing in a group or sharing an admin identity is
+  forbidden.
+- Custom Settings Install remains backward-compatible: `integrations.telegram.enabled` and its
+  canonical Keychain token compile to `service-env/telegram.config.env` with mode `0600` and use the
+  existing supervised adapter path.
+- Browser and operator ownership are mutually exclusive. If the supervised operator bridge is
+  enabled or Telegram reports another poller, Settings must fail closed with a repair action. It
+  must never stop an unknown poller or silently replace the owner's established bridge.
+- Core web chat remains healthy when Telegram is disconnected, misconfigured, degraded, or waiting
+  for user action.
+
 ## Telegram Voice and Call Behavior
 
 - Voice-note transcription must use the Telegram bridge STT provider. By default,

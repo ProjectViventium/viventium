@@ -27,6 +27,7 @@ from installer_ui import InstallerUI  # noqa: E402
 from brain_readiness import (  # noqa: E402
     ADVANCED_OFF_KEYS,
     FEATURE_BY_KEY,
+    GUIDED_EXPRESS_KEYS,
     UNAVAILABLE_KEYS,
     feature_guidance,
     feature_label,
@@ -1371,6 +1372,8 @@ def brain_setup_state(
     if key == "ms365":
         if resolve_bool((integrations.get("ms365") or {}).get("enabled"), False):
             return configured_unverified("Microsoft 365 MCP configured")
+        return "Needs setup", feature_guidance(key)
+    if key in GUIDED_EXPRESS_KEYS:
         return "Needs setup", feature_guidance(key)
     if key in UNAVAILABLE_KEYS:
         return "Not available", feature_guidance(key)
