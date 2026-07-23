@@ -371,6 +371,8 @@ def test_native_runtime_env_is_secret_free_relocatable_and_fixed_to_native_ports
     assert native["ANTHROPIC_API_KEY"] == "user_provided"
     assert native["GROQ_API_KEY"] == "user_provided"
     assert native["XAI_API_KEY"] == "user_provided"
+    assert native["GROQ_BASE_URL"] == "https://api.groq.com/openai/v1/"
+    assert native["XAI_BASE_URL"] == "https://api.x.ai/v1"
     assert native["VIVENTIUM_LC_API_PORT"] == "3180"
     assert native["VIVENTIUM_LC_FRONTEND_PORT"] == "3190"
     assert native["VIVENTIUM_PLAYGROUND_PORT"] == "3300"
@@ -393,6 +395,50 @@ def test_native_runtime_env_is_secret_free_relocatable_and_fixed_to_native_ports
         key for key, value in native.items() if value == "user_provided"
     } == allowed_capability_sentinels
     assert not any(value.startswith(("/", "~")) for value in native.values())
+
+
+def test_custom_provider_base_urls_are_runtime_overridable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROQ_BASE_URL", "http://127.0.0.1:14662/v1")
+    monkeypatch.setenv("XAI_BASE_URL", "http://127.0.0.1:14663/v1")
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+
+    env = config_compiler.render_runtime_env(config, assignments)
+    rendered = yaml.safe_load(
+        config_compiler.render_librechat_yaml(config, assignments, env)
+    )
+    config_compiler.render_service_envs(tmp_path, env)
+    service_env = (tmp_path / "service-env" / "librechat.env").read_text(
+        encoding="utf-8"
+    )
+
+    assert env["GROQ_BASE_URL"] == "http://127.0.0.1:14662/v1"
+    assert env["XAI_BASE_URL"] == "http://127.0.0.1:14663/v1"
+    assert custom_endpoint(rendered["endpoints"]["custom"], "groq")[
+        "baseURL"
+    ] == "${GROQ_BASE_URL}"
+    assert custom_endpoint(rendered["endpoints"]["custom"], "xai")[
+        "baseURL"
+    ] == "${XAI_BASE_URL}"
+    assert "GROQ_BASE_URL=http://127.0.0.1:14662/v1" in service_env
+    assert "XAI_BASE_URL=http://127.0.0.1:14663/v1" in service_env
+
+
+def test_source_native_custom_sandpack_port_keeps_listener_and_public_urls_aligned() -> None:
+    config = minimal_compile_config()
+    config["runtime"]["ports"] = {"sandpack_bundler_port": 45191}
+
+    env = config_compiler.render_runtime_env(
+        config,
+        config_compiler.build_agent_assignments(config),
+    )
+
+    assert env["SANDPACK_BUNDLER_LISTEN_HOST"] == "127.0.0.1"
+    assert env["SANDPACK_BUNDLER_LISTEN_PORT"] == "45191"
+    assert env["SANDPACK_BUNDLER_URL"] == "http://127.0.0.1:45191/"
+    assert env["SANDPACK_STATIC_BUNDLER_URL"] == "http://127.0.0.1:45191/"
 
 
 def test_scheduling_cortex_can_be_omitted_from_canonical_native_defaults() -> None:
@@ -2532,6 +2578,34 @@ def test_config_compiler_easy_install_defaults_to_browser_api_key_not_direct_sub
     runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
     assert "VIVENTIUM_OPENAI_AUTH_MODE=user_provided" in runtime_env
     assert "OPENAI_API_KEY=user_provided" in runtime_env
+    assert "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=false" in runtime_env
+
+
+def test_official_clean_easy_install_fixture_compiles_to_stable_account_handoff(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "out"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(
+                REPO_ROOT
+                / "qa/installer-resilience/fixtures/express-native-clean.json"
+            ),
+            "--output-dir",
+            str(output_dir),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+    )
+
+    runtime_env = (output_dir / "runtime.env").read_text(encoding="utf-8")
+    assert "VIVENTIUM_OPENAI_AUTH_MODE=user_provided" in runtime_env
+    assert "OPENAI_API_KEY=user_provided" in runtime_env
+    assert "GROQ_API_KEY=user_provided" in runtime_env
     assert "VIVENTIUM_EXPERIMENTAL_DIRECT_SUBSCRIPTION_AUTH=false" in runtime_env
 
 

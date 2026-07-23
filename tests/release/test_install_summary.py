@@ -2052,7 +2052,7 @@ def test_build_service_rows_reports_semantic_memory_hardening_health(
     assert "health failed" in services["Memory Hardening"][1]
 
 
-def test_build_brain_setup_rows_reports_guided_and_lab_postures() -> None:
+def test_build_brain_setup_rows_reports_guided_postures_without_internal_lab_features() -> None:
     install_summary = load_install_summary_module()
 
     config = {
@@ -2093,7 +2093,7 @@ def test_build_brain_setup_rows_reports_guided_and_lab_postures() -> None:
     assert states["WhatsApp"][0] == "Needs setup"
     assert states["Code Interpreter"][0] == "Disabled by choice"
     assert states["Skyvern"][0] == "Disabled by choice"
-    assert states["OpenClaw"][0] == "Not available"
+    assert "OpenClaw" not in states
     assert states["Remote Access"][0] == "Disabled by choice"
 
 

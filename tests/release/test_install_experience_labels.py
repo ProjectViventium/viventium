@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -93,8 +94,27 @@ def test_easy_install_browser_qa_requires_synthetic_identity_and_stable_api_key_
     assert 'page.locator("form#f")' in source
     assert 'input[name="confirm_password"]' in source
     assert 'name: "Create admin"' in source
+    assert "await page.waitForURL((url) => !url.searchParams.has(\"setup\")" in source
     assert "Connect OpenAI Account" not in source
     assert "/api/connected-accounts/openai/start" not in source
+
+
+def test_easy_install_qa_fixture_uses_stable_browser_account_handoff() -> None:
+    fixture = json.loads(
+        (
+            REPO_ROOT
+            / "qa/installer-resilience/fixtures/express-native-clean.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert fixture["install"]["experience"] == "express"
+    assert fixture["llm"]["activation"]["auth_mode"] == "user_provided"
+    assert fixture["llm"]["primary"]["auth_mode"] == "user_provided"
+    assert all(
+        node.get("auth_mode") != "connected_account"
+        for node in fixture["llm"].values()
+        if isinstance(node, dict)
+    )
 
 
 def test_internal_install_experience_contract_remains_backward_compatible() -> None:
@@ -131,6 +151,20 @@ def test_runtime_install_experience_readers_share_legacy_default() -> None:
     assert 'VIVENTIUM_INSTALL_EXPERIENCE:-legacy' in launcher
     assert 'config.get("install", {}).get("experience") or "legacy"' in compiler
     assert 'VIVENTIUM_INSTALL_EXPERIENCE:-legacy' in native_stack
+
+
+def test_runtime_startup_never_reports_user_provided_sentinels_as_configured_keys() -> None:
+    launcher = (
+        REPO_ROOT / "viventium_v0_4/viventium-librechat-start.sh"
+    ).read_text(encoding="utf-8")
+
+    assert '"${OPENAI_API_KEY}" != "user_provided"' in launcher
+    assert '"${GROQ_API_KEY}" != "user_provided"' in launcher
+    assert '"${XAI_API_KEY}" != "user_provided"' in launcher
+    assert '"${CARTESIA_API_KEY}" != "user_provided"' in launcher
+    assert '"${ELEVEN_API_KEY_FINAL}" != "user_provided"' in launcher
+    assert "Connect in Settings > Account > Connected Accounts" in launcher
+    assert 'LiveKit API Key:   ${GREEN}${LIVEKIT_API_KEY}' not in launcher
 
 
 def test_prebuilt_helper_binary_contains_no_retired_install_labels() -> None:

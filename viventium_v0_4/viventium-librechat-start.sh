@@ -10201,7 +10201,11 @@ echo -e "Configuration:"
 echo -e "  Runtime Profile:   ${GREEN}${VIVENTIUM_RUNTIME_PROFILE}${NC}"
 echo -e "  Runtime State:     ${GREEN}${VIVENTIUM_STATE_ROOT}${NC}"
 echo -e "  LiveKit URL:       ${GREEN}${LIVEKIT_URL}${NC}"
-echo -e "  LiveKit API Key:   ${GREEN}${LIVEKIT_API_KEY}${NC}"
+if [[ -n "${LIVEKIT_API_KEY:-}" ]]; then
+  echo -e "  LiveKit API Key:   ${GREEN}Configured${NC}"
+else
+  echo -e "  LiveKit API Key:   ${YELLOW}Not set${NC}"
+fi
 echo -e "  LiveKit Node IP:   ${GREEN}${LIVEKIT_NODE_IP}${NC}"
 echo -e "  Playground URL:    ${GREEN}${VIVENTIUM_PLAYGROUND_URL}${NC}"
 echo -e "  Playground UI:     ${GREEN}${PLAYGROUND_VARIANT}${NC}"
@@ -10225,26 +10229,42 @@ fi
 if [[ -n "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
   echo -e "  Call Secret:       ${GREEN}Configured${NC}"
 fi
-if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+if [[ -n "${OPENAI_API_KEY:-}" && "${OPENAI_API_KEY}" != "user_provided" ]]; then
   echo -e "  OpenAI API Key:    ${GREEN}Configured${NC}"
+elif [[ "${OPENAI_API_KEY:-}" == "user_provided" ]]; then
+  echo -e "  OpenAI API Key:    ${YELLOW}Connect in Settings > Account > Connected Accounts${NC}"
 else
   echo -e "  OpenAI API Key:    ${YELLOW}Not set (STT will fail)${NC}"
 fi
+# Check for Groq API key
+if [[ -n "${GROQ_API_KEY:-}" && "${GROQ_API_KEY}" != "user_provided" ]]; then
+  echo -e "  Groq API Key:      ${GREEN}Configured${NC}"
+elif [[ "${GROQ_API_KEY:-}" == "user_provided" ]]; then
+  echo -e "  Groq API Key:      ${YELLOW}Connect in Settings > Account > Connected Accounts${NC}"
+else
+  echo -e "  Groq API Key:      ${YELLOW}Not set${NC}"
+fi
 # Check for ElevenLabs API key (support both ELEVEN_API_KEY and ELEVENLABS_API_KEY)
 ELEVEN_API_KEY_FINAL="${ELEVEN_API_KEY:-${ELEVENLABS_API_KEY:-}}"
-if [[ -n "${ELEVEN_API_KEY_FINAL:-}" ]]; then
+if [[ -n "${ELEVEN_API_KEY_FINAL:-}" && "${ELEVEN_API_KEY_FINAL}" != "user_provided" ]]; then
   echo -e "  ElevenLabs API Key: ${GREEN}Configured${NC}"
+elif [[ "${ELEVEN_API_KEY_FINAL:-}" == "user_provided" ]]; then
+  echo -e "  ElevenLabs API Key: ${YELLOW}Connect in Settings > Account > Connected Accounts${NC}"
 else
   echo -e "  ElevenLabs API Key: ${YELLOW}Not set (TTS will fallback to OpenAI)${NC}"
 fi
 # Check for xAI API key
-if [[ -n "${XAI_API_KEY:-}" ]]; then
+if [[ -n "${XAI_API_KEY:-}" && "${XAI_API_KEY}" != "user_provided" ]]; then
   echo -e "  xAI API Key:        ${GREEN}Configured${NC}"
+elif [[ "${XAI_API_KEY:-}" == "user_provided" ]]; then
+  echo -e "  xAI API Key:        ${YELLOW}Connect in Settings > Account > Connected Accounts${NC}"
 else
   echo -e "  xAI API Key:        ${YELLOW}Not set${NC}"
 fi
-if [[ -n "${CARTESIA_API_KEY:-}" ]]; then
+if [[ -n "${CARTESIA_API_KEY:-}" && "${CARTESIA_API_KEY}" != "user_provided" ]]; then
   echo -e "  Cartesia API Key:   ${GREEN}Configured${NC}"
+elif [[ "${CARTESIA_API_KEY:-}" == "user_provided" ]]; then
+  echo -e "  Cartesia API Key:   ${YELLOW}Connect in Settings > Account > Connected Accounts${NC}"
 else
   echo -e "  Cartesia API Key:   ${YELLOW}Not set${NC}"
 fi

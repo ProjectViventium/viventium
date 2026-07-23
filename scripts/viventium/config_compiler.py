@@ -67,6 +67,8 @@ DEFAULT_XAI_TTS_SAMPLE_RATE = "24000"
 DEFAULT_XAI_TTS_OPTIMIZE_STREAMING_LATENCY = "1"
 DEFAULT_XAI_TTS_CODEC = "mp3"
 DEFAULT_XAI_TTS_BIT_RATE = "128000"
+DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1/"
+DEFAULT_XAI_BASE_URL = "https://api.x.ai/v1"
 DEFAULT_BACKGROUND_FOLLOWUP_WINDOW_S = "30"
 DEFAULT_GLASSHIVE_FOLLOWUP_TIMEOUT_S = "600"
 DEFAULT_GLASSHIVE_MCP_BLOCKING_WAIT_MAX_SEC = 1800
@@ -160,6 +162,7 @@ LEGACY_CANONICAL_ENV_IMPORT_KEYS = (
     "GOOGLE_OAUTH_CLIENT_ID",
     "GOOGLE_OAUTH_CLIENT_SECRET",
     "GROQ_API_KEY",
+    "GROQ_BASE_URL",
     "INSTANCE_NAME",
     "MS365_MCP_CLIENT_ID",
     "MS365_MCP_CLIENT_SECRET",
@@ -183,6 +186,7 @@ LEGACY_CANONICAL_ENV_IMPORT_KEYS = (
     "VIVENTIUM_FOUNDRY_ANTHROPIC_MODELS",
     "VIVENTIUM_FOUNDRY_ANTHROPIC_REVERSE_PROXY",
     "XAI_API_KEY",
+    "XAI_BASE_URL",
 )
 
 KEYCHAIN_SERVICE_ENV_FALLBACKS = {
@@ -903,7 +907,7 @@ CURATED_CUSTOM_ENDPOINTS = [
     {
         "name": "xai",
         "apiKeyEnv": "XAI_API_KEY",
-        "baseURL": "https://api.x.ai/v1",
+        "baseURL": "${XAI_BASE_URL}",
         "models": [
             "grok-4.3",
             "grok-4.20-non-reasoning",
@@ -938,7 +942,7 @@ CURATED_CUSTOM_ENDPOINTS = [
     {
         "name": "groq",
         "apiKeyEnv": "GROQ_API_KEY",
-        "baseURL": "https://api.groq.com/openai/v1/",
+        "baseURL": "${GROQ_BASE_URL}",
         "models": [
             "qwen/qwen3.6-27b",
             "meta-llama/llama-4-maverick-17b-128e-instruct",
@@ -3268,13 +3272,16 @@ def render_runtime_env(
         "VIVENTIUM_RAG_EMBEDDINGS_MODEL": retrieval_embeddings["model"],
         "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
     }
-    if config.get("install", {}).get("mode") != "native":
-        env.update(
-            {
-                "SANDPACK_BUNDLER_LISTEN_HOST": "127.0.0.1",
-                "SANDPACK_BUNDLER_LISTEN_PORT": str(profile["sandpack_bundler_port"]),
-            }
-        )
+    # Source-native installs launch the API-owned Sandpack listener just like the
+    # Docker/source paths, so its listener must follow any compiled port override.
+    # Immutable Native payloads use render_native_runtime_env(), which deliberately
+    # filters these keys because the verified native proxy owns that listener.
+    env.update(
+        {
+            "SANDPACK_BUNDLER_LISTEN_HOST": "127.0.0.1",
+            "SANDPACK_BUNDLER_LISTEN_PORT": str(profile["sandpack_bundler_port"]),
+        }
+    )
     if runtime_mongo_data_path_override is not None:
         env["VIVENTIUM_LOCAL_MONGO_DATA_PATH"] = runtime_mongo_data_path_override
 
@@ -4064,6 +4071,8 @@ def render_runtime_env(
     for key, value in build_legacy_env_imports(config).items():
         env.setdefault(key, value)
     apply_provider_endpoint_env_aliases(env)
+    env.setdefault("GROQ_BASE_URL", DEFAULT_GROQ_BASE_URL)
+    env.setdefault("XAI_BASE_URL", DEFAULT_XAI_BASE_URL)
     if glasshive_enterprise["enabled"] and env.get("OPENAI_BASE_URL"):
         env.setdefault("WPR_OPENCLAW_USE_CUSTOM_PROVIDER", "1")
         env.setdefault("WPR_OPENCLAW_WIRE_API", "openai-completions")
@@ -4184,6 +4193,8 @@ def render_native_runtime_env(config: dict[str, Any], env: dict[str, str]) -> di
             "ANTHROPIC_API_KEY": "user_provided",
             "GROQ_API_KEY": "user_provided",
             "XAI_API_KEY": "user_provided",
+            "GROQ_BASE_URL": DEFAULT_GROQ_BASE_URL,
+            "XAI_BASE_URL": DEFAULT_XAI_BASE_URL,
             "VIVENTIUM_LC_API_PORT": "3180",
             "VIVENTIUM_LC_FRONTEND_PORT": "3190",
             "VIVENTIUM_PLAYGROUND_PORT": "3300",
@@ -4696,6 +4707,8 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "ANTHROPIC_API_KEY",
         "XAI_API_KEY",
         "GROQ_API_KEY",
+        "XAI_BASE_URL",
+        "GROQ_BASE_URL",
         "MONGO_URI",
         "ALLOW_EMAIL_LOGIN",
         "ALLOW_REGISTRATION",

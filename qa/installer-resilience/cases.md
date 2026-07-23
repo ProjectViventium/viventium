@@ -1040,6 +1040,52 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   hosted green; its exact tree is merged and pinned at `38527a8651...`. The exact
   payload, headed upgrade, and Docker-image browser run remain open.
 
+## `INST-033` - Complete Non-Docker Source Easy Install
+
+- Requirement: a new or established user can run one supported Easy Install command from the public
+  source checkout, connect a preferred provider in the browser, immediately use the optimized
+  Viventium agents/configuration, optionally configure Telegram, Slack, or WhatsApp, and retain the
+  result through reinstall, restart, and upgrade without inheriting an owner's data.
+- Risk covered: owner-machine leftovers masquerading as product defaults; raw credentials in
+  browser or generated files; Groq/Grok custom-endpoint drift; hidden responsive navigation;
+  optional channel failures blocking first chat; reinstall/upgrade data loss; unrelated-process or
+  personal-state removal during uninstall.
+- Preconditions: isolated support, cache, temp, browser, database, ports, and synthetic account
+  roots; loopback-only synthetic providers; no owner runtime or personal state in scope.
+- Steps:
+  1. Run the public headless Easy Install source entrypoint with the minimal Native/non-Docker
+     profile; open its browser handoff and create the first local synthetic administrator.
+  2. Connect OpenAI, Groq, and Grok/xAI independently; for each, obtain two useful answers, refresh,
+     restart, exercise invalid credential, quota, provider outage, network failure, Disconnect, and
+     re-add, then confirm no request occurs while disconnected.
+  3. Confirm the public main/core/background agent inventory and prompts match source of truth, and
+     confirm a custom provider's base URL and headers survive Background Cortex initialization.
+  4. Open Settings > Channels on desktop and 320-pixel layouts. Exercise Telegram, Slack Socket
+     Mode, and WhatsApp Business Cloud API setup/cancel paths, secret masking, official setup links,
+     secret-free Slack manifest, keyboard operation, refresh/reopen, and degraded recovery.
+  5. Rerun Easy Install, perform the supported established-user upgrade/restart, and compare user,
+     conversation, message, agent, prompt, provider, and channel state before and after.
+  6. Uninstall through the supported command. Confirm only the isolated owned runtime is stopped or
+     removed, its preserved state is recoverable as promised, and all task listeners close.
+- Expected result: one command reaches a useful first chat; the user receives the public optimized
+  Viventium configuration but no owner's conversations or database; provider and optional-channel
+  failures are specific and recoverable; restart/reinstall/upgrade are idempotent; uninstall is
+  ownership-bounded.
+- Forbidden result: owner-specific state or prompts, raw secret persistence, `user_provided` used as
+  an API key, silent provider remapping, old LiveKit playground routing, invisible navigation
+  intercepting Settings, optional-channel failure blocking chat, data loss, or unrelated cleanup.
+- Evidence to capture: sanitized command/timing ledger; headed browser outcomes and accessibility
+  scan; loopback request counters; before/after counts and hashes; generated config and component
+  pin identity; listener ownership; uninstall result; public-safety scan.
+- Last run: PASS 2026-07-23. The isolated source Easy Install and warm reinstall passed; OpenAI,
+  Groq, and Grok/xAI each passed a 12-step headed lifecycle with two answers, refresh/restart,
+  classified failures, disconnect/no-request, and re-add; the 12-agent/74-prompt public baseline
+  matched; Connected Channels passed six headed desktop/mobile cases with zero accessibility
+  violations; continuity remained unchanged. The final established-user upgrade and owned uninstall
+  evidence are recorded in the dated report. Vendor-side message delivery and a signed/notarized
+  immutable Native payload remain separately scoped external acceptance gates, not source-path
+  failures.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Installer Resilience. Add narrower feature-specific
@@ -1065,6 +1111,7 @@ rows before claiming a pass when the feature behavior changes.
 | `INST-UC-016` | Install with no Node present, then build/start/restart and inspect which Node executable actually owns each step. | `39_Installer_and_Config_Compiler.md` / `INST-024` | Clean Native installer/payload, preflight, doctor, launcher, process table, status | Version contract, installed formulas/files, resolved PATH/executable, process environment, build/start logs, artifact digest | One supported pinned Node runtime owns every stage; no second major is downloaded or silently forced. | PARTIAL 2026-07-19; source contract, full parent suite, helper rebuild, and VM Node 24 production build/start/restart pass, while exact-payload process provenance remains unrun |
 | `INST-UC-017` | Force a failed start, stop with Telegram disabled, restart after Docker-daemon loss, and uninstall from a new shell. | `39_Installer_and_Config_Compiler.md` / `INST-019`, `TR-010` | isolated CLI install/start/stop/preflight/uninstall, process table, Docker endpoint/volume | process group and pid records, receipt mode/decision, launchctl recorder, ports, Docker health, recoverable backup | Only exact target-owned processes/jobs are drained; outage is honest; retry works; uninstall preserves state and never infers helper ownership from transient environment. | PARTIAL 2026-07-21; the expanded 300-case synthetic fault/native slice and disposable source-candidate paths cover failure/recovery/removal ownership. Exact signed artifact and wider physical fault matrix remain open. |
 | `INST-UC-018` | Freeze one candidate, run its clean-machine matrix through the storage guard, then remove the only disposable VM. | `39_Installer_and_Config_Compiler.md` / `INST-032` | QA host guard, Tart, Docker baseline, candidate VM and private evidence | persistent receipt, exact argv/events, host/Docker before/peak/after metrics, baseline resource sets, final QA-VM inventory | The run cannot start beside another QA VM, stops at budget limits, preserves unrelated state, and releases its lease only after exact cleanup. | PARTIAL 2026-07-21; fake-tool automation passed, while the real frozen-candidate run remains blocked pending an exact candidate and isolated machine. |
+| `INST-UC-019` | Run the supported non-Docker source Easy Install from one command through first chat, providers, Channels, restart, reinstall, upgrade, and owned uninstall. | `39_Installer_and_Config_Compiler.md` / `INST-033` | Isolated public source entrypoint, headed browser, generated config, local DB/state, CLI lifecycle | Sanitized timings, visible setup/chat/Channels results, loopback request ledger, counts/hashes, agent baseline, component pins, listeners, uninstall receipt | A novice immediately gets the optimized public Viventium configuration without owner data; failures recover; continuity holds; cleanup touches only the isolated install. | PASS 2026-07-23; complete isolated source-path acceptance recorded in the dated report. |
 
 ## Release Test Traceability
 

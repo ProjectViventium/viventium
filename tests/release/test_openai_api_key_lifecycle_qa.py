@@ -52,6 +52,9 @@ def test_api_key_lifecycle_harness_owns_the_stable_easy_install_contract() -> No
         "content_block_delta",
         "message_stop",
         "VIVENTIUM_QA_PROVIDER",
+        "parseRuntimeProviderTarget",
+        "OPENAI_REVERSE_PROXY",
+        "Force the disposable backend to inherit the verified loopback provider target",
         "/api/keys/",
         "externalNetworkAttempts",
         "assertBrowserCredentialAbsent",
@@ -59,7 +62,8 @@ def test_api_key_lifecycle_harness_owns_the_stable_easy_install_contract() -> No
         "indexedDB.databases",
         "browserCredentialResidueChecks",
         "<private>",
-        "const recovery = disconnectedMessage.getByRole",
+        "const recoveryButtonsBefore = await page",
+        ".nth(recoveryButtonsBefore)",
         'name: "Connected Accounts"',
         'page.keyboard.press("Enter")',
         'page.locator("form#f")',
@@ -185,6 +189,39 @@ def test_api_key_lifecycle_harness_rejects_non_loopback_and_ci_targets() -> None
     assert "ci/production" in ci.stderr.lower()
 
 
+def test_api_key_lifecycle_harness_requires_backend_loopback_provider_target() -> None:
+    base_env = {
+        **os.environ,
+        "VIVENTIUM_QA_CLIENT_BASE": "http://127.0.0.1:3190",
+        "VIVENTIUM_QA_EMAIL": "synthetic@example.invalid",
+        "VIVENTIUM_QA_PASSWORD": "synthetic-password",
+        "VIVENTIUM_QA_PROVIDER_PORT": "14661",
+    }
+    missing = subprocess.run(
+        ["node", str(HARNESS), "--contract-check"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**base_env, "OPENAI_REVERSE_PROXY": ""},
+        timeout=30,
+    )
+    assert missing.returncode != 0
+    assert "OPENAI_REVERSE_PROXY" in missing.stderr
+
+    external = subprocess.run(
+        ["node", str(HARNESS), "--contract-check"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**base_env, "OPENAI_REVERSE_PROXY": "https://api.example.com/v1"},
+        timeout=30,
+    )
+    assert external.returncode != 0
+    assert "loopback" in external.stderr.lower()
+
+
 def test_browser_launch_failure_releases_the_synthetic_provider_port(
     tmp_path: Path,
 ) -> None:
@@ -210,6 +247,7 @@ def test_browser_launch_failure_releases_the_synthetic_provider_port(
             "VIVENTIUM_QA_EMAIL": "synthetic@example.invalid",
             "VIVENTIUM_QA_PASSWORD": "synthetic-password",
             "VIVENTIUM_QA_PROVIDER_PORT": str(provider_port),
+            "OPENAI_REVERSE_PROXY": f"http://127.0.0.1:{provider_port}/v1",
             "VIVENTIUM_QA_RESTART_ARGV_JSON": '["/usr/bin/true"]',
             "VIVENTIUM_QA_PRIVATE_EVIDENCE_DIR": str(tmp_path / "evidence"),
             "VIVENTIUM_QA_PLAYWRIGHT_MODULE": str(playwright_fixture),
