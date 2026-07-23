@@ -233,6 +233,7 @@ def validate_built_librechat(root: Path) -> None:
         root / "scripts" / "viventium-seed-agents.js",
         root / "scripts" / "viventium-reconcile-user-defaults.js",
         root / "viventium" / "source_of_truth" / "local.viventium-agents.yaml",
+        root / "viventium" / "source_of_truth" / "managed-agent-baseline-migration.json",
     )
     if any(not path.exists() for path in required):
         raise AssemblyError("built LibreChat runtime or browser compliance closure is incomplete")

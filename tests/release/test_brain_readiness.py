@@ -35,6 +35,7 @@ def test_registry_covers_express_brain_surfaces_and_public_safety() -> None:
         "secondary_ai",
         "voice",
         "telegram",
+        "slack",
         "telegram_codex",
         "google_workspace",
         "ms365",
@@ -59,9 +60,15 @@ def test_registry_keeps_unshipped_features_out_of_easy_install_default() -> None
     assert {"code_interpreter", "skyvern", "remote_access"} <= set(
         registry.ADVANCED_OFF_KEYS
     )
-    assert {"whatsapp", "openclaw"} <= set(registry.UNAVAILABLE_KEYS)
+    assert registry.GUIDED_EXPRESS_KEYS == (
+        "primary_ai",
+        "secondary_ai",
+        "telegram",
+        "slack",
+        "whatsapp",
+    )
+    assert {"openclaw"} <= set(registry.UNAVAILABLE_KEYS)
     assert registry.CORE_EXPRESS_KEYS == ("core_app",)
-    assert registry.GUIDED_EXPRESS_KEYS == ("primary_ai", "secondary_ai")
     assert {
         "scheduler",
         "glasshive",
@@ -70,3 +77,18 @@ def test_registry_keeps_unshipped_features_out_of_easy_install_default() -> None
         "memory_hardening",
     } <= set(registry.CUSTOM_SETTINGS_ONLY_KEYS)
     assert not set(registry.CORE_EXPRESS_KEYS) & set(registry.CUSTOM_SETTINGS_ONLY_KEYS)
+
+
+def test_channel_readiness_matches_the_real_runtime_owners() -> None:
+    registry = load_brain_readiness_module()
+
+    telegram = registry.FEATURE_BY_KEY["telegram"]
+    slack = registry.FEATURE_BY_KEY["slack"]
+    whatsapp = registry.FEATURE_BY_KEY["whatsapp"]
+
+    assert telegram.generated_env_keys == ("START_TELEGRAM", "BOT_TOKEN")
+    assert telegram.config_paths == ("integrations.telegram.*",)
+    assert slack.generated_env_keys == ()
+    assert slack.config_paths == ()
+    assert whatsapp.generated_env_keys == ("VIVENTIUM_PUBLIC_SERVER_URL",)
+    assert whatsapp.config_paths == ("runtime.network.public_api_origin",)

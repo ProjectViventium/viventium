@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import errno
 import json
 import importlib.util
 import hashlib
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -33,6 +35,7 @@ NATIVE_PROXY = REPO_ROOT / "scripts" / "viventium" / "native_runtime_proxy.js"
 NATIVE_FIRST_ADMIN_RECOVERY = (
     REPO_ROOT / "scripts" / "viventium" / "native_first_admin_recovery.js"
 )
+NATIVE_VERIFY_AGENT = REPO_ROOT / "scripts" / "viventium" / "native_verify_agent.js"
 GENERATE_COMPLIANCE = REPO_ROOT / "scripts" / "viventium" / "generate_native_compliance.py"
 VERIFY_COMPLIANCE = REPO_ROOT / "scripts" / "viventium" / "verify_native_compliance.py"
 COMPONENT_MANIFEST = (
@@ -159,6 +162,13 @@ def fixture_inputs(tmp_path: Path) -> dict[str, Path]:
         librechat / "viventium" / "source_of_truth" / "local.viventium-agents.yaml",
         "meta:\n  mainAgentId: agent_viventium_main_fixture\nmainAgent:\n  id: agent_viventium_main_fixture\n",
     )
+    file(
+        librechat
+        / "viventium"
+        / "source_of_truth"
+        / "managed-agent-baseline-migration.json",
+        '{"schema_version":1,"migrations":[],"artifact_sha256":"fixture"}\n',
+    )
 
     helper = tmp_path / "Viventium.app"
     executable(helper / "Contents" / "MacOS" / "Viventium")
@@ -277,6 +287,103 @@ def load_native_installer(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_native_installer_eperm_liveness_still_reaches_bounded_sigkill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installer = load_native_installer(monkeypatch)
+    process_group = 424242
+    liveness_checks = 0
+    signals: list[int] = []
+
+    def fake_killpg(pid: int, sent_signal: int) -> None:
+        nonlocal liveness_checks
+        assert pid == process_group
+        if sent_signal == 0:
+            liveness_checks += 1
+            if liveness_checks <= 2:
+                raise PermissionError(errno.EPERM, "synthetic macOS process-group race")
+            raise ProcessLookupError(errno.ESRCH, "synthetic group drained")
+        signals.append(sent_signal)
+
+    process = type(
+        "SyntheticOwnedProcess",
+        (),
+        {"pid": process_group, "poll": lambda self: 0},
+    )()
+    monkeypatch.setattr(installer.os, "killpg", fake_killpg)
+
+    installer.terminate_owned_process(process, timeout=0)
+
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert liveness_checks >= 3
+
+
+def test_native_maintenance_surfaces_public_safe_owner_recovery_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    (support / "logs").mkdir(parents=True)
+    guidance = (
+        "Native first-admin owner verification did not complete. Restore or promote the recorded "
+        "administrator, or restore the latest Viventium backup, then retry; otherwise inspect "
+        "native-first-admin-recovery.log before retrying."
+    )
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["synthetic"], 1),
+    )
+
+    with pytest.raises(runtime.RuntimeError_, match="Restore or promote the recorded administrator"):
+        runtime.run_native_maintenance(
+            "first-admin-recovery",
+            ["synthetic"],
+            support,
+            cwd=tmp_path,
+            env={},
+            public_failure_message=guidance,
+        )
+
+
+@pytest.mark.parametrize("surface", ["health", "doctor"])
+def test_native_health_surfaces_recovery_for_closed_state_without_owner_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str
+) -> None:
+    runtime = load_native_runtime()
+    support = tmp_path / "support"
+    file(
+        support / "state" / "native-runtime.json",
+        '{"schema_version":1}\n',
+    )
+    monkeypatch.setattr(runtime, "release_root", lambda: tmp_path / "release")
+    monkeypatch.setattr(runtime, "packaged_health", lambda _root: None)
+    monkeypatch.setattr(runtime, "validate_support_children", lambda _support: None)
+    monkeypatch.setattr(runtime, "reject_pending_restore_for_read", lambda _support: None)
+    monkeypatch.setattr(runtime, "owned_service_pid", lambda *_args: 123)
+    monkeypatch.setattr(runtime, "semantic_unix_http_ready", lambda *_args: True)
+    monkeypatch.setattr(runtime, "semantic_http_ready", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime, "native_child_environment", lambda _support: {})
+    monkeypatch.setattr(
+        runtime,
+        "build_metadata",
+        lambda _root: {"source_commit": "a" * 40, "sandpack_index_sha256": "b" * 64},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "ensure_first_admin_state",
+        lambda _support: {"schema_version": 1, "status": "closed"},
+    )
+
+    args = type("Args", (), {"app_support_dir": support, "installed_only": False})()
+    with pytest.raises(
+        runtime.RuntimeError_, match="Restore or promote the recorded administrator"
+    ) as raised:
+        getattr(runtime, surface)(args)
+
+    assert not isinstance(raised.value.__cause__, KeyError)
 
 
 def test_assembler_builds_deterministic_relocatable_payload_and_bootstrap(tmp_path: Path) -> None:
@@ -531,6 +638,14 @@ def test_local_qa_install_and_health_entrypoints_run_without_target_build_tools(
         encoding="utf-8"
     )
     assert (payload / "bin" / "viventium").is_file()
+    assert (
+        payload
+        / "runtime"
+        / "librechat"
+        / "viventium"
+        / "source_of_truth"
+        / "managed-agent-baseline-migration.json"
+    ).is_file()
     assert json.loads((support / "state" / "native-runtime.json").read_text())["release_root"] == str(payload)
     secrets_path = support / "state" / "native-secrets.json"
     secrets = json.loads(secrets_path.read_text())
@@ -951,6 +1066,7 @@ def test_native_start_failure_preserves_a_preexisting_owned_service(
     support = tmp_path / "support"
     support.mkdir(mode=0o700)
     stopped: list[str] = []
+    maintenance: list[tuple[str, list[str]]] = []
 
     monkeypatch.setattr(runtime, "runtime_state", lambda _support: {"release_root": str(root)})
     monkeypatch.setattr(runtime, "release_root", lambda: root)
@@ -976,7 +1092,11 @@ def test_native_start_failure_preserves_a_preexisting_owned_service(
     monkeypatch.setattr(runtime, "native_child_environment", lambda _support: {})
     monkeypatch.setattr(runtime, "runtime_secrets", lambda _support: {})
     monkeypatch.setattr(runtime, "spawn", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(runtime, "run_native_maintenance", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runtime,
+        "run_native_maintenance",
+        lambda label, command, *_args, **_kwargs: maintenance.append((label, command)),
+    )
     monkeypatch.setattr(runtime, "wait_owned_mongodb_socket", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         runtime,
@@ -988,6 +1108,17 @@ def test_native_start_failure_preserves_a_preexisting_owned_service(
         runtime.start(type("Args", (), {"app_support_dir": support, "timeout": 0.1})())
 
     assert stopped == ["librechat"]
+    assert maintenance[0] == (
+        "first-admin-recovery",
+        [
+            str(root / "runtime" / "node" / "bin" / "node"),
+            str(root / "runtime" / "scripts" / "native_first_admin_recovery.js"),
+            str(support / "state" / "native-first-admin.json"),
+            str(root / "runtime" / "librechat"),
+            runtime.mongodb_uri(support),
+            str(root / "runtime" / "defaults" / "viventium-agents.yaml"),
+        ],
+    )
 
 
 def test_native_mongodb_connections_use_a_support_owned_unix_socket(tmp_path: Path) -> None:
@@ -1531,6 +1662,8 @@ def test_native_runtime_uses_canonical_config_stable_auth_and_identity_health() 
     assert "IS_ONPREM" in proxy
     assert "viventium-reconcile-user-defaults.js" in source
     assert "viventium-seed-agents.js" in source
+    assert "--owner-id=" in source
+    assert "agent-managed-baseline.json" in source
     assert "verify_default_agent" in source
 
 
@@ -1832,6 +1965,592 @@ module.exports = {mongo: {MongoClient}};
     assert recovered["schema_version"] == 1
     assert recovered["status"] == "open"
     assert len(recovered["token"]) == 64
+
+
+def test_first_admin_recovery_resolves_one_real_admin_id_without_storing_email(
+    tmp_path: Path,
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    librechat = tmp_path / "LibreChat"
+    file(librechat / "package.json", '{"private":true}\n')
+    file(
+        librechat / "node_modules" / "mongoose" / "package.json",
+        '{"name":"mongoose","version":"8.24.1","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "mongoose" / "index.js",
+        """
+class MongoClient {
+  async connect() {}
+  db() {
+    return {collection: () => ({
+      countDocuments: async () => 1,
+      find: () => ({limit: () => ({toArray: async () => [{_id: '0123456789abcdef01234567'}]})}),
+    })};
+  }
+  async close() {}
+}
+module.exports = {mongo: {MongoClient}};
+""".lstrip(),
+    )
+    state = tmp_path / "native-first-admin.json"
+
+    completed = subprocess.run(
+        [
+            node,
+            str(NATIVE_FIRST_ADMIN_RECOVERY),
+            str(state),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    recovered = json.loads(state.read_text(encoding="utf-8"))
+    assert recovered["status"] == "closed"
+    assert recovered["admin_user_id"] == "0123456789abcdef01234567"
+    assert "email" not in recovered
+
+
+def test_first_admin_recovery_preserves_closed_owner_across_multi_admin_restart(
+    tmp_path: Path,
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    librechat = tmp_path / "LibreChat"
+    file(librechat / "package.json", '{"private":true}\n')
+    file(
+        librechat / "node_modules" / "mongoose" / "package.json",
+        '{"name":"mongoose","version":"8.24.1","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "mongoose" / "index.js",
+        """
+class ObjectId {
+  constructor(value) { this.value = value; }
+  toString() { return this.value; }
+}
+class MongoClient {
+  async connect() {}
+  db() {
+    return {collection: () => ({
+      countDocuments: async () => 2,
+      findOne: async query => {
+        if (String(query._id) !== '0123456789abcdef01234567') {
+          throw new Error('recovery did not query the stored owner id');
+        }
+        return {_id: query._id, role: 'ADMIN', email: 'owner@example.test'};
+      },
+      find: () => { throw new Error('closed owner must not be re-inferred'); },
+    })};
+  }
+  async close() {}
+}
+module.exports = {mongo: {MongoClient, ObjectId}};
+""".lstrip(),
+    )
+    state = tmp_path / "native-first-admin.json"
+    original = (
+        '{"schema_version":1,"status":"closed",'
+        '"admin_user_id":"0123456789abcdef01234567","reconciled_at":123}\n'
+    )
+    state.write_text(original, encoding="utf-8")
+    state.chmod(0o600)
+
+    completed = subprocess.run(
+        [
+            node,
+            str(NATIVE_FIRST_ADMIN_RECOVERY),
+            str(state),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert state.read_text(encoding="utf-8") == original
+
+
+def test_legacy_closed_owner_recovers_from_shipped_main_agent_without_admin_scan_or_db_writes(
+    tmp_path: Path,
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    librechat = tmp_path / "LibreChat"
+    file(librechat / "package.json", '{"private":true}\n')
+    file(
+        librechat / "node_modules" / "mongoose" / "package.json",
+        '{"name":"mongoose","version":"8.24.1","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "mongoose" / "index.js",
+        """
+class ObjectId {
+  constructor(value) { this.value = value; }
+  toString() { return this.value; }
+}
+const ownerId = '0123456789abcdef01234567';
+class MongoClient {
+  async connect() {}
+  db() {
+    return {collection: name => {
+      if (name === 'users') return {
+        countDocuments: async () => 2,
+        findOne: async query => {
+          if (String(query._id) !== ownerId || query.role !== 'ADMIN') {
+            throw new Error('recovery did not verify the exact main-agent author');
+          }
+          if (query.email?.$ne !== 'viventium-system@example.com') {
+            throw new Error('recovery omitted the non-placeholder owner filter');
+          }
+          return {_id: query._id, role: 'ADMIN', email: 'owner@example.test'};
+        },
+        find: () => { throw new Error('legacy recovery must not enumerate administrators'); },
+        updateOne: async () => { throw new Error('legacy recovery must not mutate users'); },
+      };
+      if (name === 'agents') return {
+        findOne: async query => {
+          if (query.id !== 'agent_viventium_main_test') {
+            throw new Error('recovery did not query the shipped main agent id');
+          }
+          return {id: query.id, author: ownerId};
+        },
+        updateOne: async () => { throw new Error('legacy recovery must not mutate agents'); },
+      };
+      if (name === 'aclentries') {
+        throw new Error('legacy recovery must not read or mutate ACL entries');
+      }
+      throw new Error(`unexpected collection ${name}`);
+    }};
+  }
+  async close() {}
+}
+module.exports = {mongo: {MongoClient, ObjectId}};
+""".lstrip(),
+    )
+    file(
+        librechat / "node_modules" / "js-yaml" / "package.json",
+        '{"name":"js-yaml","version":"4.0.0","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "js-yaml" / "index.js",
+        "module.exports = {JSON_SCHEMA: {}, load: JSON.parse};\n",
+    )
+    bundle = tmp_path / "viventium-agents.json"
+    bundle.write_text(
+        json.dumps(
+            {
+                "meta": {"mainAgentId": "agent_viventium_main_test"},
+                "mainAgent": {"id": "agent_viventium_main_test"},
+                "backgroundAgents": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = tmp_path / "native-first-admin.json"
+    state.write_text(
+        '{"schema_version":1,"status":"closed","admin_created_at":123}\n',
+        encoding="utf-8",
+    )
+    state.chmod(0o600)
+
+    completed = subprocess.run(
+        [
+            node,
+            str(NATIVE_FIRST_ADMIN_RECOVERY),
+            str(state),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+            str(bundle),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    recovered = json.loads(state.read_text(encoding="utf-8"))
+    assert recovered == {
+        "schema_version": 1,
+        "status": "closed",
+        "admin_created_at": 123,
+        "admin_user_id": "0123456789abcdef01234567",
+        "reconciled_at": recovered["reconciled_at"],
+    }
+    assert isinstance(recovered["reconciled_at"], int)
+    assert state.stat().st_mode & 0o777 == 0o600
+    recovered_bytes = state.read_bytes()
+
+    repeated = subprocess.run(
+        completed.args,
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert repeated.returncode == 0, repeated.stderr
+    assert state.read_bytes() == recovered_bytes
+
+
+@pytest.mark.parametrize("owner_status", ["deleted", "demoted"])
+def test_first_admin_recovery_rejects_deleted_or_demoted_stored_owner(
+    tmp_path: Path, owner_status: str
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    librechat = tmp_path / "LibreChat"
+    file(librechat / "package.json", '{"private":true}\n')
+    file(
+        librechat / "node_modules" / "mongoose" / "package.json",
+        '{"name":"mongoose","version":"8.24.1","main":"index.js"}\n',
+    )
+    record = (
+        "null"
+        if owner_status == "deleted"
+        else "{_id: query._id, role: 'USER', email: 'owner@example.test'}"
+    )
+    file(
+        librechat / "node_modules" / "mongoose" / "index.js",
+        f"""
+class ObjectId {{
+  constructor(value) {{ this.value = value; }}
+  toString() {{ return this.value; }}
+}}
+class MongoClient {{
+  async connect() {{}}
+  db() {{
+    return {{collection: () => ({{
+      findOne: async query => {{
+        if (String(query._id) !== '0123456789abcdef01234567') {{
+          throw new Error('recovery did not query the stored owner id');
+        }}
+        if (query.role !== 'ADMIN' || query.email?.$ne !== 'viventium-system@example.com') {{
+          throw new Error('recovery omitted the production administrator filters');
+        }}
+        const record = {record};
+        if (!record || record.role !== query.role || record.email === query.email.$ne) return null;
+        return record;
+      }},
+      find: () => {{ throw new Error('invalid stored owner must not be re-inferred'); }},
+    }})}};
+  }}
+  async close() {{}}
+}}
+module.exports = {{mongo: {{MongoClient, ObjectId}}}};
+""".lstrip(),
+    )
+    state = tmp_path / "native-first-admin.json"
+    original = (
+        '{"schema_version":1,"status":"closed",'
+        '"admin_user_id":"0123456789abcdef01234567","reconciled_at":123}\n'
+    )
+    state.write_text(original, encoding="utf-8")
+    state.chmod(0o600)
+
+    completed = subprocess.run(
+        [
+            node,
+            str(NATIVE_FIRST_ADMIN_RECOVERY),
+            str(state),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "no longer a valid local administrator" in completed.stderr
+    assert "latest Viventium backup" in completed.stderr
+    assert state.read_text(encoding="utf-8") == original
+
+
+def test_first_admin_recovery_rejects_unsafe_existing_state_permissions(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    librechat = tmp_path / "LibreChat"
+    file(librechat / "package.json", '{"private":true}\n')
+    file(
+        librechat / "node_modules" / "mongoose" / "package.json",
+        '{"name":"mongoose","version":"8.24.1","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "mongoose" / "index.js",
+        """
+class MongoClient {
+  async connect() {}
+  db() { return {collection: () => ({countDocuments: async () => 0})}; }
+  async close() {}
+}
+module.exports = {mongo: {MongoClient}};
+""".lstrip(),
+    )
+    state = tmp_path / "native-first-admin.json"
+    original = '{"schema_version":1,"status":"closed","admin_user_id":"bad"}\n'
+    state.write_text(original, encoding="utf-8")
+    state.chmod(0o644)
+
+    completed = subprocess.run(
+        [
+            node,
+            str(NATIVE_FIRST_ADMIN_RECOVERY),
+            str(state),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "owner-owned mode 0600" in completed.stderr
+    assert state.read_text(encoding="utf-8") == original
+
+    state.chmod(0o600)
+    invalid = subprocess.run(
+        [
+            node,
+            str(NATIVE_FIRST_ADMIN_RECOVERY),
+            str(state),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert invalid.returncode != 0
+    assert "latest Viventium backup" in invalid.stderr
+    assert "protected owner state was not changed" in invalid.stderr
+    assert state.read_text(encoding="utf-8") == original
+
+
+def test_native_agent_verification_looks_up_the_exact_stored_owner(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    librechat = tmp_path / "LibreChat"
+    file(librechat / "package.json", '{"private":true}\n')
+    file(
+        librechat / "node_modules" / "mongodb" / "package.json",
+        '{"name":"mongodb","version":"6.0.0","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "mongodb" / "index.js",
+        """
+class ObjectId {
+  constructor(value) { this.value = value; }
+  toString() { return this.value; }
+}
+const ownerId = '0123456789abcdef01234567';
+const agentId = 'agent_viventium_main_test';
+const agentResourceId = '111111111111111111111111';
+const roleIds = {agent: '222222222222222222222222', remoteAgent: '333333333333333333333333'};
+class MongoClient {
+  async connect() {}
+  db() {
+    return {collection: name => {
+      if (name === 'users') return {
+        findOne: async query => {
+          if (String(query._id) !== ownerId) throw new Error('verification did not query stored owner');
+          return {_id: query._id, role: 'ADMIN', email: 'owner@example.test'};
+        },
+        find: () => { throw new Error('verification must not sample administrators'); },
+      };
+      if (name === 'agents') return {find: () => ({toArray: async () => [
+        {_id: agentResourceId, id: agentId, author: ownerId},
+      ]})};
+      if (name === 'accessroles') return {find: () => ({toArray: async () => [
+        {_id: roleIds.agent, resourceType: 'agent'},
+        {_id: roleIds.remoteAgent, resourceType: 'remoteAgent'},
+      ]})};
+      if (name === 'aclentries') return {find: () => ({toArray: async () => [
+        {resourceId: agentResourceId, resourceType: 'agent', roleId: roleIds.agent},
+        {resourceId: agentResourceId, resourceType: 'remoteAgent', roleId: roleIds.remoteAgent},
+      ]})};
+      throw new Error(`unexpected collection ${name}`);
+    }};
+  }
+  async close() {}
+}
+module.exports = {MongoClient, ObjectId};
+""".lstrip(),
+    )
+    file(
+        librechat / "node_modules" / "js-yaml" / "package.json",
+        '{"name":"js-yaml","version":"4.0.0","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "js-yaml" / "index.js",
+        "module.exports = {JSON_SCHEMA: {}, load: JSON.parse};\n",
+    )
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(
+        json.dumps(
+            {
+                "meta": {"mainAgentId": "agent_viventium_main_test"},
+                "mainAgent": {"id": "agent_viventium_main_test"},
+                "backgroundAgents": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    baseline = tmp_path / "agent-managed-baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "bundle_sha256": "a" * 64,
+                "agents": {
+                    "agent_viventium_main_test": {"fields": {"instructions": "test"}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    baseline.chmod(0o600)
+
+    completed = subprocess.run(
+        [
+            node,
+            str(NATIVE_VERIFY_AGENT),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+            str(bundle),
+            "0123456789abcdef01234567",
+            str(baseline),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["owner"] == "0123456789abcdef01234567"
+
+
+@pytest.mark.parametrize("owner_status", ["deleted", "demoted"])
+def test_native_agent_verification_rejects_deleted_or_demoted_exact_owner(
+    tmp_path: Path, owner_status: str
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    librechat = tmp_path / "LibreChat"
+    file(librechat / "package.json", '{"private":true}\n')
+    file(
+        librechat / "node_modules" / "mongodb" / "package.json",
+        '{"name":"mongodb","version":"6.0.0","main":"index.js"}\n',
+    )
+    record = (
+        "null"
+        if owner_status == "deleted"
+        else "{_id: query._id, role: 'USER', email: 'owner@example.test'}"
+    )
+    file(
+        librechat / "node_modules" / "mongodb" / "index.js",
+        f"""
+class ObjectId {{
+  constructor(value) {{ this.value = value; }}
+  toString() {{ return this.value; }}
+}}
+class MongoClient {{
+  async connect() {{}}
+  db() {{
+    return {{collection: name => {{
+      if (name !== 'users') throw new Error('verification continued after invalid owner');
+      return {{findOne: async query => {{
+        if (String(query._id) !== '0123456789abcdef01234567') {{
+          throw new Error('verification did not query the stored owner id');
+        }}
+        if (query.role !== 'ADMIN' || query.email?.$ne !== 'viventium-system@example.com') {{
+          throw new Error('verification omitted the production administrator filters');
+        }}
+        const record = {record};
+        if (!record || record.role !== query.role || record.email === query.email.$ne) return null;
+        return record;
+      }}}};
+    }}}};
+  }}
+  async close() {{}}
+}}
+module.exports = {{MongoClient, ObjectId}};
+""".lstrip(),
+    )
+    file(
+        librechat / "node_modules" / "js-yaml" / "package.json",
+        '{"name":"js-yaml","version":"4.0.0","main":"index.js"}\n',
+    )
+    file(
+        librechat / "node_modules" / "js-yaml" / "index.js",
+        "module.exports = {JSON_SCHEMA: {}, load: JSON.parse};\n",
+    )
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(
+        json.dumps(
+            {
+                "meta": {"mainAgentId": "agent_viventium_main_test"},
+                "mainAgent": {"id": "agent_viventium_main_test"},
+                "backgroundAgents": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    baseline = tmp_path / "agent-managed-baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "bundle_sha256": "a" * 64,
+                "agents": {
+                    "agent_viventium_main_test": {"fields": {"instructions": "test"}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    baseline.chmod(0o600)
+
+    completed = subprocess.run(
+        [
+            node,
+            str(NATIVE_VERIFY_AGENT),
+            str(librechat),
+            "mongodb://127.0.0.1:27017/LibreChat",
+            str(bundle),
+            "0123456789abcdef01234567",
+            str(baseline),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "not the verified local administrator" in completed.stderr
+    assert "Restore or promote the recorded administrator" in completed.stderr
 
 
 def test_first_admin_proxy_connection_error_allows_same_token_retry(tmp_path: Path) -> None:
@@ -2355,16 +3074,16 @@ def test_native_identity_seed_waits_for_real_first_admin_and_preserves_order(
     runtime = load_native_runtime()
     root = tmp_path / "release"
     support = tmp_path / "support"
-    calls: list[str] = []
+    calls: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(
         runtime,
         "run_native_maintenance",
-        lambda label, _command, _support, **_kwargs: calls.append(label),
+        lambda label, command, _support, **_kwargs: calls.append((label, command)),
     )
     monkeypatch.setattr(
         runtime,
         "verify_default_agent",
-        lambda _root, _support, _env: calls.append("verify-default-agent"),
+        lambda _root, _support, _env: calls.append(("verify-default-agent", [])),
     )
 
     runtime.maintain_native_identity(
@@ -2375,17 +3094,33 @@ def test_native_identity_seed_waits_for_real_first_admin_and_preserves_order(
     )
     assert calls == []
 
+    with pytest.raises(runtime.RuntimeError_, match="administrator identity"):
+        runtime.maintain_native_identity(
+            root,
+            support,
+            {},
+            {"schema_version": 1, "status": "closed"},
+        )
+
     runtime.maintain_native_identity(
         root,
         support,
         {},
-        {"schema_version": 1, "status": "closed"},
+        {
+            "schema_version": 1,
+            "status": "closed",
+            "admin_user_id": "0123456789abcdef01234567",
+        },
     )
-    assert calls == [
+    assert [label for label, _command in calls] == [
         "user-default-reconciliation",
         "default-agent-seed",
         "verify-default-agent",
     ]
+    seed_command = next(command for label, command in calls if label == "default-agent-seed")
+    assert "--owner-id=0123456789abcdef01234567" in seed_command
+    assert f"--managed-baseline={support / 'state' / 'agent-managed-baseline.json'}" in seed_command
+    assert not any(argument.startswith("--email=") for argument in seed_command)
 
 
 def test_native_helper_decodes_native_mode_uses_semantic_health_and_hides_source_tools() -> None:

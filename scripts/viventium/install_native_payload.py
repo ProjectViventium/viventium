@@ -41,6 +41,11 @@ def owned_process_group_alive(process_group: int) -> bool:
         os.killpg(process_group, 0)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # A process group that still exists can briefly report EPERM on macOS after
+        # its leader exits. Treat it as alive so cancellation continues to the
+        # bounded SIGKILL fallback instead of abandoning an owned descendant.
+        return True
     return True
 
 

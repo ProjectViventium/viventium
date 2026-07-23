@@ -4,6 +4,8 @@
 # feature QA case catalog that already exists; use release-readiness for broad
 # public packaging and boundary checks.
 release_tests:
+  tests/release/test_agent_migration_state.py:
+    qa_owner: qa/agent-config-continuity/cases.md
   tests/release/test_agent_sync_review_contract.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_background_agent_browser_qa_harness.py:
@@ -66,6 +68,8 @@ release_tests:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_macos_helper_install.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_managed_agent_migration_history.py:
+    qa_owner: qa/agent-config-continuity/cases.md
   tests/release/test_memory_hardening_contract.py:
     qa_owner: qa/memory-hardening/cases.md
   tests/release/test_meilisearch_resource_guardrails.py:

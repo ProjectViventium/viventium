@@ -174,8 +174,47 @@ Deferred until the core is ready unless a later accepted requirement proves othe
 - voice, LiveKit, local speech models, and the modern voice playground;
 - conversation Recall/RAG, local SearXNG/Firecrawl, Code Interpreter, Microsoft 365 MCP, Skyvern,
   and GlassHive Docker workstation execution;
-- Telegram, Google Workspace, Slack, WhatsApp, remote access, transcript ingestion, and additional
-  providers.
+- Google Workspace, remote access, transcript ingestion, and additional providers.
+
+Telegram, Slack, and WhatsApp have an optional **Settings > Channels** setup surface after core
+chat is ready:
+
+- Easy Install stores one admin-managed connection record per channel in the local database using
+  an authenticated AES-256-GCM envelope whose HKDF key domain is separated from other LibreChat
+  credentials. Browser storage and generated env files
+  never hold those browser-entered credentials. Authentication failure or the unreleased legacy
+  unauthenticated format requires reconnect and must never start a worker or be silently migrated.
+- LibreChat owns each browser record and its in-process channel worker. Inbound messages are
+  normalized and routed through the existing authenticated Viventium gateway and Main Agent; no
+  channel owns a direct model path. Connected means the provider test, worker startup, and required
+  provider-side activation have succeeded. Later faults become a specific degraded state.
+- Global provider credentials and worker controls are admin-only. Every signed-in user creates a
+  high-entropy, one-use, expiring code for their own account and sends `/pair CODE` privately from
+  the messaging identity they control. The server binds only to the authenticated code creator; an
+  admin cannot share a bearer code that grants the admin's conversations, memory, or tool context.
+- Custom Settings retains only the existing operator Telegram path. A configured
+  `integrations.telegram` token compiles to its consumed `0600` service env. Slack and WhatsApp
+  browser credentials have no parent YAML, Keychain, generated-env, or sidecar contract.
+- Slack Socket Mode requires a workspace app, app-level token, bot token, and the generated manifest
+  workflow. It does not require a signing secret.
+  WhatsApp means the official Business Cloud API and requires a stable public HTTPS callback from
+  `runtime.network.public_api_origin` or the administrator's validated **Public Viventium HTTPS
+  address** in Settings. The Settings value is a stable API origin, not a full callback URL: it must
+  use HTTPS, must not contain credentials/path/query/fragment, and must not resolve syntactically to
+  loopback, `.local`, or a private IP address. Viventium appends the secret connection-specific
+  callback path and displays the result for Meta. It stays action-required until Meta verifies that
+  callback and a correctly signed callback is received. Creating the external domain, tunnel, Meta
+  Business app, and provider approval remains an explicit vendor/network step; Consumer-account
+  automation, ephemeral quick-tunnel claims, and localhost-only webhook claims are not supported.
+- Any optional-channel setup or transport failure stays scoped to that channel. It must not block
+  installation, first provider connection, core browser chat, restart, upgrade, or recovery.
+- Native Easy Install channel turns use the same authenticated gateway chat and SSE routes, HMAC
+  signatures, AgentController/Main Agent path, and request timeouts as source installs, but their
+  HTTP client connects only through the absolute, owner-checked, mode-`0600`
+  `VIVENTIUM_NATIVE_API_SOCKET`. It must never fall back to the historical loopback API port. A
+  missing, stale, symlinked, foreign, or permission-drifted socket is a retryable
+  `connection_unavailable` condition; the 30-second worker reconciler is installed before initial
+  persistence/socket readiness so a repaired socket can self-heal without a process restart.
 
 Deferral is not permission to deliver a stale optional runtime. When Voice is enabled after core
 readiness or selected through **Custom Settings Install**, the supported browser surface is the
@@ -491,7 +530,23 @@ Native-specific agent bundle that removes tools, tool options,
 direct-action ownership, and handoffs backed only by unavailable MCP servers. Initial boot must not
 seed the agent system owner before the real admin exists, because that synthetic user would close
 first-user registration; the post-registration restart reconciles the new user's installer-owned
-defaults, seeds the exact compiled agent bundle, and verifies the default agent in MongoDB. Candidate
+defaults, resolves exactly one non-placeholder administrator by immutable user ID, seeds the exact
+compiled agent bundle under that owner, and verifies every shipped main/background agent plus both
+owner ACL resource types in MongoDB. The first resolved administrator ID is retained in the
+owner-only mode-`0600` first-admin state and managed agent baseline. Later starts must verify that
+exact ID and leave the established state unchanged even when more administrators exist; they must
+not sample or re-infer an owner from administrator ordering. Source installs without a stored owner
+may migrate the verified administrator who already owns the built-in main agent before considering
+single-admin inference. A Native upgrade from the historical closed first-admin state that lacks an
+owner ID must first resolve the exact shipped main-agent ID from the immutable agent bundle and
+verify that agent's author as a real administrator; valid canonical evidence is backfilled without
+enumerating administrators or mutating agents/ACLs, while the exactly-one-administrator fallback is
+reserved for a state with no usable shipped-agent evidence. An invalid, deleted, placeholder, or
+demoted stored owner fails closed with restore/promote-from-backup guidance and never silently
+rewrites protected owner state. Native CLI
+must carry that public-safe guidance out of the private maintenance log, and the helper must show the
+administrator/backup recovery path rather than irrelevant Docker advice. Email is not
+retained in first-admin state or used to re-infer ownership on an established multi-admin database. Candidate
 acceptance must probe direct port
 `3180` before setup, after setup, and after restart, then prove login and default-agent health. Those
 exact-candidate checks are declared but have not run, so this boundary remains `PARTIAL`.
@@ -788,9 +843,9 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     scheduler tick does not permanently drop the reflection
   - memory hardening and nightly reflection must resolve the installing user's first local admin
     path without asking for a developer email, hardcoding an owner account, or leaking private data
-  - provider API-key entry and an optional fallback provider are the only guided Easy Install
-    surfaces today; user-owned or resource-heavy services stay behind Custom Settings Install until
-    a signed optional-component transaction exists
+  - provider API-key entry and optional channel connection are guided Easy Install surfaces;
+    user-owned or resource-heavy services stay behind Custom Settings Install until a signed
+    optional-component transaction exists
   - foundation fallback credential presence means `Configured`, not `Ready`; only a successful live
     provider request can prove credential validity, and status must not manufacture that proof
   - Conversation Recall/RAG remains Custom Settings-only because it requires
@@ -810,8 +865,9 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     bridge authentication even on loopback. Direct host execution is never an implicit fallback:
     it requires both `OPENCLAW_RUNTIME=direct` and the explicit
     `OPENCLAW_ALLOW_DIRECT_HOST_EXEC=true` risk acknowledgement
-  - WhatsApp must not be advertised as installed or configured until an owning runtime integration,
-    requirement doc, and QA surface exist
+  - Telegram, Slack, and WhatsApp setup may be advertised as guided and encrypted, but not as
+    delivery-ready until provider activation, worker health, and a real inbound/outbound test agree;
+    a successful credential probe alone is not a successful message test
   - upgrades preserve explicit disables and never invent secrets, OAuth grants, transcript paths,
     user emails, local absolute paths, or private account state. They may add readiness/status cards
     and reconcile missing core-spine defaults idempotently.
@@ -1653,16 +1709,58 @@ config and recompile/restart; they do not patch generated App Support env files.
   - the product gap is not “missing reseed logic”; it is failing to move stale installs onto the
     reviewed pinned checkout before that reseed/upsert runs
 - On April 19, 2026, a live local rollback incident clarified the ownership boundary inside that
-  reseed path:
-  - startup reseed must not overwrite live user-managed built-in agent fields on existing installs
-  - protected live fields include at least name/description, instructions, tools, model/provider,
-    model bags, voice model/provider/bag, conversation starters, category, and background cortex
-    wiring
-  - the startup seed path may still create missing built-ins, fill missing fields, repair ACLs, and
-    apply canonical runtime normalization to the effective live assignment
-  - intentional changes to those live user-managed fields belong in reviewed sync flows such as
-    `viventium-sync-agents.js compare` plus the narrowest safe push mode, not in automatic startup
-    reseed
+  reseed path; the July 22 Easy Install audit added the missing safe-update half:
+  - startup reseed must not overwrite a real user edit to built-in agent fields
+  - protected fields include at least name/description, instructions, tools, model/provider, model
+    bags, voice model/provider/bag, conversation starters, category, and background cortex wiring
+  - every successful seed stores a mode-`0600`, app-owned, non-personal managed baseline outside git.
+    Upgrade performs a three-way comparison of prior shipped baseline, live value, and new shipped
+    value: untouched fields advance; live values already equal to the new bundle are idempotent;
+    user-edited fields remain live and are recorded as unresolved drift
+  - object fields merge by path, and `background_cortices` merges by stable `agent_id`, so one custom
+    activation prompt does not freeze unrelated shipped cortex improvements
+  - interrupted runs advance the baseline only after all agent writes/ACL work succeed. For the
+    first supported upgrade from a legacy install with no local baseline, `viventium upgrade`
+    captures the exact pre-pull and post-bootstrap LibreChat commits. The current CLI writes an
+    owner-only mode-`0600` one-time App Support record bound to those refs, the successor bundle,
+    the migration registry, and the immutable upgrade transaction; generated runtime files and
+    ambient environment variables are not trusted migration evidence. Previously shipped CLIs did
+    not write this handoff. On their first upgrade into a baseline-aware release, the new startup
+    path derives the predecessor only from the owner-only, runner-hash-verified upgrade ledger when
+    it proves the same predecessor/successor transition. A mode-`0600` per-transaction receipt
+    prevents that discovered migration from being recreated after consumption. The transitional
+    `runtime.env` marker remains supported and is removed before canonical regeneration, but it is
+    not required for an upgrade from the actual previously shipped CLI
+  - the public registry covers all 74 published parent lock revisions from the reviewed April 2,
+    2026 support floor: 62 retrievable LibreChat pins resolve to 22 managed-baseline groups, and
+    three lock entries are explicit tombstones because their nested objects were never published.
+    Standalone nested verification re-resolves all 62 objects without an adjacent parent checkout;
+    full regeneration requires an explicit exact parent repository root. The artifact records the
+    last parent lock-history commit it audited, and later parent checks stop at that immutable
+    boundary rather than moving branch HEAD; publishing the new nested pin therefore cannot force a
+    self-referential rewrite of the already-reviewed nested registry
+  - the seed path resolves only an exact registry match. The registry binds known predecessor
+    commits and their source-bundle hash to hash-only managed-field fingerprints; registry,
+    baseline, handoff, bundle, and source hashes are recomputed before use. A matching prior shipped
+    value advances to current source, while a live value that differs from both prior and current
+    remains protected. Exact interrupted retries reuse the same record; different, unknown,
+    malformed, ambiguous, stale, or tampered evidence fails closed. Successful consumption happens
+    durably only after every agent write, ACL update, and next-baseline write succeeds
+  - canonical runtime repair receives that same reconciled/effective assignment. It must not restore
+    incoming source values over protected live model/provider, tools, voice, prompt, or other managed
+    drift after the three-way update has preserved it
+  - the migration registry is a required native payload asset, so source, assembled payload, and
+    installed first-upgrade behavior cannot silently diverge. Native currently has no supported
+    cross-release upgrade lane: its `upgrade` command requires a future signed Bootstrap, and a
+    different immutable release root is refused rather than adopted in place. Fresh Native installs
+    seed current source and establish the local baseline; same-release starts reuse it. The future
+    signed release-replacement transaction must carry an authenticated predecessor identity into
+    this shipped registry before cross-release Native upgrade can be enabled. Reviewed sync
+    (`viventium-sync-agents.js compare` plus the narrowest safe push mode) remains the explicit path
+    for unsupported historical predecessors or intentionally reconciled user drift
+  - the startup seed path may still create missing built-ins, fill missing fields, migrate only the
+    placeholder owner to the one verified admin, repair ACLs, and apply canonical runtime
+    normalization to the effective live assignment
 - The same April 13, 2026 audit clarified the recall-default ownership boundary:
   - if local conversation recall should default on when the machine already supports the local
     recall path, that default must be set consistently in shared config-building layers

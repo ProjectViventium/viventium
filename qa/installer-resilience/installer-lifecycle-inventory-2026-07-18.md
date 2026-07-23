@@ -202,15 +202,15 @@ established machine cannot substitute for clean-pin acceptance.
 
 ### Current Isolated Candidate Reconciliation — 2026-07-22
 
-After the 11 hosted pull requests merged, a reconciliation fetched each new `origin/main`, compared
+After the component pull requests merged, a reconciliation fetched each current `origin/main`, compared
 the hosted merge commit with the captured GitHub result, and compared the merged tree with the
-previously audited review tree. All 11 merged trees are byte-for-byte identical to their reviewed
+previously audited review tree. All 11 current component trees are byte-for-byte identical to their reviewed
 heads, every isolated review worktree remains clean, and the parent lock now records the real merged
 `main` commits:
 
 | Component | Current ref | Local source state | Delivery evidence |
 | --- | --- | --- | --- |
-| LibreChat | `38527a8651653f5f7d0cba48038421653312d999` | merged tree exact; review worktree clean | PR 67 merged reviewed head `44ac1f7a...`; 59 stream tests, all 216 Viventium route tests, and the CI-stability regression pass locally; all 15 exact-head hosted checks pass, including actual Redis and the serialized data-schema lane. Built/shipped/installed identity remains open. |
+| LibreChat | `9e859bcac6a691bb67224380842b44b96a6e3073` | merged tree exact; review worktree clean | PR 71 merged reviewed head `0c3f26ba...`; complete client/backend/package/channel suites, headed connected-channel browser QA, privacy scans, and all 14 exact-head hosted checks pass. The hosted API lane independently re-audited all 62 historical managed-agent predecessors from a full standalone checkout. Signed/notarized release and installed-runtime identity remain separate gates. |
 | agents-playground | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | merged tree exact; review worktree clean | PR 1 merged reviewed head `112f646c...`; classic fallback only. Artifact identity remains open. |
 | livekit | `c20e96166726565f026f894ccca6f1cff2480741` | merged tree exact; review worktree clean | PR 1 merged reviewed head `8839980c...`; the locked Docker runtime is a separate delivery artifact. |
 | cartesia-voice-agent | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | merged tree exact; review worktree clean | PR 1 merged reviewed head `df2f0248...`; artifact identity remains open. |

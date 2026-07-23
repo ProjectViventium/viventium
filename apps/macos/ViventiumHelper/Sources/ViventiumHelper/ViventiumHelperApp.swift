@@ -1149,7 +1149,11 @@ final class HelperController: ObservableObject {
                     if openWhenReady {
                         let alert = NSAlert()
                             alert.messageText = "Viventium did not finish starting"
-                        alert.informativeText = "Check Docker Desktop and the Viventium logs, then try again."
+                        alert.informativeText = Self.startFailureGuidance(
+                            runtime: runtime,
+                            startLogURL: startLogURL,
+                            startLogOffset: startLogOffset
+                        )
                         alert.alertStyle = .warning
                         alert.addButton(withTitle: "OK")
                         alert.runModal()
@@ -1177,7 +1181,11 @@ final class HelperController: ObservableObject {
                 } else if openWhenReady && !started {
                     let alert = NSAlert()
                     alert.messageText = "Viventium did not finish starting"
-                    alert.informativeText = "Check Docker Desktop and the Viventium logs, then try again."
+                    alert.informativeText = Self.startFailureGuidance(
+                        runtime: runtime,
+                        startLogURL: startLogURL,
+                        startLogOffset: startLogOffset
+                    )
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
@@ -2335,12 +2343,30 @@ final class HelperController: ObservableObject {
             return false
         }
         let failureMarkers = [
+            "Native first-admin owner verification did not complete",
             "Built-in Viventium agent seeding failed",
             "Failed to seed built-in Viventium agents",
             "All services stopped.",
         ]
 
         return failureMarkers.contains { segment.contains($0) }
+    }
+
+    private nonisolated static func startFailureGuidance(
+        runtime: RuntimePorts,
+        startLogURL: URL?,
+        startLogOffset: UInt64
+    ) -> String {
+        let segment = self.logSegment(startLogURL, offset: startLogOffset)
+        if runtime.nativeRuntime,
+           segment.contains("Native first-admin owner verification did not complete")
+        {
+            return "Viventium could not verify the recorded administrator. Restore or promote that administrator, or choose Advanced > Restore from Backup, then try Start again."
+        }
+        if runtime.nativeRuntime {
+            return "Check the Viventium logs, then try again. If administrator access or protected state changed, choose Advanced > Restore from Backup first."
+        }
+        return "Check Docker Desktop and the Viventium logs, then try again."
     }
 
     private nonisolated static func logSegment(_ url: URL?, offset: UInt64) -> String {

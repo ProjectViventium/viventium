@@ -6,6 +6,7 @@ import os
 import pty
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,9 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LAST_SHIPPED_PARENT_WITHOUT_MANAGED_MIGRATION_HANDOFF = (
+    "70569c4e1ab4d5ee0931d7eb03083814ff90171f"
+)
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -28,6 +32,24 @@ def copy_cli_fixture(repo_root: Path) -> None:
     shutil.copy2(
         REPO_ROOT / "scripts" / "viventium" / "upgrade_transaction.py",
         repo_root / "scripts" / "viventium" / "upgrade_transaction.py",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "agent_migration_state.py",
+        "#!/usr/bin/env python3\n"
+        "import argparse, hashlib, json, os, subprocess\n"
+        "from pathlib import Path\n"
+        "parser = argparse.ArgumentParser(); sub = parser.add_subparsers(dest='command', required=True)\n"
+        "source = sub.add_parser('source-ref'); source.add_argument('--repo-root', type=Path, required=True)\n"
+        "legacy = sub.add_parser('import-legacy'); legacy.add_argument('--repo-root', type=Path, required=True); legacy.add_argument('--app-support-dir', type=Path, required=True); legacy.add_argument('--runtime-env', type=Path, required=True)\n"
+        "prepare = sub.add_parser('prepare'); prepare.add_argument('--repo-root', type=Path, required=True); prepare.add_argument('--app-support-dir', type=Path, required=True); prepare.add_argument('--predecessor-ref', required=True); prepare.add_argument('--successor-ref', required=True); prepare.add_argument('--transaction-id', required=True)\n"
+        "args = parser.parse_args()\n"
+        "if args.command == 'import-legacy': print(json.dumps({'imported': False})); raise SystemExit(0)\n"
+        "head = subprocess.check_output(['git', '-C', str(args.repo_root / 'viventium_v0_4' / 'LibreChat'), 'rev-parse', 'HEAD'], text=True).strip()\n"
+        "if args.command == 'source-ref': print(json.dumps({'source_ref': head, 'source_kind': 'synthetic_nested_git'})); raise SystemExit(0)\n"
+        "if head != args.successor_ref: raise SystemExit('successor mismatch')\n"
+        "state = {'schema_version': 1, 'predecessor_source_ref': args.predecessor_ref, 'successor_source_ref': args.successor_ref, 'successor_bundle_sha256': 'b' * 64, 'registry_artifact_sha256': 'c' * 64, 'transaction_id': args.transaction_id}\n"
+        "state['content_sha256'] = hashlib.sha256(json.dumps(state, sort_keys=True, separators=(',', ':')).encode()).hexdigest()\n"
+        "target = args.app_support_dir / 'state' / 'runtime' / 'agent-managed-migration-pending.json'; target.parent.mkdir(parents=True, exist_ok=True); target.write_text(json.dumps(state), encoding='utf-8'); target.chmod(0o600)\n",
     )
     write_executable(
         repo_root / "scripts" / "viventium" / "default_nightly_routines.py",
@@ -845,6 +867,58 @@ def test_upgrade_rechecks_component_alignment_structurally_after_bootstrap() -> 
     assert 'report.get("ready_to_upgrade")' in checked_bootstrap
     assert "kept local dirty checkout" not in checked_bootstrap
     assert "Structured component alignment verification failed" in checked_bootstrap
+
+
+def test_upgrade_carries_the_exact_pre_pull_librechat_ref_in_protected_one_time_state() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    capture = extract_shell_function(cli_source, "capture_agent_source_ref")
+    refuse_pending = extract_shell_function(cli_source, "ensure_no_pending_agent_migration")
+    prepare = extract_shell_function(cli_source, "prepare_agent_migration_state")
+    upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split(
+        "  configure|wizard)", 1
+    )[0]
+
+    assert "agent_migration_state.py" in capture
+    assert "source-ref" in capture
+    assert "agent-managed-migration-pending.json" in refuse_pending
+    assert "start to finish it" in refuse_pending
+    assert "agent_migration_state.py" in prepare
+    assert "--transaction-id" in prepare
+    assert "VIVENTIUM_AGENT_PREDECESSOR_SOURCE_REF" not in cli_source
+    compile_config = extract_shell_function(cli_source, "compile_config")
+    assert "agent_migration_state.py" in compile_config
+    assert "import-legacy" in compile_config
+    assert compile_config.index("import-legacy") < compile_config.index("config_compiler.py")
+    refuse_index = upgrade_section.index("ensure_no_pending_agent_migration")
+    capture_index = upgrade_section.index(
+        'UPGRADE_AGENT_PREDECESSOR_SOURCE_REF="$(capture_agent_source_ref)"'
+    )
+    pull_index = upgrade_section.index('fast_forward_current_branch_to_target "$UPGRADE_TARGET_HEAD"')
+    compiler_index = upgrade_section.index(
+        '"$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py"'
+    )
+    doctor_index = upgrade_section.index('"$REPO_ROOT/scripts/viventium/doctor.sh"')
+    successor_index = upgrade_section.index(
+        'UPGRADE_AGENT_SUCCESSOR_SOURCE_REF="$(capture_agent_source_ref)"'
+    )
+    prepare_index = upgrade_section.index("prepare_agent_migration_state")
+    assert refuse_index < capture_index < pull_index < compiler_index < doctor_index
+    assert doctor_index < successor_index < prepare_index
+
+    launcher = (REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+    seed = extract_shell_function(launcher, "ensure_viventium_agents_seeded")
+    assert "$VIVENTIUM_BASE_STATE_DIR/runtime/agent-managed-migration-pending.json" in seed
+    assert '--managed-migration-state="$managed_migration_state"' in seed
+    legacy_import = extract_shell_function(
+        launcher, "import_legacy_agent_migration_before_runtime_regeneration"
+    )
+    assert "agent_migration_state.py" in legacy_import
+    assert "import-legacy" in legacy_import
+    assert launcher.index("import_legacy_agent_migration_before_runtime_regeneration\n") < launcher.index(
+        "regenerate_canonical_runtime_env_if_needed\n"
+    )
 
 
 def test_remote_access_failure_does_not_abort_local_launcher_progress(tmp_path: Path) -> None:
@@ -2027,6 +2101,17 @@ def test_install_wait_spinner_frame_uses_single_width_backslash() -> None:
 
 
 def init_git_repo(path: Path) -> None:
+    # Upgrade captures the exact installed LibreChat commit before mutating anything. Keep every
+    # synthetic full-repository fixture faithful to that nested-repository contract.
+    if (path / "bin" / "viventium").is_file():
+        librechat_root = path / "viventium_v0_4" / "LibreChat"
+        if not (librechat_root / ".git").exists():
+            librechat_root.mkdir(parents=True, exist_ok=True)
+            if not any(librechat_root.iterdir()):
+                (librechat_root / "README.md").write_text(
+                    "synthetic LibreChat fixture\n", encoding="utf-8"
+                )
+            init_git_repo(librechat_root)
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
     subprocess.run(["git", "config", "user.name", "Codex"], cwd=path, check=True, capture_output=True, text=True)
     subprocess.run(
@@ -2205,11 +2290,242 @@ def test_upgrade_phase_failure_restores_exact_checkpoint_and_prior_running_state
     assert (support / "config.yaml").read_bytes() == old_config
     assert (support / "runtime" / "runtime.env").read_bytes() == old_runtime
     assert (support / "state" / "runtime" / "isolated" / "database.bin").read_bytes() == old_database
+    assert not (support / "state" / "runtime" / "agent-managed-migration-pending.json").exists()
     assert not (support / "state" / "upgrade-transaction-active.json").exists()
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo_root, check=True, capture_output=True, text=True
     ).stdout.strip()
     assert head == old_head
+
+
+def test_shipped_cli_process_bridges_first_upgrade_from_verified_ledger_and_preserves_edits(
+    tmp_path: Path,
+) -> None:
+    predecessor = "07c1960c9105e547c312f7eab6f43c1dd2ba17ab"
+    repo_root, support = build_transactional_upgrade_failure_fixture(tmp_path, "none")
+    nested = repo_root / "viventium_v0_4" / "LibreChat"
+    shutil.rmtree(nested)
+    subprocess.run(
+        ["git", "clone", "--quiet", "--shared", str(REPO_ROOT / "viventium_v0_4" / "LibreChat"), str(nested)],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(nested), "checkout", "--quiet", "--detach", predecessor], check=True)
+    subprocess.run(["git", "-C", str(nested), "config", "user.name", "Synthetic QA"], check=True)
+    subprocess.run(
+        ["git", "-C", str(nested), "config", "user.email", "qa@example.invalid"], check=True
+    )
+    current_nested = REPO_ROOT / "viventium_v0_4" / "LibreChat"
+    for relative in [
+        "viventium/source_of_truth/local.viventium-agents.yaml",
+        "viventium/source_of_truth/managed-agent-baseline-migration.json",
+        "scripts/viventium-seed-agents.js",
+        "scripts/viventium-agent-runtime-models.js",
+    ]:
+        destination = nested / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(current_nested / relative, destination)
+    subprocess.run(["git", "-C", str(nested), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(nested), "commit", "--quiet", "-m", "synthetic successor payload"],
+        check=True,
+    )
+    successor = subprocess.run(
+        ["git", "-C", str(nested), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(nested), "checkout", "--quiet", "--detach", predecessor], check=True)
+
+    lock = {
+        "version": 1,
+        "components": [
+            {
+                "name": "LibreChat",
+                "path": "viventium_v0_4/LibreChat",
+                "ref": predecessor,
+            }
+        ],
+    }
+    (repo_root / "components.lock.json").write_text(json.dumps(lock) + "\n", encoding="utf-8")
+    shipped_cli = subprocess.run(
+        [
+            "git",
+            "show",
+            f"{LAST_SHIPPED_PARENT_WITHOUT_MANAGED_MIGRATION_HANDOFF}:bin/viventium",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "VIVENTIUM_AGENT_PREDECESSOR_SOURCE_REF" not in shipped_cli
+    assert "agent_migration_state.py" not in shipped_cli
+    (repo_root / "bin" / "viventium").write_text(shipped_cli, encoding="utf-8")
+    (repo_root / "bin" / "viventium").chmod(0o755)
+    subprocess.run(
+        ["git", "add", "bin/viventium", "components.lock.json", "viventium_v0_4/LibreChat"],
+        cwd=repo_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--quiet", "-m", "actual shipped predecessor CLI"],
+        cwd=repo_root,
+        check=True,
+    )
+    old_parent = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo_root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    subprocess.run(["git", "checkout", "-b", "release-target"], cwd=repo_root, check=True, capture_output=True)
+    shutil.copy2(REPO_ROOT / "bin" / "viventium", repo_root / "bin" / "viventium")
+    shutil.copy2(
+        REPO_ROOT / "scripts" / "viventium" / "agent_migration_state.py",
+        repo_root / "scripts" / "viventium" / "agent_migration_state.py",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "bootstrap_components.py",
+        f"#!/usr/bin/env python3\nimport subprocess\nfrom pathlib import Path\nroot=Path(__file__).resolve().parents[2]\nsubprocess.run(['git','-C',str(root/'viventium_v0_4'/'LibreChat'),'checkout','--quiet','--detach','{successor}'],check=True)\n",
+    )
+    write_executable(
+        repo_root / "scripts" / "viventium" / "config_compiler.py",
+        "#!/usr/bin/env python3\n"
+        "import argparse\nfrom pathlib import Path\n"
+        "p=argparse.ArgumentParser(); p.add_argument('--config'); p.add_argument('--output-dir'); a=p.parse_args()\n"
+        "out=Path(a.output_dir); out.mkdir(parents=True,exist_ok=True)\n"
+        "(out/'runtime.env').write_text('VIVENTIUM_RUNTIME_PROFILE=isolated\\nVIVENTIUM_INSTALL_EXPERIENCE=express\\nVIVENTIUM_INSTALL_MODE=docker\\nVIVENTIUM_CALL_SESSION_SECRET=synthetic\\nCANDIDATE=1\\n',encoding='utf-8'); (out/'runtime.env').chmod(0o600)\n"
+        "(out/'runtime.local.env').write_text('',encoding='utf-8'); (out/'librechat.yaml').write_text('version: 1\\n',encoding='utf-8')\n",
+    )
+    lock["components"][0]["ref"] = successor
+    (repo_root / "components.lock.json").write_text(json.dumps(lock) + "\n", encoding="utf-8")
+    subprocess.run(
+        [
+            "git",
+            "add",
+            "bin/viventium",
+            "components.lock.json",
+            "scripts/viventium/agent_migration_state.py",
+            "scripts/viventium/bootstrap_components.py",
+            "scripts/viventium/config_compiler.py",
+        ],
+        cwd=repo_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "update-index", "--cacheinfo", f"160000,{successor},viventium_v0_4/LibreChat"],
+        cwd=repo_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--quiet", "-m", "new protected migration release"],
+        cwd=repo_root,
+        check=True,
+    )
+    remote = tmp_path / "release.git"
+    subprocess.run(["git", "clone", "--quiet", "--bare", str(repo_root), str(remote)], check=True)
+    subprocess.run(["git", "checkout", "--quiet", "codex/test-cli"], cwd=repo_root, check=True)
+    assert subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo_root, check=True, capture_output=True, text=True
+    ).stdout.strip() == old_parent
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=repo_root, check=True)
+    subprocess.run(
+        ["git", "config", "branch.codex/test-cli.remote", "origin"], cwd=repo_root, check=True
+    )
+    subprocess.run(
+        ["git", "config", "branch.codex/test-cli.merge", "refs/heads/release-target"],
+        cwd=repo_root,
+        check=True,
+    )
+    (tmp_path / "stop-called").touch()
+    env = {**os.environ, "TEST_ROOT": str(tmp_path), "TEST_PYTHON": sys.executable}
+
+    upgraded = subprocess.run(
+        [str(repo_root / "bin" / "viventium"), "--app-support-dir", str(support), "upgrade"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=90,
+    )
+
+    assert upgraded.returncode == 0, upgraded.stderr
+    runtime_env = support / "runtime" / "runtime.env"
+    assert "VIVENTIUM_AGENT_PREDECESSOR_SOURCE_REF" not in runtime_env.read_text(encoding="utf-8")
+    pending = support / "state" / "runtime" / "agent-managed-migration-pending.json"
+    assert not pending.exists()
+
+    started = subprocess.run(
+        [str(repo_root / "bin" / "viventium"), "--app-support-dir", str(support), "start"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=90,
+    )
+
+    assert started.returncode == 0, started.stderr
+    assert pending.is_file()
+    assert "VIVENTIUM_AGENT_PREDECESSOR_SOURCE_REF" not in runtime_env.read_text(encoding="utf-8")
+    artifact = nested / "viventium" / "source_of_truth" / "managed-agent-baseline-migration.json"
+    bundle = nested / "viventium" / "source_of_truth" / "local.viventium-agents.yaml"
+    node_script = r"""
+const [statePath,bundlePath,artifactPath,successor,predecessor,parentRoot,sourceRoot] = process.argv.slice(1);
+const seed = require(sourceRoot + '/viventium_v0_4/LibreChat/scripts/viventium-seed-agents.js');
+const history = require(sourceRoot + '/viventium_v0_4/LibreChat/scripts/viventium-generate-managed-agent-migrations.js');
+const state = seed.loadManagedMigrationState(statePath, {bundlePath, managedBaselineMigrationPath: artifactPath, currentSourceRef: successor});
+const previous = seed.loadManagedBaselineMigration(artifactPath, {predecessorSourceRef: predecessor});
+const audit = history.buildArtifact({includeAudit: true, parentRoot});
+const group = audit.groups.find((item) => item.predecessor_source_refs.includes(predecessor));
+if (!group) throw new Error('historical predecessor group missing');
+let verified = false;
+for (const [agentId, priorAgent] of Object.entries(group.fullBaseline.agents)) {
+  const currentAgent = audit.currentBaseline.agents[agentId];
+  const fingerprints = previous.agents[agentId]?.fields || null;
+  if (!currentAgent || !fingerprints) continue;
+  const field = Object.keys(fingerprints)[0];
+  if (!field) continue;
+  const unchanged = seed.reconcileManagedAgentFields(priorAgent.fields, currentAgent.fields, fingerprints);
+  if (history.stableSerialize(unchanged.agentData) !== history.stableSerialize(currentAgent.fields)) throw new Error('unchanged field did not advance');
+  const synthetic = '__synthetic_user_edit__';
+  const edited = seed.reconcileManagedAgentFields({...priorAgent.fields, [field]: synthetic}, currentAgent.fields, fingerprints);
+  if (edited.agentData[field] !== synthetic) throw new Error('user edit was overwritten');
+  verified = true;
+  break;
+}
+if (!verified) throw new Error('no changed managed field available');
+seed.consumeManagedMigrationState(statePath, state.content_sha256);
+process.stdout.write(JSON.stringify({unchangedAdvanced:true,userEditPreserved:true,consumed:true}));
+process.exit(0);
+"""
+    reconciliation = subprocess.run(
+        [
+            "node",
+            "-e",
+            node_script,
+            str(pending),
+            str(bundle),
+            str(artifact),
+            successor,
+            predecessor,
+            str(REPO_ROOT),
+            str(REPO_ROOT),
+        ],
+        cwd=REPO_ROOT / "viventium_v0_4" / "LibreChat",
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "MONGO_URI": "mongodb://127.0.0.1:1/synthetic"},
+        timeout=120,
+    )
+    assert reconciliation.returncode == 0, reconciliation.stderr
+    assert json.loads(reconciliation.stdout) == {
+        "unchangedAdvanced": True,
+        "userEditPreserved": True,
+        "consumed": True,
+    }
+    assert not pending.exists()
 
 
 def test_upgrade_pull_divergence_rolls_back_without_mixed_state(tmp_path: Path) -> None:
@@ -2304,6 +2620,9 @@ def test_next_upgrade_recovers_interrupted_transaction_before_new_mutation(tmp_p
     (support / "config.yaml").write_text("candidate interrupted\n", encoding="utf-8")
     (support / "runtime" / "runtime.env").write_text("CANDIDATE=1\n", encoding="utf-8")
     (support / "state" / "runtime" / "isolated" / "database.bin").write_bytes(b"interrupted")
+    pending = support / "state" / "runtime" / "agent-managed-migration-pending.json"
+    pending.write_text('{"synthetic":"interrupted"}\n', encoding="utf-8")
+    pending.chmod(0o600)
     subprocess.run(
         [
             sys.executable,
@@ -2340,6 +2659,7 @@ def test_next_upgrade_recovers_interrupted_transaction_before_new_mutation(tmp_p
     assert (support / "config.yaml").read_bytes() == old_config
     assert (support / "runtime" / "runtime.env").read_bytes() == old_runtime
     assert (support / "state" / "runtime" / "isolated" / "database.bin").read_bytes() == old_database
+    assert not pending.exists()
     assert not (support / "state" / "upgrade-transaction-active.json").exists()
 
 
@@ -2499,6 +2819,30 @@ exit 1
     assert "Upgrade complete. Next: bin/viventium start" in completed.stdout
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "selected-python.txt").read_text(encoding="utf-8") == "python3.12"
+    pending = config_path.parent / "state" / "runtime" / "agent-managed-migration-pending.json"
+    assert pending.is_file()
+    assert stat.S_IMODE(pending.stat().st_mode) == 0o600
+    assert "VIVENTIUM_AGENT_PREDECESSOR_SOURCE_REF" not in (
+        config_path.parent / "runtime" / "runtime.env"
+    ).read_text(encoding="utf-8")
+
+    refused = subprocess.run(
+        [
+            str(repo_root / "bin" / "viventium"),
+            "--app-support-dir",
+            str(config_path.parent),
+            "upgrade",
+            "--skip-pull",
+            "--allow-dirty",
+        ],
+        cwd=repo_root,
+        check=False,
+        text=True,
+        capture_output=True,
+        env={**dict(os.environ), "TEST_ROOT": str(tmp_path)},
+    )
+    assert refused.returncode != 0
+    assert "prior managed-agent migration has not finished" in refused.stderr
 
 
 def test_upgrade_restart_stops_running_stack_before_bootstrap(tmp_path: Path) -> None:

@@ -828,6 +828,24 @@ regenerate_canonical_runtime_env_if_needed() {
   fi
 }
 
+import_legacy_agent_migration_before_runtime_regeneration() {
+  local canonical_runtime_dir="${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}"
+  local canonical_env_file="$canonical_runtime_dir/runtime.env"
+  local migration_helper="$VIVENTIUM_CORE_DIR/scripts/viventium/agent_migration_state.py"
+  if [[ ! -e "$canonical_env_file" && ! -L "$canonical_env_file" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$migration_helper" || -L "$migration_helper" ]]; then
+    echo -e "${RED}[viventium]${NC} Managed-agent migration helper is unavailable" >&2
+    return 1
+  fi
+  "$PYTHON_BIN" "$migration_helper" import-legacy \
+    --repo-root "$VIVENTIUM_CORE_DIR" \
+    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+    --runtime-env "$canonical_env_file" >/dev/null
+}
+
+import_legacy_agent_migration_before_runtime_regeneration
 regenerate_canonical_runtime_env_if_needed
 # === VIVENTIUM END ===
 
@@ -4118,11 +4136,18 @@ ensure_viventium_agents_seeded() {
   fi
 
   local seed_log="$LOG_DIR/librechat_agent_seed.log"
+  local managed_baseline="$VIVENTIUM_STATE_ROOT/agent-managed-baseline.json"
+  local managed_migration_state="$VIVENTIUM_BASE_STATE_DIR/runtime/agent-managed-migration-pending.json"
+  mkdir -p "$(dirname "$managed_baseline")"
   log_info "Ensuring built-in Viventium agents are present from $(basename "$bundle_path")"
   if (
     cd "$LIBRECHAT_DIR" &&
       ensure_librechat_server_packages_ready &&
-      node "$seed_script" --bundle="$bundle_path" --public
+      node "$seed_script" \
+        --bundle="$bundle_path" \
+        --managed-baseline="$managed_baseline" \
+        --managed-migration-state="$managed_migration_state" \
+        --public
   ) >"$seed_log" 2>&1; then
     log_success "Built-in Viventium agents ready"
     return 0
