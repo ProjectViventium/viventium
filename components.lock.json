@@ -45,6 +45,13 @@
       "ref": "ebc9bbab2d7e0954c5723207982f105e5fcea82c"
     },
     {
+      "name": "Viventium-Health",
+      "path": "viventium_v0_4/Viventium-Health",
+      "origin": "https://github.com/ProjectViventium/Viventium-Health.git",
+      "upstream": "",
+      "ref": "70e718d21bfa0b120b100ab2b82410cd82e1b8a4"
+    },
+    {
       "name": "ms-365-mcp-server",
       "path": "viventium_v0_4/MCPs/ms-365-mcp-server",
       "origin": "https://github.com/ProjectViventium/ms-365-mcp-server.git",

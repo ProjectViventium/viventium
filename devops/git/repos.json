@@ -44,6 +44,13 @@
       "upstream_branch": "main"
     },
     {
+      "name": "Viventium-Health",
+      "path": "viventium_v0_4/Viventium-Health",
+      "origin": "https://github.com/ProjectViventium/Viventium-Health.git",
+      "upstream": "",
+      "upstream_branch": "main"
+    },
+    {
       "name": "livekit-playground",
       "path": "viventium_v0_3_py/interfaces/livekit-playground",
       "origin": "https://github.com/ProjectViventium/livekit-playground.git",
