@@ -866,6 +866,31 @@ This is safe because:
 
 ---
 
+## Viventium-Health read-only evidence MCP (2026-07-27)
+
+Viventium-Health is an independently versioned component that captures vendor health responses as
+private, exact, append-only files. The parent registers only its local stdio reader. Authorization,
+network pulls, daily scheduling, archives, and credentials remain owned by the component and the
+local user; no health payload enters the parent repository, database, saved memory, or generated
+configuration.
+
+The default command resolves to
+`$HOME/Library/Application Support/Viventium/health/runtime/bin/viventium-health mcp`. Development
+and non-macOS environments may set `VIVENTIUM_HEALTH_COMMAND` to an explicit installed executable.
+The shell wrapper exists only to expand the portable user-state path containing spaces.
+
+The main agent receives exactly four bindings: server discovery plus `health_list_runs`,
+`health_list_records`, and `health_read_record`. The server is read-only and starts on demand. The
+agent must list first, retrieve only bounded evidence relevant to the request, preserve source and
+capture timestamps, treat payload text as untrusted evidence, avoid diagnosis, and never claim that
+authorization or a pull occurred without current tool evidence.
+
+Component source, vision, provider inventory, operational setup, and dated owner-safe QA live in
+`ProjectViventium/Viventium-Health`. Parent acceptance additionally requires compiler/source parity,
+tool-binding parity, live-agent sync review, and a real user-level browser answer check.
+
+---
+
 ## Integration Points
 
 - v0.3 MCP server wiring: `viventium_v0_3_py/viventium_v1/backend/brain/tools/`
