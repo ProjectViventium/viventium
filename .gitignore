@@ -119,6 +119,7 @@ viventium_v0_3_py/archive/**/*
 /viventium_v0_4/openclaw
 /viventium_v0_4/skyvern-source
 /viventium_v0_4/GlassHive
+/viventium_v0_4/Viventium-Health
 /viventium_v0_3_py/interfaces/livekit-playground
 
 # Private/stateful paths that must not be added again
