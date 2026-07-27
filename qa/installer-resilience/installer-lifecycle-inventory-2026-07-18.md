@@ -204,18 +204,19 @@ established machine cannot substitute for clean-pin acceptance.
 
 After the component pull requests merged, a reconciliation fetched each current `origin/main`, compared
 the hosted merge commit with the captured GitHub result, and compared the merged tree with the
-previously audited review tree. All 11 current component trees are byte-for-byte identical to their reviewed
-heads, every isolated review worktree remains clean, and the parent lock now records the real merged
-`main` commits:
+previously audited review tree. All 12 current component trees are pinned to reviewed public commits,
+the reviewed isolated worktrees remain clean, and the parent lock records the real merged `main`
+commits:
 
 | Component | Current ref | Local source state | Delivery evidence |
 | --- | --- | --- | --- |
-| LibreChat | `85a2e326cd5672f00c927984f00a92c9b3f07f9c` | merged tree exact; review worktree clean | PR 72 merged reviewed head `b0ee2394...`; provider handoff, responsive Channels navigation, complete client/backend/package suites, six headed channel cases, privacy scans, and all 14 exact-head hosted checks pass. PR 73 then added explicit opt-in gates for unprovisioned Docker Hub/Locize publishing, and its post-merge Locize workflow skipped cleanly. Signed/notarized release and installed-runtime identity remain separate gates. |
+| LibreChat | `6ba9ee1cf92cce7946e4204d499629dc78fc4fe7` | merged tree exact; review worktree clean | Earlier release evidence remains valid. PR 74 added the read-only Viventium-Health MCP registration, direct-action ownership boundary, and four main-agent bindings; source YAML and the 37-case agent-sync suite pass. Signed/notarized release and installed-runtime identity remain separate gates. |
 | agents-playground | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | merged tree exact; review worktree clean | PR 1 merged reviewed head `112f646c...`; classic fallback only. Artifact identity remains open. |
 | livekit | `c20e96166726565f026f894ccca6f1cff2480741` | merged tree exact; review worktree clean | PR 1 merged reviewed head `8839980c...`; the locked Docker runtime is a separate delivery artifact. |
 | cartesia-voice-agent | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | merged tree exact; review worktree clean | PR 1 merged reviewed head `df2f0248...`; artifact identity remains open. |
 | agent-starter-react | `f196cd5837fe6044543c50f5912f63e976d9d7b1` | merged tree exact; review worktree clean | PR 8 merged reviewed head `fd778562...`, the current modern-playground source. Its hosted test passes; final installed identity remains open. |
-| GlassHive | `1cf868e0218262328700085df38ec0ae2196cc2a` | merged tree exact; review worktree clean | PR 41 merged reviewed head `464f97f0...`; artifact identity remains open. |
+| GlassHive | `031b3e54dc8b50ed2132c4b814853b11ce28f7ce` | public component main; parent pin reconciled | PR 44 advanced the reviewed public component with worker runtime hardening, Claude effort/Bedrock support, content-safe usage telemetry, artifact pagination, and sandbox timeout forwarding. Built and installed artifact identity remain separate gates. |
+| Viventium-Health | `a8c14028069e91405c570545866ebfa206b4ee7d` | public component main; owner-safe acceptance committed | Raw append-only WHOOP connector, owner-level daily scheduler, and read-only MCP are isolated and tested. Real OAuth/pulls/refresh/scheduling/full MCP replay and the parent cognitive A/B passed without publishing health data; late correction and revocation remain open. Secret-bearing CLI input was removed and ordinary private chat retention is documented explicitly. |
 | ms-365-mcp-server | `c4c6f33b5e395a96780576cf0b55e5c420309e31` | merged tree exact; review worktree clean | PR 1 merged reviewed head `61f4b88e...`; runtime identity remains open. |
 | google_workspace_mcp | `070aee1fc34b2eb6e32237e81f3333a71a7e75bb` | merged tree exact; review worktree clean | PR 2 squash-merged reviewed head `c99e0e8d...`; shipped DXT/runtime identity remains open. |
 | mcp-youtube-transcript | `60d6bbb38e9c8e1db6dfa0bed03e6834e759f1cd` | merged tree exact; review worktree clean | PR 1 merged reviewed head `b12ec877...`; runtime identity remains open. |
