@@ -78,6 +78,7 @@ def test_main_agent_binds_only_the_health_servers_read_tools() -> None:
         if entry["server"] == HEALTH_SERVER_NAME
     )
 
-    assert HEALTH_TOOL_IDS <= main_tools
+    health_bindings = {tool for tool in main_tools if tool.endswith("_mcp_viventium-health")}
+    assert health_bindings == HEALTH_TOOL_IDS
     assert set(health_policy["tool_names"]) == HEALTH_TOOL_IDS
     assert "read-only" in health_policy["owns"]

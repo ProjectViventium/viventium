@@ -871,8 +871,10 @@ This is safe because:
 Viventium-Health is an independently versioned component that captures vendor health responses as
 private, exact, append-only files. The parent registers only its local stdio reader. Authorization,
 network pulls, daily scheduling, archives, and credentials remain owned by the component and the
-local user; no health payload enters the parent repository, database, saved memory, or generated
-configuration.
+local user; no health payload enters the parent repository, generated configuration, or a new health
+database. A bounded chunk the agent deliberately reads does enter ordinary tool context and may be
+retained in the existing conversation history. The connector does not write saved memory or create
+a second canonical store.
 
 The default command resolves to
 `$HOME/Library/Application Support/Viventium/health/runtime/bin/viventium-health mcp`. Development
