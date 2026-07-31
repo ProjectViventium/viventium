@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import types
 
 import pytest
 
@@ -40,10 +41,22 @@ def test_intel_macos_dependency_sync_disables_broken_sdist_wheel_repair(
     monkeypatch.setattr(module.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(module.platform, "machine", lambda: "x86_64")
 
-    environment = module._dependency_sync_environment({"PRESERVED": "yes"})
+    environment = module._dependency_sync_environment(
+        {
+            "PATH": "/synthetic/bin",
+            "TMPDIR": "/synthetic/tmp",
+            "PRESERVED": "no",
+            "HOME": '/synthetic/home with spaces & triple-quote-"""',
+            "OPENAI_API_KEY": "must-not-reach-a-package-build",
+        }
+    )
 
-    assert environment["PRESERVED"] == "yes"
+    assert environment["PATH"] == "/synthetic/bin"
+    assert environment["TMPDIR"] == "/synthetic/tmp"
     assert environment["NO_REPAIR"] == "1"
+    assert "PRESERVED" not in environment
+    assert "HOME" not in environment
+    assert "OPENAI_API_KEY" not in environment
 
 
 def test_non_intel_dependency_sync_does_not_inherit_wheel_repair_override(
@@ -54,10 +67,57 @@ def test_non_intel_dependency_sync_does_not_inherit_wheel_repair_override(
     monkeypatch.setattr(module.platform, "machine", lambda: "arm64")
 
     environment = module._dependency_sync_environment(
-        {"PRESERVED": "yes", "NO_REPAIR": "owner-shell-value"}
+        {
+            "PATH": "/synthetic/bin",
+            "LANG": "en_US.UTF-8",
+            "PRESERVED": "no",
+            "NO_REPAIR": "owner-shell-value",
+        }
     )
 
-    assert environment == {"PRESERVED": "yes"}
+    assert environment == {
+        "PATH": "/synthetic/bin",
+        "LANG": "en_US.UTF-8",
+    }
+
+
+def test_optional_dependency_install_uses_the_curated_build_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_component_module()
+    repo = tmp_path / "repo"
+    store = tmp_path / "store"
+    _make_runtime_repo(repo)
+    monkeypatch.setattr(module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(module.platform, "machine", lambda: "arm64")
+    monkeypatch.setenv("HOME", '/synthetic/home with spaces & triple-quote-"""')
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-a-package-build")
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> types.SimpleNamespace:
+        calls.append((command, kwargs))
+        if command[:2] == ["uv", "sync"]:
+            environment = kwargs["env"]
+            assert isinstance(environment, dict)
+            stage = Path(environment["UV_PROJECT_ENVIRONMENT"])
+            python = stage / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            python.chmod(0o755)
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module._sync_dependencies(store, repo, "a" * 64)
+
+    optional_call = next(
+        kwargs for command, kwargs in calls if command[:3] == ["uv", "pip", "install"]
+    )
+    optional_environment = optional_call["env"]
+    assert isinstance(optional_environment, dict)
+    assert "HOME" not in optional_environment
+    assert "OPENAI_API_KEY" not in optional_environment
 
 
 def test_sealed_dependency_stage_cleanup_is_recoverable(tmp_path: Path) -> None:
@@ -71,6 +131,52 @@ def test_sealed_dependency_stage_cleanup_is_recoverable(tmp_path: Path) -> None:
     module._remove_dependency_stage(stage)
 
     assert not stage.exists()
+
+
+@pytest.mark.parametrize(
+    ("owner", "group", "mode", "expected"),
+    [
+        (0, 0, 0o775, True),
+        (0, 80, 0o775, False),
+        (0, 0, 0o777, False),
+        (os.getuid(), os.getgid(), 0o755, True),
+        (
+            os.getuid(),
+            os.getgid(),
+            0o775,
+            os.getuid() == 0 and os.getgid() == 0,
+        ),
+    ],
+)
+def test_external_python_target_permission_policy(
+    tmp_path: Path,
+    owner: int,
+    group: int,
+    mode: int,
+    expected: bool,
+) -> None:
+    module = _load_component_module()
+    environment = tmp_path / "environment"
+    candidate = environment / "bin" / "python"
+    resolved_target = tmp_path / "managed-python"
+    candidate.parent.mkdir(parents=True)
+    resolved_target.write_bytes(b"synthetic-python")
+    resolved_target.chmod(0o555)
+    metadata = types.SimpleNamespace(
+        st_mode=stat.S_IFREG | mode,
+        st_uid=owner,
+        st_gid=group,
+    )
+
+    assert (
+        module._external_python_target_is_trusted(
+            candidate=candidate,
+            root=environment,
+            resolved_target=resolved_target,
+            target_metadata=metadata,
+        )
+        is expected
+    )
 
 
 def _write(path: Path, text: str = "synthetic\n") -> None:

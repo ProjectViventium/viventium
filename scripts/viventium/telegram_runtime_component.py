@@ -25,6 +25,47 @@ COMPONENT_NAME = "telegram-viventium"
 MANIFEST_NAME = "component-manifest.json"
 DEPENDENCY_MARKER = ".viventium-dependency.json"
 DEPENDENCY_MANIFEST = ".viventium-dependency-manifest.json"
+DEPENDENCY_BUILD_ENVIRONMENT = frozenset(
+    {
+        "ARCHFLAGS",
+        "AR",
+        "CC",
+        "CFLAGS",
+        "CMAKE_ARGS",
+        "CMAKE_BUILD_PARALLEL_LEVEL",
+        "CMAKE_GENERATOR",
+        "CMAKE_PREFIX_PATH",
+        "CPATH",
+        "CPPFLAGS",
+        "CXX",
+        "CXXFLAGS",
+        "DEVELOPER_DIR",
+        "LANG",
+        "LDFLAGS",
+        "LIBRARY_PATH",
+        "MACOSX_DEPLOYMENT_TARGET",
+        "PATH",
+        "PKG_CONFIG_PATH",
+        "PYTHONIOENCODING",
+        "PYTHONUTF8",
+        "REQUESTS_CA_BUNDLE",
+        "SDKROOT",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "SYSTEM_VERSION_COMPAT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "UV_CACHE_DIR",
+        "UV_CONCURRENT_BUILDS",
+        "UV_CONCURRENT_DOWNLOADS",
+        "UV_HTTP_TIMEOUT",
+        "UV_LINK_MODE",
+        "UV_NO_CONFIG",
+        "UV_NO_PROGRESS",
+        "UV_OFFLINE",
+    }
+)
 RECOVERY_RECEIPT = Path("state/continuity/telegram-recovery-active.json")
 RECOVERY_GENERATION = Path(
     "state/continuity/telegram-recovery-generation.json"
@@ -521,6 +562,33 @@ def _verify_dependency_root(root: Path, dependency_digest: str) -> Path:
     return python
 
 
+def _external_python_target_is_trusted(
+    *,
+    candidate: Path,
+    root: Path,
+    resolved_target: Path,
+    target_metadata: Any,
+) -> bool:
+    mode = stat.S_IMODE(target_metadata.st_mode)
+    # The canonical macOS CPython package installs its root:wheel interpreter
+    # as 0775. The wheel group remains privileged; every other group-writable
+    # or world-writable external interpreter is rejected.
+    root_wheel_group_writable = (
+        target_metadata.st_uid == 0
+        and target_metadata.st_gid == 0
+        and bool(mode & 0o020)
+    )
+    return bool(
+        candidate.parent.relative_to(root) == Path("bin")
+        and candidate.name.startswith("python")
+        and stat.S_ISREG(target_metadata.st_mode)
+        and target_metadata.st_uid in {0, os.getuid()}
+        and not (mode & 0o002)
+        and (not (mode & 0o020) or root_wheel_group_writable)
+        and os.access(resolved_target, os.X_OK)
+    )
+
+
 def _dependency_environment_manifest(root: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
     digest = hashlib.sha256()
@@ -542,13 +610,11 @@ def _dependency_environment_manifest(root: Path) -> dict[str, Any]:
                     resolved_target.relative_to(root)
                 except ValueError:
                     target_metadata = resolved_target.stat()
-                    if (
-                        candidate.parent.relative_to(root) != Path("bin")
-                        or not candidate.name.startswith("python")
-                        or not stat.S_ISREG(target_metadata.st_mode)
-                        or target_metadata.st_uid not in {0, os.getuid()}
-                        or stat.S_IMODE(target_metadata.st_mode) & 0o022
-                        or not os.access(resolved_target, os.X_OK)
+                    if not _external_python_target_is_trusted(
+                        candidate=candidate,
+                        root=root,
+                        resolved_target=resolved_target,
+                        target_metadata=target_metadata,
                     ):
                         raise ComponentError(
                             "Telegram dependency environment has an unsafe external symlink"
@@ -588,13 +654,11 @@ def _dependency_environment_manifest(root: Path) -> dict[str, Any]:
                     resolved_target.relative_to(root)
                 except ValueError:
                     target_metadata = resolved_target.stat()
-                    if (
-                        candidate.parent.relative_to(root) != Path("bin")
-                        or not candidate.name.startswith("python")
-                        or not stat.S_ISREG(target_metadata.st_mode)
-                        or target_metadata.st_uid not in {0, os.getuid()}
-                        or stat.S_IMODE(target_metadata.st_mode) & 0o022
-                        or not os.access(resolved_target, os.X_OK)
+                    if not _external_python_target_is_trusted(
+                        candidate=candidate,
+                        root=root,
+                        resolved_target=resolved_target,
+                        target_metadata=target_metadata,
                     ):
                         raise ComponentError(
                             "Telegram dependency environment has an unsafe external symlink"
@@ -649,8 +713,15 @@ def _seal_dependency_root(root: Path) -> None:
 
 
 def _dependency_sync_environment(base: dict[str, str]) -> dict[str, str]:
-    environment = dict(base)
-    environment.pop("NO_REPAIR", None)
+    # pywhispercpp 1.3.3 forwards every inherited environment variable to
+    # CMake as a command-line definition. Keep package builds independent from
+    # owner paths and prevent unrelated application credentials reaching the
+    # build process or its diagnostics.
+    environment = {
+        name: value
+        for name, value in base.items()
+        if name in DEPENDENCY_BUILD_ENVIRONMENT or name.startswith("LC_")
+    }
     if (
         platform.system() == "Darwin"
         and platform.machine().strip().lower() in {"x86_64", "amd64"}
@@ -763,6 +834,7 @@ def _sync_dependencies(
                     str(optional_requirements),
                 ],
                 cwd=bot_root,
+                env=environment,
                 check=False,
                 text=True,
                 stdout=subprocess.PIPE,
