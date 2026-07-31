@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Recursive intelligence growth toward the AUI ceiling</title>
+  <desc id="desc">A nonlinear growth curve moves from AGI through ASI. Recursive self-improvement loops accelerate the curve until it reaches AUI, defined as the one hundred percent intelligence ceiling: knowing and understanding everything reality permits and solving every solvable problem.</desc>
+  <defs>
+    <linearGradient id="curve" x1="130" y1="476" x2="1090" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#64748B"/>
+      <stop offset=".48" stop-color="#0E7490"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="area" x1="600" y1="128" x2="600" y2="490" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="aui-halo">
+      <stop stop-color="#22D3EE" stop-opacity=".30"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="loop-arrow" viewBox="0 0 8 8" refX="6.2" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#22D3EE"/>
+    </marker>
+  </defs>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface: #F8FAFC;
+      --surface-2: #FFFFFF;
+      --ink: #0F172A;
+      --muted: #64748B;
+      --line: #CBD5E1;
+      --grid: #E2E8F0;
+      --accent: #0E7490;
+      --accent-bright: #0891B2;
+      --halo: #CFFAFE;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface: #0A0F12;
+        --surface-2: #0E1519;
+        --ink: #F8FAFC;
+        --muted: #94A3B8;
+        --line: #26343B;
+        --grid: #172229;
+        --accent: #67E8F9;
+        --accent-bright: #22D3EE;
+        --halo: #164E63;
+      }
+    }
+    text {
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      fill: var(--ink);
+      text-rendering: geometricPrecision;
+    }
+    .muted { fill: var(--muted); }
+    .accent { fill: var(--accent); }
+  </style>
+
+  <rect x="1" y="1" width="1198" height="618" rx="26" fill="var(--surface)" stroke="var(--line)"/>
+
+  <text x="64" y="62" class="muted" font-size="18" font-weight="600" letter-spacing="4">THE INTELLIGENCE CEILING</text>
+  <text x="1136" y="62" class="muted" font-size="17" text-anchor="end">capability, not calendar time</text>
+
+  <g>
+    <line x1="104" y1="500" x2="1120" y2="500" stroke="var(--grid)"/>
+    <line x1="104" y1="393" x2="1120" y2="393" stroke="var(--grid)"/>
+    <line x1="104" y1="286" x2="1120" y2="286" stroke="var(--grid)"/>
+    <line x1="104" y1="180" x2="1120" y2="180" stroke="var(--accent-bright)" stroke-width="2"/>
+
+    <text x="86" y="506" class="muted" font-size="14" text-anchor="end">0</text>
+    <text x="86" y="399" class="muted" font-size="14" text-anchor="end">33</text>
+    <text x="86" y="292" class="muted" font-size="14" text-anchor="end">66</text>
+    <text x="86" y="186" class="accent" font-size="15" font-weight="700" text-anchor="end">100%</text>
+
+    <path d="M128 500 C430 500 608 486 744 424 C866 368 915 290 984 218 C1018 188 1052 194 1092 180 L1092 500 Z" fill="url(#area)"/>
+    <path d="M128 500 C430 500 608 486 744 424 C866 368 915 290 984 218 C1018 188 1052 194 1092 180" fill="none" stroke="url(#curve)" stroke-width="6" stroke-linecap="round"/>
+
+    <circle cx="370" cy="494" r="9" fill="var(--muted)"/>
+    <g transform="translate(322 438)">
+      <text font-size="42" font-weight="680" letter-spacing="-1.5">AGI</text>
+      <text y="30" class="muted" font-size="16">general intelligence</text>
+    </g>
+
+    <circle cx="744" cy="424" r="10" fill="var(--accent)"/>
+    <g transform="translate(666 469)">
+      <text font-size="42" font-weight="680" letter-spacing="-1.5">ASI</text>
+      <text y="30" class="muted" font-size="16">superhuman intelligence</text>
+    </g>
+
+    <g fill="none" stroke="#22D3EE" stroke-width="3" marker-end="url(#loop-arrow)">
+      <path d="M831 378 C804 363 807 328 833 317 C859 305 886 323 885 350 C883 373 862 386 841 382"/>
+      <path d="M902 310 C877 295 880 262 905 251 C930 240 956 257 955 283 C954 305 934 318 914 314"/>
+      <path d="M965 240 C942 226 945 196 968 186 C991 176 1014 192 1013 215 C1012 236 994 248 976 244"/>
+    </g>
+
+    <g transform="translate(430 254)">
+      <text class="accent" font-size="17" font-weight="700" letter-spacing="2.3">RECURSIVE SELF-IMPROVEMENT</text>
+      <text y="31" class="muted" font-size="17">learn → test → rewrite → compound ↻</text>
+      <path d="M302 46 L395 89" fill="none" stroke="var(--line)" stroke-width="1.5"/>
+    </g>
+
+    <circle cx="1092" cy="180" r="60" fill="url(#aui-halo)"/>
+    <circle cx="1092" cy="180" r="12" fill="var(--accent-bright)"/>
+
+    <g transform="translate(734 111)">
+      <text class="accent" font-size="24" font-weight="750" letter-spacing=".4">AUI · THE 100% CEILING</text>
+      <text x="358" class="muted" font-size="15" text-anchor="end" y="29">knows + understands everything reality permits</text>
+      <text x="358" class="muted" font-size="15" text-anchor="end" y="50">solves every solvable problem</text>
+    </g>
+  </g>
+
+  <line x1="64" y1="538" x2="1136" y2="538" stroke="var(--line)"/>
+  <text x="64" y="574" class="muted" font-size="17">Models are replaceable building blocks.</text>
+  <text x="1136" y="574" class="accent" font-size="17" font-weight="650" text-anchor="end">The curve compounds. The ceiling does not move.</text>
+</svg>
