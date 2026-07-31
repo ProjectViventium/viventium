@@ -94,6 +94,7 @@ def test_optional_dependency_install_uses_the_curated_build_environment(
     monkeypatch.setenv("HOME", '/synthetic/home with spaces & triple-quote-"""')
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-a-package-build")
     calls: list[tuple[list[str], dict[str, object]]] = []
+    real_rename = module.os.rename
 
     def fake_run(command: list[str], **kwargs: object) -> types.SimpleNamespace:
         calls.append((command, kwargs))
@@ -107,9 +108,14 @@ def test_optional_dependency_install_uses_the_curated_build_environment(
             python.chmod(0o755)
         return types.SimpleNamespace(returncode=0, stdout="")
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    def require_owner_writable_source(source: Path, destination: Path) -> None:
+        assert stat.S_IMODE(source.stat().st_mode) & stat.S_IWUSR
+        real_rename(source, destination)
 
-    module._sync_dependencies(store, repo, "a" * 64)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module.os, "rename", require_owner_writable_source)
+
+    python, reused = module._sync_dependencies(store, repo, "a" * 64)
 
     optional_call = next(
         kwargs for command, kwargs in calls if command[:3] == ["uv", "pip", "install"]
@@ -118,6 +124,26 @@ def test_optional_dependency_install_uses_the_curated_build_environment(
     assert isinstance(optional_environment, dict)
     assert "HOME" not in optional_environment
     assert "OPENAI_API_KEY" not in optional_environment
+    assert reused is False
+    published_root = python.parents[1]
+    assert not (stat.S_IMODE(published_root.stat().st_mode) & 0o222)
+
+    published_root.chmod(0o755)
+    recovered_python, reused = module._sync_dependencies(store, repo, "a" * 64)
+
+    assert reused is True
+    assert recovered_python == python
+    assert not (stat.S_IMODE(published_root.stat().st_mode) & 0o222)
+
+    published_root.chmod(0o755)
+    python.chmod(0o755)
+    python.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+
+    with pytest.raises(
+        module.ComponentError,
+        match="integrity verification|not sealed read-only",
+    ):
+        module._sync_dependencies(store, repo, "a" * 64)
 
 
 def test_sealed_dependency_stage_cleanup_is_recoverable(tmp_path: Path) -> None:

@@ -531,7 +531,12 @@ def _dependency_digest(code_root: Path) -> str:
     return digest.hexdigest()
 
 
-def _verify_dependency_root(root: Path, dependency_digest: str) -> Path:
+def _verify_dependency_root(
+    root: Path,
+    dependency_digest: str,
+    *,
+    allow_writable_root: bool = False,
+) -> Path:
     marker_path = root / DEPENDENCY_MARKER
     manifest_path = root / DEPENDENCY_MANIFEST
     python = root / "bin" / "python"
@@ -547,6 +552,10 @@ def _verify_dependency_root(root: Path, dependency_digest: str) -> Path:
         root.is_symlink()
         or not root.is_dir()
         or root.stat().st_uid != os.getuid()
+        or (
+            not allow_writable_root
+            and bool(stat.S_IMODE(root.stat().st_mode) & 0o222)
+        )
         or manifest != expected_manifest
         or marker != {
             "schema_version": SCHEMA_VERSION,
@@ -761,6 +770,26 @@ def _remove_dependency_stage(stage: Path) -> None:
     shutil.rmtree(stage)
 
 
+def _verify_or_reseal_dependency_root(
+    root: Path,
+    dependency_digest: str,
+) -> Path:
+    if not root.is_symlink() and root.is_dir():
+        metadata = root.stat()
+        if metadata.st_uid == os.getuid() and stat.S_IMODE(metadata.st_mode) & 0o222:
+            # Publication temporarily makes only the stage root owner-writable
+            # for filesystems that refuse to rename a read-only directory.
+            # A process exit in that narrow window is recoverable only after
+            # the complete sealed contents and marker have verified.
+            _verify_dependency_root(
+                root,
+                dependency_digest,
+                allow_writable_root=True,
+            )
+            _seal_dependency_root(root)
+    return _verify_dependency_root(root, dependency_digest)
+
+
 def _verify_dependency_runtime(python: Path) -> None:
     completed = subprocess.run(
         [
@@ -793,7 +822,7 @@ def _sync_dependencies(
     _ensure_private_directory(venv_parent)
     venv_root = venv_parent / dependency_digest
     if venv_root.exists() or venv_root.is_symlink():
-        return _verify_dependency_root(venv_root, dependency_digest), True
+        return _verify_or_reseal_dependency_root(venv_root, dependency_digest), True
     stage = venv_parent / f".venv-stage.{secrets.token_hex(8)}"
     bot_root = (
         code_root
@@ -864,10 +893,12 @@ def _sync_dependencies(
         }
         _write_json_atomic(stage / DEPENDENCY_MARKER, marker)
         _seal_dependency_root(stage)
+        stage.chmod(0o700)
         try:
             os.rename(stage, venv_root)
         except FileExistsError:
-            return _verify_dependency_root(venv_root, dependency_digest), True
+            return _verify_or_reseal_dependency_root(venv_root, dependency_digest), True
+        venv_root.chmod(0o555)
         return _verify_dependency_root(venv_root, dependency_digest), False
     finally:
         _remove_dependency_stage(stage)
