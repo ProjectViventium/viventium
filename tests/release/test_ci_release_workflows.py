@@ -210,6 +210,7 @@ def test_config_compile_runs_native_continuity_and_release_boundary_suites() -> 
     assert 'node-version: "24"' in source
     assert 'python-version: "3.12"' in source
     assert 'python-version: "3.12.' not in source
+    assert "uv==0.11.28" in source
     assert "Fetch and validate the exact pinned LibreChat component" in source
     assert "python scripts/viventium/bootstrap_components.py" in source
     assert '--config config.minimal.example.yaml' in source

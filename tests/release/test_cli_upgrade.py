@@ -3736,15 +3736,24 @@ def test_upgrade_phase_failure_restores_exact_checkpoint_and_prior_running_state
     assert head == old_head
 
 
-def test_shipped_cli_process_bridges_first_upgrade_from_verified_ledger_without_advancing_fields(
+def test_shipped_cli_process_bridges_first_upgrade_from_verified_ledger_and_preserves_user_edits(
     tmp_path: Path,
 ) -> None:
     predecessor = "07c1960c9105e547c312f7eab6f43c1dd2ba17ab"
     repo_root, support = build_transactional_upgrade_failure_fixture(tmp_path, "none")
     nested = repo_root / "viventium_v0_4" / "LibreChat"
     shutil.rmtree(nested)
+    current_nested = REPO_ROOT / "viventium_v0_4" / "LibreChat"
+    # Bootstrap uses a blob-filtered clone. Materialize the exact predecessor
+    # tree before making a local, self-contained test clone so later replacement
+    # of its remote cannot strand promisor objects.
     subprocess.run(
-        ["git", "clone", "--quiet", "--shared", str(REPO_ROOT / "viventium_v0_4" / "LibreChat"), str(nested)],
+        ["git", "-C", str(current_nested), "archive", "--format=tar", predecessor],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["git", "clone", "--quiet", "--no-hardlinks", str(current_nested), str(nested)],
         check=True,
     )
     subprocess.run(["git", "-C", str(nested), "checkout", "--quiet", "--detach", predecessor], check=True)
@@ -3752,7 +3761,6 @@ def test_shipped_cli_process_bridges_first_upgrade_from_verified_ledger_without_
     subprocess.run(
         ["git", "-C", str(nested), "config", "user.email", "qa@example.invalid"], check=True
     )
-    current_nested = REPO_ROOT / "viventium_v0_4" / "LibreChat"
     for relative in [
         "viventium/source_of_truth/local.viventium-agents.yaml",
         "viventium/source_of_truth/managed-agent-baseline-migration.json",
@@ -3941,7 +3949,7 @@ for (const [agentId, priorAgent] of Object.entries(group.fullBaseline.agents)) {
   );
   if (!field) continue;
   const unchanged = seed.reconcileManagedAgentFields(priorAgent.fields, currentAgent.fields, fingerprints);
-  if (history.stableSerialize(unchanged.agentData[field]) !== history.stableSerialize(priorAgent.fields[field])) throw new Error('old managed default was not preserved');
+  if (history.stableSerialize(unchanged.agentData[field]) !== history.stableSerialize(currentAgent.fields[field])) throw new Error('unchanged managed default did not advance');
   const synthetic = '__synthetic_user_edit__';
   const edited = seed.reconcileManagedAgentFields({...priorAgent.fields, [field]: synthetic}, currentAgent.fields, fingerprints);
   if (edited.agentData[field] !== synthetic) throw new Error('user edit was overwritten');
@@ -3950,7 +3958,7 @@ for (const [agentId, priorAgent] of Object.entries(group.fullBaseline.agents)) {
 }
 if (!verified) throw new Error('no changed managed field available');
 seed.consumeManagedMigrationState(statePath, state.content_sha256);
-process.stdout.write(JSON.stringify({oldDefaultPreserved:true,userEditPreserved:true,consumed:true}));
+process.stdout.write(JSON.stringify({managedDefaultAdvanced:true,userEditPreserved:true,consumed:true}));
 process.exit(0);
 """
     reconciliation = subprocess.run(
@@ -3975,7 +3983,7 @@ process.exit(0);
     )
     assert reconciliation.returncode == 0, reconciliation.stderr
     assert json.loads(reconciliation.stdout) == {
-        "oldDefaultPreserved": True,
+        "managedDefaultAdvanced": True,
         "userEditPreserved": True,
         "consumed": True,
     }
