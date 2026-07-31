@@ -1,8 +1,16 @@
 # Viventium
 
-**Your second brain for real work.**
+**A user-owned exocortex for becoming and owning your highest possible intelligence.**
 
-Viventium thinks with you, remembers what matters, and helps move work forward across voice, chat, and your tools. It is built to feel fast on the surface, go deeper in the background, and give you more control over how it runs.
+Models supply intelligence. Agent harnesses turn intelligence into action. Viventium connects that power to What Makes You, then joins that You'ified AI with You.
+
+> **Viventium = You'ified AI + You.**
+
+You'ified means **connected, synchronized and always there**: connected to the parts of life you authorize, synchronized with your changing reality, and available to wake when life actually happens.
+
+AUI means **Artificial Ultimate Intelligence**, the ultimate ceiling beyond AGI and ASI. Viventium is not AUI. It is the system through which you ride the best available intelligence at every stage toward it, while the accumulated mind formed around your life remains yours.
+
+[Read the Viventium thesis: Rent the Models. Own the Mind.](docs/VIVENTIUM_THESIS.md)
 
 [Website](https://www.viventium.ai) · [Docs](https://www.viventium.ai/docs) · [Changelog](https://www.viventium.ai/changelog) · [Roadmap](https://www.viventium.ai/roadmap) · [Community](https://www.viventium.ai/community)
 
