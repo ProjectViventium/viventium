@@ -49,6 +49,12 @@ We will implement a dedicated Scheduling MCP server that:
 The scheduler is a local runtime loop, so it must handle host sleep, restart, and long pauses
 without silently dropping user-facing reminders.
 
+Upgrade continuity treats the complete scheduling SQLite database as durable owner state. The
+private strict manifest hashes every column and row in every non-internal table, including
+`last_conversation_id`, `next_run_at`, run/delivery/status/error fields, and
+`scheduled_prompt_runs`. Future scheduling tables are protected by default; an upgrade may not
+reset runtime outcomes or delete run history merely because task definitions remain present.
+
 The launcher must treat the Scheduling Cortex MCP as a supervised local sidecar, not a one-shot
 optional startup. Startup success requires a real `/health` probe, and a lightweight watchdog must
 restart the MCP if the process exits while LibreChat remains running.
@@ -71,6 +77,17 @@ different DB hash is a port-ownership conflict, not a healthy local-prod schedul
 launcher and watchdog must fail loud or wait without killing the other runtime. Raw DB paths, App
 Support paths, schedule prompts, schedule content, user ids, tokens, and operator-chosen dev-env
 names must not appear in the health payload or public QA evidence.
+
+An upgrade stop must probe the port even when the original installed component directory or PID
+file is already absent. Activation may have renamed that component into a rollback slot while its
+process still retains the original command path. After the health identity matches the canonical
+schedules database, the launcher must drain both source and stable installed lexical scopes without
+requiring those directories to exist, leave a mismatched listener untouched, and allow a bounded
+socket-release interval after signalling. If the matching listener remains, cleanup must continue
+under `set -e`, but the completed stop must still fail before activation can publish. An
+identity-empty listener may only be stopped inside the already-selected lexical scope; it must
+never trigger cross-scope broadening. Durable schedule DB bytes must not be modified by this
+ownership transfer.
 
 - A task is a misfire when it is due but first processed after `SCHEDULER_MISFIRE_GRACE_S`
   seconds. The default grace is 900 seconds.
@@ -198,6 +215,21 @@ names must not appear in the health payload or public QA evidence.
 - Direct/manual Scheduling Cortex startup defaults to the canonical App Support state database when
   `SCHEDULING_DB_PATH` is absent. The legacy hidden-home database is not a fallback. Managed launch
   remains explicit and `/health` continues to expose only a public-safe DB identity hash.
+- Scheduler enablement is an explicit canonical choice for new installs. During upgrade, an
+  explicit `integrations.scheduling_cortex.enabled` value always wins, including `false`. A legacy
+  config with the key missing may migrate to `enabled: true` only when the predecessor generated
+  runtime proves Scheduler was enabled with `START_SCHEDULING_MCP=true`; the migration is persisted
+  to canonical config so snapshot/restore does not later lose the choice. A retained schedules DB
+  is data-preservation evidence, not enablement evidence.
+- The installed macOS helper owns a code-only Scheduling Cortex component under App Support. The
+  helper installer copies the dependency manifests and Python package while excluding source
+  virtual environments, caches, and database files. Helper launches select that installed
+  component unconditionally, so dependency sync and execution cannot occur inside a protected
+  source checkout. Direct developer launches continue to use the selected source checkout.
+- Scheduler code replacement and schedule-state preservation are separate transactions. The
+  canonical per-runtime database remains under App Support
+  `state/runtime/<profile>/scheduling/schedules.db`; helper install/upgrade must neither copy a
+  source-tree DB into that location nor remove or rewrite the existing DB.
 - The run ledger distinguishes requested from effective reasoning effort because provider-route
   compatibility may clamp a request. Workbench must show that projection, and terminal callbacks
   must preserve structured classes such as `provider_request_rejected` in both child and parent

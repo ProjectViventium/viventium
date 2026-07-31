@@ -82,6 +82,23 @@ For the manager-readable handbook, start with:
 Background-agent execution-family selection is part of the install/compiler/runtime contract, not a
 browser-only post-connect side effect.
 
+### GlassHive provider routing
+
+- Every substantive cortex keeps its own normal Agent `provider` and `model`. Selecting
+  `glasshive-harness` therefore uses that cortex's Codex or Claude harness directly; no wrapper LLM
+  authors the cortex result.
+- Phase A remains a bounded direct classifier and filters providers by
+  `activation_classifier: true`; GlassHive declares this false.
+- Phase B uses the originating main agent's provider. A GlassHive main reuses the same native
+  `(owner, conversation, agent)` session; a direct main with a GlassHive cortex remains direct for
+  adjudication.
+- Specialist cortices do not receive Feelings. The main speaking path—including a GlassHive-backed
+  main—receives the request-pinned capsule exactly once.
+- Harness-backed runs remove the GlassHive self-delegation MCP through declared capability metadata,
+  preventing GlassHive-inside-GlassHive recursion while retaining other declared tools.
+- Speculative Phase-A redo is disabled for a harness-backed main. After native execution starts,
+  transport recovery may reattach to the same idempotent request but cannot dispatch a second run.
+
 - The tracked source-of-truth bundle in
   `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml` is the mixed
   launch baseline.
@@ -95,25 +112,26 @@ Authoritative execution matrix:
 
 | Agent | Shipped Mixed Baseline | OpenAI-only install | Anthropic-only install | OpenAI + Anthropic install |
 | --- | --- | --- | --- | --- |
-| Viventium conscious | `openAI / gpt-5.6-sol / medium` | `openAI / gpt-5.6-sol / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / medium` |
-| Background Analysis | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Confirmation Bias | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Red Team | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / xhigh` |
-| Deep Research | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / xhigh` |
-| MS365 | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
-| Parietal Cortex | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Pattern Recognition | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Emotional Resonance | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
-| Strategic Planning | `openAI / gpt-5.6-sol / high` | `openAI / gpt-5.6-sol / high` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / high` |
-| Viventium User Help | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
-| Google | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
+| Viventium conscious | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` |
+| Background Analysis | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Confirmation Bias | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Red Team | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
+| Deep Research | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
+| MS365 | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Parietal Cortex | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Pattern Recognition | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Emotional Resonance | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Strategic Planning | `openAI / gpt-5.6-sol / high` | `openAI / gpt-5.6-sol / high` | `anthropic / claude-opus-5 / high` | `openAI / gpt-5.6-sol / high` |
+| Viventium User Help | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Google | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
 
 Model inventory rule:
 
-- The built-in conscious/subconscious source uses only the connected-account-proven explicit
-  `gpt-5.6-sol` and `gpt-5.6-terra` slugs. Do not use the unsupported connected-account alias or
-  Luna on these built-ins merely because direct API-key inventory exposes them.
-- Every source-owned conscious/subconscious agent declares `anthropic / claude-opus-4-8` as its
+- The source-owned Main uses the exact GlassHive harness model `codex-cli:gpt-5.6-sol`. Direct
+  background cortices use only the connected-account-proven explicit `gpt-5.6-sol` and
+  `gpt-5.6-terra` slugs. Do not use an unsupported alias or Luna merely because direct API-key
+  inventory exposes it.
+- Every source-owned conscious/subconscious agent declares `anthropic / claude-opus-5` as its
   text fallback. That route is usable only when Anthropic auth is configured for the user/runtime;
   missing fallback auth must surface honestly rather than causing a silent model downgrade.
   Phase B runtime owns retrying the configured backup once for provider timeout/abort/recoverable
@@ -143,11 +161,11 @@ Model inventory rule:
 
 Anthropic Opus fallback rule:
 
-- Opus 4.8 is the explicit fallback for every conscious/subconscious text route.
+- Opus 5 is the explicit fallback for every conscious/subconscious text route.
 - Fallback parameter bags remain provider-native: Red Team and Deep Research use
-  `thinkingBudget: 4000`, Strategic Planning uses `thinkingBudget: 2000`, and the retry path must
+  `effort: max`, Strategic Planning uses `effort: high`, and the retry path must
   strip OpenAI-only `reasoning_effort` and `useResponsesApi` fields before Anthropic initialization.
-- On an Anthropic-only install, Opus 4.8 becomes the execution route for all built-in agents because
+- On an Anthropic-only install, Opus 5 becomes the execution route for all built-in agents because
   the preferred GPT-5.6 route is unavailable. This is an explicit quality-first fallback posture,
   not a cost optimization; operators who need a cheaper Anthropic-only mix must use reviewed model
   overrides rather than silently returning the shipped bundle to Sonnet.
@@ -386,11 +404,15 @@ Requirements:
   just explicit `thinking` fields already present in the source-of-truth YAML.
 - Background-cortex execution should therefore re-check the final initialized Anthropic config before
   Phase B execution and remove `temperature` if thinking is active.
-- Current shipped Anthropic Sonnet 4.5 built-ins that use thinking should not carry explicit
-  `temperature` at all.
-- If a future Anthropic built-in ever intentionally reintroduces temperature tuning, it must set
-  `thinking: false` explicitly and be re-validated against the current Anthropic API contract before
-  shipping.
+- Current shipped Opus 5 built-ins must not carry `temperature`, `topP`, or `topK`.
+- Opus 5 thinking is on by default. An explicit disabled-thinking choice is valid only at `high`
+  effort or below; `xhigh`/`max` plus disabled thinking must fail clearly before dispatch.
+- An Opus 5 HTTP-200 response with structured `stop_reason: refusal` is not a successful empty
+  answer. Before visible assistant text exists, it is a recoverable provider result and must use the
+  agent's configured fallback route. If no reviewed fallback is configured or that route also fails,
+  the user sees a concise refusal-class error rather than a fabricated answer or raw provider JSON.
+- Refusal handling must use provider-owned structured metadata, never prompt, keyword, agent-name, or
+  model-response text matching.
 
 ## OpenAI Runtime Compatibility
 
@@ -565,7 +587,7 @@ Use this order so the fix stays surgical:
   reachability from activation reasoning quality.
   - `groq / meta-llama/llama-4-scout-17b-16e-instruct` was the best shipping primary for that
     2-second Phase A budget: fast, zero timeouts, and full target-hit rate
-  - `anthropic / claude-haiku-4-5` worked correctly through the connected-account path with
+  - the prior Anthropic compatibility route worked correctly through the connected-account path with
     `thinking: false`, but at the shipping 2-second budget it was too close to timeout to replace
     Groq as the primary
   - the same Haiku model hit full target coverage when given a larger 10-second diagnostic budget,
@@ -812,7 +834,7 @@ LLM routes, where a mid-audio "nevermind" would feel broken.
 ### Related model decisions (affect Main Agent / cortex latency)
 - Main Agent text: `gpt-5.6-sol` with `reasoning_effort: medium` and Responses API. Background
   execution uses the Sol/Terra effort map above. Every text route falls back to
-  `anthropic / claude-opus-4-8` when that auth path is available.
+  `anthropic / claude-opus-5` when that auth path is available.
 - Voice LLM remains `xai / grok-4.3` with `reasoning_effort: none`. Its latency-preserving voice
   fallback is `openAI / gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does
   not replace the explicit voice route. The dedicated route must pass the same recall,

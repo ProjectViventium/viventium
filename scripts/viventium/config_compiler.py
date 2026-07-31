@@ -32,6 +32,10 @@ from prompt_registry import (
     render_prompt,
     resolve_prompt_refs,
 )
+from repo_path_safety import (
+    RepoPathSafetyError,
+    validate_regular_file_under_repo,
+)
 
 CONFIG_VERSION = 1
 DEFAULT_MAIN_AGENT_ID = "agent_viventium_main_95aeb3"
@@ -658,6 +662,77 @@ def resolve_glasshive_host_worker_settings(config: dict[str, Any]) -> dict[str, 
         "openclaw_cli_available": bool(openclaw_cli_path),
     }
 
+
+def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any]:
+    integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive", {}) or {}
+    provider = glasshive.get("provider", {}) or {}
+    enabled = glasshive_enabled(config) and resolve_bool(provider.get("enabled"), True)
+    enterprise = resolve_glasshive_enterprise_settings(config)
+    configured_base_url = str(provider.get("base_url") or "").strip().rstrip("/")
+    if configured_base_url:
+        base_url = configured_base_url
+    elif enterprise["enabled"]:
+        base_url = f"{str(enterprise['artifact_base_url']).rstrip('/')}/v1"
+    else:
+        # The supported local runtime is host-native, so LibreChat reaches this on loopback.
+        # Docker-specific deployments can override integrations.glasshive.provider.base_url.
+        base_url = "http://127.0.0.1:8766/v1"
+    life_dir = str(
+        provider.get("life_dir") or Path.home() / "Documents" / "Viventium" / "Life"
+    ).strip()
+    life_path = Path(life_dir).expanduser()
+    raw_roots = provider.get("allowed_workspace_roots")
+    if isinstance(raw_roots, str):
+        allowed_workspace_roots = [
+            str(Path(value).expanduser())
+            for value in raw_roots.split(os.pathsep)
+            if value.strip()
+        ]
+    elif isinstance(raw_roots, list):
+        allowed_workspace_roots = [
+            str(Path(str(value)).expanduser())
+            for value in raw_roots
+            if str(value).strip()
+        ]
+    else:
+        allowed_workspace_roots = [str(life_path.parent)]
+    configured_default_model = str(provider.get("default_model") or "").strip()
+    available_models = [str(model["id"]) for model in GLASSHIVE_PROVIDER_MODELS]
+    default_model = configured_default_model or next(
+        (
+            str(model["id"])
+            for model in GLASSHIVE_PROVIDER_MODELS
+            if model.get("harnessProfile") == "codex-cli"
+        ),
+        available_models[0],
+    )
+    if default_model not in available_models:
+        raise SystemExit(
+            "integrations.glasshive.provider.default_model must match a declared GlassHive model"
+        )
+    return {
+        "enabled": enabled,
+        "base_url": base_url,
+        "life_dir": str(life_path),
+        "principal_id": str(provider.get("principal_id") or "librechat").strip() or "librechat",
+        "tenant_id": str(
+            provider.get("tenant_id")
+            or (enterprise.get("tenant_id") if enterprise["enabled"] else "local")
+            or "local"
+        ).strip()
+        or "local",
+        "trust_identity_headers": resolve_bool(provider.get("trust_identity_headers"), True),
+        "allow_full_access": resolve_bool(provider.get("allow_full_access"), True),
+        "default_access": (
+            "workspace"
+            if str(provider.get("default_access") or "full").strip().lower() == "workspace"
+            else "full"
+        ),
+        "allowed_workspace_roots": allowed_workspace_roots,
+        "default_model": default_model,
+    }
+
 VOICE_PROVIDER_KEYCHAIN_SERVICES = {
     "assemblyai": "viventium/assemblyai_api_key",
     "cartesia": "viventium/cartesia_api_key",
@@ -681,18 +756,18 @@ MODEL_MAP = {
         "memory": "gpt-5.4",
     },
     "anthropic": {
-        "conscious": "claude-opus-4-8",
-        "background_analysis": "claude-opus-4-8",
-        "confirmation_bias": "claude-opus-4-8",
-        "red_team": "claude-opus-4-8",
-        "deep_research": "claude-opus-4-8",
-        "productivity": "claude-opus-4-8",
-        "parietal": "claude-opus-4-8",
-        "pattern_recognition": "claude-opus-4-8",
-        "emotional_resonance": "claude-opus-4-8",
-        "strategic_planning": "claude-opus-4-8",
-        "support": "claude-opus-4-8",
-        "memory": "claude-sonnet-4-5",
+        "conscious": "claude-opus-5",
+        "background_analysis": "claude-opus-5",
+        "confirmation_bias": "claude-opus-5",
+        "red_team": "claude-opus-5",
+        "deep_research": "claude-opus-5",
+        "productivity": "claude-opus-5",
+        "parietal": "claude-opus-5",
+        "pattern_recognition": "claude-opus-5",
+        "emotional_resonance": "claude-opus-5",
+        "strategic_planning": "claude-opus-5",
+        "support": "claude-opus-5",
+        "memory": "claude-opus-5",
     },
     "x_ai": {
         "conscious": "grok-4.3",
@@ -723,9 +798,13 @@ AGENT_ASSIGNMENT_ROLES = {
     "support",
     "memory",
 }
+MODEL_OVERRIDE_ROLES = AGENT_ASSIGNMENT_ROLES | {
+    "glasshive_codex",
+    "glasshive_claude",
+}
 
 MEMORY_HARDENING_LAUNCH_READY_MODELS = {
-    "anthropic": {"claude-opus-4-8"},
+    "anthropic": {"claude-opus-5", "claude-opus-4-8"},
     "openai": {"gpt-5.5", "gpt-5.6-sol"},
 }
 DEFAULT_MEMORY_HARDENING = {
@@ -742,7 +821,7 @@ DEFAULT_MEMORY_HARDENING = {
     "dry_run_first": True,
     "min_apply_interval_seconds": 300,
     "provider_profile": "launch_ready_only",
-    "anthropic_model": "claude-opus-4-8",
+    "anthropic_model": "claude-opus-5",
     "anthropic_effort": "xhigh",
     "openai_model": "gpt-5.6-sol",
     "openai_reasoning_effort": "xhigh",
@@ -819,7 +898,7 @@ DEFAULT_FEELINGS = {
         "service_tier": "priority",
         "timeout_ms": 15000,
         "fallback_provider": "anthropic",
-        "fallback_model": "claude-opus-4-8",
+        "fallback_model": "claude-opus-5",
         "activation_provider": "groq",
         "activation_model": "qwen/qwen3.6-27b",
         "activation_confidence_threshold": 0.55,
@@ -958,6 +1037,52 @@ CURATED_CUSTOM_ENDPOINTS = [
         "modelDisplayLabel": "Groq",
         "fetch": True,
     },
+]
+
+GLASSHIVE_PROVIDER_ID = "glasshive-harness"
+GLASSHIVE_PROVIDER_MODELS = [
+    {
+        "id": "codex-cli:gpt-5.6-sol",
+        "label": "Codex / GPT-5.6 Sol",
+        "harnessProfile": "codex-cli",
+        "effortChoices": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+        ],
+        "recommendedEffort": "medium",
+        "contextLimit": 272000,
+    },
+    {
+        "id": "claude-code:opus",
+        "label": "Claude / Opus",
+        "harnessProfile": "claude-code",
+        "effortChoices": ["low", "medium", "high", "xhigh", "max"],
+        "recommendedEffort": "max",
+        "contextLimit": 200000,
+    },
+]
+GLASSHIVE_PROVIDER_DROP_PARAMS = [
+    "stop",
+    "temperature",
+    "top_p",
+    "frequency_penalty",
+    "presence_penalty",
+    "max_tokens",
+    "max_completion_tokens",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "reasoning",
+    "reasoning_summary",
+    "verbosity",
+    "useResponsesApi",
+    "web_search",
 ]
 
 PROFILE_DEFAULTS = {
@@ -1346,6 +1471,16 @@ def resolve_source_of_truth_librechat_yaml_candidates() -> list[Path]:
 
 
 def load_source_of_truth_librechat_yaml() -> dict[str, Any]:
+    try:
+        validate_regular_file_under_repo(
+            Path(__file__).resolve().parents[2],
+            SOURCE_OF_TRUTH_LIBRECHAT_YAML,
+            label="tracked LibreChat source-of-truth",
+        )
+    except (OSError, RepoPathSafetyError) as error:
+        raise SystemExit(
+            f"Tracked LibreChat source-of-truth is unsafe: {error}"
+        ) from error
     for candidate in resolve_source_of_truth_librechat_yaml_candidates():
         if candidate.is_file():
             return resolve_source_prompt_refs(load_yaml(candidate))
@@ -1353,6 +1488,16 @@ def load_source_of_truth_librechat_yaml() -> dict[str, Any]:
 
 
 def load_source_of_truth_agents_bundle() -> dict[str, Any]:
+    try:
+        validate_regular_file_under_repo(
+            Path(__file__).resolve().parents[2],
+            SOURCE_OF_TRUTH_AGENTS_BUNDLE,
+            label="LibreChat agent source-of-truth",
+        )
+    except (OSError, RepoPathSafetyError) as error:
+        raise SystemExit(
+            f"LibreChat agent source-of-truth is unsafe: {error}"
+        ) from error
     if not SOURCE_OF_TRUTH_AGENTS_BUNDLE.is_file():
         return {}
     return resolve_source_prompt_refs(load_yaml(SOURCE_OF_TRUTH_AGENTS_BUNDLE))
@@ -1606,6 +1751,14 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
                     continue
                 retained_custom_endpoints.append(endpoint)
             endpoints["custom"] = retained_custom_endpoints
+        agents_endpoint = endpoints.get("agents")
+        if isinstance(agents_endpoint, dict):
+            capabilities = agents_endpoint.get("providerCapabilities")
+            if isinstance(capabilities, dict):
+                for removed_name in removed_custom_endpoints:
+                    capabilities.pop(removed_name, None)
+                if not resolve_bool(env.get("START_GLASSHIVE"), False):
+                    capabilities.pop(GLASSHIVE_PROVIDER_ID, None)
 
     model_specs = cleaned.get("modelSpecs")
     if isinstance(model_specs, dict):
@@ -1798,6 +1951,163 @@ def parse_env_file(path: Path) -> dict[str, str]:
             parsed = parsed[1:-1]
         values[key] = parsed
     return values
+
+
+def migrate_legacy_scheduling_enablement(
+    config: dict[str, Any],
+    predecessor_runtime_env: Path,
+) -> tuple[dict[str, Any], bool]:
+    """Make a legacy Scheduler choice explicit only when prior runtime state proves it.
+
+    Fresh installs and legacy configs with no enabled predecessor stay disabled. An explicit
+    canonical value always wins, including ``false``. The schedules database is deliberately not
+    used as enablement evidence because retained schedule data must survive a user's later choice
+    to disable the sidecar.
+    """
+
+    integrations = config.get("integrations")
+    if not isinstance(integrations, dict):
+        return config, False
+    scheduling = integrations.get("scheduling_cortex")
+    if isinstance(scheduling, dict) and "enabled" in scheduling:
+        return config, False
+    if scheduling is not None and not isinstance(scheduling, dict):
+        return config, False
+
+    predecessor = parse_env_file(predecessor_runtime_env)
+    if predecessor.get("START_SCHEDULING_MCP", "").strip().lower() != "true":
+        return config, False
+
+    migrated = copy.deepcopy(config)
+    migrated_integrations = migrated.setdefault("integrations", {})
+    migrated_scheduling = migrated_integrations.setdefault("scheduling_cortex", {})
+    migrated_scheduling["enabled"] = True
+    return migrated, True
+
+
+def resolve_scheduling_predecessor_runtime_env(
+    config_path: Path,
+    output_dir: Path,
+) -> Path:
+    """Resolve the immutable predecessor env during an in-flight source upgrade.
+
+    The predecessor compiler used ``output_dir/runtime.env`` because normal recompiles
+    replace that file in place. During a transactional source upgrade, however, the
+    candidate output directory starts empty and the activated runtime is regenerated
+    before acceptance. In both cases the only trustworthy predecessor is the stopped
+    checkpoint recorded by the immutable upgrade transaction runner.
+    """
+
+    default_runtime_env = output_dir / "runtime.env"
+    app_support = Path(
+        os.environ.get("VIVENTIUM_APP_SUPPORT_DIR") or APP_SUPPORT_VIVENTIUM_DIR
+    ).expanduser().resolve()
+    pointer = app_support / "state" / "upgrade-transaction-active.json"
+    if not pointer.exists() and not pointer.is_symlink():
+        return default_runtime_env
+
+    try:
+        import upgrade_transaction
+
+        upgrade_transaction.validate_chain(pointer, owned_from=app_support)
+        pointer_metadata = pointer.lstat()
+        if (
+            pointer.is_symlink()
+            or not pointer.is_file()
+            or pointer_metadata.st_uid != os.getuid()
+        ):
+            raise upgrade_transaction.UpgradeTransactionError(
+                "Active upgrade transaction pointer is unsafe"
+            )
+        pointer_payload = json.loads(pointer.read_text(encoding="utf-8"))
+        transaction = upgrade_transaction.lexical(
+            Path(str(pointer_payload.get("transaction_path") or ""))
+        )
+        ledger = upgrade_transaction.load_ledger(transaction)
+        if (
+            pointer_payload.get("schema_version") != upgrade_transaction.SCHEMA_VERSION
+            or upgrade_transaction.lexical(Path(ledger["transaction_path"])) != transaction
+            or ledger.get("status") != "active"
+        ):
+            raise upgrade_transaction.UpgradeTransactionError(
+                "Active upgrade transaction metadata is inconsistent"
+            )
+
+        requested_pair = (config_path.resolve(), output_dir.resolve())
+        live_pair = (
+            Path(str(ledger["config_file"])).resolve(),
+            Path(str(ledger["runtime_dir"])).resolve(),
+        )
+        candidate_pair = (
+            (transaction / "candidate" / "config.yaml").resolve(),
+            (transaction / "candidate" / "runtime").resolve(),
+        )
+        if requested_pair not in {live_pair, candidate_pair}:
+            return default_runtime_env
+
+        runtime_surfaces = [
+            surface
+            for surface in ledger.get("surfaces", [])
+            if surface.get("label") == "runtime"
+        ]
+        if len(runtime_surfaces) != 1:
+            raise upgrade_transaction.UpgradeTransactionError(
+                "Stopped predecessor runtime checkpoint is missing or ambiguous"
+            )
+        checkpoint_runtime = upgrade_transaction.contained(
+            Path(str(runtime_surfaces[0].get("backup") or "")),
+            transaction,
+            "stopped predecessor runtime checkpoint",
+        )
+        predecessor_runtime_env = checkpoint_runtime / "runtime.env"
+        upgrade_transaction.validate_chain(
+            predecessor_runtime_env,
+            owned_from=transaction,
+        )
+        predecessor_metadata = predecessor_runtime_env.lstat()
+        if (
+            predecessor_runtime_env.is_symlink()
+            or not predecessor_runtime_env.is_file()
+            or predecessor_metadata.st_uid != os.getuid()
+        ):
+            raise upgrade_transaction.UpgradeTransactionError(
+                "Stopped predecessor runtime environment is unsafe"
+            )
+        return predecessor_runtime_env
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
+        raise SystemExit(
+            "Active upgrade transaction could not prove the predecessor Scheduler setting."
+        ) from error
+    except Exception as error:
+        # Upgrade transaction verification deliberately fails closed. Convert its
+        # private exception type into the compiler's established user-facing exit.
+        if error.__class__.__name__ != "UpgradeTransactionError":
+            raise
+        raise SystemExit(
+            "Active upgrade transaction could not prove the predecessor Scheduler setting."
+        ) from error
+
+
+def write_migrated_canonical_config(config_path: Path, config: dict[str, Any]) -> None:
+    """Atomically persist a semantic migration while preserving owner-facing file mode."""
+
+    original_mode = config_path.stat().st_mode & 0o777
+    temporary_path = config_path.with_name(f".{config_path.name}.scheduler-migration.{os.getpid()}")
+    try:
+        temporary_path.write_text(
+            yaml.safe_dump(config, sort_keys=False),
+            encoding="utf-8",
+        )
+        temporary_path.chmod(original_mode)
+        os.replace(temporary_path, config_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def resolve_canonical_env_candidates() -> list[Path]:
@@ -2179,7 +2489,7 @@ def build_model_specs(_default_main_agent_id: str) -> dict[str, Any]:
     }
 
 
-def build_custom_endpoints() -> list[dict[str, Any]]:
+def build_custom_endpoints(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     endpoints: list[dict[str, Any]] = []
     for definition in CURATED_CUSTOM_ENDPOINTS:
         payload = {
@@ -2203,7 +2513,55 @@ def build_custom_endpoints() -> list[dict[str, Any]]:
         if definition.get("forcePrompt") is not None:
             payload["forcePrompt"] = definition["forcePrompt"]
         endpoints.append(payload)
+    if config is not None:
+        provider = resolve_glasshive_provider_settings(config)
+        if provider["enabled"]:
+            endpoints.append(
+                {
+                    "name": GLASSHIVE_PROVIDER_ID,
+                    "apiKey": "${GLASSHIVE_PROVIDER_API_KEY}",
+                    "baseURL": "${GLASSHIVE_PROVIDER_BASE_URL}",
+                    "models": {
+                        "default": [model["id"] for model in GLASSHIVE_PROVIDER_MODELS],
+                        "fetch": False,
+                    },
+                    "titleConvo": True,
+                    "titleEndpoint": "openAI",
+                    "titleModel": "gpt-5.6-terra",
+                    "summarize": False,
+                    "modelDisplayLabel": "GlassHive",
+                    "dropParams": list(GLASSHIVE_PROVIDER_DROP_PARAMS),
+                    "addParams": {"maxRetries": 0},
+                    "forcePrompt": False,
+                }
+            )
     return endpoints
+
+
+def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
+    provider = resolve_glasshive_provider_settings(config)
+    if not provider["enabled"]:
+        return {}
+    return {
+        GLASSHIVE_PROVIDER_ID: {
+            "label": "GlassHive",
+            "main_chat": True,
+            "cortex_execution": True,
+            "phase_b_followup": True,
+            "activation_classifier": False,
+            "realtime_voice": False,
+            "automatic_fallback_target": False,
+            "workspace_binding": True,
+            "conversation_session": True,
+            "native_tools": True,
+            "activity_stream": True,
+            "responses_api": False,
+            "default_access": provider["default_access"],
+            "allow_full_access": provider["allow_full_access"],
+            "excluded_mcp_servers": ["glasshive-workers-projects"],
+            "models": copy.deepcopy(GLASSHIVE_PROVIDER_MODELS),
+        }
+    }
 
 
 def choose_provider(available: list[str], preferred: list[str], fallback: str) -> str:
@@ -2229,6 +2587,14 @@ def model_override_for(config: dict[str, Any], provider: str, role: str) -> str:
 
 def assignment_model(config: dict[str, Any], provider: str, role: str) -> str:
     override = model_override_for(config, provider, role)
+    if provider == GLASSHIVE_PROVIDER_ID:
+        model = override or resolve_glasshive_provider_settings(config)["default_model"]
+        available_models = {str(item["id"]) for item in GLASSHIVE_PROVIDER_MODELS}
+        if model not in available_models:
+            raise SystemExit(
+                "GlassHive model overrides must match a declared GlassHive provider model"
+            )
+        return model
     return override or MODEL_MAP[provider][role]
 
 
@@ -2242,7 +2608,7 @@ def has_model_overrides(config: dict[str, Any]) -> bool:
         if not isinstance(provider_overrides, dict):
             continue
         for role, value in provider_overrides.items():
-            if role != "default" and role not in AGENT_ASSIGNMENT_ROLES:
+            if role != "default" and role not in MODEL_OVERRIDE_ROLES:
                 continue
             if str(value or "").strip():
                 return True
@@ -2257,7 +2623,33 @@ def runtime_model_lists(
         "openai": "OPENAI_MODELS",
         "anthropic": "ANTHROPIC_MODELS",
     }
-    model_lists: dict[str, list[str]] = {}
+    # Source-owned consumers such as the Connected Accounts handoff and Anthropic model picker
+    # remain on the managed current default even when an owner supplies a role override. Keep that
+    # managed model in the provider inventory while preserving every explicit override verbatim.
+    model_lists: dict[str, list[str]] = {
+        "ANTHROPIC_MODELS": ["claude-opus-5"],
+    }
+    overrides = (config.get("llm", {}) or {}).get("model_overrides") or {}
+    if isinstance(overrides, dict):
+        for provider, provider_overrides in overrides.items():
+            env_key = provider_env_keys.get(str(provider))
+            if not env_key:
+                continue
+            if isinstance(provider_overrides, str):
+                override_values = [provider_overrides]
+            elif isinstance(provider_overrides, dict):
+                override_values = [
+                    value
+                    for role, value in provider_overrides.items()
+                    if role == "default" or role in MODEL_OVERRIDE_ROLES
+                ]
+            else:
+                override_values = []
+            models = model_lists.setdefault(env_key, [])
+            for value in override_values:
+                model = str(value or "").strip()
+                if model and model not in models:
+                    models.append(model)
     for role, (provider, model) in assignments.items():
         env_key = provider_env_keys.get(provider)
         if not env_key or not model:
@@ -2280,10 +2672,13 @@ def worker_runtime_model_env(config: dict[str, Any]) -> dict[str, str]:
     values["WPR_MODEL_HOST_CODEX_CLI"] = openai_model
     values["WPR_MODEL_CODEX_CLI"] = openai_model
     values["WPR_MODEL_OPENCLAW_CODEX"] = openai_model
-    anthropic_model = model_override_for(config, "anthropic", "glasshive_claude") or model_override_for(config, "anthropic", "default")
-    if anthropic_model:
-        values["WPR_MODEL_CLAUDE_CODE"] = anthropic_model
-        values["WPR_MODEL_OPENCLAW_CLAUDE"] = anthropic_model
+    anthropic_model = (
+        model_override_for(config, "anthropic", "glasshive_claude")
+        or model_override_for(config, "anthropic", "default")
+        or "claude-opus-5"
+    )
+    values["WPR_MODEL_CLAUDE_CODE"] = anthropic_model
+    values["WPR_MODEL_OPENCLAW_CLAUDE"] = anthropic_model
     return values
 
 
@@ -2318,7 +2713,12 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
         )
 
     foundation_fallback = foundation_available[0]
-    conscious_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
+    glasshive_provider = resolve_glasshive_provider_settings(config)
+    conscious_provider = (
+        GLASSHIVE_PROVIDER_ID
+        if glasshive_provider["enabled"]
+        else choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
+    )
     reflective_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     analytical_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     emotional_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
@@ -2376,17 +2776,20 @@ def apply_memory_assignment(
     agent["model"] = model
 
 
-def normalize_anthropic_title_endpoint(payload: dict[str, Any]) -> None:
+def normalize_anthropic_title_endpoint(
+    payload: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
     endpoints = payload.get("endpoints")
     if not isinstance(endpoints, dict):
         return
     anthropic_endpoint = endpoints.get("anthropic")
     if not isinstance(anthropic_endpoint, dict):
         return
+    title_model = assignment_model(config, "anthropic", "background_analysis")
     anthropic_endpoint["titleEndpoint"] = "anthropic"
-    anthropic_endpoint["titleModel"] = str(
-        anthropic_endpoint.get("summaryModel") or MODEL_MAP["anthropic"]["background_analysis"]
-    ).strip()
+    anthropic_endpoint["titleModel"] = title_model
+    anthropic_endpoint["summaryModel"] = title_model
 
 
 def host_supports_local_tts() -> bool:
@@ -2611,7 +3014,7 @@ def resolve_feelings_settings(config: dict[str, Any]) -> dict[str, Any]:
         reaction.get("fallback_provider") or "anthropic"
     ).strip().lower()
     reaction["fallback_model"] = str(
-        reaction.get("fallback_model") or "claude-opus-4-8"
+        reaction.get("fallback_model") or "claude-opus-5"
     ).strip()
     reaction["activation_provider"] = str(
         reaction.get("activation_provider") or CURRENT_BACKGROUND_ACTIVATION_PROVIDER
@@ -2928,6 +3331,10 @@ def render_runtime_env(
     runtime_mongo_data_path_override: str | None = None,
     runtime_call_session_secret_override: str | None = None,
 ) -> dict[str, str]:
+    runtime_app_support_dir = Path(
+        os.environ.get("VIVENTIUM_APP_SUPPORT_DIR") or APP_SUPPORT_VIVENTIUM_DIR
+    ).expanduser()
+    canonical_uploads_root = runtime_app_support_dir / "data" / "uploads"
     llm = config["llm"]
     voice = config.get("voice", {})
     tts_config = voice.get("tts", {}) or {}
@@ -3003,6 +3410,7 @@ def render_runtime_env(
     glasshive_is_enabled = glasshive_enabled(config)
     glasshive_host_worker = resolve_glasshive_host_worker_settings(config)
     glasshive_enterprise = resolve_glasshive_enterprise_settings(config)
+    glasshive_provider = resolve_glasshive_provider_settings(config)
     feature_request_pr = config.get("feature_requests", {}).get("pr", {}) or {}
     feature_request_pr_after_approval = resolve_bool(
         feature_request_pr.get("create_after_user_approval"),
@@ -3020,6 +3428,7 @@ def render_runtime_env(
 
     env: dict[str, str] = {
         "VIVENTIUM_CONFIG_VERSION": str(CONFIG_VERSION),
+        "VIVENTIUM_LIBRECHAT_UPLOADS_ROOT": str(canonical_uploads_root),
         "VIVENTIUM_INSTALL_MODE": config["install"]["mode"],
         "VIVENTIUM_INSTALL_EXPERIENCE": str(
             config.get("install", {}).get("experience") or "legacy"
@@ -3441,8 +3850,8 @@ def render_runtime_env(
                 )
                 env["GLASSHIVE_COOKIE_SECURE"] = "true"
                 env["GLASSHIVE_UI_PORT"] = "8780"
-        env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(LIBRECHAT_UPLOADS_DIR)
-        env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(LIBRECHAT_UPLOADS_DIR)
+        env["WPR_LIBRECHAT_UPLOADS_ROOT"] = str(canonical_uploads_root)
+        env["WPR_BOOTSTRAP_SOURCE_ROOTS"] = str(canonical_uploads_root)
         env["VIVENTIUM_GLASSHIVE_CALLBACK_URL"] = f"http://localhost:{profile['lc_api_port']}/api/viventium/glasshive/callback"
         env["VIVENTIUM_GLASSHIVE_CALLBACK_SECRET"] = scoped_secret(call_session_secret, "glasshive-callback")
         env["VIVENTIUM_GLASSHIVE_CAPABILITY_BROKER_SECRET"] = scoped_secret(
@@ -3496,6 +3905,35 @@ def render_runtime_env(
             if glasshive_enterprise["service_token"]:
                 env[str(glasshive_enterprise["service_token_env"])] = str(glasshive_enterprise["service_token"])
                 env["WPR_API_TOKEN"] = str(glasshive_enterprise["service_token"])
+
+        if glasshive_provider["enabled"]:
+            env.setdefault(
+                "WPR_API_TOKEN",
+                scoped_secret(call_session_secret, "glasshive-runtime"),
+            )
+            env["GLASSHIVE_PROVIDER_API_KEY"] = scoped_secret(
+                call_session_secret,
+                "glasshive-provider",
+            )
+            env["GLASSHIVE_MCP_API_KEY"] = scoped_secret(
+                call_session_secret,
+                "glasshive-mcp",
+            )
+            env["GLASSHIVE_PROVIDER_BASE_URL"] = str(glasshive_provider["base_url"])
+            env["GLASSHIVE_PROVIDER_PRINCIPAL_ID"] = str(glasshive_provider["principal_id"])
+            env["GLASSHIVE_PROVIDER_TENANT_ID"] = str(glasshive_provider["tenant_id"])
+            env["GLASSHIVE_PROVIDER_TRUST_IDENTITY_HEADERS"] = (
+                "true" if glasshive_provider["trust_identity_headers"] else "false"
+            )
+            env["GLASSHIVE_PROVIDER_ALLOW_FULL_ACCESS"] = (
+                "true" if glasshive_provider["allow_full_access"] else "false"
+            )
+            env["GLASSHIVE_PROVIDER_DEFAULT_ACCESS"] = str(glasshive_provider["default_access"])
+            env["GLASSHIVE_PROVIDER_DEFAULT_WORKSPACE"] = str(glasshive_provider["life_dir"])
+            env["GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS"] = os.pathsep.join(
+                glasshive_provider["allowed_workspace_roots"]
+            )
+            env["VIVENTIUM_LIFE_DIR"] = str(glasshive_provider["life_dir"])
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -3672,6 +4110,10 @@ def render_runtime_env(
     env["VIVENTIUM_WEB_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_VOICE_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
     env["VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S"] = glasshive_followup_timeout_s
+    # Harness-authored interactive turns may legitimately work for ten minutes. The Telegram
+    # relay reconnects by stream id and must not turn a quiet autonomous run into a second run.
+    env["VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S"] = "120"
+    env["VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S"] = "720"
     # Voice Phase A defaults are runtime outputs, not hand-maintained App Support edits. The default
     # keeps Phase A activation awareness in the main-response path, but releases early on the first
     # true voice activation instead of waiting for every detector.
@@ -4081,8 +4523,8 @@ def render_runtime_env(
     if has_model_overrides(config):
         for key, models in runtime_model_lists(config, assignments).items():
             env.setdefault(key, ",".join(models))
-        for key, value in worker_runtime_model_env(config).items():
-            env.setdefault(key, value)
+    for key, value in worker_runtime_model_env(config).items():
+        env.setdefault(key, value)
 
     if xai_voice_key:
         env.setdefault("XAI_API_KEY", xai_voice_key)
@@ -4455,6 +4897,8 @@ def build_mcp_servers(
             glasshive_headers["X-Viventium-User-Role"] = "{{LIBRECHAT_USER_ROLE}}"
             if glasshive_enterprise["service_token_delivery"] == "client_header":
                 glasshive_headers["X-WPR-Token"] = "${" + str(glasshive_enterprise["service_token_env"]) + "}"
+        elif resolve_glasshive_provider_settings(config)["enabled"]:
+            glasshive_headers["X-WPR-Token"] = "${GLASSHIVE_MCP_API_KEY}"
         glasshive_server = {
             "type": "streamable-http",
             "url": "${GLASSHIVE_MCP_URL}",
@@ -4640,8 +5084,14 @@ def render_librechat_yaml(
                 "defaultId": default_main_agent_id,
                 "recursionLimit": DEFAULT_AGENT_RECURSION_LIMIT,
                 "maxRecursionLimit": DEFAULT_AGENT_RECURSION_LIMIT,
+                "providerCapabilities": build_agent_provider_capabilities(config),
+                "capabilityRequiredProviders": (
+                    [GLASSHIVE_PROVIDER_ID]
+                    if resolve_glasshive_provider_settings(config)["enabled"]
+                    else []
+                ),
             },
-            "custom": build_custom_endpoints(),
+            "custom": build_custom_endpoints(config),
         },
     }
     source_template = load_source_of_truth_librechat_yaml()
@@ -4717,7 +5167,7 @@ def render_librechat_yaml(
         endpoints["custom"] = copy.deepcopy(generated_custom)
     payload["endpoints"] = endpoints
     apply_memory_assignment(payload, assignments)
-    normalize_anthropic_title_endpoint(payload)
+    normalize_anthropic_title_endpoint(payload, config)
     payload = prune_unavailable_source_defaults(payload, env)
     return yaml.safe_dump(payload, sort_keys=False)
 
@@ -4733,6 +5183,9 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "GROQ_API_KEY",
         "XAI_BASE_URL",
         "GROQ_BASE_URL",
+        "GLASSHIVE_MCP_API_KEY",
+        "GLASSHIVE_PROVIDER_API_KEY",
+        "GLASSHIVE_PROVIDER_BASE_URL",
         "MONGO_URI",
         "ALLOW_EMAIL_LOGIN",
         "ALLOW_REGISTRATION",
@@ -4802,6 +5255,8 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH",
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID",
         "VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH",
+        "VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S",
+        "VIVENTIUM_TELEGRAM_SSE_READ_TIMEOUT_S",
         "XAI_API_KEY",
         "VIVENTIUM_XAI_TTS_API_KEY",
         "VIVENTIUM_XAI_TTS_API_URL",
@@ -5382,6 +5837,10 @@ def main() -> None:
     output_dir = Path(args.output_dir).expanduser().resolve()
     config = load_yaml(config_path)
     validate_config(config, config_path)
+    config, scheduling_migrated = migrate_legacy_scheduling_enablement(
+        config,
+        resolve_scheduling_predecessor_runtime_env(config_path, output_dir),
+    )
 
     assignments = build_agent_assignments(config)
     runtime_overrides = restored_runtime_selection_overrides(config, config_path, output_dir)
@@ -5411,6 +5870,7 @@ def main() -> None:
         "voice_mode": config.get("voice", {}).get("mode", "disabled"),
         "primary_provider": config["llm"]["primary"]["provider"],
         "telegram_codex_enabled": telegram_codex_enabled(config),
+        "scheduling_cortex_migrated_from_predecessor": scheduling_migrated,
         "prompt_registry": {
             "prompt_count": prompt_bundle["prompt_count"],
             "prompt_bundle": str(prompt_bundle_path),
@@ -5422,6 +5882,8 @@ def main() -> None:
         print(json.dumps(summary, indent=2))
         return
 
+    if scheduling_migrated:
+        write_migrated_canonical_config(config_path, config)
     output_dir.mkdir(parents=True, exist_ok=True)
     dump_env(output_dir / "runtime.env", env)
     if config["install"]["mode"] == "native":

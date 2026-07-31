@@ -143,7 +143,7 @@ def test_command_runtime_ready_times_out_cleanly(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("helper_name", "item_key", "formula", "config"),
     [
-        ("pnpm_runtime_ready", "pnpm", "pnpm", {}),
+        ("pnpm_runtime_ready", "pnpm", "pnpm@10", {}),
         ("uv_runtime_ready", "uv", "uv", {}),
         (
             "ollama_cli_runtime_ready",
@@ -1397,7 +1397,7 @@ def test_install_brew_formulas_reports_homebrew_drift_when_reinstall_cannot_fix_
 @pytest.mark.parametrize(
     ("formula", "helper_name"),
     [
-        ("pnpm", "pnpm_runtime_ready"),
+        ("pnpm@10", "pnpm_runtime_ready"),
         ("uv", "uv_runtime_ready"),
         ("ollama", "ollama_cli_runtime_ready"),
         ("ffmpeg", "ffmpeg_runtime_ready"),
@@ -1423,6 +1423,33 @@ def test_formula_usable_delegates_to_runtime_probe(monkeypatch, formula: str, he
 
     assert preflight.formula_usable(formula) is True
     assert calls == [helper_name]
+
+
+def test_refresh_brew_paths_prioritizes_supported_node24_and_pnpm10(monkeypatch) -> None:
+    preflight = load_preflight_module()
+    pnpm_bin = "/opt/homebrew/opt/pnpm@10/bin"
+    node_bin = "/opt/homebrew/opt/node@24/bin"
+    brew_bin = "/opt/homebrew/bin"
+
+    monkeypatch.setenv("PATH", brew_bin)
+    monkeypatch.setattr(
+        preflight.os.path,
+        "isdir",
+        lambda candidate: candidate in {pnpm_bin, node_bin, brew_bin},
+    )
+
+    preflight.refresh_brew_paths()
+
+    parts = preflight.os.environ["PATH"].split(preflight.os.pathsep)
+    assert parts.index(node_bin) < parts.index(brew_bin)
+    assert parts.index(pnpm_bin) < parts.index(brew_bin)
+
+
+def test_shared_cli_path_prefers_supported_pnpm10() -> None:
+    common_source = (REPO_ROOT / "scripts/viventium/common.sh").read_text(encoding="utf-8")
+
+    assert 'prepend_path_if_dir "/opt/homebrew/opt/pnpm@10/bin"' in common_source
+    assert 'prepend_path_if_dir "/usr/local/opt/pnpm@10/bin"' in common_source
 
 
 def test_docker_daemon_ready_uses_bounded_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

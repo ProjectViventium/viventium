@@ -28,6 +28,18 @@ This document defines what belongs in public, private personal, and private ente
 - Secret-bearing snapshot payloads, backup archives, restore pre-backups, and companion-enriched
   continuity bundles must stay machine-local or in the private companion repo. They must never land
   in `docs/`, `qa/`, `tests/`, fixtures, or git history for the public repo.
+- Generated `runtime.env`, `runtime.local.env`, `service-env/**`, `librechat.env`,
+  `librechat.owner.env`, `upgrade-backups/**`, and `successor-bridge/**` are secret-capable
+  machine-local artifacts. Git ignore rules, the staged
+  commit/push gate, Native assembler, Native final verifier, continuity snapshot, metadata audit,
+  and diagnostic surfaces must each exclude or reject them independently. Weakly formatted values
+  do not make one of these paths public-safe.
+- Private upgrade transactions may checkpoint those files only under owner-only transaction
+  storage. Terminal commit/rollback removes ordinary checkpoints, and successful first-upgrade
+  finalization removes only its known secret-bearing successor copies after continuity proof while
+  retaining known sanitized receipts. An incomplete cleanup remains retryable and is not labeled
+  fully cleaned. No raw value may enter a public manifest, command output, QA report, or release
+  payload.
 - Memory hardening raw workpacks, model proposals, rollback snapshots, and local account backup
   manifests are private runtime artifacts. They may exist under App Support or an operator-chosen
   private local backup directory, but must never be copied into public docs, QA evidence, fixtures,

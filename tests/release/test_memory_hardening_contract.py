@@ -361,7 +361,7 @@ process.stdout.write(JSON.stringify({ defaultCandidates, explicitCandidates }));
     payload = json.loads(result.stdout)
 
     assert {candidate["provider"] for candidate in payload["defaultCandidates"]} == {"anthropic"}
-    assert any(candidate["model"] == "claude-opus-4-8" for candidate in payload["defaultCandidates"])
+    assert any(candidate["model"] == "claude-opus-5" for candidate in payload["defaultCandidates"])
     assert any(candidate["model"] == "opus" for candidate in payload["defaultCandidates"])
     assert any(candidate["provider"] == "openai" for candidate in payload["explicitCandidates"])
 
@@ -635,7 +635,7 @@ assert.strictEqual(health.expected_latest_fire_at_utc, '2026-01-15T11:00:00.000Z
 @pytest.mark.parametrize(
     ("effective_provider", "effective_model", "effective_effort", "mismatch_field"),
     [
-        ("anthropic", "claude-opus-4-8", "xhigh", "provider_mismatch"),
+        ("anthropic", "claude-opus-5", "xhigh", "provider_mismatch"),
         ("openai", "gpt-5.6-terra", "xhigh", "model_mismatch"),
         ("openai", "gpt-5.6-sol", "medium", "effort_mismatch"),
     ],
@@ -1052,7 +1052,7 @@ def test_memory_hardening_wrapper_prefers_compiled_runtime_over_ambient_shell_en
         {
             "RAG_API_URL": "http://compiled-rag",
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
         },
     )
 
@@ -1088,7 +1088,7 @@ def test_memory_hardening_wrapper_uses_provider_specific_model_for_override() ->
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
             "VIVENTIUM_MEMORY_HARDENING_OPENAI_MODEL": "gpt-5.6-sol",
         },
     )
@@ -1125,7 +1125,7 @@ def test_memory_hardening_cli_user_email_overrides_compiled_operator_scope() -> 
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
             "VIVENTIUM_MEMORY_HARDENING_USER_EMAIL": "compiled@example.com",
         },
     )
@@ -1170,7 +1170,7 @@ def test_ingest_transcripts_defaults_to_zero_saved_memory_changes() -> None:
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
         },
     )
 
@@ -1287,7 +1287,7 @@ def test_memory_hardening_efficiency_override_is_separate_from_power_override() 
         args,
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
         },
     )
 
@@ -1786,6 +1786,154 @@ def test_memory_hardening_schedule_records_failed_post_bootstrap_verification(
     assert receipt["status"] == "failed"
     assert receipt["error_class"] == "launchctl_verify_failed"
     assert receipt["loaded_verified"] is False
+    assert receipt["rollback_status"] == "restored"
+    assert not plist_path.exists()
+
+
+def test_memory_hardening_schedule_failed_reinstall_restores_exact_prior_agent(
+    tmp_path, monkeypatch
+) -> None:
+    plist_path = tmp_path / "ai.viventium.memory-harden.plist"
+    app_support_dir = tmp_path / "app-support"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="install-schedule",
+        json=True,
+    )
+    args.schedule = "0 4 * * *"
+    args.user_email = None
+    prior_bytes = plistlib.dumps(
+        {
+            "Label": memory_harden.LAUNCH_AGENT_LABEL,
+            "ProgramArguments": ["prior", "--user-preserved"],
+            "StartCalendarInterval": {"Hour": 3, "Minute": 0},
+        },
+        sort_keys=False,
+    )
+    plist_path.write_bytes(prior_bytes)
+    os.chmod(plist_path, 0o600)
+    launchd = {"loaded": True}
+    bootstrap_calls = 0
+
+    class Completed:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(command, **_kwargs):
+        nonlocal bootstrap_calls
+        if command[0:2] == ["launchctl", "print"]:
+            return Completed(0 if launchd["loaded"] else 113)
+        if command[0:2] == ["launchctl", "bootout"]:
+            launchd["loaded"] = False
+            return Completed()
+        if command[0:2] == ["launchctl", "bootstrap"]:
+            bootstrap_calls += 1
+            if bootstrap_calls == 1:
+                return Completed(9, stderr="synthetic desired bootstrap failure")
+            launchd["loaded"] = True
+            return Completed()
+        return Completed()
+
+    monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+
+    with pytest.raises(SystemExit, match="failed to install"):
+        memory_harden.install_schedule(args, {})
+
+    assert plist_path.read_bytes() == prior_bytes
+    assert plist_path.stat().st_mode & 0o777 == 0o600
+    assert launchd["loaded"] is True
+    assert bootstrap_calls == 2
+    receipt = json.loads(
+        (memory_harden.schedule_lifecycle_events_dir(app_support_dir) / "latest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert receipt["status"] == "failed"
+    assert receipt["error_class"] == "launchctl_bootstrap_failed"
+    assert receipt["rollback_status"] == "restored"
+
+
+def test_memory_hardening_schedule_failed_uninstall_restores_agent_and_marker(
+    tmp_path, monkeypatch
+) -> None:
+    plist_path = tmp_path / "ai.viventium.memory-harden.plist"
+    app_support_dir = tmp_path / "app-support"
+    marker = app_support_dir / "state" / "memory-hardening" / "dry-run-first-complete"
+    args = make_memory_harden_args(
+        repo_root=ROOT,
+        app_support_dir=app_support_dir,
+        runtime_dir=app_support_dir / "runtime",
+        command="uninstall-schedule",
+        json=True,
+    )
+    args.schedule = None
+    args.user_email = None
+    prior_bytes = plistlib.dumps(
+        {
+            "Label": memory_harden.LAUNCH_AGENT_LABEL,
+            "ProgramArguments": ["prior", "--user-preserved"],
+            "StartCalendarInterval": {"Hour": 3, "Minute": 0},
+        },
+        sort_keys=False,
+    )
+    plist_path.write_bytes(prior_bytes)
+    os.chmod(plist_path, 0o600)
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(b"prior-marker\n")
+    os.chmod(marker, 0o640)
+    launchd = {"loaded": True}
+
+    class Completed:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(command, **_kwargs):
+        if command[0:2] == ["launchctl", "print"]:
+            return Completed(0 if launchd["loaded"] else 113)
+        if command[0:2] == ["launchctl", "bootout"]:
+            launchd["loaded"] = False
+            return Completed()
+        if command[0:2] == ["launchctl", "bootstrap"]:
+            launchd["loaded"] = True
+            return Completed()
+        return Completed()
+
+    def fail_receipt(*_args, **_kwargs):
+        raise OSError("synthetic lifecycle receipt failure")
+
+    monkeypatch.setattr(memory_harden, "launch_agent_path", lambda: plist_path)
+    monkeypatch.setattr(memory_harden.subprocess, "run", fake_run)
+    monkeypatch.setattr(memory_harden, "write_schedule_lifecycle_receipt", fail_receipt)
+    monkeypatch.setattr(memory_harden.sys, "platform", "darwin")
+
+    with pytest.raises(OSError, match="synthetic lifecycle receipt failure"):
+        memory_harden.uninstall_schedule(args)
+
+    assert plist_path.read_bytes() == prior_bytes
+    assert plist_path.stat().st_mode & 0o777 == 0o600
+    assert marker.read_bytes() == b"prior-marker\n"
+    assert marker.stat().st_mode & 0o777 == 0o640
+    assert launchd["loaded"] is True
+
+
+def test_memory_hardening_schedule_rejects_file_not_owned_by_current_user(
+    tmp_path, monkeypatch
+) -> None:
+    plist_path = tmp_path / "ai.viventium.memory-harden.plist"
+    plist_path.write_bytes(b"synthetic")
+    actual_uid = os.getuid()
+    monkeypatch.setattr(memory_harden.os, "getuid", lambda: actual_uid + 1)
+
+    with pytest.raises(SystemExit, match="not owned by the current user"):
+        memory_harden.snapshot_regular_file(plist_path)
 
 
 def test_memory_hardening_schedule_records_failed_bootout(tmp_path, monkeypatch) -> None:
@@ -1888,6 +2036,9 @@ def test_memory_hardening_config_sync_uninstalls_only_explicit_false() -> None:
         "\n}\n\napply_default_nightly_routines()", 1
     )[0]
 
+    assert 'canonical_app_support_dir="$HOME/Library/Application Support/Viventium"' in block
+    assert 'VIVENTIUM_ALLOW_NONCANONICAL_SCHEDULE_MUTATION' in block
+    assert "Skipping the machine-global memory hardening schedule" in block
     assert 'elif [[ "$enabled" == "false" && -f "$plist_path" ]]' in block
     assert 'elif [[ -f "$plist_path" ]]' not in block
     assert "preserving the existing LaunchAgent" in block
@@ -2119,7 +2270,7 @@ def test_scheduled_transcript_ingest_honors_dry_run_first_marker(tmp_path, monke
         Args(),
         {
             "VIVENTIUM_MEMORY_HARDENING_PROVIDER": "anthropic",
-            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-4-8",
+            "VIVENTIUM_MEMORY_HARDENING_MODEL": "claude-opus-5",
             "VIVENTIUM_MEMORY_HARDENING_DRY_RUN_FIRST": "true",
         },
     )

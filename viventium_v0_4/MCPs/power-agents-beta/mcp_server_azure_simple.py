@@ -26,7 +26,7 @@ POWER_AGENT_VM_URL = os.environ.get("POWER_AGENT_VM_URL", "http://localhost:8000
 CLAUDE_CODE_USE_FOUNDRY = os.environ.get("CLAUDE_CODE_USE_FOUNDRY", "")
 ANTHROPIC_FOUNDRY_API_KEY = os.environ.get("ANTHROPIC_FOUNDRY_API_KEY", "")
 ANTHROPIC_FOUNDRY_RESOURCE = os.environ.get("ANTHROPIC_FOUNDRY_RESOURCE", "")
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
 
 PORT_MAPPINGS = {
     3000: 9100,

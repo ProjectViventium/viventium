@@ -13,6 +13,8 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
 | `TGVOICE-003` | Telegram voice replies must sanitize TTS artifacts in parity with the Modern LiveKit voice path while preserving selected-provider voice controls. | Telegram audio does not speak raw citation ids, source labels, links/domains/emails, unknown tags, or unsupported provider markup. | Telegram voice note/reply, always-voice text reply, proactive callback audio, selected TTS provider payload | `tests/test_tts.py`, `tests/test_bot_stream_preview.py`, `tests/test_librechat_bridge.py`, `tests/test_voice_preferences.py` | PASS-AUTOMATED/PARTIAL 2026-07-15; 51/51 provider-payload boundaries pass, dedicated audible Telegram provider matrix NOT RUN |
 | `TGVOICE-004` | Telegram voice-note and always-voice replies are text-mode turns with optional audio delivery, not LiveKit voice-call turns. | The user gets the main text-mode answer plus audio when enabled, while LibreChat receives `voiceMode=false` and no Voice Call LLM override is applied. | Telegram voice note/reply, always-voice text reply, LibreChat Telegram route payload/logs | `tests/test_bot_stream_preview.py`, `tests/test_voice_preferences.py`, `tests/test_librechat_bridge.py`, `surfacePrompts.spec.js` | PASS-AUTOMATED/PARTIAL 2026-07-11; voice-note/text payload coverage passes, dedicated Telegram delivery/input NOT RUN |
 | `TGVOICE-005` | Telegram text-mode audio turns expose exactly the selected TTS provider/model control contract and shared Feelings expression rule without switching to LiveKit voice mode. | Expressive xAI, Cartesia, and Chatterbox replies can use one fitting supported control without the user asking; restrained/Feelings-off/OpenAI/ElevenLabs `eleven_turbo_v2_5`/unknown routes stay unmarked; visible text is clean; model-specific Eleven v3 tags never leak to v2.5. | Telegram voice-note/reply, always-voice text reply, LibreChat Telegram route payload/logs, metadata-only provider rendering events, prompt layers, Prompt Workbench | shared provider/model contract, `surfacePrompts.spec.js`, `telegram.spec.js`, `tests/test_librechat_bridge.py`, `tests/test_tts.py`, exact-model prompt bank | PASS-AUTOMATED/PARTIAL 2026-07-15; provider-model, marker, telemetry, and semantic fixtures pass, dedicated audible Telegram delivery NOT RUN ([report](../emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md)) |
+| `TGVOICE-006` | Optional Telegram text audio is model-selected per answer through `{SKIP_VOICE}`. | Read/copy/edit-first artifacts stay complete in text without wasteful synthesis; ordinary or explicitly requested spoken replies retain audio. | Main turn, proactive callback, persistence, TTS, Preferences, Prompt Workbench | shared JS/Python grammar, persistence, bot/callback/TTS suites, exact-model prompt bank | PASS 2026-07-30 for the installed direct GlassHive Telegram route; proactive callback behavior and clean structured persistence PASS automation but remain PARTIAL for a fresh live callback ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)) |
+| `TGVOICE-007` | The Main Agent may create bounded natural Telegram bubbles with `{MSG_BREAK}` while preserving one logical answer. | Conversation can arrive as two or three complete beats without fragment bombardment, duplicate history, or duplicate audio. | Streaming preview, main turn, proactive callback, persistence, Telegram transport | shared grammar, split-token streaming, callback/persistence suites, exact-model prompt bank | PASS 2026-07-30 for the installed direct GlassHive route; proactive callback behavior PASS automation but remains PARTIAL for a fresh live callback ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)) |
 
 ## `TGVOICE-001` - Core User Flow
 
@@ -150,6 +152,34 @@ Use stable `TGVOICE-NNN` IDs for telegram voice replies cases.
   unknown-provider, and the exact xAI history regression. Dedicated Telegram delivery/playback,
   LiveKit call audio, voice-note input, and non-xAI Telegram delivery are NOT RUN.
 
+## `TGVOICE-006` - Smart Optional Audio
+
+- Steps: enable Smart voice for text; request a copy-ready synthetic email, ordinary conversation,
+  and an explicitly spoken reminder; repeat the structural skip through callback automation.
+- Expected: the agent chooses optional audio semantically; complete text remains; the control is
+  never visible, spoken, or persisted; explicit spoken intent wins.
+- Forbidden: runtime keyword/length classification, missing text, leaked controls, or audio after a
+  model skip.
+- Automation: `tests/release/test_delivery_controls_contract.py`, Telegram bot/callback/TTS tests,
+  LibreChat persistence/prompt tests, and `telegram_smart_delivery`.
+- Last run: PASS 2026-07-30 for real Telegram Desktop direct skip and explicit-audio paths, Prompt
+  Workbench inspection, database/log correlation, and full affected automation. Proactive callback
+  delivery and clean structured persistence PASS automation but remain PARTIAL for a fresh live callback
+  ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)).
+
+## `TGVOICE-007` - Natural Message Boundaries
+
+- Steps: request two complete conversational beats without naming the control; verify at most three
+  clean bubbles, one persisted turn, and at most one audio attachment; test code/email/list negative
+  cases and a control split across stream chunks.
+- Expected: natural conversation may split without changing meaning or history ownership.
+- Forbidden: complete/partial control leakage, tiny fragments, more than three semantic bubbles,
+  fake delays, duplicate persistence, or repeated audio.
+- Last run: PASS 2026-07-30 for a real direct two-bubble Telegram Desktop turn, conversation
+  reopen, one persisted assistant row, one audio attachment, and split-token regression coverage.
+  Proactive callback delivery PASS automation but remains PARTIAL for a fresh live callback
+  ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)).
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Voice Replies. Add narrower feature-specific
@@ -163,3 +193,5 @@ rows before claiming a pass when the feature behavior changes.
 | `TGVOICE-UC-004` | Hear a Telegram voice reply or always-voice text reply that includes synthetic citations, source labels, links, emails, unknown tags, provider controls, and bracket stage directions in the assistant text. | `docs/requirements_and_learnings/06_Voice_Calls.md` / `TGVOICE-003` | Telegram bot audio plus provider-payload test harness | TTS payload captures, voice route cache, Telegram display text, runtime logs, sanitized QA report | Telegram audio receives speech-safe provider-appropriate text with no raw artifacts; visible text hides voice-control markup; capable providers keep only their documented controls. | 2026-05-22 PARTIAL/PASS: automated provider-payload parity passed; live Telegram audio send/listen not rerun |
 | `TGVOICE-UC-005` | Send a Telegram always-voice text message and a Telegram voice note, then confirm the answer uses Telegram text mode while still sending audio. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-004` | dedicated synthetic Telegram identity plus LibreChat route fixture | Bot kwargs, route request metadata, visible text/audio, persisted fixture message | LibreChat sees `voiceMode=false`; input mode is `text` or `voice_note` as appropriate; Telegram audio is delivered when enabled. | PASS-AUTOMATED/PARTIAL 2026-07-11; payload fixtures pass, dedicated Telegram delivery/input NOT RUN |
 | `TGVOICE-UC-006` | Send synthetic positive, calm, and negative Telegram messages without asking for emotion or markup while an xAI fixture is selected. | `docs/requirements_and_learnings/03_Telegram_Bridge.md` / `TGVOICE-005`, `EMO-036` | dedicated synthetic Telegram identity, route fixtures, Prompt Workbench | Marker counts, prompt-frame metadata, clean display text, TTS payload, delivery/playback when run, negative cases | Fitting xAI controls reach TTS and telemetry for expressive moments but not the bubble; the calm turn and Feelings-off/plain routes remain unmarked | PASS-AUTOMATED/PARTIAL 2026-07-14; semantic/provider fixtures pass, dedicated Telegram delivery/playback NOT RUN ([report](../emotional-cortex/reports/2026-07-14-feelings-activation-and-telegram-acceptance.md)) |
+| `TGVOICE-UC-007` | With Smart voice for text enabled, request a copy-ready synthetic email, ordinary conversation, and an explicitly spoken reminder. | `TGVOICE-006` | Telegram Desktop and Prompt Workbench | Visible text/audio, clean DB row, voice-decision log, prompt lineage | Email stays complete/text-only; conversation and spoken reminder get at most one audio; controls remain hidden | PASS 2026-07-30 ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)) |
+| `TGVOICE-UC-008` | Ask for a friendly two-beat reply, then a copy-ready artifact, and reopen the chat. | `TGVOICE-007` | Telegram Desktop, logs, DB/history | Bubble count, final audio, one clean assistant turn, reopen | At most three complete bubbles; artifact stays intact; one persisted turn and at most one audio | PASS 2026-07-30 ([report](reports/2026-07-30-smart-delivery-regression-restoration.md)) |

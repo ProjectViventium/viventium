@@ -59,7 +59,7 @@ The intended mental model is:
    existing activation-classifier path and `disabled` stops reactions.
 5. The default reaction route is OpenAI `gpt-5.6-terra`, Responses API, reasoning `none`, and
    Priority service tier, shown in the product as **Fast**. A declared Anthropic
-   `claude-opus-4-8` fallback recovers a provider timeout or other recoverable failure without
+   `claude-opus-5` fallback recovers a provider timeout or other recoverable failure without
    silently dropping appraisal quality; it is
    configurable and can be disabled with `fallback_provider: none`. The drawer and persisted
    health distinguish the requested primary route from the route that actually completed.
@@ -285,6 +285,12 @@ instructions are assembled, the shared final-placement helper moves the capsule 
 worker instruction artifact (`agents_md`, `claude_md`, and `codex_md`). Structured final-run events
 record the route, pinned hash, capsule count, and trailing instruction characters for each artifact.
 
+For the core `glasshive-harness` provider, the selected harness is the main speaking agent rather
+than a delegated specialist. The request-pinned capsule is therefore present exactly once in the
+main authored turn and is carried forward by the same native session for Phase B. It is never copied
+into specialist cortex prompts, harness activity, provider metadata, or LIFE files. A direct main
+with a GlassHive cortex keeps the capsule on the direct main adjudication path only.
+
 ## Prompt contract
 
 The runtime first assembles base/MCP, capability-scoped voice/Telegram, time, activation-awareness,
@@ -457,7 +463,7 @@ fast: true
 service_tier: priority
 timeout_ms: 15000
 fallback_provider: anthropic
-fallback_model: claude-opus-4-8
+fallback_model: claude-opus-5
 ```
 
 OpenAI's current model guide describes GPT-5.6 and the Sol/Terra/Luna operating variants. `none` is
@@ -583,7 +589,7 @@ runtime:
       service_tier: priority
       timeout_ms: 15000
       fallback_provider: anthropic
-      fallback_model: claude-opus-4-8
+      fallback_model: claude-opus-5
       activation_provider: groq
       activation_model: qwen/qwen3.6-27b
       activation_confidence_threshold: 0.55

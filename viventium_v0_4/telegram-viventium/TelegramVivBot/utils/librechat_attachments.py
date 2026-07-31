@@ -22,6 +22,10 @@ from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 from telegram import InputMediaPhoto
+try:
+    from utils.librechat_http import async_client_options_for_url
+except ModuleNotFoundError:
+    from TelegramVivBot.utils.librechat_http import async_client_options_for_url
 
 _LC_CODE_DOWNLOAD_PATH_RE = re.compile(
     r"^/?(?:.*?)(/api/files/code/download/([A-Za-z0-9_-]{21})/([A-Za-z0-9_-]{21}))"
@@ -63,7 +67,10 @@ async def fetch_librechat_bytes(
         params["telegramChatId"] = str(telegram_chat_id)
 
     timeout = httpx.Timeout(connect=10.0, read=timeout_s, write=10.0, pool=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        **async_client_options_for_url(url),
+    ) as client:
         resp = await client.get(url, headers=headers, params=params)
         resp.raise_for_status()
         return resp.content, resp.headers.get("content-type") or ""

@@ -81,6 +81,29 @@ def test_native_public_safety_rejects_forbidden_artifacts(tmp_path: Path) -> Non
     assert "__pycache__/module.pyc" in completed.stderr
 
 
+def test_native_public_safety_rejects_generated_owner_environment_paths(
+    tmp_path: Path,
+) -> None:
+    candidate = candidate_fixture(tmp_path)
+    sentinel = "weak-owner-env-sentinel"
+    for relative in (
+        Path("payload/runtime/librechat/runtime.env"),
+        Path("payload/runtime/librechat/runtime.local.env"),
+        Path("payload/runtime/librechat/service-env/librechat.owner.env"),
+        Path("payload/runtime/librechat/.env.viventium-retired-env-synthetic"),
+        Path("payload/runtime/librechat/.env.viventium-private-synthetic/owner.env"),
+    ):
+        write(candidate / relative, f"OWNER_VALUE={sentinel}\n")
+
+    completed = run_verifier(candidate)
+
+    assert completed.returncode != 0
+    assert "forbidden environment artifact path" in completed.stderr
+    assert "runtime.env" in completed.stderr
+    assert "service-env/librechat.owner.env" in completed.stderr
+    assert sentinel not in completed.stderr
+
+
 def test_native_public_safety_rejects_a_symlinked_candidate_root(tmp_path: Path) -> None:
     candidate = candidate_fixture(tmp_path)
     linked_candidate = tmp_path / "linked-candidate"

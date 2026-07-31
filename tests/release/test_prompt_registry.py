@@ -91,6 +91,8 @@ def test_public_prompt_registry_validates_and_compiles() -> None:
     assert "main.conscious_agent" in bundle["prompts"]
     assert "surface.voice.provider.cartesia" in bundle["prompts"]
     assert "surface.voice.feeling_expression" in bundle["prompts"]
+    assert "surface.messaging.optional_audio" in bundle["prompts"]
+    assert "surface.messaging.bubble_boundaries" in bundle["prompts"]
     assert "surface.telegram.audio_output" in bundle["prompts"]
     assert "surface.telegram.audio_provider.cartesia" in bundle["prompts"]
     assert "surface.telegram.audio_provider.chatterbox" in bundle["prompts"]

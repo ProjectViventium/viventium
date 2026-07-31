@@ -839,9 +839,9 @@ not prompt prose.
   `high` for Strategic Planning, `medium` for balanced cognition, and `low` for latency-sensitive or
   tool-heavy work.
 
-### Claude Opus 4.8 fallback
+### Claude Opus 5 fallback
 
-Every conscious/subconscious text route declares Claude Opus 4.8 as fallback. Fallback prompt
+Every conscious/subconscious text route declares Claude Opus 5 as fallback. Fallback prompt
 behavior must preserve the same user-visible outcome and tool/evidence contract without carrying
 OpenAI-only `reasoning_effort` or `useResponsesApi` fields into Anthropic requests. Missing Anthropic
 auth is a classified fallback-availability blocker, not permission to downgrade silently.
@@ -1149,6 +1149,31 @@ Acceptance:
   parity test; bundle/source sync alone does not prove fallback/source parity.
 - Provider dialects remain isolated: Cartesia prompts never leak into xAI routes, xAI tags never
   leak into Cartesia routes, and OpenAI/ElevenLabs routes prohibit provider markup entirely.
+
+### Fix 7a: Keep messaging delivery intent model-owned and adapter-neutral
+
+Natural message bubbles and optional audio are surface decisions, not runtime classification tasks.
+The registered `surface.messaging.optional_audio` and `surface.messaging.bubble_boundaries` prompts
+teach the selected Main Agent the shared `{SKIP_VOICE}` and `{MSG_BREAK}` contract. Telegram audio
+and text prompts include those layers explicitly so Prompt Workbench can show source, compiled,
+live, include/dependent, and eval lineage.
+
+Runtime recognizes only standalone reserved control lines outside code fences and block quotes. It
+must not decide that an answer is an email, non-conversational, too long, or better split by
+matching words or prompt text. JavaScript and Python parsers share a versioned grammar and parity
+test. A compatible future messaging adapter consumes the same parsed intent while applying its own
+transport limits.
+
+Acceptance:
+
+- copy-ready text may suppress optional audio without losing text;
+- ordinary conversation retains audio unless the agent has a semantic reason to suppress it;
+- an explicit request to hear/read/speak never suppresses audio;
+- natural conversation uses no more than two `{MSG_BREAK}` controls;
+- copy-ready artifacts do not receive semantic bubble breaks;
+- no complete or partial control appears in visible or persisted chat text;
+- one logical turn remains one persisted turn with at most one audio attachment;
+- exact-model evaluation covers positive and negative judgment, not only parser correctness.
 
 ### Fix 8: Tier memory context instead of dumping everything blindly
 

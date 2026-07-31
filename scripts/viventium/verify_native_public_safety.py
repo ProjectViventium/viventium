@@ -17,6 +17,18 @@ class PublicSafetyError(RuntimeError):
 
 FORBIDDEN_DIRECTORY_NAMES = {".cache", "__pycache__"}
 FORBIDDEN_FILE_SUFFIXES = ("-audit.json", ".log", ".pyc", ".pyo")
+FORBIDDEN_ENV_DIRECTORY_NAMES = {"service-env"}
+FORBIDDEN_ENV_FILE_NAMES = {
+    ".env",
+    ".env.local",
+    "librechat.env",
+    "librechat.owner.env",
+    "owner.env",
+    "deleting.env",
+    "runtime.env",
+    "runtime.local.env",
+}
+FORBIDDEN_ENV_FILE_PREFIXES = (".env.viventium-",)
 OWNED_SURFACES = (
     Path("payload/apps"),
     Path("payload/bin"),
@@ -130,6 +142,12 @@ def verify(root: Path, forbidden_prefixes: list[str]) -> dict[str, object]:
     for path in files:
         relative = path.relative_to(root)
         scanned_bytes += path.stat().st_size
+        if (
+            any(part in FORBIDDEN_ENV_DIRECTORY_NAMES for part in relative.parts)
+            or relative.name in FORBIDDEN_ENV_FILE_NAMES
+            or relative.name.startswith(FORBIDDEN_ENV_FILE_PREFIXES)
+        ):
+            findings.append(f"forbidden environment artifact path: {relative.as_posix()}")
         if any(part in FORBIDDEN_DIRECTORY_NAMES for part in relative.parts) or relative.name.endswith(
             FORBIDDEN_FILE_SUFFIXES
         ):

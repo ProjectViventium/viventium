@@ -15,7 +15,7 @@
 #   WORKSPACE_BASE - Mount point for Azure File Share
 #   ANTHROPIC_FOUNDRY_API_KEY - Azure Foundry API key
 #   ANTHROPIC_FOUNDRY_RESOURCE - Azure Foundry resource name
-#   ANTHROPIC_MODEL - Model to use (default: claude-opus-4-5)
+#   ANTHROPIC_MODEL - Model to use (default: claude-opus-5)
 # VIVENTIUM END
 
 services:
@@ -50,7 +50,7 @@ services:
       - CLAUDE_CODE_USE_FOUNDRY=${CLAUDE_CODE_USE_FOUNDRY:-1}
       - ANTHROPIC_FOUNDRY_API_KEY=${ANTHROPIC_FOUNDRY_API_KEY:-}
       - ANTHROPIC_FOUNDRY_RESOURCE=${ANTHROPIC_FOUNDRY_RESOURCE:-}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-opus-4-5}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-opus-5}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

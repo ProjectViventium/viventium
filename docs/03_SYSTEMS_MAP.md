@@ -31,6 +31,39 @@ Connected-channel ownership inside LibreChat:
 - Native Easy Install channel turns keep that same signed gateway route but use the owner-checked
   mode-`0600` `VIVENTIUM_NATIVE_API_SOCKET`; source profiles retain the loopback HTTP transport
 
+Installed Telegram runtime ownership:
+
+- source/public code inventory and assembly:
+  `scripts/viventium/telegram_runtime_component.py`
+- content-addressed code, sealed dependency environments, and recovery controller:
+  `~/Library/Application Support/Viventium/runtime-components/telegram-viventium/`
+- live/candidate selection:
+  `~/Library/Application Support/Viventium/runtime*/components/telegram-viventium.json`
+- canonical preferences and legacy migration evidence:
+  `~/Library/Application Support/Viventium/state/telegram-user-configs/` and
+  `state/telegram-user-config-migration/`
+- source provenance and execution identity remain separate in schema-2 poller receipts owned by
+  `scripts/viventium/telegram_poller_handoff.py`
+
+GlassHive core provider ownership:
+
+- compiler registration/capabilities: `scripts/viventium/config_compiler.py`
+- Agent document and Builder fields: nested LibreChat `packages/data-schemas`, `packages/data-provider`,
+  `packages/api`, and `client/src/components/SidePanel/Agents/`
+- exact Chat Completions/Responses provider, session, activity, and cancellation API: nested GlassHive
+  `runtime_phase1/src/workers_projects_runtime/conversation_provider.py`
+- provider authentication boundary: a provider-only bearer token maps to a configured principal;
+  Viventium's compiler explicitly grants trusted LibreChat identity delegation/full access while
+  MCP and runtime administrator credentials remain separate; projected bootstrap bundles also
+  require a fresh HMAC signature from the capability broker
+- conversation-mode harness execution: nested GlassHive
+  `runtime_phase1/src/workers_projects_runtime/profile_runtime.py`
+- canonical LIFE template/bootstrap: `templates/life-v0.01/` and
+  `scripts/viventium/life_bootstrap.py`; private bootstrap version state remains in App Support
+- UI activity part: nested LibreChat `client/src/components/Chat/Messages/Content/HarnessActivity.tsx`
+- Telegram long-turn transport: the compiler owns a 120-second `/chat` setup budget and a
+  720-second SSE read budget; reconnect remains idempotent and never authorizes a second harness run
+
 Feelings ownership inside LibreChat:
 
 - compiler/env contract: root `config.schema.yaml`, examples, and `scripts/viventium/config_compiler.py`
@@ -46,6 +79,16 @@ Feelings ownership inside LibreChat:
   workspace while the selected-band sidebar owns its range editor
 - feeling-aware spoken prompt source: `viventium/source_of_truth/prompts/surface/voice_feeling_expression.md`
   included by registered voice-call and Telegram-audio provider prompts
+
+Smart messaging delivery ownership:
+
+- model decision prompts: nested LibreChat `viventium/source_of_truth/prompts/surface/messaging_*.md`
+- JavaScript parsing/persistence: nested LibreChat
+  `api/server/services/viventium/deliveryControls.js` and `voiceArtifactText.js`
+- adapter-neutral Python grammar: `viventium_v0_4/shared/delivery_controls.py`
+- Telegram direct/proactive delivery: `viventium_v0_4/telegram-viventium/TelegramVivBot/`
+- cross-language parity and user acceptance: `tests/release/test_delivery_controls_contract.py` and
+  `qa/telegram-voice-replies/`
 - Telegram audio delivery/telemetry: `viventium_v0_4/telegram-viventium/TelegramVivBot/`, consuming
   the same shared voice capability JSON as LibreChat prompt composition
 

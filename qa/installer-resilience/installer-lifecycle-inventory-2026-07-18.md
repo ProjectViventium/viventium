@@ -200,7 +200,7 @@ GlassHive also contains many ignored runtime-created git directories under worke
 They are not managed components and will not exist on a clean install. This is another reason the
 established machine cannot substitute for clean-pin acceptance.
 
-### Current Isolated Candidate Reconciliation — 2026-07-22
+### Current Isolated Candidate Reconciliation — 2026-07-24
 
 After the component pull requests merged, a reconciliation fetched each current `origin/main`, compared
 the hosted merge commit with the captured GitHub result, and compared the merged tree with the
@@ -208,14 +208,18 @@ previously audited review tree. All 12 current component trees are pinned to rev
 the reviewed isolated worktrees remain clean, and the parent lock records the real merged `main`
 commits:
 
+The July 24 universal-upgrade preservation evidence remains valid as upgrade/runtime QA, but its
+temporary local-candidate component refs are historical and must not replace the newer public
+component refs below.
+
 | Component | Current ref | Local source state | Delivery evidence |
 | --- | --- | --- | --- |
-| LibreChat | `6ba9ee1cf92cce7946e4204d499629dc78fc4fe7` | merged tree exact; review worktree clean | Earlier release evidence remains valid. PR 74 added the read-only Viventium-Health MCP registration, direct-action ownership boundary, and four main-agent bindings; source YAML and the 37-case agent-sync suite pass. Signed/notarized release and installed-runtime identity remain separate gates. |
+| LibreChat | `058f6cb2eb626e664964507f5d5397188bd765e2` | merged tree exact; review worktree clean | PRs 75 and 76 added GlassHive as a core Provider/Model choice plus exact capability/effort, Opus 5, migration, and scheduler contracts. Full API, client, aggregate build, lint, accessibility, Windows/Linux, and Redis CI passed. Signed/notarized release and installed-runtime identity remain separate gates. |
 | agents-playground | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | merged tree exact; review worktree clean | PR 1 merged reviewed head `112f646c...`; classic fallback only. Artifact identity remains open. |
 | livekit | `c20e96166726565f026f894ccca6f1cff2480741` | merged tree exact; review worktree clean | PR 1 merged reviewed head `8839980c...`; the locked Docker runtime is a separate delivery artifact. |
 | cartesia-voice-agent | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | merged tree exact; review worktree clean | PR 1 merged reviewed head `df2f0248...`; artifact identity remains open. |
 | agent-starter-react | `f196cd5837fe6044543c50f5912f63e976d9d7b1` | merged tree exact; review worktree clean | PR 8 merged reviewed head `fd778562...`, the current modern-playground source. Its hosted test passes; final installed identity remains open. |
-| GlassHive | `031b3e54dc8b50ed2132c4b814853b11ce28f7ce` | public component main; parent pin reconciled | PR 44 advanced the reviewed public component with worker runtime hardening, Claude effort/Bedrock support, content-safe usage telemetry, artifact pagination, and sandbox timeout forwarding. Built and installed artifact identity remain separate gates. |
+| GlassHive | `1a407a4e90ceea7cd9febcf56b0759ff46f35af0` | merged tree exact; review worktree clean | PR 46 added the authenticated universal AI endpoint, conversation sessions, harness activity/cancellation, redaction, and canonical workspace controls required by the core provider. Built and installed artifact identity remain separate gates. |
 | Viventium-Health | `a8c14028069e91405c570545866ebfa206b4ee7d` | public component main; owner-safe acceptance committed | Raw append-only WHOOP connector, owner-level daily scheduler, and read-only MCP are isolated and tested. Real OAuth/pulls/refresh/scheduling/full MCP replay and the parent cognitive A/B passed without publishing health data; late correction and revocation remain open. Secret-bearing CLI input was removed and ordinary private chat retention is documented explicitly. |
 | ms-365-mcp-server | `c4c6f33b5e395a96780576cf0b55e5c420309e31` | merged tree exact; review worktree clean | PR 1 merged reviewed head `61f4b88e...`; runtime identity remains open. |
 | google_workspace_mcp | `070aee1fc34b2eb6e32237e81f3333a71a7e75bb` | merged tree exact; review worktree clean | PR 2 squash-merged reviewed head `c99e0e8d...`; shipped DXT/runtime identity remains open. |

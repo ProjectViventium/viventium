@@ -107,7 +107,7 @@ def test_express_service_summary_treats_deferred_playground_as_core_ready(monkey
         "Deferred",
         "Disabled by Easy Install; enable Voice when you want the playground.",
     )
-    assert services["Primary AI"] == (
+    assert services["Direct AI Accounts"] == (
         "Add in browser",
         "Add an OpenAI API key in Settings > Account > Connected Accounts",
     )
@@ -850,6 +850,30 @@ def test_build_connected_accounts_notice_matches_anthropic_only_foundation_contr
     assert "OpenAI" not in notice
 
 
+def test_build_connected_accounts_notice_distinguishes_glasshive_main_from_direct_cortices() -> None:
+    install_summary = load_install_summary_module()
+
+    config = {
+        "runtime": {"ports": {"lc_frontend_port": 3190}},
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "connected_account"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "voice": {"mode": "local"},
+        "integrations": {
+            "glasshive": {"enabled": True, "provider": {"enabled": True}},
+        },
+    }
+
+    notice = install_summary.build_connected_accounts_notice(config)
+
+    assert "Codex CLI" in notice
+    assert "GlassHive-backed Viventium Main" in notice
+    assert "direct background cortices" in notice
+    assert "shipped Viventium and background agents" not in notice
+
+
 def test_build_connected_accounts_notice_mentions_workspace_accounts_when_enabled() -> None:
     install_summary = load_install_summary_module()
 
@@ -1328,7 +1352,7 @@ def test_build_service_rows_reports_auth_posture() -> None:
     rows = install_summary.build_service_rows(config, {}, probe_live=False)
     services = {name: (status, detail) for name, status, detail in rows}
 
-    assert services["Primary AI"] == (
+    assert services["Direct AI Accounts"] == (
         "Action Required",
         "Add an OpenAI API key in Settings > Account > Connected Accounts",
     )
@@ -1360,7 +1384,7 @@ def test_build_service_rows_does_not_report_connect_openai_when_account_route_is
     rows = install_summary.build_service_rows(config, runtime_env, probe_live=False)
     services = {name: (status, detail) for name, status, detail in rows}
 
-    status, detail = services["Primary AI"]
+    status, detail = services["Direct AI Accounts"]
     assert status == "Configured"
     assert "Connect OpenAI" not in detail
     assert "account-scoped route configured" in detail
@@ -1386,7 +1410,7 @@ def test_build_service_rows_does_not_call_legacy_account_bridge_ready_without_op
             config, runtime_env, probe_live=False
         )
     }
-    status, detail = services["Primary AI"]
+    status, detail = services["Direct AI Accounts"]
     assert status == "Action Required"
     assert "experimental OpenAI account bridge" in detail
 
@@ -1809,6 +1833,38 @@ def test_build_service_rows_probes_public_glasshive_through_its_local_upstream(m
     ]
 
 
+def test_glasshive_status_requires_the_enabled_provider_surface_to_be_healthy(
+    monkeypatch,
+) -> None:
+    install_summary = load_install_summary_module()
+    config = {
+        "runtime": {"ports": {}},
+        "llm": {"primary": {"auth_mode": "connected_account"}},
+        "voice": {"mode": "local"},
+        "integrations": {
+            "glasshive": {"enabled": True, "provider": {"enabled": True}}
+        },
+    }
+    runtime_env = {
+        "START_GLASSHIVE": "true",
+        "GLASSHIVE_OPERATOR_BASE_URL": "http://127.0.0.1:8780",
+        "GLASSHIVE_PROVIDER_BASE_URL": "http://127.0.0.1:8766/v1",
+    }
+    monkeypatch.setattr(install_summary, "stack_expected_live", lambda *_args: True)
+    monkeypatch.setattr(install_summary, "cli_operation_running", lambda *_args: False)
+    monkeypatch.setattr(
+        install_summary,
+        "http_ok",
+        lambda url: "8780" in url,
+    )
+
+    rows = install_summary.build_service_rows(config, runtime_env, probe_live=True)
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["GlassHive"][0] == "Action Required"
+    assert "provider: http://127.0.0.1:8766/v1" in services["GlassHive"][1]
+
+
 def test_build_service_rows_reports_scheduler_health_and_sanitized_ledger(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -2081,7 +2137,7 @@ def test_build_brain_setup_rows_reports_guided_postures_without_internal_lab_fea
     rows = install_summary.build_brain_setup_rows(config, {})
     states = {name: (state, action) for name, state, action in rows}
 
-    assert states["Primary AI"][0] == "Needs setup"
+    assert states["Direct AI Accounts"][0] == "Needs setup"
     assert states["Transcript Ingest"][0] == "Needs setup"
     assert states["Conversation Recall/RAG"][0] == "Needs setup"
     assert states["Scheduler"][0] == "Needs setup"
@@ -2160,8 +2216,8 @@ def test_build_brain_setup_rows_does_not_call_connected_account_route_ready() ->
     rows = install_summary.build_brain_setup_rows(config, runtime_env)
     states = {name: (state, action) for name, state, action in rows}
 
-    assert states["Primary AI"][0] == "Needs setup"
-    assert "Connected Accounts" in states["Primary AI"][1]
+    assert states["Direct AI Accounts"][0] == "Needs setup"
+    assert "Connected Accounts" in states["Direct AI Accounts"][1]
 
 
 def test_build_brain_setup_rows_does_not_call_unprobed_fallback_ready() -> None:

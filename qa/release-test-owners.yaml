@@ -40,33 +40,53 @@ release_tests:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_detached_librechat_supervision.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_dev_runtime_activation.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_feelings_contract.py:
     qa_owner: qa/emotional-cortex/cases.md
   tests/release/test_feelings_navigation_contract.py:
     qa_owner: qa/emotional-cortex/cases.md
+  tests/release/test_first_upgrade_bridge.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_first_upgrade_bridge_docker.py:
+    qa_owner: qa/continuity-ops/cases.md
   tests/release/test_directory_link.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_default_nightly_routines.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_delivery_controls_contract.py:
+    qa_owner: qa/telegram-voice-replies/cases.md
   tests/release/test_doctor_sh.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_git_helper.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_glasshive_core_provider_qa.py:
+    qa_owner: qa/glasshive-core-provider/cases.md
   tests/release/test_install_summary.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_helper_runtime_intent.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_install_experience_labels.py:
     qa_owner: qa/installer-resilience/cases.md
+  tests/release/test_life_bootstrap.py:
+    qa_owner: qa/glasshive-core-provider/cases.md
   tests/release/test_installer_ui.py:
     qa_owner: qa/installer-resilience/cases.md
   tests/release/test_librechat_client_defaults.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_librechat_dev_start_config_sync.py:
     qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_librechat_env_upgrade_continuity.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_librechat_owner_env.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_librechat_package_rebuild_contract.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_local_web_search_compose.py:
     qa_owner: qa/release-readiness/cases.md
   tests/release/test_macos_helper_install.py:
+    qa_owner: qa/stable-dev-runtime/cases.md
+  tests/release/test_macos_helper_supervision.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_managed_agent_migration_history.py:
     qa_owner: qa/agent-config-continuity/cases.md
@@ -76,6 +96,8 @@ release_tests:
     qa_owner: qa/local-docker-services/cases.md
   tests/release/test_ms365_launcher_contract.py:
     qa_owner: qa/release-readiness/cases.md
+  tests/release/test_mongo_engine_identity.py:
+    qa_owner: qa/continuity-ops/cases.md
   tests/release/test_native_stack_helpers.py:
     qa_owner: qa/stable-dev-runtime/cases.md
   tests/release/test_native_bootstrap_ui.py:
@@ -148,6 +170,10 @@ release_tests:
     qa_owner: qa/conversation-recall-rag/cases.md
   tests/release/test_rag_compose_resource_guardrails.py:
     qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_rag_postgres_migration.py:
+    qa_owner: qa/conversation-recall-rag/cases.md
+  tests/release/test_rag_postgres_migration_docker.py:
+    qa_owner: qa/conversation-recall-rag/cases.md
   tests/release/test_remote_call_tunnel.py:
     qa_owner: qa/remote-access/cases.md
   tests/release/test_sandpack_runtime_contract.py:
@@ -170,12 +196,22 @@ release_tests:
     qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_telegram_media_prereqs.py:
     qa_owner: qa/telegram-media-prereqs/cases.md
+  tests/release/test_telegram_poller_handoff.py:
+    qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_telegram_runtime_component.py:
+    qa_owner: qa/telegram-runtime/cases.md
   tests/release/test_telegram_transcription_error_contract.py:
     qa_owner: qa/telegram-runtime/cases.md
+  tests/release/test_telegram_user_config_migration.py:
+    qa_owner: qa/continuity-ops/cases.md
   tests/release/test_upgrade_transaction.py:
     qa_owner: qa/continuity-ops/cases.md
   tests/release/test_viventium_health_integration.py:
     qa_owner: qa/viventium-health/cases.md
+  tests/release/test_upgrade_support.py:
+    qa_owner: qa/continuity-ops/cases.md
+  tests/release/test_uploads_migration.py:
+    qa_owner: qa/continuity-ops/cases.md
   tests/release/test_voice_call_startup_guard.py:
     qa_owner: qa/modern-playground-voice/cases.md
   tests/release/test_voice_playground_dispatch_contract.py:

@@ -563,6 +563,28 @@ def test_assembler_rejects_unattestable_component_metadata(tmp_path: Path) -> No
     assert "node arm64 component digest" in invalid_digest.stderr
 
 
+@pytest.mark.parametrize(
+    "relative",
+    (
+        Path("runtime.env"),
+        Path("runtime.local.env"),
+        Path("service-env/librechat.owner.env"),
+    ),
+)
+def test_assembler_rejects_generated_owner_environment_inputs(
+    tmp_path: Path,
+    relative: Path,
+) -> None:
+    inputs = fixture_inputs(tmp_path)
+    file(inputs["librechat"] / relative, "OWNER_VALUE=weak-sentinel\n")
+
+    completed = run_assembler(tmp_path, inputs, tmp_path / "candidate")
+
+    assert completed.returncode != 0
+    assert "secret-shaped input" in completed.stderr
+    assert "weak-sentinel" not in completed.stderr
+
+
 def test_assembler_excludes_runtime_artifacts_and_python_bytecode(tmp_path: Path) -> None:
     inputs = fixture_inputs(tmp_path)
     private_fixture = synthetic_macos_home("build-owner", "private") + "\n"

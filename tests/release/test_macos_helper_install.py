@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import os
 import plistlib
+import shlex
+import shutil
+import socket
 import stat
 import subprocess
 import hashlib
 import importlib.util
 import json
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 import sys
 
@@ -103,6 +109,128 @@ def _make_fake_runtime_repo_root(path: Path) -> None:
     (path / "viventium_v0_4").mkdir(parents=True, exist_ok=True)
     (path / "viventium_v0_4" / "viventium-librechat-start.sh").write_text(
         "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    scheduler_root = (
+        path
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "viventium"
+        / "MCPs"
+        / "scheduling-cortex"
+    )
+    (scheduler_root / "scheduling_cortex").mkdir(parents=True, exist_ok=True)
+    (scheduler_root / "pyproject.toml").write_text(
+        "[project]\nname = \"synthetic-scheduling-cortex\"\nversion = \"0.0.0\"\n",
+        encoding="utf-8",
+    )
+    (scheduler_root / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (scheduler_root / "requirements.txt").write_text("fastmcp\n", encoding="utf-8")
+    (scheduler_root / "scheduling_cortex" / "__init__.py").write_text(
+        "__all__ = []\n",
+        encoding="utf-8",
+    )
+    (scheduler_root / "scheduling_cortex" / "server.py").write_text(
+        "def main():\n    return 0\n",
+        encoding="utf-8",
+    )
+    shared_root = path / "viventium_v0_4" / "shared"
+    shared_root.mkdir(parents=True)
+    (shared_root / "__init__.py").write_text("", encoding="utf-8")
+    (shared_root / "no_response.py").write_text(
+        "def is_no_response_only(_value):\n    return False\n",
+        encoding="utf-8",
+    )
+    shared_voice_root = shared_root / "voice"
+    shared_voice_root.mkdir()
+    for name in (
+        "tts_provider_capabilities.json",
+        "cartesia_sonic3_capabilities.json",
+        "xai_tts_capabilities.json",
+    ):
+        (shared_voice_root / name).write_text("{}\n", encoding="utf-8")
+    telegram_bot_root = (
+        path
+        / "viventium_v0_4"
+        / "telegram-viventium"
+        / "TelegramVivBot"
+    )
+    (telegram_bot_root / "utils").mkdir(parents=True)
+    (telegram_bot_root / "bot.py").write_text(
+        "print('synthetic telegram runtime')\n",
+        encoding="utf-8",
+    )
+    (telegram_bot_root / "config.py").write_text(
+        "SYNTHETIC = True\n",
+        encoding="utf-8",
+    )
+    (telegram_bot_root / "utils" / "singleton.py").write_text(
+        "SYNTHETIC = True\n",
+        encoding="utf-8",
+    )
+    (telegram_bot_root / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "synthetic-telegram-runtime"\n'
+        'version = "0.0.0"\n'
+        'requires-python = ">=3.11"\n'
+        "dependencies = []\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["uv", "lock"],
+        cwd=telegram_bot_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    voice_gateway_root = path / "viventium_v0_4" / "voice-gateway"
+    voice_gateway_root.mkdir()
+    for name in (
+        "local_chatterbox_config.py",
+        "mlx_chatterbox_tts.py",
+        "sse.py",
+    ):
+        (voice_gateway_root / name).write_text("SYNTHETIC = True\n", encoding="utf-8")
+    (voice_gateway_root / "requirements.mlx_audio_darwin.txt").write_text(
+        "",
+        encoding="utf-8",
+    )
+    workbench_package = (
+        path
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "backend"
+        / "prompt_workbench"
+    )
+    workbench_package.mkdir(parents=True)
+    (workbench_package / "__init__.py").write_text("", encoding="utf-8")
+    (workbench_package / "scheduled_prompts.py").write_text(
+        "SYNTHETIC_INSTALLED_SUPPORT = True\n",
+        encoding="utf-8",
+    )
+    prompt_registry = path / "scripts" / "viventium" / "prompt_registry.py"
+    prompt_registry.write_text(
+        "def load_and_resolve_prompt_refs(value, _root=None):\n    return value\n",
+        encoding="utf-8",
+    )
+    source_of_truth = (
+        path
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "viventium"
+        / "source_of_truth"
+    )
+    (source_of_truth / "prompts").mkdir(parents=True)
+    (source_of_truth / "local.viventium-agents.yaml").write_text(
+        "backgroundAgents: []\n",
+        encoding="utf-8",
+    )
+    (source_of_truth / "local.librechat.yaml").write_text(
+        "version: synthetic\n",
+        encoding="utf-8",
+    )
+    (source_of_truth / "prompts" / "registry.yaml").write_text(
+        "version: 1\nprompts: {}\n",
         encoding="utf-8",
     )
 
@@ -243,6 +371,29 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     assert wrapper_text.index('if [[ "${1:-}" == "--stop" ]]; then') < wrapper_text.index(
         "export VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE=1"
     )
+    installed_scheduler_root = (
+        app_support / "runtime" / "components" / "scheduling-cortex"
+    )
+    installed_component_env = {
+        **os.environ,
+        "PYTHONPATH": str(installed_scheduler_root),
+    }
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path; "
+                "from scheduling_cortex import dispatch; "
+                "module = dispatch._import_workbench_scheduled_prompts(); "
+                "root = Path.cwd().resolve(); "
+                "assert Path(module.__file__).resolve().is_relative_to(root)"
+            ),
+        ],
+        cwd=installed_scheduler_root,
+        env=installed_component_env,
+        check=True,
+    )
 
     subprocess.run(
         [
@@ -258,6 +409,285 @@ def test_install_and_uninstall_helper_bundle(tmp_path: Path) -> None:
     )
 
     assert not app_bundle.exists()
+
+
+def test_installed_scheduler_component_syncs_and_serves_matching_health(
+    tmp_path: Path,
+) -> None:
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("uv is required for installed Scheduler runtime acceptance")
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+    }
+
+    subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--no-launch",
+        ],
+        check=True,
+        env=env,
+    )
+
+    component_root = app_support / "runtime" / "components" / "scheduling-cortex"
+    component_venv = component_root / ".venv"
+    subprocess.run(
+        [uv_bin, "sync", "--frozen"],
+        cwd=component_root,
+        check=True,
+        env={**env, "UV_PROJECT_ENVIRONMENT": str(component_venv)},
+        capture_output=True,
+        text=True,
+    )
+    component_python = component_venv / "bin" / "python"
+    subprocess.run(
+        [
+            str(component_python),
+            "-c",
+            (
+                "from pathlib import Path; "
+                "from scheduling_cortex import dispatch; "
+                "module = dispatch._import_workbench_scheduled_prompts(); "
+                "assert Path(module.__file__).resolve().is_relative_to(Path.cwd().resolve())"
+            ),
+        ],
+        cwd=component_root,
+        env=env,
+        check=True,
+    )
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = int(probe.getsockname()[1])
+    state_root = app_support / "state" / "runtime" / "isolated"
+    schedule_db = state_root / "scheduling" / "schedules.db"
+    server_env = {
+        **env,
+        "VIVENTIUM_STATE_ROOT": str(state_root),
+        "VIVENTIUM_RUNTIME_PROFILE": "isolated",
+        "VIVENTIUM_DEV_ENV_ENABLED": "false",
+        "SCHEDULING_DB_PATH": str(schedule_db),
+        "SCHEDULING_MCP_DB_PATH": str(schedule_db),
+        "SCHEDULER_LIBRECHAT_SECRET": "synthetic-scheduler-secret",
+    }
+    server_log = tmp_path / "installed-scheduler.log"
+    payload = None
+    with server_log.open("wb") as log_handle:
+        process = subprocess.Popen(
+            [
+                str(component_python),
+                "-m",
+                "scheduling_cortex.server",
+                "--transport",
+                "streamable-http",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ],
+            cwd=component_root,
+            env=server_env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    break
+                try:
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/health",
+                        timeout=1,
+                    ) as response:
+                        payload = json.loads(response.read().decode("utf-8"))
+                        break
+                except (OSError, urllib.error.URLError, json.JSONDecodeError):
+                    time.sleep(0.2)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+
+    if payload is None:
+        pytest.fail(
+            "Installed Scheduler component did not serve health:\n"
+            + server_log.read_text(encoding="utf-8", errors="replace")
+        )
+    expected_db_hash = hashlib.sha256(
+        str(schedule_db.resolve()).encode("utf-8")
+    ).hexdigest()
+    assert payload["status"] == "ok"
+    assert payload["service"] == "scheduling-cortex"
+    assert payload["db_path_sha256"] == expected_db_hash
+    assert schedule_db.is_file()
+    assert component_venv.is_dir()
+    schedule_db_before_upgrade = schedule_db.read_bytes()
+    venv_sentinel = component_venv / "viventium-upgrade-preserve-sentinel"
+    venv_sentinel.write_text("installed dependency cache\n", encoding="utf-8")
+
+    subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--no-launch",
+        ],
+        check=True,
+        env=env,
+    )
+
+    assert venv_sentinel.read_text(encoding="utf-8") == "installed dependency cache\n"
+    assert schedule_db.read_bytes() == schedule_db_before_upgrade
+    assert (component_root / "scheduling_cortex" / "server.py").is_file()
+
+
+def test_scheduler_component_failure_after_venv_transfer_restores_exact_predecessor(
+    tmp_path: Path,
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    component_root = (
+        app_support / "runtime" / "components" / "scheduling-cortex"
+    )
+    prior_package = component_root / "scheduling_cortex"
+    prior_venv = component_root / ".venv"
+    prior_package.mkdir(parents=True)
+    prior_venv.mkdir()
+    prior_source = prior_package / "legacy.py"
+    prior_source.write_text("LEGACY = True\n", encoding="utf-8")
+    prior_source.chmod(0o640)
+    venv_sentinel = prior_venv / "installed-dependency"
+    venv_sentinel.write_bytes(b"exact prior venv\n")
+    venv_sentinel.chmod(0o600)
+    before = {
+        path.relative_to(component_root).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mode & 0o777,
+        )
+        for path in component_root.rglob("*")
+        if path.is_file()
+    }
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+        "VIVENTIUM_QA_FAIL_SCHEDULER_AFTER_VENV_TRANSFER": "1",
+    }
+
+    completed = subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--no-launch",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert "synthetic failure after Scheduler venv transfer" in completed.stderr
+    after = {
+        path.relative_to(component_root).as_posix(): (
+            path.read_bytes(),
+            path.stat().st_mode & 0o777,
+        )
+        for path in component_root.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    assert not list(component_root.parent.glob(".scheduling-cortex.stage.*"))
+    assert not list(component_root.parent.glob(".scheduling-cortex.backup.*"))
+
+
+@pytest.mark.parametrize(
+    "failure_phase",
+    ["config", "scheduler", "scripts", "activation", "registration"],
+)
+def test_helper_install_sigkill_windows_converge_on_retry(
+    tmp_path: Path,
+    failure_phase: str,
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+        "VIVENTIUM_QA_KILL_HELPER_INSTALL_AFTER": failure_phase,
+    }
+    command = [
+        str(SCRIPT),
+        "install",
+        "--app-support-dir",
+        str(app_support),
+        "--repo-root",
+        str(REPO_ROOT),
+        "--no-launch",
+    ]
+
+    interrupted = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert interrupted.returncode != 0
+    receipt = app_support / "state" / "helper-install-in-progress.json"
+    assert receipt.is_file()
+
+    retry_env = dict(env)
+    retry_env.pop("VIVENTIUM_QA_KILL_HELPER_INSTALL_AFTER")
+    subprocess.run(command, check=True, env=retry_env)
+
+    assert not receipt.exists()
+    applications = fake_home / "Applications"
+    assert (applications / "Viventium.app").is_dir()
+    assert not list(applications.glob(".viventium-helper-*"))
 
 
 def test_helper_install_and_uninstall_refuse_symlinked_applications_without_touching_external_data(
@@ -854,6 +1284,92 @@ def test_install_preserves_hidden_status_bar_preference(tmp_path: Path) -> None:
     assert '"showInStatusBar": false' in config_text
 
 
+def test_recovery_arm_preserves_helper_config_bytes_and_active_pointer(
+    tmp_path: Path,
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_exec = tmp_path / "build" / "ViventiumHelper"
+    _make_fake_executable(fake_exec)
+    app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    continuity = app_support / "state" / "continuity"
+    continuity.mkdir(parents=True)
+    helper_config = app_support / "helper-config.json"
+    original = (
+        "{\n"
+        f'  "repoRoot": {json.dumps(str(REPO_ROOT))},\n'
+        f'  "appSupportDir": {json.dumps(str(app_support))},\n'
+        '  "showInStatusBar": false,\n'
+        '  "ownerFutureSetting": {"nested": ["preserve", 5]}\n'
+        "}\n"
+    ).encode("utf-8")
+    helper_config.write_bytes(original)
+    helper_config.chmod(0o600)
+    _make_existing_app_bundle(
+        fake_home / "Applications" / "Viventium.app",
+        bundle_identifier="ai.viventium.helper",
+        marker={
+            "product": "ai.viventium.helper",
+            "schema_version": 1,
+        },
+    )
+    recovery_pointer = continuity / "telegram-recovery-active.json"
+    recovery_pointer.write_text('{"synthetic":"armed"}\n', encoding="utf-8")
+    recovery_pointer.chmod(0o600)
+    env = {
+        **os.environ,
+        "HOME": str(fake_home),
+        "VIVENTIUM_HELPER_SKIP_BUILD": "1",
+        "VIVENTIUM_HELPER_SKIP_LAUNCHCTL": "1",
+        "VIVENTIUM_HELPER_SKIP_LOGIN_ITEM": "1",
+        "VIVENTIUM_HELPER_BUILT_EXECUTABLE": str(fake_exec),
+        "VIVENTIUM_HELPER_RECOVERY_ARM": "1",
+    }
+
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "install",
+            "--app-support-dir",
+            str(app_support),
+            "--repo-root",
+            str(REPO_ROOT),
+            "--no-launch",
+            "--preserve-helper-config",
+            "--recovery-bundle-only",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=900,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert helper_config.read_bytes() == original
+    assert recovery_pointer.read_text(encoding="utf-8") == '{"synthetic":"armed"}\n'
+
+
+def test_helper_telegram_recovery_is_fail_closed_and_uses_sealed_component() -> None:
+    source = HELPER_SOURCE.read_text(encoding="utf-8")
+
+    assert "private nonisolated static func hasNoSymlinkComponents(" in source
+    assert "self.hasNoSymlinkComponents(path)" in source
+    assert "self.ownerControlledDirectory(componentBoundary)" in source
+    assert "self.ownerControlledDirectory(selection.codeRoot)" in source
+    assert "telegramRecoveryPointerExists" in source
+    assert "if recoveryPointerExists && recovery == nil" in source
+    assert '"state/continuity/telegram-recovery-active.json"' in source
+    assert '"viventium-telegram-runtime-recovery"' in source
+    assert '"resolve-recovery"' in source
+    assert '"VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE"' in source
+    assert '"VIVENTIUM_TELEGRAM_COMPONENT_TOOL"' in source
+    assert '"VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER"' in source
+    assert '"VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR"' in source
+    assert "recovery.selection.compatLauncher" in source
+    assert "recovery?.selection.codeRoot ?? appSupportDir" in source
+
+
 def test_install_prefers_safe_public_checkout_for_helper_runtime_when_repo_root_is_in_documents(tmp_path: Path) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -925,10 +1441,50 @@ def test_install_honors_explicit_active_developer_checkout_in_documents(tmp_path
 
     unsafe_repo_root = fake_home / "Documents" / "Viventium"
     _make_fake_runtime_repo_root(unsafe_repo_root)
+    unsafe_scheduler_root = (
+        unsafe_repo_root
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "viventium"
+        / "MCPs"
+        / "scheduling-cortex"
+    )
+    (unsafe_scheduler_root / ".venv").mkdir()
+    (unsafe_scheduler_root / ".venv" / "source-only.txt").write_text(
+        "must not be copied\n",
+        encoding="utf-8",
+    )
+    (unsafe_scheduler_root / "schedules.db").write_text(
+        "must not be copied\n",
+        encoding="utf-8",
+    )
     safe_repo_root = fake_home / "viventium"
     _make_fake_runtime_repo_root(safe_repo_root)
 
     app_support = fake_home / "Library" / "Application Support" / "Viventium"
+    helper_config_path = app_support / "helper-config.json"
+    helper_config_path.parent.mkdir(parents=True, exist_ok=True)
+    helper_config_path.write_text(
+        json.dumps(
+            {
+                "repoRoot": str(unsafe_repo_root),
+                "appSupportDir": str(app_support),
+                "allowProtectedRepoRoot": True,
+                "showInStatusBar": False,
+                "ownerFutureSetting": {"mode": "preserve"},
+                "runtimeSupervision": {
+                    "schemaVersion": 1,
+                    "desiredState": "running",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    schedule_db = app_support / "state" / "runtime" / "isolated" / "scheduling" / "schedules.db"
+    schedule_db.parent.mkdir(parents=True)
+    schedule_db.write_text("preserved schedule state\n", encoding="utf-8")
     active_checkout = app_support / "state" / "active-checkout.json"
     active_checkout.parent.mkdir(parents=True, exist_ok=True)
     active_checkout.write_text(
@@ -983,13 +1539,82 @@ def test_install_honors_explicit_active_developer_checkout_in_documents(tmp_path
 
     helper_config = json.loads((app_support / "helper-config.json").read_text(encoding="utf-8"))
     stack_wrapper_text = (app_support / "helper-scripts" / "viventium-stack.sh").read_text(encoding="utf-8")
+    installed_scheduler_root = (
+        app_support / "runtime" / "components" / "scheduling-cortex"
+    )
 
     assert helper_config["repoRoot"] == str(unsafe_repo_root.resolve())
     assert helper_config["allowProtectedRepoRoot"] is True
+    assert helper_config["showInStatusBar"] is False
+    assert helper_config["ownerFutureSetting"] == {"mode": "preserve"}
+    assert helper_config["runtimeSupervision"] == {
+        "schemaVersion": 1,
+        "desiredState": "running",
+    }
     assert str(unsafe_repo_root / "bin" / "viventium") in stack_wrapper_text
     assert str(safe_repo_root / "bin" / "viventium") not in stack_wrapper_text
     assert helper_config["repoRoot"] != str(safe_repo_root.resolve())
     assert "Binding helper to explicit developer checkout inside a macOS protected folder" in completed.stderr
+    assert (
+        "export VIVENTIUM_SCHEDULING_MCP_DIR="
+        f"{shlex.quote(str(installed_scheduler_root))}"
+        in stack_wrapper_text
+    )
+    assert (installed_scheduler_root / "pyproject.toml").is_file()
+    assert (installed_scheduler_root / "uv.lock").is_file()
+    assert (installed_scheduler_root / "scheduling_cortex" / "server.py").is_file()
+    assert (installed_scheduler_root / "shared" / "no_response.py").is_file()
+    assert (
+        installed_scheduler_root
+        / "viventium_v0_4"
+        / "prompt-workbench"
+        / "backend"
+        / "prompt_workbench"
+        / "scheduled_prompts.py"
+    ).is_file()
+    assert (
+        installed_scheduler_root / "scripts" / "viventium" / "prompt_registry.py"
+    ).is_file()
+    assert (
+        installed_scheduler_root
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "viventium"
+        / "source_of_truth"
+        / "prompts"
+        / "registry.yaml"
+    ).is_file()
+    assert not (installed_scheduler_root / ".venv").exists()
+    assert not (installed_scheduler_root / "schedules.db").exists()
+    assert schedule_db.read_text(encoding="utf-8") == "preserved schedule state\n"
+    component_env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            (
+                str(installed_scheduler_root),
+                str(
+                    installed_scheduler_root
+                    / "viventium_v0_4"
+                    / "prompt-workbench"
+                    / "backend"
+                ),
+            )
+        ),
+    }
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from scheduling_cortex import server; "
+                "from prompt_workbench import scheduled_prompts; "
+                "assert scheduled_prompts.SYNTHETIC_INSTALLED_SUPPORT is True"
+            ),
+        ],
+        cwd=installed_scheduler_root,
+        env=component_env,
+        check=True,
+    )
 
 
 def test_install_refuses_protected_helper_runtime_when_no_safe_checkout_exists(tmp_path: Path) -> None:
@@ -1114,7 +1739,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     init_section = source.split("init() {", 1)[1].split("var actionLabel:", 1)[0]
     quit_section = source.split("func quit() {", 1)[1].split("private func activateHelperLifecycle", 1)[0]
     refresh_section = source.split("private func refreshState(force: Bool = false) {", 1)[1].split(
-        "private func maybeAutoStartOnLaunch",
+        "private func reconcileRuntimeSupervision",
         1,
     )[0]
     user_facing_health_section = source.split(
@@ -1125,19 +1750,40 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
         "nonisolated static func stopCompletionReached(runtime: RuntimePorts, appSupportDir: String) async -> Bool",
         1,
     )[1].split("nonisolated static func managedServicesRunning", 1)[0]
+    supervision_section = source.split(
+        "private func reconcileRuntimeSupervision(trigger: String) {",
+        1,
+    )[1].split("private func setRuntimeDesiredState", 1)[0]
 
     assert "private let automaticTerminationReason =" in source
     assert "Viventium status-bar helper keeps the local runtime available after login." in source
     assert info_plist["NSSupportsAutomaticTermination"] is False
     assert "ProcessInfo.processInfo.disableAutomaticTermination(self.automaticTerminationReason)" in init_section
     assert init_section.index("ProcessInfo.processInfo.disableAutomaticTermination") < init_section.index("self.config = Self.loadConfig()")
-    assert 'self?.maybeAutoStartOnLaunch(trigger: "launch")' in source
-    assert 'self?.maybeAutoStartOnLaunch(trigger: "poll")' in source
+    assert 'self?.reconcileRuntimeSupervision(trigger: "launch")' in source
+    assert 'self?.reconcileRuntimeSupervision(trigger: "poll")' in source
     assert "DispatchQueue.main.asyncAfter" in source
-    assert "if Self.cliOperationStillRunning(appSupportDir: config.appSupportDir)" in source
+    assert "!Self.cliOperationStillRunning(appSupportDir: config.appSupportDir)" in source
     assert "let inFlightState = Self.inFlightStackState(appSupportDir: config.appSupportDir)" in source
-    assert 'self.log("Auto-start launching stack' in source
-    assert 'self.startStack(openWhenReady: false, launchReason: "auto-start:' in source
+    assert '"Runtime supervision launching stack attempt' in source
+    assert supervision_section.index(
+        "let snapshot = await self.stackHealthSnapshot"
+    ) < supervision_section.index(
+        "Self.telegramRecoveryWasRunning"
+    )
+    assert supervision_section.index(
+        "self.runtimeSupervision.shouldLaunch"
+    ) < supervision_section.index(
+        "Self.telegramRecoveryWasRunning"
+    )
+    assert 'launchReason: "supervisor:\\(trigger)"' in source
+    assert "recordsDesiredRunning: false" in source
+    assert "supervisedLaunch: true" in source
+    assert "runtimeSupervisionBaseDelaySeconds: TimeInterval = 15" in source
+    assert "runtimeSupervisionMaximumDelaySeconds: TimeInterval = 900" in source
+    assert "runtimeSupervisionStableHealthSeconds: TimeInterval = 300" in source
+    assert "setRuntimeDesiredState(.stopped)" in source
+    assert "setRuntimeDesiredState(.running)" in source
     assert 'return self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: "viventium-helper.log")' in source
     assert 'private nonisolated static func makeNamedHelperLogURL(' in source
     assert 'process.arguments = ["\\(repoRoot)/bin/viventium", "--app-support-dir", appSupportDir] + arguments' in source
@@ -1210,10 +1856,37 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'let binViventiumPath = "\\(repoRoot)/bin/viventium"' in source
     assert 'let runnerScriptURL = URL(fileURLWithPath: self.helperDetachedCommandScriptPath(' in source
     assert 'let legacyRunnerScriptURL = URL(fileURLWithPath: self.legacyHelperDetachedCommandScriptPath(' in source
-    assert 'guard FileManager.default.isExecutableFile(atPath: binViventiumPath) else {' in source
-    assert 'let escapedCommand = (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)' in source
+    assert (
+        "if recovery == nil &&\n"
+        "            !FileManager.default.isExecutableFile(atPath: binViventiumPath)"
+        in source
+    )
+    assert (
+        'let command = recoveryCommand ??\n'
+        '            (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)'
+        in source
+    )
+    assert "let recoveryPointerExists = self.telegramRecoveryPointerExists(" in source
+    assert "if recoveryPointerExists && recovery == nil {" in source
+    assert "let recovery = self.loadTelegramRecoverySelection(" in source
+    assert "let resolvedSelectionPath = resolved.selectionFile" in source
+    assert "resolver.executableURL = URL(fileURLWithPath: selection.python)" in source
+    assert "resolved.python == selection.python" in source
+    assert 'fileURLWithPath: "/usr/bin/python3"' not in source
+    assert "let deadline = Date().addingTimeInterval(30)" in source
+    assert "if resolver.isRunning {" in source
+    assert (
+        '"VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE": recovery.selectionPath'
+        in source
+    )
+    assert "let workingDirectory = recovery?.selection.codeRoot ?? appSupportDir" in source
+    assert (
+        "guard !Self.configUsesProtectedRepoRoot(config) ||\n"
+        "            protectedRecoveryPointer"
+        in source
+    )
     assert 'let detachedCommand = """' in source
-    assert 'cd \\(escapedAppSupportDir)' in source
+    assert 'cd \\(escapedWorkingDirectory)' in source
     assert 'nohup \\(escapedCommand) 2>&1 < /dev/null &' in source
     assert 'guard let logHandle = self.openPrivateAppendLog(logURL) else {' in source
     assert 'process.standardOutput = logHandle' in source
@@ -1223,7 +1896,10 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert 'try? FileManager.default.removeItem(at: legacyRunnerScriptURL)' in source
     assert 'process.executableURL = URL(fileURLWithPath: "/bin/bash")' in source
     assert 'process.arguments = ["-lc", detachedCommand]' in source
-    assert 'process.currentDirectoryURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)' in source
+    assert (
+        'process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)'
+        in source
+    )
     assert "process.environment = self.makeHelperStackEnvironment(" in source
     assert 'process.executableURL = URL(fileURLWithPath: "/usr/bin/open")' not in source
     assert '"-a", "Terminal"' not in source
@@ -1393,14 +2069,16 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "nonisolated static func pidFileProcessRunning(_ url: URL) -> Bool" in source
     assert 'self.log("Start blocked; another workspace owns the running stack")' in source
     assert 'self.log("Stop blocked; another workspace owns the running stack")' in source
-    assert 'self.log("Auto-start blocked; split-workspace state detected' in source
+    assert '"Runtime supervision blocked; split-workspace state detected' in source
     assert 'self.stackState = .unavailable("Split Workspace")' in source
     assert 'self.stackState = .running' in refresh_section
     assert 'self.stackState = .stopped' in refresh_section
     assert refresh_section.index("if splitWorkspace {") < refresh_section.index("if healthy {")
     assert refresh_section.index("if healthy {") < refresh_section.index("if shouldPreserveBusyState {")
-    assert 'self.log("Auto-start skipped; stack already healthy' in source
-    assert 'self.stackState = .running\n                    self.didAttemptLaunchAutostart = true' in source
+    assert "self.runtimeSupervision.recordHealthy(" in source
+    assert "self.runtimeSupervision.recordUnhealthy(" in source
+    assert "self.runtimeSupervision.recordLaunchAttempt(" in source
+    assert "self.persistRuntimeSupervision()" in source
     assert 'appendingPathComponent("state/runtime/\\(runtimeProfile)/stack-owner.json")' in source
     assert 'let managedStopCheckURLs: [String]' in source
     assert 'managedStopCheckURLs: self.managedStopCheckURLs(values: values)' in source
@@ -1502,7 +2180,7 @@ def test_helper_source_autostarts_stack_on_launch() -> None:
     assert "return await self.frontendHealthy(port: playgroundPort)" not in source
     assert "await self.stackHealthSnapshot(runtime: runtime).healthy" in user_facing_health_section
     assert "await self.playgroundHealthy(port: runtime.playgroundPort)" in source
-    assert "return await self.managedServicesHealthy(runtime: runtime)" not in source
+    assert "return await self.managedServicesHealthy(runtime: runtime)" in source
     assert "let shouldPreserveBusyState =" in source
     assert "self.stackState.actionBusy &&" in source
     assert "inFlightState != nil" in source
@@ -1663,7 +2341,10 @@ def test_helper_package_stays_compatible_with_clean_intel_command_line_tools() -
     command_dispatch = cli_source.split('case "$COMMAND" in', 1)[1]
     start_section = command_dispatch.split('  start)', 1)[1].split('  stop)', 1)[0]
     assert 'The CLI lock protects start preparation, config compilation, and runtime' in start_section
-    assert 'cleanup_cli_lock\n    "${START_CMD[@]}"' in start_section
+    assert (
+        'cleanup_cli_lock\n'
+        '    VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"'
+    ) in start_section
     assert 'VIVENTIUM_HELPER_SKIP_LOGIN_ITEM=1 run_macos_helper_installer install "$@"' in cli_source
     assert 'run_macos_helper_installer install' in cli_source
     assert 'if ! run_macos_helper_install_command 1 "${helper_args[@]}"; then' in cli_source

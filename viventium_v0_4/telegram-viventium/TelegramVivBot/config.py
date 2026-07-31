@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -581,18 +582,38 @@ def file_lock(filename):
 
 def save_user_config(user_id, config):
     if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
+        os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(CONFIG_DIR, 0o700)
+    except OSError:
+        pass
 
     filename = os.path.join(CONFIG_DIR, f'{user_id}.json')
 
-    # Write directly without file_lock to avoid Azure Files SMB conflicts.
-    # The bot runs as a single process so concurrent writes are not a concern.
+    temporary = os.path.join(
+        CONFIG_DIR,
+        f".{user_id}.{os.getpid()}.{secrets.token_hex(4)}.tmp",
+    )
     try:
-        with open(filename, 'w') as f:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(descriptor, 'w') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, filename)
+        os.chmod(filename, 0o600)
     except OSError as e:
         import logging
         logging.getLogger(__name__).warning("Failed to save config %s: %s", filename, e)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
 
 def load_user_config(user_id):
     filename = os.path.join(CONFIG_DIR, f'{user_id}.json')
@@ -906,8 +927,8 @@ class UserConfig:
         
         # CRITICAL: Use .data.keys() to avoid triggering __getitem__ auto-creation
         self.parameter_name_list = list(self.users["global"].data.keys())
-        if global_changed:
-            save_user_config("global", self.users["global"].data)
+        # Defaults are an in-memory compatibility view. Startup must never rewrite an existing
+        # user's preference file merely because a newer release added a default.
 
 
     def load_all_configs(self):
@@ -919,19 +940,12 @@ class UserConfig:
                 user_id = filename[:-5]  # Remove '.json' suffix
                 user_config = load_user_config(user_id)
                 self.users[user_id] = NestedDict()
-                user_changed = False
-
                 # REMOVED: Plugin key mapping - Plugins removed, Viventium handles tools
 
                 # Process configuration items normally
                 for key, value in user_config.items():
                     self.users[user_id][key] = value
-                    # Don't overwrite user-specific api_url and api_key - they may be provider-specific
-                    # Only update global systemprompt if needed
-                    if user_id == "global" and key == "systemprompt" and value != self.systemprompt:
-                        self.users[user_id]["systemprompt"] = self.systemprompt
-                        user_changed = True
-                
+
                 # CRITICAL: Add missing preferences from PREFERENCES dict (handles new preferences)
                 # This ensures backward compatibility when new preferences are added
                 # Use __contains__ or .data directly to avoid triggering NestedDict.__getitem__ auto-creation
@@ -939,10 +953,8 @@ class UserConfig:
                     # Check if key exists using .data directly to avoid auto-creation
                     if pref_key not in self.users[user_id].data:
                         self.users[user_id][pref_key] = pref_value
-                        user_changed = True
-
-                if user_changed:
-                    save_user_config(user_id, self.users[user_id].data)
+                # Preserve the exact file on startup. A later explicit user change persists the
+                # complete in-memory view through the normal set/toggle path.
 
     def get_init_preferences(self):
         return {
@@ -1428,7 +1440,7 @@ PREFERENCE_DISPLAY_NAMES = {
     # Feature: Explicit voice reply toggle in Preferences.
     "VOICE_RESPONSES_ENABLED": "Voice replies",
     # === VIVENTIUM END ===
-    "ALWAYS_VOICE_RESPONSE": "Always Voice",  # User-friendly label for voice response toggle
+    "ALWAYS_VOICE_RESPONSE": "Smart voice for text",
 }
 
 def create_buttons(strings, plugins_status=False, lang="en", button_text=None, Suffix="", chatid=None, status_map=None):

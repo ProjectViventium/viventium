@@ -248,7 +248,7 @@ compatible only at effective reasoning `none`.
 
 The July 9, 2026 built-in model migration is a separate, evaluated source/compiler/runtime change:
 the conscious agent and quality-first cortices use explicit Sol; balanced and latency-sensitive
-cortices use explicit Terra; every text route uses Opus 4.8 fallback; and the voice route remains
+cortices use explicit Terra; every text route uses Opus 5 fallback; and the voice route remains
 Grok 4.3. The exact map and efforts live in `02_Background_Agents.md`. This does not add Pro mode,
 persisted reasoning, Programmatic Tool Calling, explicit caching, or multi-agent orchestration.
 There is no `gpt-5.6-pro` model slug; Pro is a reasoning mode.

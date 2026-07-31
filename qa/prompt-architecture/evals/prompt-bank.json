@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "scope": "public-safe synthetic prompt architecture eval bank",
   "safety": {
     "external_api_mode": "read_only",
@@ -209,6 +209,72 @@
             "does not expose provider fallback mechanics",
             "does not emit malformed provider-control tags",
             "keeps display text clean"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "telegram_smart_delivery",
+      "goal": "Let the Main Agent choose natural Telegram audio and message boundaries while keeping copy-first artifacts clean and complete.",
+      "semanticJudge": true,
+      "promptRefs": [
+        "main.conscious_agent",
+        "surface.telegram.text",
+        "surface.telegram.audio_output",
+        "surface.messaging.optional_audio",
+        "surface.messaging.bubble_boundaries"
+      ],
+      "cases": [
+        {
+          "id": "telegram_copy_ready_email_skips_optional_audio",
+          "surface": "telegram",
+          "prompt": "Rewrite this synthetic note as a polished email I can copy and send: Please confirm the sample review by Friday and reply to qa@example.com.",
+          "rubric": [
+            "returns the complete polished email in text",
+            "ends with a standalone {SKIP_VOICE} control because the artifact is meant to be read, copied, and edited",
+            "does not explain or expose the control to the user",
+            "does not use {MSG_BREAK} inside the email artifact"
+          ]
+        },
+        {
+          "id": "telegram_conversation_keeps_smart_audio",
+          "surface": "telegram",
+          "prompt": "Talk me through why the ocean feels calming in a warm conversational way.",
+          "rubric": [
+            "answers as natural spoken conversation",
+            "does not emit {SKIP_VOICE} merely because the answer has useful detail",
+            "does not mention delivery controls or channel mechanics"
+          ]
+        },
+        {
+          "id": "telegram_explicit_read_aloud_keeps_audio",
+          "surface": "telegram",
+          "prompt": "Read this short synthetic reminder aloud for me: bring the blue notebook to the sample review.",
+          "rubric": [
+            "returns a concise speakable response",
+            "does not emit {SKIP_VOICE} because the user explicitly asked to hear it",
+            "does not mention delivery controls or channel mechanics"
+          ]
+        },
+        {
+          "id": "telegram_two_natural_beats_may_split",
+          "surface": "telegram",
+          "prompt": "Reply like a thoughtful friend: first reassure me that the synthetic plan is manageable, then add one short practical afterthought.",
+          "rubric": [
+            "returns one coherent logical answer",
+            "may use one standalone {MSG_BREAK} between two complete conversational beats",
+            "uses no more than one {MSG_BREAK} for this short answer",
+            "does not produce tiny fragments or explain the message boundary"
+          ]
+        },
+        {
+          "id": "telegram_copy_artifact_stays_one_message",
+          "surface": "telegram",
+          "prompt": "Write a three-item checklist I can copy exactly for a synthetic launch review.",
+          "rubric": [
+            "returns the complete checklist as one coherent copy-ready artifact",
+            "does not insert {MSG_BREAK} inside the checklist",
+            "does not mention delivery controls or channel mechanics"
           ]
         }
       ]

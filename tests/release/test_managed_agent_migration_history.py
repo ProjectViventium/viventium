@@ -23,7 +23,7 @@ def test_standalone_librechat_checkout_verifies_all_predecessors_without_parent_
 ) -> None:
     standalone = tmp_path / "standalone-librechat"
     subprocess.run(
-        ["git", "clone", "--quiet", "--shared", str(LIBRECHAT_ROOT), str(standalone)],
+        ["git", "clone", "--quiet", "--no-hardlinks", str(LIBRECHAT_ROOT), str(standalone)],
         check=True,
     )
     shutil.copy2(GENERATOR, standalone / "scripts" / GENERATOR.name)
@@ -44,7 +44,7 @@ def test_standalone_librechat_checkout_verifies_all_predecessors_without_parent_
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "self-contained and matches all 62 predecessor objects" in completed.stdout
+    assert "self-contained and matches all 65 predecessor objects" in completed.stdout
 
 
 def test_explicit_parent_history_audit_matches_the_hermetic_artifact() -> None:

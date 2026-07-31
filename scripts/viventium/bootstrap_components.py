@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import ctypes
+import errno
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
 import tarfile
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -48,6 +53,10 @@ COMPONENT_SELECTION_PREFIXES = frozenset(
 )
 YAML_MAPPING_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):(?:[ ]+(.*))?$")
 SCP_GIT_URL_RE = re.compile(r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>.+)$")
+SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+AT_FDCWD = -100
+DARWIN_RENAME_EXCL = 0x00000004
+LINUX_RENAME_NOREPLACE = 0x00000001
 
 
 class ComponentSelectionConfig(dict[str, Any]):
@@ -549,13 +558,102 @@ def is_empty_placeholder_dir(path: Path) -> bool:
     return path.is_dir() and not any(path.iterdir())
 
 
+def safe_component_target_path(
+    repo_root: Path,
+    component: dict[str, Any],
+) -> Path:
+    name = str(component.get("name") or component.get("path") or "component")
+    raw_path = component.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise SystemExit(f"Component {name} has no safe relative path")
+    relative = Path(raw_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise SystemExit(f"Component {name} has no safe relative path")
+
+    root = repo_root.resolve()
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise SystemExit(
+                f"Component {name} has an unsafe linked component path; "
+                "refusing to bootstrap"
+            )
+        if current.exists() and current != root / relative and not current.is_dir():
+            raise SystemExit(
+                f"Component {name} has a non-directory component path ancestor; "
+                "refusing to bootstrap"
+            )
+    try:
+        current.resolve(strict=False).relative_to(root)
+    except ValueError as error:
+        raise SystemExit(
+            f"Component {name} resolves outside the repository; "
+            "refusing to bootstrap"
+        ) from error
+    return current
+
+
 def is_bootable_vendored_component_dir(path: Path) -> bool:
     if not path.is_dir():
         return False
     return any((path / marker).exists() for marker in BOOTSTRAP_MARKER_PATHS)
 
 
-def clone_component_checkout(
+def fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def atomic_rename_no_replace(source: Path, destination: Path) -> None:
+    """Publish one directory atomically without replacing a concurrent writer."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    result: int
+    if sys.platform == "darwin":
+        renamex_np = libc.renamex_np
+        renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        renamex_np.restype = ctypes.c_int
+        result = renamex_np(source_bytes, destination_bytes, DARWIN_RENAME_EXCL)
+    elif sys.platform.startswith("linux"):
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise OSError(
+                errno.ENOTSUP,
+                "atomic no-replace component publication is unavailable",
+                destination,
+            )
+        renameat2.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        renameat2.restype = ctypes.c_int
+        result = renameat2(
+            AT_FDCWD,
+            source_bytes,
+            AT_FDCWD,
+            destination_bytes,
+            LINUX_RENAME_NOREPLACE,
+        )
+    else:
+        raise OSError(
+            errno.ENOTSUP,
+            "atomic no-replace component publication is unavailable",
+            destination,
+        )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number), destination)
+
+
+def populate_component_checkout(
     repo_root: Path,
     name: str,
     origin: str,
@@ -599,6 +697,48 @@ def clone_component_checkout(
         raise
 
 
+def clone_component_checkout(
+    repo_root: Path,
+    name: str,
+    origin: str,
+    ref: str,
+    target_dir: Path,
+    *,
+    branch_ref: bool,
+    snapshot_available: bool,
+    component: dict[str, Any],
+) -> str:
+    staging_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{target_dir.name}.viventium-bootstrap-",
+            dir=target_dir.parent,
+        )
+    )
+    staged_target = staging_root / "checkout"
+    try:
+        result = populate_component_checkout(
+            repo_root,
+            name,
+            origin,
+            ref,
+            staged_target,
+            branch_ref=branch_ref,
+            snapshot_available=snapshot_available,
+            component=component,
+        )
+        validate_component_checkout(
+            repo_root,
+            component,
+            staged_target,
+            strict_pinned=True,
+        )
+        atomic_rename_no_replace(staged_target, target_dir)
+        fsync_directory(target_dir.parent)
+        return result.replace(str(staged_target), str(target_dir))
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+
 def clone_or_update_component(
     repo_root: Path,
     component: dict[str, Any],
@@ -609,7 +749,7 @@ def clone_or_update_component(
     name = component["name"]
     origin = component["origin"]
     ref = component["ref"]
-    target_dir = repo_root / component["path"]
+    target_dir = safe_component_target_path(repo_root, component)
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     branch_ref = not is_commit_sha(ref)
     snapshot_available = can_use_private_snapshot(repo_root, component)
@@ -743,6 +883,26 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def config_file_sha256(path: Path) -> str:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise OSError(errno.ENOTSUP, "no-follow config reads are unavailable", path)
+    descriptor = os.open(path, os.O_RDONLY | nofollow)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError(errno.EINVAL, "canonical config is not a regular file", path)
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
 
 
 def snapshot_marker_path(target_dir: Path) -> Path:
@@ -942,15 +1102,16 @@ def validate_private_snapshot_install(
     return f"validated private snapshot for {component['name']} -> {component['ref']}"
 
 
-def validate_component(
+def validate_component_checkout(
     repo_root: Path,
     component: dict[str, Any],
+    target_dir: Path,
     *,
     prefer_existing_checkout_head: bool = False,
+    strict_pinned: bool = False,
 ) -> str:
     name = component["name"]
     ref = component["ref"]
-    target_dir = repo_root / component["path"]
 
     if not target_dir.exists():
         raise SystemExit(f"Missing component directory: {target_dir}")
@@ -969,15 +1130,24 @@ def validate_component(
             raise SystemExit(
                 f"Snapshot-installed component {name} requires refresh: existing-non-git-path"
             )
+        if strict_pinned:
+            raise SystemExit(
+                f"Component {name} cannot satisfy strict pin validation without git or a "
+                "validated private snapshot"
+            )
         if is_bootable_vendored_component_dir(target_dir):
             return f"validated vendored checkout for {name} -> {target_dir}"
         raise SystemExit(f"Existing path is not a git repo: {target_dir}")
     if repo_is_dirty(target_dir):
+        if strict_pinned:
+            raise SystemExit(
+                f"Component {name} is dirty and cannot satisfy strict pin validation"
+            )
         ensure_dirty_checkout_is_bootable(target_dir, name)
         return f"validated local dirty checkout for {name} -> {current_head(target_dir)}"
     head = current_head(target_dir)
     current_branch = current_branch_name(target_dir)
-    if prefer_existing_checkout_head and current_branch:
+    if prefer_existing_checkout_head and current_branch and not strict_pinned:
         return f"validated existing clean branch checkout for {name} -> {head} ({current_branch})"
     if not repo_has_ref(target_dir, ref):
         raise SystemExit(f"Missing required ref for existing repo {name}: {ref}")
@@ -987,6 +1157,23 @@ def validate_component(
         raise SystemExit(f"Component {name} is not pinned to {ref} (current HEAD {head}, resolved {resolved})")
 
     return f"validated {name} -> {ref}"
+
+
+def validate_component(
+    repo_root: Path,
+    component: dict[str, Any],
+    *,
+    prefer_existing_checkout_head: bool = False,
+    strict_pinned: bool = False,
+) -> str:
+    target_dir = safe_component_target_path(repo_root, component)
+    return validate_component_checkout(
+        repo_root,
+        component,
+        target_dir,
+        prefer_existing_checkout_head=prefer_existing_checkout_head,
+        strict_pinned=strict_pinned,
+    )
 
 
 def select_components(components: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1072,6 +1259,21 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--strict-pinned",
+        action="store_true",
+        help=(
+            "With --validate-only, reject dirty, missing, vendored, or non-pinned "
+            "selected component checkouts."
+        ),
+    )
+    parser.add_argument(
+        "--expected-config-sha256",
+        help=(
+            "Fail if the canonical config differs from the digest captured for this "
+            "activation attempt."
+        ),
+    )
+    parser.add_argument(
         "--jobs",
         type=int,
         help=(
@@ -1080,6 +1282,8 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.strict_pinned and not args.validate_only:
+        parser.error("--strict-pinned requires --validate-only")
 
     repo_root = Path(args.repo_root).expanduser().resolve()
     lock_file = Path(args.lock_file).expanduser()
@@ -1087,7 +1291,32 @@ def main() -> None:
         lock_file = repo_root / lock_file
     payload = load_lockfile(lock_file)
     config_path = Path(args.config).expanduser().resolve() if args.config else None
+    expected_config_sha256 = str(args.expected_config_sha256 or "").strip().lower()
+    if expected_config_sha256 and not SHA256_RE.fullmatch(expected_config_sha256):
+        parser.error("--expected-config-sha256 must be a full SHA-256 digest")
+    if expected_config_sha256:
+        if config_path is None:
+            raise SystemExit(
+                "Canonical config path is required for digest-bound component activation"
+            )
+        try:
+            observed_config_sha256 = config_file_sha256(config_path)
+        except OSError as error:
+            raise SystemExit(
+                "Canonical config changed during component activation"
+            ) from error
+        if observed_config_sha256 != expected_config_sha256:
+            raise SystemExit("Canonical config changed during component activation")
     config = load_config(config_path)
+    if expected_config_sha256:
+        try:
+            observed_config_sha256 = config_file_sha256(config_path)
+        except OSError as error:
+            raise SystemExit(
+                "Canonical config changed during component activation"
+            ) from error
+        if observed_config_sha256 != expected_config_sha256:
+            raise SystemExit("Canonical config changed during component activation")
     source_root_env = os.environ.get("VIVENTIUM_COMPONENTS_SOURCE_ROOT", "").strip()
     source_root = Path(source_root_env) if source_root_env else None
 
@@ -1101,6 +1330,7 @@ def main() -> None:
                     repo_root,
                     component,
                     prefer_existing_checkout_head=args.prefer_existing_checkout_head,
+                    strict_pinned=args.strict_pinned,
                 )
             )
         return

@@ -16,10 +16,11 @@ Covered surfaces:
 
 - Existing built-in agents must preserve live user-managed fields during startup reseed.
 - A first upgrade with no local managed baseline must use only the exact, hash-verified prior
-  shipped baseline registered for the captured pre-pull LibreChat commit. It must advance unchanged
-  shipped fields, preserve real user edits, and reject unknown or tampered predecessor evidence.
-- The supported public history audit covers all 74 lock revisions from the reviewed support floor:
-  62 retrievable LibreChat pins in 22 resolved baseline groups plus three explicit never-published
+  shipped baseline registered for the captured pre-pull LibreChat commit. It must preserve every
+  present field, including a value equal to an old shipped default; preserve explicit deletions;
+  add only genuinely new successor fields; and reject unknown or tampered predecessor evidence.
+- The supported public history audit covers all 76 lock revisions from the reviewed support floor:
+  64 retrievable LibreChat pins in 22 resolved baseline groups plus three explicit never-published
   tombstones. Its nested-checkout verification must not require an adjacent parent repository, and
   its parent audit must stop at the registry's recorded history boundary so a later release pin does
   not create a self-referential nested/parent publication loop.
