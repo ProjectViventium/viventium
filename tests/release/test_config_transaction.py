@@ -525,7 +525,19 @@ def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp
     app_support = home / "Library" / "Application Support" / "Viventium"
     config = app_support / "config.yaml"
     runtime = app_support / "runtime"
+    fake_applications = tmp_path / "Applications"
+    fake_codex = fake_applications / "Codex.app" / "Contents" / "Resources" / "codex"
     app_support.mkdir(parents=True)
+    fake_codex.parent.mkdir(parents=True)
+    fake_codex.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "login" ] && [ "$2" = "status" ]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
 
     existing = yaml.safe_load((REPO_ROOT / "config.minimal.example.yaml").read_text(encoding="utf-8"))
     replace_secret_references_with_synthetic_values(existing)
@@ -543,6 +555,7 @@ def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp
         "VIVENTIUM_CONFIG_FILE": str(config),
         "VIVENTIUM_RUNTIME_DIR": str(runtime),
         "VIVENTIUM_PYTHON_BIN": sys.executable,
+        "VIVENTIUM_CODEX_APP_DIRS": str(fake_applications),
     }
 
     result = subprocess.run(

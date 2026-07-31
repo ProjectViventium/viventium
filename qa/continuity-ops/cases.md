@@ -289,15 +289,29 @@ Use stable `CONT-NNN` IDs for continuity ops cases.
   13. Fail or skip the terminalizer health path. A pending post-commit identity must still arm the
       deferred monitor; terminalizer/receipt/ledger failure stops the owned runtime and stays
       retryable rather than leaving an accepting API behind.
+  14. Under umask `022`, create a fresh public-CLI App Support layout and start an armed API without
+      passing `--app-support-dir`. Require exported canonical authority, `0700` managed directories
+      including `state/continuity`, an audit producer that creates a missing continuity directory
+      privately, a complete `0600` receipt, and fail-closed refusal of a symlinked managed directory.
+  15. Exercise contradictory armed-plus-quiesced input and clustered worker restart. The former
+      must fail before any stage; the latter must keep exactly one durable receipt writer, local
+      readiness on every worker, and bounded replacement backoff without receipt regression.
 - Expected result: old/current shell behavior cannot bypass quiesced successor acceptance; a
-  post-commit full-runtime failure is visible and resumable without protected-state drift.
+  post-commit full-runtime failure is visible and resumable without protected-state drift. Fresh
+  public-CLI state satisfies the same private-directory contract as the API verifier.
 - Forbidden result: treating the fast-forwarded shell as new code, validating only ports, installing
   an unverified helper after commit, moving ignored uploads before rollback is impossible, or changing
   user-managed state to make comparison pass. A floor commit without required state proof must not
-  be reported as supported or create an upgrade transaction.
+  be reported as supported or create an upgrade transaction. A permissive umask, missing environment
+  export, contradictory startup mode, or clustered worker race may not strand an armed runtime
+  without a valid receipt.
 - Evidence to capture: predecessor/successor identities, immutable ledger/runner hashes, private
   bridge receipt, strict comparison status, helper source/binary hashes, runtime health, restored
   intent, upload fingerprint, and public-safe test output.
+- Last run: **PASS-AUTOMATED / PARTIAL-INSTALLED 2026-07-31**. The exact nested API suite, focused
+  parent contracts, and 2,100-case parent release suite pass. Installed browser/restart and live
+  managed-agent reconciliation remain; see
+  `reports/2026-07-31-postcommit-api-finalization.md`.
 - Last run: PARTIAL 2026-07-25. Exact-shell running/stopped × healthy/corrupt-helper paths, forced
   old-shell restart quiescence, and process-group `SIGKILL` after successor-owned candidate
   activation pass in disposable/synthetic tests. The fresh recovery process restores exact

@@ -641,6 +641,23 @@ def test_emit_json_atomically_replaces_output_once(tmp_path: Path) -> None:
     assert list(tmp_path.glob(".continuity.json.*.tmp")) == []
 
 
+def test_emit_json_creates_private_output_directory_under_public_umask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    output = tmp_path / "state" / "continuity" / "audit.json"
+    previous_umask = os.umask(0o022)
+    try:
+        result = continuity_audit.emit_json({"status": "ok"}, str(output))
+    finally:
+        os.umask(previous_umask)
+
+    assert result == 0
+    assert (tmp_path / "state").stat().st_mode & 0o777 == 0o700
+    assert output.parent.stat().st_mode & 0o777 == 0o700
+    assert output.stat().st_mode & 0o777 == 0o600
+
+
 def test_strict_semantic_compare_allows_only_expired_ttl_documents_to_disappear(
     tmp_path: Path,
 ) -> None:

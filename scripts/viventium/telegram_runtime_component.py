@@ -648,6 +648,65 @@ def _seal_dependency_root(root: Path) -> None:
         directory_path.chmod(0o555)
 
 
+def _dependency_sync_environment(base: dict[str, str]) -> dict[str, str]:
+    environment = dict(base)
+    environment.pop("NO_REPAIR", None)
+    if (
+        platform.system() == "Darwin"
+        and platform.machine().strip().lower() in {"x86_64", "amd64"}
+    ):
+        # pywhispercpp publishes no macOS Intel wheel. Its 1.3.3 source build supports
+        # NO_REPAIR=1 specifically to bypass a wheel-repair StopIteration after a
+        # successful native compile.
+        environment["NO_REPAIR"] = "1"
+    return environment
+
+
+def _remove_dependency_stage(stage: Path) -> None:
+    if not os.path.lexists(stage):
+        return
+    if stage.is_symlink():
+        stage.unlink()
+        return
+    for directory, directory_names, file_names in os.walk(
+        stage, topdown=False, followlinks=False
+    ):
+        directory_path = Path(directory)
+        for name in file_names:
+            candidate = directory_path / name
+            if not candidate.is_symlink():
+                candidate.chmod(0o600)
+        for name in directory_names:
+            candidate = directory_path / name
+            if not candidate.is_symlink():
+                candidate.chmod(0o700)
+        directory_path.chmod(0o700)
+    shutil.rmtree(stage)
+
+
+def _verify_dependency_runtime(python: Path) -> None:
+    completed = subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "import importlib.util;"
+                "spec=importlib.util.find_spec('pywhispercpp');"
+                "exec('from pywhispercpp.model import Model') if spec else None"
+            ),
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if completed.returncode != 0:
+        raise ComponentError(
+            "Telegram native transcription dependency validation failed: "
+            + "\n".join(completed.stdout.splitlines()[-12:])
+        )
+
+
 def _sync_dependencies(
     store_root: Path,
     code_root: Path,
@@ -665,7 +724,7 @@ def _sync_dependencies(
         / "telegram-viventium"
         / "TelegramVivBot"
     )
-    environment = os.environ.copy()
+    environment = _dependency_sync_environment(os.environ)
     environment["UV_PROJECT_ENVIRONMENT"] = str(stage)
     try:
         completed = subprocess.run(
@@ -714,6 +773,7 @@ def _sync_dependencies(
                     "Telegram optional voice dependency sync failed: "
                     + "\n".join(completed.stdout.splitlines()[-12:])
                 )
+        _verify_dependency_runtime(stage / "bin" / "python")
         _seal_dependency_root(stage)
         environment_manifest = _dependency_environment_manifest(stage)
         stage.chmod(0o755)
@@ -732,8 +792,7 @@ def _sync_dependencies(
             return _verify_dependency_root(venv_root, dependency_digest), True
         return _verify_dependency_root(venv_root, dependency_digest), False
     finally:
-        if stage.exists():
-            shutil.rmtree(stage)
+        _remove_dependency_stage(stage)
 
 
 def _selection_payload(

@@ -214,7 +214,7 @@ component refs below.
 
 | Component | Current ref | Local source state | Delivery evidence |
 | --- | --- | --- | --- |
-| LibreChat | `058f6cb2eb626e664964507f5d5397188bd765e2` | merged tree exact; review worktree clean | PRs 75 and 76 added GlassHive as a core Provider/Model choice plus exact capability/effort, Opus 5, migration, and scheduler contracts. Full API, client, aggregate build, lint, accessibility, Windows/Linux, and Redis CI passed. Signed/notarized release and installed-runtime identity remain separate gates. |
+| LibreChat | `a489dea449221add67fbc2fd83a116ce02616270` | merged tree exact; review worktree clean | PRs 75–77 added GlassHive as a core Provider/Model choice plus exact capability/effort, Opus 5, migration, scheduler, post-upgrade finalization, clustered-startup, and canonical managed-agent provisioning contracts. Full API, client, aggregate build, lint, accessibility, Windows/Linux, and Redis CI passed. Signed/notarized release and installed-runtime identity remain separate gates. |
 | agents-playground | `f7ea19564bd062e82aed775b7c8932b70fb8984e` | merged tree exact; review worktree clean | PR 1 merged reviewed head `112f646c...`; classic fallback only. Artifact identity remains open. |
 | livekit | `c20e96166726565f026f894ccca6f1cff2480741` | merged tree exact; review worktree clean | PR 1 merged reviewed head `8839980c...`; the locked Docker runtime is a separate delivery artifact. |
 | cartesia-voice-agent | `a37250ac2c2de1827853cdc2b2eebee4164b6c69` | merged tree exact; review worktree clean | PR 1 merged reviewed head `df2f0248...`; artifact identity remains open. |

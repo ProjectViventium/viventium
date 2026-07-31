@@ -23,6 +23,8 @@ reported honestly.
 - `docs/requirements_and_learnings/48_GlassHive_Workstation_Sandbox_Runtime.md`
 - Provisioner:
   `viventium_v0_4/LibreChat/scripts/viventium-provision-connected-accounts-agent.js`
+  (compatibility entrypoint into the canonical managed-agent seeder; it does not own a duplicate
+  agent definition)
 - Runtime fix: `viventium_v0_4/LibreChat/api/server/services/viventium/openaiResponsesOutputPatch.js`
 - GlassHive broker complement: `qa/glasshive-mcp-capability-broker/`
 

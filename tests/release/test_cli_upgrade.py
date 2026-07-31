@@ -745,6 +745,21 @@ def test_upgrade_restart_hands_off_to_detached_health_checked_start() -> None:
     assert "        start" not in autorestart_section
 
 
+def test_public_cli_always_exports_the_canonical_app_support_directory() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    assignment = (
+        'APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"'
+    )
+    assignment_index = cli_source.index(assignment)
+    export_index = cli_source.index(
+        'export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"',
+        assignment_index,
+    )
+    parse_options_call_index = cli_source.index('  parse_global_options "$@"')
+
+    assert assignment_index < export_index < parse_options_call_index
+
+
 def test_mutating_upgrade_requires_restart_before_any_install_state_mutation() -> None:
     cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     upgrade_section = cli_source.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]

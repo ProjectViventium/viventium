@@ -1135,6 +1135,16 @@ def test_quiesced_launcher_contract_disables_every_inventory_writer_fail_closed(
         / "server"
         / "experimental.js"
     ).read_text(encoding="utf-8")
+    api_finalization = (
+        REPO_ROOT
+        / "viventium_v0_4"
+        / "LibreChat"
+        / "api"
+        / "server"
+        / "services"
+        / "viventium"
+        / "upgradeFinalization.js"
+    ).read_text(encoding="utf-8")
 
     writer_ids = {
         "agent-seeding",
@@ -1178,11 +1188,12 @@ def test_quiesced_launcher_contract_disables_every_inventory_writer_fail_closed(
     assert "validation_runtime_is_quiesced" in launcher
 
     for api_source in (api_index, api_cluster):
-        assert "VIVENTIUM_QUIESCED_API_STARTUP" in api_source
+        assert "upgradeFinalization.isQuiesced()" in api_source
         assert "initializeMCPs" in api_source
         assert "initializeOAuthReconnectManager" in api_source
         assert "restoreChannelWorkers" in api_source
         assert "recoverStaleCortexMessages" in api_source
+    assert "VIVENTIUM_QUIESCED_API_STARTUP" in api_finalization
 
 
 def test_native_stack_mongo_only_bridge_is_internal_and_identity_bound() -> None:

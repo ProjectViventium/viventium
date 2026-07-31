@@ -33,6 +33,46 @@ def _load_component_module():
     return module
 
 
+def test_intel_macos_dependency_sync_disables_broken_sdist_wheel_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_component_module()
+    monkeypatch.setattr(module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(module.platform, "machine", lambda: "x86_64")
+
+    environment = module._dependency_sync_environment({"PRESERVED": "yes"})
+
+    assert environment["PRESERVED"] == "yes"
+    assert environment["NO_REPAIR"] == "1"
+
+
+def test_non_intel_dependency_sync_does_not_inherit_wheel_repair_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_component_module()
+    monkeypatch.setattr(module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(module.platform, "machine", lambda: "arm64")
+
+    environment = module._dependency_sync_environment(
+        {"PRESERVED": "yes", "NO_REPAIR": "owner-shell-value"}
+    )
+
+    assert environment == {"PRESERVED": "yes"}
+
+
+def test_sealed_dependency_stage_cleanup_is_recoverable(tmp_path: Path) -> None:
+    module = _load_component_module()
+    stage = tmp_path / ".venv-stage.synthetic"
+    nested = stage / "lib" / "python" / "site-packages"
+    nested.mkdir(parents=True)
+    _write(nested / "package.py", "SYNTHETIC = True\n")
+    module._seal_dependency_root(stage)
+
+    module._remove_dependency_stage(stage)
+
+    assert not stage.exists()
+
+
 def _write(path: Path, text: str = "synthetic\n") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

@@ -31,11 +31,29 @@ ensure_brew_paths_on_path() {
 
 ensure_app_support_layout() {
   local app_support_dir="$1"
-  mkdir -p "$app_support_dir"
-  mkdir -p "$app_support_dir/runtime"
-  mkdir -p "$app_support_dir/state"
-  mkdir -p "$app_support_dir/snapshots"
-  mkdir -p "$app_support_dir/logs"
+  local directory=""
+  for directory in \
+    "$app_support_dir" \
+    "$app_support_dir/runtime" \
+    "$app_support_dir/state" \
+    "$app_support_dir/state/continuity" \
+    "$app_support_dir/snapshots" \
+    "$app_support_dir/logs"
+  do
+    if [[ -L "$directory" || ( -e "$directory" && ! -d "$directory" ) ]]; then
+      echo "Viventium App Support contains an unsafe managed directory" >&2
+      return 1
+    fi
+    (
+      umask 077
+      mkdir -p "$directory"
+    )
+    if [[ -L "$directory" || ! -d "$directory" ]]; then
+      echo "Viventium App Support directory could not be secured" >&2
+      return 1
+    fi
+    chmod 700 "$directory"
+  done
 }
 
 path_is_git_repo_root() {

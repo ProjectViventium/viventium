@@ -1763,6 +1763,13 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     forward-recoverable but is **not one globally atomic transaction**; release reporting must
     distinguish the remaining non-atomic boundaries rather than claiming rollback of committed
     source
+  - the public CLI always exports its resolved App Support authority before any start/finalizer
+    path and creates or repairs the root plus managed runtime/state/state-continuity/snapshot/log
+    directories as owner-only `0700`, even under a permissive caller umask. A managed-directory
+    symlink fails before child creation or chmod rather than following it. Armed and quiesced API
+    modes are mutually exclusive. Clustered development elects one durable receipt writer while
+    every worker retains process-local readiness, and replacement failures use bounded exponential
+    backoff so a deterministic startup failure cannot create a receipt-clobbering fork storm
   - default role/access-role/category seeding is ordered and idempotent: existing nonempty/custom
     permissions, access-role fields, and custom categories are not overwritten. Interruption after
     any seed stage keeps API readiness failed and the next attempt reruns the complete sequence.
@@ -2513,6 +2520,11 @@ daemon and create false-green evidence.
   recovery launcher, and the complete frozen dependency environment into content-addressed,
   owner-only App Support roots. The environment is sealed and manifest-verified; optional local
   voice dependencies are installed before publication, never on first message/start.
+- Frozen dependency assembly remains architecture-aware without weakening the lock: macOS Intel
+  uses pywhispercpp's supported `NO_REPAIR=1` source-build path because that release publishes no
+  Intel wheel, then imports the native module before publication. Failed/interrupted assembly
+  reopens only its transaction-owned sealed stage for deletion, so cleanup cannot mask the original
+  dependency error or strand an undeletable partial environment.
 - A present-invalid selection fails closed everywhere. A missing/unsafe selection on detached macOS
   also fails closed with an actionable error; source fallback remains only a direct development or
   non-macOS compatibility behavior.

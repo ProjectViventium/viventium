@@ -10,6 +10,68 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_ensure_app_support_layout_is_owner_private_under_public_umask(
+    tmp_path: Path,
+) -> None:
+    app_support = tmp_path / "support"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "umask 022; "
+                f"source '{REPO_ROOT / 'scripts/viventium/common.sh'}' && "
+                f"ensure_app_support_layout '{app_support}'"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    for directory in (
+        app_support,
+        app_support / "runtime",
+        app_support / "state",
+        app_support / "state" / "continuity",
+        app_support / "snapshots",
+        app_support / "logs",
+    ):
+        assert directory.is_dir()
+        assert directory.stat().st_mode & 0o777 == 0o700
+
+
+def test_ensure_app_support_layout_refuses_symlinked_managed_directory(
+    tmp_path: Path,
+) -> None:
+    app_support = tmp_path / "support"
+    external = tmp_path / "external"
+    external.mkdir(mode=0o755)
+    app_support.symlink_to(external, target_is_directory=True)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f"source '{REPO_ROOT / 'scripts/viventium/common.sh'}' && "
+                f"ensure_app_support_layout '{app_support}'"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert external.stat().st_mode & 0o777 == 0o755
+    assert not (external / "runtime").exists()
+
+
 def test_resolve_existing_product_python_prefers_ready_bootstrap_without_mutating_it(
     tmp_path: Path,
 ) -> None:

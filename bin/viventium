@@ -96,6 +96,7 @@ resolve_upgrade_transaction_python() {
 }
 
 APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
+export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
 CONFIG_FILE="${VIVENTIUM_CONFIG_FILE:-$APP_SUPPORT_DIR/config.yaml}"
 RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
 GENERATED_ENV="$RUNTIME_DIR/runtime.env"

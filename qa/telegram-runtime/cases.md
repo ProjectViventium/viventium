@@ -176,6 +176,8 @@
   identity. Legacy repo-local preferences migrate into canonical App Support without deleting the
   source; active legacy values, canonical-only values, explicit custom directories, and a byte-exact
   displaced canonical backup are preserved. Repeated startup performs no preference rewrite.
+  Apple Silicon uses the compatible locked wheel while Intel uses the upstream-supported source
+  build without broken wheel repair; both import the native transcription module before publishing.
   Recovery selections are immutable per attempt, custom/canonical root selection is durable across
   a cold start, migration/root receipt refresh happens before rollback, and helper supervision does
   not hash the full environment on its four-second UI poll. Each handoff seals the launcher and both
@@ -186,17 +188,20 @@
   an untracked allowed-suffix file enters the component; a failed candidate restores an older
   source-only launcher; a modified launcher/runtime-env/overlay executes during rollback; a native
   predecessor is accepted through legacy grace; stale secret-bearing launch attempts accumulate; or
-  staging changes the live selection before its owning transaction.
+  staging changes the live selection before its owning transaction. An Intel source build may not
+  die in pywhispercpp wheel repair, and a failed sealed stage may not mask its root cause with a
+  cleanup permission error.
 - **Evidence to capture:** component/tree and dependency-manifest hashes, exact selection bytes
   before injected failure, schema-2 receipt cwd/Python, migration receipt/backup hashes, first and
   second start preference fingerprints, launch-package tamper/cleanup cases, helper/CLI tests, real
-  message latency, and public-safe logs.
-- **Last run:** PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-25. The complete
-  2,063-passed/11-skipped release suite,
-  347-case Telegram suite, exact shipped-predecessor matrix, real process-group SIGKILL recovery,
-  interrupted migration recovery, immutable staging, sealed Python/helper build, custom cold-start
-  selection, stopped-core fallback, component/migration, handoff, atomic ACL, and startup no-write
-  regressions pass. Post-change installed Telegram delivery/restart remains required.
+  message latency, native dependency import on arm64 and x86_64, and public-safe logs.
+- **Last run:** PASS-ARM64/PENDING-HOSTED-X86_64 2026-07-31. The complete 2,100-passed/8-skipped
+  release suite, 18-case focused runtime-component set, fresh sealed Apple Silicon environment and
+  native import probe, Intel environment selection, sealed-stage cleanup, exact shipped-predecessor
+  matrix, process-group recovery, immutable staging, handoff, atomic ACL, and startup no-write
+  regressions pass. The final public x86_64 easy-install job and post-change installed Telegram
+  delivery/restart remain required; see
+  `reports/2026-07-31-cross-architecture-dependency-assembly.md`.
 
 ## Case TR-015: Legacy Canonical Preferences Harden Without Byte Drift
 

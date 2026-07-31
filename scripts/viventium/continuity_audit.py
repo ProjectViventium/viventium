@@ -1117,7 +1117,11 @@ def emit_json(payload: dict[str, Any], output_path: str | None) -> int:
     rendered = json.dumps(payload, indent=2) + "\n"
     if output_path:
         output = Path(output_path)
-        output.parent.mkdir(parents=True, exist_ok=True)
+        previous_umask = os.umask(0o077)
+        try:
+            output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        finally:
+            os.umask(previous_umask)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{output.name}.",
             suffix=".tmp",
