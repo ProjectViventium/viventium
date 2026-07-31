@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import fcntl
+import grp
 import hashlib
 import json
 import os
@@ -570,21 +571,26 @@ def _external_python_target_is_trusted(
     target_metadata: Any,
 ) -> bool:
     mode = stat.S_IMODE(target_metadata.st_mode)
-    # The canonical macOS CPython package installs its root:wheel interpreter
-    # as 0775. The wheel group remains privileged; every other group-writable
-    # or world-writable external interpreter is rejected.
-    root_wheel_group_writable = (
-        target_metadata.st_uid == 0
-        and target_metadata.st_gid == 0
-        and bool(mode & 0o020)
-    )
+    # The official macOS CPython package changes its framework to root:admin
+    # 0775 after installation; root:wheel 0775 is also a standard privileged
+    # layout. Every other group-writable or world-writable external interpreter
+    # remains rejected.
+    trusted_root_group_writable = False
+    if target_metadata.st_uid == 0 and bool(mode & 0o020):
+        trusted_group_ids = {0}
+        if platform.system() == "Darwin":
+            try:
+                trusted_group_ids.add(grp.getgrnam("admin").gr_gid)
+            except KeyError:
+                pass
+        trusted_root_group_writable = target_metadata.st_gid in trusted_group_ids
     return bool(
         candidate.parent.relative_to(root) == Path("bin")
         and candidate.name.startswith("python")
         and stat.S_ISREG(target_metadata.st_mode)
         and target_metadata.st_uid in {0, os.getuid()}
         and not (mode & 0o002)
-        and (not (mode & 0o020) or root_wheel_group_writable)
+        and (not (mode & 0o020) or trusted_root_group_writable)
         and os.access(resolved_target, os.X_OK)
     )
 

@@ -134,13 +134,15 @@ def test_sealed_dependency_stage_cleanup_is_recoverable(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("owner", "group", "mode", "expected"),
+    ("system", "owner", "group", "mode", "expected"),
     [
-        (0, 0, 0o775, True),
-        (0, 80, 0o775, False),
-        (0, 0, 0o777, False),
-        (os.getuid(), os.getgid(), 0o755, True),
+        ("Darwin", 0, 0, 0o775, True),
+        ("Darwin", 0, 80, 0o775, True),
+        ("Linux", 0, 80, 0o775, False),
+        ("Darwin", 0, 0, 0o777, False),
+        ("Darwin", os.getuid(), os.getgid(), 0o755, True),
         (
+            "Darwin",
             os.getuid(),
             os.getgid(),
             0o775,
@@ -150,12 +152,22 @@ def test_sealed_dependency_stage_cleanup_is_recoverable(tmp_path: Path) -> None:
 )
 def test_external_python_target_permission_policy(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    system: str,
     owner: int,
     group: int,
     mode: int,
     expected: bool,
 ) -> None:
     module = _load_component_module()
+    monkeypatch.setattr(module.platform, "system", lambda: system)
+
+    def fake_getgrnam(name: str) -> types.SimpleNamespace:
+        if name != "admin":
+            raise KeyError(name)
+        return types.SimpleNamespace(gr_gid=80)
+
+    monkeypatch.setattr(module.grp, "getgrnam", fake_getgrnam)
     environment = tmp_path / "environment"
     candidate = environment / "bin" / "python"
     resolved_target = tmp_path / "managed-python"
