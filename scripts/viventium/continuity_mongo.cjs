@@ -35,6 +35,57 @@ const SAFE_COLLECTIONS = Object.freeze([
   'users',
 ]);
 
+// User-owned product state that must remain byte-for-byte stable across an
+// upgrade. Managed default agents are intentionally handled by the separate
+// baseline-aware agent migration ledger so legitimate default advances do not
+// look like personalization loss.
+const FINGERPRINT_COLLECTIONS = Object.freeze([
+  ...SAFE_COLLECTIONS.filter((name) => name !== 'agents'),
+  'actions',
+  'agentapikeys',
+  'channelconnections',
+  'channelpairingcodes',
+  'channelthreads',
+  'gatewaylinktokens',
+  'gatewayusermappings',
+  'keys',
+  'mcpservers',
+  'pluginauths',
+  'sessions',
+  'telegramlinktokens',
+  'telegramusermappings',
+  'tokens',
+]);
+
+// These policies mirror the owning Mongoose TTL indexes. The continuity
+// comparator may disregard a document only after its effective database
+// expiry; every active or non-expiring document remains strictly protected.
+const TTL_COLLECTION_POLICIES = Object.freeze({
+  agentapikeys: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  channeldeliveries: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  channelingressquotas: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  channelpairingattempts: Object.freeze({ field: 'windowExpiresAt', expireAfterSeconds: 0 }),
+  channelpairingcodes: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  channelworkerleases: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  conversations: Object.freeze({ field: 'expiredAt', expireAfterSeconds: 0 }),
+  files: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 3600 }),
+  gatewaylinktokens: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  keys: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  messages: Object.freeze({ field: 'expiredAt', expireAfterSeconds: 0 }),
+  sessions: Object.freeze({ field: 'expiration', expireAfterSeconds: 0 }),
+  telegramlinktokens: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  tokens: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  users: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 604800 }),
+  viventiumcallsessions: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  viventiumgatewayingressevents: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  viventiumglasshivecallbackdeliveries: Object.freeze({
+    field: 'expiresAt',
+    expireAfterSeconds: 0,
+  }),
+  viventiumtelegramingressevents: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+  viventiumvoiceingressevents: Object.freeze({ field: 'expiresAt', expireAfterSeconds: 0 }),
+});
+
 const USER_FIELDS = Object.freeze([
   '_id',
   'name',
@@ -148,7 +199,48 @@ function requireMongo(repoRoot) {
   const scopedRequire = createRequire(packageJson);
   const mongodb = scopedRequire('mongodb');
   const bson = scopedRequire('bson');
-  return { MongoClient: mongodb.MongoClient, EJSON: bson.EJSON };
+  const YAML = scopedRequire('yaml');
+  return { MongoClient: mongodb.MongoClient, EJSON: bson.EJSON, YAML };
+}
+
+function managedAgentIds(repoRoot, YAML) {
+  const ids = new Set();
+  const migrationPath = path.join(
+    repoRoot,
+    'viventium_v0_4',
+    'LibreChat',
+    'viventium',
+    'source_of_truth',
+    'managed-agent-baseline-migration.json',
+  );
+  const migration = JSON.parse(fs.readFileSync(migrationPath, 'utf8'));
+  for (const item of migration.migrations || []) {
+    const agents = item?.baseline?.agents;
+    if (!agents || typeof agents !== 'object' || Array.isArray(agents)) continue;
+    for (const id of Object.keys(agents)) ids.add(id);
+  }
+
+  const sourcePath = path.join(
+    repoRoot,
+    'viventium_v0_4',
+    'LibreChat',
+    'viventium',
+    'source_of_truth',
+    'local.viventium-agents.yaml',
+  );
+  const source = YAML.parse(fs.readFileSync(sourcePath, 'utf8')) || {};
+  const candidates = [
+    source.mainAgent,
+    ...(Array.isArray(source.backgroundAgents) ? source.backgroundAgents : []),
+    ...(Array.isArray(source.handoffAgents) ? source.handoffAgents : []),
+  ];
+  for (const agent of candidates) {
+    if (agent && typeof agent === 'object' && typeof agent.id === 'string' && agent.id) {
+      ids.add(agent.id);
+    }
+  }
+  if (!ids.size) throw new Error('managed agent identity source is empty');
+  return ids;
 }
 
 function validateUri(raw, socketPath = '') {
@@ -227,6 +319,110 @@ async function exportCollections(db, outputDir, EJSON) {
   }
   writeJsonExclusive(path.join(outputDir, 'index.json'), { schemaVersion: 1, collections: ledger });
   return ledger;
+}
+
+function expiryUnixMs(value) {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    if (Number.isFinite(timestamp)) return timestamp;
+    throw new Error('TTL lifecycle timestamp is invalid');
+  }
+  if (value && typeof value === 'object' && Object.hasOwn(value, '$date')) {
+    return expiryUnixMs(value.$date);
+  }
+  const timestamp = typeof value === 'number' ? value : Date.parse(String(value));
+  if (!Number.isFinite(timestamp)) {
+    throw new Error('TTL lifecycle timestamp is invalid');
+  }
+  return timestamp;
+}
+
+function ttlFingerprint(document, serialized, policy) {
+  const baseExpiryUnixMs = expiryUnixMs(document[policy.field]);
+  let effectiveExpiryUnixMs = null;
+  if (baseExpiryUnixMs != null) {
+    effectiveExpiryUnixMs = baseExpiryUnixMs + (policy.expireAfterSeconds * 1000);
+    if (!Number.isSafeInteger(effectiveExpiryUnixMs)) {
+      throw new Error('TTL lifecycle timestamp is outside the supported range');
+    }
+  }
+  return {
+    sha256: crypto.createHash('sha256').update(`${serialized}\n`, 'utf8').digest('hex'),
+    effectiveExpiryUnixMs,
+  };
+}
+
+async function fingerprintCollections(db, EJSON, repoRoot, YAML) {
+  const present = new Set(
+    (await db.listCollections({}, { nameOnly: true }).toArray()).map((item) => item.name),
+  );
+  const collections = {};
+  // Strict local manifests protect every application collection by default.
+  // Future/custom durable state must not silently fall through a maintained
+  // allowlist. Managed agents are the sole baseline-aware exception below;
+  // system/restore-claim collections are operational, not user state.
+  const fingerprintNames = [...present]
+    .filter((name) => (
+      name !== 'agents'
+      && name !== CLAIM_COLLECTION
+      && !name.startsWith('system.')
+    ))
+    .sort();
+  for (const name of fingerprintNames) {
+    const hash = crypto.createHash('sha256');
+    const ttlPolicy = TTL_COLLECTION_POLICIES[name];
+    const ttlDocuments = [];
+    const nonExpiringHash = crypto.createHash('sha256');
+    let nonExpiringDocuments = 0;
+    let documents = 0;
+    const cursor = db.collection(name).find({}).sort({ _id: 1 });
+    for await (const document of cursor) {
+      const serialized = EJSON.stringify(document, { relaxed: false });
+      hash.update(`${serialized}\n`, 'utf8');
+      if (ttlPolicy) {
+        const ttlDocument = ttlFingerprint(document, serialized, ttlPolicy);
+        if (ttlDocument.effectiveExpiryUnixMs == null) {
+          nonExpiringHash.update(`${serialized}\n`, 'utf8');
+          nonExpiringDocuments += 1;
+        } else {
+          ttlDocuments.push(ttlDocument);
+        }
+      }
+      documents += 1;
+    }
+    collections[name] = {
+      count: documents,
+      sha256: hash.digest('hex'),
+    };
+    if (ttlPolicy) {
+      collections[name].ttl = {
+        field: ttlPolicy.field,
+        expireAfterSeconds: ttlPolicy.expireAfterSeconds,
+        documents: ttlDocuments,
+        nonExpiring: {
+          count: nonExpiringDocuments,
+          sha256: nonExpiringHash.digest('hex'),
+        },
+      };
+    }
+  }
+  if (present.has('agents')) {
+    const managedIds = managedAgentIds(repoRoot, YAML);
+    const hash = crypto.createHash('sha256');
+    let documents = 0;
+    const cursor = db.collection('agents').find({}).sort({ _id: 1 });
+    for await (const document of cursor) {
+      if (managedIds.has(String(document.id || ''))) continue;
+      hash.update(`${EJSON.stringify(document, { relaxed: false })}\n`, 'utf8');
+      documents += 1;
+    }
+    collections.useragents = {
+      count: documents,
+      sha256: hash.digest('hex'),
+    };
+  }
+  return collections;
 }
 
 async function databaseEmpty(db) {
@@ -338,7 +534,7 @@ async function main() {
   const repoRoot = path.resolve(args['repo-root'] || '');
   const uri = args.uri || '';
   validateUri(uri, args['socket-path'] || '');
-  const { MongoClient, EJSON } = requireMongo(repoRoot);
+  const { MongoClient, EJSON, YAML } = requireMongo(repoRoot);
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000 });
   try {
     await client.connect();
@@ -354,6 +550,11 @@ async function main() {
     }
     if (args.command === 'estimate') {
       process.stdout.write(`${JSON.stringify({ ok: true, estimatedBytes: await estimateLogicalBytes(db) })}\n`);
+      return;
+    }
+    if (args.command === 'fingerprint') {
+      const collections = await fingerprintCollections(db, EJSON, repoRoot, YAML);
+      process.stdout.write(`${JSON.stringify({ ok: true, collections })}\n`);
       return;
     }
     if (args.command === 'claim') {
@@ -403,4 +604,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { estimateLogicalBytes, normalizeStructuredKey, sanitizeExportDocument };
+module.exports = {
+  TTL_COLLECTION_POLICIES,
+  estimateLogicalBytes,
+  exportCollections,
+  fingerprintCollections,
+  normalizeStructuredKey,
+  sanitizeExportDocument,
+};

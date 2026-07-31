@@ -78,7 +78,7 @@ def test_feelings_defaults_match_owner_approved_contract() -> None:
     assert settings["reaction"]["service_tier"] == "priority"
     assert settings["reaction"]["timeout_ms"] == 15000
     assert settings["reaction"]["fallback_provider"] == "anthropic"
-    assert settings["reaction"]["fallback_model"] == "claude-opus-4-8"
+    assert settings["reaction"]["fallback_model"] == "claude-opus-5"
     assert list(settings["bands"]) == [
         "energy",
         "mood",
@@ -156,7 +156,7 @@ def test_every_tracked_builtin_activation_detector_has_a_complete_route() -> Non
     assert source.count("provider: groq") >= 11
     assert source.count("model: grok-4.20-non-reasoning") >= 11
     assert source.count("model: gpt-5.4") >= 11
-    assert source.count("model: claude-haiku-4-5") >= 11
+    assert source.count("model: claude-opus-5") >= 11
 
 
 def test_feelings_compile_to_explicit_env_contract() -> None:
@@ -240,7 +240,7 @@ def test_feelings_schema_and_examples_publish_the_contract() -> None:
     assert "gpt-5.6-terra" in full
     assert "service_tier: priority" in full
     assert "fallback_provider: anthropic" in full
-    assert "fallback_model: claude-opus-4-8" in minimal
+    assert "fallback_model: claude-opus-5" in minimal
 
 
 def test_feelings_runtime_publishes_concurrency_privacy_and_telemetry_contract() -> None:

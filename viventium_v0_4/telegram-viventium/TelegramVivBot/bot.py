@@ -51,7 +51,13 @@ from utils.scripts import GetMesageInfo, safe_get, is_emoji
 from utils.tts import resolve_tts_selection, summarize_voice_markup, synthesize_speech
 from utils.livekit_bridge import LiveKitBridge
 from utils.env import coerce_bool
-from utils.singleton import SingletonAlreadyRunning, acquire_telegram_singleton_lock
+from utils.singleton import (
+    SingletonAlreadyRunning,
+    acquire_telegram_singleton_lock,
+    cancel_telegram_singleton_readiness,
+    clear_telegram_singleton_receipt,
+    schedule_telegram_singleton_readiness,
+)
 # === VIVENTIUM START ===
 # Feature: Centralized voice reply gating helper.
 from utils.voice import normalize_voice_preference, should_request_audio_reply, should_send_voice_reply
@@ -71,6 +77,14 @@ from utils.librechat_attachments import (
     fetch_librechat_bytes,
     send_librechat_attachments,
 )
+
+_SHARED_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "shared")
+)
+if _SHARED_PATH not in sys.path:
+    sys.path.insert(0, _SHARED_PATH)
+
+from delivery_controls import parse_delivery_controls
 
 _PENDING_INFO_CALL_REFRESHES = set()
 
@@ -1062,6 +1076,8 @@ async def getViventiumResponse(
     
     result = ""
     tmpresult = ""
+    delivery_plan = parse_delivery_controls("")
+    final_segments = []
     time_out = 600
     image_has_send = 0
     # === VIVENTIUM START ===
@@ -1417,6 +1433,65 @@ async def getViventiumResponse(
                 await asyncio.gather(task, return_exceptions=True)
             except Exception:
                 pass
+
+    async def _deliver_final_message_segments(segments) -> None:
+        nonlocal answer_messageid, lastresult
+        for index, segment in enumerate(segments):
+            rendered, parse_mode = _render_telegram_response(segment)
+            if not rendered:
+                continue
+            fallback = (
+                sanitize_telegram_display_text(segment)
+                if telegram_audio_requested
+                else sanitize_telegram_text(segment)
+            )
+            if index == 0 and answer_messageid:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chatid,
+                        message_id=answer_messageid,
+                        text=rendered,
+                        parse_mode=parse_mode,
+                        disable_web_page_preview=True,
+                        read_timeout=time_out,
+                        write_timeout=time_out,
+                        pool_timeout=time_out,
+                        connect_timeout=time_out,
+                    )
+                except Exception as error:
+                    if parse_mode and "parse entities" in str(error):
+                        await context.bot.edit_message_text(
+                            chat_id=chatid,
+                            message_id=answer_messageid,
+                            text=fallback,
+                            disable_web_page_preview=True,
+                            read_timeout=time_out,
+                            write_timeout=time_out,
+                            pool_timeout=time_out,
+                            connect_timeout=time_out,
+                        )
+                    else:
+                        logger.warning(
+                            "Failed to finalize Telegram delivery segment %s: %s",
+                            index,
+                            error,
+                        )
+                lastresult = rendered
+                continue
+
+            answer_messageid = None
+            try:
+                await _ensure_answer_message(
+                    rendered,
+                    parse_mode,
+                    fallback_text=fallback,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Failed to send Telegram delivery segment %s: %s",
+                    index,
+                    error,
+                )
     # === VIVENTIUM END ===
 
     try:
@@ -1643,6 +1718,12 @@ async def getViventiumResponse(
                 except Exception:
                     pass
             return
+        delivery_plan = parse_delivery_controls(result)
+        result = delivery_plan.clean_text
+        final_segments = list(delivery_plan.segments)
+        if title and final_segments:
+            final_segments[0] = f"{title}{final_segments[0]}"
+        tmpresult = f"{title or ''}{result}"
         # === VIVENTIUM END ===
         _tg_timing_log(trace_id, "stream_complete", stream_start_ts)
         _tg_deep_log(trace_id, "stream_complete", stream_start_ts, base_ts=response_start_ts)
@@ -1825,8 +1906,12 @@ async def getViventiumResponse(
             except Exception as e:
                 logger.warning(f"Failed to send image(s): {str(e)}")
 
-    now_result, now_parse_mode = _render_telegram_response(tmpresult)
-    if lastresult != now_result:
+    if len(final_segments) > 1:
+        await _deliver_final_message_segments(final_segments)
+        now_result, now_parse_mode = _render_telegram_response(final_segments[-1])
+    else:
+        now_result, now_parse_mode = _render_telegram_response(tmpresult)
+    if len(final_segments) <= 1 and lastresult != now_result:
         if "Can't parse entities: can't find end of code entity at byte offset" in tmpresult:
             # === VIVENTIUM START ===
             # Strip citations before plain-text fallback replies.
@@ -1890,15 +1975,34 @@ async def getViventiumResponse(
         voice_enabled=voice_responses_active,
         text=tmpresult,
     )
+    model_skip_requested = bool(delivery_plan.skip_voice)
+    model_skip_effective = bool(
+        model_skip_requested and should_send_voice and bridge_error_audio_allowed
+    )
+    voice_decision = "sent" if should_send_voice else "disabled_user"
+    if model_skip_requested:
+        should_send_voice = False
+        if model_skip_effective:
+            voice_decision = "skipped_model"
     if not bridge_error_audio_allowed:
         should_send_voice = False
+        voice_decision = "transport_error"
     logger.info(
-        "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s send=%s",
+        "[TG_VOICE] trace=%s gate voice_note=%s always_voice=%s voice_enabled=%s "
+        "send=%s voice_decision=%s model_skip_requested=%s model_skip_effective=%s "
+        "tts_avoided_chars=%s msg_breaks=%s segments=%s segment_merge=%s",
         trace_id,
         int(bool(voice_note_detected)),
         int(always_voice_active),
         int(voice_responses_active),
         int(bool(should_send_voice)),
+        voice_decision,
+        int(model_skip_requested),
+        int(model_skip_effective),
+        len(tmpresult) if model_skip_effective else 0,
+        delivery_plan.message_break_count,
+        len(delivery_plan.segments),
+        delivery_plan.merged_break_count,
     )
     _tg_timing_log(
         trace_id,
@@ -1908,7 +2012,13 @@ async def getViventiumResponse(
             f"voice_note={int(bool(voice_note_detected))} "
             f"always_voice={int(always_voice_active)} "
             f"voice_enabled={int(voice_responses_active)} "
-            f"send={int(bool(should_send_voice))}"
+            f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
+            f"model_skip_requested={int(model_skip_requested)} "
+            f"model_skip_effective={int(model_skip_effective)} "
+            f"tts_avoided_chars={len(tmpresult) if model_skip_effective else 0} "
+            f"msg_breaks={delivery_plan.message_break_count} "
+            f"segments={len(delivery_plan.segments)} "
+            f"segment_merge={delivery_plan.merged_break_count}"
         ),
     )
     _tg_deep_log(
@@ -1920,7 +2030,13 @@ async def getViventiumResponse(
             f"voice_note={int(bool(voice_note_detected))} "
             f"always_voice={int(always_voice_active)} "
             f"voice_enabled={int(voice_responses_active)} "
-            f"send={int(bool(should_send_voice))}"
+            f"send={int(bool(should_send_voice))} voice_decision={voice_decision} "
+            f"model_skip_requested={int(model_skip_requested)} "
+            f"model_skip_effective={int(model_skip_effective)} "
+            f"tts_avoided_chars={len(tmpresult) if model_skip_effective else 0} "
+            f"msg_breaks={delivery_plan.message_break_count} "
+            f"segments={len(delivery_plan.segments)} "
+            f"segment_merge={delivery_plan.merged_break_count}"
         ),
     )
     # === VIVENTIUM END ===
@@ -2574,12 +2690,27 @@ async def post_init(application: Application) -> None:
         "I am an Assistant, a large language model trained by OpenAI. I will do my best to help answer your questions."
     )
     await application.bot.set_my_description(description)
+    # === VIVENTIUM START ===
+    # Feature: Cross-checkout Telegram receive-loop readiness receipt.
+    # PTB invokes post_init before it starts the Updater and Application. The
+    # watcher publishes only after both public running states become true.
+    application.bot_data["viventium_telegram_readiness_task"] = (
+        schedule_telegram_singleton_readiness(
+            application,
+            BOT_TOKEN,
+            transport="webhook" if WEB_HOOK else "polling",
+        )
+    )
+    # === VIVENTIUM END ===
 
 
 async def post_shutdown(application: Application) -> None:
-    _ = application
+    await cancel_telegram_singleton_readiness(
+        application.bot_data.pop("viventium_telegram_readiness_task", None)
+    )
     if config.ChatGPTbot and hasattr(config.ChatGPTbot, "stop_glasshive_delivery_dispatcher"):
         config.ChatGPTbot.stop_glasshive_delivery_dispatcher()
+    clear_telegram_singleton_receipt()
 
 if __name__ == '__main__':
     # ========================================================================

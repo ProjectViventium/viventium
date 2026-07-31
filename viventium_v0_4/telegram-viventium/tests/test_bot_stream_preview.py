@@ -42,6 +42,7 @@ class _FakeTelegramBot:
         self.edits = []
         self.audios = []
         self.next_id = 1000
+        self.edit_error = None
 
     async def send_chat_action(self, **_kwargs):
         return None
@@ -52,6 +53,8 @@ class _FakeTelegramBot:
         return _Msg(self.next_id)
 
     async def edit_message_text(self, **kwargs):
+        if self.edit_error:
+            raise self.edit_error
         self.edits.append(kwargs)
         return None
 
@@ -508,6 +511,191 @@ def test_get_viventium_response_always_voice_stays_text_mode_with_audio(monkeypa
     assert len(context.bot.audios) == 1
     rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
     assert "[laughter]" not in rendered
+
+
+def test_get_viventium_response_skip_voice_sends_full_text_without_tts(monkeypatch):
+    class _SkipVoiceRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "Here is **the draft** for qa@example.com.\n{SKIP_VOICE}"
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    synthesized = []
+
+    async def _fake_synthesize(text, _convo_id, *, voice_route=None):
+        synthesized.append((text, voice_route))
+        return b"voice-bytes"
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_SkipVoiceRobot(),
+            message="rewrite this email",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-skip-voice",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
+    assert "the draft" in rendered
+    assert "qa@example.com" in rendered
+    assert "SKIP_VOICE" not in rendered
+    assert synthesized == []
+    assert context.bot.audios == []
+
+
+def test_optional_text_audio_preference_has_smart_user_facing_label():
+    assert tg_bot.config.PREFERENCE_DISPLAY_NAMES["ALWAYS_VOICE_RESPONSE"] == (
+        "Smart voice for text"
+    )
+
+
+def test_get_viventium_response_message_break_sends_two_bubbles_and_one_audio(monkeypatch):
+    class _MessageBreakRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "First thought.\n{MSG_"
+            yield "BREAK}\nSecond thought."
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    synthesized = []
+
+    async def _fake_synthesize(text, _convo_id, *, voice_route=None):
+        synthesized.append(text)
+        return b"voice-bytes"
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+    monkeypatch.setattr(
+        tg_bot,
+        "resolve_tts_selection",
+        lambda *, voice_route=None: {"provider": "xai", "source": "test", "variant": "Eve"},
+    )
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_MessageBreakRobot(),
+            message="give me a natural update",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-message-break",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    delivered = context.bot.messages + context.bot.edits
+    assert len(context.bot.messages) == 2
+    assert all("MSG_" not in str(item.get("text", "")) for item in delivered)
+    assert "First thought." in str(context.bot.edits[-1]["text"])
+    assert "Second thought." in str(context.bot.messages[-1]["text"])
+    assert synthesized == ["First thought. Second thought."]
+    assert len(context.bot.audios) == 1
+
+
+def test_message_break_edit_failure_does_not_abort_turn(monkeypatch):
+    class _MessageBreakRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "First thought.\n{MSG_BREAK}\nSecond thought."
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        return b"voice-bytes"
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+    monkeypatch.setattr(
+        tg_bot,
+        "resolve_tts_selection",
+        lambda *, voice_route=None: {"provider": "xai", "source": "test", "variant": "Eve"},
+    )
+
+    context = _FakeContext()
+    context.bot.edit_error = RuntimeError("synthetic flood-control")
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_MessageBreakRobot(),
+            message="give me a natural update",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-message-break-edit-failure",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert any("Second thought." in str(item.get("text", "")) for item in context.bot.messages)
+    assert len(context.bot.audios) == 1
 
 
 def test_get_viventium_response_does_not_voice_transport_bridge_errors(monkeypatch):

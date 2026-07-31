@@ -720,7 +720,7 @@ async function main() {
       .innerText();
     result.checks.reactionDrawer =
       reactionRouteText.includes("Primary: gpt-5.6-terra · Fast") &&
-      reactionRouteText.includes("Fallback: claude-opus-4-8") &&
+      reactionRouteText.includes("Fallback: claude-opus-5") &&
       (await dialog
         .getByRole("combobox", { name: "When should it activate?" })
         .inputValue()) === "always";

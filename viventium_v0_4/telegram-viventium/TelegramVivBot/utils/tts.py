@@ -21,6 +21,8 @@ _SHARED_PATH = Path(__file__).resolve().parents[3] / "shared"
 if str(_SHARED_PATH) not in sys.path:
     sys.path.insert(0, str(_SHARED_PATH))
 
+from delivery_controls import parse_delivery_controls
+
 try:
     from no_response import strip_inline_nta
 except Exception:
@@ -946,7 +948,7 @@ def prepare_tts_text(text: str) -> str:
     if not text:
         return ""
 
-    cleaned = strip_inline_nta(text)
+    cleaned = strip_inline_nta(parse_delivery_controls(text).clean_text)
     if not cleaned:
         return ""
     # === VIVENTIUM START ===

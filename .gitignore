@@ -58,6 +58,14 @@ dumps/
 config.env
 **/config.env
 **/.env.bridge
+**/runtime.env
+**/runtime.local.env
+**/service-env/
+**/librechat.env
+**/librechat.owner.env
+**/dev-runtime-activation.*/**
+**/upgrade-backups/**
+**/successor-bridge/**
 devops/full_azure_deployment/viv_full_final_deploy/config.yaml
 devops/full_azure_deployment/viv_full_final_deploy/exports/
 devops/full_azure_deployment/viv_full_final_deploy/state/
@@ -140,6 +148,8 @@ docs/prompt_design/
 docs/research/
 docs/archive/
 projects/
+!templates/life-v0.01/Projects/
+!templates/life-v0.01/Projects/**
 qa/results/*
 !qa/results/
 !qa/results/README.md

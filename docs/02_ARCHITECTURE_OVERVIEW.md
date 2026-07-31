@@ -19,6 +19,12 @@ User -> LibreChat UI -> AgentClient -> BackgroundCortexService
 
 Core components:
 - Orchestration: `viventium_v0_4/LibreChat/api/server/controllers/agents/client.js`
+- GlassHive provider API/session ownership:
+  `viventium_v0_4/GlassHive/runtime_phase1/src/workers_projects_runtime/conversation_provider.py`
+- Agent provider capability/validation ownership:
+  `viventium_v0_4/LibreChat/packages/api/src/agents/validation.ts` and
+  `viventium_v0_4/LibreChat/packages/api/src/agents/initialize.ts`
+- Canonical LIFE bootstrap: `scripts/viventium/life_bootstrap.py`
 - Background activation: `viventium_v0_4/LibreChat/api/server/services/BackgroundCortexService.js`
 - Follow-ups: `viventium_v0_4/LibreChat/api/server/services/viventium/BackgroundCortexFollowUpService.js`
 - Feelings kernel/state/config: `viventium_v0_4/LibreChat/packages/api/src/feelings/` (five stable

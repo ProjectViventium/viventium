@@ -62,8 +62,10 @@ elif [[ -d "${LEGACY_MONGO_DATA_DIR}" ]]; then
 else
   MONGO_DATA_DIR="${PROFILE_STATE_DIR}/mongo-data"
 fi
-MONGO_PID_FILE="$NATIVE_STATE_DIR/mongod.pid"
+MONGO_PID_FILE="${VIVENTIUM_MONGO_NATIVE_PID_FILE:-$NATIVE_STATE_DIR/mongod.pid}"
 MONGO_LOG_FILE="$NATIVE_LOG_DIR/mongod.log"
+MONGO_ENGINE_IDENTITY_HELPER="$REPO_ROOT/scripts/viventium/mongo_engine_identity.py"
+MONGO_ENGINE_IDENTITY_PREPARED=false
 MONGODB_NATIVE_VERSION="8.0.23"
 MONGODB_NATIVE_TEAM_ID="4XWMY46275"
 MONGODB_NATIVE_BINARY="${APP_SUPPORT_DIR}/runtime-tools/mongodb/${MONGODB_NATIVE_VERSION}/$(uname -m)/bin/mongod"
@@ -136,6 +138,64 @@ mkdir -p "$NATIVE_STATE_DIR" "$NATIVE_LOG_DIR" "$PROFILE_STATE_DIR" "$MONGO_DATA
 port_listening() {
   local port="$1"
   viventium_port_listener_active "$port"
+}
+
+run_mongo_engine_identity() {
+  local action="$1"
+  shift
+  local python_bin="${PYTHON_BIN:-python3}"
+  if [[ ! -f "$MONGO_ENGINE_IDENTITY_HELPER" ]] ||
+    ! command -v "$python_bin" >/dev/null 2>&1
+  then
+    echo "[native] ERROR: MongoDB engine identity helper is unavailable." >&2
+    return 1
+  fi
+  "$python_bin" "$MONGO_ENGINE_IDENTITY_HELPER" "$action" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}" \
+    "$@" \
+    >/dev/null
+}
+
+prepare_native_mongo_engine_identity_for_stop() {
+  MONGO_ENGINE_IDENTITY_PREPARED=false
+  if ! port_listening "$MONGO_PORT" &&
+    [[ ! -e "$MONGO_PID_FILE" && ! -L "$MONGO_PID_FILE" ]]
+  then
+    return 0
+  fi
+  if ! port_listening "$MONGO_PORT" &&
+    run_mongo_engine_identity prune-stale-native-pid \
+      --pid-file "$MONGO_PID_FILE" \
+      2>/dev/null
+  then
+    return 0
+  fi
+  if ! run_mongo_engine_identity record-mongo-engine; then
+    echo "[native] ERROR: Refusing a clean stop without exact MongoDB engine proof." >&2
+    return 1
+  fi
+  MONGO_ENGINE_IDENTITY_PREPARED=true
+}
+
+seal_native_mongo_engine_identity_after_stop() {
+  if [[ "$MONGO_ENGINE_IDENTITY_PREPARED" != "true" ]]; then
+    return 0
+  fi
+  if ! run_mongo_engine_identity seal-mongo-engine; then
+    echo "[native] ERROR: MongoDB stopped, but its durable engine receipt was not sealed." >&2
+    echo "[native] Restart Viventium and retry a clean stop before upgrading." >&2
+    return 1
+  fi
+  MONGO_ENGINE_IDENTITY_PREPARED=false
+}
+
+stop_recorded_native_mongo_engine() {
+  if [[ "$MONGO_ENGINE_IDENTITY_PREPARED" != "true" ]]; then
+    return 0
+  fi
+  run_mongo_engine_identity stop-recorded-native-engine \
+    --pid-file "$MONGO_PID_FILE"
 }
 
 process_command_line() {
@@ -402,6 +462,18 @@ verify_express_mongod_binary() {
 }
 
 select_mongod_binary() {
+  if [[ "${VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL:-0}" == "1" &&
+    -n "${VIVENTIUM_BRIDGE_MONGOD_BINARY:-}" ]]
+  then
+    if [[ ! -x "$VIVENTIUM_BRIDGE_MONGOD_BINARY" ||
+      -L "$VIVENTIUM_BRIDGE_MONGOD_BINARY" ]]
+    then
+      echo "[native] ERROR: recorded MongoDB bridge binary is unavailable or unsafe." >&2
+      return 1
+    fi
+    printf '%s\n' "$VIVENTIUM_BRIDGE_MONGOD_BINARY"
+    return 0
+  fi
   if [[ "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]; then
     if ! verify_express_mongod_binary; then
       echo "[native] ERROR: Easy Install will not fall back to Homebrew or an unverified PATH mongod; repair the pinned MongoDB runtime first." >&2
@@ -441,6 +513,75 @@ start_mongo() {
     >"$MONGO_LOG_FILE" 2>&1 &
   write_pid "$!" "$MONGO_PID_FILE"
   wait_for_port "$MONGO_PORT" "MongoDB"
+}
+
+mongo_bridge_pid_matches_expected() {
+  local pid="$1"
+  local command_line expected_data_dir expected_binary
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  command_line="$(process_command_line "$pid")"
+  [[ -n "$command_line" ]] || return 1
+  expected_data_dir="$(canonical_existing_dir "$MONGO_DATA_DIR")" || return 1
+  [[ "$command_line" == *"mongod"* ]] || return 1
+  [[ "$command_line" == *"--bind_ip $MONGO_HOST"* ]] || return 1
+  [[ "$command_line" == *"--port $MONGO_PORT"* ]] || return 1
+  [[ "$command_line" == *"--dbpath $expected_data_dir"* ]] || return 1
+  expected_binary="${VIVENTIUM_BRIDGE_MONGOD_BINARY:-}"
+  if [[ -z "$expected_binary" &&
+    "${VIVENTIUM_INSTALL_EXPERIENCE:-legacy}" == "express" ]]
+  then
+    expected_binary="$MONGODB_NATIVE_BINARY"
+  fi
+  [[ -z "$expected_binary" || "$command_line" == *"$expected_binary"* ]] || return 1
+}
+
+start_mongo_bridge() {
+  if [[ "${VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL:-0}" != "1" ]]; then
+    echo "[native] ERROR: MongoDB-only bridge is internal to a verified first upgrade." >&2
+    return 1
+  fi
+  if port_listening "$MONGO_PORT" || [[ -e "$MONGO_PID_FILE" || -L "$MONGO_PID_FILE" ]]; then
+    echo "[native] ERROR: MongoDB-only bridge requires a stopped, unclaimed checkpoint port." >&2
+    return 1
+  fi
+  start_mongo
+  local pid
+  pid="$(tr -d '[:space:]' <"$MONGO_PID_FILE" 2>/dev/null || true)"
+  if ! mongo_bridge_pid_matches_expected "$pid"; then
+    echo "[native] ERROR: MongoDB-only bridge could not prove its exact process identity." >&2
+    return 1
+  fi
+  printf 'VIVENTIUM_BRIDGE_MONGO_PID=%s\n' "$pid"
+}
+
+stop_mongo_bridge() {
+  local expected_pid="${1:-}"
+  if [[ "${VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL:-0}" != "1" ]]; then
+    echo "[native] ERROR: MongoDB-only bridge is internal to a verified first upgrade." >&2
+    return 1
+  fi
+  if [[ ! "$expected_pid" =~ ^[0-9]+$ ]] ||
+    [[ ! -f "$MONGO_PID_FILE" || -L "$MONGO_PID_FILE" ]]
+  then
+    echo "[native] ERROR: MongoDB-only bridge cleanup identity is invalid." >&2
+    return 1
+  fi
+  local actual_pid
+  actual_pid="$(tr -d '[:space:]' <"$MONGO_PID_FILE" 2>/dev/null || true)"
+  if [[ "$actual_pid" != "$expected_pid" ]] ||
+    ! mongo_bridge_pid_matches_expected "$expected_pid"
+  then
+    echo "[native] ERROR: MongoDB-only bridge cleanup identity changed; refusing to stop it." >&2
+    return 1
+  fi
+  stop_pid "$expected_pid" "MongoDB bridge"
+  actual_pid="$(tr -d '[:space:]' <"$MONGO_PID_FILE" 2>/dev/null || true)"
+  if [[ "$actual_pid" != "$expected_pid" ]]; then
+    echo "[native] ERROR: MongoDB-only bridge PID file changed during cleanup." >&2
+    return 1
+  fi
+  rm -f "$MONGO_PID_FILE"
 }
 
 meili_log_indicates_incompatible_data() {
@@ -538,23 +679,30 @@ start_livekit() {
 }
 
 case "${1:-}" in
+  start-mongo-only)
+    start_mongo_bridge
+    ;;
+  stop-mongo-only)
+    stop_mongo_bridge "${2:-}"
+    ;;
   start)
     validate_native_livekit_startup
     start_mongo
+    run_mongo_engine_identity record-mongo-engine
     if [[ "$NATIVE_STACK_SKIP_MEILI" != "1" ]]; then
       start_meili
     fi
     start_livekit
     ;;
   stop)
+    prepare_native_mongo_engine_identity_for_stop
     stop_livekit
     stop_pid_file "$MEILI_PID_FILE" "Meilisearch"
-    if [[ -f "$MONGO_PID_FILE" ]]; then
-      stop_pid_file "$MONGO_PID_FILE" "MongoDB"
-    fi
+    stop_recorded_native_mongo_engine
+    seal_native_mongo_engine_identity_after_stop
     ;;
   *)
-    echo "Usage: $0 <start|stop>" >&2
+    echo "Usage: $0 <start|stop|start-mongo-only|stop-mongo-only>" >&2
     exit 1
     ;;
 esac

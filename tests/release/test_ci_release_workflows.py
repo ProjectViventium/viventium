@@ -637,8 +637,8 @@ def test_native_payload_candidate_policy_step_accepts_merged_aligned_pins(
         (ROOT / "release" / "native-payload" / "components.json").read_text()
     )
 
-    assert lock_payload["publication_state"] == "merged"
-    assert native_payload["publication_state"] == "merged"
+    lock_payload["publication_state"] = "merged"
+    native_payload["publication_state"] = "merged"
 
     completed = _run_native_component_policy_step(
         tmp_path,

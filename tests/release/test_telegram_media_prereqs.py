@@ -180,7 +180,7 @@ def test_start_telegram_bot_checks_media_prereqs_before_launch() -> None:
 def test_detached_telegram_start_uses_user_launchd_job() -> None:
     script_text = START_SCRIPT_PATH.read_text(encoding="utf-8")
     launch_fragment = script_text[
-        script_text.index('local telegram_runtime_env_file="$LOG_ROOT/telegram_bot_runtime.env"') :
+        script_text.index('local telegram_legacy_launch_script="$LOG_ROOT/telegram_bot_launch.sh"') :
         script_text.index("local telegram_started_with_launchctl=false")
     ]
 
@@ -190,7 +190,21 @@ def test_detached_telegram_start_uses_user_launchd_job() -> None:
     assert "MS365_MCP_CLIENT_SECRET" not in launch_fragment
     assert 'source "$VIVENTIUM_ENV_FILE"' not in launch_fragment
     assert 'source "$ENV_FILE_LOCAL"' not in launch_fragment
-    assert 'source "$telegram_runtime_env_file"' in launch_fragment
+    assert (
+        'local telegram_launch_dir="$TELEGRAM_POLLER_STATE_DIR/launches/'
+        '${telegram_repo_launch_id}-${telegram_launch_attempt_id}"'
+    ) in launch_fragment
+    assert "# viventium-launch-package-schema: 1" in launch_fragment
+    assert (
+        'source "\\$telegram_launch_package_dir/telegram_bot_runtime.env"'
+        in launch_fragment
+    )
+    assert (
+        'source "\\$telegram_launch_package_dir/telegram_overlay.env"'
+        in launch_fragment
+    )
+    assert 'source "$telegram_runtime_env_file"' not in launch_fragment
+    assert '--candidate-launch-script "$telegram_launch_script"' in launch_fragment
     assert "VIVENTIUM_TELEGRAM_RECONNECT_GRACE_S" in launch_fragment
     assert "VIVENTIUM_TELEGRAM_EMPTY_RESPONSE_MESSAGE" in launch_fragment
     assert "local telegram_clean_env=(" in script_text
@@ -203,7 +217,11 @@ def test_detached_telegram_start_uses_user_launchd_job() -> None:
     assert '-- "${telegram_launch_program[@]}"' in script_text
     assert 'nohup "${telegram_launch_program[@]}"' in script_text
     assert 'nohup "$telegram_python" bot.py' in script_text
-    assert 'source "$TELEGRAM_CONFIG_ENV_FILE"' in script_text
+    assert (
+        '/bin/cp "$TELEGRAM_CONFIG_ENV_FILE" "$telegram_overlay_env_file"'
+        in launch_fragment
+    )
+    assert 'source "$TELEGRAM_CONFIG_ENV_FILE"' not in launch_fragment
     assert 'if [[ -z "\\${API_KEY:-}" && -n "\\${OPENAI_API_KEY:-}" ]]; then export API_KEY="\\$OPENAI_API_KEY"; fi' in script_text
     assert 'TELEGRAM_BOT_WATCHDOG_PID_FILE="$LOG_ROOT/telegram_bot_watchdog.pid"' in script_text
     assert "start_telegram_bot_watchdog() {" in script_text

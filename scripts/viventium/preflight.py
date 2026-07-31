@@ -979,12 +979,12 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     items.append(
         PreflightItem(
             key="pnpm",
-            label="pnpm",
+            label="pnpm@10",
             category="runtime",
-            reason="install and manage JS workspaces",
+            reason="install and manage JS workspaces on the validated Node 20 runtime",
             status="ok" if pnpm_ready else "missing",
             install_kind="brew_formula" if not pnpm_ready else "none",
-            formula="pnpm" if not pnpm_ready else "",
+            formula="pnpm@10" if not pnpm_ready else "",
             command="pnpm",
         )
     )
@@ -1644,6 +1644,8 @@ def refresh_brew_paths() -> None:
         str(mongodb_native_bin_dir()),
         "/opt/homebrew/opt/node@24/bin",
         "/usr/local/opt/node@24/bin",
+        "/opt/homebrew/opt/pnpm@10/bin",
+        "/usr/local/opt/pnpm@10/bin",
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/bin",
@@ -1705,7 +1707,7 @@ def formula_usable(formula: str) -> bool:
     refresh_brew_paths()
     checks: dict[str, Any] = {
         "node@24": node_runtime_supported,
-        "pnpm": pnpm_runtime_ready,
+        "pnpm@10": pnpm_runtime_ready,
         "uv": uv_runtime_ready,
         "ollama": ollama_cli_runtime_ready,
         "ffmpeg": ffmpeg_runtime_ready,

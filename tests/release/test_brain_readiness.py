@@ -68,10 +68,9 @@ def test_registry_keeps_unshipped_features_out_of_easy_install_default() -> None
         "whatsapp",
     )
     assert {"openclaw"} <= set(registry.UNAVAILABLE_KEYS)
-    assert registry.CORE_EXPRESS_KEYS == ("core_app",)
+    assert registry.CORE_EXPRESS_KEYS == ("core_app", "glasshive")
     assert {
         "scheduler",
-        "glasshive",
         "prompt_workbench",
         "nightly_reflection",
         "memory_hardening",
@@ -92,3 +91,4 @@ def test_channel_readiness_matches_the_real_runtime_owners() -> None:
     assert slack.config_paths == ()
     assert whatsapp.generated_env_keys == ("VIVENTIUM_PUBLIC_SERVER_URL",)
     assert whatsapp.config_paths == ("runtime.network.public_api_origin",)
+    assert registry.FEATURE_BY_KEY["primary_ai"].label == "Direct AI Accounts"

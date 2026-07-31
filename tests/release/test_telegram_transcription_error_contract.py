@@ -85,12 +85,11 @@ def test_telegram_runtime_user_configs_default_to_app_support_state() -> None:
         REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
     ).read_text(encoding="utf-8")
 
-    app_support_index = launcher_source.index(
-        '"$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs"'
-    )
-    repo_local_index = launcher_source.index('"$TELEGRAM_DIR_PRIMARY/TelegramVivBot/user_configs"')
-
-    assert app_support_index < repo_local_index
+    assert (
+        'TELEGRAM_USER_CONFIGS_DIR="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-'
+        '$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs}"'
+    ) in launcher_source
+    assert '"$TELEGRAM_DIR_PRIMARY/TelegramVivBot/user_configs"' not in launcher_source
     assert 'mkdir -p "$TELEGRAM_USER_CONFIGS_DIR"' in launcher_source
     assert 'export CONFIG_DIR="$TELEGRAM_USER_CONFIGS_DIR"' in launcher_source
 

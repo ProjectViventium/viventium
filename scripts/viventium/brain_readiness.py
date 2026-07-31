@@ -50,14 +50,19 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
     BrainReadinessFeature(
         key="glasshive",
         label="GlassHive",
-        express_posture="custom_only",
-        required_user_action="Use Custom Settings Install and have Codex CLI or Claude CLI installed and signed in.",
+        express_posture="installed",
+        required_user_action="Have Codex CLI or Claude CLI installed and signed in.",
         machine_prerequisite="At least one supported local worker CLI can run on this Mac.",
         config_paths=("integrations.glasshive.*",),
-        generated_env_keys=("START_GLASSHIVE", "GLASSHIVE_OPERATOR_BASE_URL", "GLASSHIVE_DEFAULT_WORKER_PROFILE"),
-        health_probe="GlassHive operator health plus default worker profile.",
+        generated_env_keys=(
+            "START_GLASSHIVE",
+            "GLASSHIVE_OPERATOR_BASE_URL",
+            "GLASSHIVE_PROVIDER_BASE_URL",
+            "GLASSHIVE_DEFAULT_WORKER_PROFILE",
+        ),
+        health_probe="GlassHive operator and provider health plus an authenticated default worker profile.",
         self_heal_action="Run the worker CLI login command, then bin/viventium start.",
-        qa_owner="qa/glasshive/cases.md",
+        qa_owner="qa/glasshive-core-provider/cases.md",
         public_safety_rule="Do not publish worker home paths, raw delegated prompts, or private result payloads.",
     ),
     BrainReadinessFeature(
@@ -144,7 +149,7 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
     ),
     BrainReadinessFeature(
         key="primary_ai",
-        label="Primary AI",
+        label="Direct AI Accounts",
         express_posture="guided",
         required_user_action=(
             "Add an OpenAI API key in Settings > Account > Connected Accounts for the complete "

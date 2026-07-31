@@ -24,6 +24,8 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 | `SCHED-014` | Built-in Workbench runs own explicit model/effort provenance and preserve structured failures. | Workbench, Scheduler, GlassHive host worker, callback ledgers | Workbench/Scheduler/GlassHive regressions plus isolated scheduled fixtures | PASS-AUTOMATED/PARTIAL 2026-07-18; provenance/failure/ledger fixtures pass, isolated automatic browser run NOT RUN |
 | `SCHED-015` | Recurring catch-up judges the latest eligible occurrence and manual startup uses canonical DB state. | Scheduler loop, delivery ledger, `/health` DB identity | `test_scheduler.py`, `test_bootstrap.py` | PASS-AUTOMATED 2026-07-11; delayed live tick pending ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)) |
 | `SCHED-016` | Authenticated scheduled agent runs use the compiler-owned Sol/xHigh tuple without changing ordinary chat. | Compiler, Scheduling Cortex dispatch, scheduler route, agent initialization, logs/fixture DB | compiler/dispatch/Jest regressions plus isolated scheduled fixture | PASS-AUTOMATED/PARTIAL 2026-07-13; tuple/failure/no-fallback/ordinary-chat isolation regressions pass, isolated model run NOT RUN |
+| `SCHED-017` | Universal upgrade preserves the prior Scheduler choice and schedules DB while helper execution stays outside protected source checkouts. | Compiler, canonical config, helper installer/launcher, App Support component and DB | `test_config_compiler.py`, `test_macos_helper_install.py`, `test_scheduling_mcp_supervision.py` | PASS-AUTOMATED/PARTIAL 2026-07-24 ([report](reports/2026-07-24-universal-upgrade-scheduler-hardening.md)); migration, protected-folder artifact, installed-component sync/import, and matching `/health` tests pass; real user-helper restart/delivery NOT RUN |
+| `SCHED-018` | Upgrade readiness accepts Scheduling Cortex's documented `status: ok` only with exact service and configured-ledger identity. | CLI activation/restart health, Scheduling Cortex `/health`, generated runtime env | `test_cli_upgrade.py`; live activation and browser/status QA | PASS-AUTOMATED/PARTIAL 2026-07-25 ([report](../stable-dev-runtime/reports/2026-07-25-managed-sidecar-health-and-cancel-qa.md)); escaped literal-status mismatch reproduced and fixed; post-fix live activation/browser evidence pending |
 
 ## `SCHED-001` - Create/update existing schedule
 
@@ -443,6 +445,70 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
   chat isolation tests pass. Isolated scheduled model execution, visible response, and cleanup are
   NOT RUN.
 
+## `SCHED-017` - Universal Upgrade Choice, State, And Installed Execution
+
+- Compile a legacy config with no Scheduler key against predecessor generated runtime state that
+  explicitly says `START_SCHEDULING_MCP=true`.
+- Confirm the effective runtime and MCP config stay enabled, the choice becomes explicit in
+  canonical config, unrelated settings and file mode remain unchanged, and dry-run reports without
+  writing.
+- Repeat with explicit `enabled: false`; confirm false wins even when predecessor runtime says true.
+- Repeat with only a retained schedules DB and no enabled predecessor; confirm DB existence does not
+  turn Scheduler on or mutate the DB.
+- Install the helper from a synthetic protected checkout containing source `.venv` and DB artifacts;
+  confirm only code/manifests reach the App Support component, the helper launcher selects that
+  component, and the existing App Support schedules DB remains unchanged.
+- Seed the installed App Support component with an exact prior `.venv`, inject failure immediately
+  after its transfer into the candidate but before component commit, and compare prior file
+  contents/modes plus stage/backup cleanup.
+- Start the same canonical schedules database through the helper-installed component, then promote a
+  source checkout; confirm identity-bound stop drains the installed process before the candidate
+  starts. Repeat in helper mode with the selected directory set to the installed component while a
+  matching listener and pre-bind PID still belong to the declared source checkout. Repeat with a
+  foreign health identity and confirm it remains untouched.
+- Expected: upgrades preserve the user's prior enabled/disabled choice and durable schedule state;
+  helper execution/dependency sync occurs under App Support, never the protected source checkout;
+  same-runtime installed/source ownership transfers without a port conflict while foreign runtimes
+  remain isolated; health identity is checked before broadening beyond the selected scheduler scope;
+  a surviving listener cannot truncate managed cleanup under `set -e`, and the completed stop fails
+  before publication.
+- Forbidden: explicit false becomes true; a fresh/missing choice is inferred from DB existence;
+  helper runs or builds from protected source; source DB/venv is copied; App Support schedule data
+  is deleted, replaced, or rewritten by component installation; a same-database installed process
+  blocks checkout promotion, or a foreign/mismatching/identity-empty installed scheduler is killed
+  or loses its PID record by path/port alone.
+- Last run: PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25
+  ([report](reports/2026-07-25-runtime-handoff-and-mcp-availability.md)); the escaped renamed-component
+  listener was reproduced with a real process and port, exact matching ownership drained it in
+  source-selected and helper-selected modes, foreign identity remained alive, SQLite
+  bytes/`quick_check` stayed exact, and the promoted local runtime completed a real MCP
+  initialize/`list_tools` call. A newly created visible schedule and
+  delivered result remain required before full user-grade acceptance.
+
+## `SCHED-018` - Upgrade Health Uses The Real Scheduler Contract
+
+- Requirement: upgrade/runtime readiness must accept Scheduling Cortex's documented
+  `{"status":"ok"}` response while still checking `service="scheduling-cortex"` and the SHA-256
+  identity of the configured schedules database.
+- Risk covered: a healthy scheduler is labeled unavailable and a transaction waits until timeout
+  because a shared readiness helper expects another service's literal `status: UP`; broadening the
+  check to HTTP 200 alone would mask a stale or foreign scheduler.
+- Steps:
+  1. Serve or probe the real Scheduling Cortex health payload.
+  2. Confirm activation readiness accepts `status: ok` only with the expected service and DB hash,
+     both for an explicit DB path and the launcher's per-runtime default derived from state root.
+  3. Repeat with wrong status, service, missing DB path, and mismatched hash; each must fail.
+  4. Run a real activation, verify the visible Scheduling Cortex surface, refresh it, and compare
+     the UI result with generated config, health identity, logs, and schedule-ledger counts.
+- Expected: the real local-prod scheduler satisfies readiness and appears available without
+  weakening runtime ownership.
+- Forbidden: requiring literal `UP`, accepting HTTP 200 alone, accepting a mismatched service/DB,
+  changing schedule rows to make health pass, or calling source/unit evidence full user acceptance.
+- Evidence: focused CLI regression, sanitized health field/identity comparison, activation result,
+  browser evidence, and continuity schedule counts.
+- Last run: PASS-AUTOMATED/PARTIAL 2026-07-25; regression and live pre-fix RCA pass, while post-fix
+  activation and browser persistence evidence are still pending.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Scheduling Cortex. Add narrower feature-specific
@@ -466,3 +532,4 @@ rows before claiming a pass when the feature behavior changes.
 | `SCHED-UC-014` | Open the built-in 03:00 Workbench schedule, trigger it safely, and inspect the terminal run. | `11_Scheduling_Cortex.md` / `SCHED-014`, `PW-037` | isolated Workbench, Scheduler fixture, GlassHive fixture | definition/bootstrap/effective tuple, callbacks, child/parent ledger, visible detail | Workbench shows configured model and requested to effective effort; terminal status preserves the real failure class or completion. | PASS-AUTOMATED/PARTIAL 2026-07-14; provenance/ledger fixtures pass, isolated automatic browser proof NOT RUN |
 | `SCHED-UC-015` | Wake the host after several missed recurring periods while today's run is still in its catch-up window. | `11_Scheduling_Cortex.md` / `SCHED-015` | Scheduler, Workbench run history, delivery ledger | stored old due time, latest occurrence, late seconds, next due, DB identity hash | Today's occurrence runs once or is skipped by today's lateness, then advances correctly without using a legacy DB. | PASS-AUTOMATED 2026-07-11; delayed live tick pending ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)) |
 | `SCHED-UC-016` | Let a synthetic Viventium-agent automation run, then compare its model/effort with ordinary chat and clean the fixture run. | `11_Scheduling_Cortex.md` / `SCHED-016` | isolated Scheduler/LibreChat route, logs, fixture DB, browser when visible | compiled tuple, authenticated fixture metadata, initialization trace, exact response, fallback state, cleanup count | The scheduled turn uses Sol/xHigh, ordinary chat is not globally rewritten, no hidden fallback is claimed as success, and exact QA residue is zero. | PASS-AUTOMATED/PARTIAL 2026-07-13; tuple/fallback/ordinary-chat regressions pass, isolated visible model run NOT RUN |
+| `SCHED-UC-017` | Upgrade an existing Scheduler-enabled or explicitly disabled install, then launch through the helper from a protected developer checkout. | `11_Scheduling_Cortex.md` / `SCHED-017` | upgrade/compiler, helper installer/launcher, Scheduler MCP, schedules DB | canonical before/after semantic diff, generated env/MCP config, installed component inventory, DB hash/count, helper/MCP logs and health | The prior choice remains explicit, schedules survive, helper runs the App Support component, and a test schedule still works after restart. | PASS-AUTOMATED/PARTIAL 2026-07-24; migration/component/DB preservation and isolated installed MCP health pass, real user helper launch/restart/delivery NOT RUN |

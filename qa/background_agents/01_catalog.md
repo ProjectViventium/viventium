@@ -19,7 +19,8 @@
 ## Notes
 
 - The execution-family column is the launch-ready shipped baseline from source-of-truth.
-- Every row uses Responses API and declares `anthropic / claude-opus-4-8` as its text fallback.
+- Every row uses Responses API and declares `anthropic / claude-opus-5` as its managed text
+  fallback for new installs. Upgrade logic preserves an explicit existing user-selected fallback.
 - The activation-family column is the shipped primary activation baseline.
 - `Deep Research`, `MS365`, and `Google` remain shipped specialist agents, but the main Viventium
   agent disables their background activation in the GlassHive broker-first local baseline. Live

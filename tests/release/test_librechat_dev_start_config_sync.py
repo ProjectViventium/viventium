@@ -28,11 +28,12 @@ def test_direct_librechat_dev_start_remains_valid_bash() -> None:
 def test_direct_librechat_dev_start_compiles_prompt_registry_bundle() -> None:
     launcher_text = LIBRECHAT_START_PATH.read_text(encoding="utf-8")
 
+    assert "resolve_prompt_registry_python() {" in launcher_text
+    assert '"$candidate" -c "import yaml"' in launcher_text
+    assert 'PROMPT_REGISTRY_PYTHON="$(resolve_prompt_registry_python)"' in launcher_text
     assert "ensure_viventium_prompt_bundle() {" in launcher_text
     assert "scripts/viventium/prompt_registry.py" in launcher_text
-    assert 'PYTHON_BIN="${VIVENTIUM_PYTHON_BIN:-${PYTHON_BIN:-python3}}"' in launcher_text
-    assert '"$PYTHON_BIN" "$prompt_registry_script" --json-out "$target"' in launcher_text
-    assert '"$PYTHON_BIN" - "$source_config" "$target_config" "$prompt_registry_script"' in launcher_text
+    assert '"$PROMPT_REGISTRY_PYTHON" "$prompt_registry_script" --json-out "$target"' in launcher_text
     assert 'export VIVENTIUM_PROMPT_BUNDLE_PATH="$target"' in launcher_text
     assert "ensure_viventium_prompt_bundle" in launcher_text
 

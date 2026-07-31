@@ -28,13 +28,13 @@ const QA_PROVIDERS = Object.freeze({
   anthropic: Object.freeze({
     slug: "anthropic",
     protocol: "anthropic",
-    modelId: "claude-opus-4-8",
+    modelId: "claude-opus-5",
     regionName: "Anthropic account",
     keyButtonName: "Use Anthropic API key",
     keyInputLabel: "Key",
     keyName: "anthropic",
     endpointItem: "anthropic",
-    selectionText: "Claude Opus 4 8",
+    selectionText: "Claude Opus 5",
   }),
   groq: Object.freeze({
     slug: "groq",

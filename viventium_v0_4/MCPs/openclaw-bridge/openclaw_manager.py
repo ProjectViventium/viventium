@@ -96,7 +96,7 @@ _PROVIDER_ENV_KEYS = [
 ]
 
 # Default model for OpenClaw agent.
-OPENCLAW_MODEL = os.environ.get("OPENCLAW_MODEL", "anthropic/claude-sonnet-4-20250514")
+OPENCLAW_MODEL = os.environ.get("OPENCLAW_MODEL", "anthropic/claude-opus-5")
 
 # Optional channel-bridge plugin wiring (direct runtime).
 OPENCLAW_CHANNEL_BRIDGE_ENABLED = os.environ.get("OPENCLAW_CHANNEL_BRIDGE_ENABLED", "").lower() in (

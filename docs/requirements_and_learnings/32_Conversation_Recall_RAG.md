@@ -665,6 +665,25 @@ A private local benchmark pass over a real local corpus refined the local-first 
   - launcher/readiness probes parse the health body and require `UP`; HTTP reachability alone is not
     accepted as healthy
   - Compose starts RAG only after PGVector passes `pg_isready`, and both services declare healthchecks
+  - `pg_isready` proves only that PostgreSQL accepts connections; it does not prove that the RAG
+    application's configured password authenticates. The official PostgreSQL image consumes
+    `POSTGRES_PASSWORD` only while initializing empty `PGDATA`, so changing generated environment
+    values alone is not a legal existing-install migration.
+  - local source/Docker runtimes therefore keep one stable 64-hex PostgreSQL credential in an
+    owner-only runtime-state file. It is internal runtime state, not canonical user config, and is
+    never written to the generated LibreChat env, a command argument, a log, or a public receipt
+  - before starting RAG against stopped or absent sidecars, the launcher starts only PGVector,
+    verifies the exact Compose project/service and bind source, PostgreSQL 15 system identity,
+    database/role ownership, and either an empty database or the exact known LangChain PGVector
+    relation set. Unknown, partial, or foreign `PGDATA` fails closed before role mutation
+  - after provenance passes, the launcher reconciles only the existing application role password
+    over PostgreSQL's local Unix socket. A pending owner-only journal is written first and contains
+    only identity metadata plus a credential hash. Interruption is forward-recoverable by replaying
+    the same desired credential; corpus tables and rows are never rewritten, copied, or deleted
+  - a completed owner-only receipt binds the credential hash to the PostgreSQL system identifier,
+    database/role OIDs, Compose owner, PGDATA source, and recognized schema class. A missing secret
+    beside an existing receipt, receipt/cluster mismatch, mount drift, unsupported server major, or
+    unknown relation/extension remains a hard blocker rather than silently adopting another database
   - RAG compose mutation is protected by a stale-owner-safe interprocess lock. A Compose container id
     that Docker cannot inspect is an inconsistent substrate: recovery stops and reports Docker-level
     repair instead of repeatedly force-recreating in parallel

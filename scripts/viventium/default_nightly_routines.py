@@ -40,6 +40,13 @@ def _version(value: Any) -> int:
         return 0
 
 
+def set_default_if_missing(mapping: dict[str, Any], key: str, value: Any) -> bool:
+    if key in mapping:
+        return False
+    mapping[key] = value
+    return True
+
+
 def ensure_default_nightly_routines(config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     changed = False
     runtime = config.setdefault("runtime", {})
@@ -48,37 +55,37 @@ def ensure_default_nightly_routines(config: dict[str, Any]) -> tuple[dict[str, A
     prior_version = _version(routines.get("defaults_version"))
 
     if prior_version < DEFAULTS_VERSION:
-        routines["enabled"] = True
+        changed |= set_default_if_missing(routines, "enabled", True)
         routines["defaults_version"] = DEFAULTS_VERSION
-        routines["auto_worker_profile"] = True
         changed = True
+        changed |= set_default_if_missing(routines, "auto_worker_profile", True)
 
         prompt_workbench = runtime.setdefault("prompt_workbench", {})
-        prompt_workbench["enabled"] = True
+        changed |= set_default_if_missing(prompt_workbench, "enabled", True)
         seed = prompt_workbench.setdefault("seed_nightly", {})
-        seed["enabled"] = True
-        seed["active"] = True
-        seed["executor"] = "glasshive_host"
+        changed |= set_default_if_missing(seed, "enabled", True)
+        changed |= set_default_if_missing(seed, "active", True)
+        changed |= set_default_if_missing(seed, "executor", "glasshive_host")
 
         memory_hardening = runtime.setdefault("memory_hardening", {})
-        memory_hardening["enabled"] = True
-        memory_hardening.setdefault("schedule", "0 3 * * *")
-        memory_hardening.setdefault("operator_user_email", "")
-        memory_hardening.setdefault("dry_run_first", True)
+        changed |= set_default_if_missing(memory_hardening, "enabled", True)
+        changed |= set_default_if_missing(memory_hardening, "schedule", "0 3 * * *")
+        changed |= set_default_if_missing(memory_hardening, "operator_user_email", "")
+        changed |= set_default_if_missing(memory_hardening, "dry_run_first", True)
 
         glasshive = integrations.setdefault("glasshive", {})
-        glasshive["enabled"] = True
+        changed |= set_default_if_missing(glasshive, "enabled", True)
         host_worker = glasshive.setdefault("host_worker", {})
-        host_worker["enabled"] = True
-        host_worker.setdefault("workspace_root", "~/viventium")
-        host_worker.setdefault("default_execution_mode", "host")
+        changed |= set_default_if_missing(host_worker, "enabled", True)
+        changed |= set_default_if_missing(host_worker, "workspace_root", "~/viventium")
+        changed |= set_default_if_missing(host_worker, "default_execution_mode", "host")
 
     if resolve_bool(routines.get("auto_worker_profile"), False):
         profile = detect_worker_profile()
         if profile:
             glasshive = integrations.setdefault("glasshive", {})
             host_worker = glasshive.setdefault("host_worker", {})
-            if not str(host_worker.get("default_worker_profile") or "").strip():
+            if "default_worker_profile" not in host_worker:
                 host_worker["default_worker_profile"] = profile
                 changed = True
 

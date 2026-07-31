@@ -15,6 +15,7 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
 | `RAG-005` | Lexical and vector recall run together and fail independently; lexical source hits preserve bounded adjacent-turn context through one batched expansion. | Exact names/recent events remain recoverable during vector degradation without suppressing healthy semantic evidence, splitting one natural event across isolated messages, or issuing per-hit before/after queries. | `file_search`, Mongo lexical rescue, RAG API, browser/voice recall | focused hybrid/context/query-count regressions plus isolated-account recall QA | PASS-AUTOMATED/PARTIAL 2026-07-20; focused memory/recall API 137/137, complete API 3,365 pass/19 skip, data schemas 405 pass/3 skip plus build; dedicated isolated-account browser and audible voice proof is NOT RUN |
 | `RAG-006` | RAG health and recovery are semantic, dependency-aware, serialized, and portable to an explicitly selected no-host-share Docker daemon. | Recall is never called healthy because a DOWN tuple arrived with HTTP 200, concurrent helpers cannot thrash one Compose project, and remote daemon binds do not touch unrelated client or daemon paths. | RAG route, PGVector/RAG Compose healthchecks, launcher recovery | `test_rag_api_override_contract.py`, compose validation, shell syntax | PASS-LIVE 2026-07-20; 20 parent contracts, 5 nested Compose/dependency contracts, semantic HTTP 200 `UP`, long-bind inspection, product-owned daemon namespace, and supported restart/query persistence pass |
 | `RAG-007` | PGVector is restart-persistent derived state, but snapshots and independent restores must require rebuild from restored canonical state. | Ordinary restart retains Recall; independent restore never presents copied/stale vectors as current. | snapshot, restore, RAG API, PGVector bind, continuity markers | continuity bundle validation plus synthetic live query | PASS-RESTART/PARTIAL-REBUILD 2026-07-20; pre/post supported restart query returned both synthetic facts, complete snapshot and independent restore passed, restored target contained 7 nonempty Mongo collections and an explicit rebuild-required marker; actual restored-corpus rebuild and browser answer remain unrun |
+| `RAG-008` | Existing persisted PGVector data must survive internal PostgreSQL credential changes without relying on the image's first-init environment behavior. | An established user upgrades and Recall starts with the same vector rows; no config reset, corpus deletion, or manual password repair is required. | launcher, PGVector container, owner-only migration state, RAG startup | `test_rag_postgres_migration.py`, opt-in disposable Docker tests | PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24 ([report](reports/2026-07-24-pgdata-credential-migration.md)); 19 focused contracts and two real disposable Docker passes now require equal full-schema plus streamed UUID-ordered collection/embedding row digests before/after role reconciliation, including same-count content-drift refusal, stable rerun, fresh-to-initialized promotion, old/new auth, and foreign-PGDATA refusal. Installed upgrade plus browser Recall proof remains unrun |
 
 ## `RAG-001` - Core User Flow
 
@@ -143,6 +144,28 @@ Use stable `RAG-NNN` IDs for conversation recall rag cases.
   synthetic facts across the supported stop/launch lifecycle. Browser recall grounding is tracked
   separately under `RAG-004`.
 
+## `RAG-008` - Persisted PGDATA Credential Continuity
+
+- Initialize disposable PGVector `PGDATA` under a synthetic predecessor password and seed the exact
+  known RAG relation names with one synthetic vector row.
+- Stop the predecessor container, run the supported migration helper with a new empty owner-state
+  directory, and compare PostgreSQL system identity, complete recognized schema digest, and streamed
+  deterministic digests of every UUID-ordered collection/embedding row before and after.
+- Authenticate from a separate container on the Compose network with both predecessor and migrated
+  credentials. Rerun the migration and confirm the owner credential does not rotate.
+- Interrupt role reconciliation after the pending journal is durable, rerun, and confirm the same
+  desired credential completes without exposing the secret in errors or receipts.
+- Add an unrelated relation, mismatch the PGDATA mount, remove/mismatch database or role identity,
+  and present a receipt without its credential. Each must fail before role mutation.
+- Expected: only recognized empty or legacy Viventium RAG clusters are adopted; the new credential
+  authenticates, the predecessor credential does not, system identity/schema/every row are
+  unchanged, and replay is stable.
+- Forbidden: deleting/reinitializing PGDATA, copying vector rows to a new cluster, accepting
+  `pg_isready` as password proof, logging/persisting the raw secret outside its `0600` file, adopting
+  foreign/partial schemas, or reporting installed/browser acceptance from an isolated DB test.
+- Last run: PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24
+  ([report](reports/2026-07-24-pgdata-credential-migration.md)).
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Conversation Recall Rag. Add narrower feature-specific
@@ -158,9 +181,12 @@ rows before claiming a pass when the feature behavior changes.
 | `RAG-UC-006` | Mention a synthetic event in an isolated channel without explicitly saving it, then ask about it in a new voice conversation. | `32_Conversation_Recall_RAG.md` / `RAG-005` | isolated channel, Modern Playground voice, `file_search` | fixture message, recall corpus/freshness, tool sources, transcript/audio, logs | Voice visibly and audibly recovers the event through recall; saved memory is confirmed absent. | PARTIAL 2026-07-14; synthetic retrieval regressions pass, but the dedicated isolated-account channel-to-voice journey is NOT RUN |
 | `RAG-UC-007` | Start or inspect local Recall while PGVector is down or Compose state is inconsistent. | `32_Conversation_Recall_RAG.md` / `RAG-006` | launcher/status, RAG `/health`, Docker Compose | HTTP status/body, semantic probe result, compose health, serialized recovery log | Recall stays degraded with one actionable Docker blocker; no false ready state or repeated repair loop. | PASS-LIVE 2026-07-20; semantic health, long-bind ownership, isolated restart, and query persistence pass |
 | `RAG-UC-008` | Restart an enabled local Recall install, then snapshot and restore into an independent empty target. | `32_Conversation_Recall_RAG.md` / `RAG-007` | CLI stop/launch, snapshot, restore, RAG API | pre/post query, bundle manifest, restored Mongo counts, rebuild and reauth markers | Restart retains derived vectors; restore retains canonical state but explicitly blocks vector Recall until rebuild. | PASS-RESTART/PARTIAL-REBUILD 2026-07-20; complete snapshot and independent restore pass, restored target is correctly marked rebuild-required, actual rebuilt browser answer remains unrun |
+| `RAG-UC-009` | Upgrade or restart an established source/Docker install whose generated internal PostgreSQL credential no longer matches persisted PGDATA. | `32_Conversation_Recall_RAG.md` / `RAG-008` | supported upgrade/restart, PGVector, RAG API, browser chat | owner-only receipt/journal, mount/system-id/row comparison, RAG health, grounded browser Recall answer | The same corpus remains available after automatic credential reconciliation; foreign PGDATA blocks safely with a repair message. | PASS-ISOLATED/PARTIAL-INSTALLED 2026-07-24; real disposable PostgreSQL migration passed, while installed upgrade/RAG API/browser Recall is NOT RUN |
 
 ## Release Test Traceability
 
 - `tests/release/test_ollama_embeddings_prereqs.py`
 - `tests/release/test_rag_api_override_contract.py`
 - `tests/release/test_rag_compose_resource_guardrails.py`
+- `tests/release/test_rag_postgres_migration.py`
+- `tests/release/test_rag_postgres_migration_docker.py`

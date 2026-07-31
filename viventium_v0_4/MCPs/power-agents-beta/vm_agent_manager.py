@@ -56,7 +56,7 @@ CONTAINER_CPUS = float(os.environ.get("CONTAINER_CPUS", "2"))
 DEFAULT_CLAUDE_CODE_USE_FOUNDRY = os.environ.get("CLAUDE_CODE_USE_FOUNDRY", "")
 DEFAULT_ANTHROPIC_FOUNDRY_API_KEY = os.environ.get("ANTHROPIC_FOUNDRY_API_KEY", "")
 DEFAULT_ANTHROPIC_FOUNDRY_RESOURCE = os.environ.get("ANTHROPIC_FOUNDRY_RESOURCE", "")
-DEFAULT_ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5")
+DEFAULT_ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
 
 VM_PUBLIC_IP = (os.environ.get("VM_PUBLIC_IP") or os.environ.get("PUBLIC_IP") or "").strip()
 

@@ -291,6 +291,21 @@ def test_voice_rendering_observability_distinguishes_normalization_from_strippin
     assert "Private playful sentence" not in line
 
 
+def test_prepare_tts_text_consumes_delivery_controls_before_speech_cleanup():
+    raw = (
+        '<whisper>First beat.</whisper>\n{MSG_BREAK}\n'
+        'Second beat.\n{SKIP_VOICE}'
+    )
+
+    cleaned = tts_module.prepare_tts_text(raw)
+
+    assert "MSG_BREAK" not in cleaned
+    assert "SKIP_VOICE" not in cleaned
+    assert "First beat." in cleaned
+    assert "Second beat." in cleaned
+    assert "<whisper>" in cleaned
+
+
 def test_prepare_tts_text_strips_bare_turn_citation_shells():
     assert (
         tts_module.prepare_tts_text("Answer \u3010turn0search4\u2020source\u3011 continues")

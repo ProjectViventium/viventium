@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -433,18 +434,115 @@ log_success() {{ printf '%s\n' "$*"; }}
     assert "No external LiveKit endpoint was configured" in completed.stdout
 
 
+def test_compiler_generated_local_livekit_endpoint_starts_locked_runtime_when_cold(
+    tmp_path: Path,
+) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    ownership_def = _extract_shell_function(
+        launcher, "livekit_api_host_is_managed_local"
+    )
+    compiler_path = ROOT / "scripts" / "viventium" / "config_compiler.py"
+    spec = importlib.util.spec_from_file_location(
+        "viventium_config_compiler", compiler_path
+    )
+    assert spec is not None and spec.loader is not None
+    compiler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compiler)
+    config = compiler.load_yaml(ROOT / "config.minimal.example.yaml")
+    runtime_env = compiler.render_runtime_env(
+        config, compiler.build_agent_assignments(config)
+    )
+    livekit_http_port = runtime_env["LIVEKIT_HTTP_PORT"]
+    livekit_api_host = runtime_env["LIVEKIT_API_HOST"]
+    assert livekit_api_host == f"http://localhost:{livekit_http_port}"
+
+    docker_log = tmp_path / "docker.log"
+    state_root = tmp_path / "state"
+    script = f"""
+set -u
+SKIP_LIVEKIT=false
+SKIP_DOCKER=false
+LIVEKIT_HTTP_PORT={livekit_http_port}
+LIVEKIT_TCP_PORT=17881
+LIVEKIT_UDP_PORT=17882
+LIVEKIT_API_HOST={livekit_api_host!r}
+LIVEKIT_API_HOST_WAS_CONFIGURED=true
+VIVENTIUM_RUNTIME_PROFILE=isolated
+VIVENTIUM_STATE_ROOT='{state_root}'
+LIVEKIT_NODE_IP=127.0.0.1
+LIVEKIT_SERVER_VERSION=v1.13.4
+LIVEKIT_SERVER_SOURCE_COMMIT='{LIVEKIT_SOURCE_COMMIT}'
+LIVEKIT_SERVER_IMAGE='{LIVEKIT_IMAGE}'
+LIVEKIT_STARTED_BY_SCRIPT=false
+LIVEKIT_CONTAINER_ID=''
+LIVEKIT_TURN_DOMAIN=''
+LIVEKIT_TURN_TLS_PORT=''
+LIVEKIT_TURN_CERT_FILE=''
+LIVEKIT_TURN_KEY_FILE=''
+RED=''
+GREEN=''
+YELLOW=''
+CYAN=''
+NC=''
+curl() {{ return 1; }}
+require_cmd() {{ :; }}
+docker_daemon_ready() {{ return 0; }}
+docker() {{
+  printf '%s\\n' "$*" >>'{docker_log}'
+  if [[ "$1" == "run" ]]; then printf 'locked-container-id\\n'; fi
+}}
+port_in_use() {{ return 1; }}
+write_livekit_config() {{ : >"$1"; }}
+wait_for_http() {{ return 0; }}
+livekit_managed_container_matches_release() {{ return 0; }}
+log_error() {{ printf '%s\\n' "$*"; }}
+log_success() {{ printf '%s\\n' "$*"; }}
+log_warn() {{ printf '%s\\n' "$*"; }}
+request_docker_desktop_launch() {{ :; }}
+{ownership_def}
+if livekit_api_host_is_managed_local "$LIVEKIT_API_HOST"; then
+  LIVEKIT_API_HOST_WAS_CONFIGURED=false
+fi
+{_livekit_startup_block()}
+"""
+    completed = subprocess.run(
+        ["/bin/bash", "-c", script],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    commands = docker_log.read_text(encoding="utf-8")
+    assert "run -d" in commands
+    assert LIVEKIT_IMAGE in commands
+    assert f"viventium.livekit.image={LIVEKIT_IMAGE}" in commands
+    assert f"viventium.livekit.source={LIVEKIT_SOURCE_COMMIT}" in commands
+    assert "Configured LiveKit endpoint did not respond" not in completed.stdout
+
+
 def test_unhealthy_configured_livekit_fails_before_docker_fallback(tmp_path: Path) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    ownership_def = _extract_shell_function(
+        launcher, "livekit_api_host_is_managed_local"
+    )
     docker_marker = tmp_path / "docker-ran"
     script = f"""
 set -u
 SKIP_LIVEKIT=false
 SKIP_DOCKER=false
-LIVEKIT_API_HOST_WAS_CONFIGURED=true
+LIVEKIT_HTTP_PORT=17880
 LIVEKIT_API_HOST=http://127.0.0.1:17880
+LIVEKIT_API_HOST_WAS_CONFIGURED=false
 curl() {{ return 1; }}
 docker() {{ touch '{docker_marker}'; return 1; }}
 log_error() {{ printf '%s\n' "$*"; }}
 log_success() {{ printf '%s\n' "$*"; }}
+{ownership_def}
+if ! livekit_api_host_is_managed_local "$LIVEKIT_API_HOST"; then
+  LIVEKIT_API_HOST_WAS_CONFIGURED=true
+fi
 {_livekit_startup_block()}
 """
     completed = subprocess.run(

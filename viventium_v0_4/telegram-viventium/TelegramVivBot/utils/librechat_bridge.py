@@ -25,6 +25,14 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
 
 import httpx
+try:
+    from utils.librechat_http import (
+        async_client_options_for_url as _async_client_options_for_url,
+    )
+except ModuleNotFoundError:
+    from TelegramVivBot.utils.librechat_http import (
+        async_client_options_for_url as _async_client_options_for_url,
+    )
 # === VIVENTIUM START ===
 # Feature: Markdown → Telegram HTML conversion (replaces fragile MarkdownV2).
 try:
@@ -228,6 +236,12 @@ _SHARED_PATH = Path(__file__).resolve().parents[3] / "shared"  # .../viventium_v
 if str(_SHARED_PATH) not in sys.path:
     sys.path.insert(0, str(_SHARED_PATH))
 
+from delivery_controls import (
+    parse_delivery_controls,
+    strip_delivery_controls_for_preview,
+    strip_incomplete_control_suffix,
+)
+
 try:
     from no_response import NO_RESPONSE_TAG, is_no_response_only, strip_trailing_nta
     from insights import format_insights_fallback_text
@@ -297,10 +311,24 @@ except Exception:
 # === VIVENTIUM END ===
 
 
-def sanitize_telegram_text(text: str) -> str:
+def sanitize_telegram_text(text: str, *, preserve_delivery_controls: bool = False) -> str:
     if not text:
         return ""
-    cleaned = _strip_tool_transcript_lines(text)
+    if preserve_delivery_controls:
+        cleaned = text
+    else:
+        preview_source = strip_incomplete_control_suffix(text)
+        delivery_plan = parse_delivery_controls(preview_source)
+        has_delivery_controls = bool(
+            delivery_plan.skip_voice_count
+            or delivery_plan.message_break_count
+            or delivery_plan.merged_break_count
+        )
+        if preview_source != text or has_delivery_controls:
+            cleaned = delivery_plan.clean_text
+        else:
+            cleaned = text
+    cleaned = _strip_tool_transcript_lines(cleaned)
     cleaned = _TOOL_XML_INVOKE_BLOCK_RE.sub(
         lambda match: "" if _contains_glasshive_raw_tool_name(match.group(0)) else match.group(0),
         cleaned,
@@ -361,6 +389,22 @@ def strip_voice_control_tags_for_display(text: str) -> str:
     cleaned = _VOICE_BRACKET_RE.sub(_strip_voice_bracket_marker, cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned.strip()
+
+
+def apply_structured_delivery_controls(text: str, delivery_controls: Any) -> str:
+    """Rebuild transport-only controls from clean persisted Phase B metadata."""
+    if not isinstance(text, str) or not isinstance(delivery_controls, dict):
+        return text
+    segments = delivery_controls.get("segments")
+    clean_segments = (
+        [segment for segment in segments if isinstance(segment, str) and segment.strip()]
+        if isinstance(segments, list)
+        else []
+    )
+    rebuilt = "\n{MSG_BREAK}\n".join(clean_segments) if clean_segments else text
+    if delivery_controls.get("skipVoice") is True:
+        rebuilt = f"{rebuilt}\n{{SKIP_VOICE}}"
+    return rebuilt
 
 
 def _strip_voice_bracket_marker(match: re.Match[str]) -> str:
@@ -532,7 +576,7 @@ def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
 
     text = payload.get("text")
     if isinstance(text, str) and text:
-        out.append(sanitize_telegram_text(text))
+        out.append(sanitize_telegram_text(text, preserve_delivery_controls=True))
         return out
 
     event = payload.get("event")
@@ -561,12 +605,12 @@ def extract_text_deltas(payload: dict[str, Any]) -> list[str]:
             continue
         ptext = part.get("text")
         if isinstance(ptext, str) and ptext:
-            out.append(sanitize_telegram_text(ptext))
+            out.append(sanitize_telegram_text(ptext, preserve_delivery_controls=True))
             continue
         if isinstance(ptext, dict):
             val = ptext.get("value")
             if isinstance(val, str) and val:
-                out.append(sanitize_telegram_text(val))
+                out.append(sanitize_telegram_text(val, preserve_delivery_controls=True))
 
     return out
 
@@ -814,13 +858,18 @@ def extract_final_response_text(payload: dict[str, Any]) -> str:
     if isinstance(response, dict):
         text = response.get("text")
         if isinstance(text, str) and text.strip():
-            parts.append(sanitize_telegram_text(text))
+            parts.append(sanitize_telegram_text(text, preserve_delivery_controls=True))
         if not parts:
-            parts.extend(_collect_text_parts(response.get("content")))
+            parts.extend(
+                _collect_text_parts(
+                    response.get("content"),
+                    preserve_delivery_controls=True,
+                )
+            )
     if not parts:
         text = payload.get("text")
         if isinstance(text, str) and text.strip():
-            parts.append(sanitize_telegram_text(text))
+            parts.append(sanitize_telegram_text(text, preserve_delivery_controls=True))
     return "".join(parts).strip()
 
 
@@ -1089,40 +1138,51 @@ def _is_deferred_internal_final(payload: dict[str, Any]) -> bool:
 # === VIVENTIUM END ===
 
 
-def _collect_text_parts(content: Any) -> list[str]:
+def _collect_text_parts(
+    content: Any,
+    *,
+    preserve_delivery_controls: bool = False,
+) -> list[str]:
     parts: list[str] = []
+
+    def sanitize(value: str) -> str:
+        return sanitize_telegram_text(
+            value,
+            preserve_delivery_controls=preserve_delivery_controls,
+        )
+
     if isinstance(content, str):
         if content:
-            parts.append(sanitize_telegram_text(content))
+            parts.append(sanitize(content))
         return parts
     if isinstance(content, dict):
         if content.get("type") == "text":
             text = content.get("text")
             if isinstance(text, str) and text:
-                parts.append(sanitize_telegram_text(text))
+                parts.append(sanitize(text))
                 return parts
             if isinstance(text, dict):
                 val = text.get("value")
                 if isinstance(val, str) and val:
-                    parts.append(sanitize_telegram_text(val))
+                    parts.append(sanitize(val))
                     return parts
         text = content.get("text")
         if isinstance(text, str) and text:
-            parts.append(sanitize_telegram_text(text))
+            parts.append(sanitize(text))
         elif isinstance(text, dict):
             val = text.get("value")
             if isinstance(val, str) and val:
-                parts.append(sanitize_telegram_text(val))
+                parts.append(sanitize(val))
         else:
             val = content.get("value")
             if isinstance(val, str) and val:
-                parts.append(sanitize_telegram_text(val))
+                parts.append(sanitize(val))
         return parts
     if isinstance(content, list):
         for item in content:
             if isinstance(item, str):
                 if item:
-                    parts.append(sanitize_telegram_text(item))
+                    parts.append(sanitize(item))
                 continue
             if not isinstance(item, dict):
                 continue
@@ -1130,16 +1190,16 @@ def _collect_text_parts(content: Any) -> list[str]:
                 continue
             text = item.get("text")
             if isinstance(text, str) and text:
-                parts.append(sanitize_telegram_text(text))
+                parts.append(sanitize(text))
                 continue
             if isinstance(text, dict):
                 val = text.get("value")
                 if isinstance(val, str) and val:
-                    parts.append(sanitize_telegram_text(val))
+                    parts.append(sanitize(val))
                     continue
             val = item.get("value")
             if isinstance(val, str) and val:
-                parts.append(sanitize_telegram_text(val))
+                parts.append(sanitize(val))
         return parts
     return parts
 
@@ -1220,6 +1280,13 @@ class LibreChatBridge:
         self.glasshive_delivery_poll_s = _parse_positive_float(
             (os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S") or "").strip(),
             5.0,
+        )
+        self.glasshive_delivery_max_backoff_s = _parse_positive_float(
+            (
+                os.getenv("VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_MAX_BACKOFF_S")
+                or ""
+            ).strip(),
+            60.0,
         )
         self.glasshive_delivery_batch_size = max(
             1,
@@ -1319,9 +1386,17 @@ class LibreChatBridge:
 
     async def _run_glasshive_delivery_dispatcher(self) -> None:
         interval_s = max(self.glasshive_delivery_poll_s, 1.0)
+        max_backoff_s = max(self.glasshive_delivery_max_backoff_s, interval_s)
+        consecutive_failures = 0
         while True:
             try:
                 claimed = await self._claim_glasshive_deliveries(limit=self.glasshive_delivery_batch_size)
+                if consecutive_failures:
+                    logger.info(
+                        "GlassHive delivery dispatcher dependency recovered after %s failed attempt(s)",
+                        consecutive_failures,
+                    )
+                    consecutive_failures = 0
                 if not claimed:
                     await asyncio.sleep(interval_s)
                     continue
@@ -1330,8 +1405,20 @@ class LibreChatBridge:
             except asyncio.CancelledError:
                 return
             except Exception as exc:
-                logger.warning("GlassHive delivery dispatcher failed: %s", exc)
-                await asyncio.sleep(interval_s)
+                consecutive_failures += 1
+                retry_s = min(
+                    max_backoff_s,
+                    interval_s * (2 ** min(consecutive_failures - 1, 10)),
+                )
+                # One warning identifies the outage; subsequent identical
+                # attempts back off quietly until one recovery message.
+                if consecutive_failures == 1:
+                    logger.warning(
+                        "GlassHive delivery dispatcher dependency unavailable; "
+                        "retrying with capped backoff: %s",
+                        exc,
+                    )
+                await asyncio.sleep(retry_s)
 
     async def _claim_glasshive_deliveries(
         self,
@@ -1351,7 +1438,10 @@ class LibreChatBridge:
         if callback_id:
             payload["callbackId"] = callback_id
         timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
             response = await client.post(url, json=payload, headers=headers)
             if response.status_code != 200:
                 raise RuntimeError(f"GlassHive delivery claim failed ({response.status_code})")
@@ -1379,7 +1469,10 @@ class LibreChatBridge:
         if reason:
             payload["reason"] = reason[:1000]
         timeout = httpx.Timeout(10.0, connect=5.0, read=10.0, write=5.0, pool=5.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(url),
+        ) as client:
             response = await client.post(url, json=payload, headers=headers)
             if response.status_code == 409:
                 logger.warning("GlassHive delivery claim was lost before status=%s", status)
@@ -1708,7 +1801,15 @@ class LibreChatBridge:
             if isinstance(raw_message, str) and raw_message.strip()
             else message
         )
+        delivery_plan = parse_delivery_controls(voice_text)
+        voice_text = delivery_plan.clean_text
+        if isinstance(raw_message, str) and raw_message.strip():
+            message = render_telegram_markdown(voice_text, strip_voice_markup=True)
+            parse_mode = "HTML"
+        else:
+            message = strip_delivery_controls_for_preview(message)
         should_send_voice = False
+        model_skip_effective = False
         if voice_text and convo_id:
             try:
                 from config import Users  # local import to avoid circular dependency
@@ -1723,13 +1824,30 @@ class LibreChatBridge:
                     voice_enabled=voice_responses_enabled,
                     text=voice_text,
                 )
+                model_skip_effective = bool(delivery_plan.skip_voice and should_send_voice)
+                if delivery_plan.skip_voice:
+                    should_send_voice = False
                 if should_send_voice:
                     voice_audio = await synthesize_speech(voice_text, convo_id, voice_route=voice_route)
             except Exception as exc:
                 logger.warning("Failed proactive voice synthesis, falling back to text: %s", exc)
-        if should_send_voice and isinstance(raw_message, str) and raw_message.strip():
-            message = render_telegram_markdown(raw_message, strip_voice_markup=True)
-            parse_mode = "HTML"
+        logger.info(
+            "[TG_VOICE] proactive gate send=%s voice_decision=%s model_skip_requested=%s "
+            "model_skip_effective=%s tts_avoided_chars=%s msg_breaks=%s segments=%s "
+            "segment_merge=%s",
+            int(bool(should_send_voice)),
+            (
+                "skipped_model"
+                if model_skip_effective
+                else ("sent" if should_send_voice else "disabled_user")
+            ),
+            int(bool(delivery_plan.skip_voice)),
+            int(model_skip_effective),
+            len(voice_text) if model_skip_effective else 0,
+            delivery_plan.message_break_count,
+            len(delivery_plan.segments),
+            delivery_plan.merged_break_count,
+        )
         # === VIVENTIUM END ===
 
         async def _invoke_callback(
@@ -1780,20 +1898,18 @@ class LibreChatBridge:
             # preserving existing HTML formatting behavior for each chunk. When
             # proactive voice is enabled, keep text canonical and attach audio only
             # to the final chunk so users do not receive duplicate voice notes.
-            if (
-                parse_mode == "HTML"
-                and isinstance(raw_message, str)
-                and raw_message.strip()
-            ):
-                chunks = split_telegram_text(raw_message)
-                if len(chunks) > 1:
-                    last_index = len(chunks) - 1
-                    for index, chunk in enumerate(chunks):
+            if isinstance(raw_message, str) and raw_message.strip():
+                payloads = [
+                    render_telegram_markdown(chunk, strip_voice_markup=True)
+                    for segment in delivery_plan.segments
+                    for chunk in split_telegram_text(segment)
+                    if chunk.strip()
+                ]
+                if payloads:
+                    last_index = len(payloads) - 1
+                    for index, payload in enumerate(payloads):
                         await _invoke_callback(
-                            render_telegram_markdown(
-                                chunk,
-                                strip_voice_markup=should_send_voice,
-                            ),
+                            payload,
                             payload_parse_mode="HTML",
                             payload_voice_audio=voice_audio if index == last_index else None,
                         )
@@ -2181,7 +2297,10 @@ class LibreChatBridge:
 
         timeout_s = _parse_positive_float(os.getenv("VIVENTIUM_TELEGRAM_CHAT_TIMEOUT_S", ""), 120.0)
         timeout = httpx.Timeout(timeout_s, connect=10.0, read=timeout_s, write=timeout_s, pool=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            **_async_client_options_for_url(chat_url),
+        ) as client:
             resp = await client.post(chat_url, json=payload, headers=headers)
             if resp.status_code != 200:
                 link_payload = None
@@ -2266,7 +2385,10 @@ class LibreChatBridge:
                     120.0,
                 )
                 timeout = _build_stream_timeout(read_timeout_s)
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(
+                    timeout=timeout,
+                    **_async_client_options_for_url(url),
+                ) as client:
                     async with client.stream("GET", url, headers=headers, params=params) as resp:
                         resp.raise_for_status()
 
@@ -2478,7 +2600,10 @@ class LibreChatBridge:
             params["conversationId"] = conversation_id
         timeout = httpx.Timeout(connect=10.0, read=10.0, write=10.0, pool=10.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                **_async_client_options_for_url(url),
+            ) as client:
                 resp = await client.get(url, headers=headers, params=params)
                 if resp.status_code == 200:
                     payload = resp.json()
@@ -2514,7 +2639,10 @@ class LibreChatBridge:
             params["conversationId"] = conversation_id
         timeout = httpx.Timeout(connect=10.0, read=10.0, write=10.0, pool=10.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                **_async_client_options_for_url(url),
+            ) as client:
                 resp = await client.get(url, headers=headers, params=params)
                 if resp.status_code == 200:
                     payload = resp.json()
@@ -2647,6 +2775,10 @@ class LibreChatBridge:
                     if isinstance(follow_up, dict):
                         text = follow_up.get("text")
                         if isinstance(text, str) and text.strip():
+                            text = apply_structured_delivery_controls(
+                                text,
+                                follow_up.get("deliveryControls"),
+                            )
                             # === VIVENTIUM START ===
                             # Feature: Treat {NTA} (or equivalent) as an intentional silent follow-up.
                             if is_no_response_only(text):
@@ -2826,7 +2958,10 @@ class LibreChatBridge:
                     request_params = dict(base_params)
                     if attempt > 0:
                         request_params["resume"] = "true"
-                    async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with httpx.AsyncClient(
+                        timeout=timeout,
+                        **_async_client_options_for_url(url),
+                    ) as client:
                         async with client.stream("GET", url, headers=headers, params=request_params) as resp:
                             resp.raise_for_status()
 

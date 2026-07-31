@@ -1085,7 +1085,7 @@ No cloud change was made; this records compatibility so the enterprise contract 
   reserve `xhigh` for genuinely hard asynchronous work after direct route and worker-run proof. A
   user/operator option, never a hardcoded constant.
 - **Worker model.** Config-driven via `WPR_MODEL_CODEX_CLI` (default `gpt-5.4`) and
-  `WPR_MODEL_OPENCLAW_CLAUDE` (default `claude-sonnet-4-6`). Choose from a launch-ready quality family
+  `WPR_MODEL_OPENCLAW_CLAUDE` (default `claude-opus-5`). Choose from a launch-ready quality family
   (model governance in `01_Key_Principles.md`); never use a low-tier model (GPT-mini / Haiku class)
   as a speed lever. A faster quality model is a supported option, not a silent default override.
 - **Keep-awake vs cost (default OFF for always-on prewarm).** Keeping workers warm has ongoing
@@ -1251,6 +1251,92 @@ to Web, Telegram, and Voice GlassHive timeout env vars, and defaults to 600 seco
 must not silently inherit the shorter background-follow-up grace window.
 
 ---
+
+## Core Viventium provider surface
+
+GlassHive also exposes an authenticated OpenAI-compatible conversation surface for Viventium's
+normal Agent Provider/Model layer. This is independent of the GlassHive MCP broker and does not read
+LibreChat internals.
+
+- `GET /v1/models` publishes exact IDs, display metadata, harness profile, effort choices/default,
+  context window, declared capabilities, and current binary/auth readiness.
+- `POST /v1/chat/completions` accepts structured authenticated owner/conversation/agent/message/
+  stream/surface/input metadata plus workspace/access binding. It emits OpenAI-compatible streaming
+  chunks; harness-native and brokered tools stay inside GlassHive.
+- `POST /v1/responses` is an additive OpenAI Responses adapter over the same GlassHive request,
+  session, workspace, activity, cancellation, and harness execution core. It accepts the portable
+  text/message subset (`model`, `input`, optional `instructions`, `stream`, reasoning effort,
+  `conversation`, and `previous_response_id`) and emits typed Responses objects/events. A
+  `previous_response_id` may resume only a request owned by the same authenticated principal.
+  Harness-native tools remain inside GlassHive; unsupported client-owned tools or multimodal item
+  types fail visibly instead of being ignored or delegated to a wrapper model.
+- The compatibility floor is a normal bearer-authenticated Chat Completions request containing only
+  `model`, `messages`, and optional `stream`; server defaults supply principal, tenant, conversation,
+  agent, workspace, and access. Viventium headers/metadata are optional extensions. Unsupported
+  parameters return the standard `error.message/type/param/code` envelope and never silently alter
+  harness behavior. Chat Completions remains the broad compatibility floor used by LibreChat;
+  Responses is the preferred additive surface for new direct clients and does not create a second
+  execution engine.
+- Portability is deliberately protocol-layered. OpenAI's official guidance recommends Responses for
+  new projects while keeping Chat Completions supported, so GlassHive implements both over one core.
+  ACP remains a possible future external-agent/editor adapter, and MCP remains the tool/context
+  broker; neither is substituted for the HTTP conversation API. The Claude Agent SDK may later
+  replace Claude CLI process management inside the existing profile if it proves a lifecycle or
+  streaming advantage, without changing the public provider contract. Authoritative references:
+  [OpenAI Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses),
+  [OpenAI Chat API](https://developers.openai.com/api/reference/resources/chat),
+  [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python),
+  [ACP](https://zed.dev/acp), and
+  [MCP architecture](https://modelcontextprotocol.io/docs/learn/architecture).
+- `GLASSHIVE_PROVIDER_API_KEY`, `GLASSHIVE_MCP_API_KEY`, and `WPR_API_TOKEN` are separate credentials.
+  The provider key is accepted only on provider routes and resolves to a configured principal and
+  tenant. Owner delegation and full access require explicit server grants; a caller cannot escalate
+  either by adding headers or rich metadata. The MCP credential cannot administer the runtime, and
+  the runtime administrator token cannot authenticate the provider route.
+- One session exists per tenant/owner/conversation/agent. A model, workspace, or access change
+  supersedes the old worker and seeds the new native session from complete visible history.
+- Idempotency is owner-scoped and authoring-role-scoped: `main:<assistant-response-id>`,
+  `phase_b:<main-agent-id>:<parent-response-id>`, and
+  `cortex:<cortex-agent-id>:<main-response-id>`. Transport retries reuse the same exact key while
+  parallel authoring roles cannot collide. Explicit Stop cancels that exact request; refresh or
+  transport disconnect only reattaches and does not terminate native execution.
+- Standard endpoint calls that omit a stable idempotency/message identifier create a fresh request;
+  the provider never content-hashes identical prompts into an accidental replay.
+- The authenticated request activity stream has monotonic IDs, `Last-Event-ID` recovery, 15-second
+  heartbeats, and normalized queued/started/reasoning-summary/plan/tool/file/waiting/completed/
+  failed/cancelled events. Only summaries and observable actions may cross the boundary—never hidden
+  chain-of-thought.
+- Provider sessions, context manifests, transcripts, execution metadata, and raw runtime logs live
+  under private GlassHive/Viventium App Support state. Conversation mode runs in the exact selected
+  folder but creates user work there only when the task calls for it. Each turn projects one current
+  authoritative system/Feeling snapshot; it supersedes older session snapshots instead of
+  accumulating stale prompt state. Completed request/activity rows are retained for 30 days and
+  idle provider sessions for 90 days by default; active or referenced turns are never pruned.
+- Output and activity payloads are recursively redacted before leaving GlassHive. Local paths,
+  credentials, tokens, and secrets split across transport chunks must not escape.
+- Host capacity reserves an interactive conversation lane per harness family in addition to the
+  mission lane. Authentication remains isolated and concurrency is not broadened beyond proven-safe
+  limits.
+- The `workspace` access value is a write boundary, not a claim that all reads are chrooted. Codex
+  uses native workspace-write/no-approval policy and Claude uses `acceptEdits` plus a fail-closed
+  native sandbox. Both may read required runtime/system dependencies outside the selected folder;
+  full access remains the default as explicitly approved for the canonical Main.
+- Completion usage is taken from native harness events when supplied. If the native CLI omits usage,
+  GlassHive returns a clearly marked estimate; streaming and non-streaming responses must agree on
+  the final visible text and usage provenance.
+- Native transport truth is preserved: the currently shipped Claude and Codex CLI conversation
+  profiles stream normalized activity while working, then publish assistant text only when the
+  harness emits its native terminal event (`result` for Claude or `turn.completed` for Codex).
+  `/v1/models` declares `incremental_text: false` for both. GlassHive must never publish an
+  intermediate working preamble as the answer or fabricate token deltas. A later native adapter may
+  improve text latency if measured Quality + Performance warrants the extra lifecycle surface.
+
+### Conversation versus mission mode
+
+Mission mode retains the established worker contract. Conversation mode removes mission-only
+language and mechanics: no `JUST DO IT`, forced deliverable, mandatory `FINAL REPORT`, terminal-tail
+slicing, mission retry loop, or LIFE-side evidence scaffolding. Natural answers and clarifying
+questions are valid. Existing destructive-action and safety checkpoints remain active.
 
 ## MCP Integration
 
@@ -1739,7 +1825,10 @@ per-user VMs, gVisor, or Kata.
 
 Default enterprise auth is `first_party_assertion`:
 
-- LibreChat remains unmodified and connects to GlassHive through MCP config only.
+- LibreChat may connect to GlassHive in two independent supported roles: as the normal
+  `glasshive-harness` AI Provider/Model for authored conversations, and through MCP configuration
+  for explicit worker delegation/tool use. Enterprise identity and tenant assertions apply to both
+  boundaries according to their separate credentials; neither role wraps the other.
 - The default LibreChat MCP config sends `X-Viventium-Tenant-Id`, `X-Viventium-User-Id`, and
   request-context/upload headers; the service token is injected by the trusted reverse proxy unless
   `service_token_delivery=client_header` is explicitly selected.
@@ -1837,11 +1926,17 @@ persistent home and workspace mounts.
 
 ## Installer Integration
 
-- GlassHive is **not part of the minimum public first-run contract** (see doc 39)
-- Optional component: `START_GLASSHIVE=true|false`, `--skip-glasshive` flag
-- The start script auto-disables GlassHive when the runtime directory is absent
-- Seeded built-in agents must not keep dead GlassHive tool IDs when `START_GLASSHIVE=false`
-- A missing local GlassHive MCP can surface as a generic error to fresh users if not compiled out
+- On supported new local installs, the core GlassHive provider and host runtime are enabled by default
+  as defined by doc 39. The installer bootstraps LIFE and exposes the provider even when Codex or
+  Claude authentication still needs user action.
+- Custom configurations may explicitly disable GlassHive through compiled configuration or the
+  diagnostic `--skip-glasshive` launcher option.
+- If a damaged or partial checkout is missing the GlassHive runtime directory, the launcher disables
+  GlassHive for that run and reports the degraded state while leaving the repairable core chat
+  surfaces available.
+- When GlassHive is disabled or unavailable, generated provider/model additions and seeded built-in
+  tool IDs must compile out together. A fresh user must receive a precise readiness/dependency error,
+  never a generic missing-key error or a silent substitute provider.
 
 ---
 

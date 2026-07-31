@@ -24,6 +24,7 @@ try:
         apply_local_origin_overrides,
         canonical_repository_identity,
         component_origin_status,
+        config_file_sha256,
         load_component_selection_config,
         select_components,
     )
@@ -227,6 +228,8 @@ def safe_component_path(repo: Path, rel_path: str) -> Path | None:
 def component_alignment(
     repo: Path,
     config_file: Path | None = None,
+    *,
+    expected_config_sha256: str = "",
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     lock_path = repo / "components.lock.json"
     if not lock_path.exists():
@@ -273,6 +276,28 @@ def component_alignment(
             ],
             [],
         )
+    expected_config_sha256 = expected_config_sha256.strip().lower()
+    if expected_config_sha256:
+        try:
+            config_matches = (
+                config_file is not None
+                and SHA256_RE.fullmatch(expected_config_sha256) is not None
+                and config_file_sha256(config_file) == expected_config_sha256
+            )
+        except OSError:
+            config_matches = False
+        if not config_matches:
+            return (
+                [
+                    {
+                        "name": "config.yaml",
+                        "status": "config_changed_during_activation",
+                        "expected": "unchanged activation config",
+                        "actual": "",
+                    }
+                ],
+                [],
+            )
     try:
         selection_config = (
             load_component_selection_config(config_file) if config_file is not None else {}
@@ -290,6 +315,26 @@ def component_alignment(
             ],
             [],
         )
+    if expected_config_sha256:
+        try:
+            config_matches = (
+                config_file is not None
+                and config_file_sha256(config_file) == expected_config_sha256
+            )
+        except OSError:
+            config_matches = False
+        if not config_matches:
+            return (
+                [
+                    {
+                        "name": "config.yaml",
+                        "status": "config_changed_during_activation",
+                        "expected": "unchanged activation config",
+                        "actual": "",
+                    }
+                ],
+                [],
+            )
     source_root_value = os.environ.get("VIVENTIUM_COMPONENTS_SOURCE_ROOT", "").strip()
     source_root = Path(source_root_value) if source_root_value else None
     components = apply_local_origin_overrides(components, source_root)
@@ -591,7 +636,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     dirty = tracked_dirty(repo)
     config_file = Path(args.config_file).expanduser().resolve() if args.config_file else None
-    lock_drift, component_refresh = component_alignment(repo, config_file)
+    lock_drift, component_refresh = component_alignment(
+        repo,
+        config_file,
+        expected_config_sha256=str(args.expected_config_sha256 or ""),
+    )
     running = stack_running(app_support)
     helper_rebuild = helper_needs_rebuild(repo)
     blockers: list[str] = []
@@ -632,6 +681,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-fetch", action="store_true")
     parser.add_argument("--config-file")
+    parser.add_argument("--expected-config-sha256")
     parser.add_argument("--allow-dirty-parent", action="store_true")
     args = parser.parse_args(argv)
     report = build_report(args)

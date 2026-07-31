@@ -150,3 +150,18 @@ Conversation exports must render background events as readable text (not raw JSO
   - Chatterbox: `[laugh]`, `[sigh]`, `[gasp]` — no SSML.
   - ElevenLabs/OpenAI: no tags at all (explicit prohibition).
 - Voice control tags (SSML + bracket nonverbals) must be stripped from: (1) playground transcript display, (2) follow-up text before DB persistence, (3) fallback TTS input.
+
+## Smart Messaging Delivery
+
+- Messaging surfaces treat optional audio and multiple bubbles as views of one logical Main Agent
+  answer.
+- The model may emit standalone `{SKIP_VOICE}` to suppress optional audio while delivering complete
+  text, except when the user explicitly asks to hear/read/speak the answer.
+- The model may place standalone `{MSG_BREAK}` between complete conversational beats. Runtime caps
+  this at two breaks/three bubbles and does not invent delays.
+- Controls apply only as standalone lines outside fenced code and quotes. Literal examples remain
+  visible; incomplete reserved streaming suffixes do not.
+- Runtime parses structure but never infers artifact type, intent, or delivery preference from
+  keywords, length, provider, agent name, or prompt text.
+- The clean answer persists once. Any audio is synthesized once and attached only to the final
+  delivered bubble.

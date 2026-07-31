@@ -18,6 +18,8 @@ ensure_brew_paths_on_path() {
   prepend_path_if_dir "/usr/local/sbin"
   prepend_path_if_dir "/opt/homebrew/opt/node@24/bin"
   prepend_path_if_dir "/usr/local/opt/node@24/bin"
+  prepend_path_if_dir "/opt/homebrew/opt/pnpm@10/bin"
+  prepend_path_if_dir "/usr/local/opt/pnpm@10/bin"
   prepend_path_if_dir "/opt/homebrew/opt/python@3.12/libexec/bin"
   prepend_path_if_dir "/usr/local/opt/python@3.12/libexec/bin"
   prepend_path_if_dir "/Applications/Docker.app/Contents/Resources/bin"

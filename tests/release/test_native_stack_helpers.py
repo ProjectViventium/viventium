@@ -81,6 +81,39 @@ def test_express_native_can_skip_meilisearch_without_changing_stop_cleanup() -> 
     assert 'stop_pid_file "$MEILI_PID_FILE" "Meilisearch"' in stop_case
 
 
+def test_native_mongo_stop_requires_a_fresh_running_engine_receipt() -> None:
+    script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
+    function_def = extract_shell_function(
+        script_text,
+        "stop_recorded_native_mongo_engine",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                "MONGO_PID_FILE='/tmp/synthetic-mongod.pid'\n"
+                "run_mongo_engine_identity() { printf 'identity:%s\\n' \"$*\"; }\n"
+                f"{function_def}"
+                "MONGO_ENGINE_IDENTITY_PREPARED=false\n"
+                "stop_recorded_native_mongo_engine\n"
+                "MONGO_ENGINE_IDENTITY_PREPARED=true\n"
+                "stop_recorded_native_mongo_engine\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "identity:stop-recorded-native-engine --pid-file /tmp/synthetic-mongod.pid"
+    ]
+
+
 def test_livekit_meta_matches_expected_accepts_matching_runtime_meta(tmp_path: Path) -> None:
     script_text = NATIVE_STACK_PATH.read_text(encoding="utf-8")
     function_def = extract_shell_function(script_text, "livekit_meta_matches_expected")

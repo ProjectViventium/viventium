@@ -128,9 +128,9 @@ endpoints:
       baseURL: https://api.anthropic.com/v1
       models:
         default:
-          - claude-3-5-sonnet-20241022
+          - claude-opus-5
       titleConvo: true
-      summaryModel: claude-3-5-sonnet-20241022
+      summaryModel: claude-opus-5
     - name: xAI
       apiKey: ${XAI_API_KEY}
       baseURL: https://api.x.ai/v1

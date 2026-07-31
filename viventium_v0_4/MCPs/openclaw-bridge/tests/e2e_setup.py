@@ -210,7 +210,7 @@ def write_env_e2e(env: dict[str, str], api_key: str | None, openclaw_bin: str):
         "",
         f"OPENCLAW_BIN={openclaw_bin}",
         "OPENCLAW_BRIDGE_AUTH_TOKEN=viventium-bridge-e2e",
-        "OPENCLAW_MODEL=anthropic/claude-sonnet-4-20250514",
+        "OPENCLAW_MODEL=anthropic/claude-opus-5",
         "OPENCLAW_PORT_START=18900",
         "OPENCLAW_PORT_END=18950",
         "OPENCLAW_READINESS_TIMEOUT=60",
