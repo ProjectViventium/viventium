@@ -448,9 +448,9 @@ falling back to historical defaults:
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
 The current reviewed LibreChat source is merged commit
-`8486789e3f46f65ca8b597d98ae4e571200b34f6`, pinned by both the parent component lock and Native
+`5f9c44ef47ff83a4889313fda74dfe1f5e817ad3`, pinned by both the parent component lock and Native
 payload component manifest. The source/Docker GlassHive runtime is pinned by the parent component
-lock to merged commit `1a407a4e90ceea7cd9febcf56b0759ff46f35af0`; it is intentionally absent
+lock to merged commit `5c2117ab7ebfa94a6556aba8822b34fcab44c54d`; it is intentionally absent
 from the Native payload component manifest. Both manifests deliberately declare `merged`, and the
 public release policy independently verifies that every declared component ref equals its public
 default branch before accepting a parent change. Source and local-runtime PASS still do not

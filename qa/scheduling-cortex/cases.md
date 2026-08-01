@@ -26,6 +26,7 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 | `SCHED-016` | Authenticated scheduled agent runs use the compiler-owned Sol/xHigh tuple without changing ordinary chat. | Compiler, Scheduling Cortex dispatch, scheduler route, agent initialization, logs/fixture DB | compiler/dispatch/Jest regressions plus isolated scheduled fixture | PASS-AUTOMATED/PARTIAL 2026-07-13; tuple/failure/no-fallback/ordinary-chat isolation regressions pass, isolated model run NOT RUN |
 | `SCHED-017` | Universal upgrade preserves the prior Scheduler choice and schedules DB while helper execution stays outside protected source checkouts. | Compiler, canonical config, helper installer/launcher, App Support component and DB | `test_config_compiler.py`, `test_macos_helper_install.py`, `test_scheduling_mcp_supervision.py` | PASS-AUTOMATED/PARTIAL 2026-07-24 ([report](reports/2026-07-24-universal-upgrade-scheduler-hardening.md)); migration, protected-folder artifact, installed-component sync/import, and matching `/health` tests pass; real user-helper restart/delivery NOT RUN |
 | `SCHED-018` | Upgrade readiness accepts Scheduling Cortex's documented `status: ok` only with exact service and configured-ledger identity. | CLI activation/restart health, Scheduling Cortex `/health`, generated runtime env | `test_cli_upgrade.py`; live activation and browser/status QA | PASS-AUTOMATED/PARTIAL 2026-07-25 ([report](../stable-dev-runtime/reports/2026-07-25-managed-sidecar-health-and-cancel-qa.md)); escaped literal-status mismatch reproduced and fixed; post-fix live activation/browser evidence pending |
+| `SCHED-019` | A GlassHive-backed Main Agent can use Scheduling Cortex through its exact brokered MCP scope on web and Telegram. | LibreChat, Telegram, GlassHive provider, capability broker, Scheduling Cortex MCP | broker route/service Jest, compiler tests, Scheduler tests, real user-surface QA | PASS 2026-08-01 ([report](reports/2026-08-01-glasshive-main-scheduler-capability-repair.md)); web/refresh and Telegram/no-late-duplicate passed with matching persisted/tool/run evidence; invalid grant failed closed |
 
 ## `SCHED-001` - Create/update existing schedule
 
@@ -509,6 +510,33 @@ Use stable `SCHED-NNN` IDs for scheduling cortex cases.
 - Last run: PASS-AUTOMATED/PARTIAL 2026-07-25; regression and live pre-fix RCA pass, while post-fix
   activation and browser persistence evidence are still pending.
 
+## `SCHED-019` - GlassHive Main Uses Scheduling Cortex
+
+- Requirement: when an agent selects GlassHive as its normal Provider/Model, every Scheduler tool
+  selected on that agent remains available through the authenticated native-capability broker on
+  LibreChat and Telegram.
+- Risk covered: tool discovery appears healthy, but an already-aborted HTTP lifecycle signal cancels
+  the real `tools/call` before it reaches Scheduling Cortex; the agent then falsely says its live
+  scheduling connection is unavailable.
+- Steps:
+  1. Compile and inspect the Scheduler's GlassHive capability projection and the direct conversation
+     bundle. Confirm the bundle contains only the selected Scheduler server and disables dynamic
+     policy expansion.
+  2. Send a synthetic count-only schedule inspection through the real LibreChat Main Agent. Expand
+     harness activity, verify a connected tool ran, refresh, and confirm the answer persists.
+  3. Send the same request through the real Telegram bot. Confirm one authored text response, the
+     configured voice rendering when enabled, and no late duplicate.
+  4. Correlate both turns with one persisted user/assistant pair per surface, two completed and
+     error-free GlassHive runs, broker invocation logs, and real Scheduler `CallToolRequest`s.
+  5. Exercise an invalid synthetic broker grant and the already-aborted request-signal regression.
+- Expected: both surfaces return the same verified schedule summary; refresh and relay boundaries do
+  not cancel the tool call; auth fails closed; no unrelated MCP server is granted.
+- Forbidden: a direct wrapper LLM, silent OpenAI fallback, `provider_degraded` while Scheduler is
+  healthy, an unrelated connected-account capability in the worker bundle, an empty result presented
+  as success, or a late duplicate answer.
+- Evidence: [2026-08-01 report](reports/2026-08-01-glasshive-main-scheduler-capability-repair.md).
+- Last run: PASS 2026-08-01.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Scheduling Cortex. Add narrower feature-specific
@@ -533,3 +561,4 @@ rows before claiming a pass when the feature behavior changes.
 | `SCHED-UC-015` | Wake the host after several missed recurring periods while today's run is still in its catch-up window. | `11_Scheduling_Cortex.md` / `SCHED-015` | Scheduler, Workbench run history, delivery ledger | stored old due time, latest occurrence, late seconds, next due, DB identity hash | Today's occurrence runs once or is skipped by today's lateness, then advances correctly without using a legacy DB. | PASS-AUTOMATED 2026-07-11; delayed live tick pending ([report](../memory-hardening/reports/2026-07-11-nightly-failure-prevention.md)) |
 | `SCHED-UC-016` | Let a synthetic Viventium-agent automation run, then compare its model/effort with ordinary chat and clean the fixture run. | `11_Scheduling_Cortex.md` / `SCHED-016` | isolated Scheduler/LibreChat route, logs, fixture DB, browser when visible | compiled tuple, authenticated fixture metadata, initialization trace, exact response, fallback state, cleanup count | The scheduled turn uses Sol/xHigh, ordinary chat is not globally rewritten, no hidden fallback is claimed as success, and exact QA residue is zero. | PASS-AUTOMATED/PARTIAL 2026-07-13; tuple/fallback/ordinary-chat regressions pass, isolated visible model run NOT RUN |
 | `SCHED-UC-017` | Upgrade an existing Scheduler-enabled or explicitly disabled install, then launch through the helper from a protected developer checkout. | `11_Scheduling_Cortex.md` / `SCHED-017` | upgrade/compiler, helper installer/launcher, Scheduler MCP, schedules DB | canonical before/after semantic diff, generated env/MCP config, installed component inventory, DB hash/count, helper/MCP logs and health | The prior choice remains explicit, schedules survive, helper runs the App Support component, and a test schedule still works after restart. | PASS-AUTOMATED/PARTIAL 2026-07-24; migration/component/DB preservation and isolated installed MCP health pass, real user helper launch/restart/delivery NOT RUN |
+| `SCHED-UC-019` | Ask the GlassHive-backed Main Agent to inspect schedules from web and Telegram, then refresh/wait for duplicates. | `11_Scheduling_Cortex.md` / `SCHED-019` | LibreChat through Computer Use, Telegram Desktop, GlassHive, Scheduling Cortex MCP | visible count-only result, expanded harness activity, refreshed persistence, Mongo pair counts, GlassHive terminal aggregates, broker/Scheduler logs, invalid-grant response | Both surfaces return the same verified summary through Scheduling Cortex, persist correctly, expose no unrelated MCP server, and do not emit a late duplicate. | PASS 2026-08-01 ([report](reports/2026-08-01-glasshive-main-scheduler-capability-repair.md)) |

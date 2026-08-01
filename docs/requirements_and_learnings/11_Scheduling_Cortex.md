@@ -44,6 +44,27 @@ We will implement a dedicated Scheduling MCP server that:
   full internal prompts, generated delivery prose, or raw delivery payloads to other answer
   surfaces.
 
+## Interactive Main-Agent Access Through GlassHive
+
+- Scheduling Cortex remains an ordinary MCP capability of the configured agent. A GlassHive-backed
+  Main Agent receives it through GlassHive's authenticated native-capability broker; it must not use
+  a direct wrapper LLM, a second hidden author, or a GlassHive-inside-GlassHive delegation.
+- The compiler-owned `viventiumGlassHive` projection explicitly exports the Scheduler's declared
+  read and write tools. Content-reading operations require the run's broker grant, and the direct
+  conversation bundle is scoped to the agent's selected MCP servers. Dynamic policy expansion is
+  disabled for direct conversations so selecting Scheduling Cortex cannot silently expose unrelated
+  connected-account servers.
+- A browser refresh, Telegram relay hop, or completed surrounding HTTP request must not cancel an
+  already-started brokered MCP operation. GlassHive owns intentional run cancellation and the broker
+  owns a bounded provider timeout. The route must not forward an already-aborted HTTP lifecycle
+  signal into the provider call.
+- Capability discovery reuses a healthy user-scoped MCP connection and opens a fresh connection only
+  after stale or empty discovery. This prevents catalog construction immediately before a tool call
+  from replacing the connection that the call needs.
+- Failure remains explicit: an invalid or expired broker grant is unauthorized, a provider timeout
+  is reported as degraded, and a stopped or unavailable Scheduler must never be represented as a
+  successful empty schedule list.
+
 ## Misfire And Catch-Up Contract
 
 The scheduler is a local runtime loop, so it must handle host sleep, restart, and long pauses

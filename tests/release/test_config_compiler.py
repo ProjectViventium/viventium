@@ -2744,6 +2744,29 @@ def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path
     assert scheduling is True
     assert glasshive is True
     assert servers["scheduling-cortex"]["viventiumTrustedServerInstructions"] is True
+    assert servers["scheduling-cortex"]["viventiumGlassHive"] == {
+        "version": 1,
+        "permitsAutonomousWorker": True,
+        "hostAllowed": True,
+        "sandboxAllowed": False,
+        "defaultToolAccess": "none",
+        "contentReadPolicy": "require_broker_grant",
+        "writePolicy": "allow",
+        "riskClass": "scheduling",
+        "reexportNativeTools": True,
+        "toolPolicies": {
+            "periphery_list": {"access": "content_read"},
+            "periphery_read": {"access": "content_read"},
+            "schedule_get": {"access": "content_read"},
+            "schedule_list": {"access": "content_read"},
+            "schedule_search": {"access": "content_read"},
+            "schedule_last_delivery": {"access": "content_read"},
+            "schedule_preview_next": {"access": "content_read"},
+            "schedule_create": {"access": "write"},
+            "schedule_update": {"access": "write"},
+            "schedule_delete": {"access": "write"},
+        },
+    }
     assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
     assert servers["glasshive-workers-projects"]["timeout"] == 1860000
 
@@ -2778,6 +2801,29 @@ def test_source_of_truth_mcp_instructions_match_prompt_architecture_contract() -
     assert scheduling is True
     assert glasshive is True
     assert servers["scheduling-cortex"]["viventiumTrustedServerInstructions"] is True
+    assert servers["scheduling-cortex"]["viventiumGlassHive"] == {
+        "version": 1,
+        "permitsAutonomousWorker": True,
+        "hostAllowed": True,
+        "sandboxAllowed": False,
+        "defaultToolAccess": "none",
+        "contentReadPolicy": "require_broker_grant",
+        "writePolicy": "allow",
+        "riskClass": "scheduling",
+        "reexportNativeTools": True,
+        "toolPolicies": {
+            "periphery_list": {"access": "content_read"},
+            "periphery_read": {"access": "content_read"},
+            "schedule_get": {"access": "content_read"},
+            "schedule_list": {"access": "content_read"},
+            "schedule_search": {"access": "content_read"},
+            "schedule_last_delivery": {"access": "content_read"},
+            "schedule_preview_next": {"access": "content_read"},
+            "schedule_create": {"access": "write"},
+            "schedule_update": {"access": "write"},
+            "schedule_delete": {"access": "write"},
+        },
+    }
     assert servers["glasshive-workers-projects"]["viventiumTrustedServerInstructions"] is True
 
     for instructions in [ms365, google_workspace]:
