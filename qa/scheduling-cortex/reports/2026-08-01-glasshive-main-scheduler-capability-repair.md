@@ -109,8 +109,10 @@ The live generated config, source config, and installed config had matching hash
 turn. Broker logs recorded successful invocations at the same timestamps as Scheduler
 `CallToolRequest`s. Mongo and GlassHive terminal state agreed with the visible results.
 
-LibreChat PR 87 merged as `5f9c44ef47ff83a4889313fda74dfe1f5e817ad3` after every hosted
-check passed, including the full API suite on Node 24. GlassHive PR 47 merged as
+LibreChat PR 87's functional changes passed every hosted check, including the full API suite on
+Node 24. Release-gate PR 88 then made the completed one-shot API package build exit reliably on
+hosted Intel macOS; the final merged component is
+`e40a1f3fe4a7c697cba52b7861c3d51f4fa8edc1`. GlassHive PR 47 merged as
 `5c2117ab7ebfa94a6556aba8822b34fcab44c54d` after the full local runtime suite passed. In both
 repositories, the merge tree exactly matched the audited head tree; the parent lock pins those
 merged commits.
