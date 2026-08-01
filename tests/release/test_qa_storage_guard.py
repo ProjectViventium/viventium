@@ -659,7 +659,9 @@ def test_run_fails_if_a_preexisting_docker_resource_disappears(tmp_path: Path) -
         path = Path(sys.argv[1])
         payload = json.loads(path.read_text())
         payload["volumes"] = []
-        path.write_text(json.dumps(payload))
+        replacement = path.with_suffix(".replacement")
+        replacement.write_text(json.dumps(payload))
+        replacement.replace(path)
         """,
     )
 
