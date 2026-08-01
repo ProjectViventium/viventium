@@ -1,6 +1,6 @@
 # GlassHive Main Scheduler Capability Repair — 2026-08-01
 
-## Result
+## Summary
 
 `SCHED-019`: **PASS** on the active local production runtime.
 
@@ -10,7 +10,14 @@ failed locally before Scheduling Cortex received it. The repair separates cancel
 GlassHive owns intentional run cancellation, the broker owns its provider timeout, and a completed
 web/relay request no longer cancels the MCP operation.
 
-## What Was Run
+- Result: PASS
+- Build/source under test: final reviewed parent candidate with merged LibreChat and GlassHive trees
+- Runtime/artifact under test: active installed local production runtime
+- Environment: local macOS browser and Telegram Desktop
+- Tester: Codex with Computer Use and supporting runtime inspection
+- Related change: compiler-owned Scheduler capability projection and durable broker execution
+
+## Scope Run
 
 | Check | Result | Public-safe evidence |
 | --- | --- | --- |
@@ -26,6 +33,61 @@ web/relay request no longer cancels the MCP operation.
 
 No schedule titles, prompts, identifiers, user identifiers, tokens, local absolute paths, screenshots,
 or database exports are included in this public report.
+
+## Traceability
+
+`feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
+
+- Feature: interactive Scheduling Cortex access from a GlassHive-backed Main Agent.
+- Requirement: `docs/requirements_and_learnings/11_Scheduling_Cortex.md` interactive access contract.
+- Use case: inspect current schedules from web or Telegram through the agent's selected MCP tool.
+- QA case: `SCHED-019` and `SCHED-UC-019`.
+- Expected result: both surfaces return the same verified result, preserve it across refresh/relay,
+  grant no unrelated MCP server, and never present provider failure as a successful empty list.
+- Actual evidence: visible web and Telegram outcomes, expanded harness activity, persistence counts,
+  GlassHive terminal aggregates, broker/Scheduler logs, health, and invalid-grant behavior.
+- Remaining gap or fix: destructive live Scheduler stop was intentionally not performed against the
+  active schedule ledger; the automated degraded-provider contract covers that unhappy path.
+
+## Full-View Evidence Checklist
+
+| Evidence surface | Required question | Result / sanitized pointer |
+| --- | --- | --- |
+| Requirement and use case | Which contract is proven? | Scheduler interactive access contract, `SCHED-019`, and `SCHED-UC-019` |
+| Code owning path | Which path owns it? | Compiler policy -> LibreChat grant/route/broker -> GlassHive worker -> Scheduler MCP |
+| Docs and nested docs/repos | Where is behavior defined? | Scheduler requirement, living cases, merged LibreChat and GlassHive source |
+| Scripts or harnesses | What exercised it? | Computer Use, direct authenticated broker probe, compiler/Jest/pytest suites |
+| Local/external prerequisite state | Were dependencies healthy? | Scheduler and broker health were `ok`; native harness auth was ready |
+| Logs | What corroborated tool use? | Sanitized broker success and real Scheduler `CallToolRequest` entries |
+| DB/state/persistence | What persisted? | One user/assistant pair per surface and two terminal error-free provider runs |
+| Generated/shipped artifact | What artifact was checked? | Generated runtime config, source config, component pins, and active installed checkout |
+| Real user path | Which surfaces ran? | Logged-in Viventium browser via Computer Use and Telegram Desktop |
+| Visual/UX comparison | Did UI/delivery match? | Same verified count-only result, connected-tool activity, refresh persistence, no duplicate |
+| Not run / blocked | What remained unavailable? | Live destructive service stop and requested Claude review; neither substituted for run evidence |
+
+## User-Grade Evidence
+
+- Surface exercised: logged-in Viventium browser with expanded harness activity and Telegram Desktop.
+- Real user path: asked the Main Agent to inspect schedules on each surface, refreshed the browser,
+  and observed Telegram through the late-duplicate window.
+- Visible outcome: both surfaces returned the same verified count-only result; Telegram delivered one
+  authored text response plus its configured voice rendering.
+- Expanded/detail state: the browser showed harness-started and connected-tool activity steps.
+- Persistence/reload result: the web result/activity survived refresh; each surface retained one
+  user/assistant pair and no late duplicate appeared.
+- Local/external prerequisite state: Scheduling Cortex, the broker, GlassHive, LibreChat, Telegram,
+  and native harness authentication were healthy.
+- Evidence retrieval classification, if applicable: successful non-empty MCP result; invalid auth was
+  separately rejected, and provider-degraded/timeout classes remained explicit in automation.
+- Fallback path, if applicable: no fallback was used; the selected Scheduling Cortex MCP authored the
+  evidence and no direct wrapper LLM substituted for it.
+- Backend/log/DB confirmation: sanitized Scheduler calls, broker invocations, Mongo pair counts,
+  GlassHive terminal state, exact capability bundles, and generated config matched the visible turns.
+- Final model/runtime wording check: the Main reported verified scheduler data and did not claim the
+  scheduling connection was unavailable.
+- Substitution check: logs, DB rows, API responses, source inspection, model completions, and unit
+  tests are supporting evidence, not substitutes for any required visible-UI, detail-state,
+  persistence, or wording step.
 
 ## Automated Evidence
 
@@ -53,8 +115,13 @@ check passed, including the full API suite on Node 24. GlassHive PR 47 merged as
 repositories, the merge tree exactly matched the audited head tree; the parent lock pins those
 merged commits.
 
-## Unhappy Paths And Residual Risk
+## Findings
 
+- Defects: missing Scheduler projection and request-signal cancellation were repaired.
+- Regressions: none observed in web, Telegram, persistence, broker isolation, or hosted tests.
+- Flakes: a GlassHive callback-budget test race was isolated and made deterministic; final suites passed.
+- Environment issues: the requested Claude review-only pass was blocked by external plan quota.
+- Residual risks:
 - Invalid authorization and stale-aborted request lifecycle: **PASS**.
 - Provider timeout/degraded mapping, rate limiting, unavailable user, write-grant enforcement, and
   catalog retry behavior: **PASS-AUTOMATED**.
@@ -66,3 +133,11 @@ merged commits.
   CRUD coverage remains owned by `SCHED-001`.
 
 There is no remaining blocker for interactive Scheduler access from the GlassHive-backed Main Agent.
+
+## Public-Safety Review
+
+- [x] No secrets, tokens, passwords, cookies, or credential-bearing command lines.
+- [x] No private chats, prompts, attachments, screenshots with private content, personal emails, account identifiers, or customer data.
+- [x] No conversation IDs, message IDs, session/call IDs, Telegram chat IDs, Mongo `_id` values, or raw provider request/response IDs.
+- [x] No local absolute paths, hostnames, machine names, stack traces with private paths, DB exports, App Support state, or raw runtime dumps.
+- [x] Private evidence is summarized with sanitized counts, hashes, timestamps, and conclusions only.

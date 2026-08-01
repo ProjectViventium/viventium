@@ -1,6 +1,6 @@
 # GlassHive Phase B Web and Telegram Acceptance — 2026-08-01
 
-## Verdict
+## Summary
 
 **PASS.** Phase B is active on the real local Viventium web and Telegram surfaces. When completed
 cortices added concrete value, the originating Main produced exactly one additive continuation. When
@@ -9,6 +9,22 @@ an extra response nor the internal `{NTA}` marker. A later user turn did not inh
 
 This acceptance used public-safe synthetic prompts. Private account identifiers, raw conversation
 text, local paths, and screenshots are intentionally excluded.
+
+- Result: PASS
+- Build/source under test: final reviewed parent candidate with merged LibreChat and GlassHive trees
+- Runtime/artifact under test: active installed local production runtime
+- Environment: local macOS web and Telegram surfaces
+- Tester: Codex with real-browser and Computer Use verification
+- Related change: GlassHive provider routing for substantive cortices and same-session Phase B
+
+## Scope Run
+
+| Case ID | Result | Evidence | Notes |
+| --- | --- | --- | --- |
+| `ACT-34` | PASS | Visible Phase A plus one additive continuation or terminal suppression | No replay or exposed internal no-response marker |
+| `ACT-35` | PASS | Agent Builder and persisted agent config matched GlassHive/Codex/LIFE/access/effort | Red Team used measured interactive `high` |
+| `ACT-47` | PASS | Serialized host-busy retries and terminal capacity wake in live and automated evidence | One native authentication lane remained authoritative |
+| `ACT-48` | PASS | Useful, suppressed, and moved-on web/Telegram cases | Novelty and stale-turn controls behaved as documented |
 
 ## Delivered runtime contract
 
@@ -91,7 +107,60 @@ control. No raw chat content or account identity is retained in this report.
   Main fallback/background-cortex fields, and Red Team instructions. Adjacent LibreChat config has
   zero live/source or worktree/HEAD drift.
 
-## Automated regression evidence
+## Traceability
+
+`feature -> requirement -> use case -> QA case -> expected result -> actual evidence -> remaining gap`
+
+- Feature: conditionally activated Background Cortices and Phase B continuation.
+- Requirement: `docs/requirements_and_learnings/02_Background_Agents.md`.
+- Use case: Main receives useful completed cortex evidence, adds one non-repetitive continuation, or
+  remains silent when evidence is not valuable or the user has moved on.
+- QA case: `ACT-34`, `ACT-35`, `ACT-47`, and `ACT-48`.
+- Expected result: one provider-authored continuation at most, durable cards/state, no stale or
+  duplicate response, and no specialist appropriation of Main-only Feelings or wording constraints.
+- Actual evidence: real web and Telegram acceptance, persisted message/cortex/decision counts,
+  correlated completed GlassHive runs, generated config, and the automated matrix below.
+- Remaining gap or fix: Claude review was unavailable because the signed-in plan quota was exhausted;
+  this did not replace or weaken the real user-path gate.
+
+## Full-View Evidence Checklist
+
+| Evidence surface | Required question | Result / sanitized pointer |
+| --- | --- | --- |
+| Requirement and use case | Which contract is proven? | Background Agents requirement plus `ACT-34/35/47/48` |
+| Code owning path | Which code owns it? | LibreChat activation/execution/follow-up services and GlassHive conversation runtime |
+| Docs and nested docs/repos | Where is expected behavior defined? | Background Agents requirement, living cases, LibreChat and GlassHive merged source |
+| Scripts or harnesses | What exercised it? | Browser harness, Computer Use, focused and broader automated suites |
+| Local/external prerequisite state | Were dependencies healthy? | Web/API, GlassHive, Telegram bridge, and native harness auth were healthy |
+| Logs | What corroborated delivery? | Sanitized Phase B decisions, capacity retries, delivery controls, and terminal run events |
+| DB/state/persistence | What persisted? | Sanitized parent/child/cortex-part counts and decision metadata |
+| Generated/shipped artifact | What runtime artifact was checked? | Generated agent/config bundles and active installed checkout |
+| Real user path | Which user surfaces ran? | Logged-in browser via Computer Use and Telegram Desktop |
+| Visual/UX comparison | Did visible behavior match? | Cards, initial response, continuation/silence, and reload all matched |
+| Not run / blocked | What remained unavailable? | Requested Claude second opinion only; real product acceptance was run |
+
+## User-Grade Evidence
+
+- Surface exercised: logged-in Viventium browser, Agent Builder, and Telegram Desktop.
+- Real user path: sent synthetic prompts, expanded cortex cards, observed initial and follow-up
+  delivery, reloaded the browser, and sent a later-turn Telegram control.
+- Visible outcome: useful evidence produced exactly one additive continuation; non-useful and moved-on
+  cases stayed silent without exposing the internal no-response marker.
+- Expanded/detail state: named terminal cortex cards and their public-safe status/result detail were
+  visible in the browser.
+- Persistence/reload result: Phase A, cortex cards, decision metadata, and the continuation/suppression
+  state survived reload without replay.
+- Local/external prerequisite state: LibreChat, GlassHive, Telegram bridge, native CLI auth, and the
+  active runtime were healthy; an unrelated Scheduler status issue was excluded from this result.
+- Backend/log/DB confirmation: sanitized logs, Mongo counts, GlassHive run totals, generated config,
+  and Telegram delivery controls matched each visible turn.
+- Final model/runtime wording check: the Main authored the continuation in its existing session and
+  never claimed that completed background work was unavailable.
+- Substitution check: logs, DB rows, API responses, source inspection, model completions, and unit
+  tests are supporting evidence, not substitutes for any required visible-UI, detail-state,
+  persistence, or wording step.
+
+## Automated Evidence
 
 | Surface | Result |
 | --- | --- |
@@ -127,3 +196,21 @@ this acceptance scope.
 - `ACT-46`: specialists do not inherit Main-only wording/shape constraints.
 - `ACT-47`: serialized GlassHive lane retries and terminal capacity wake.
 - `ACT-48`: concrete novelty, consent, generated continuation, `{NTA}`, and moved-on controls.
+
+## Findings
+
+- Defects: the original Phase B loss/replay and provider-routing gaps are fixed.
+- Regressions: none observed in web, Telegram, persistence, or automated acceptance.
+- Flakes: none remained in the final affected suites.
+- Environment issues: requested Claude review was blocked by external plan quota; the unrelated
+  Scheduler status noted during this earlier run was later diagnosed and repaired separately.
+- Residual risks: real LiveKit remained governed by its separate voice acceptance and was not used as
+  evidence for this text/Telegram Phase B result.
+
+## Public-Safety Review
+
+- [x] No secrets, tokens, passwords, cookies, or credential-bearing command lines.
+- [x] No private chats, prompts, attachments, screenshots with private content, personal emails, account identifiers, or customer data.
+- [x] No conversation IDs, message IDs, session/call IDs, Telegram chat IDs, Mongo `_id` values, or raw provider request/response IDs.
+- [x] No local absolute paths, hostnames, machine names, stack traces with private paths, DB exports, App Support state, or raw runtime dumps.
+- [x] Private evidence is summarized with sanitized counts, hashes, timestamps, and conclusions only.
