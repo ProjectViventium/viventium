@@ -3572,6 +3572,18 @@ def command_rollback(args: argparse.Namespace) -> int:
     transaction = lexical(args.transaction)
     ledger = load_ledger(transaction)
     if ledger["status"] == "rolled_back":
+        support = Path(ledger["app_support_dir"])
+        pointer = support / ACTIVE_POINTER
+        if pointer.exists() or pointer.is_symlink():
+            validate_chain(pointer, owned_from=support)
+            pointer.unlink()
+        try:
+            ledger["cleanup"] = cleanup_transaction_artifacts(
+                transaction, ROLLBACK_GENERATED_ROOTS
+            )
+        except UpgradeTransactionError as error:
+            ledger["cleanup"] = {"status": "cleanup_required", "error": str(error)}
+        save_ledger(transaction, ledger)
         print(json.dumps({"rolled_back": True, "was_running": ledger["was_running"]}, sort_keys=True))
         return 0
     if ledger["status"] not in {"active", "rolling_back"}:
@@ -3662,17 +3674,18 @@ def command_rollback(args: argparse.Namespace) -> int:
 def command_commit(args: argparse.Namespace) -> int:
     transaction = lexical(args.transaction)
     ledger = load_ledger(transaction)
-    if ledger["status"] != "active":
+    if ledger["status"] not in {"active", "committed"}:
         raise UpgradeTransactionError("Upgrade transaction is not active")
-    ledger["librechat_env_continuity"] = verify_librechat_env_continuity(ledger)
-    ledger["helper_config_continuity"] = verify_helper_config_continuity(ledger)
-    ledger["static_personalization_continuity"] = (
-        verify_static_personalization_continuity(ledger)
-    )
-    ledger["status"] = "committed"
-    ledger["stage"] = "committed"
-    ledger["committed_at"] = utc_stamp()
-    save_ledger(transaction, ledger)
+    if ledger["status"] == "active":
+        ledger["librechat_env_continuity"] = verify_librechat_env_continuity(ledger)
+        ledger["helper_config_continuity"] = verify_helper_config_continuity(ledger)
+        ledger["static_personalization_continuity"] = (
+            verify_static_personalization_continuity(ledger)
+        )
+        ledger["status"] = "committed"
+        ledger["stage"] = "committed"
+        ledger["committed_at"] = utc_stamp()
+        save_ledger(transaction, ledger)
     support = Path(ledger["app_support_dir"])
     pointer = support / ACTIVE_POINTER
     if pointer.exists() or pointer.is_symlink():

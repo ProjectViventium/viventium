@@ -136,8 +136,58 @@ def test_staged_public_safety_rejects_high_confidence_secret_content(
     completed = run_staged_safety(repo)
 
     assert completed.returncode != 0
-    assert "high-confidence secret" in completed.stderr
+    assert "private or secret content" in completed.stderr
     assert "abcdefghijklmnopqrstuvwxyz" not in completed.stderr
+
+
+def test_staged_public_safety_rejects_private_home_email_and_embedded_credentials(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path)
+    source = repo / "safe-name.txt"
+    private_home = "/" + "Users" + "/" + "private-owner" + "/Documents/context.txt"
+    private_email = "private.owner" + "@" + "confidential.internal"
+    credential_url = (
+        "https://" + "operator:private-password" + "@confidential.internal/api"
+    )
+    source.write_text(
+        "\n".join((private_home, private_email, credential_url)) + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "safe-name.txt"], check=True)
+
+    completed = run_staged_safety(repo)
+
+    assert completed.returncode != 0
+    assert "private or secret content" in completed.stderr
+    assert "private-owner" not in completed.stderr
+    assert "private.owner" not in completed.stderr
+    assert "private-password" not in completed.stderr
+
+
+def test_staged_public_safety_allows_reserved_synthetic_identifiers(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path)
+    source = repo / "synthetic-fixtures.txt"
+    source.write_text(
+        "\n".join(
+            (
+                "qa@example.com",
+                "owner@viventium.example",
+                "git@github.com",
+                "https://user:synthetic-password@example.test/api",
+                "http://user:synthetic-password@127.0.0.1:3190/health",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "synthetic-fixtures.txt"], check=True)
+
+    completed = run_staged_safety(repo)
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_git_helper_runs_staged_safety_before_commit() -> None:

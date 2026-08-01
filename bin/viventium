@@ -1821,11 +1821,24 @@ bootstrap_life() {
   local life_bootstrap_status=0
   "$PYTHON_BIN" "$life_bootstrap_script" \
     --runtime-env "$runtime_env" \
-    --state-file "$APP_SUPPORT_DIR/state/life-bootstrap.json" \
-    --if-configured || life_bootstrap_status=$?
+    --state-file "$APP_SUPPORT_DIR/state/life-bootstrap.json" || life_bootstrap_status=$?
   if [[ "$life_bootstrap_status" -ne 0 ]]; then
+    if (
+      set +u
+      START_GLASSHIVE=false
+      # shellcheck disable=SC1090
+      source "$runtime_env"
+      case "${START_GLASSHIVE:-false}" in
+        1|true|TRUE|True|yes|YES|Yes|on|ON|On) exit 0 ;;
+        *) exit 1 ;;
+      esac
+    ); then
+      echo "[viventium] Error: canonical LIFE bootstrap is required by the enabled GlassHive runtime." >&2
+      echo "[viventium] Resolve the reported LIFE path conflict before starting chat." >&2
+      return "$life_bootstrap_status"
+    fi
     echo "[viventium] Warning: canonical LIFE bootstrap could not complete; chat startup will continue." >&2
-    echo "[viventium] Fix the configured LIFE path, then rerun bin/viventium doctor or start." >&2
+    echo "[viventium] Fix the configured LIFE path, then rerun bin/viventium configure or start." >&2
   fi
   return 0
 }
@@ -4247,7 +4260,10 @@ drain_native_stack_before_state_removal() {
     fi
     set -u
   fi
-  "$REPO_ROOT/scripts/viventium/native_stack.sh" stop >/dev/null 2>&1 || true
+  if ! "$REPO_ROOT/scripts/viventium/native_stack.sh" stop; then
+    echo "Native services did not drain; refusing to remove Viventium state." >&2
+    return 1
+  fi
 }
 
 reset_local_install_state() {
@@ -4257,7 +4273,10 @@ reset_local_install_state() {
     echo "Stopping the current Viventium stack before reset..."
     stop_stack_for_upgrade
   fi
-  drain_native_stack_before_state_removal
+  if ! drain_native_stack_before_state_removal; then
+    echo "Factory reset stopped before any Viventium state was removed." >&2
+    return 1
+  fi
   if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
     backup_dir="$(backup_install_state_for_removal "reset")"
   fi
@@ -4277,7 +4296,10 @@ uninstall_local_installation() {
     echo "Stopping the current Viventium stack before uninstall..."
     stop_stack_for_upgrade
   fi
-  drain_native_stack_before_state_removal
+  if ! drain_native_stack_before_state_removal; then
+    echo "Uninstall stopped before any Viventium state was removed." >&2
+    return 1
+  fi
   helper_ownership="$(read_install_helper_ownership)"
   if [[ "$helper_ownership" == "unknown" ]] && legacy_helper_ownership_matches_install; then
     helper_ownership="legacy-owned"
@@ -6404,6 +6426,7 @@ upgrade_transaction_commit() {
 
 recover_interrupted_upgrade_transaction() {
   local active_info=""
+  local active_status=""
   local recovery_receipt_loaded=0
   local loaded_receipt_config_root=""
   active_info="$(upgrade_transaction_active_info)" || {
@@ -6424,12 +6447,31 @@ recover_interrupted_upgrade_transaction() {
   UPGRADE_TRANSACTION_WAS_RUNNING="$(
     "$PYTHON_BIN" -c 'import json,sys; print(1 if json.loads(sys.argv[1])["was_running"] else 0)' "$active_info"
   )"
+  active_status="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])["status"])' "$active_info"
+  )"
   TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
     "$PYTHON_BIN" -c \
       'import json,sys; print(json.loads(sys.argv[1]).get("telegram_preference_root", ""))' \
       "$active_info"
   )" || exit 1
   UPGRADE_TRANSACTION_ACTIVE=1
+  if [[ "$active_status" == "committed" ]]; then
+    echo "A committed upgrade left a recovery pointer. Completing its idempotent cleanup..." >&2
+    if ! upgrade_transaction_commit; then
+      echo "The committed upgrade cleanup could not be completed safely." >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [[ "$active_status" == "rolled_back" ]]; then
+    echo "A rolled-back upgrade left a recovery pointer. Completing its idempotent cleanup..." >&2
+    if ! upgrade_transaction_rollback; then
+      echo "The rolled-back upgrade cleanup could not be completed safely." >&2
+      exit 1
+    fi
+    return 0
+  fi
   echo "An interrupted upgrade was found. Recovering its verified pre-upgrade checkpoint before any new mutation..." >&2
   if ! stop_stack_for_upgrade; then
     echo "Interrupted-upgrade recovery stopped because the current runtime could not be drained safely." >&2
@@ -6594,6 +6636,30 @@ ensure_supported_upgrade_predecessor() {
     --runtime-dir "$RUNTIME_DIR"; then
     echo "This install is outside the reviewed universal-upgrade range." >&2
     echo "Create a supported backup/restore transfer or upgrade through a reviewed intermediate release." >&2
+    return 1
+  fi
+}
+
+repair_shallow_upgrade_history() {
+  local shallow=""
+  shallow="$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || true)"
+  [[ "$shallow" == "true" ]] || return 0
+
+  local current_branch=""
+  local configured_remote=""
+  local merge_ref=""
+  current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  configured_remote="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.remote" || true)"
+  merge_ref="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.merge" || true)"
+  if [[ -z "$configured_remote" || "$merge_ref" != refs/heads/* ]]; then
+    echo "Upgrade cannot repair this legacy shallow checkout without its configured remote branch." >&2
+    return 1
+  fi
+
+  echo "Retrieving Viventium upgrade history for this legacy shallow checkout..."
+  if ! git -C "$REPO_ROOT" fetch --unshallow "$configured_remote" "$merge_ref" >/dev/null; then
+    echo "Upgrade could not retrieve the history required to validate this checkout." >&2
+    echo "Restore network access to '$configured_remote' and retry; no working-tree or runtime changes were made." >&2
     return 1
   fi
 }
@@ -7080,7 +7146,6 @@ case "$COMMAND" in
       echo "Run: bin/viventium install" >&2
       exit 1
     fi
-    ensure_supported_upgrade_predecessor
     UPGRADE_REQUIRES_REMOTE=1
     if [[ "$SKIP_PULL" == "1" ]]; then
       UPGRADE_REQUIRES_REMOTE=0
@@ -7136,6 +7201,8 @@ PY
       echo "Upgrade aborted before pull or component mutation because local safety blockers must be resolved first." >&2
       exit "$UPGRADE_SAFETY_STATUS"
     fi
+    repair_shallow_upgrade_history
+    ensure_supported_upgrade_predecessor
     UPGRADE_AUDIT_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
     UPGRADE_AGENT_PREDECESSOR_SOURCE_REF="$(capture_agent_source_ref)"
     VIVENTIUM_CONTINUITY_AUDIT_SKIP_PYTHON_REFRESH=1
@@ -7224,7 +7291,6 @@ PY
     "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
       --config "$UPGRADE_CANDIDATE_CONFIG" \
       --output-dir "$UPGRADE_CANDIDATE_RUNTIME"
-    bootstrap_life "$UPGRADE_CANDIDATE_RUNTIME/runtime.env"
     prepare_telegram_runtime_component "$REPO_ROOT" "$UPGRADE_CANDIDATE_RUNTIME"
     "$REPO_ROOT/scripts/viventium/doctor.sh" \
       --config "$UPGRADE_CANDIDATE_CONFIG" \
@@ -7276,6 +7342,8 @@ PY
     fi
     upgrade_transaction_checkpoint "continuity_and_runtime_intent_verified"
     upgrade_transaction_commit
+    postcommit_life_bootstrap_status=0
+    bootstrap_life || postcommit_life_bootstrap_status=$?
     if ! finalize_quiesced_upgrade_session_after_commit; then
       echo "The source upgrade committed, but protected runtime finalization is incomplete." >&2
       echo "Resolve the reported runtime health failure, then rerun bin/viventium upgrade --restart." >&2
@@ -7303,6 +7371,11 @@ PY
       exit 1
     fi
     launch_macos_helper_app
+    if [[ "$postcommit_life_bootstrap_status" -ne 0 ]]; then
+      echo "The upgrade and protected runtime finalization completed, but canonical LIFE is not ready." >&2
+      echo "Resolve the reported LIFE path conflict, then rerun: bin/viventium start" >&2
+      exit "$postcommit_life_bootstrap_status"
+    fi
     exit 0
     ;;
   configure|wizard)
@@ -7350,7 +7423,7 @@ PY
       "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
       apply_default_nightly_routines
     fi
-    if ! compile_config || ! bootstrap_life || ! ensure_configured_prerequisites || ! sync_memory_hardening_schedule; then
+    if ! bootstrap_components || ! compile_config || ! bootstrap_life || ! ensure_configured_prerequisites || ! sync_memory_hardening_schedule; then
       rollback_config_candidate || true
       cleanup_config_candidate || true
       exit 1
@@ -7364,6 +7437,7 @@ PY
   compile-config)
     acquire_cli_lock "$COMMAND"
     apply_default_nightly_routines
+    bootstrap_components
     compile_config "$@"
     sync_memory_hardening_schedule
     ;;
@@ -7764,6 +7838,7 @@ PY
     fi
     compile_config
     if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
+      bootstrap_life
       sync_memory_hardening_schedule
     fi
     prepare_runtime_exports

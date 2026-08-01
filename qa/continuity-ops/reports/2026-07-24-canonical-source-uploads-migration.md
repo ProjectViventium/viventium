@@ -36,7 +36,7 @@ green; a supported established-user upgrade and headed browser upload/download/r
 
 ## Delivery Surfaces
 
-- Tracked source: implemented in this uncommitted release-safety worktree.
+- Tracked source: implemented in the reviewed release candidate.
 - Generated runtime: compiler assertions prove canonical LibreChat/GlassHive values.
 - Launcher: static ordering proves the migration gate precedes upload-consuming parallel services
   and a stopped backend start.

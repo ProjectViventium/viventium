@@ -1,4 +1,6 @@
 import asyncio
+import html
+import re
 import sys
 import types
 from datetime import datetime, timezone
@@ -29,6 +31,8 @@ if "md2tgmd" in sys.modules and not hasattr(sys.modules["md2tgmd"], "__path__"):
 
 import bot as tg_bot  # noqa: E402
 from utils.librechat_bridge import TelegramLinkRequired  # noqa: E402
+from utils.telegram_chunks import telegram_text_units  # noqa: E402
+from utils.telegram_html import strip_html_tags  # noqa: E402
 
 
 class _Msg:
@@ -43,19 +47,35 @@ class _FakeTelegramBot:
         self.audios = []
         self.next_id = 1000
         self.edit_error = None
+        self.edit_errors = []
+        self.send_errors = []
+        self.sent_ids = []
+        self.current_messages = {}
 
     async def send_chat_action(self, **_kwargs):
         return None
 
     async def send_message(self, **kwargs):
+        if self.send_errors:
+            error = self.send_errors.pop(0)
+            if error:
+                raise error
         self.messages.append(kwargs)
         self.next_id += 1
-        return _Msg(self.next_id)
+        message_id = self.next_id
+        self.sent_ids.append(message_id)
+        self.current_messages[message_id] = kwargs
+        return _Msg(message_id)
 
     async def edit_message_text(self, **kwargs):
+        if self.edit_errors:
+            error = self.edit_errors.pop(0)
+            if error:
+                raise error
         if self.edit_error:
             raise self.edit_error
         self.edits.append(kwargs)
+        self.current_messages[kwargs["message_id"]] = kwargs
         return None
 
     async def delete_message(self, **_kwargs):
@@ -80,6 +100,17 @@ class _FailingGetMeBot(_FakeTelegramBot):
 class _FakeContext:
     def __init__(self) -> None:
         self.bot = _FakeTelegramBot()
+
+
+def _final_delivered_texts(context):
+    return [
+        str(context.bot.current_messages[message_id].get("text", ""))
+        for message_id in context.bot.sent_ids
+    ]
+
+
+def _visible_html(rendered):
+    return html.unescape(re.sub(r"<[^>]+>", "", rendered))
 
 
 class _FakeJobQueue:
@@ -570,6 +601,68 @@ def test_get_viventium_response_skip_voice_sends_full_text_without_tts(monkeypat
     assert context.bot.audios == []
 
 
+def test_long_response_keeps_early_skip_voice_control(monkeypatch):
+    long_prefix = ("A complete useful paragraph. " * 180).strip()
+
+    class _LongSkipVoiceRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield f"{{SKIP_VOICE}}\n{long_prefix}"
+            yield "Final clean paragraph."
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    synthesized = []
+
+    async def _fake_synthesize(text, _convo_id, *, voice_route=None):
+        synthesized.append((text, voice_route))
+        return b"voice-bytes"
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_LongSkipVoiceRobot(),
+            message="prepare the long draft",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-long-skip-voice",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    final_texts = _final_delivered_texts(context)
+    rendered = "".join(_visible_html(item) for item in final_texts)
+    assert "Final clean paragraph." in rendered
+    assert rendered.count("A complete useful paragraph.") == 180
+    assert "SKIP_VOICE" not in rendered
+    assert synthesized == []
+    assert context.bot.audios == []
+    assert all(telegram_text_units(item) <= 4000 for item in final_texts)
+
+
 def test_optional_text_audio_preference_has_smart_user_facing_label():
     assert tg_bot.config.PREFERENCE_DISPLAY_NAMES["ALWAYS_VOICE_RESPONSE"] == (
         "Smart voice for text"
@@ -640,7 +733,7 @@ def test_get_viventium_response_message_break_sends_two_bubbles_and_one_audio(mo
     assert len(context.bot.audios) == 1
 
 
-def test_message_break_edit_failure_does_not_abort_turn(monkeypatch):
+def test_message_break_transient_edit_failure_retries_without_duplicate_or_drop(monkeypatch):
     class _MessageBreakRobot:
         async def ask_stream_async(self, *args, **kwargs):
             _ = args, kwargs
@@ -673,7 +766,7 @@ def test_message_break_edit_failure_does_not_abort_turn(monkeypatch):
     )
 
     context = _FakeContext()
-    context.bot.edit_error = RuntimeError("synthetic flood-control")
+    context.bot.edit_errors = [RuntimeError("synthetic flood-control")]
 
     asyncio.run(
         tg_bot.getViventiumResponse(
@@ -694,7 +787,126 @@ def test_message_break_edit_failure_does_not_abort_turn(monkeypatch):
         )
     )
 
-    assert any("Second thought." in str(item.get("text", "")) for item in context.bot.messages)
+    final_texts = _final_delivered_texts(context)
+    visible = [strip_html_tags(item) for item in final_texts]
+    assert visible == ["First thought.", "Second thought."]
+    assert context.bot.current_messages[context.bot.sent_ids[0]]["parse_mode"] == "HTML"
+    assert len(context.bot.audios) == 1
+
+
+def test_message_break_persistent_first_edit_failure_stops_later_delivery_and_audio(
+    monkeypatch,
+):
+    class _MessageBreakRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "First thought.\n{MSG_BREAK}\nSecond thought."
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        return b"voice-bytes"
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+
+    context = _FakeContext()
+    context.bot.edit_error = RuntimeError("synthetic persistent outage")
+
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_MessageBreakRobot(),
+            message="give me a natural update",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-message-break-persistent-edit-failure",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert len(context.bot.messages) == 2
+    visible = [strip_html_tags(item) for item in _final_delivered_texts(context)]
+    assert visible[0] == "First thought.\n\nSecond thought."
+    assert visible[1] == tg_bot.TELEGRAM_DELIVERY_INTERRUPTED_NOTICE
+    assert context.bot.audios == []
+
+
+def test_long_response_keeps_early_message_break_and_safe_rendered_chunks(monkeypatch):
+    first = ("First complete thought with `code`. " * 180).strip()
+
+    class _LongMessageBreakRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield f"{first}\n{{MSG_BREAK}}\nSecond complete thought."
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    async def _fake_synthesize(_text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        return b"voice-bytes"
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_LongMessageBreakRobot(),
+            message="give me a long two-part answer",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-long-message-break",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    final_texts = _final_delivered_texts(context)
+    visible = "".join(_visible_html(item) for item in final_texts)
+    assert visible.count("First complete thought with code.") == 180
+    assert visible.endswith("Second complete thought.")
+    assert "MSG_BREAK" not in visible
+    assert all(telegram_text_units(item) <= 4000 for item in final_texts)
     assert len(context.bot.audios) == 1
 
 
@@ -762,6 +974,165 @@ def test_get_viventium_response_does_not_voice_transport_bridge_errors(monkeypat
     rendered = " ".join(str(item.get("text", "")) for item in context.bot.messages + context.bot.edits)
     assert "Response stream expired during reconnect" in rendered
     assert context.bot.audios == []
+
+
+def test_midstream_exception_delivers_partial_text_and_suppresses_audio(monkeypatch):
+    class _InterruptedRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "Partial useful answer."
+            raise TimeoutError("synthetic stream timeout")
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    synthesized = []
+
+    async def _fake_synthesize(text, _convo_id, *, voice_route=None):
+        synthesized.append((text, voice_route))
+        return b"voice-bytes"
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: True),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "synthesize_speech", _fake_synthesize)
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_InterruptedRobot(),
+            message="give me the answer",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-midstream-interruption",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    visible = " ".join(
+        strip_html_tags(item)
+        for item in _final_delivered_texts(context)
+    )
+    assert "Partial useful answer." in visible
+    assert "Response interrupted before completion. Please try again." in visible
+    assert "synthetic stream timeout" not in visible
+    assert synthesized == []
+    assert context.bot.audios == []
+
+
+def test_midstream_exception_strips_an_incomplete_delivery_control_suffix(monkeypatch):
+    class _InterruptedControlRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "Partial useful answer.\n{SKIP_"
+            raise TimeoutError("synthetic stream timeout")
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: False),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_InterruptedControlRobot(),
+            message="give me the answer",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-midstream-control-interruption",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    visible = " ".join(strip_html_tags(item) for item in _final_delivered_texts(context))
+    assert "Partial useful answer." in visible
+    assert "Response interrupted before completion. Please try again." in visible
+    assert "{SKIP_" not in visible
+
+
+def test_plain_preview_fallback_is_replaced_by_final_html(monkeypatch):
+    class _FormattedRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            yield "**Bold final answer.**"
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: False),
+    )
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+
+    context = _FakeContext()
+    context.bot.send_errors = [RuntimeError("can't parse entities"), None]
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_FormattedRobot(),
+            message="format this",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-preview-fallback-final-html",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert len(context.bot.sent_ids) == 1
+    final = context.bot.current_messages[context.bot.sent_ids[0]]
+    assert final["parse_mode"] == "HTML"
+    assert "<b>Bold final answer.</b>" in final["text"]
 
 
 def test_get_viventium_response_voice_note_stays_text_mode_with_voice_note_input(monkeypatch):
@@ -927,6 +1298,64 @@ def test_get_viventium_response_stream_preview_single_message_with_edits(monkeyp
     assert len(context.bot.edits) >= 1
     assert any("Yo. Late night grind?" in text for text in delivered_texts)
     assert all("stream_preview_task" not in text for text in delivered_texts)
+
+
+def test_stream_preview_coalesces_before_expensive_rendering(monkeypatch):
+    class _BurstRobot:
+        async def ask_stream_async(self, *args, **kwargs):
+            _ = args, kwargs
+            for index in range(80):
+                yield f" token-{index}"
+
+        def get_cached_voice_route(self, _key):
+            return None
+
+        def reset(self, *args, **kwargs):
+            _ = args, kwargs
+
+    async def _noop_send_librechat_attachments(**_kwargs):
+        return None
+
+    original_render = tg_bot.render_telegram_markdown
+    render_calls = 0
+
+    def _counted_render(*args, **kwargs):
+        nonlocal render_calls
+        render_calls += 1
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(
+        tg_bot,
+        "Users",
+        types.SimpleNamespace(get_config=lambda *_a, **_k: False),
+    )
+    monkeypatch.setattr(tg_bot, "should_send_voice_reply", lambda **_k: False)
+    monkeypatch.setattr(tg_bot, "send_librechat_attachments", _noop_send_librechat_attachments)
+    monkeypatch.setattr(tg_bot, "render_telegram_markdown", _counted_render)
+    monkeypatch.setattr(tg_bot.config, "VIVENTIUM_TELEGRAM_STREAM_EDIT_INTERVAL_S", 0.1)
+
+    context = _FakeContext()
+    asyncio.run(
+        tg_bot.getViventiumResponse(
+            update_message=_FakeUpdateMessage(),
+            context=context,
+            title="",
+            robot=_BurstRobot(),
+            message="stream quickly",
+            chatid=111,
+            messageid=222,
+            convo_id="chat-1",
+            message_thread_id=None,
+            voice_note_detected=False,
+            files=None,
+            trace_id="test-preview-render-coalescing",
+            telegram_message_id=222,
+            telegram_update_id=333,
+        )
+    )
+
+    assert render_calls < 10
+    assert "token-79" in " ".join(_final_delivered_texts(context))
 
 
 def test_get_viventium_response_surfaces_link_prompt(monkeypatch):

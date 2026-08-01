@@ -149,6 +149,28 @@ def read_components(path: Path) -> dict[str, object]:
     return payload
 
 
+def validate_native_compiled_defaults(compiled: Path) -> None:
+    """Reject provider advertisements for runtimes absent from the Native payload."""
+
+    forbidden_markers = ("glasshive-harness", "glasshive-workers-projects")
+    for name in (
+        "librechat.yaml",
+        "prompt-bundle.json",
+        "native-runtime.env",
+        "viventium-agents.yaml",
+    ):
+        path = compiled / name
+        try:
+            body = path.read_text(encoding="utf-8").lower()
+        except OSError as error:
+            raise AssemblyError(f"Native compiled default is unavailable: {name}") from error
+        leaked = next((marker for marker in forbidden_markers if marker in body), "")
+        if leaked:
+            raise AssemblyError(
+                f"Native compiled defaults advertise unavailable GlassHive runtime: {name}"
+            )
+
+
 def is_lower_hex(value: object, length: int) -> bool:
     return (
         isinstance(value, str)
@@ -330,6 +352,7 @@ def assemble(args: argparse.Namespace) -> dict[str, object]:
     if args.source_date_epoch < 315532800:
         raise AssemblyError("source date epoch is outside the supported range")
     validate_built_librechat(librechat)
+    validate_native_compiled_defaults(compiled)
     components = read_components(args.components)
     component_manifest = release_component_manifest(components, args.arch)
     if args.mode == "candidate":

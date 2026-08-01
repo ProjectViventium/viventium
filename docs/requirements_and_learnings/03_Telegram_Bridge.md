@@ -67,20 +67,37 @@ boundaries; runtime only consumes these explicit structural controls:
 
 Controls are case/whitespace tolerant only as standalone lines outside fenced code and block
 quotes. Literal mentions in prose, inline code, fenced examples, and quotes remain user content.
-Incomplete reserved suffixes are hidden during streaming.
+Incomplete reserved suffixes are hidden during streaming. Streaming may update one reversible
+preview bubble, but it must not publish irreversible length chunks before the complete logical
+answer has been parsed for delivery controls. After parsing, each semantic segment is rendered once
+to Telegram HTML and then split into tag-balanced physical messages measured against Telegram's
+post-entity UTF-16 limit. This preserves code fences, expanded tables, emoji, and an early
+`{SKIP_VOICE}` or `{MSG_BREAK}` even when the answer later exceeds the transport limit.
+Preview coalescing happens before Markdown rendering so rapid token deltas do not repeatedly pay the
+full render/split cost. If a final or proactive multi-message delivery stops after any text has been
+shown, the runtime suppresses audio and sends a short visible interruption notice rather than
+silently presenting a truncated answer as complete.
 
 The clean response persists as one logical assistant turn. Semantic bubbles are transport messages,
-not duplicate history. Legacy long-message rotation remains an additional Telegram size guard: the
+not duplicate history. Telegram-safe post-parse chunking remains an additional size guard: the
 at-most-three limit applies to semantic bubbles, while a response over the transport threshold can
-require more physical messages. A semantic boundary in a prefix already rotated for length is
-cleaned but is not guaranteed to create another bubble. If audio is sent, the clean logical answer
-is synthesized once and attached once to the final bubble. Runtime must never infer these choices
-from keywords, length, provider labels, agent names, or prompt text.
+require more physical messages. If audio is sent, the clean logical answer is synthesized once and
+delivered once after the final physical text message. Runtime must never infer these choices from
+keywords, length, provider labels, agent names, or prompt text. Physical size splitting is mandatory
+and is not exposed as a user preference because Telegram cannot accept an oversized message.
+If a response stream fails after useful partial text arrives, the reversible preview is finalized
+with a clear retry notice and optional audio is suppressed. A transient final edit retries the same
+formatted HTML; only an explicit entity-parse failure uses a plain-text fallback. Failure to deliver
+text always suppresses audio.
 
 The grammar is versioned and shared by the LibreChat/JavaScript persistence boundary and Python
 messaging adapters. Compatible future adapters consume this contract instead of inventing
 channel-specific tokens. Telegram exposes the existing `ALWAYS_VOICE_RESPONSE` preference as
 `Smart voice for text`.
+
+The legacy `LONG_TEXT_SPLIT` preference is retired and is no longer forwarded to the bot. Physical
+Telegram limit enforcement is mandatory and semantic bubble boundaries belong only to the
+versioned `{MSG_BREAK}` control.
 
 ## Public-Safe Implementation Notes
 

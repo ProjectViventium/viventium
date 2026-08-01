@@ -7,7 +7,9 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -71,9 +73,12 @@ def runtime_env_value(path: Path, key: str) -> str:
         if not raw_line.startswith(prefix):
             continue
         value = raw_line[len(prefix) :].strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        return value
+        words = shlex.split(value, comments=False, posix=True)
+        if len(words) != 1:
+            raise ValueError(
+                f"{key} in {path} must contain exactly one shell word"
+            )
+        return words[0]
     return ""
 
 
@@ -96,15 +101,21 @@ def bootstrap_life(
     state_file: Path,
 ) -> dict[str, object]:
     template_dir = template_dir.expanduser().resolve(strict=True)
-    life_dir = life_dir.expanduser()
+    life_dir = Path(os.path.abspath(life_dir.expanduser()))
     symlink_component = _first_symlink_component(life_dir)
     if symlink_component:
-        if symlink_component == Path(os.path.abspath(life_dir)):
+        if symlink_component == life_dir:
             raise ValueError(f"LIFE root must not be a symbolic link: {life_dir}")
-        raise ValueError(
-            f"LIFE path must not contain a symbolic link ancestor: {symlink_component}"
-        )
-    life_dir = life_dir.resolve()
+        resolved_life_dir = life_dir.resolve()
+        resolved_home = Path.home().expanduser().resolve()
+        if not resolved_life_dir.is_relative_to(resolved_home):
+            raise ValueError(
+                "LIFE path has a symbolic link ancestor that resolves outside "
+                f"the current user's home: {symlink_component}"
+            )
+        life_dir = resolved_life_dir
+    else:
+        life_dir = life_dir.resolve()
     if not template_dir.is_dir():
         raise ValueError(f"LIFE template is not a directory: {template_dir}")
 
@@ -113,6 +124,7 @@ def bootstrap_life(
     created_files: list[str] = []
     preserved_files: list[str] = []
     skipped_symlinks: list[str] = []
+    conflicts: list[dict[str, str]] = []
     created_directories = 0
     for source, relative in _template_entries(template_dir):
         destination = life_dir / relative
@@ -120,19 +132,43 @@ def bootstrap_life(
         if destination.is_symlink() or any(parent.is_symlink() for parent in relative_parents):
             skipped_symlinks.append(relative.as_posix())
             continue
-        if source.is_dir():
-            if not destination.exists():
-                destination.mkdir(mode=0o700, parents=True, exist_ok=True)
-                destination.chmod(0o700)
-                created_directories += 1
-            continue
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists():
-            preserved_files.append(relative.as_posix())
-            continue
-        shutil.copyfile(source, destination)
-        destination.chmod(0o600)
-        created_files.append(relative.as_posix())
+        try:
+            if source.is_dir():
+                if destination.exists() and not destination.is_dir():
+                    conflicts.append(
+                        {
+                            "path": relative.as_posix(),
+                            "reason": "personalized file blocks template directory",
+                        }
+                    )
+                    continue
+                if not destination.exists():
+                    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    destination.chmod(0o700)
+                    created_directories += 1
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                if destination.is_file():
+                    preserved_files.append(relative.as_posix())
+                else:
+                    conflicts.append(
+                        {
+                            "path": relative.as_posix(),
+                            "reason": "personalized directory blocks template file",
+                        }
+                    )
+                continue
+            shutil.copyfile(source, destination)
+            destination.chmod(0o600)
+            created_files.append(relative.as_posix())
+        except OSError as error:
+            conflicts.append(
+                {
+                    "path": relative.as_posix(),
+                    "reason": f"{type(error).__name__}: {error.strerror or 'filesystem error'}",
+                }
+            )
 
     record = {
         "schema_version": 1,
@@ -143,6 +179,7 @@ def bootstrap_life(
         "created_files": created_files,
         "preserved_files": preserved_files,
         "skipped_symlinks": skipped_symlinks,
+        "conflicts": conflicts,
         "created_directories": created_directories,
         "excluded": sorted(path.as_posix() for path in EXCLUDED_PREFIXES)
         + sorted(EXCLUDED_NAMES),
@@ -174,20 +211,42 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    configured = runtime_env_value(args.runtime_env, "VIVENTIUM_LIFE_DIR") if args.runtime_env else ""
-    if args.if_configured and not configured and args.life_dir is None:
-        return 0
-    life_dir = args.life_dir or Path(configured) if configured else args.life_dir or DEFAULT_LIFE_DIR
-    record = bootstrap_life(
-        template_dir=args.template_dir,
-        life_dir=Path(life_dir),
-        state_file=args.state_file,
-    )
+    try:
+        configured = (
+            runtime_env_value(args.runtime_env, "VIVENTIUM_LIFE_DIR")
+            if args.runtime_env
+            else ""
+        )
+        if args.if_configured and not configured and args.life_dir is None:
+            return 0
+        life_dir = args.life_dir or (
+            Path(configured) if configured else DEFAULT_LIFE_DIR
+        )
+        record = bootstrap_life(
+            template_dir=args.template_dir,
+            life_dir=Path(life_dir),
+            state_file=args.state_file,
+        )
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"LIFE bootstrap failed: {error}", file=sys.stderr)
+        return 2
     print(
         "LIFE ready: "
         f"{record['life_dir']} "
         f"({len(record['created_files'])} files added, {len(record['preserved_files'])} preserved)"
     )
+    if record["conflicts"]:
+        conflict_paths = ", ".join(
+            str(conflict["path"]) for conflict in record["conflicts"][:8]
+        )
+        remainder = len(record["conflicts"]) - min(len(record["conflicts"]), 8)
+        suffix = f" (+{remainder} more)" if remainder else ""
+        print(
+            "LIFE preserved personalized conflicts and could not add every template "
+            f"item: {conflict_paths}{suffix}",
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 

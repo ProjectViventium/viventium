@@ -40,9 +40,9 @@ try:
 except ModuleNotFoundError:
     from TelegramVivBot.utils.telegram_html import markdown_to_html, strip_html_tags
 try:
-    from utils.telegram_chunks import split_telegram_text
+    from utils.telegram_chunks import split_telegram_html
 except ModuleNotFoundError:
-    from TelegramVivBot.utils.telegram_chunks import split_telegram_text
+    from TelegramVivBot.utils.telegram_chunks import split_telegram_html
 # Legacy MarkdownV2 import kept only for backward compat if needed.
 try:
     from md2tgmd.src.md2tgmd import escape as md2tgmd_escape
@@ -54,6 +54,9 @@ except ModuleNotFoundError:
 # === VIVENTIUM END ===
 
 logger = logging.getLogger(__name__)
+TELEGRAM_CALLBACK_INTERRUPTED_NOTICE = (
+    "I couldn't finish delivering that response. Please try again."
+)
 
 
 @dataclass(frozen=True)
@@ -311,20 +314,27 @@ except Exception:
 # === VIVENTIUM END ===
 
 
-def sanitize_telegram_text(text: str, *, preserve_delivery_controls: bool = False) -> str:
+def sanitize_telegram_text(
+    text: str,
+    *,
+    preserve_delivery_controls: bool = False,
+    streaming_preview: bool = False,
+) -> str:
     if not text:
         return ""
     if preserve_delivery_controls:
         cleaned = text
     else:
-        preview_source = strip_incomplete_control_suffix(text)
-        delivery_plan = parse_delivery_controls(preview_source)
+        delivery_source = (
+            strip_incomplete_control_suffix(text) if streaming_preview else text
+        )
+        delivery_plan = parse_delivery_controls(delivery_source)
         has_delivery_controls = bool(
             delivery_plan.skip_voice_count
             or delivery_plan.message_break_count
             or delivery_plan.merged_break_count
         )
-        if preview_source != text or has_delivery_controls:
+        if delivery_source != text or has_delivery_controls:
             cleaned = delivery_plan.clean_text
         else:
             cleaned = text
@@ -501,8 +511,13 @@ def _strip_markdown(text: str) -> str:
 # Feature: Convert standard Markdown to Telegram HTML (robust replacement for MarkdownV2).
 # MarkdownV2 required 17 characters to be perfectly escaped — any miss caused total parse failure.
 # HTML only needs 3 (<, >, &) and degrades gracefully on edge cases.
-def render_telegram_markdown(text: str, *, strip_voice_markup: bool = False) -> str:
-    cleaned = sanitize_telegram_text(text)
+def render_telegram_markdown(
+    text: str,
+    *,
+    strip_voice_markup: bool = False,
+    streaming_preview: bool = False,
+) -> str:
+    cleaned = sanitize_telegram_text(text, streaming_preview=streaming_preview)
     if strip_voice_markup:
         cleaned = strip_voice_control_tags_for_display(cleaned)
     if not cleaned:
@@ -1900,29 +1915,45 @@ class LibreChatBridge:
             # to the final chunk so users do not receive duplicate voice notes.
             if isinstance(raw_message, str) and raw_message.strip():
                 payloads = [
-                    render_telegram_markdown(chunk, strip_voice_markup=True)
+                    chunk
                     for segment in delivery_plan.segments
-                    for chunk in split_telegram_text(segment)
+                    for chunk in split_telegram_html(
+                        render_telegram_markdown(segment, strip_voice_markup=True)
+                    )
                     if chunk.strip()
                 ]
-                if payloads:
-                    last_index = len(payloads) - 1
-                    for index, payload in enumerate(payloads):
-                        await _invoke_callback(
-                            payload,
-                            payload_parse_mode="HTML",
-                            payload_voice_audio=voice_audio if index == last_index else None,
-                        )
-                    return True
+                payload_parse_mode = "HTML"
+            else:
+                payloads = [
+                    chunk
+                    for chunk in split_telegram_html(message)
+                    if chunk.strip()
+                ]
+                payload_parse_mode = parse_mode
+            if payloads:
+                last_index = len(payloads) - 1
+                for index, payload in enumerate(payloads):
+                    await _invoke_callback(
+                        payload,
+                        payload_parse_mode=payload_parse_mode,
+                        payload_voice_audio=voice_audio if index == last_index else None,
+                    )
+                return True
             # === VIVENTIUM END ===
-            await _invoke_callback(
-                message,
-                payload_parse_mode=parse_mode,
-                payload_voice_audio=voice_audio,
-            )
-            return True
+            return False
         except Exception as exc:
             logger.warning("Failed to deliver Telegram callback: %s", exc)
+            try:
+                await _invoke_callback(
+                    TELEGRAM_CALLBACK_INTERRUPTED_NOTICE,
+                    payload_parse_mode=None,
+                    payload_voice_audio=None,
+                )
+            except Exception as notice_exc:
+                logger.warning(
+                    "Failed to deliver Telegram callback interruption notice: %s",
+                    notice_exc,
+                )
             return False
 
     # Track cortex activity seen on SSE so DB polling doesn't exit before persistence catches up.

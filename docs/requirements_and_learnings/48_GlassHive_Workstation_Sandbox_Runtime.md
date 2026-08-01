@@ -1926,14 +1926,24 @@ persistent home and workspace mounts.
 
 ## Installer Integration
 
-- On supported new local installs, the core GlassHive provider and host runtime are enabled by default
-  as defined by doc 39. The installer bootstraps LIFE and exposes the provider even when Codex or
-  Claude authentication still needs user action.
+- On supported source/Docker installs that select GlassHive, the compiler enables the provider and
+  host runtime together, bootstraps LIFE, and exposes the provider even when Codex or Claude
+  authentication still needs user action. The immutable Easy Install Native payload does not
+  package GlassHive today and must not advertise or emit this provider.
+- Provider selection is explicit and portable: both the GlassHive integration and its provider flag
+  must be enabled. Provider-only mismatch fails compilation, while enabling only the broader
+  GlassHive integration does not silently move any Agent to the harness endpoint.
 - Custom configurations may explicitly disable GlassHive through compiled configuration or the
   diagnostic `--skip-glasshive` launcher option.
-- If a damaged or partial checkout is missing the GlassHive runtime directory, the launcher disables
-  GlassHive for that run and reports the degraded state while leaving the repairable core chat
-  surfaces available.
+- If configuration enables GlassHive but a damaged or partial checkout is missing its runtime
+  directory, compilation fails with the component-repair action. It must not silently disable the
+  saved provider and execute that agent on another model.
+- Canonical LIFE creation is a source/Docker Viventium lifecycle capability and is not gated on
+  GlassHive enablement. The current immutable Native payload has no LIFE consumer and therefore
+  neither advertises GlassHive nor creates an inert Documents scaffold. iCloud Documents ancestors
+  are supported only when their resolved target remains inside the user's home; personalized
+  conflicts are preserved and recorded. A LIFE failure blocks a GlassHive-enabled start instead of
+  allowing every provider request to fail later.
 - When GlassHive is disabled or unavailable, generated provider/model additions and seeded built-in
   tool IDs must compile out together. A fresh user must receive a precise readiness/dependency error,
   never a generic missing-key error or a silent substitute provider.

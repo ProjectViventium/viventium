@@ -351,6 +351,67 @@ def test_successful_commit_removes_full_checkpoint_and_keeps_small_receipt(tmp_p
     assert not (support / "state" / "upgrade-transaction-active.json").exists()
 
 
+def test_committed_transaction_with_surviving_pointer_finishes_idempotently(
+    tmp_path: Path,
+) -> None:
+    repo, _, support, _, _, _ = build_fixture(tmp_path)
+    transaction = begin(repo, support, was_running=False)
+    prepared = run("prepare-candidate", "--transaction", str(transaction))
+    assert prepared.returncode == 0, prepared.stderr
+    candidate = json.loads(prepared.stdout)
+    Path(candidate["config_file"]).write_text("version: committed\n", encoding="utf-8")
+    candidate_runtime = Path(candidate["runtime_dir"])
+    candidate_runtime.mkdir(parents=True)
+    (candidate_runtime / "runtime.env").write_text(
+        "VERSION=committed\n",
+        encoding="utf-8",
+    )
+    assert run("activate-candidate", "--transaction", str(transaction)).returncode == 0
+    committed = run("commit", "--transaction", str(transaction))
+    assert committed.returncode == 0, committed.stderr
+
+    pointer = support / "state" / "upgrade-transaction-active.json"
+    pointer.write_text(
+        json.dumps({"transaction_path": str(transaction)}) + "\n",
+        encoding="utf-8",
+    )
+    pointer.chmod(0o600)
+
+    retried = run("commit", "--transaction", str(transaction))
+
+    assert retried.returncode == 0, retried.stderr
+    assert json.loads(retried.stdout)["committed"] is True
+    assert not pointer.exists()
+    assert json.loads((transaction / "ledger.json").read_text(encoding="utf-8"))[
+        "status"
+    ] == "committed"
+
+
+def test_rolled_back_transaction_with_surviving_pointer_finishes_idempotently(
+    tmp_path: Path,
+) -> None:
+    repo, _, support, _, _, _ = build_fixture(tmp_path)
+    transaction = begin(repo, support, was_running=False)
+    rolled_back = run("rollback", "--transaction", str(transaction))
+    assert rolled_back.returncode == 0, rolled_back.stderr
+
+    pointer = support / "state" / "upgrade-transaction-active.json"
+    pointer.write_text(
+        json.dumps({"transaction_path": str(transaction)}) + "\n",
+        encoding="utf-8",
+    )
+    pointer.chmod(0o600)
+
+    retried = run("rollback", "--transaction", str(transaction))
+
+    assert retried.returncode == 0, retried.stderr
+    assert json.loads(retried.stdout)["rolled_back"] is True
+    assert not pointer.exists()
+    assert json.loads((transaction / "ledger.json").read_text(encoding="utf-8"))[
+        "status"
+    ] == "rolled_back"
+
+
 def test_begin_refuses_capacity_loss_before_registering_transaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "support_floor": {
     "parent_commit": "d59c710f45adc37bf86abd491fce603308b1bfa9",
-    "published_at": "2026-07-23T01:05:09-04:00"
+    "published_at": "2026-07-23T05:05:09Z"
   },
   "supported_canonical_config_versions": [
     1

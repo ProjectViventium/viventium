@@ -394,6 +394,43 @@ release_rag_compose_lock
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
+def test_launcher_rag_lock_preserves_initializing_lock_at_stale_grace_boundary(
+    tmp_path: Path,
+) -> None:
+    lock_block = _launcher_slice(
+        "RAG_COMPOSE_UNRECOVERABLE_EXIT=75",
+        "rag_api_http_ping() {",
+    )
+    script = f"""
+set -euo pipefail
+VIVENTIUM_APP_SUPPORT_ROOT="$LOCK_ROOT"
+VIVENTIUM_RAG_COMPOSE_LOCK_DIR="$LOCK_ROOT/rag-compose.lock"
+VIVENTIUM_RAG_COMPOSE_LOCK_STALE_GRACE_SECONDS=1
+{lock_block}
+
+mkdir -p "$VIVENTIUM_RAG_COMPOSE_LOCK_DIR"
+rag_compose_lock_age_seconds() {{
+  printf '1\\n'
+}}
+
+if acquire_rag_compose_lock 0; then
+  exit 90
+fi
+[[ -d "$VIVENTIUM_RAG_COMPOSE_LOCK_DIR" ]]
+[[ ! -e "$VIVENTIUM_RAG_COMPOSE_LOCK_DIR/pid" ]]
+"""
+    completed = subprocess.run(
+        ["/bin/bash", "-c", script],
+        text=True,
+        capture_output=True,
+        env={**os.environ, "LOCK_ROOT": str(tmp_path)},
+        check=False,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_launcher_rag_compose_state_classification_is_behavioral(tmp_path: Path) -> None:
     state_function = _launcher_slice(
         "rag_api_compose_state() {",

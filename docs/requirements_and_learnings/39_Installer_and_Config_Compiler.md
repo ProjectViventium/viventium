@@ -430,13 +430,14 @@ falling back to historical defaults:
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
 The current reviewed LibreChat source is merged commit
-`264a9e25a4e92f384070097890e85da6426d7433`, pinned by both the parent component lock and Native
-payload component manifest. GlassHive is likewise pinned to merged commit
-`1a407a4e90ceea7cd9febcf56b0759ff46f35af0`. Both manifests deliberately declare `merged`, and
-the public release policy independently verifies that every component ref equals its public default
-branch before accepting a parent change. Source and local-runtime PASS still do not substitute for
-a separately signed and notarized immutable Native artifact or vendor-side Telegram, Slack, or Meta
-account approval without credentials owned by the installing user.
+`6bf2a6ec65fcf6af1a1ce404d25a72a33cce9341`, pinned by both the parent component lock and Native
+payload component manifest. The source/Docker GlassHive runtime is pinned by the parent component
+lock to merged commit `1a407a4e90ceea7cd9febcf56b0759ff46f35af0`; it is intentionally absent
+from the Native payload component manifest. Both manifests deliberately declare `merged`, and the
+public release policy independently verifies that every declared component ref equals its public
+default branch before accepting a parent change. Source and local-runtime PASS still do not
+substitute for a separately signed and notarized immutable Native artifact or vendor-side Telegram,
+Slack, or Meta account approval without credentials owned by the installing user.
 
 `scripts/viventium/native_payload.py` and its tests implement the signed-manifest, hostile-archive,
 immutable-activation, journal/lock, interruption recovery, idempotent re-activation, and health-
@@ -1647,6 +1648,10 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
     checkout activation, rollback, and outer commit; the successor may accept the candidate only
     after it verifies that immutable proof, ancestry, the published support floor, and the exact
     prebuilt helper artifact
+  - terminal finalization is idempotent. If a committed or rolled-back ledger survives with its
+    active pointer because interruption occurred after the durable terminal write but before
+    pointer cleanup, the next start/launch/upgrade clears that pointer and reruns bounded cleanup;
+    it must not attempt an impossible second state transition or strand every CLI entrypoint
   - at the predecessor's `candidate_activated` checkpoint, the dynamically loaded successor
     continuity auditor invokes the successor bridge under the still-live parent CLI lock
   - the bridge starts only the recorded stopped storage authority, captures a semantic baseline
@@ -1799,14 +1804,17 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 
 ## GlassHive provider and canonical LIFE compiler contract
 
-- Supported new installs, including the express/minimal path, enable the core GlassHive provider and
-  host runtime by default so every local user receives the canonical LIFE bootstrap and can select
-  GlassHive in Agent Builder. Missing Codex/Claude authentication is a visible readiness state, not
-  a reason to omit the provider. Custom configurations may explicitly disable the integration.
+- Supported source/Docker installs that select GlassHive enable its provider and host runtime from
+  the same compiled capability. They bootstrap canonical LIFE and expose GlassHive in Agent Builder;
+  missing Codex/Claude authentication is a visible readiness state, not a reason to substitute
+  another provider. The immutable Easy Install Native payload does not package GlassHive today and
+  must keep the provider compiled out until a signed payload includes and proves that runtime.
 - When GlassHive and its provider surface are enabled, compilation registers the exact custom
   endpoint ID `glasshive-harness` with visible label **GlassHive**, exact model inventory, context
   limits, title generation pinned to a configured fast direct model, and unsupported OpenAI request
-  parameters removed.
+  parameters removed. Provider activation is explicit: both `integrations.glasshive.enabled` and
+  `integrations.glasshive.provider.enabled` must be true. A mismatched provider-only setting fails
+  compilation, and an integration-only setting never silently migrates Main.
 - Compilation publishes provider capabilities under the Agent endpoint. Main chat, cortex execution,
   Phase B, workspace binding, native tools, and activity stream are enabled; activation classifier,
   real-time voice, and automatic fallback target are disabled. The same registry owns
@@ -1834,7 +1842,7 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   - `VIVENTIUM_LIFE_DIR` is the canonical LIFE location shared by bootstrap and provider defaults.
   These keys are generated outputs. Public examples document the canonical config fields instead
   of publishing generated credentials or owner-machine values.
-- With the default provider enabled, preflight requires at least one installed and authenticated
+- With the provider enabled, preflight requires at least one installed and authenticated
   Codex or Claude CLI before a supported install completes. A missing login is an actionable manual
   prerequisite (`codex login` or `claude auth login`), not a silent direct-model fallback. An
   existing install whose harness authentication later expires keeps the saved provider/model and
@@ -1845,11 +1853,32 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   Those are compiler-owned grants, not powers that an arbitrary request header may enable.
   A generic GlassHive endpoint deployment remains portable and defaults to its configured principal,
   default workspace, and workspace-only access.
-- Install, upgrade, and start additively bootstrap the configured LIFE directory from the public-safe
-  fixture. Missing directories/files are created owner-only, existing personalized content is never
-  overwritten, and destination/root symlinks are skipped or rejected rather than followed. Template
-  version/digest state is written under private Viventium App Support—not inside LIFE. A malformed or
-  unavailable LIFE path is reported clearly but never prevents the core chat runtime from starting.
+- Source/Docker install, configure, and committed upgrade additively bootstrap canonical LIFE from
+  the public-safe fixture whether or not GlassHive is enabled. When the provider is enabled, its
+  configured working-folder override remains authoritative; otherwise the per-user default is
+  `~/Documents/Viventium/Life`. Custom LIFE and allowed-workspace-root values must be absolute
+  server-side paths (a leading `~` is supported); relative values fail compilation rather than
+  resolving differently in the compiler, bootstrap CLI, and GlassHive process. The runtime-env
+  reader decodes exactly one compiler-emitted shell word without evaluating shell syntax, including
+  paths with spaces, apostrophes, or backslashes. Missing directories/files are created owner-only, existing
+  personalized content is never overwritten, and destination/root symlinks are skipped or rejected
+  rather than followed. A macOS Documents symlink is accepted only when its resolved destination
+  stays inside the current user's home, covering iCloud Desktop and Documents without permitting an
+  ancestor escape; a symlink loop produces the same bounded actionable bootstrap error, never a raw
+  traceback. File/directory/permission conflicts are collected while independent template
+  entries continue; the owner-only receipt records every relative conflict and the CLI reports
+  actionable names instead of a raw traceback. Template version/digest state is written under
+  private Viventium App Support—not inside LIFE. Upgrade writes that state only after source/runtime
+  commit, so rollback cannot claim a template version it did not retain. A malformed or unavailable
+  LIFE path is a start-blocking error when GlassHive is enabled because the provider cannot run
+  truthfully without its workspace; otherwise it is a visible warning and core direct chat may
+  continue.
+- The immutable Easy Install Native payload still has no LIFE-consuming GlassHive runtime. It does
+  not write an inert Documents scaffold or trigger a macOS Documents-access prompt. Native assembly
+  fails if any of the four shipped compiled defaults (`librechat.yaml`, `prompt-bundle.json`,
+  `native-runtime.env`, or `viventium-agents.yaml`) advertises either `glasshive-harness` or
+  `glasshive-workers-projects`; a future signed payload must ship and prove the consumer before it
+  can add a Native LIFE bootstrap.
 - Bootstrap excludes `.git`, `CLAUDE.md`, `CODEX.md`, delegated-mission scaffolding, night-run
   receipts, and runtime logs. The canonical `AGENTS.md` is shared by both harnesses.
 - Generated runtime files remain compiler outputs. Operators must not patch App Support YAML/env or
@@ -2311,11 +2340,11 @@ config and recompile/restart; they do not patch generated App Support env files.
     agree when GlassHive is off
   - otherwise a missing local GlassHive MCP can surface to fresh users as a generic `No key found`
     error even though foundation-model auth is healthy
-- On May 31, 2026, the nightly-routines QA follow-up made GlassHive part of the supported local
-  install and upgrade path because the built-in nightly reflection uses scheduled Workbench prompts
-  delivered through GlassHive. The approved July 18, 2026 Easy Install Native contract narrows when it
-  activates: the capability remains supported, existing explicit state is preserved, and new
-  Easy Install Native installs defer worker auth and schedules until after the first useful answer.
+- On May 31, 2026, the nightly-routines QA follow-up made GlassHive part of the supported
+  source/Docker install and upgrade path because the built-in nightly reflection uses scheduled
+  Workbench prompts delivered through GlassHive. The approved July 18, 2026 Easy Install Native
+  contract excludes that unshipped stack: existing explicit source/Docker state is preserved, while
+  new Native installs compile GlassHive, Workbench schedules, and worker-auth prompts out.
 - The same April 13, 2026 remote clean-machine pass exposed the public-clone bootstrap boundary:
   - a shipped public checkout can contain vendored component source without nested git history
   - `bootstrap_components.py` must therefore treat a bootable vendored component tree as valid
@@ -2512,6 +2541,15 @@ Docker-mode preflight must test the selected Docker endpoint, not merely the pre
 binary. QA harnesses that use a non-default isolated context must pin that endpoint for both healthy
 and daemon-down cases; otherwise a removed test context can fall back to an unrelated local Docker
 daemon and create false-green evidence.
+
+Source-installer checkouts must retain enough Git history to enforce the declared upgrade-support
+floor at the point that history is needed. New public installs use a tip-only, single-branch clone
+so installation does not download historical author metadata that is irrelevant to the runtime.
+Before the first mutating upgrade, that checkout is expanded from its configured remote branch
+after the read-only safety audit and before predecessor assessment, target fetch, or transaction
+start; failure to recover that history aborts without working-tree or runtime mutation. Re-running
+the public installer against an existing shallow checkout performs the same fail-closed expansion
+before updating it.
 
 ### July 25, 2026 Installed Telegram And Existing-User Continuity Boundary
 

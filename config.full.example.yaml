@@ -251,7 +251,7 @@ integrations:
     enabled: true
     provider:
       enabled: true
-      # Defaults to the local GlassHive API for the native runtime.
+      # Defaults to the local GlassHive API for a source/Docker runtime.
       # base_url: http://127.0.0.1:8766/v1
       # life_dir: ~/Documents/Viventium/Life
       # Full is the trusted-local default and disables harness sandbox/approval gates.

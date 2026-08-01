@@ -8,6 +8,11 @@ into bounded Telegram bubbles with `{MSG_BREAK}`. Controls are not shown, spoken
 Proactive callback delivery and clean structured persistence pass automation but remain PARTIAL
 until a fresh real callback is observed after this restoration.
 
+Current-candidate note (2026-07-31): the prior live evidence below remains historical. The release
+candidate replaces source-prefix rotation with post-render, tag-balanced UTF-16 chunking. Its full
+Telegram suite passes `378/378`; the changed installed path remains `PARTIAL` until the dated
+post-activation Telegram Desktop pass is appended.
+
 ## Scope Run
 
 | Case ID | Result | Evidence | Notes |
@@ -48,8 +53,8 @@ log and DB/state evidence, and the explicitly bounded scope.
 
 ### Root Cause And Fix
 
-The July 22 implementation existed only as uncommitted working-copy changes and never entered the
-active component history. The live branch therefore omitted the prompt sources, shared parser,
+The July 22 implementation was not present in the active component history. The live branch
+therefore omitted the prompt sources, shared parser,
 persistence sanitizer, Telegram transport handling, TTS guard, and regression tests.
 
 During restoration, live QA exposed a second boundary defect: the GlassHive-authored response
@@ -61,7 +66,8 @@ them. The surgical fix now:
 2. continues to sanitize the persisted assistant message;
 3. preserves partial controls across streamed chunks until the Telegram bridge assembles them;
 4. parses both controls through one equivalent JS/Python grammar;
-5. bounds delivery to three complete bubbles and sends audio only for the final logical answer;
+5. bounds semantic delivery to three complete bubbles, performs mandatory transport splitting only
+   after rendering, and sends audio only once after the final physical message;
 6. stores proactive Phase B text without reserved controls, preserves its decisions as structured
    metadata for Telegram transport, and strips controls before TTS.
 
@@ -79,8 +85,9 @@ It found three P1 gaps, all fixed before final acceptance:
 
 The repaired contract now saves clean proactive text plus control-free structured delivery metadata,
 sanitizes every Telegram snapshot, requires the authenticated Telegram route flag before controls
-can leave LibreChat, and logs/skips individual Telegram edit/send failures without aborting the
-remaining logical turn. Equivalent invalid-limit coercion is also enforced in JavaScript and Python.
+can leave LibreChat, retries the first final edit safely, and fails closed before later delivery or
+audio after an unrecoverable Telegram error. Equivalent invalid-limit coercion is also enforced in
+JavaScript and Python.
 
 ## User-Grade Evidence
 
@@ -140,15 +147,17 @@ uv run --with pytest --with pyyaml python -m pytest -q \
   tests/release/test_no_runtime_nlu.py
 ```
 
-- Full Telegram suite: **338 passed**.
+- Historical restoration Telegram suite: **338 passed**.
+- Current post-render chunking candidate: **378 passed**.
 - Affected LibreChat suites: **239 passed** across six suites.
 - Cross-layer release contracts: **31 passed**.
 - JavaScript syntax checks and Python compilation checks: **PASS**.
 - Prompt Workbench headed browser preview: **5/5 cases selected**, code **0**.
 
 Automated unhappy-path coverage includes controls split across stream chunks, incomplete controls in
-previews, controls inside literal/code content, excess break controls, TTS sanitation, proactive
-callbacks, explicit-audio override, and persistence without control leakage.
+previews and interrupted streams, controls inside literal/code content, excess break controls, TTS
+sanitation, proactive callback chunking, visible partial-delivery interruption, formatting fallback
+recovery, explicit-audio override, and persistence without control leakage.
 
 ## Runtime And Delivery Evidence
 
@@ -168,9 +177,9 @@ participate in this Telegram output path and is not represented as fixed here.
   was not rerun. Existing `TGVOICE-004` evidence remains the owner for the separate input path.
 - Direct Telegram delivery is user-verified. Proactive callback delivery and clean structured
   persistence pass focused automation but remain PARTIAL for a fresh real callback.
-- The three-bubble bound applies to semantic controls. Telegram's legacy size rotation may create
-  additional physical messages for a very long answer, and a semantic boundary already rotated in
-  that prefix is cleaned rather than guaranteed as another bubble.
+- The three-bubble bound applies to semantic controls. Mandatory post-render splitting may create
+  additional tag-balanced physical messages for a very long answer; it does not alter the semantic
+  controls or persisted logical turn.
 - It does not claim broader LiveKit or every TTS-provider acceptance.
 - The five-case Workbench run in this report was a structural preview; the five real Telegram
   turns used the live GlassHive authoring model and provided the exact-model behavioral evidence.

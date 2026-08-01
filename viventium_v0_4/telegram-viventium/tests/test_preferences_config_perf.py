@@ -22,6 +22,14 @@ if str(TELEGRAM_ROOT) not in sys.path:
 from TelegramVivBot import config as telegram_config
 
 
+def test_legacy_long_text_split_preference_is_not_forwarded() -> None:
+    launcher = (ROOT.parent / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "\n    LONG_TEXT_SPLIT\n" not in launcher
+
+
 def _build_user_config(monkeypatch):
     saved = []
 
@@ -44,7 +52,6 @@ def _build_user_config(monkeypatch):
 
     preferences = {
         "LONG_TEXT": True,
-        "LONG_TEXT_SPLIT": True,
         "FILE_UPLOAD_MESS": True,
         "VOICE_RESPONSES_ENABLED": True,
         "ALWAYS_VOICE_RESPONSE": False,

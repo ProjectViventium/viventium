@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,16 +23,20 @@ MODULE_SPEC.loader.exec_module(life_bootstrap)
 
 
 def test_canonical_projects_template_is_tracked_for_clean_installs() -> None:
-    expected = (
-        "templates/life-v0.01/Projects/README.md",
-        "templates/life-v0.01/Projects/_template/README.md",
-        "templates/life-v0.01/Projects/_template/evidence/README.md",
-        "templates/life-v0.01/Projects/_template/research/README.md",
-        "templates/life-v0.01/Projects/_template/analysis/README.md",
-        "templates/life-v0.01/Projects/_template/decisions/README.md",
-        "templates/life-v0.01/Projects/_template/plans/README.md",
-        "templates/life-v0.01/Projects/_template/artifacts/README.md",
-        "templates/life-v0.01/Projects/_template/history/README.md",
+    template_root = life_bootstrap.DEFAULT_TEMPLATE_DIR.relative_to(REPO_ROOT)
+    expected = tuple(
+        (template_root / relative).as_posix()
+        for relative in (
+            "Projects/README.md",
+            "Projects/_template/README.md",
+            "Projects/_template/evidence/README.md",
+            "Projects/_template/research/README.md",
+            "Projects/_template/analysis/README.md",
+            "Projects/_template/decisions/README.md",
+            "Projects/_template/plans/README.md",
+            "Projects/_template/artifacts/README.md",
+            "Projects/_template/history/README.md",
+        )
     )
 
     for relative_path in expected:
@@ -125,6 +131,96 @@ def test_runtime_env_value_reads_compiled_life_path_without_executing_shell(tmp_
     )
 
 
+def test_runtime_env_value_round_trips_compiler_shell_quoting(tmp_path: Path) -> None:
+    runtime_env = tmp_path / "runtime.env"
+    life_dir = tmp_path / "Owner's Life\\Archive"
+    runtime_env.write_text(
+        f"VIVENTIUM_LIFE_DIR={shlex.quote(str(life_dir))}\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        life_bootstrap.runtime_env_value(runtime_env, "VIVENTIUM_LIFE_DIR")
+        == str(life_dir)
+    )
+
+
+def test_runtime_env_value_rejects_multiple_shell_words(tmp_path: Path) -> None:
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        "VIVENTIUM_LIFE_DIR=/safe/first /unsafe/second\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="exactly one shell word"):
+        life_bootstrap.runtime_env_value(runtime_env, "VIVENTIUM_LIFE_DIR")
+
+
+def test_life_bootstrap_defaults_to_canonical_folder_without_provider_config(
+    tmp_path: Path,
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text("START_GLASSHIVE=false\n", encoding="utf-8")
+    state_file = tmp_path / "app-support" / "state" / "life-bootstrap.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "viventium" / "life_bootstrap.py"),
+            "--runtime-env",
+            str(runtime_env),
+            "--state-file",
+            str(state_file),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(fake_home)},
+    )
+
+    life_dir = fake_home / "Documents" / "Viventium" / "Life"
+    assert completed.returncode == 0, completed.stderr
+    assert (life_dir / "AGENTS.md").is_file()
+    assert json.loads(state_file.read_text(encoding="utf-8"))["life_dir"] == str(
+        life_dir
+    )
+
+
+def test_life_bootstrap_reports_symlink_loops_without_a_traceback(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "loop-a"
+    second = tmp_path / "loop-b"
+    os.symlink(second, first)
+    os.symlink(first, second)
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text(
+        f"VIVENTIUM_LIFE_DIR={shlex.quote(str(first / 'Life'))}\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "viventium" / "life_bootstrap.py"),
+            "--runtime-env",
+            str(runtime_env),
+            "--state-file",
+            str(tmp_path / "state" / "life-bootstrap.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
+
+    assert completed.returncode == 2
+    assert "LIFE bootstrap failed:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
 def test_life_bootstrap_skips_dangling_destination_symlinks(tmp_path: Path) -> None:
     template = tmp_path / "template"
     template.mkdir()
@@ -187,10 +283,111 @@ def test_life_bootstrap_rejects_a_symlink_in_the_destination_ancestor_chain(
     assert not (real_parent / "Viventium").exists()
 
 
+def test_life_bootstrap_accepts_icloud_documents_symlink_inside_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_home = tmp_path / "home"
+    icloud_documents = (
+        fake_home
+        / "Library"
+        / "Mobile Documents"
+        / "com~apple~CloudDocs"
+        / "Documents"
+    )
+    icloud_documents.mkdir(parents=True)
+    fake_home.mkdir(exist_ok=True)
+    os.symlink(icloud_documents, fake_home / "Documents")
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    result = life_bootstrap.bootstrap_life(
+        template_dir=life_bootstrap.DEFAULT_TEMPLATE_DIR,
+        life_dir=fake_home / "Documents" / "Viventium" / "Life",
+        state_file=tmp_path / "state-icloud.json",
+    )
+
+    resolved_life = icloud_documents / "Viventium" / "Life"
+    assert (resolved_life / "AGENTS.md").is_file()
+    assert result["life_dir"] == str(resolved_life)
+    assert result["conflicts"] == []
+
+
+def test_life_bootstrap_preserves_conflicts_continues_and_writes_receipt(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template"
+    (template / "Self").mkdir(parents=True)
+    (template / "Self" / "README.md").write_text("template self\n", encoding="utf-8")
+    (template / "Zed").mkdir()
+    (template / "Zed" / "README.md").write_text("template zed\n", encoding="utf-8")
+    life_dir = tmp_path / "Life"
+    life_dir.mkdir()
+    (life_dir / "Self").write_text("personal file\n", encoding="utf-8")
+    state_file = tmp_path / "state" / "life.json"
+
+    result = life_bootstrap.bootstrap_life(
+        template_dir=template,
+        life_dir=life_dir,
+        state_file=state_file,
+    )
+
+    assert (life_dir / "Self").read_text(encoding="utf-8") == "personal file\n"
+    assert (life_dir / "Zed" / "README.md").read_text(encoding="utf-8") == (
+        "template zed\n"
+    )
+    assert result["conflicts"]
+    assert result["conflicts"][0]["path"] == "Self"
+    assert json.loads(state_file.read_text(encoding="utf-8"))["conflicts"] == result[
+        "conflicts"
+    ]
+
+
 def test_public_cli_treats_life_bootstrap_as_non_fatal() -> None:
     cli = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
     function_body = cli.split("bootstrap_life() {", 1)[1].split("\n}", 1)[0]
 
     assert "|| life_bootstrap_status=$?" in function_body
+    assert "--if-configured" not in function_body
     assert "Warning: canonical LIFE bootstrap could not complete" in function_body
+    assert "canonical LIFE bootstrap is required by the enabled GlassHive runtime" in function_body
+    assert "rerun bin/viventium configure or start" in function_body
+    assert 'return "$life_bootstrap_status"' in function_body
     assert function_body.rstrip().endswith("return 0")
+
+
+def test_normal_start_bootstraps_life_after_compile_and_before_runtime_start() -> None:
+    cli = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    start = cli.rsplit("  start)", 1)[1].split("  stop)", 1)[0]
+
+    compile_index = start.index("    compile_config\n")
+    life_index = start.index("      bootstrap_life\n", compile_index)
+    runtime_index = start.index("    prepare_runtime_exports\n", life_index)
+
+    assert compile_index < life_index < runtime_index
+    life_guard = start[start.rfind("if [[", compile_index, life_index) : life_index]
+    assert 'VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced"' in life_guard
+
+
+def test_postcommit_life_failure_does_not_skip_protected_finalization() -> None:
+    cli = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    upgrade = cli.rsplit("  upgrade|update)", 1)[1].split("  configure|wizard)", 1)[0]
+
+    commit_index = upgrade.index("    upgrade_transaction_commit\n")
+    capture_index = upgrade.index(
+        "    bootstrap_life || postcommit_life_bootstrap_status=$?\n",
+        commit_index,
+    )
+    runtime_finalize_index = upgrade.index(
+        "    if ! finalize_quiesced_upgrade_session_after_commit; then",
+        capture_index,
+    )
+    uploads_finalize_index = upgrade.index(
+        "    if ! finalize_deferred_uploads_after_upgrade_commit; then",
+        runtime_finalize_index,
+    )
+    life_failure_index = upgrade.index(
+        '    if [[ "$postcommit_life_bootstrap_status" -ne 0 ]]; then',
+        uploads_finalize_index,
+    )
+
+    assert capture_index < runtime_finalize_index < uploads_finalize_index < life_failure_index

@@ -1,8 +1,11 @@
+import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,12 +62,66 @@ def test_quality_matrix_separates_like_for_like_quality_from_native_capability()
     assert "executed: false" in source
 
 
-def test_glasshive_installer_docs_match_the_core_provider_first_run_contract() -> None:
-    source = GLASSHIVE_REQUIREMENTS.read_text(encoding="utf-8")
+def test_native_default_compiles_without_advertising_glasshive(tmp_path: Path) -> None:
+    config = yaml.safe_load(
+        (ROOT / "config.minimal.example.yaml").read_text(encoding="utf-8")
+    )
+    assert config["install"]["mode"] == "native"
+    assert config["integrations"]["glasshive"]["enabled"] is False
 
-    assert "GlassHive is **not part of the minimum public first-run contract**" not in source
-    assert "core GlassHive provider and host runtime are enabled by default" in source
-    assert "Custom configurations may explicitly disable GlassHive" in source
+    config_path = tmp_path / "native-config.yaml"
+    output_dir = tmp_path / "compiled"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/viventium/config_compiler.py"),
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+    librechat = yaml.safe_load(
+        (output_dir / "librechat.yaml").read_text(encoding="utf-8")
+    )
+    agents = yaml.safe_load(
+        (output_dir / "viventium-agents.yaml").read_text(encoding="utf-8")
+    )
+    custom_endpoints = librechat.get("endpoints", {}).get("custom", [])
+    assert all(endpoint.get("name") != "glasshive-harness" for endpoint in custom_endpoints)
+    assert (
+        librechat.get("viventium", {})
+        .get("consciousAgent", {})
+        .get("provider")
+        != "glasshive-harness"
+    )
+    assert agents.get("mainAgent", {}).get("provider") != "glasshive-harness"
+    for artifact in (
+        "librechat.yaml",
+        "prompt-bundle.json",
+        "native-runtime.env",
+        "viventium-agents.yaml",
+    ):
+        body = (output_dir / artifact).read_text(encoding="utf-8").lower()
+        assert "glasshive-harness" not in body
+        assert "glasshive-workers-projects" not in body
+
+    assembler_spec = importlib.util.spec_from_file_location(
+        "native_payload_assembler",
+        ROOT / "scripts/viventium/assemble_native_payload.py",
+    )
+    assert assembler_spec and assembler_spec.loader
+    assembler = importlib.util.module_from_spec(assembler_spec)
+    assembler_spec.loader.exec_module(assembler)
+    assembler.validate_native_compiled_defaults(output_dir)
+
+    source = GLASSHIVE_REQUIREMENTS.read_text(encoding="utf-8")
+    assert "source/Docker installs that select GlassHive" in source
+    assert "Easy Install Native payload does not" in source
 
 
 @pytest.mark.skipif(

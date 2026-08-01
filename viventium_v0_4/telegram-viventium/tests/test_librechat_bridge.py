@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from TelegramVivBot.utils.librechat_bridge import (
+    TELEGRAM_CALLBACK_INTERRUPTED_NOTICE,
     _async_client_options_for_url,
     _bridge_error_event,
     _strip_markdown,
@@ -37,6 +38,7 @@ from TelegramVivBot.utils.librechat_bridge import (
     sanitize_telegram_text,
     _XAI_WRAPPING_TAG_NAMES,
 )
+from TelegramVivBot.utils.telegram_chunks import telegram_text_units
 
 
 def test_loopback_http_bridge_skips_unused_tls_bundle_and_proxy_environment():
@@ -119,13 +121,18 @@ def test_sanitize_telegram_text_removes_citations():
     assert "Hello world done" in cleaned
 
 
-def test_sanitize_telegram_text_hides_delivery_controls_and_streaming_prefixes():
+def test_sanitize_telegram_text_hides_delivery_controls_without_eating_final_literals():
     complete = sanitize_telegram_text("First beat.\n{MSG_BREAK}\nSecond beat.\n{SKIP_VOICE}")
-    partial = sanitize_telegram_text("First beat.\n{MSG_")
+    final_partial_literal = sanitize_telegram_text("First beat.\n{MSG_")
+    streaming_partial = sanitize_telegram_text(
+        "First beat.\n{MSG_",
+        streaming_preview=True,
+    )
     protected = sanitize_telegram_text("```text\n{MSG_BREAK}\n```")
 
     assert complete == "First beat.\n\nSecond beat."
-    assert partial == "First beat."
+    assert final_partial_literal == "First beat.\n{MSG_"
+    assert streaming_partial == "First beat."
     assert "{MSG_BREAK}" in protected
 
 
@@ -890,7 +897,7 @@ async def test_deliver_callback_splits_long_text_and_attaches_voice_only_to_last
 
     long_text = "\n\n".join(
         [
-            f"Section {index}: " + ("word " * 180)
+            f"Section {index}: " + ("word " * 240)
             for index in range(1, 5)
         ]
     )
@@ -3497,7 +3504,7 @@ async def test_send_followup_text_splits_long_proactive_messages():
     bridge.set_on_message_callback(on_message)
     long_text = "\n\n".join(
         [
-            f"Section {index}: " + ("word " * 180)
+            f"Section {index}: " + ("word " * 240)
             for index in range(1, 5)
         ]
     )
@@ -3509,3 +3516,57 @@ async def test_send_followup_text_splits_long_proactive_messages():
     assert all(message[2] == "HTML" for message in messages)
     assert all(message[3] is None for message in messages)
     assert all(len(message[1]) < 4096 for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_callback_without_raw_message_still_chunks_oversized_html():
+    bridge = _make_bridge()
+    messages = []
+
+    async def on_message(chat_id, text, parse_mode=None, voice_audio=None):
+        messages.append((chat_id, text, parse_mode, voice_audio))
+
+    bridge.set_on_message_callback(on_message)
+    rendered = "<b>" + ("synthetic &amp; text " * 600) + "</b>"
+
+    sent = await bridge._deliver_callback(
+        505,
+        rendered,
+        parse_mode="HTML",
+        raw_message=None,
+    )
+
+    assert sent is True
+    assert len(messages) > 1
+    assert all(message[0] == 505 for message in messages)
+    assert all(message[2] == "HTML" for message in messages)
+    assert all(telegram_text_units(message[1]) <= 4000 for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_chunked_callback_failure_reports_visible_interruption_without_audio():
+    bridge = _make_bridge()
+    messages = []
+    attempts = 0
+
+    async def on_message(chat_id, text, parse_mode=None, voice_audio=None):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise RuntimeError("synthetic second chunk failure")
+        messages.append((chat_id, text, parse_mode, voice_audio))
+
+    bridge.set_on_message_callback(on_message)
+    long_text = "\n\n".join(
+        f"Section {index}: " + ("word " * 300)
+        for index in range(1, 5)
+    )
+
+    sent = await bridge._send_followup_text("505:666", long_text, stream_id="stream-6")
+
+    assert sent is False
+    assert len(messages) == 2
+    assert messages[0][2] == "HTML"
+    assert messages[-1][1] == TELEGRAM_CALLBACK_INTERRUPTED_NOTICE
+    assert messages[-1][2] is None
+    assert all(message[3] is None for message in messages)

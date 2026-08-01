@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import os
@@ -48,10 +49,36 @@ assert CONFIG_COMPILER_SPEC and CONFIG_COMPILER_SPEC.loader
 config_compiler = importlib.util.module_from_spec(CONFIG_COMPILER_SPEC)
 CONFIG_COMPILER_SPEC.loader.exec_module(config_compiler)
 START_SCRIPT = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+GLASSHIVE_CONVERSATION_PROVIDER = (
+    REPO_ROOT
+    / "viventium_v0_4"
+    / "GlassHive"
+    / "runtime_phase1"
+    / "src"
+    / "workers_projects_runtime"
+    / "conversation_provider.py"
+)
 
 
 def write_config(path: Path, payload: dict) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def configure_synthetic_glasshive_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    runtime_dir = tmp_path / "runtime_phase1"
+    provider_entrypoint = (
+        runtime_dir
+        / "src"
+        / "workers_projects_runtime"
+        / "conversation_provider.py"
+    )
+    provider_entrypoint.parent.mkdir(parents=True, exist_ok=True)
+    provider_entrypoint.write_text("# synthetic provider entrypoint\n", encoding="utf-8")
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    return runtime_dir
 
 
 def minimal_compile_config() -> dict:
@@ -800,7 +827,8 @@ def test_native_agent_bundle_omits_tools_and_handoffs_owned_by_unavailable_servi
     config = minimal_compile_config()
     config["integrations"]["scheduling_cortex"] = {"enabled": False}
     config["integrations"]["sequential_thinking"] = {"enabled": False}
-    compiled = config_compiler.render_native_agents_bundle(config, set())
+    assignments = config_compiler.build_agent_assignments(config)
+    compiled = config_compiler.render_native_agents_bundle(config, assignments, set())
 
     agent_groups = [compiled["mainAgent"], *compiled.get("backgroundAgents", [])]
     assert all(
@@ -811,6 +839,9 @@ def test_native_agent_bundle_omits_tools_and_handoffs_owned_by_unavailable_servi
     assert all("web_search" not in agent.get("tools", []) for agent in agent_groups)
     assert compiled.get("handoffAgents") == []
     assert compiled["mainAgent"].get("edges") == []
+    assert compiled["mainAgent"]["provider"] == assignments["conscious"][0]
+    assert compiled["mainAgent"]["model"] == assignments["conscious"][1]
+    assert "glasshive_options" not in compiled["mainAgent"]
     direct_servers = compiled["config"]["viventium"]["background_cortices"][
         "activation_policy"
     ]["direct_action_mcp_servers"]
@@ -1136,9 +1167,7 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir()
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
@@ -1182,8 +1211,6 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["excluded_mcp_servers"] == ["glasshive-workers-projects"]
     assert capability["models"][0]["recommendedEffort"] == "medium"
     assert capability["models"][0]["effortChoices"] == [
-        "none",
-        "minimal",
         "low",
         "medium",
         "high",
@@ -1237,9 +1264,7 @@ def test_glasshive_compiler_capability_matches_tracked_source_of_truth(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir()
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
@@ -1286,6 +1311,30 @@ def test_glasshive_rejects_an_unknown_configured_default_model() -> None:
     }
 
     with pytest.raises(SystemExit, match="must match a declared GlassHive model"):
+        config_compiler.build_agent_assignments(config)
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        {"enabled": True, "life_dir": "relative/Life"},
+        {
+            "enabled": True,
+            "life_dir": "/absolute/Life",
+            "allowed_workspace_roots": ["relative/workspaces"],
+        },
+    ],
+)
+def test_glasshive_rejects_relative_server_workspace_paths(
+    provider: dict[str, object],
+) -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "provider": provider,
+    }
+
+    with pytest.raises(SystemExit, match="absolute server-side path"):
         config_compiler.build_agent_assignments(config)
 
 
@@ -1829,24 +1878,187 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert summary["primary_provider"] == "openai"
 
 
-def test_glasshive_enabled_requires_config_and_runtime_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_glasshive_enabled_fails_loud_when_configured_component_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     missing_dir = tmp_path / "missing-glasshive"
     monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", missing_dir)
 
     assert config_compiler.glasshive_enabled({"integrations": {}}) is False
-    assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": True}}}) is False
+    with pytest.raises(SystemExit, match="GlassHive provider component is missing or incomplete"):
+        config_compiler.glasshive_enabled(
+            {"integrations": {"glasshive": {"enabled": True}}}
+        )
 
     runtime_dir = tmp_path / "runtime_phase1"
     runtime_dir.mkdir(parents=True)
     monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
 
     assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": False}}}) is False
+    with pytest.raises(SystemExit, match="GlassHive provider component is missing or incomplete"):
+        config_compiler.glasshive_enabled(
+            {"integrations": {"glasshive": {"enabled": True}}}
+        )
+    provider_entrypoint = (
+        runtime_dir
+        / "src"
+        / "workers_projects_runtime"
+        / "conversation_provider.py"
+    )
+    provider_entrypoint.parent.mkdir(parents=True)
+    provider_entrypoint.write_text("# synthetic provider entrypoint\n", encoding="utf-8")
     assert config_compiler.glasshive_enabled({"integrations": {"glasshive": {"enabled": True}}}) is True
 
 
+@pytest.mark.skipif(
+    not GLASSHIVE_CONVERSATION_PROVIDER.is_file(),
+    reason="GlassHive contract check requires the explicitly bootstrapped component",
+)
+def test_glasshive_effort_registry_matches_the_runtime_contract() -> None:
+    compiler_models = {
+        str(model["id"]): model
+        for model in config_compiler.GLASSHIVE_PROVIDER_MODELS
+    }
+    librechat = yaml.safe_load(
+        SOURCE_OF_TRUTH_LIBRECHAT_YAML.read_text(encoding="utf-8")
+    )
+    template_models = {
+        str(model["id"]): model
+        for model in librechat["endpoints"]["agents"]["providerCapabilities"][
+            "glasshive-harness"
+        ]["models"]
+    }
+    provider_module = ast.parse(
+        GLASSHIVE_CONVERSATION_PROVIDER.read_text(encoding="utf-8")
+    )
+    registry_assignment = next(
+        node
+        for node in provider_module.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "GLASSHIVE_MODELS"
+    )
+    assert isinstance(registry_assignment.value, ast.Dict)
+    endpoint_models = {}
+    for call in registry_assignment.value.values:
+        assert isinstance(call, ast.Call)
+        keywords = {
+            keyword.arg: ast.literal_eval(keyword.value)
+            for keyword in call.keywords
+            if keyword.arg in {"id", "effort_choices"}
+        }
+        endpoint_models[str(keywords["id"])] = list(keywords["effort_choices"])
+
+    expected_codex = [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra",
+    ]
+    expected_claude = [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert compiler_models["codex-cli:gpt-5.6-sol"]["effortChoices"] == expected_codex
+    assert template_models["codex-cli:gpt-5.6-sol"]["effortChoices"] == expected_codex
+    assert endpoint_models["codex-cli:gpt-5.6-sol"] == expected_codex
+    assert compiler_models["claude-code:opus"]["effortChoices"] == expected_claude
+    assert template_models["claude-code:opus"]["effortChoices"] == expected_claude
+    assert endpoint_models["claude-code:opus"] == expected_claude
+
+
+def test_glasshive_provider_enablement_is_explicit_and_mismatches_fail_loud(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_dir = tmp_path / "GlassHive" / "runtime_phase1"
+    provider_entrypoint = (
+        runtime_dir
+        / "src"
+        / "workers_projects_runtime"
+        / "conversation_provider.py"
+    )
+    provider_entrypoint.parent.mkdir(parents=True)
+    provider_entrypoint.write_text("# synthetic provider\n", encoding="utf-8")
+    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+
+    integration_only = {"integrations": {"glasshive": {"enabled": True}}}
+    assert (
+        config_compiler.resolve_glasshive_provider_settings(integration_only)["enabled"]
+        is False
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="provider.enabled requires integrations.glasshive.enabled",
+    ):
+        config_compiler.resolve_glasshive_provider_settings(
+            {
+                "integrations": {
+                    "glasshive": {
+                        "enabled": False,
+                        "provider": {"enabled": True},
+                    }
+                }
+            }
+        )
+
+
+def test_unavailable_glasshive_prunes_cortex_routes_and_prompt_material() -> None:
+    payload = {
+        "mcpServers": {
+            "viventium-health": {"url": "http://localhost/health"},
+            "glasshive-workers-projects": {"url": "http://localhost/glasshive"},
+        },
+        "viventium": {
+            "background_cortices": {
+                "activation_policy": {
+                    "direct_action_mcp_servers": [
+                        {
+                            "server": "glasshive-workers-projects",
+                            "tool_names": [
+                                "workspace_launch_mcp_glasshive-workers-projects"
+                            ],
+                        },
+                        {"server": "viventium-health", "tool_names": ["health"]},
+                    ]
+                }
+            }
+        },
+    }
+    pruned = config_compiler.prune_unavailable_source_defaults(
+        payload,
+        {"START_GLASSHIVE": "false"},
+    )
+    assert set(pruned["mcpServers"]) == {"viventium-health"}
+    assert pruned["viventium"]["background_cortices"]["activation_policy"][
+        "direct_action_mcp_servers"
+    ] == [{"server": "viventium-health", "tool_names": ["health"]}]
+
+    prompt_bundle = {
+        "prompt_count": 2,
+        "prompts": {
+            "mcp.glasshive_workers.server": {"body": "GlassHive"},
+            "main": {"body": "Main"},
+        },
+    }
+    assert config_compiler.prune_unavailable_prompt_bundle(
+        prompt_bundle,
+        {"START_GLASSHIVE": "false"},
+    ) == {
+        "prompt_count": 1,
+        "prompts": {"main": {"body": "Main"}},
+    }
+
+
 def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     app_support_root = tmp_path / "app-support" / "Viventium"
     codex_bin = tmp_path / "bin" / "codex"
     claude_bin = tmp_path / "bin" / "claude"
@@ -1855,7 +2067,6 @@ def test_render_runtime_env_emits_glasshive_launch_env_only_when_enabled(tmp_pat
     claude_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     codex_bin.chmod(0o755)
     claude_bin.chmod(0o755)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
     monkeypatch.setattr(config_compiler, "APP_SUPPORT_VIVENTIUM_DIR", app_support_root)
     monkeypatch.setattr(
         config_compiler.shutil,
@@ -2063,13 +2274,11 @@ def test_render_runtime_env_uses_codex_app_bundle_when_shell_path_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     app_cli = tmp_path / "Codex.app" / "Contents" / "Resources" / "codex"
     app_cli.parent.mkdir(parents=True)
     app_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     app_cli.chmod(0o755)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
     monkeypatch.setattr(config_compiler, "CODEX_APP_CLI", app_cli)
     monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
 
@@ -2087,15 +2296,13 @@ def test_render_runtime_env_discovers_codex_app_bundle_from_user_app_search_path
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     app_root = tmp_path / "Applications"
     app_cli = app_root / "Codex.app" / "Contents" / "Resources" / "codex"
     app_cli.parent.mkdir(parents=True)
     app_cli.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     app_cli.chmod(0o755)
     monkeypatch.setenv("VIVENTIUM_CODEX_APP_DIRS", str(app_root))
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
     monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
 
     config = minimal_compile_config()
@@ -2109,9 +2316,7 @@ def test_render_runtime_env_discovers_codex_app_bundle_from_user_app_search_path
 
 
 def test_glasshive_azure_enterprise_vm_docker_compiles_cloud_safe_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     monkeypatch.setattr(config_compiler.shutil, "which", lambda _name: None)
 
     config = {
@@ -2270,9 +2475,7 @@ def test_glasshive_azure_enterprise_local_simulation_compiles_matching_ports(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
 
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
@@ -2306,9 +2509,7 @@ def test_glasshive_azure_enterprise_rejects_signed_link_secret_equal_to_service_
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
 
     config = minimal_compile_config()
     config["integrations"]["glasshive"] = {
@@ -2334,9 +2535,7 @@ def test_glasshive_azure_enterprise_client_header_token_delivery_is_explicit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     config = minimal_compile_config()
     config["runtime"]["network"] = {"public_api_origin": "https://api.enterprise.example.com"}
     config["integrations"]["glasshive"] = {
@@ -2360,9 +2559,7 @@ def test_glasshive_azure_enterprise_client_header_token_delivery_is_explicit(
 
 
 def test_glasshive_azure_enterprise_rejects_localhost_cloud_urls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
 
     config = {
         "version": 1,
@@ -2398,9 +2595,7 @@ def test_glasshive_azure_enterprise_rejects_localhost_cloud_urls(tmp_path: Path,
 def test_glasshive_azure_enterprise_rejects_localhost_oauth_redirect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
 
     config = {
         "version": 1,
@@ -2448,9 +2643,7 @@ def test_glasshive_azure_enterprise_rejects_localhost_oauth_redirect(
 
 
 def test_mcp_server_instructions_own_scheduling_and_glasshive_cognition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime_dir = tmp_path / "runtime_phase1"
-    runtime_dir.mkdir(parents=True)
-    monkeypatch.setattr(config_compiler, "GLASSHIVE_RUNTIME_DIR", runtime_dir)
+    runtime_dir = configure_synthetic_glasshive_runtime(tmp_path, monkeypatch)
     monkeypatch.setattr(
         config_compiler.shutil,
         "which",
@@ -3284,8 +3477,22 @@ def test_public_minimal_example_compiles_without_preexisting_keychain_state(
     assert normalized["runtime"]["prompt_workbench"]["enabled"] is False
     assert normalized["runtime"]["nightly_routines"]["enabled"] is False
     assert normalized["voice"]["mode"] == "disabled"
-    assert normalized["integrations"]["glasshive"]["enabled"] is True
-    assert "START_GLASSHIVE=true" in runtime_env
+    assert normalized["integrations"]["glasshive"]["enabled"] is False
+    assert normalized["integrations"]["glasshive"]["provider"]["enabled"] is False
+    assert normalized["integrations"]["glasshive"]["host_worker"]["enabled"] is False
+    assert "START_GLASSHIVE=false" in runtime_env
+    librechat = yaml.safe_load((output_dir / "librechat.yaml").read_text(encoding="utf-8"))
+    agents = yaml.safe_load((output_dir / "viventium-agents.yaml").read_text(encoding="utf-8"))
+    custom_endpoints = librechat.get("endpoints", {}).get("custom", [])
+    assert all(endpoint.get("name") != "glasshive-harness" for endpoint in custom_endpoints)
+    assert (
+        librechat.get("endpoints", {})
+        .get("agents", {})
+        .get("consciousAgent", {})
+        .get("provider")
+        != "glasshive-harness"
+    )
+    assert agents.get("mainAgent", {}).get("provider") != "glasshive-harness"
     assert "GROQ_API_KEY=user_provided" in runtime_env
     assert "SEARCH=false" in runtime_env
 

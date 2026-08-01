@@ -9387,7 +9387,11 @@ acquire_rag_compose_lock() {
     fi
 
     lock_age="$(rag_compose_lock_age_seconds "$lock_dir")"
-    if [[ "$lock_age" -lt "$stale_grace" ]]; then
+    # The owner PID is published immediately after the atomic mkdir. With
+    # second-resolution mtimes, a newly created directory can already report
+    # an age equal to the grace threshold. Preserve that boundary so another
+    # starter cannot steal an initializing lock before its PID is written.
+    if [[ "$lock_age" -le "$stale_grace" ]]; then
       sleep 1
       attempt=$((attempt + 1))
       continue
@@ -10894,7 +10898,6 @@ PY
     CHAT_MODE
     PASS_HISTORY
     LONG_TEXT
-    LONG_TEXT_SPLIT
     FILE_UPLOAD_MESS
     WEB_HOOK
     whitelist

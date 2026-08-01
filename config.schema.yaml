@@ -496,7 +496,7 @@ properties:
                 description: OpenAI-compatible GlassHive base URL as reached by LibreChat.
               life_dir:
                 type: string
-                description: Canonical per-user Viventium LIFE folder on the GlassHive host.
+                description: Absolute canonical per-user Viventium LIFE folder on the GlassHive host; a leading ~ is supported.
               principal_id:
                 type: string
                 description: Server-owned principal used for portable clients without delegated identity.
@@ -519,7 +519,7 @@ properties:
                   - type: array
                     items:
                       type: string
-                description: Server-side roots within which custom working folders may be selected.
+                description: Absolute server-side roots within which custom working folders may be selected; a leading ~ is supported.
           host_worker:
             type: object
             properties:

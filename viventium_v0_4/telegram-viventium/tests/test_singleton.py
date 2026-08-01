@@ -75,7 +75,7 @@ def test_telegram_singleton_requires_token(token, tmp_path):
 def test_owner_readiness_receipt_is_owner_only_and_never_contains_token(
     tmp_path, monkeypatch
 ):
-    token = "123456:receipt-secret-value"
+    token = "12345:synthetic-receipt-value"
     receipt = tmp_path / "state" / "owner.json"
     execution_root = tmp_path / "runtime-components" / "telegram" / "TelegramVivBot"
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_OWNER_RECEIPT", str(receipt))
@@ -127,7 +127,7 @@ def test_owner_readiness_receipt_is_owner_only_and_never_contains_token(
 def test_failure_between_post_init_and_polling_keeps_receipt_pending(
     tmp_path, monkeypatch
 ):
-    token = "123456:failure-between-post-init-and-polling"
+    token = "12345:synthetic-polling-failure"
     receipt = tmp_path / "state" / "owner.json"
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_OWNER_RECEIPT", str(receipt))
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT", str(ROOT))
@@ -167,7 +167,7 @@ def test_pinned_ptb_application_requires_both_running_states_before_ready(
     tmp_path, monkeypatch
 ):
     telegram_ext = pytest.importorskip("telegram.ext")
-    token = "123456:pinned-ptb-readiness"
+    token = "12345:synthetic-ptb-readiness"
     receipt = tmp_path / "state" / "owner.json"
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_OWNER_RECEIPT", str(receipt))
     monkeypatch.setenv("VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT", str(ROOT))

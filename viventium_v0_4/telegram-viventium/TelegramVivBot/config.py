@@ -514,7 +514,6 @@ PREFERENCES = {
     # REMOVED: TITLE - Cosmetic feature, not needed
     # REMOVED: REPLY - LiveKit Bridge handles message threading
     "LONG_TEXT"         : (os.environ.get('LONG_TEXT', "True") == "False") == False,
-    "LONG_TEXT_SPLIT"   : (os.environ.get('LONG_TEXT_SPLIT', "True") == "False") == False,
     "FILE_UPLOAD_MESS"  : (os.environ.get('FILE_UPLOAD_MESS', "True") == "False") == False,
     # === VIVENTIUM START ===
     # Feature: Allow users to disable/enable voice replies entirely.
@@ -1434,7 +1433,6 @@ def get_status(chatid = None, item = None):
 # English display names for preferences (removed i18n)
 PREFERENCE_DISPLAY_NAMES = {
     "LONG_TEXT": "Long text merge",
-    "LONG_TEXT_SPLIT": "Long text split",
     "FILE_UPLOAD_MESS": "File upload message",
     # === VIVENTIUM START ===
     # Feature: Explicit voice reply toggle in Preferences.

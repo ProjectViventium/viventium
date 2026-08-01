@@ -287,17 +287,31 @@ validate_existing_checkout_matches_remote() {
   fi
 }
 
+ensure_full_checkout_history() {
+  local shallow=""
+  shallow="$(git -C "$INSTALL_DIR" rev-parse --is-shallow-repository 2>/dev/null || true)"
+  if [[ "$shallow" != "true" ]]; then
+    return 0
+  fi
+  echo "Repairing legacy shallow Viventium checkout history..."
+  git -C "$INSTALL_DIR" fetch --unshallow origin "$BRANCH"
+}
+
 mkdir -p "$(dirname "$INSTALL_DIR")"
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   validate_existing_checkout_origin
   validate_existing_checkout_clean
+  ensure_full_checkout_history
   git -C "$INSTALL_DIR" fetch origin "$BRANCH"
   git -C "$INSTALL_DIR" checkout "$BRANCH"
   git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
   validate_existing_checkout_clean
   validate_existing_checkout_matches_remote
 else
+  # A fresh installer needs only the reviewed branch tip. Historical author
+  # metadata is not part of the runtime payload; the first mutating upgrade
+  # expands this checkout before enforcing the declared support floor.
   git clone --depth 1 --single-branch --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 

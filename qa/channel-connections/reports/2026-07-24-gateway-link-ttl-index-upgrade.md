@@ -2,7 +2,13 @@
 # Gateway Link TTL Index Upgrade
 
 Date: 2026-07-24
-Status: PASS — source, isolated database, installed upgrade/restart, and headed user-path verification passed.
+Status: BLOCKED for public release — the historical local acceptance below exercised changes that
+are not present in the currently pinned public LibreChat component.
+
+Current correction (2026-07-31): the pinned LibreChat tree contains neither the cited `collMod`
+migration nor its cited regression spec. The evidence below remains a record of an unreleased local
+evaluation, not proof of the public component. This case must be reimplemented in the nested
+component, reviewed, merged, repinned, and rerun before it can return to `PASS`.
 
 ## Incident and root cause
 
@@ -48,7 +54,7 @@ ESLint passed for all four changed nested JavaScript files, Prettier reported ev
 file compliant, and `git diff --check` passed. This implementation slice used no live database or
 personal channel state.
 
-## Installed acceptance completed
+## Historical local acceptance (not present in the public pin)
 
 - The established local runtime that had produced the unavailable Channels screen was upgraded and
   restarted through the supported activation path.

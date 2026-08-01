@@ -419,8 +419,13 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
     assert "prepare_runtime_exports" in drain_function
     assert 'source "$GENERATED_ENV"' in drain_function
     assert 'scripts/viventium/native_stack.sh" stop' in drain_function
+    assert 'stop >/dev/null 2>&1' not in drain_function
+    assert "|| true" not in drain_function
+    assert "refusing to remove Viventium state" in drain_function
     assert "drain_native_stack_before_state_removal" in reset_function
     assert "drain_native_stack_before_state_removal" in uninstall_function
+    assert "Uninstall stopped before any Viventium state was removed." in uninstall_function
+    assert "Factory reset stopped before any Viventium state was removed." in reset_function
     assert 'mv -- "$APP_SUPPORT_DIR" "$backup_dir"' in removal_backup_function
     assert 'cp "$GENERATED_ENV"' not in removal_backup_function
     assert "preserves databases, state, snapshots" in removal_backup_function
@@ -494,6 +499,57 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
         'launch_macos_helper_app\n      print_install_summary 1\n      open_default_browser\n      print_connected_accounts_browser_reminder'
         in cli_source
     )
+
+
+@pytest.mark.parametrize(
+    ("function_name", "expected_error"),
+    (
+        (
+            "reset_local_install_state",
+            "Factory reset stopped before any Viventium state was removed.",
+        ),
+        (
+            "uninstall_local_installation",
+            "Uninstall stopped before any Viventium state was removed.",
+        ),
+    ),
+)
+def test_destructive_flow_preserves_state_when_native_drain_fails(
+    tmp_path: Path,
+    function_name: str,
+    expected_error: str,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    function = extract_shell_function(cli_source, function_name)
+    app_support = tmp_path / "app-support"
+    app_support.mkdir()
+    sentinel = app_support / "sentinel"
+    sentinel.write_text("preserve\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"APP_SUPPORT_DIR={str(app_support)!r}\n"
+                f"CONFIG_FILE={str(app_support / 'config.yaml')!r}\n"
+                "is_stack_running() { return 1; }\n"
+                "stop_stack_for_upgrade() { return 0; }\n"
+                "drain_native_stack_before_state_removal() { return 23; }\n"
+                f"{function}"
+                f"{function_name}\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert expected_error in completed.stderr
+    assert sentinel.read_text(encoding="utf-8") == "preserve\n"
 
 
 def test_uninstall_honors_explicit_no_helper_install_contract(tmp_path: Path) -> None:
@@ -784,6 +840,9 @@ def test_upgrade_quiesces_before_compare_and_defers_full_runtime_and_helper_unti
     strict_compare = upgrade_section.index("compare_upgrade_continuity_audits")
     helper = upgrade_section.index("if ! maybe_install_macos_helper --no-launch; then")
     commit = upgrade_section.index("upgrade_transaction_commit")
+    life = upgrade_section.index(
+        "\n    bootstrap_life || postcommit_life_bootstrap_status=$?\n"
+    )
     session_finalize = upgrade_section.index(
         "finalize_quiesced_upgrade_session_after_commit"
     )
@@ -795,6 +854,7 @@ def test_upgrade_quiesces_before_compare_and_defers_full_runtime_and_helper_unti
         < post_capture
         < strict_compare
         < commit
+        < life
         < session_finalize
         < uploads_finalize
         < schedule
@@ -806,6 +866,31 @@ def test_upgrade_quiesces_before_compare_and_defers_full_runtime_and_helper_unti
     assert "previous LaunchAgent state was restored" in upgrade_section
     assert "bin/viventium compile-config" in upgrade_section
     assert "The core upgrade is finalized, but the macOS helper refresh failed" in upgrade_section
+
+
+def test_interrupted_upgrade_recovery_finalizes_committed_pointer_without_rollback() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    recovery = extract_shell_function(
+        cli_source,
+        "recover_interrupted_upgrade_transaction",
+    )
+
+    assert 'json.loads(sys.argv[1])["status"]' in recovery
+    committed_branch = recovery.split(
+        'if [[ "$active_status" == "committed" ]]; then',
+        1,
+    )[1].split("\n  fi", 1)[0]
+    assert "upgrade_transaction_commit" in committed_branch
+    assert "upgrade_transaction_rollback" not in committed_branch
+    assert committed_branch.index("upgrade_transaction_commit") < committed_branch.index(
+        "return 0"
+    )
+    rolled_back_branch = recovery.split(
+        'if [[ "$active_status" == "rolled_back" ]]; then',
+        1,
+    )[1].split("\n  fi", 1)[0]
+    assert "upgrade_transaction_rollback" in rolled_back_branch
+    assert "stop_stack_for_upgrade" not in rolled_back_branch
 
 
 def test_upgrade_restart_waits_for_every_enabled_structural_surface() -> None:
@@ -1989,6 +2074,12 @@ def test_cli_reconciles_default_nightly_routines_on_supported_entrypoints() -> N
     assert "run_preflight apply" not in upgrade_section
     assert "apply_default_nightly_routines" in configure_section
     assert "apply_default_nightly_routines" in compile_config_section
+    assert configure_section.index("bootstrap_components") < configure_section.index(
+        "compile_config"
+    )
+    assert compile_config_section.index("bootstrap_components") < compile_config_section.index(
+        "compile_config"
+    )
     assert "apply_default_nightly_routines" in start_section
     assert "compile_config" in start_section
     assert start_section.index("apply_default_nightly_routines") < start_section.index(

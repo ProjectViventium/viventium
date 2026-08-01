@@ -25,13 +25,14 @@ jobs:
           - runner: macos-15-intel
             expected_arch: x86_64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       EXPECTED_ARCH: ${{ matrix.expected_arch }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify runner architecture
         run: test "$(uname -m)" = "$EXPECTED_ARCH"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -43,30 +44,38 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "24"
-      - run: python -m pip install -r scripts/viventium/requirements.txt pytest uv==0.11.28
-      - name: Fetch and validate the exact pinned LibreChat component
+      - run: >-
+          python -m pip install
+          -r scripts/viventium/requirements.txt
+          pytest==8.4.2
+          pydantic==2.12.5
+          croniter==6.0.0
+          fastapi==0.141.1
+          fastmcp==3.4.5
+          httpx==0.28.1
+          uv==0.11.28
+      - name: Fetch and validate the exact configured components
         run: |
           python scripts/viventium/bootstrap_components.py \
             --repo-root "$PWD" \
-            --config config.minimal.example.yaml \
+            --config config.full.example.yaml \
             --jobs 1
+      - name: Install LibreChat workspace dependencies
+        working-directory: viventium_v0_4/LibreChat
+        run: |
+          npm ci --ignore-scripts
+          npm run build:packages
+      - name: Install modern playground dependencies
+        working-directory: viventium_v0_4/agent-starter-react
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
       - name: Run cross-architecture installer and payload policy suites
         run: |
-          python -m pytest \
-            tests/release/test_config_compiler.py \
-            tests/release/test_continuity_bundle.py \
-            tests/release/test_install_experience_labels.py \
-            tests/release/test_macos_helper_install.py \
-            tests/release/test_native_candidate_transport.py \
-            tests/release/test_native_component_manifest.py \
-            tests/release/test_native_component_staging.py \
-            tests/release/test_native_continuity.py \
-            tests/release/test_native_macos_compatibility.py \
-            tests/release/test_native_payload.py \
-            tests/release/test_native_payload_assembler.py \
-            tests/release/test_native_payload_builder.py \
-            tests/release/test_native_public_safety.py \
-            tests/release/test_native_release_sequence.py \
-            tests/release/test_native_stack_helpers.py \
-            tests/release/test_ci_release_workflows.py \
-            -q
+          python -m pytest tests/release/ -q
+      - name: Run Telegram smart-delivery regression suite
+        run: |
+          git ls-files --error-unmatch \
+            viventium_v0_4/telegram-viventium/tests/test_telegram_chunks.py
+          cd viventium_v0_4/telegram-viventium
+          uv run --project TelegramVivBot --frozen \
+            --with pytest==8.4.2 --with pytest-asyncio==1.4.0 \
+            python -m pytest -q tests

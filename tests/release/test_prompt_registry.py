@@ -474,6 +474,8 @@ def test_scheduling_cortex_fastmcp_instructions_match_registry_prompt() -> None:
 
 
 def _load_glasshive_instruction_namespace():
+    if not GLASSHIVE_MCP_SERVER.is_file():
+        pytest.skip("GlassHive component is not checked out for this parent-only test run")
     tree = ast.parse(GLASSHIVE_MCP_SERVER.read_text(encoding="utf-8"))
     selected_names = {
         "_allowed_worker_profiles",

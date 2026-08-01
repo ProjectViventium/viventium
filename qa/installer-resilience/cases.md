@@ -270,42 +270,45 @@ These cases are intentionally separate so one broad `PARTIAL` cannot hide a miss
   reconstructed source passed post-merge `python3 -m pytest tests/release/ -q` with 1,542 passed,
   11 skipped, and 0 failed in 293.15 seconds. Staged and remote parent-PR exactness remain open.
 
-## `INST-003` - Profile-Aware Nightly Workflow Install And Upgrade
+## `INST-003` - Profile-Aware Optional Workflow Install And Upgrade
 
-- Requirement: all supported paths carry the nightly-workflow capability without hardcoding a
-  developer account or relying on owner-machine leftovers. New Easy Install Native installs defer its
-  activation until post-ready worker setup; Custom Settings Install choices and existing explicit upgrade
-  state are preserved.
+- Requirement: supported source/Docker paths carry the nightly-workflow capability without
+  hardcoding a developer account or relying on owner-machine leftovers. Easy Install Native
+  truthfully compiles the unshipped GlassHive/Workbench stack out; Custom Settings Install choices
+  and existing explicit source/Docker upgrade state are preserved.
 - Risk covered: new users install Viventium successfully but do not get the intended nightly
   reflection/memory workflow, or the workflow only works on the original developer laptop.
 - Preconditions: synthetic config/temp state can be used; at least one positive worker-auth case
   and one missing-auth case must be exercised without writing private account details to public QA.
 - Steps:
-  1. Build a new Easy Install Native config and confirm GlassHive worker execution, Prompt Workbench
-     schedule activation, and memory hardening are setup-pending and do not block core preflight.
-  2. Activate worker setup and prove the same canonical capability becomes runnable without
-     reinstalling the core.
+  1. Build a new Easy Install Native config and confirm GlassHive provider/model choices, Prompt
+     Workbench schedules, and scheduled memory hardening are absent rather than advertised as
+     setup-pending capabilities.
+  2. Build the supported source/Docker configuration and prove the canonical capability becomes
+     runnable after worker setup without changing the Native artifact.
   3. Run the reconciler over legacy, explicitly active, and explicitly disabled upgrade-shaped
      configs and confirm each posture is preserved while `operator_user_email` remains empty.
   4. Simulate Codex-ready and Claude-ready machines and confirm an empty generated worker profile is
      filled from the signed-in CLI instead of a hardcoded developer machine value.
   5. Confirm an explicit existing worker profile is preserved even when another CLI is detected.
-  6. Simulate no signed-in Codex/Claude CLI: Easy Install Native core passes with worker setup pending;
-     an explicitly activated worker fails only that capability with one clear sign-in action.
+  6. Simulate no signed-in Codex/Claude CLI: Easy Install Native core passes without an unavailable
+     worker surface; an explicitly activated source/Docker worker fails only that capability with
+     one clear sign-in action.
   7. Compile config and inspect generated env for `START_GLASSHIVE`, `START_PROMPT_WORKBENCH`,
      `VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_*`, `GLASSHIVE_DEFAULT_WORKER_PROFILE`, and memory
      hardening env keys.
   8. Start or harness Prompt Workbench with a synthetic admin and confirm the built-in
      `Subconscious Deep Thought` schedule is active, `glasshive_host`, and uses the selected worker
      profile.
-  9. Inspect install-summary rows and confirm the user sees GlassHive, Prompt Workbench, Nightly
-     Reflection, and Memory Hardening status without private account/path leakage.
-- Expected result: new Easy Install Native reaches first chat without worker CLI auth; later activation
-  compiles a runnable nightly workflow; upgrades preserve explicit state; no owner/private identity,
-  raw prompt, local path, or manual App Support edit is required.
-- Forbidden result: capability code omitted from Easy Install, missing worker auth blocks first chat,
-  upgrade flips an explicit active/disabled choice, setup-pending is called Ready, or any public
-  artifact contains a real user email/path/token/raw prompt.
+  9. Inspect install-summary output and confirm source/Docker users see GlassHive, Prompt Workbench,
+     Nightly Reflection, and Memory Hardening status while Native users receive truthful omission
+     wording, all without private account/path leakage.
+- Expected result: new Easy Install Native reaches first chat without advertising an unshipped
+  worker; source/Docker setup compiles a runnable nightly workflow; upgrades preserve explicit
+  state; no owner/private identity, raw prompt, local path, or manual App Support edit is required.
+- Forbidden result: Native advertises an unshipped capability, missing worker auth blocks Native
+  first chat, upgrade flips an explicit source/Docker active/disabled choice, setup-pending is
+  called Ready, or any public artifact contains a real user email/path/token/raw prompt.
 - Evidence to capture: focused release-test results, sanitized generated env key summary, preflight
   item statuses for Codex/Claude/none scenarios, Workbench synthetic seed row, install-summary rows,
   public-safety scan, and Claude review summary when used.

@@ -31,11 +31,33 @@ FORBIDDEN_FILE_NAMES = {
     "runtime.env",
     "runtime.local.env",
 }
-SECRET_PATTERNS = (
+PRIVATE_OR_SECRET_PATTERNS = (
     re.compile(rb"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b"),
+    re.compile(rb"\bsk-ant-[A-Za-z0-9_-]{20,}\b"),
     re.compile(rb"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
     re.compile(rb"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(rb"\bAKIA[A-Z0-9]{16}\b"),
+    re.compile(rb"\bAIza[A-Za-z0-9_-]{30,}\b"),
+    re.compile(rb"\b[0-9]{6,12}:[A-Za-z0-9_-]{30,}\b"),
     re.compile(rb"-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----"),
+    re.compile(
+        rb"/Users/(?!(?:example|username|user)(?:/|\\))[A-Za-z0-9._-]+(?:/|\\)"
+    ),
+    re.compile(
+        rb"\b(?!git@github\.com\b)[A-Za-z0-9._%+-]+@"
+        rb"(?!(?:example\.(?:com|org|net)|localhost|viventium\.local|"
+        rb"users\.noreply\.github\.com)\b)"
+        rb"(?!(?:[A-Za-z0-9-]+\.)*(?:example|invalid|test)\b)"
+        rb"[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rb"https?://[A-Za-z0-9._~-]+:[^@\s/]{8,}@"
+        rb"(?!(?:(?:[A-Za-z0-9-]+\.)*(?:example|invalid|test)|"
+        rb"localhost|127(?:\.[0-9]{1,3}){3})(?=[:/\s]|$))"
+        rb"[A-Za-z0-9.-]+",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -89,8 +111,8 @@ def verify(repo: Path) -> dict[str, object]:
             continue
         blob = git(repo, "show", f":{raw_path}")
         assert isinstance(blob, bytes)
-        if any(pattern.search(blob) for pattern in SECRET_PATTERNS):
-            findings.append(f"high-confidence secret in staged file: {path.as_posix()}")
+        if any(pattern.search(blob) for pattern in PRIVATE_OR_SECRET_PATTERNS):
+            findings.append(f"private or secret content in staged file: {path.as_posix()}")
     if findings:
         raise StagedSafetyError("\n".join(sorted(findings)))
     return {"status": "pass", "staged_files": len(paths)}

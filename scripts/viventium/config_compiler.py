@@ -276,7 +276,21 @@ def resolve_timezone_name(value: Any) -> str:
 def glasshive_enabled(config: dict[str, Any]) -> bool:
     integrations = config.get("integrations", {}) or {}
     configured = resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False)
-    return configured and GLASSHIVE_RUNTIME_DIR.is_dir()
+    if not configured:
+        return False
+    provider_entrypoint = (
+        GLASSHIVE_RUNTIME_DIR
+        / "src"
+        / "workers_projects_runtime"
+        / "conversation_provider.py"
+    )
+    if not GLASSHIVE_RUNTIME_DIR.is_dir() or not provider_entrypoint.is_file():
+        raise SystemExit(
+            "GlassHive provider component is missing or incomplete while "
+            "integrations.glasshive.enabled is true; "
+            "run `bin/viventium bootstrap-components` and compile again"
+        )
+    return True
 
 
 def glasshive_deployment_mode(config: dict[str, Any]) -> str:
@@ -667,7 +681,14 @@ def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any
     integrations = config.get("integrations", {}) or {}
     glasshive = integrations.get("glasshive", {}) or {}
     provider = glasshive.get("provider", {}) or {}
-    enabled = glasshive_enabled(config) and resolve_bool(provider.get("enabled"), True)
+    integration_enabled = resolve_bool(glasshive.get("enabled"), False)
+    provider_enabled = resolve_bool(provider.get("enabled"), False)
+    if provider_enabled and not integration_enabled:
+        raise SystemExit(
+            "integrations.glasshive.provider.enabled requires "
+            "integrations.glasshive.enabled; enable both or disable the provider"
+        )
+    enabled = glasshive_enabled(config) and provider_enabled
     enterprise = resolve_glasshive_enterprise_settings(config)
     configured_base_url = str(provider.get("base_url") or "").strip().rstrip("/")
     if configured_base_url:
@@ -682,21 +703,34 @@ def resolve_glasshive_provider_settings(config: dict[str, Any]) -> dict[str, Any
         provider.get("life_dir") or Path.home() / "Documents" / "Viventium" / "Life"
     ).strip()
     life_path = Path(life_dir).expanduser()
+    if not life_path.is_absolute():
+        raise SystemExit(
+            "integrations.glasshive.provider.life_dir must be an absolute "
+            "server-side path (a leading ~ is supported)"
+        )
+    life_path = Path(os.path.normpath(str(life_path)))
     raw_roots = provider.get("allowed_workspace_roots")
     if isinstance(raw_roots, str):
-        allowed_workspace_roots = [
-            str(Path(value).expanduser())
-            for value in raw_roots.split(os.pathsep)
-            if value.strip()
+        raw_workspace_roots = [
+            value for value in raw_roots.split(os.pathsep) if value.strip()
         ]
     elif isinstance(raw_roots, list):
-        allowed_workspace_roots = [
-            str(Path(str(value)).expanduser())
-            for value in raw_roots
-            if str(value).strip()
+        raw_workspace_roots = [
+            str(value) for value in raw_roots if str(value).strip()
         ]
     else:
-        allowed_workspace_roots = [str(life_path.parent)]
+        raw_workspace_roots = [str(life_path.parent)]
+    allowed_workspace_roots = []
+    for raw_workspace_root in raw_workspace_roots:
+        workspace_root = Path(raw_workspace_root.strip()).expanduser()
+        if not workspace_root.is_absolute():
+            raise SystemExit(
+                "integrations.glasshive.provider.allowed_workspace_roots entries "
+                "must be absolute server-side paths (a leading ~ is supported)"
+            )
+        allowed_workspace_roots.append(
+            str(Path(os.path.normpath(str(workspace_root))))
+        )
     configured_default_model = str(provider.get("default_model") or "").strip()
     available_models = [str(model["id"]) for model in GLASSHIVE_PROVIDER_MODELS]
     default_model = configured_default_model or next(
@@ -1046,8 +1080,6 @@ GLASSHIVE_PROVIDER_MODELS = [
         "label": "Codex / GPT-5.6 Sol",
         "harnessProfile": "codex-cli",
         "effortChoices": [
-            "none",
-            "minimal",
             "low",
             "medium",
             "high",
@@ -1828,6 +1860,21 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
                     if not has_non_placeholder_env(env, env_key):
                         oauth[field] = ""
 
+        available_mcp_servers = set(mcp_servers)
+        activation_policy = (
+            (cleaned.get("viventium") or {})
+            .get("background_cortices", {})
+            .get("activation_policy", {})
+        )
+        direct_servers = activation_policy.get("direct_action_mcp_servers")
+        if isinstance(direct_servers, list):
+            activation_policy["direct_action_mcp_servers"] = [
+                server
+                for server in direct_servers
+                if isinstance(server, dict)
+                and str(server.get("server") or "").strip() in available_mcp_servers
+            ]
+
     web_search = cleaned.get("webSearch")
     if isinstance(web_search, dict):
         optional_env_fields = {
@@ -1856,6 +1903,23 @@ def prune_unavailable_source_defaults(payload: dict[str, Any], env: dict[str, st
         if not web_search:
             cleaned.pop("webSearch", None)
 
+    return cleaned
+
+
+def prune_unavailable_prompt_bundle(
+    prompt_bundle: dict[str, Any],
+    env: dict[str, str],
+) -> dict[str, Any]:
+    """Exclude provider-specific prompt material when its runtime is unavailable."""
+
+    cleaned = copy.deepcopy(prompt_bundle)
+    prompts = cleaned.get("prompts")
+    if (
+        isinstance(prompts, dict)
+        and not resolve_bool(env.get("START_GLASSHIVE"), False)
+    ):
+        prompts.pop("mcp.glasshive_workers.server", None)
+        cleaned["prompt_count"] = len(prompts)
     return cleaned
 
 
@@ -3680,6 +3744,9 @@ def render_runtime_env(
         "VIVENTIUM_RAG_EMBEDDINGS_PROVIDER": retrieval_embeddings["provider"],
         "VIVENTIUM_RAG_EMBEDDINGS_MODEL": retrieval_embeddings["model"],
         "VIVENTIUM_RAG_EMBEDDINGS_PROFILE": retrieval_embeddings["profile"],
+        # LIFE is a source/Docker install concern independent of whether the
+        # GlassHive provider is currently enabled. Native filters this key.
+        "VIVENTIUM_LIFE_DIR": str(glasshive_provider["life_dir"]),
     }
     # Source-native installs launch the API-owned Sandpack listener just like the
     # Docker/source paths, so its listener must follow any compiled port override.
@@ -3933,7 +4000,6 @@ def render_runtime_env(
             env["GLASSHIVE_PROVIDER_ALLOWED_WORKSPACE_ROOTS"] = os.pathsep.join(
                 glasshive_provider["allowed_workspace_roots"]
             )
-            env["VIVENTIUM_LIFE_DIR"] = str(glasshive_provider["life_dir"])
 
     public_client_origin = str(network.get("public_client_origin", "") or "").strip()
     public_api_origin = str(network.get("public_api_origin", "") or "").strip()
@@ -4653,7 +4719,9 @@ def render_native_runtime_env(config: dict[str, Any], env: dict[str, str]) -> di
 
 
 def render_native_agents_bundle(
-    config: dict[str, Any], available_mcp_servers: set[str]
+    config: dict[str, Any],
+    assignments: dict[str, tuple[str, str]],
+    available_mcp_servers: set[str],
 ) -> dict[str, Any]:
     """Compile agents against the services that the exact Native payload can provide."""
     if config.get("install", {}).get("mode") != "native":
@@ -4662,6 +4730,19 @@ def render_native_agents_bundle(
     if not bundle:
         raise SystemExit("Native agent defaults require the source-of-truth agent bundle")
     web_search_is_enabled = resolve_web_search_settings(config)["enabled"] == "true"
+    main_agent = bundle.get("mainAgent")
+    if isinstance(main_agent, dict):
+        conscious_provider, conscious_model = assignments["conscious"]
+        main_agent["provider"] = conscious_provider
+        main_agent["model"] = conscious_model
+        model_parameters = main_agent.get("model_parameters")
+        if not isinstance(model_parameters, dict):
+            model_parameters = {}
+            main_agent["model_parameters"] = model_parameters
+        model_parameters["model"] = conscious_model
+        if conscious_provider != GLASSHIVE_PROVIDER_ID:
+            main_agent.pop("glasshive_options", None)
+            model_parameters.pop("reasoning_effort", None)
 
     def tool_is_available(tool: object) -> bool:
         name = str(tool or "").strip()
@@ -5854,13 +5935,14 @@ def main() -> None:
     )
     prompt_bundle_path = output_dir / "prompt-bundle.json"
     env["VIVENTIUM_PROMPT_BUNDLE_PATH"] = str(prompt_bundle_path)
-    prompt_bundle = build_prompt_bundle()
+    prompt_bundle = prune_unavailable_prompt_bundle(build_prompt_bundle(), env)
     librechat_yaml = render_librechat_yaml(config, assignments, env)
     native_agents_bundle = None
     if config["install"]["mode"] == "native":
         rendered_librechat = yaml.safe_load(librechat_yaml) or {}
         native_agents_bundle = render_native_agents_bundle(
             config,
+            assignments,
             set((rendered_librechat.get("mcpServers") or {}).keys()),
         )
     summary = {

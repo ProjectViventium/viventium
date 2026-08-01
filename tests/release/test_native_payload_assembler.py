@@ -525,6 +525,37 @@ def test_assembler_rejects_missing_built_runtime_and_external_symlink(tmp_path: 
     assert not (tmp_path / "unsafe").exists()
 
 
+@pytest.mark.parametrize(
+    ("artifact", "marker"),
+    tuple(
+        (artifact, marker)
+        for artifact in (
+            "librechat.yaml",
+            "prompt-bundle.json",
+            "native-runtime.env",
+            "viventium-agents.yaml",
+        )
+        for marker in ("glasshive-harness", "glasshive-workers-projects")
+    ),
+)
+def test_assembler_rejects_unavailable_glasshive_native_advertisements(
+    tmp_path: Path,
+    artifact: str,
+    marker: str,
+) -> None:
+    inputs = fixture_inputs(tmp_path)
+    path = inputs["compiled"] / artifact
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\nforbidden: {marker}\n",
+        encoding="utf-8",
+    )
+
+    completed = run_assembler(tmp_path, inputs, tmp_path / "candidate")
+
+    assert completed.returncode != 0
+    assert "advertise unavailable GlassHive runtime" in completed.stderr
+
+
 def test_assembler_rejects_unattestable_component_metadata(tmp_path: Path) -> None:
     inputs = fixture_inputs(tmp_path)
     policy = json.loads(

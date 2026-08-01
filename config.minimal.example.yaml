@@ -150,17 +150,21 @@ voice:
     default_enabled: false
 integrations:
   glasshive:
-    # Core provider and canonical LIFE runtime. Harness auth can be completed later.
-    enabled: true
+    # The immutable Native payload does not package GlassHive. Source/Docker users
+    # can enable the provider from Custom Settings after the component is present.
+    enabled: false
     provider:
-      enabled: true
-      # Used automatically when GlassHive itself is enabled.
+      # Provider activation is explicit: both this flag and the parent flag above
+      # must be true. A mismatch fails compilation instead of downgrading silently.
+      enabled: false
+      # Optional GlassHive working-folder override. The canonical LIFE bootstrap
+      # remains additive and independent of whether this provider is enabled.
       # life_dir: ~/Documents/Viventium/Life
       # Full is the trusted-local default; workspace is the restricted option.
       default_access: full
       allow_full_access: true
     host_worker:
-      enabled: true
+      enabled: false
       workspace_root: ~/viventium
       # Worker runtime profile: codex-cli, claude-code, or openclaw-general.
       # Separate from the integrations.openclaw lab toggle below.
