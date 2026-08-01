@@ -7219,12 +7219,12 @@ scheduling_mcp_health_url() {
 }
 
 scheduling_mcp_health_reachable() {
-  curl -fsS --max-time 3 "$(scheduling_mcp_health_url)" >/dev/null 2>&1
+  curl --noproxy '*' -fsS --max-time 3 "$(scheduling_mcp_health_url)" >/dev/null 2>&1
 }
 
 scheduling_mcp_matches_runtime() {
   local payload
-  payload="$(curl -fsS --max-time 3 "$(scheduling_mcp_health_url)" 2>/dev/null)" || return 1
+  payload="$(curl --noproxy '*' -fsS --max-time 3 "$(scheduling_mcp_health_url)" 2>/dev/null)" || return 1
   local python_cmd="${PYTHON_BIN:-python3}"
   "$python_cmd" - "$SCHEDULING_DB_PATH" "$payload" <<'PY'
 import hashlib

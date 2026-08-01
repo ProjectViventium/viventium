@@ -439,6 +439,24 @@
   2,063-passed/11-skipped release suite pass. Final candidate promotion, browser persistence, and
   real channel reply remain required.
 
+## SDR-016: Scheduler Loopback Health Ignores Ambient Proxies
+
+- Requirement: `11_Scheduling_Cortex.md`, `50_Stable_Dev_Runtime.md`
+- Surfaces: launcher, activation/upgrade shutdown, hosted release runners
+- Preconditions: a real local Scheduler process and poisoned `HTTP_PROXY`/`HTTPS_PROXY` values with
+  no `NO_PROXY` exemption
+- Steps: start the Scheduler, run its readiness and ownership checks, then stop it across the
+  activation-scope scenarios
+- Expected Result: hardcoded loopback probes bypass ambient proxies, identify the exact Scheduler
+  ledger, and complete the intended ownership-safe stop
+- Forbidden Result: a proxy connection error is reported as Scheduler failure or prevents a safe
+  activation/upgrade stop
+- Evidence: `tests/release/test_scheduling_mcp_supervision.py` poisoned-proxy cases and hosted
+  `Easy Install core` checks
+- Last Run: PASS-AUTOMATED 2026-07-31; 3/3 previously failing scenarios and the focused Scheduler
+  suite (16 passed, 1 platform skip) passed with poisoned proxy variables. Current-head hosted rerun
+  remains pending.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Stable Dev Runtime. Add narrower feature-specific

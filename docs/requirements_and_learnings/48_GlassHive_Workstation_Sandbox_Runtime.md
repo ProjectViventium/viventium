@@ -1277,6 +1277,12 @@ LibreChat internals.
   harness behavior. Chat Completions remains the broad compatibility floor used by LibreChat;
   Responses is the preferred additive surface for new direct clients and does not create a second
   execution engine.
+- LibreChat must honor the compiled provider capability at its final model-construction seam. When
+  that registration declares `responses_api: false`, neither stale per-conversation options nor an
+  SDK heuristic based on the provider's model ID may switch web, Telegram, or cortex turns away from
+  the registered Chat Completions transport. The exact provider model and declared effort must
+  remain on the wire. This does not remove GlassHive's independent Responses endpoint or alter
+  direct OpenAI Agents whose capability permits Responses.
 - Portability is deliberately protocol-layered. OpenAI's official guidance recommends Responses for
   new projects while keeping Chat Completions supported, so GlassHive implements both over one core.
   ACP remains a possible future external-agent/editor adapter, and MCP remains the tool/context

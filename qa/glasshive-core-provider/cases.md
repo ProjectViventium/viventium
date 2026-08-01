@@ -26,6 +26,7 @@
 | GCP-020 | Harness working preambles remain activity only; the authored reply is the final Codex agent message or Claude result | Web, direct SDK, native event logs | PASS (2026-07-30) |
 | GCP-021 | A queued busy run does not hot-spin, survives restart, and clears active failure metadata after a successful retry while retaining retry audit fields | GlassHive API/state/logs | PASS (2026-07-30) |
 | GCP-022 | Provider usage quota is an explicit OpenAI-compatible rate-limit failure with no fallback, retry storm, or duplicate authoring | Live Chat Completions/Responses API, DB, logs | PASS (2026-07-30) |
+| GCP-023 | LibreChat honors the selected provider's declared transport capability at model construction, so SDK model-name heuristics or stale conversation options cannot switch a Chat-Completions provider to Responses | Web/Telegram, LibreChat API, GlassHive logs/state | PARTIAL (2026-07-31 real-model regression passed; installed web and Telegram rerun pending) |
 
 ## Natural User Use Case Checklist
 

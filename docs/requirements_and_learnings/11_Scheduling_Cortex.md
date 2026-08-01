@@ -78,6 +78,10 @@ launcher and watchdog must fail loud or wait without killing the other runtime. 
 Support paths, schedule prompts, schedule content, user ids, tokens, and operator-chosen dev-env
 names must not appear in the health payload or public QA evidence.
 
+Launcher and test probes to this hardcoded loopback endpoint must bypass ambient HTTP proxy
+configuration explicitly. A host or CI proxy must not turn a healthy local Scheduler into a false
+startup, shutdown, or ownership failure.
+
 An upgrade stop must probe the port even when the original installed component directory or PID
 file is already absent. Activation may have renamed that component into a rollback slot while its
 process still retains the original command path. After the health identity matches the canonical

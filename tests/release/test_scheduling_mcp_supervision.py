@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULING_ROOT = (
     REPO_ROOT / "viventium_v0_4" / "LibreChat" / "viventium" / "MCPs" / "scheduling-cortex"
 )
+LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 if str(SCHEDULING_ROOT) not in sys.path:
     sys.path.insert(0, str(SCHEDULING_ROOT))
 
@@ -41,7 +42,7 @@ def wait_for_scheduler_health(port: int, *, timeout: float = 10.0) -> dict[str, 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(
+            with LOOPBACK_OPENER.open(
                 f"http://127.0.0.1:{port}/health",
                 timeout=0.5,
             ) as response:
@@ -68,6 +69,7 @@ def test_scheduling_mcp_has_health_checked_watchdog_contract() -> None:
     assert "restart_scheduling_mcp_runtime() {" in launcher_text
     assert "start_scheduling_mcp_watchdog() {" in launcher_text
     assert "stop_scheduling_mcp_watchdog() {" in launcher_text
+    assert launcher_text.count("curl --noproxy '*' -fsS --max-time 3") == 2
     assert 'scheduling_python="$PWD/.venv/bin/python"' in launcher_text
     assert '"$scheduling_python" -m scheduling_cortex.server' in launcher_text
     assert (
@@ -401,12 +403,18 @@ def test_scheduler_stop_handles_installed_pid_in_pre_bind_gap_without_touching_f
 )
 def test_scheduler_stop_handles_real_process_across_activation_scopes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     scenario: str,
     matching_identity: bool,
     expected_running: bool,
 ) -> None:
     if not shutil.which("lsof"):
         pytest.skip("lsof is required for real scheduler ownership acceptance")
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
 
     launcher_text = (
         REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
