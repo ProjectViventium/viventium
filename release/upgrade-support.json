@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "support_floor": {
+    "parent_commit": "d59c710f45adc37bf86abd491fce603308b1bfa9",
+    "published_at": "2026-07-23T05:05:09Z"
+  },
+  "supported_canonical_config_versions": [
+    1
+  ],
+  "supported_continuity_manifest_versions": [
+    2
+  ],
+  "state_contracts": {
+    "first_upgrade_bridge": "successor-handoff-v1",
+    "helper_runtime_intent": "desired-state-v1",
+    "managed_agents": "baseline-ledger-v1",
+    "mongo": "semantic-fingerprint-v1",
+    "mongo_engine_identity": "clean-stop-receipt-v1",
+    "rag_postgres": "credential-migration-v1",
+    "schedules": "semantic-fingerprint-v1",
+    "telegram": "singleton-handoff-v1",
+    "uploads": "app-support-canonical-v1"
+  },
+  "predecessor_state_requirements": {
+    "mongo_engine_identity": {
+      "required_for": "durable-stopped-or-ambiguous-storage",
+      "accepted_proof": "direct-running-engine-or-clean-stop-receipt-v1",
+      "unsupported_status": "mongo_engine_proof_required",
+      "recovery": "observed-intermediate-clean-stop-or-supported-snapshot-restore"
+    }
+  }
+}

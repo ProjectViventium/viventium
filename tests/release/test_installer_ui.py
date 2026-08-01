@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 import types
 from pathlib import Path
@@ -131,6 +132,31 @@ def test_questionary_is_disabled_when_term_is_dumb(monkeypatch) -> None:
 
     assert ui.interactive is False
     assert ui.questionary_enabled is False
+
+
+def test_rich_output_is_disabled_for_noninteractive_logs(monkeypatch) -> None:
+    installer_ui = load_installer_ui_module()
+
+    class _UnexpectedConsole:
+        def __init__(self) -> None:
+            raise AssertionError("Rich Console must not be constructed for captured output")
+
+    captured_input = io.StringIO()
+    captured_output = io.StringIO()
+    monkeypatch.setattr(installer_ui.sys, "stdin", captured_input)
+    monkeypatch.setattr(installer_ui.sys, "stdout", captured_output)
+    monkeypatch.setattr(installer_ui, "Console", _UnexpectedConsole)
+
+    ui = installer_ui.InstallerUI()
+    ui.print_table(
+        "Mac Prerequisites",
+        ["Component", "Status"],
+        [["Node 24.16.0 (verified archive)", "Missing"]],
+    )
+
+    assert ui.rich_enabled is False
+    assert ui.console is None
+    assert "Node 24.16.0 (verified archive) | Missing" in captured_output.getvalue()
 
 
 def test_checkbox_falls_back_to_plain_prompts_when_questionary_checkbox_raises(monkeypatch, capsys) -> None:

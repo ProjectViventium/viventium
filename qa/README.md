@@ -168,6 +168,10 @@ Rerun cadence:
 - rerun the full feature suite before any release-readiness or production-signoff claim
 - refresh `Last Run` whenever a case is rerun; stale pass results are evidence history, not current
   acceptance
+- keep every cataloged but unrun case tied to a concrete event-based trigger such as the next change
+  to its owning feature, the next public report, or the next full feature run. Calendar age alone
+  must not silently invalidate a durable case catalog; release signoff still requires the affected
+  cases to be run and recorded.
 
 ## Public-Safe Evidence
 

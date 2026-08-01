@@ -22,6 +22,14 @@ if str(TELEGRAM_ROOT) not in sys.path:
 from TelegramVivBot import config as telegram_config
 
 
+def test_legacy_long_text_split_preference_is_not_forwarded() -> None:
+    launcher = (ROOT.parent / "viventium-librechat-start.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "\n    LONG_TEXT_SPLIT\n" not in launcher
+
+
 def _build_user_config(monkeypatch):
     saved = []
 
@@ -44,7 +52,6 @@ def _build_user_config(monkeypatch):
 
     preferences = {
         "LONG_TEXT": True,
-        "LONG_TEXT_SPLIT": True,
         "FILE_UPLOAD_MESS": True,
         "VOICE_RESPONSES_ENABLED": True,
         "ALWAYS_VOICE_RESPONSE": False,
@@ -87,6 +94,44 @@ def test_set_config_same_value_skips_persist(monkeypatch):
     assert len(saved) == 1
     assert saved[0][0] == "user-1"
     assert saved[0][1]["ALWAYS_VOICE_RESPONSE"] is True
+
+
+def test_existing_preferences_are_not_rewritten_or_overridden_on_startup(monkeypatch):
+    saved = []
+    existing = {
+        "systemprompt": "preserve the user's legacy value",
+        "LONG_TEXT": False,
+        "UNKNOWN_PERSONALIZATION": {"kept": True},
+    }
+    monkeypatch.setattr(
+        telegram_config,
+        "save_user_config",
+        lambda user_id, cfg: saved.append((user_id, dict(cfg))),
+    )
+    monkeypatch.setattr(
+        telegram_config,
+        "load_user_config",
+        lambda _user_id: dict(existing),
+    )
+    monkeypatch.setattr(telegram_config.os.path, "exists", lambda _path: True)
+    monkeypatch.setattr(telegram_config.os, "listdir", lambda _path: ["global.json"])
+
+    cfg = telegram_config.UserConfig(
+        mode="multiusers",
+        api_key="new-default-key",
+        api_url="https://example.invalid/v1",
+        engine="gpt-5",
+        preferences={"LONG_TEXT": True, "ALWAYS_VOICE_RESPONSE": False},
+        language="English",
+        languages=None,
+        systemprompt="new release default",
+    )
+
+    assert saved == []
+    assert cfg.users["global"].data["systemprompt"] == existing["systemprompt"]
+    assert cfg.users["global"].data["LONG_TEXT"] is False
+    assert cfg.users["global"].data["UNKNOWN_PERSONALIZATION"] == {"kept": True}
+    assert cfg.users["global"].data["ALWAYS_VOICE_RESPONSE"] is False
 
 
 def test_internal_conversation_state_version_is_supported(monkeypatch):

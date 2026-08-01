@@ -5,8 +5,8 @@
 | Agent | Primary Positive Coverage | Negative / Boundary Coverage | Runtime Notes |
 | --- | --- | --- | --- |
 | Background Analysis | `ACT-01`, `ACT-07`, `ACT-15`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-36` | `ACT-12`, `ACT-21`, `ACT-36` | Known to over-activate on some broad analysis prompts; benchmark tracks spillover explicitly. |
-| Confirmation Bias | `ACT-02`, `ACT-13`, `ACT-15`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-36` | `ACT-12`, `ACT-14`, `ACT-21`, `ACT-36` | Must stay distinct from generic analysis and emotional prompts; latest-user-message control prevents stale repeated activation from history. |
-| Red Team | `ACT-01`, `ACT-02`, `ACT-13`, `ACT-15`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-35`, `ACT-36` | `ACT-12`, `ACT-21`, `ACT-35` negative control, `ACT-36` | Challenge pressure should not fire on pure tool/capability requests, pure decision-method education, or stale older requests. |
+| Confirmation Bias | `ACT-02`, `ACT-13`, `ACT-15`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-36`, `ACT-46`, `ACT-48` | `ACT-12`, `ACT-14`, `ACT-21`, `ACT-36`, `ACT-48` negative control | Must stay distinct from generic analysis and emotional prompts; latest-user-message control prevents stale repeated activation from history. |
+| Red Team | `ACT-01`, `ACT-02`, `ACT-13`, `ACT-15`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-35`, `ACT-36`, `ACT-46`, `ACT-47`, `ACT-48` | `ACT-12`, `ACT-21`, `ACT-35` negative control, `ACT-36`, `ACT-48` negative control | Challenge pressure should not fire on pure tool/capability requests, pure decision-method education, or stale older requests. |
 | Deep Research | `ACT-03`, `ACT-36` | `ACT-12`, `ACT-27`, `ACT-36` | Shipped specialist remains capable, but main-agent auto-activation is disabled in the GlassHive broker-first local baseline. |
 | MS365 | `ACT-09`, `ACT-11`, `ACT-23`, `ACT-24`, `ACT-25`, `ACT-26`, `ACT-36` | `ACT-12`, `ACT-25` negative controls, `ACT-27`, `ACT-36` | Provider-only clarification is a required regression case; source/live tool arrays must include MS365 MCP tools; in the broker-first local baseline the main agent no longer auto-activates MS365 as a background cortex. |
 | Parietal Cortex | `ACT-05`, `ACT-36` | `ACT-12`, `ACT-36` | Math/statistics only. |
@@ -19,7 +19,7 @@
 ## Interpretation
 
 - Coverage in this matrix is activation coverage, not full execution QA.
-- Cases with outcome assertions (`ACT-13`, `ACT-14`, `ACT-15`, `ACT-16`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-21`, `ACT-22`, `ACT-23`, `ACT-24`, `ACT-25`, `ACT-26`, `ACT-27`, `ACT-33`, `ACT-34`, `ACT-35`, `ACT-36`, `ACT-37`, `ACT-38`, `ACT-39`) are promoted incident regressions. They
+- Cases with outcome assertions (`ACT-13`, `ACT-14`, `ACT-15`, `ACT-16`, `ACT-17`, `ACT-18`, `ACT-19`, `ACT-20`, `ACT-21`, `ACT-22`, `ACT-23`, `ACT-24`, `ACT-25`, `ACT-26`, `ACT-27`, `ACT-33`, `ACT-34`, `ACT-35`, `ACT-36`, `ACT-37`, `ACT-38`, `ACT-39`, `ACT-46`, `ACT-47`, `ACT-48`) are promoted incident regressions. They
   are not satisfied by an activation-only pass; QA must verify user-visible quality, named cortex
   visibility, durable `messages.content` persistence, first-response speed, and preservation of the
   original Phase A parent answer when background cards attach.
@@ -41,6 +41,12 @@
   per-attempt deadline, not provider cooperation, advances the fallback chain.
 - `ACT-39` protects the source/config/runtime prompt boundary: registry prompt-reference objects
   must validate and resolve before use, never degrade to `[object Object]`.
+- `ACT-46` protects specialist output ownership: Main-only exact wording/shape constraints cannot
+  turn a substantive cortex into an echo of the initial answer.
+- `ACT-47` protects serialized harness throughput without weakening authentication isolation: only
+  the matching free runtime lane wakes, and every terminal release path participates.
+- `ACT-48` protects the conscious Phase B decision: concrete novelty and the user's continuation
+  permission determine generated versus silent `{NTA}` outcomes, not mere topic overlap.
 - `ACT-24` protects live productivity evidence: Google/MS365 cortices must have their provider-owned
   MCP tools attached so inbox/status requests do not degrade to recall-only synthesis when auth is
   otherwise available.

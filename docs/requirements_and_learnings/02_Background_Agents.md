@@ -29,14 +29,19 @@ For the manager-readable handbook, start with:
   - its built-in source-of-truth contract must include `web_search`
   - when its execution family is `openAI / gpt-5.6-sol`, its shipped `model_parameters` must use
     `reasoning_effort: xhigh`, not Anthropic/Google-only thinking fields such as `thinkingBudget`
-  - it must use the Responses API because this is a reasoning-plus-tools workload
+  - on the direct OpenAI execution family it must use the Responses API because this is a
+    reasoning-plus-tools workload; GlassHive executes it through the harness-native endpoint
 - Red Team is a shipped adversarial decision-quality cortex:
   - its built-in source-of-truth contract must include `web_search` so evidence-first checks can
     actually use live evidence when runtime web search is enabled
   - when its execution family is `openAI / gpt-5.6-sol`, its shipped and runtime-normalized
     `model_parameters` must use `reasoning_effort: xhigh`, not Anthropic/Google-only thinking
     fields such as `thinkingBudget`
-  - it must use the Responses API because this is a reasoning-plus-tools workload
+  - on the direct OpenAI execution family it must use the Responses API because this is a
+    reasoning-plus-tools workload; GlassHive executes it through the harness-native endpoint
+  - the interactive GlassHive baseline uses `high`: a real xhigh Red Team turn took 177 seconds
+    before queue time, too close to the old three-minute cortex deadline for reliable Phase B. The
+    direct OpenAI fallback remains xhigh, and Deep Research remains GlassHive xhigh.
 - Shipping a specialist background agent does not require the main Viventium agent to auto-activate
   it. In the current local baseline, the main agent keeps `Deep Research`, `MS365`, and `Google`
   background activation disabled. Live web/productivity execution should be handled by the
@@ -82,9 +87,52 @@ For the manager-readable handbook, start with:
 Background-agent execution-family selection is part of the install/compiler/runtime contract, not a
 browser-only post-connect side effect.
 
+### GlassHive provider routing
+
+- Every substantive cortex keeps its own normal Agent `provider` and `model`. Selecting
+  `glasshive-harness` therefore uses that cortex's Codex or Claude harness directly; no wrapper LLM
+  authors the cortex result.
+- Phase A remains a bounded direct classifier and filters providers by
+  `activation_classifier: true`; GlassHive declares this false.
+- Phase B uses the originating main agent's provider. A GlassHive main reuses the same native
+  `(owner, conversation, agent)` session; a direct main with a GlassHive cortex remains direct for
+  adjudication.
+- Every substantive GlassHive cortex receives the canonical persisted conversation ID while
+  retaining its own Agent ID. GlassHive session identity includes both conversation and agent, so
+  specialists remain independent sessions inside the same visible conversation instead of falling
+  back to orphaned generated conversation IDs. This applies to ordinary, speculative, late-recovery,
+  configured-fallback, and detached Emotional Reaction execution.
+- A substantive cortex is the specialist, not the Main agent. Main-only wording and response-shape
+  instructions in the originating request are context for the specialist's analysis, not constraints
+  on its result. Universal safety/permission constraints and instructions explicitly addressed to
+  background agents still apply. A cortex must not restate or quote the original request or Phase A;
+  it returns only independent specialist findings that add information. This prevents a specialist
+  from echoing the Phase A answer instead of producing independent evidence.
+- GlassHive's universal conversation endpoint preserves OpenAI role authority when translating the
+  ordered message array into a native CLI instruction: it carries one authoritative system snapshot,
+  labels visible conversation roles, and ends the flattened transcript with a compact reminder to
+  verify the response against that system snapshot. Recency in a user message must not silently
+  outrank the agent/cortex contract.
+- Specialist cortices do not receive Feelings. The main speaking path—including a GlassHive-backed
+  main—receives the request-pinned capsule exactly once.
+- Harness-backed runs remove the GlassHive self-delegation MCP through declared capability metadata,
+  preventing GlassHive-inside-GlassHive recursion while retaining other declared tools.
+- Speculative Phase-A redo is disabled for a harness-backed main. After native execution starts,
+  transport recovery may reattach to the same idempotent request but cannot dispatch a second run.
+- Browser refresh, relay timeout, or transport disconnect detaches the consumer; it does not cancel
+  the harness. GlassHive must continue reconciling the durable provider request from the worker run
+  so a completed result becomes terminal exactly once and a reconnect can recover it.
+- Host-native CLI authentication isolation remains serial per CLI family and conversation lane.
+  `host_worker_busy` is therefore normal capacity queueing: it uses a short bounded retry cadence,
+  its own long retry budget, and an immediate wake when the active worker releases the lane. It must
+  not consume the shorter generic provider-failure retry budget or strand later cortices. A wake is
+  scoped to the exact runtime lane (harness profile, host execution, and conversation/mission mode),
+  rechecks real capacity before clearing delays, and occurs after every terminal release path—not
+  only successful completion. Requeueing a still-busy worker must not wake or erase unrelated lanes.
+
 - The tracked source-of-truth bundle in
-  `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml` is the mixed
-  launch baseline.
+  `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml` is the
+  GlassHive-enabled launch baseline.
 - `scripts/viventium/config_compiler.py` chooses the provider/model mix for the local install.
 - `viventium-agent-runtime-models.js` must then normalize each built-in background agent onto the
   canonical execution bag for that target provider family.
@@ -93,27 +141,28 @@ browser-only post-connect side effect.
 
 Authoritative execution matrix:
 
-| Agent | Shipped Mixed Baseline | OpenAI-only install | Anthropic-only install | OpenAI + Anthropic install |
+| Agent | GlassHive-enabled shipped baseline | GlassHive-disabled OpenAI-only | GlassHive-disabled Anthropic-only | GlassHive-disabled OpenAI + Anthropic |
 | --- | --- | --- | --- | --- |
-| Viventium conscious | `openAI / gpt-5.6-sol / medium` | `openAI / gpt-5.6-sol / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / medium` |
-| Background Analysis | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Confirmation Bias | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Red Team | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / xhigh` |
-| Deep Research | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / xhigh` |
-| MS365 | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
-| Parietal Cortex | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Pattern Recognition | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / medium` |
-| Emotional Resonance | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
-| Strategic Planning | `openAI / gpt-5.6-sol / high` | `openAI / gpt-5.6-sol / high` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-sol / high` |
-| Viventium User Help | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
-| Google | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-4-8` | `openAI / gpt-5.6-terra / low` |
+| Viventium conscious | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `openAI / gpt-5.6-sol` | `anthropic / claude-opus-5` | `openAI / gpt-5.6-sol` |
+| Background Analysis | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Confirmation Bias | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Red Team | `GlassHive Codex / Sol / high` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
+| Deep Research | `GlassHive Codex / Sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
+| MS365 | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Parietal Cortex | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Pattern Recognition | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Emotional Resonance | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Strategic Planning | `GlassHive Codex / Sol / high` | `openAI / gpt-5.6-sol / high` | `anthropic / claude-opus-5 / high` | `openAI / gpt-5.6-sol / high` |
+| Viventium User Help | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Google | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
 
 Model inventory rule:
 
-- The built-in conscious/subconscious source uses only the connected-account-proven explicit
-  `gpt-5.6-sol` and `gpt-5.6-terra` slugs. Do not use the unsupported connected-account alias or
-  Luna on these built-ins merely because direct API-key inventory exposes them.
-- Every source-owned conscious/subconscious agent declares `anthropic / claude-opus-4-8` as its
+- The source-owned Main and background cortices use the exact GlassHive harness model
+  `codex-cli:gpt-5.6-sol` when GlassHive is enabled. The compiler restores explicit direct
+  `gpt-5.6-sol` and `gpt-5.6-terra` families only for a GlassHive-disabled install. Do not use an
+  unsupported alias or Luna merely because direct API-key inventory exposes it.
+- Every source-owned conscious/subconscious agent declares `anthropic / claude-opus-5` as its
   text fallback. That route is usable only when Anthropic auth is configured for the user/runtime;
   missing fallback auth must surface honestly rather than causing a silent model downgrade.
   Phase B runtime owns retrying the configured backup once for provider timeout/abort/recoverable
@@ -137,17 +186,20 @@ Model inventory rule:
   Viventium's configured `gpt-5.4` activation run must not receive `temperature`, `topP`, penalties,
   `n`, or logprob sampling controls.
 - Phase B execution has a bounded outer guard so a stuck or aborted background run cannot leave the
-  UI on permanent progress. The guard is the agent execution timeout plus a small grace window;
+  UI on permanent progress. The default agent execution timeout is 3,600,000 ms, covering the
+  supported ten-minute harness path plus multiple serialized cortices and single-CLI capacity
+  queueing. The guard is the
+  agent execution timeout plus a small grace window;
   `VIVENTIUM_CORTEX_EXECUTION_GUARD_GRACE_MS` may tune only that grace window, defaults to 15s,
   and is clamped between 0s and 60s.
 
 Anthropic Opus fallback rule:
 
-- Opus 4.8 is the explicit fallback for every conscious/subconscious text route.
+- Opus 5 is the explicit fallback for every conscious/subconscious text route.
 - Fallback parameter bags remain provider-native: Red Team and Deep Research use
-  `thinkingBudget: 4000`, Strategic Planning uses `thinkingBudget: 2000`, and the retry path must
+  `effort: max`, Strategic Planning uses `effort: high`, and the retry path must
   strip OpenAI-only `reasoning_effort` and `useResponsesApi` fields before Anthropic initialization.
-- On an Anthropic-only install, Opus 4.8 becomes the execution route for all built-in agents because
+- On an Anthropic-only install, Opus 5 becomes the execution route for all built-in agents because
   the preferred GPT-5.6 route is unavailable. This is an explicit quality-first fallback posture,
   not a cost optimization; operators who need a cheaper Anthropic-only mix must use reviewed model
   overrides rather than silently returning the shipped bundle to Sonnet.
@@ -303,6 +355,11 @@ Requirements:
   evidence as an injected continuation prompt, compares it to the response the main agent already
   gave, and either writes a concise same-conversation follow-up as a new assistant message or outputs
   exactly `{NTA}`.
+- The adjudicator also receives the original user request so it can honor whether the user allowed
+  or prohibited a later continuation. Same-topic evidence is not automatically redundant: the
+  comparison is against concrete facts, risks, decisions, and actions already present in Phase A.
+  When the requested Phase A output bound is already satisfied and no later continuation was
+  authorized, the adjudicator must resolve silently to `{NTA}`.
 - Phase B follow-ups are nonblocking additions. Runtime must not replace, overwrite, or rewrite the
   original Phase A assistant message when Phase B completes.
 - Phase B may still upsert structured cortex status/insight parts onto the Phase A message for
@@ -324,11 +381,12 @@ Requirements:
   apply to scheduled `{NTA}` holds, and must preserve structured cortex parts on the same parent.
 - If a user surface already received visible Phase A assistant text but the canonical text aggregator
   did not advance, runtime must repair the canonical parent from the emitted visible delta before
-  Phase B adjudication. That repaired visible answer is treated as the authored Phase A answer; Phase B
-  must fail closed and record a silent terminal decision rather than using deterministic fallback text
-  that could contradict the already-delivered answer. This guard is structural and surface-neutral:
-  it keys on stream/canonical mismatch evidence, not user wording, provider labels, agent names, or
-  safety-policy text.
+  Phase B adjudication. That repaired visible answer is treated as the authored Phase A answer and
+  must still be passed to the normal Main adjudicator: substantive new evidence may produce one
+  additive continuation, while no new value resolves to `{NTA}`. A later exact replay of the same
+  repaired text must collapse to one Phase A copy without collapsing legitimate repeated prose.
+  These guards are structural and surface-neutral: they key on stream/canonical mismatch evidence,
+  not user wording, provider labels, agent names, or safety-policy text.
 - If the main model stream terminates after visible assistant text already exists, runtime must
   preserve the authored text and structured cortex parts without appending a generic fatal error
   card to the same message. The failure remains diagnostic/log evidence. Error-only turns and
@@ -386,11 +444,15 @@ Requirements:
   just explicit `thinking` fields already present in the source-of-truth YAML.
 - Background-cortex execution should therefore re-check the final initialized Anthropic config before
   Phase B execution and remove `temperature` if thinking is active.
-- Current shipped Anthropic Sonnet 4.5 built-ins that use thinking should not carry explicit
-  `temperature` at all.
-- If a future Anthropic built-in ever intentionally reintroduces temperature tuning, it must set
-  `thinking: false` explicitly and be re-validated against the current Anthropic API contract before
-  shipping.
+- Current shipped Opus 5 built-ins must not carry `temperature`, `topP`, or `topK`.
+- Opus 5 thinking is on by default. An explicit disabled-thinking choice is valid only at `high`
+  effort or below; `xhigh`/`max` plus disabled thinking must fail clearly before dispatch.
+- An Opus 5 HTTP-200 response with structured `stop_reason: refusal` is not a successful empty
+  answer. Before visible assistant text exists, it is a recoverable provider result and must use the
+  agent's configured fallback route. If no reviewed fallback is configured or that route also fails,
+  the user sees a concise refusal-class error rather than a fabricated answer or raw provider JSON.
+- Refusal handling must use provider-owned structured metadata, never prompt, keyword, agent-name, or
+  model-response text matching.
 
 ## OpenAI Runtime Compatibility
 
@@ -402,13 +464,13 @@ Requirements:
   `topP`, penalties, `n`, `logprobs`, or related sampling fields for OpenAI no-sampling reasoning
   runs such as `gpt-5`, dash-suffixed `gpt-5` reasoning variants, Viventium's configured GPT-5.6
   Sol/Terra runtime family, or `o1`/`o3`.
-- All GPT-5.6 conscious/subconscious bags set `useResponsesApi: true`; OpenAI documents Responses as
+- All direct OpenAI GPT-5.6 conscious/subconscious bags set `useResponsesApi: true`; OpenAI documents Responses as
   the required path for reasoning plus tools, while Chat Completions function tools are compatible
   only at effective reasoning `none`.
-- The explicit effort map is part of the runtime contract: Sol/medium for the conscious agent,
-  Sol/xhigh for Red Team and Deep Research, Sol/high for Strategic Planning, Terra/medium for
-  Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition, and Terra/low
-  for MS365, Google, Emotional Resonance, and Viventium User Help.
+- The explicit effort map is part of the runtime contract: GlassHive Sol/medium for the conscious
+  agent and general analytical cortices, GlassHive Sol/high for Red Team, GlassHive Sol/xhigh for Deep Research,
+  GlassHive Sol/high for Strategic Planning, and GlassHive Sol/low for MS365, Google, Emotional
+  Resonance, and Viventium User Help. GlassHive-disabled profiles preserve the direct Sol/Terra map.
 
 ## Memory Context Parity
 
@@ -565,7 +627,7 @@ Use this order so the fix stays surgical:
   reachability from activation reasoning quality.
   - `groq / meta-llama/llama-4-scout-17b-16e-instruct` was the best shipping primary for that
     2-second Phase A budget: fast, zero timeouts, and full target-hit rate
-  - `anthropic / claude-haiku-4-5` worked correctly through the connected-account path with
+  - the prior Anthropic compatibility route worked correctly through the connected-account path with
     `thinking: false`, but at the shipping 2-second budget it was too close to timeout to replace
     Groq as the primary
   - the same Haiku model hit full target coverage when given a larger 10-second diagnostic budget,
@@ -810,9 +872,9 @@ surface cortices via Phase B. This is especially important for voice TTS and for
 LLM routes, where a mid-audio "nevermind" would feel broken.
 
 ### Related model decisions (affect Main Agent / cortex latency)
-- Main Agent text: `gpt-5.6-sol` with `reasoning_effort: medium` and Responses API. Background
-  execution uses the Sol/Terra effort map above. Every text route falls back to
-  `anthropic / claude-opus-4-8` when that auth path is available.
+- Main Agent text: GlassHive Codex `gpt-5.6-sol` with `reasoning_effort: medium`. Background
+  execution uses the same harness with the workload effort map above. Every text route falls back to
+  `anthropic / claude-opus-5` when that auth path is available.
 - Voice LLM remains `xai / grok-4.3` with `reasoning_effort: none`. Its latency-preserving voice
   fallback is `openAI / gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does
   not replace the explicit voice route. The dedicated route must pass the same recall,

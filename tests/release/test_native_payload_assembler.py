@@ -51,6 +51,7 @@ BOOTSTRAP_SWIFT = (
     / "main.swift"
 )
 HELPER_SWIFT = REPO_ROOT / "apps" / "macos" / "ViventiumHelper" / "Sources" / "ViventiumHelper" / "ViventiumHelperApp.swift"
+LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def synthetic_macos_home(*parts: str) -> str:
@@ -525,6 +526,37 @@ def test_assembler_rejects_missing_built_runtime_and_external_symlink(tmp_path: 
     assert not (tmp_path / "unsafe").exists()
 
 
+@pytest.mark.parametrize(
+    ("artifact", "marker"),
+    tuple(
+        (artifact, marker)
+        for artifact in (
+            "librechat.yaml",
+            "prompt-bundle.json",
+            "native-runtime.env",
+            "viventium-agents.yaml",
+        )
+        for marker in ("glasshive-harness", "glasshive-workers-projects")
+    ),
+)
+def test_assembler_rejects_unavailable_glasshive_native_advertisements(
+    tmp_path: Path,
+    artifact: str,
+    marker: str,
+) -> None:
+    inputs = fixture_inputs(tmp_path)
+    path = inputs["compiled"] / artifact
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\nforbidden: {marker}\n",
+        encoding="utf-8",
+    )
+
+    completed = run_assembler(tmp_path, inputs, tmp_path / "candidate")
+
+    assert completed.returncode != 0
+    assert "advertise unavailable GlassHive runtime" in completed.stderr
+
+
 def test_assembler_rejects_unattestable_component_metadata(tmp_path: Path) -> None:
     inputs = fixture_inputs(tmp_path)
     policy = json.loads(
@@ -561,6 +593,28 @@ def test_assembler_rejects_unattestable_component_metadata(tmp_path: Path) -> No
     )
     assert invalid_digest.returncode != 0
     assert "node arm64 component digest" in invalid_digest.stderr
+
+
+@pytest.mark.parametrize(
+    "relative",
+    (
+        Path("runtime.env"),
+        Path("runtime.local.env"),
+        Path("service-env/librechat.owner.env"),
+    ),
+)
+def test_assembler_rejects_generated_owner_environment_inputs(
+    tmp_path: Path,
+    relative: Path,
+) -> None:
+    inputs = fixture_inputs(tmp_path)
+    file(inputs["librechat"] / relative, "OWNER_VALUE=weak-sentinel\n")
+
+    completed = run_assembler(tmp_path, inputs, tmp_path / "candidate")
+
+    assert completed.returncode != 0
+    assert "secret-shaped input" in completed.stderr
+    assert "weak-sentinel" not in completed.stderr
 
 
 def test_assembler_excludes_runtime_artifacts_and_python_bytecode(tmp_path: Path) -> None:
@@ -2625,7 +2679,7 @@ def test_first_admin_proxy_connection_error_allows_same_token_retry(tmp_path: Pa
             },
         )
         try:
-            with urllib.request.urlopen(value, timeout=3) as response:
+            with LOOPBACK_OPENER.open(value, timeout=3) as response:
                 return response.status
         except urllib.error.HTTPError as error:
             return error.code
@@ -2654,14 +2708,14 @@ def test_first_admin_proxy_connection_error_allows_same_token_retry(tmp_path: Pa
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
-                with urllib.request.urlopen(
+                with LOOPBACK_OPENER.open(
                     f"http://127.0.0.1:{proxy_port}/__viventium_native_health", timeout=0.2
                 ):
                     break
             except OSError:
                 time.sleep(0.05)
 
-        with urllib.request.urlopen(f"http://127.0.0.1:{sandpack_port}/", timeout=3) as response:
+        with LOOPBACK_OPENER.open(f"http://127.0.0.1:{sandpack_port}/", timeout=3) as response:
             assert response.status == 200
             assert response.headers["X-Content-Type-Options"] == "nosniff"
             assert response.headers["Referrer-Policy"] == "no-referrer"
@@ -2670,13 +2724,13 @@ def test_first_admin_proxy_connection_error_allows_same_token_retry(tmp_path: Pa
             )
             assert b'IS_ONPREM:"true"' in response.read()
         with pytest.raises(urllib.error.HTTPError) as traversal:
-            urllib.request.urlopen(
+            LOOPBACK_OPENER.open(
                 f"http://127.0.0.1:{sandpack_port}/%2e%2e/%2e%2e/etc/passwd",
                 timeout=3,
             )
         assert traversal.value.code in {403, 404}
         with pytest.raises(urllib.error.HTTPError) as method:
-            urllib.request.urlopen(
+            LOOPBACK_OPENER.open(
                 urllib.request.Request(
                     f"http://127.0.0.1:{sandpack_port}/index.html",
                     data=b"not-allowed",
@@ -2690,7 +2744,7 @@ def test_first_admin_proxy_connection_error_allows_same_token_retry(tmp_path: Pa
             def redirect_request(self, request, fp, code, message, headers, new_url):
                 return None
 
-        opener = urllib.request.build_opener(NoRedirect)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect)
         with pytest.raises(urllib.error.HTTPError) as hostile_host:
             opener.open(
                 urllib.request.Request(
@@ -2727,7 +2781,7 @@ def test_first_admin_proxy_connection_error_allows_same_token_retry(tmp_path: Pa
             f"http://127.0.0.1:{proxy_port}/__viventium_native_first_admin",
             headers={"Cookie": cookie.split(";", 1)[0]},
         )
-        with urllib.request.urlopen(clean_page_request, timeout=3) as clean_page:
+        with LOOPBACK_OPENER.open(clean_page_request, timeout=3) as clean_page:
             page = clean_page.read().decode("utf-8")
             assert clean_page.status == 200
             assert "connect-src 'self'" in clean_page.headers["Content-Security-Policy"]
@@ -2854,14 +2908,14 @@ def test_first_admin_proxy_hook_failure_stays_closed_and_returns_service_unavail
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
-                with urllib.request.urlopen(
+                with LOOPBACK_OPENER.open(
                     f"http://127.0.0.1:{proxy_port}/__viventium_native_health", timeout=0.2
                 ):
                     break
             except OSError:
                 time.sleep(0.05)
         with pytest.raises(urllib.error.HTTPError) as response:
-            urllib.request.urlopen(request, timeout=5)
+            LOOPBACK_OPENER.open(request, timeout=5)
         assert response.value.code == 503
         closed = json.loads(state.read_text(encoding="utf-8"))
         assert closed["status"] == "closed"
@@ -2946,7 +3000,7 @@ def test_native_proxy_never_forwards_to_obsolete_or_foreign_tcp_target(tmp_path:
         response_code = None
         while time.monotonic() < deadline:
             try:
-                urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/api/config", timeout=0.2)
+                LOOPBACK_OPENER.open(f"http://127.0.0.1:{proxy_port}/api/config", timeout=0.2)
             except urllib.error.HTTPError as error:
                 response_code = error.code
                 break

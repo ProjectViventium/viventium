@@ -18,6 +18,7 @@ class BrainReadinessFeature:
     self_heal_action: str
     qa_owner: str
     public_safety_rule: str
+    native_payload_posture: str = ""
 
 
 FEATURES: tuple[BrainReadinessFeature, ...] = (
@@ -50,15 +51,33 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
     BrainReadinessFeature(
         key="glasshive",
         label="GlassHive",
-        express_posture="custom_only",
-        required_user_action="Use Custom Settings Install and have Codex CLI or Claude CLI installed and signed in.",
-        machine_prerequisite="At least one supported local worker CLI can run on this Mac.",
+        express_posture="installed",
+        required_user_action=(
+            "Easy Install requires Codex CLI installed and signed in. Custom Settings may use "
+            "the selected Codex or Claude harness."
+        ),
+        machine_prerequisite=(
+            "The harness selected for the authored conversation can run on this Mac; canonical "
+            "source Easy Install requires Codex."
+        ),
         config_paths=("integrations.glasshive.*",),
-        generated_env_keys=("START_GLASSHIVE", "GLASSHIVE_OPERATOR_BASE_URL", "GLASSHIVE_DEFAULT_WORKER_PROFILE"),
-        health_probe="GlassHive operator health plus default worker profile.",
-        self_heal_action="Run the worker CLI login command, then bin/viventium start.",
-        qa_owner="qa/glasshive/cases.md",
+        generated_env_keys=(
+            "START_GLASSHIVE",
+            "GLASSHIVE_OPERATOR_BASE_URL",
+            "GLASSHIVE_PROVIDER_BASE_URL",
+            "GLASSHIVE_DEFAULT_WORKER_PROFILE",
+        ),
+        health_probe=(
+            "GlassHive operator/provider health plus authentication for the configured harness; "
+            "Easy Install probes Codex specifically."
+        ),
+        self_heal_action=(
+            "For Easy Install run codex login; for Custom Settings sign in to the selected worker "
+            "CLI, then run bin/viventium start."
+        ),
+        qa_owner="qa/glasshive-core-provider/cases.md",
         public_safety_rule="Do not publish worker home paths, raw delegated prompts, or private result payloads.",
+        native_payload_posture="custom_only",
     ),
     BrainReadinessFeature(
         key="prompt_workbench",
@@ -144,7 +163,7 @@ FEATURES: tuple[BrainReadinessFeature, ...] = (
     ),
     BrainReadinessFeature(
         key="primary_ai",
-        label="Primary AI",
+        label="Direct AI Accounts",
         express_posture="guided",
         required_user_action=(
             "Add an OpenAI API key in Settings > Account > Connected Accounts for the complete "
@@ -325,8 +344,16 @@ FEATURE_GUIDANCE: dict[str, str] = {
 }
 FEATURE_LABELS: dict[str, str] = {feature.key: feature.label for feature in FEATURES}
 
-CORE_EXPRESS_KEYS: tuple[str, ...] = tuple(
+SOURCE_EXPRESS_CORE_KEYS: tuple[str, ...] = tuple(
     feature.key for feature in FEATURES if feature.express_posture == "installed"
+)
+# Backward-compatible name: the source-checkout wizard owns this inventory. The immutable Native
+# artifact has an independent capability set because it cannot advertise services it does not ship.
+CORE_EXPRESS_KEYS = SOURCE_EXPRESS_CORE_KEYS
+NATIVE_PAYLOAD_CORE_EXPRESS_KEYS: tuple[str, ...] = tuple(
+    feature.key
+    for feature in FEATURES
+    if (feature.native_payload_posture or feature.express_posture) == "installed"
 )
 GUIDED_EXPRESS_KEYS: tuple[str, ...] = tuple(
     feature.key for feature in FEATURES if feature.express_posture in {"guided", "installed_or_guided"}

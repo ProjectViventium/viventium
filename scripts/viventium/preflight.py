@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import posixpath
 import re
 import shlex
 import shutil
@@ -31,7 +32,9 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from installer_ui import InstallerUI
 from host_cli_auth import (
+    DEFAULT_GLASSHIVE_PROVIDER_MODEL,
     codex_app_cli_candidates as shared_codex_app_cli_candidates,
+    glasshive_worker_command_for_provider_model,
     host_cli_auth_ready as shared_host_cli_auth_ready,
     host_cli_command as shared_host_cli_command,
     host_cli_exists as shared_host_cli_exists,
@@ -58,6 +61,22 @@ DEFAULT_CLI_RUNTIME_PROBE_TIMEOUT_SECONDS = 3.0
 MIN_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 30
 MAX_GLASSHIVE_FOLLOWUP_TIMEOUT_S = 86400
 CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
+NODE_RUNTIME_VERSION = "24.16.0"
+NODE_RUNTIME_TEAM_ID = "HX7739G8FX"
+NODE_RUNTIME_ARCHIVES = {
+    "arm64": {
+        "archive_arch": "arm64",
+        "url": "https://nodejs.org/dist/v24.16.0/node-v24.16.0-darwin-arm64.tar.gz",
+        "sha256": "39189dab4eeb15706c424af0ac08a3044c9e48f7db12a7d77f6b7aafc7dd5df6",
+    },
+    "x86_64": {
+        "archive_arch": "x64",
+        "url": "https://nodejs.org/dist/v24.16.0/node-v24.16.0-darwin-x64.tar.gz",
+        "sha256": "298b4c7b3cb80765c8703e42b90324a4ece3b6634947b89e769c3c980ab55185",
+    },
+}
+NODE_RUNTIME_MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
+NODE_RUNTIME_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
 MONGODB_NATIVE_VERSION = "8.0.23"
 MONGODB_NATIVE_TEAM_ID = "4XWMY46275"
 MONGODB_NATIVE_ARCHIVES = {
@@ -650,20 +669,189 @@ def queue_local_web_search_prewarm(config_path: Path, config: dict[str, Any]) ->
             )
 
 
-def node_major_version() -> int | None:
-    if not command_exists("node"):
-        return None
-    result = run_checked(["node", "--version"])
-    if result.returncode != 0:
-        return None
-    raw = result.stdout.strip().lstrip("v")
-    major = raw.split(".", 1)[0]
-    return int(major) if major.isdigit() else None
+def node_runtime_install_root() -> Path:
+    app_support = Path(
+        os.environ.get(
+            "VIVENTIUM_APP_SUPPORT_DIR",
+            str(Path.home() / "Library" / "Application Support" / "Viventium"),
+        )
+    )
+    return app_support / "runtime-tools" / "node" / NODE_RUNTIME_VERSION / platform.machine()
+
+
+def node_runtime_binary() -> Path:
+    return node_runtime_install_root() / "bin" / "node"
+
+
+def verify_node_runtime(binary: Path) -> bool:
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        return False
+    runtime_root = binary.parent.parent
+    if any(
+        not (runtime_root / required).exists()
+        for required in ("LICENSE", "bin/npm", "bin/npx", "bin/corepack")
+    ):
+        return False
+    signature = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", str(binary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if signature.returncode != 0:
+        return False
+    details = subprocess.run(
+        ["/usr/bin/codesign", "-dv", "--verbose=4", str(binary)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    signing_details = f"{details.stdout}\n{details.stderr}"
+    if details.returncode != 0 or f"TeamIdentifier={NODE_RUNTIME_TEAM_ID}" not in signing_details:
+        return False
+    version = subprocess.run(
+        [str(binary), "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return version.returncode == 0 and version.stdout.strip() == f"v{NODE_RUNTIME_VERSION}"
+
+
+def _safe_node_archive_path(raw: str) -> PurePosixPath:
+    if not raw or "\x00" in raw or "\\" in raw or raw.startswith("/") or len(raw) > 2048:
+        raise SystemExit(f"Node archive contains an unsafe path: {raw!r}")
+    path = PurePosixPath(raw)
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise SystemExit(f"Node archive contains an unsafe path: {raw!r}")
+    return path
+
+
+def extract_node_runtime_archive(
+    archive_path: Path,
+    destination: Path,
+    *,
+    archive_arch: str,
+) -> None:
+    prefix = f"node-v{NODE_RUNTIME_VERSION}-darwin-{archive_arch}"
+    seen: set[str] = set()
+    total_size = 0
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = archive.getmembers()
+        if not members or len(members) > 20_000:
+            raise SystemExit("Node archive has an unexpected number of entries.")
+        for member in members:
+            path = _safe_node_archive_path(member.name.rstrip("/"))
+            if path.parts[0] != prefix:
+                raise SystemExit("Node archive contains an unexpected top-level directory.")
+            folded = path.as_posix().casefold()
+            if folded in seen:
+                raise SystemExit("Node archive contains a case-insensitive path collision.")
+            seen.add(folded)
+            if not (member.isfile() or member.isdir() or member.issym()):
+                raise SystemExit("Node archive contains links or special files that are not allowed.")
+            if member.isfile():
+                total_size += member.size
+                if total_size > NODE_RUNTIME_MAX_UNCOMPRESSED_BYTES:
+                    raise SystemExit("Node archive exceeds the uncompressed size limit.")
+            if member.issym():
+                target = posixpath.normpath(
+                    posixpath.join(path.parent.as_posix(), member.linkname)
+                )
+                if target != prefix and not target.startswith(f"{prefix}/"):
+                    raise SystemExit("Node archive contains a symlink outside its runtime root.")
+
+    destination.mkdir(parents=True, exist_ok=False, mode=0o700)
+    completed = subprocess.run(
+        [
+            "/usr/bin/tar",
+            "-xzf",
+            str(archive_path),
+            "-C",
+            str(destination),
+            "--strip-components",
+            "1",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise SystemExit("The pinned Node runtime archive could not be extracted safely.")
+
+
+def download_node_runtime_archive(url: str, expected_sha256: str, destination: Path) -> None:
+    request = urllib.request.Request(url, headers={"User-Agent": "Viventium-Installer/1"})
+    digest = hashlib.sha256()
+    downloaded = 0
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, destination.open("xb") as target:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                downloaded += len(chunk)
+                if downloaded > NODE_RUNTIME_MAX_ARCHIVE_BYTES:
+                    raise SystemExit("Node archive exceeds the compressed size limit.")
+                digest.update(chunk)
+                target.write(chunk)
+            target.flush()
+            os.fsync(target.fileno())
+    except (OSError, urllib.error.URLError) as error:
+        raise SystemExit(f"Could not download the pinned Node runtime: {error}") from error
+    if digest.hexdigest() != expected_sha256:
+        raise SystemExit("Node archive SHA-256 does not match the pinned Viventium manifest value.")
+
+
+def install_node_runtime_archive(ui: InstallerUI | None = None) -> None:
+    ui = ui or InstallerUI()
+    architecture = platform.machine()
+    release = NODE_RUNTIME_ARCHIVES.get(architecture)
+    if release is None:
+        raise SystemExit(f"No pinned Node runtime archive is available for {architecture}.")
+    final_root = node_runtime_install_root()
+    final_binary = final_root / "bin" / "node"
+    if final_root.exists():
+        if verify_node_runtime(final_binary):
+            refresh_brew_paths()
+            return
+        raise SystemExit(
+            "The existing Viventium Node runtime failed exact-version or publisher verification. "
+            "Run the preserve-data repair flow before retrying."
+        )
+
+    versions_root = final_root.parent
+    staging_root = versions_root / ".staging"
+    staging_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    attempt = Path(tempfile.mkdtemp(prefix="node.", dir=staging_root))
+    archive_path = attempt / "node.tgz"
+    extracted = attempt / "runtime"
+    ui.print_note(f"Installing pinned Node {NODE_RUNTIME_VERSION} runtime...")
+    try:
+        download_node_runtime_archive(release["url"], release["sha256"], archive_path)
+        extract_node_runtime_archive(
+            archive_path,
+            extracted,
+            archive_arch=release["archive_arch"],
+        )
+        if not verify_node_runtime(extracted / "bin" / "node"):
+            raise SystemExit("Node runtime failed its exact-version or Developer ID verification.")
+        archive_path.unlink()
+        final_root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.replace(extracted, final_root)
+        (final_root / "VERSION").write_text(f"{NODE_RUNTIME_VERSION}\n", encoding="utf-8")
+        ui.print_success(f"Node {NODE_RUNTIME_VERSION} runtime is ready.")
+    finally:
+        shutil.rmtree(attempt, ignore_errors=True)
+    refresh_brew_paths()
 
 
 def node_runtime_supported() -> bool:
-    major = node_major_version()
-    return major == 24
+    try:
+        return verify_node_runtime(node_runtime_binary())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def python_version(command: str) -> tuple[int, int] | None:
@@ -879,6 +1067,7 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
     remote_call_mode = normalize_remote_call_mode(network)
     integrations = config.get("integrations", {}) or {}
     glasshive = integrations.get("glasshive") or {}
+    glasshive_provider = glasshive.get("provider") or {}
     glasshive_host_worker = glasshive.get("host_worker") or {}
     telegram = integrations.get("telegram") or {}
     telegram_local_bot_api = telegram.get("local_bot_api") or {}
@@ -906,6 +1095,10 @@ def compute_install_context(config: dict[str, Any]) -> dict[str, Any]:
         ).strip(),
         "skyvern": resolve_bool((integrations.get("skyvern") or {}).get("enabled"), False),
         "glasshive": resolve_bool(glasshive.get("enabled"), False),
+        "glasshive_provider": resolve_bool(glasshive_provider.get("enabled"), False),
+        "glasshive_provider_default_model": str(
+            glasshive_provider.get("default_model") or DEFAULT_GLASSHIVE_PROVIDER_MODEL
+        ).strip(),
         "glasshive_host_worker": resolve_bool(glasshive_host_worker.get("enabled"), True),
         "glasshive_host_workspace_root": str(glasshive_host_worker.get("workspace_root") or "~/viventium").strip() or "~/viventium",
     }
@@ -966,12 +1159,11 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     items.append(
         PreflightItem(
             key="node24",
-            label="node@24",
+            label=f"Node {NODE_RUNTIME_VERSION} (verified archive)",
             category="runtime",
-            reason="run LibreChat and the modern playground on the validated Node runtime",
+            reason="run LibreChat and the modern playground on the exact validated Node runtime",
             status="ok" if node_ok else "missing",
-            install_kind="brew_formula" if not node_ok else "none",
-            formula="node@24" if not node_ok else "",
+            install_kind="node_runtime_archive" if not node_ok else "none",
             command="node",
         )
     )
@@ -979,12 +1171,12 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
     items.append(
         PreflightItem(
             key="pnpm",
-            label="pnpm",
+            label="pnpm@10",
             category="runtime",
-            reason="install and manage JS workspaces",
+            reason=f"install and manage JS workspaces on the validated Node {NODE_RUNTIME_VERSION} runtime",
             status="ok" if pnpm_ready else "missing",
             install_kind="brew_formula" if not pnpm_ready else "none",
-            formula="pnpm" if not pnpm_ready else "",
+            formula="pnpm@10" if not pnpm_ready else "",
             command="pnpm",
         )
     )
@@ -1022,7 +1214,24 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
         codex_ready = host_cli_auth_ready("codex")
         claude_ready = host_cli_auth_ready("claude")
         openclaw_ready = host_cli_exists("openclaw")
-        worker_cli_ready = codex_ready or claude_ready
+        provider_worker_command = (
+            glasshive_worker_command_for_provider_model(ctx["glasshive_provider_default_model"])
+            if ctx["glasshive_provider"]
+            else ""
+        )
+        provider_worker_label = {
+            "codex": "Codex CLI",
+            "claude": "Claude Code",
+        }.get(provider_worker_command, "Supported harness")
+        provider_worker_ready = {
+            "codex": codex_ready,
+            "claude": claude_ready,
+        }.get(provider_worker_command, False)
+        worker_cli_ready = (
+            provider_worker_ready
+            if ctx["glasshive_provider"]
+            else codex_ready or claude_ready
+        )
         workspace_ready = host_workspace_root_ready(ctx["glasshive_host_workspace_root"])
         items.extend(
             [
@@ -1040,13 +1249,33 @@ def build_preflight_items(config: dict[str, Any]) -> list[PreflightItem]:
                 ),
                 PreflightItem(
                     key="glasshive_host_worker_cli_auth",
-                    label="Codex or Claude CLI login",
+                    label=(
+                        f"{provider_worker_label} login for GlassHive Main"
+                        if ctx["glasshive_provider"]
+                        else "Codex or Claude CLI login"
+                    ),
                     category="GlassHive host workers",
-                    reason="run required GlassHive host-native nightly workers on this computer",
+                    reason=(
+                        "run the configured GlassHive Main model"
+                        if ctx["glasshive_provider"]
+                        else "run required GlassHive host-native workers on this computer"
+                    ),
                     status="ok" if worker_cli_ready else "missing",
                     install_kind="manual" if not worker_cli_ready else "none",
                     manual_command=(
-                        "Install and sign in to either Codex (`codex login`) or Claude Code "
+                        (
+                            "Install and sign in to Codex (`codex login`), then rerun preflight; "
+                            "Claude authentication does not replace the configured Codex model"
+                            if provider_worker_command == "codex"
+                            else "Install and sign in to Claude Code (`claude auth login`), then "
+                            "rerun preflight; Codex authentication does not replace the configured "
+                            "Claude model"
+                        )
+                        if ctx["glasshive_provider"] and provider_worker_command
+                        else "Set integrations.glasshive.provider.default_model to a declared "
+                        "GlassHive model before rerunning preflight"
+                        if ctx["glasshive_provider"]
+                        else "Install and sign in to either Codex (`codex login`) or Claude Code "
                         "(`claude auth login`), then rerun preflight"
                     ),
                 ),
@@ -1553,6 +1782,8 @@ def manual_missing_items(items: list[PreflightItem]) -> list[PreflightItem]:
 
 
 def install_action(item: PreflightItem) -> str:
+    if item.install_kind == "node_runtime_archive":
+        return f"download and verify Node {NODE_RUNTIME_VERSION} from Node.js"
     if item.install_kind == "mongodb_native_archive":
         return f"download and verify MongoDB Community {MONGODB_NATIVE_VERSION} from MongoDB"
     if item.install_kind == "brew_formula":
@@ -1642,8 +1873,11 @@ def refresh_brew_paths() -> None:
         return
     candidates = [
         str(mongodb_native_bin_dir()),
+        str(node_runtime_install_root() / "bin"),
         "/opt/homebrew/opt/node@24/bin",
         "/usr/local/opt/node@24/bin",
+        "/opt/homebrew/opt/pnpm@10/bin",
+        "/usr/local/opt/pnpm@10/bin",
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/bin",
@@ -1705,7 +1939,7 @@ def formula_usable(formula: str) -> bool:
     refresh_brew_paths()
     checks: dict[str, Any] = {
         "node@24": node_runtime_supported,
-        "pnpm": pnpm_runtime_ready,
+        "pnpm@10": pnpm_runtime_ready,
         "uv": uv_runtime_ready,
         "ollama": ollama_cli_runtime_ready,
         "ffmpeg": ffmpeg_runtime_ready,
@@ -1887,6 +2121,9 @@ def apply_missing_items(
 
     if any(item.install_kind == "mongodb_native_archive" for item in missing):
         install_mongodb_native_archive(ui)
+
+    if any(item.install_kind == "node_runtime_archive" for item in missing):
+        install_node_runtime_archive(ui)
 
     formulas = sorted({item.formula for item in missing if item.install_kind == "brew_formula" and item.formula})
     casks = sorted({item.cask for item in missing if item.install_kind == "brew_cask" and item.cask})

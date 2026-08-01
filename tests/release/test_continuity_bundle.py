@@ -969,6 +969,254 @@ def test_node_export_adapter_recursively_removes_structured_secrets_from_tool_co
     assert "keep" in result.stdout
 
 
+def test_node_semantic_fingerprint_covers_auth_state_without_emitting_private_values() -> None:
+    script = r"""
+const adapter = require(process.argv[1]);
+const fs = require('node:fs');
+const path = require('node:path');
+const repoRoot = process.argv[2];
+const migration = JSON.parse(fs.readFileSync(path.join(
+  repoRoot,
+  'viventium_v0_4',
+  'LibreChat',
+  'viventium',
+  'source_of_truth',
+  'managed-agent-baseline-migration.json',
+), 'utf8'));
+const managedId = Object.keys(migration.migrations[0].baseline.agents)[0];
+const data = {
+  agents: [
+    {_id: 'agent-object-1', id: managedId, instructions: 'managed default may advance'},
+    {_id: 'agent-object-2', id: 'user-agent', instructions: 'private personalization'},
+  ],
+  messages: [{_id: 'message-1', text: 'private synthetic content'}],
+  tokens: [{_id: 'token-1', token: 'synthetic-private-token'}],
+};
+const db = {
+  listCollections() {
+    return {toArray: async () => Object.keys(data).map((name) => ({name}))};
+  },
+  collection(name) {
+    return {
+      find() {
+        return {
+          sort() {
+            return {
+              async *[Symbol.asyncIterator]() {
+                for (const document of data[name]) yield document;
+              },
+            };
+          },
+        };
+      },
+    };
+  },
+};
+const EJSON = {stringify: (value) => JSON.stringify(value)};
+adapter.fingerprintCollections(db, EJSON, repoRoot, {parse: () => ({})})
+  .then((result) => process.stdout.write(JSON.stringify(result)))
+  .catch((error) => {
+    process.stderr.write(String(error));
+    process.exitCode = 1;
+  });
+"""
+    completed = subprocess.run(
+        ["node", "-e", script, str(MONGO_ADAPTER), str(REPO_ROOT)],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert set(result) == {"messages", "tokens", "useragents"}
+    assert result["messages"]["count"] == 1
+    assert result["tokens"]["count"] == 1
+    assert result["useragents"]["count"] == 1
+    assert re.fullmatch(r"[0-9a-f]{64}", result["messages"]["sha256"])
+    assert "private synthetic content" not in completed.stdout
+    assert "synthetic-private-token" not in completed.stdout
+    assert "private personalization" not in completed.stdout
+
+
+def test_node_semantic_fingerprint_records_ttl_lifecycle_without_private_values() -> None:
+    script = r"""
+const adapter = require(process.argv[1]);
+const data = {
+  gatewaylinktokens: [
+    {
+      _id: 'expired-object-id',
+      tokenHash: 'expired-private-hash',
+      expiresAt: new Date('2026-07-24T08:59:59Z'),
+    },
+    {
+      _id: 'active-object-id',
+      tokenHash: 'active-private-hash',
+      expiresAt: new Date('2026-07-24T10:00:00Z'),
+    },
+  ],
+  channelconnections: [
+    {_id: 'connection-object-id', accountId: 'private-account-id'},
+  ],
+  gatewayusermappings: [
+    {_id: 'mapping-object-id', externalUserId: 'private-user-id'},
+  ],
+};
+const db = {
+  listCollections() {
+    return {toArray: async () => Object.keys(data).map((name) => ({name}))};
+  },
+  collection(name) {
+    return {
+      find() {
+        return {
+          sort() {
+            return {
+              async *[Symbol.asyncIterator]() {
+                for (const document of data[name]) yield document;
+              },
+            };
+          },
+        };
+      },
+    };
+  },
+};
+const EJSON = {
+  stringify: (value) => JSON.stringify(
+    value,
+    (_key, child) => child instanceof Date ? child.toISOString() : child,
+  ),
+};
+adapter.fingerprintCollections(db, EJSON, process.cwd(), {parse: () => ({})})
+  .then((result) => process.stdout.write(JSON.stringify(result)))
+  .catch((error) => {
+    process.stderr.write(String(error));
+    process.exitCode = 1;
+  });
+"""
+    completed = subprocess.run(
+        ["node", "-e", script, str(MONGO_ADAPTER)],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    ttl = result["gatewaylinktokens"]["ttl"]
+    assert ttl["field"] == "expiresAt"
+    assert ttl["expireAfterSeconds"] == 0
+    assert ttl["documents"] == [
+        {
+            "sha256": ttl["documents"][0]["sha256"],
+            "effectiveExpiryUnixMs": 1784883599000,
+        },
+        {
+            "sha256": ttl["documents"][1]["sha256"],
+            "effectiveExpiryUnixMs": 1784887200000,
+        },
+    ]
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
+        for item in ttl["documents"]
+    )
+    assert result["channelconnections"]["count"] == 1
+    assert result["gatewayusermappings"]["count"] == 1
+    assert "private" not in completed.stdout
+    assert "object-id" not in completed.stdout
+
+
+def test_node_ttl_policy_covers_every_ttl_fingerprinted_collection() -> None:
+    script = r"""
+const adapter = require(process.argv[1]);
+const base = new Date('2026-07-24T09:00:00Z');
+const data = {
+  agentapikeys: [{_id: '1', expiresAt: base}, {_id: '1b'}],
+  channelpairingcodes: [{_id: '2', expiresAt: base}],
+  conversations: [{_id: '3', expiredAt: base}],
+  files: [{_id: '4', expiresAt: base}],
+  gatewaylinktokens: [{_id: '5', expiresAt: base}],
+  keys: [{_id: '6', expiresAt: base}],
+  messages: [{_id: '7', expiredAt: base}],
+  sessions: [{_id: '8', expiration: base}],
+  telegramlinktokens: [{_id: '9', expiresAt: base}],
+  tokens: [{_id: '10', expiresAt: base}],
+  users: [{_id: '11', expiresAt: base}],
+};
+const db = {
+  listCollections() {
+    return {toArray: async () => Object.keys(data).map((name) => ({name}))};
+  },
+  collection(name) {
+    return {
+      find() {
+        return {
+          sort() {
+            return {
+              async *[Symbol.asyncIterator]() {
+                for (const document of data[name]) yield document;
+              },
+            };
+          },
+        };
+      },
+    };
+  },
+};
+const EJSON = {stringify: (value) => JSON.stringify(value)};
+adapter.fingerprintCollections(db, EJSON, process.cwd(), {parse: () => ({})})
+  .then((result) => process.stdout.write(JSON.stringify(result)))
+  .catch((error) => {
+    process.stderr.write(String(error));
+    process.exitCode = 1;
+  });
+"""
+    completed = subprocess.run(
+        ["node", "-e", script, str(MONGO_ADAPTER)],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    expected = {
+        "agentapikeys": ("expiresAt", 0),
+        "channelpairingcodes": ("expiresAt", 0),
+        "conversations": ("expiredAt", 0),
+        "files": ("expiresAt", 3600),
+        "gatewaylinktokens": ("expiresAt", 0),
+        "keys": ("expiresAt", 0),
+        "messages": ("expiredAt", 0),
+        "sessions": ("expiration", 0),
+        "telegramlinktokens": ("expiresAt", 0),
+        "tokens": ("expiresAt", 0),
+        "users": ("expiresAt", 604800),
+    }
+    assert set(result) == set(expected)
+    base_unix_ms = 1784883600000
+    for collection, (field, offset_seconds) in expected.items():
+        assert result[collection]["ttl"]["field"] == field
+        assert result[collection]["ttl"]["expireAfterSeconds"] == offset_seconds
+        assert result[collection]["ttl"]["documents"][0]["effectiveExpiryUnixMs"] == (
+            base_unix_ms + offset_seconds * 1000
+        )
+    assert result["agentapikeys"]["ttl"]["nonExpiring"]["count"] == 1
+    assert re.fullmatch(
+        r"[0-9a-f]{64}",
+        result["agentapikeys"]["ttl"]["nonExpiring"]["sha256"],
+    )
+    assert all(
+        result[collection]["ttl"]["nonExpiring"]["count"] == 0
+        for collection in expected
+        if collection != "agentapikeys"
+    )
+
+
 def test_tool_result_plaintext_is_never_treated_as_a_safe_complete_export() -> None:
     bundle = load_bundle_module()
     payload = {
@@ -1037,7 +1285,8 @@ def test_transactional_restore_to_empty_independent_target_restores_all_canonica
     local_runtime_secret = target / "state" / "continuity" / "restored-local-runtime-secret"
     assert re.fullmatch(r"[0-9a-f]{64}\n", local_runtime_secret.read_text(encoding="ascii"))
     assert (local_runtime_secret.stat().st_mode & 0o777) == 0o600
-    assert (target_repo / "viventium_v0_4" / "LibreChat" / "uploads" / "synthetic-user" / "document.txt").is_file()
+    assert (target / "data" / "uploads" / "synthetic-user" / "document.txt").is_file()
+    assert not (target_repo / "viventium_v0_4" / "LibreChat" / "uploads").exists()
     restored_directories = [target, *[path for path in target.rglob("*") if path.is_dir()]]
     assert all((path.stat().st_mode & 0o777) == 0o700 for path in restored_directories)
     restored_files = [path for path in target.rglob("*") if path.is_file()]
@@ -1293,7 +1542,18 @@ def test_complete_capture_adapter_builds_restore_ready_bundle_without_exporting_
         "VIVENTIUM_RUNTIME_PROFILE=isolated\n"
         "VIVENTIUM_LOCAL_MONGO_PORT=27117\n"
         "VIVENTIUM_LOCAL_MONGO_DB=SourceViventium\n"
+        "OWNER_RUNTIME_SENTINEL=must-not-export-runtime\n"
         f"SCHEDULING_DB_PATH={schedule}\n",
+        encoding="utf-8",
+    )
+    (runtime / "runtime.local.env").write_text(
+        "OWNER_LOCAL_SENTINEL=must-not-export-local\n",
+        encoding="utf-8",
+    )
+    service_env = runtime / "service-env"
+    service_env.mkdir()
+    (service_env / "librechat.owner.env").write_text(
+        "OWNER_SERVICE_SENTINEL=must-not-export-owner\n",
         encoding="utf-8",
     )
     output_root = app_support / "snapshots"
@@ -1312,8 +1572,93 @@ def test_complete_capture_adapter_builds_restore_ready_bundle_without_exporting_
     assert "tokens" in manifest["security"]["mongoExcludedCollections"]
     assert manifest["security"]["redactedConfigFieldCount"] == 1
     assert "synthetic-must-not-export" not in (snapshot / "config" / "config.yaml").read_text(encoding="utf-8")
+    snapshot_bytes = b"\n".join(
+        path.read_bytes() for path in snapshot.rglob("*") if path.is_file()
+    )
+    snapshot_paths = "\n".join(
+        path.relative_to(snapshot).as_posix() for path in snapshot.rglob("*")
+    )
+    for forbidden in (
+        b"must-not-export-runtime",
+        b"must-not-export-local",
+        b"must-not-export-owner",
+    ):
+        assert forbidden not in snapshot_bytes
+    assert "librechat.owner.env" not in snapshot_paths
+    assert "service-env" not in snapshot_paths
     assert (snapshot.stat().st_mode & 0o777) == 0o700
     assert not (snapshot / ".viventium-incomplete").exists()
+
+
+def test_complete_capture_prefers_canonical_uploads_and_uses_legacy_only_as_fallback(
+    tmp_path: Path,
+) -> None:
+    bundle = load_bundle_module()
+    repo = tmp_path / "repo"
+    legacy = repo / "viventium_v0_4" / "LibreChat" / "uploads"
+    app_support = tmp_path / "app-support"
+    canonical = app_support / "data" / "uploads"
+    legacy.mkdir(parents=True)
+    (legacy / "legacy.txt").write_text("legacy\n", encoding="utf-8")
+
+    assert bundle.resolve_uploads_capture_source(repo, app_support) == legacy
+
+    canonical.mkdir(parents=True)
+    (canonical / "canonical.txt").write_text("canonical\n", encoding="utf-8")
+    with pytest.raises(
+        bundle.RestoreTransactionError,
+        match="both populated",
+    ):
+        bundle.resolve_uploads_capture_source(repo, app_support)
+
+    for path in sorted(legacy.rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    legacy.rmdir()
+    legacy.symlink_to(canonical, target_is_directory=True)
+    assert bundle.resolve_uploads_capture_source(repo, app_support) == canonical
+
+
+def test_capture_uses_current_runtime_root_when_other_runtime_link_is_receipted(
+    tmp_path: Path,
+) -> None:
+    bundle = load_bundle_module()
+    repo = tmp_path / "repo"
+    legacy = repo / "viventium_v0_4" / "LibreChat" / "uploads"
+    legacy.parent.mkdir(parents=True)
+    current_support = tmp_path / "runtime-b" / "Viventium"
+    current_canonical = current_support / "data" / "uploads"
+    current_canonical.mkdir(parents=True)
+    other_canonical = tmp_path / "runtime-a" / "Viventium" / "data" / "uploads"
+    other_canonical.mkdir(parents=True)
+    legacy.symlink_to(other_canonical, target_is_directory=True)
+    receipt = (
+        current_support / "state" / "continuity" / "uploads-migration" / "receipt.json"
+    )
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "legacyCompatibility": "other_runtime_exact_symlink_preserved",
+                "mode": "isolated_runtime_root",
+                "observedLinkTargetSha256": hashlib.sha256(
+                    os.fsencode(str(other_canonical))
+                ).hexdigest(),
+                "canonicalStorage": "app_support_data_uploads",
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt.chmod(0o600)
+
+    assert bundle.resolve_uploads_capture_source(repo, current_support) == current_canonical
+
+    corrupted = json.loads(receipt.read_text(encoding="utf-8"))
+    corrupted["observedLinkTargetSha256"] = "0" * 64
+    receipt.write_text(json.dumps(corrupted), encoding="utf-8")
+    receipt.chmod(0o600)
+    with pytest.raises(bundle.RestoreTransactionError, match="unexpected symlink"):
+        bundle.resolve_uploads_capture_source(repo, current_support)
 
 
 def test_capture_refuses_low_disk_before_creating_snapshot_or_contacting_mongo(
@@ -1407,6 +1752,11 @@ def test_capture_removes_incomplete_snapshot_when_disk_floor_drops_between_phase
         )()
 
     monkeypatch.setattr(bundle.shutil, "disk_usage", changing_disk_usage)
+    monkeypatch.setattr(
+        bundle,
+        "mongo_logical_source_size",
+        lambda *_args, **_kwargs: 0,
+    )
     monkeypatch.setattr(
         bundle,
         "capture_mongo_logical",
@@ -1721,6 +2071,14 @@ def test_restore_rolls_back_owned_state_when_disk_floor_drops_after_staging(
 
 def test_product_owned_node_mongo_adapter_is_secret_excluding_and_loopback_only() -> None:
     source = MONGO_ADAPTER.read_text(encoding="utf-8")
+    safe_collections = source.split("const SAFE_COLLECTIONS", 1)[1].split(
+        "const FINGERPRINT_COLLECTIONS",
+        1,
+    )[0]
+    fingerprint_collections = source.split("const FINGERPRINT_COLLECTIONS", 1)[1].split(
+        "const USER_FIELDS",
+        1,
+    )[0]
 
     assert "createRequire(packageJson)" in source
     assert "projection: Object.fromEntries(USER_FIELDS" in source
@@ -1735,9 +2093,12 @@ def test_product_owned_node_mongo_adapter_is_secret_excluding_and_loopback_only(
     assert "'accessroles'" in source
     assert "'aclentries'" in source
     assert "'users'" in source
-    assert "'tokens'" not in source
-    assert "'sessions'" not in source
-    assert "'pluginauths'" not in source
+    assert "'tokens'" not in safe_collections
+    assert "'tokens'" in fingerprint_collections
+    assert "'sessions'" not in safe_collections
+    assert "'sessions'" in fingerprint_collections
+    assert "'pluginauths'" not in safe_collections
+    assert "'pluginauths'" in fingerprint_collections
     assert "url.username" in source
     assert "url.password" in source
     assert "127.0.0.1" in source

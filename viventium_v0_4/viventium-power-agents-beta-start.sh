@@ -37,7 +37,7 @@
 #   CLAUDE_CODE_USE_FOUNDRY=1  - Enable Azure Foundry mode
 #   ANTHROPIC_FOUNDRY_API_KEY  - Azure Foundry API key
 #   ANTHROPIC_FOUNDRY_RESOURCE - Azure Foundry resource name
-#   ANTHROPIC_MODEL            - Model to use (e.g., "claude-opus-4-5")
+#   ANTHROPIC_MODEL            - Model to use (default: "claude-opus-5")
 #
 # === VIVENTIUM END ===
 #

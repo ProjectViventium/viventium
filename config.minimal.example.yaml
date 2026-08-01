@@ -72,7 +72,7 @@ runtime:
       service_tier: priority
       timeout_ms: 15000
       fallback_provider: anthropic
-      fallback_model: claude-opus-4-8
+      fallback_model: claude-opus-5
       activation_provider: groq
       activation_model: qwen/qwen3.6-27b
       activation_confidence_threshold: 0.55
@@ -100,7 +100,7 @@ runtime:
     require_full_lookback: true
     dry_run_first: true
     provider_profile: launch_ready_only
-    anthropic_model: claude-opus-4-8
+    anthropic_model: claude-opus-5
     anthropic_effort: xhigh
     openai_model: gpt-5.6-sol
     openai_reasoning_effort: xhigh
@@ -150,7 +150,19 @@ voice:
     default_enabled: false
 integrations:
   glasshive:
+    # The immutable Native payload does not package GlassHive. Source/Docker users
+    # can enable the provider from Custom Settings after the component is present.
     enabled: false
+    provider:
+      # Provider activation is explicit: both this flag and the parent flag above
+      # must be true. A mismatch fails compilation instead of downgrading silently.
+      enabled: false
+      # Optional GlassHive working-folder override. The canonical LIFE bootstrap
+      # remains additive and independent of whether this provider is enabled.
+      # life_dir: ~/Documents/Viventium/Life
+      # Full is the trusted-local default; workspace is the restricted option.
+      default_access: full
+      allow_full_access: true
     host_worker:
       enabled: false
       workspace_root: ~/viventium

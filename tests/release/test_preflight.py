@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import sys
@@ -14,6 +15,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PREFLIGHT_PATH = REPO_ROOT / "scripts/viventium/preflight.py"
+DEFAULT_NIGHTLY_ROUTINES_PATH = REPO_ROOT / "scripts/viventium/default_nightly_routines.py"
+CONFIG_COMPILER_PATH = REPO_ROOT / "scripts/viventium/config_compiler.py"
 COMMON_PATH = REPO_ROOT / "scripts/viventium/common.sh"
 DOCTOR_PATH = REPO_ROOT / "scripts/viventium/doctor.sh"
 LAUNCHER_PATH = REPO_ROOT / "viventium_v0_4/viventium-librechat-start.sh"
@@ -46,6 +49,28 @@ def load_preflight_module():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_default_nightly_routines_module():
+    spec = importlib.util.spec_from_file_location(
+        "viventium_default_nightly_routines_for_preflight_test",
+        DEFAULT_NIGHTLY_ROUTINES_PATH,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_config_compiler_module():
+    spec = importlib.util.spec_from_file_location(
+        "viventium_config_compiler_for_preflight_test",
+        CONFIG_COMPILER_PATH,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
@@ -143,7 +168,7 @@ def test_command_runtime_ready_times_out_cleanly(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("helper_name", "item_key", "formula", "config"),
     [
-        ("pnpm_runtime_ready", "pnpm", "pnpm", {}),
+        ("pnpm_runtime_ready", "pnpm", "pnpm@10", {}),
         ("uv_runtime_ready", "uv", "uv", {}),
         (
             "ollama_cli_runtime_ready",
@@ -297,6 +322,7 @@ def test_express_native_uses_pinned_vendor_mongodb_archive_instead_of_homebrew_t
     monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
     monkeypatch.setattr(module, "pnpm_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "uv_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "meilisearch_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "command_exists", lambda _command: True)
     monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
 
@@ -343,6 +369,7 @@ def test_custom_native_preserves_existing_homebrew_mongodb_install_boundary(monk
     module = load_preflight_module()
     monkeypatch.setattr(module, "refresh_brew_paths", lambda: None)
     monkeypatch.setattr(module, "mongod_runtime_ready", lambda: False)
+    monkeypatch.setattr(module, "meilisearch_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
     monkeypatch.setattr(module, "pnpm_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "uv_runtime_ready", lambda: True)
@@ -563,7 +590,7 @@ def test_preflight_defaults_glasshive_host_workers_on(monkeypatch) -> None:
     assert by_key["glasshive_host_workspace_root"].status == "ok"
 
 
-def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path) -> None:
+def test_custom_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path) -> None:
     module = load_preflight_module()
     for ready_helper in (
         "pnpm_runtime_ready",
@@ -585,7 +612,7 @@ def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path)
 
     items = module.build_preflight_items(
         {
-            "install": {"mode": "native"},
+            "install": {"mode": "native", "experience": "custom"},
             "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
             "integrations": {
                 "glasshive": {
@@ -598,9 +625,193 @@ def test_preflight_accepts_claude_only_worker_login(monkeypatch, tmp_path: Path)
     by_key = {item.key: item for item in items}
 
     assert by_key["glasshive_host_worker_cli_auth"].status == "ok"
+    assert by_key["glasshive_host_worker_cli_auth"].label == "Codex or Claude CLI login"
     assert by_key["glasshive_host_codex_cli"].status == "optional"
     assert by_key["glasshive_host_claude_cli"].status == "ok"
     assert by_key["glasshive_host_worker_cli_auth"] not in module.missing_items(items)
+
+
+@pytest.mark.parametrize(
+    ("authenticated_cli", "expected_status"),
+    [("codex", "ok"), ("claude", "missing")],
+)
+def test_source_easy_preflight_requires_codex_login_for_codex_main(
+    monkeypatch,
+    tmp_path: Path,
+    authenticated_cli: str,
+    expected_status: str,
+) -> None:
+    module = load_preflight_module()
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(module, ready_helper, lambda: True)
+    monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "command_exists",
+        lambda command: command in {"git", "security", authenticated_cli},
+    )
+    monkeypatch.setattr(
+        module,
+        "host_cli_auth_ready",
+        lambda command: command == authenticated_cli,
+    )
+
+    items = module.build_preflight_items(
+        {
+            "install": {"mode": "native", "experience": "express"},
+            "runtime": {"call_session_secret": {"secret_value": "local-dev-secret"}},
+            "integrations": {
+                "glasshive": {
+                    "enabled": True,
+                    "provider": {
+                        "enabled": True,
+                        "default_model": "codex-cli:gpt-5.6-sol",
+                    },
+                    "host_worker": {
+                        "enabled": True,
+                        "default_worker_profile": "codex-cli",
+                        "workspace_root": str(tmp_path / "workers"),
+                    },
+                }
+            },
+        }
+    )
+    by_key = {item.key: item for item in items}
+    auth_item = by_key["glasshive_host_worker_cli_auth"]
+
+    assert auth_item.status == expected_status
+    assert auth_item.label == "Codex CLI login for GlassHive Main"
+    assert "codex login" in auth_item.manual_command
+    assert by_key["glasshive_host_codex_cli"].status == (
+        "ok" if authenticated_cli == "codex" else "optional"
+    )
+    assert by_key["glasshive_host_claude_cli"].status == (
+        "ok" if authenticated_cli == "claude" else "optional"
+    )
+    if authenticated_cli == "claude":
+        assert auth_item in module.manual_missing_items(items)
+    else:
+        assert auth_item not in module.missing_items(items)
+
+
+@pytest.mark.parametrize(
+    ("explicit_model", "expected_model", "expected_auth_status", "expected_label"),
+    [
+        (None, "claude-code:opus", "ok", "Claude Code login for GlassHive Main"),
+        (
+            "codex-cli:gpt-5.6-sol",
+            "codex-cli:gpt-5.6-sol",
+            "missing",
+            "Codex CLI login for GlassHive Main",
+        ),
+    ],
+)
+def test_custom_claude_only_defaults_preflight_and_assignment_follow_resolved_model(
+    monkeypatch,
+    tmp_path: Path,
+    explicit_model: str | None,
+    expected_model: str,
+    expected_auth_status: str,
+    expected_label: str,
+) -> None:
+    defaults = load_default_nightly_routines_module()
+    preflight = load_preflight_module()
+    compiler = load_config_compiler_module()
+    monkeypatch.setattr(defaults, "detect_worker_profile", lambda: "claude-code")
+    for ready_helper in (
+        "pnpm_runtime_ready",
+        "uv_runtime_ready",
+        "ollama_cli_runtime_ready",
+        "mongod_runtime_ready",
+        "meilisearch_runtime_ready",
+        "livekit_runtime_ready",
+        "cloudflared_runtime_ready",
+        "tailscale_cli_runtime_ready",
+        "caddy_runtime_ready",
+        "upnpc_runtime_ready",
+    ):
+        monkeypatch.setattr(preflight, ready_helper, lambda: True)
+    monkeypatch.setattr(preflight, "node_runtime_supported", lambda: True)
+    monkeypatch.setattr(preflight, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(
+        preflight,
+        "command_exists",
+        lambda command: command in {"git", "security", "claude"},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "host_cli_auth_ready",
+        lambda command: command == "claude",
+    )
+
+    provider: dict[str, object] = {"enabled": True}
+    if explicit_model is not None:
+        provider["default_model"] = explicit_model
+    config = {
+        "version": 1,
+        "install": {"mode": "native", "experience": "custom"},
+        "runtime": {
+            "call_session_secret": {"secret_value": "local-dev-secret"},
+            "nightly_routines": {"defaults_version": 1, "auto_worker_profile": True},
+        },
+        "llm": {
+            "primary": {"provider": "openai", "auth_mode": "user_provided"},
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+        },
+        "integrations": {
+            "glasshive": {
+                "enabled": True,
+                "provider": provider,
+                "host_worker": {
+                    "enabled": True,
+                    "workspace_root": str(tmp_path / "workers"),
+                },
+            }
+        },
+    }
+
+    updated, changed = defaults.ensure_default_nightly_routines(config)
+    assert changed is True
+    glasshive = updated["integrations"]["glasshive"]
+    assert glasshive["host_worker"]["default_worker_profile"] == "claude-code"
+    assert glasshive["provider"]["default_model"] == expected_model
+
+    items = preflight.build_preflight_items(updated)
+    auth_item = {item.key: item for item in items}["glasshive_host_worker_cli_auth"]
+    assert auth_item.status == expected_auth_status
+    assert auth_item.label == expected_label
+
+    provider_entrypoint = (
+        tmp_path
+        / "GlassHive"
+        / "runtime_phase1"
+        / "src"
+        / "workers_projects_runtime"
+        / "conversation_provider.py"
+    )
+    provider_entrypoint.parent.mkdir(parents=True)
+    provider_entrypoint.write_text("# synthetic provider entrypoint\n", encoding="utf-8")
+    monkeypatch.setattr(compiler, "GLASSHIVE_RUNTIME_DIR", provider_entrypoint.parents[2])
+    assignments = compiler.build_agent_assignments(updated)
+    assert assignments["conscious"] == ("glasshive-harness", expected_model)
+
+    if explicit_model is not None:
+        assert auth_item in preflight.manual_missing_items(items)
+        assert "Claude authentication does not replace" in auth_item.manual_command
+    else:
+        assert auth_item not in preflight.missing_items(items)
 
 
 def test_preflight_blocks_glasshive_when_no_worker_cli_is_logged_in(monkeypatch, tmp_path: Path) -> None:
@@ -809,7 +1020,7 @@ integrations:
 
     assert completed.returncode == 1
     assert "Viventium Preflight" in completed.stdout
-    assert "node@24" in completed.stdout
+    assert "Node 24.16.0 (verified archive)" in completed.stdout
     assert "pnpm" in completed.stdout
     assert "uv" in completed.stdout
     assert "ffmpeg" in completed.stdout
@@ -1189,7 +1400,7 @@ integrations:
     assert "Docker Desktop" not in completed.stdout
 
 
-def test_preflight_requires_validated_node24_when_newer_node_is_present(tmp_path: Path) -> None:
+def test_preflight_requires_exact_validated_node_when_newer_node_is_present(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -1228,11 +1439,11 @@ voice:
     )
 
     assert completed.returncode == 1
-    assert "node@24" in completed.stdout
+    assert "Node 24.16.0 (verified archive)" in completed.stdout
     assert "validated Node runtime" in completed.stdout
 
 
-def test_supported_node_major_is_consistent_across_install_and_launcher_layers() -> None:
+def test_supported_node_runtime_is_consistent_across_install_and_launcher_layers() -> None:
     sources = {
         "preflight": PREFLIGHT_PATH.read_text(encoding="utf-8"),
         "shared path": COMMON_PATH.read_text(encoding="utf-8"),
@@ -1243,13 +1454,91 @@ def test_supported_node_major_is_consistent_across_install_and_launcher_layers()
     }
 
     for layer, source in sources.items():
-        assert "node@24" in source, f"{layer} must select the supported Node 24 runtime"
         assert "node@20" not in source, f"{layer} still selects the EOL Node 20 runtime"
+
+    for layer in ("preflight", "shared path", "doctor", "launcher", "macOS helper"):
+        assert "24.16.0" in sources[layer], f"{layer} must select the exact supported Node runtime"
+
+    assert "ensure_brew_paths_on_path" in sources["Skyvern launcher"]
 
     launcher = sources["launcher"]
     assert "ensure_validated_node24_runtime" in launcher
-    assert '[[ "$major" == "24" ]]' in launcher
-    assert '[[ "$major" != "24"' in launcher
+    assert 'VIVENTIUM_NODE_RUNTIME_VERSION="24.16.0"' in launcher
+    assert '[[ "$version" == "v${VIVENTIUM_NODE_RUNTIME_VERSION}" \\' in launcher
+    assert '"$resolved_node" == "${VIVENTIUM_NODE_RUNTIME_BIN}/node"' in launcher
+    assert '"$resolved_npm" == "${VIVENTIUM_NODE_RUNTIME_BIN}/npm"' in launcher
+    assert launcher.index("ensure_validated_node24_runtime ||") < launcher.index("require_cmd node")
+
+
+def test_preflight_accepts_only_the_managed_exact_node_runtime(monkeypatch, tmp_path: Path) -> None:
+    preflight = load_preflight_module()
+    managed_node = tmp_path / "runtime-tools/node/24.16.0/arm64/bin/node"
+
+    monkeypatch.setattr(preflight, "node_runtime_binary", lambda: managed_node)
+    monkeypatch.setattr(preflight, "verify_node_runtime", lambda binary: binary == managed_node)
+
+    assert preflight.node_runtime_supported() is True
+
+    monkeypatch.setattr(preflight, "verify_node_runtime", lambda _binary: False)
+    assert preflight.node_runtime_supported() is False
+
+
+def test_pinned_node_archives_match_native_payload_manifest() -> None:
+    preflight = load_preflight_module()
+    manifest = json.loads(
+        (REPO_ROOT / "release/native-payload/components.json").read_text(encoding="utf-8")
+    )["node"]
+
+    assert preflight.NODE_RUNTIME_VERSION == manifest["version"]
+    for architecture, release in preflight.NODE_RUNTIME_ARCHIVES.items():
+        assert release["url"] == manifest["architectures"][architecture]["url"]
+        assert release["sha256"] == manifest["architectures"][architecture]["sha256"]
+
+
+def test_node_archive_rejects_symlink_escape(tmp_path: Path) -> None:
+    preflight = load_preflight_module()
+    archive = tmp_path / "node.tgz"
+    prefix = f"node-v{preflight.NODE_RUNTIME_VERSION}-darwin-arm64"
+
+    with tarfile.open(archive, "w:gz") as handle:
+        directory = tarfile.TarInfo(f"{prefix}/bin")
+        directory.type = tarfile.DIRTYPE
+        handle.addfile(directory)
+        link = tarfile.TarInfo(f"{prefix}/bin/npm")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../../../outside"
+        handle.addfile(link)
+
+    destination = tmp_path / "runtime"
+    with pytest.raises(SystemExit, match="symlink outside"):
+        preflight.extract_node_runtime_archive(archive, destination, archive_arch="arm64")
+    assert not destination.exists()
+
+
+def test_preflight_installs_pinned_node_from_verified_archive(monkeypatch, tmp_path: Path) -> None:
+    preflight = load_preflight_module()
+    config = {
+        "version": 1,
+        "install": {"mode": "native"},
+        "runtime": {"profile": "isolated"},
+        "voice": {"mode": "disabled"},
+    }
+
+    monkeypatch.setattr(preflight, "refresh_brew_paths", lambda: None)
+    monkeypatch.setattr(preflight, "node_runtime_supported", lambda: False)
+    monkeypatch.setattr(preflight, "command_exists", lambda _command: True)
+    monkeypatch.setattr(preflight, "xcode_cli_tools_installed", lambda: True)
+    monkeypatch.setattr(preflight, "pnpm_runtime_ready", lambda: True)
+    monkeypatch.setattr(preflight, "uv_runtime_ready", lambda: True)
+    monkeypatch.setattr(preflight, "mongod_runtime_ready", lambda: True)
+    monkeypatch.setattr(preflight, "meilisearch_runtime_ready", lambda: True)
+
+    node_item = next(item for item in preflight.build_preflight_items(config) if item.key == "node24")
+
+    assert node_item.status == "missing"
+    assert node_item.install_kind == "node_runtime_archive"
+    assert node_item.formula == ""
+    assert "24.16.0" in node_item.label
 
 
 def test_preflight_treats_existing_docker_app_as_installed_for_ms365(tmp_path: Path) -> None:
@@ -1397,7 +1686,7 @@ def test_install_brew_formulas_reports_homebrew_drift_when_reinstall_cannot_fix_
 @pytest.mark.parametrize(
     ("formula", "helper_name"),
     [
-        ("pnpm", "pnpm_runtime_ready"),
+        ("pnpm@10", "pnpm_runtime_ready"),
         ("uv", "uv_runtime_ready"),
         ("ollama", "ollama_cli_runtime_ready"),
         ("ffmpeg", "ffmpeg_runtime_ready"),
@@ -1423,6 +1712,45 @@ def test_formula_usable_delegates_to_runtime_probe(monkeypatch, formula: str, he
 
     assert preflight.formula_usable(formula) is True
     assert calls == [helper_name]
+
+
+def test_refresh_brew_paths_prioritizes_managed_node_and_pnpm10(monkeypatch, tmp_path: Path) -> None:
+    preflight = load_preflight_module()
+    pnpm_bin = "/opt/homebrew/opt/pnpm@10/bin"
+    managed_node_bin = str(tmp_path / "runtime-tools/node/24.16.0/arm64/bin")
+    brew_node_bin = "/opt/homebrew/opt/node@24/bin"
+    brew_bin = "/opt/homebrew/bin"
+
+    monkeypatch.setenv("VIVENTIUM_APP_SUPPORT_DIR", str(tmp_path))
+    monkeypatch.setattr(preflight.platform, "machine", lambda: "arm64")
+    monkeypatch.setenv("PATH", brew_bin)
+    monkeypatch.setattr(
+        preflight.os.path,
+        "isdir",
+        lambda candidate: candidate in {pnpm_bin, managed_node_bin, brew_node_bin, brew_bin},
+    )
+
+    preflight.refresh_brew_paths()
+
+    parts = preflight.os.environ["PATH"].split(preflight.os.pathsep)
+    assert parts.index(managed_node_bin) < parts.index(brew_node_bin)
+    assert parts.index(managed_node_bin) < parts.index(brew_bin)
+    assert parts.index(pnpm_bin) < parts.index(brew_bin)
+
+
+def test_shared_cli_path_prefers_supported_pnpm10() -> None:
+    common_source = (REPO_ROOT / "scripts/viventium/common.sh").read_text(encoding="utf-8")
+
+    assert 'prepend_path_if_dir "/opt/homebrew/opt/pnpm@10/bin"' in common_source
+    assert 'prepend_path_if_dir "/usr/local/opt/pnpm@10/bin"' in common_source
+
+
+def test_shared_cli_path_prefers_the_managed_exact_node_runtime() -> None:
+    common_source = COMMON_PATH.read_text(encoding="utf-8")
+
+    managed = 'runtime-tools/node/24.16.0/${node_arch}/bin'
+    assert managed in common_source
+    assert common_source.index(managed) > common_source.index('/usr/local/opt/node@24/bin')
 
 
 def test_docker_daemon_ready_uses_bounded_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -454,7 +454,7 @@ both code and QA:
   - treat Anthropic default thinking as active when sanitizing memory-writer config
   - remove `temperature` whenever Anthropic thinking is active by default or explicitly
 - for adaptive-era Anthropic models used by the fallback Viventium memory route
-  (`claude-sonnet-4-5`),
+  (`claude-opus-5`),
     omit explicit `temperature` entirely from the shipped memory-writer config so fresh installs do
     not rely on runtime stripping to stay valid
   - if the memory run is also forcing tool use, remove `thinking` entirely instead of setting it to
@@ -731,7 +731,16 @@ Product contract:
   unloaded/replaced/reloaded exactly once with post-action verification. Every lifecycle action
   writes a public-safe generation-hash receipt; no raw path, email, or command is included. The
   install/uninstall state machine holds its own process lock so direct and wrapper-driven
-  reconciliation cannot race through `launchctl`.
+  reconciliation cannot race through `launchctl`. Before any mutation it snapshots exact plist and
+  dry-run marker bytes/modes plus loaded state. A later write, bootstrap, verification, removal, or
+  receipt failure restores those exact prior artifacts and loaded/unloaded state; the failed
+  lifecycle receipt records `rollback_status`. Symlinked, special, or non-current-user-owned files
+  fail closed before mutation.
+- Upgrade treats the LaunchAgent as derived host state, not transaction-owned App Support/source
+  state. It performs schedule reconciliation only after source commit, protected full-runtime
+  finalization, and deferred uploads finalization. A failure leaves the committed runtime intact,
+  restores the previous LaunchAgent state, and directs the operator to retry through
+  `bin/viventium compile-config`.
 - Only explicit `enabled: false` uninstalls the LaunchAgent. A missing or invalid generated key is
   preserved and reported as unknown rather than interpreted as disable.
 - `memory-harden status` must distinguish installed/loaded state, calendar alignment, a conflicting
@@ -810,7 +819,7 @@ Product contract:
   transcript/vector work that should have run, or an unexpected empty selection.
 - the compiler emits the selected hardening provider/model/effort tuple from configured foundation
   auth, preferring Codex/OpenAI `gpt-5.6-sol` at `xhigh` when OpenAI is available. Anthropic
-  `claude-opus-4-8` at `xhigh` remains the launch-ready route for an Anthropic-only install or an
+  `claude-opus-5` at `xhigh` is the managed launch-ready route for an Anthropic-only install or an
   explicit operator override; fallback attempts must remain visible and must not masquerade as Sol.
   Scheduled receipts record requested and effective provider/model/effort. Any successful run with
   a different provider, model, or effort is `execution_mismatch`, and an incomplete tuple is

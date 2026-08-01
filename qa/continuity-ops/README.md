@@ -17,6 +17,7 @@ Covered surfaces:
 8. positive complete-bundle structural, semantic, privacy, rollback, and target-isolation safety
 9. transactional source-install upgrade checkpoint, rollback, interruption recovery, and prior-state restart
 10. immutable Native complete snapshot, same-profile restore, journal recovery, and helper UX
+11. source-install canonical uploads migration, semantic upgrade proof, and compatibility-link safety
 
 ## Requirements Under Test
 
@@ -96,8 +97,34 @@ Covered surfaces:
   restore recognized source/component revisions, exact checkpointed bytes, and prior running state.
   Unknown local work makes rollback fail closed. System prerequisite installation is never hidden
   inside the transaction; upgrade checks and asks the user to apply missing prerequisites separately.
+- Upgrade support is source-and-state conditional. A running Mongo engine is recorded from its real
+  process/container identity; a clean stop seals an owner-only fsync'd receipt over that identity
+  and a stable storage anchor. Stopped durable storage without that proof is rejected before fetch
+  or transaction creation. The supported recovery is a reviewed intermediate that observes the
+  engine while running and cleanly stops it, or complete snapshot plus fresh same-profile restore.
+  A physical clone probe is diagnostic only and cannot infer the original creator engine.
+- Candidate runtime acceptance is quiesced for both the exact supported predecessor handoff and
+  every current-shell mutating upgrade, including same-source `--skip-pull`. The exact disabled
+  writer inventory remains active through outer strict comparison and commit. Original running
+  state receives a full configured-runtime/sidecar gate only after commit; stopped state remains
+  stopped. A failed full gate is receipt-backed and retried by the next start/upgrade without
+  weakening protected-state comparison. Full startup is bound to an owner-private run/source
+  receipt: health and API/OAuth traffic stay unavailable until required mutators complete, while
+  explicitly rebuildable search indexing is recorded as degraded. A stopped install keeps a
+  pending identity without starting; its first later foreground/detached start uses the same gate
+  and an after-health finalizer rechecks protected environment/helper state before terminalizing.
+  Finalizer failure stops the owned runtime and remains retryable, including when ordinary health
+  checks were otherwise skipped. This is resumable evidence, not proof of one global atomic
+  transaction, because the forward-recoverable mutators still run after source commit.
 - `bin/viventium continuity-audit` can both capture the current continuity state and intentionally
   clear the recall rebuild marker after rebuild.
+- Source installs migrate only the recognized checkout-local uploads predecessor into canonical
+  App Support `data/uploads` while the LibreChat writer is stopped. The bounded no-follow
+  transaction refuses ambiguous roots and unsafe ownership/link types, recovers interrupted
+  pre-commit work by rollback or committed cleanup by forward completion, and is idempotent.
+  Generated LibreChat/GlassHive paths use the canonical root. Upgrade continuity compares a
+  privacy-safe path/content fingerprint across the relocation, and complete capture/independent
+  restore use the canonical App Support root.
 - Manual on-demand snapshot creation is the default product path; the public contract does not rely
   on mandatory daily full backups.
 - Native snapshot and restore use the shipped immutable payload only. Snapshot binds capture to the

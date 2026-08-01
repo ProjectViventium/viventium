@@ -259,88 +259,22 @@ def test_main_agent_does_not_ship_provider_productivity_mcp_tools() -> None:
     assert not any("_mcp_ms-365" in tool for tool in main_tools)
 
 
-def test_connected_accounts_handoff_provisioner_is_supported_confirmed_write_and_surgical() -> None:
+def test_connected_accounts_handoff_provisioner_delegates_to_the_canonical_managed_seeder() -> None:
     source = CONNECTED_ACCOUNTS_HANDOFF_PROVISIONER.read_text(encoding="utf-8")
 
     assert "VIVENTIUM_ENABLE_RETIRED_CONNECTED_ACCOUNTS_HANDOFF" not in source
     assert "Historical provisioner" not in source
-    assert "agent_viventium_connected_accounts_95aeb3" in source
-    assert "Main_To_ConnectedAccounts" in source
-    assert "const READ_TOOLS" in source
-    assert "const WRITE_TOOLS" in source
-    assert "const CONNECTED_ACCOUNT_TOOLS" in source
-    assert "getAgent" in source
-    assert "UPDATED', AGENT_ID" in source
-    assert "ACL_GRANTED" in source
-    assert "const existingEdges" in source
-    assert "existingEdges.filter" in source
-    assert "existingEdge?.promptKey !== edge.promptKey" in source
-    assert "updateAgent({ id: MAIN_ID }, { edges: mergedEdges })" in source
-    assert "const FALLBACK_LLM_PROVIDER = 'openAI'" in source
-    assert "const FALLBACK_LLM_MODEL = 'gpt-5.4'" in source
-    assert "fallback_llm_provider: FALLBACK_LLM_PROVIDER" in source
-    assert "fallback_llm_model: FALLBACK_LLM_MODEL" in source
-    assert "fallback_llm_model_parameters: FALLBACK_LLM_MODEL_PARAMETERS" in source
-    assert "Do not dump raw API fields, account email addresses, aliases" in source
-    assert "Do not expose account email addresses, aliases, OAuth details" in source
-    assert "Default to read-only inspection" in source
-    assert "act only when the user explicitly asked for that external action" in source
-    assert "Do not say this path is read-only if the relevant write tool is present" in source
-    assert "Ask for confirmation before any external write" in source
-
-    expected_read_tools = {
-        "sys__server__sys_mcp_google_workspace",
-        "search_gmail_messages_mcp_google_workspace",
-        "get_gmail_message_content_mcp_google_workspace",
-        "get_gmail_messages_content_batch_mcp_google_workspace",
-        "get_gmail_thread_content_mcp_google_workspace",
-        "list_calendars_mcp_google_workspace",
-        "get_events_mcp_google_workspace",
-        "search_drive_files_mcp_google_workspace",
-        "get_drive_file_content_mcp_google_workspace",
-        "search_docs_mcp_google_workspace",
-        "get_doc_content_mcp_google_workspace",
-        "read_sheet_values_mcp_google_workspace",
-        "sys__server__sys_mcp_ms-365",
-        "list-mail-messages_mcp_ms-365",
-        "get-mail-message_mcp_ms-365",
-        "list-mail-folder-messages_mcp_ms-365",
-        "list-calendar-events_mcp_ms-365",
-        "get-calendar-event_mcp_ms-365",
-        "list-folder-files_mcp_ms-365",
-        "download-onedrive-file-content_mcp_ms-365",
-        "get-excel-range_mcp_ms-365",
-        "search-query_mcp_ms-365",
-    }
-    expected_write_tools = {
-        "send_gmail_message_mcp_google_workspace",
-        "draft_gmail_message_mcp_google_workspace",
-        "create_event_mcp_google_workspace",
-        "modify_event_mcp_google_workspace",
-        "create-draft-email_mcp_ms-365",
-        "send-mail_mcp_ms-365",
-        "create-specific-calendar-event_mcp_ms-365",
-        "update-specific-calendar-event_mcp_ms-365",
-        "create-calendar-event_mcp_ms-365",
-        "update-calendar-event_mcp_ms-365",
-    }
-    forbidden_connected_accounts_tools = {
-        "create_drive_file_mcp_google_workspace",
-        "upload-file-content_mcp_ms-365",
-        "delete-onedrive-file_mcp_ms-365",
-        "delete_event_mcp_google_workspace",
-        "move-mail-message_mcp_ms-365",
-        "delete-mail-message_mcp_ms-365",
-        "delete-calendar-event_mcp_ms-365",
-        "delete-specific-calendar-event_mcp_ms-365",
-    }
-
-    for tool in expected_read_tools:
-        assert tool in source
-    for tool in expected_write_tools:
-        assert tool in source
-    for tool in forbidden_connected_accounts_tools:
-        assert tool not in source
+    assert "viventium-seed-agents.js" in source
+    assert "spawn(process.execPath" in source
+    assert "VIVENTIUM_PROVISION_OWNER_ID" in source
+    assert "--owner-id=" in source
+    assert "stdio: 'inherit'" in source
+    assert "createAgent" not in source
+    assert "updateAgent" not in source
+    assert "grantPermission" not in source
+    assert "AGENT_MODEL" not in source
+    assert "CONNECTED_ACCOUNT_TOOLS" not in source
+    assert "Main_To_ConnectedAccounts" not in source
 
 
 def test_connected_accounts_handoff_is_source_owned_with_confirmed_email_calendar_writes() -> None:
@@ -371,7 +305,7 @@ def test_connected_accounts_handoff_is_source_owned_with_confirmed_email_calenda
 
     assert connected["name"] == "Connected Accounts"
     assert connected["provider"] == "anthropic"
-    assert connected["model"] == "claude-opus-4-8"
+    assert connected["model"] == "claude-opus-5"
     assert connected["fallback_llm_provider"] == "openAI"
     assert connected["fallback_llm_model"] == "gpt-5.4"
     assert "Default to read-only inspection" in connected["instructions"]
@@ -539,21 +473,12 @@ def test_productivity_activation_prompts_cover_generic_plural_inbox_sweeps() -> 
     assert "Microsoft-only work is out of scope" in google_prompt
 
 
-def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
+def test_background_agent_execution_models_use_glasshive_conversation_provider() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     expected = {
-        "agent_viventium_background_analysis_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_confirmation_bias_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_pattern_recognition_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_emotional_resonance_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_strategic_planning_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_support_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.6-terra"),
+        agent_id: ("glasshive-harness", "codex-cli:gpt-5.6-sol")
+        for agent_id in agents_by_id
     }
 
     for agent_id, (provider, model) in expected.items():
@@ -561,6 +486,10 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["model_parameters"]["model"] == model
+        assert agent["glasshive_options"] == {
+            "workspace": {"mode": "life"},
+            "access": "full",
+        }
 
 
 def test_retired_deep_research_keeps_reasoning_config_without_live_web_tool() -> None:
@@ -572,22 +501,20 @@ def test_retired_deep_research_keeps_reasoning_config_without_live_web_tool() ->
     assert "thinkingBudget" not in deep_research["model_parameters"]
 
 
-def test_red_team_ships_with_web_search_and_openai_reasoning_effort() -> None:
+def test_red_team_ships_with_web_search_and_glasshive_high_reasoning_effort() -> None:
     agents_by_id = _load_background_agents_by_id()
     red_team = agents_by_id["agent_viventium_red_team_95aeb3"]
 
     assert "web_search" in red_team["tools"]
-    assert red_team["model_parameters"]["reasoning_effort"] == "xhigh"
+    assert red_team["model_parameters"]["reasoning_effort"] == "high"
     assert "thinkingBudget" not in red_team["model_parameters"]
+    assert "useResponsesApi" not in red_team["model_parameters"]
 
 
 def test_background_agent_execution_models_stay_within_launch_ready_families() -> None:
     agents_by_id = _load_background_agents_by_id()
 
-    allowed = {
-        ("openAI", "gpt-5.6-terra"),
-        ("openAI", "gpt-5.6-sol"),
-    }
+    allowed = {("glasshive-harness", "codex-cli:gpt-5.6-sol")}
 
     for agent in agents_by_id.values():
         provider_model = (agent["provider"], agent["model"])
@@ -675,3 +602,18 @@ def test_background_follow_up_fallbacks_stay_on_launch_ready_model_families() ->
     assert "gpt-4o" not in follow_up_source
     assert "gpt-4o-mini" not in follow_up_source
     assert "claude-3" not in follow_up_source
+
+
+def test_manual_connected_accounts_provisioner_cannot_diverge_from_managed_seeding() -> None:
+    provisioner = (
+        REPO_ROOT
+        / "viventium_v0_4/LibreChat/scripts/viventium-provision-connected-accounts-agent.js"
+    ).read_text(encoding="utf-8")
+
+    assert "viventium-seed-agents.js" in provisioner
+    assert "buildProvisionArgs" in provisioner
+    assert "runProvision" in provisioner
+    assert "VIVENTIUM_PROVISION_OWNER_ID" in provisioner
+    assert "createAgent" not in provisioner
+    assert "updateAgent" not in provisioner
+    assert "AGENT_MODEL" not in provisioner

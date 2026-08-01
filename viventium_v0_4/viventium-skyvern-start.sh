@@ -95,6 +95,7 @@ VIVENTIUM_WORKSPACE_DIR="$(dirname "$VIVENTIUM_CORE_DIR")"
 if [[ -f "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh" ]]; then
   # shellcheck source=/dev/null
   source "$VIVENTIUM_CORE_DIR/scripts/viventium/common.sh"
+  ensure_brew_paths_on_path
 fi
 if ! declare -F discover_private_repo_dir >/dev/null 2>&1; then
   path_is_git_repo_root() {

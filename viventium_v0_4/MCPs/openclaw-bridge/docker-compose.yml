@@ -26,7 +26,7 @@ services:
       - OPENCLAW_RUNTIME=${OPENCLAW_RUNTIME:-e2b}
       - OPENCLAW_ALLOW_DIRECT_HOST_EXEC=${OPENCLAW_ALLOW_DIRECT_HOST_EXEC:-false}
       - OPENCLAW_ISOLATION_TIER=${OPENCLAW_ISOLATION_TIER:-direct}
-      - OPENCLAW_MODEL=${OPENCLAW_MODEL:-anthropic/claude-sonnet-4-20250514}
+      - OPENCLAW_MODEL=${OPENCLAW_MODEL:-anthropic/claude-opus-5}
       # VIVENTIUM START: loopback binding alone does not suppress host-name mDNS advertisement.
       - OPENCLAW_DISABLE_BONJOUR=1
       - FASTMCP_CHECK_FOR_UPDATES=off

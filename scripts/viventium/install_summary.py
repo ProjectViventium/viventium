@@ -1197,6 +1197,8 @@ def scheduler_status_and_detail(
     db_path = scheduler_db_path(config, runtime_env, runtime_dir)
     ledger = scheduler_ledger_summary(db_path)
     ledger_has_issue = scheduler_ledger_has_latest_issue(db_path)
+    if not start_enabled:
+        return "Disabled", f"Not enabled for this runtime | {ledger}"
     if probe_live and url:
         health_url = scheduler_health_url(url)
         healthy, health_reason = scheduler_health_matches(health_url, db_path)
@@ -1462,6 +1464,7 @@ def build_service_rows(
     if resolve_bool(runtime_env.get("GLASSHIVE_PUBLIC_LINKS_ONLY"), False):
         glasshive_ui_port = str(runtime_env.get("GLASSHIVE_UI_PORT") or "8780").strip()
         glasshive_probe_url = f"http://127.0.0.1:{glasshive_ui_port}"
+    glasshive_provider_url = runtime_env.get("GLASSHIVE_PROVIDER_BASE_URL", "")
     prompt_workbench_port = str(runtime_env.get("VIVENTIUM_PROMPT_WORKBENCH_PORT") or "8781").strip()
     prompt_workbench_url = f"http://localhost:{prompt_workbench_port}" if prompt_workbench_port else ""
 
@@ -1572,7 +1575,7 @@ def build_service_rows(
         primary_detail = f"Add an {primary_label} API key with bin/viventium configure"
     rows.append(
         (
-            "Primary AI",
+            "Direct AI Accounts",
             primary_status,
             primary_detail,
         )
@@ -1603,10 +1606,26 @@ def build_service_rows(
     )
 
     if resolve_bool((integrations.get("glasshive") or {}).get("enabled"), False) or resolve_bool(runtime_env.get("START_GLASSHIVE"), False):
-        glasshive_running = probe_live and glasshive_probe_url and any_http_ok(
+        glasshive_config = integrations.get("glasshive") or {}
+        provider_enabled = resolve_bool(
+            (glasshive_config.get("provider") or {}).get("enabled"),
+            bool(glasshive_provider_url),
+        )
+        operator_running = probe_live and glasshive_probe_url and any_http_ok(
             glasshive_probe_url,
             url_with_path(glasshive_probe_url, "/health"),
         )
+        provider_running = (
+            not provider_enabled
+            or (
+                probe_live
+                and glasshive_provider_url
+                and any_http_ok(
+                    url_with_path(glasshive_provider_url, "/health"),
+                )
+            )
+        )
+        glasshive_running = bool(operator_running and provider_running)
         if glasshive_running:
             glasshive_status = "Running"
         elif probe_live and stack_should_be_live and resolve_bool(runtime_env.get("START_GLASSHIVE"), False):
@@ -1614,11 +1633,14 @@ def build_service_rows(
         else:
             glasshive_status = "Configured"
         worker_profile = runtime_env.get("GLASSHIVE_DEFAULT_WORKER_PROFILE") or "codex-cli"
+        provider_detail = (
+            f" | provider: {glasshive_provider_url or 'missing'}" if provider_enabled else ""
+        )
         rows.append(
             (
                 "GlassHive",
                 glasshive_status,
-                f"{glasshive_url or 'Local GlassHive runtime'} | default worker: {worker_profile}",
+                f"{glasshive_url or 'Local GlassHive runtime'}{provider_detail} | default worker: {worker_profile}",
             )
         )
 
@@ -2010,6 +2032,11 @@ def build_next_steps(
 def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[str, str] | None = None) -> str | None:
     runtime_env = runtime_env or {}
     integrations = config.get("integrations", {}) or {}
+    glasshive = integrations.get("glasshive", {}) or {}
+    glasshive_provider = glasshive.get("provider", {}) or {}
+    glasshive_provider_enabled = resolve_bool(glasshive.get("enabled"), False) and resolve_bool(
+        glasshive_provider.get("enabled"), True
+    )
     foundation_needed = not foundation_api_key_present(config)
     google_workspace_enabled = resolve_bool(
         (integrations.get("google_workspace") or {}).get("enabled"),
@@ -2017,7 +2044,12 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
     )
     ms365_enabled = resolve_bool((integrations.get("ms365") or {}).get("enabled"), False)
 
-    if not foundation_needed and not google_workspace_enabled and not ms365_enabled:
+    if (
+        not glasshive_provider_enabled
+        and not foundation_needed
+        and not google_workspace_enabled
+        and not ms365_enabled
+    ):
         return None
 
     lines = [
@@ -2027,6 +2059,14 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
     ]
     next_step = 3
 
+    if glasshive_provider_enabled:
+        lines.append(
+            f"{next_step}. Verify [bold]Codex CLI[/bold] authentication on this Mac so the shipped "
+            "GlassHive-backed Viventium Main and background cortices can run; authenticate Claude Code too if you select "
+            "the Claude harness model."
+        )
+        next_step += 1
+
     if foundation_needed:
         foundation_labels = configured_foundation_account_labels(config)
         if not foundation_labels:
@@ -2035,9 +2075,12 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
             foundation_label = f"[bold]{foundation_labels[0]}[/bold]"
         else:
             foundation_label = " and ".join(f"[bold]{label}[/bold]" for label in foundation_labels)
-        lines.append(
-            f"{next_step}. Connect {foundation_label} so the shipped Viventium and background agents can run on this install."
+        foundation_scope = (
+            "the configured direct fallback and auxiliary routes"
+            if glasshive_provider_enabled
+            else "the shipped Viventium and background agents"
         )
+        lines.append(f"{next_step}. Connect {foundation_label} so {foundation_scope} can run on this install.")
         next_step += 1
 
     workspace_accounts: list[str] = []
@@ -2118,7 +2161,7 @@ def main() -> None:
     if connected_accounts_notice:
         ui.print_blank()
         ui.print_section(
-            "Connect AI Accounts First",
+            "Connect Direct AI Accounts",
             connected_accounts_notice,
             style="yellow",
         )

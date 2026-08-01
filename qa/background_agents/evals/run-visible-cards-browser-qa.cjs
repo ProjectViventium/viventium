@@ -22,6 +22,7 @@ const {
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const LIBRECHAT_ROOT = path.join(REPO_ROOT, "viventium_v0_4", "LibreChat");
 const LOCAL_JWT_ALLOW_ENV = "VIVENTIUM_QA_ALLOW_LOCAL_JWT";
+const PHASE_B_EXPECTATION_ENV = "VIVENTIUM_QA_EXPECT_PHASE_B";
 const DEFAULT_PROMPT =
   "I am evaluating whether to build a synthetic workflow analytics product because one example buyer already pays a lot for a generic tool. I have obvious confirmation bias about whether this product idea is worth doing. Please give me a fast answer, and let the Red Team and Confirmation Bias background checks run visibly by name.";
 const REQUIRED_CARD_NAMES = ["Red Team", "Confirmation Bias"];
@@ -70,6 +71,11 @@ function parseArgs(argv) {
       ),
     headless: process.env.VIVENTIUM_QA_HEADLESS !== "0",
     timeoutMs: Number(process.env.VIVENTIUM_QA_TIMEOUT_MS || 180000),
+    expectedPhaseB: parseExpectedPhaseBExpectation(
+      process.env[PHASE_B_EXPECTATION_ENV],
+    ),
+    privateTranscriptPath:
+      process.env.VIVENTIUM_QA_PRIVATE_TRANSCRIPT_PATH || "",
     prompt:
       process.env.VIVENTIUM_QA_PROMPT ||
       `${DEFAULT_PROMPT} Synthetic QA marker: ${promptMarker}.`,
@@ -111,6 +117,18 @@ function hashValue(value, length = 16) {
     .update(String(value || ""))
     .digest("hex")
     .slice(0, length);
+}
+
+function parseExpectedPhaseBExpectation(value) {
+  const expectedPhaseB = String(value || "generated")
+    .trim()
+    .toLowerCase();
+  if (!["generated", "nta"].includes(expectedPhaseB)) {
+    throw new Error(
+      `${PHASE_B_EXPECTATION_ENV} must be either generated or nta`,
+    );
+  }
+  return expectedPhaseB;
 }
 
 function parseRequiredCortexAgentIdsByName() {
@@ -410,6 +428,20 @@ async function verifyQaAgentProvisioning({
       String(activation.model || "").trim() !== EXPECTED_ACTIVATION_MODEL
     );
   });
+  const attachedCortexIds = [...liveCortexEntries.keys()];
+  const attachedCortexAgents = attachedCortexIds.length
+    ? await qaAuth.db
+        .collection("agents")
+        .find(
+          { id: { $in: attachedCortexIds } },
+          { projection: { id: 1, name: 1 } },
+        )
+        .toArray()
+    : [];
+  const runtimeAttachedCortexNames = attachedCortexAgents
+    .map((agent) => String(agent?.name || "").trim())
+    .filter(Boolean)
+    .sort();
   return {
     runtimeRequiredAgentCount: agents.length,
     runtimeMissingRequiredAgentHashes: missingRequiredAgentHashes,
@@ -417,6 +449,7 @@ async function verifyQaAgentProvisioning({
     runtimeActivationExpectedProvider: EXPECTED_ACTIVATION_PROVIDER,
     runtimeActivationExpectedModelHash: hashValue(EXPECTED_ACTIVATION_MODEL),
     runtimeActivationDriftNames: activationDriftNames,
+    runtimeAttachedCortexNames,
     runtimeActivationConfigPass: activationDriftNames.length === 0,
     runtimeProvisioningPass:
       missingRequiredAgentHashes.length === 0 &&
@@ -519,10 +552,10 @@ async function visibleCortexRowTexts(page) {
     );
 }
 
-function evaluateVisibleState(text, cortexRowTexts = []) {
-  const cardNames = REQUIRED_CARD_NAMES.filter((name) =>
+function evaluateVisibleState(text, cortexRowTexts = [], knownCortexNames = REQUIRED_CARD_NAMES) {
+  const cardNames = [...new Set(knownCortexNames)].filter((name) =>
     cortexRowTexts.some((rowText) => rowText.includes(name)),
-  );
+  ).sort();
   const forbiddenMatches = FORBIDDEN_VISIBLE_PATTERNS.filter((pattern) =>
     pattern.test(text),
   ).map((pattern) => pattern.toString());
@@ -578,10 +611,10 @@ function extractVisibleAnswerTextFromMessage(message) {
   const partText = Array.isArray(message.content)
     ? message.content.map(extractTextFromContentPart).filter(Boolean).join("\n")
     : "";
-  return [text, partText]
+  const parts = [text, partText]
     .filter((part) => typeof part === "string" && part.trim().length > 0)
-    .join("\n")
-    .trim();
+    .map((part) => part.trim());
+  return [...new Set(parts)].join("\n").trim();
 }
 
 function isNoVisibleAnswerMarker(text) {
@@ -596,6 +629,118 @@ function normalizeVisibleTextForAssertion(value) {
     .trim();
 }
 
+function novelTokenRatio(candidate, baseline) {
+  const tokenize = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .match(/[a-z0-9]{3,}/g) || [];
+  const candidateTokens = tokenize(candidate);
+  if (candidateTokens.length === 0) {
+    return 0;
+  }
+  const baselineTokens = new Set(tokenize(baseline));
+  return candidateTokens.filter((token) => !baselineTokens.has(token)).length /
+    candidateTokens.length;
+}
+
+function isSubstantiveCortexInsight({ insight, parentText } = {}) {
+  const candidate = normalizeVisibleTextForAssertion(insight);
+  const baseline = normalizeVisibleTextForAssertion(parentText);
+  if (!candidate || /^\{NTA\}$/i.test(candidate)) {
+    return false;
+  }
+  let residual = candidate;
+  if (baseline) {
+    const candidateLower = candidate.toLowerCase();
+    const baselineLower = baseline.toLowerCase();
+    const overlapIndex = candidateLower.indexOf(baselineLower);
+    if (overlapIndex >= 0) {
+      residual = `${candidate.slice(0, overlapIndex)} ${candidate.slice(
+        overlapIndex + baseline.length,
+      )}`.trim();
+    }
+  }
+  const baselineTokens = new Set(
+    baseline.toLowerCase().match(/[a-z0-9]{3,}/g) || [],
+  );
+  const novelTokens = (residual.toLowerCase().match(/[a-z0-9]{3,}/g) || []).filter(
+    (token) => !baselineTokens.has(token),
+  );
+  return residual.length >= 20 && new Set(novelTokens).size >= 3;
+}
+
+function phaseBExpectationPass({
+  expectedPhaseB,
+  phaseBFollowUpCount,
+  phaseBStructuredFollowUpCount,
+  phaseBDecisionResult,
+  phaseBLlmResult,
+  phaseBSuppressionReason,
+  phaseBFollowUpTextLength,
+  phaseBNovelTokenRatio,
+  phaseBInitialVisible,
+  phaseBReloadVisible,
+  phaseBNtaMarkerVisible,
+}) {
+  if (expectedPhaseB === "generated") {
+    return (
+      phaseBStructuredFollowUpCount === 1 &&
+      phaseBDecisionResult === "persisted" &&
+      phaseBLlmResult === "generated" &&
+      phaseBFollowUpTextLength > 0 &&
+      phaseBNovelTokenRatio >= 0.1 &&
+      phaseBInitialVisible &&
+      phaseBReloadVisible
+    );
+  }
+  if (expectedPhaseB === "nta") {
+    return (
+      phaseBFollowUpCount === 0 &&
+      phaseBStructuredFollowUpCount === 0 &&
+      phaseBDecisionResult === "suppressed" &&
+      phaseBLlmResult === "nta" &&
+      phaseBSuppressionReason === "no_response_tag" &&
+      phaseBFollowUpTextLength === 0 &&
+      !phaseBInitialVisible &&
+      !phaseBReloadVisible &&
+      !phaseBNtaMarkerVisible
+    );
+  }
+  return false;
+}
+
+function requiredCortexCoveragePass({
+  requiredNames,
+  initialNames,
+  reloadNames,
+  storedNames,
+  terminalNames,
+  completeInsightNames,
+}) {
+  const toNameSet = (values) =>
+    new Set((Array.isArray(values) ? values : []).map((value) => String(value)));
+  const required = toNameSet(requiredNames);
+  const initial = toNameSet(initialNames);
+  const reload = toNameSet(reloadNames);
+  const stored = toNameSet(storedNames);
+  const terminal = toNameSet(terminalNames);
+  const complete = toNameSet(completeInsightNames);
+  const containsAll = (haystack, needles) =>
+    [...needles].every((name) => haystack.has(name));
+  const sameNames = (left, right) =>
+    left.size === right.size && containsAll(left, right);
+
+  return (
+    required.size > 0 &&
+    containsAll(initial, required) &&
+    containsAll(stored, required) &&
+    sameNames(initial, reload) &&
+    sameNames(initial, stored) &&
+    sameNames(stored, terminal) &&
+    sameNames(stored, complete)
+  );
+}
+
 function bodyContainsMainAnswer(bodyText, answerText) {
   const answer = normalizeVisibleTextForAssertion(answerText);
   if (answer.length < 24) {
@@ -606,13 +751,37 @@ function bodyContainsMainAnswer(bodyText, answerText) {
   return body.includes(snippet);
 }
 
-function uniqueRequiredNamesFromParts(parts, predicate) {
+async function waitForVisibleAnswerText(page, answerText, timeoutMs) {
+  if (!normalizeVisibleTextForAssertion(answerText)) {
+    return false;
+  }
+  return page
+    .waitForFunction(
+      (expectedText) => {
+        const normalize = (value) =>
+          String(value || "")
+            .replace(/[`*_#>\\-]+/g, " ")
+            .replace(/\s+([:;,.!?])/g, "$1")
+            .replace(/\s+/g, " ")
+            .trim();
+        const answer = normalize(expectedText);
+        const snippet = answer.slice(0, Math.min(answer.length, 80));
+        return Boolean(snippet) && normalize(document.body.innerText || "").includes(snippet);
+      },
+      answerText,
+      { timeout: timeoutMs },
+    )
+    .then(() => true)
+    .catch(() => false);
+}
+
+function uniqueNamesFromParts(parts, predicate) {
   const names = new Set();
   for (const part of parts) {
     const name = normalizeCortexName(
       part?.cortex_name || part?.cortexName || part?.name,
     );
-    if (!REQUIRED_CARD_NAMES.includes(name)) {
+    if (!name) {
       continue;
     }
     if (!predicate(part)) {
@@ -620,7 +789,7 @@ function uniqueRequiredNamesFromParts(parts, predicate) {
     }
     names.add(name);
   }
-  return REQUIRED_CARD_NAMES.filter((name) => names.has(name));
+  return [...names].sort();
 }
 
 async function verifyStoredCortexParts({ qaAuth, conversationId, prompt }) {
@@ -669,6 +838,24 @@ async function verifyStoredCortexParts({ qaAuth, conversationId, prompt }) {
           extractVisibleAnswerTextFromMessage(message).trim().length > 0,
       ).length
     : 0;
+  const phaseBFollowUps = parentMessage
+    ? messages.filter((message) => {
+        const metadata = message?.metadata;
+        return (
+          metadata?.viventium?.type === "cortex_followup" &&
+          metadata?.viventium?.parentMessageId === parentMessage.messageId
+        );
+      })
+    : [];
+  const phaseBFollowUpText = phaseBFollowUps
+    .map(extractVisibleAnswerTextFromMessage)
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  const phaseBDecision =
+    parentMessage?.metadata?.viventium?.cortexFollowUpDecision ||
+    phaseBFollowUps[0]?.metadata?.viventium?.cortexFollowUpDecision ||
+    null;
   const cortexParts = messages.flatMap((message) =>
     Array.isArray(message.content)
       ? message.content.filter(
@@ -676,8 +863,8 @@ async function verifyStoredCortexParts({ qaAuth, conversationId, prompt }) {
         )
       : [],
   );
-  const storedCardNames = uniqueRequiredNamesFromParts(cortexParts, () => true);
-  const storedTerminalNames = uniqueRequiredNamesFromParts(
+  const storedCardNames = uniqueNamesFromParts(cortexParts, () => true);
+  const storedTerminalNames = uniqueNamesFromParts(
     cortexParts,
     (part) =>
       part.type === "cortex_insight" &&
@@ -685,7 +872,7 @@ async function verifyStoredCortexParts({ qaAuth, conversationId, prompt }) {
         String(part.status || ""),
       ),
   );
-  const storedCompleteInsightNames = uniqueRequiredNamesFromParts(
+  const storedCompleteInsightNames = uniqueNamesFromParts(
     cortexParts,
     (part) =>
       part.type === "cortex_insight" &&
@@ -693,7 +880,14 @@ async function verifyStoredCortexParts({ qaAuth, conversationId, prompt }) {
       typeof part.insight === "string" &&
       part.insight.trim().length > 0,
   );
-  const storedErrorNames = uniqueRequiredNamesFromParts(
+  const storedSubstantiveInsightNames = uniqueNamesFromParts(
+    cortexParts,
+    (part) =>
+      part.type === "cortex_insight" &&
+      String(part.status || "") === "complete" &&
+      isSubstantiveCortexInsight({ insight: part.insight, parentText }),
+  );
+  const storedErrorNames = uniqueNamesFromParts(
     cortexParts,
     (part) =>
       part.type === "cortex_insight" && String(part.status || "") === "error",
@@ -705,15 +899,36 @@ async function verifyStoredCortexParts({ qaAuth, conversationId, prompt }) {
     parentHasVisibleMainAnswer,
     parentCortexOnly,
     phaseBFollowUpCount,
+    phaseBStructuredFollowUpCount: phaseBFollowUps.length,
+    phaseBDecisionResult: String(phaseBDecision?.result || ""),
+    phaseBLlmResult: String(phaseBDecision?.llmResult || ""),
+    phaseBSelectedStrategy: String(phaseBDecision?.selectedStrategy || ""),
+    phaseBSuppressionReason: String(phaseBDecision?.suppressionReason || ""),
+    phaseBFollowUpTextLength: phaseBFollowUpText.length,
+    phaseBNovelTokenRatio: novelTokenRatio(phaseBFollowUpText, parentText),
     assistantMessageCount: messages.length,
     storedCortexPartCount: cortexParts.length,
     storedCardNames,
     storedTerminalNames,
     storedCompleteInsightNames,
+    storedSubstantiveInsightNames,
     storedErrorNames,
   };
   Object.defineProperty(publicState, "parentMainAnswerText", {
     value: parentText,
+    enumerable: false,
+  });
+  Object.defineProperty(publicState, "phaseBFollowUpText", {
+    value: phaseBFollowUpText,
+    enumerable: false,
+  });
+  Object.defineProperty(publicState, "cortexInsightTexts", {
+    value: cortexParts
+      .filter((part) => part?.type === "cortex_insight" && part?.status === "complete")
+      .map((part) => ({
+        name: normalizeCortexName(part.cortex_name || part.cortexName || part.name),
+        insight: String(part.insight || ""),
+      })),
     enumerable: false,
   });
   return publicState;
@@ -729,14 +944,34 @@ async function waitForStoredCortexParts({
   let latest = null;
   while (Date.now() < deadline) {
     latest = await verifyStoredCortexParts({ qaAuth, conversationId, prompt });
-    const hasTerminalCards =
-      latest.storedTerminalNames.length === REQUIRED_CARD_NAMES.length;
-    const hasSuccessfulCards =
-      latest.storedCompleteInsightNames.length === REQUIRED_CARD_NAMES.length;
+    const hasTerminalCards = requiredCortexCoveragePass({
+      requiredNames: REQUIRED_CARD_NAMES,
+      initialNames: latest.storedCardNames,
+      reloadNames: latest.storedCardNames,
+      storedNames: latest.storedCardNames,
+      terminalNames: latest.storedTerminalNames,
+      completeInsightNames: latest.storedTerminalNames,
+    });
+    const hasSuccessfulCards = requiredCortexCoveragePass({
+      requiredNames: REQUIRED_CARD_NAMES,
+      initialNames: latest.storedCardNames,
+      reloadNames: latest.storedCardNames,
+      storedNames: latest.storedCardNames,
+      terminalNames: latest.storedCompleteInsightNames,
+      completeInsightNames: latest.storedCompleteInsightNames,
+    });
+    const hasTerminalDecision = ["persisted", "suppressed", "empty", "skipped"].includes(
+      latest.phaseBDecisionResult,
+    );
+    const decisionIsDurable =
+      hasTerminalDecision &&
+      (latest.phaseBDecisionResult !== "persisted" ||
+        latest.phaseBStructuredFollowUpCount === 1);
     if (
       (hasTerminalCards || hasSuccessfulCards) &&
       latest.parentHasVisibleMainAnswer === true &&
-      latest.parentCortexOnly !== true
+      latest.parentCortexOnly !== true &&
+      decisionIsDurable
     ) {
       return latest;
     }
@@ -777,10 +1012,12 @@ async function run() {
   const env = localEnv();
   let qaAuth;
   let browser;
+  let privateTranscript = null;
   const trackedConversationIds = new Set();
   const startedAt = args.startedAt;
   const result = {
     startedAt,
+    expectedPhaseB: args.expectedPhaseB,
     clientBaseHash: hashValue(args.clientBase),
     apiBaseHash: hashValue(args.apiBase),
     qaEmailHash: hashValue(args.qaEmail),
@@ -798,6 +1035,16 @@ async function run() {
     initialMainAnswerVisible: false,
     reloadMainAnswerVisible: false,
     phaseBFollowUpCount: 0,
+    phaseBStructuredFollowUpCount: 0,
+    phaseBDecisionResult: "",
+    phaseBLlmResult: "",
+    phaseBSelectedStrategy: "",
+    phaseBSuppressionReason: "",
+    phaseBFollowUpTextLength: 0,
+    phaseBNovelTokenRatio: 0,
+    phaseBInitialVisible: false,
+    phaseBReloadVisible: false,
+    phaseBNtaMarkerVisible: false,
     storedCardNames: [],
     storedTerminalNames: [],
     storedCompleteInsightNames: [],
@@ -808,6 +1055,7 @@ async function run() {
     runtimeActivationExpectedProvider: EXPECTED_ACTIVATION_PROVIDER,
     runtimeActivationExpectedModelHash: hashValue(EXPECTED_ACTIVATION_MODEL),
     runtimeActivationDriftNames: [],
+    runtimeAttachedCortexNames: [],
     runtimeActivationConfigPass: false,
     runtimeProvisioningPass: false,
     usedConversationFallbackNavigation: false,
@@ -962,6 +1210,7 @@ async function run() {
       evaluateVisibleState(
         await visibleBodyText(page),
         await visibleCortexRowTexts(page),
+        provisioningState.runtimeAttachedCortexNames,
       ),
     );
     for (const name of REQUIRED_CARD_NAMES) {
@@ -1010,27 +1259,34 @@ async function run() {
       timeoutMs: args.timeoutMs,
     });
     const parentMainAnswerText = storedState.parentMainAnswerText || "";
-    await page
-      .waitForFunction(
-        (answerText) => {
-          const normalize = (value) =>
-            String(value || "")
-              .replace(/[`*_#>\\-]+/g, " ")
-              .replace(/\s+/g, " ")
-              .trim();
-          const answer = normalize(answerText);
-          if (answer.length < 24) {
-            return false;
-          }
-          const snippet = answer.slice(0, Math.min(answer.length, 80));
-          return normalize(document.body.innerText || "").includes(snippet);
-        },
-        parentMainAnswerText,
-        { timeout: Math.min(args.timeoutMs, 60000) },
-      )
-      .catch(() => {});
+    const phaseBFollowUpText = storedState.phaseBFollowUpText || "";
+    privateTranscript = {
+      conversationId,
+      capturedAt: new Date().toISOString(),
+      expectedPhaseB: args.expectedPhaseB,
+      prompt: args.prompt,
+      parentMainAnswerText,
+      cortexInsights: storedState.cortexInsightTexts || [],
+      phaseBFollowUpText,
+    };
+    await waitForVisibleAnswerText(
+      page,
+      parentMainAnswerText,
+      Math.min(args.timeoutMs, 60000),
+    );
+    if (args.expectedPhaseB === "generated") {
+      await waitForVisibleAnswerText(
+        page,
+        phaseBFollowUpText,
+        Math.min(args.timeoutMs, 60000),
+      );
+    }
     const text = await visibleBodyText(page);
-    const state = evaluateVisibleState(text, await visibleCortexRowTexts(page));
+    const state = evaluateVisibleState(
+      text,
+      await visibleCortexRowTexts(page),
+      provisioningState.runtimeAttachedCortexNames,
+    );
     Object.assign(result, state, {
       ...storedState,
       usedConversationFallbackNavigation,
@@ -1038,6 +1294,7 @@ async function run() {
         text,
         parentMainAnswerText,
       ),
+      phaseBInitialVisible: bodyContainsMainAnswer(text, phaseBFollowUpText),
       consoleErrorCount: consoleErrors.length,
       failedRequestCount: failedRequests.length,
       failedRequestRoutes: summarizeRouteClasses(failedRequestRoutes),
@@ -1061,12 +1318,20 @@ async function run() {
     const reloadState = evaluateVisibleState(
       await visibleBodyText(page),
       await visibleCortexRowTexts(page),
+      provisioningState.runtimeAttachedCortexNames,
     );
     const reloadBodyText = await visibleBodyText(page);
     result.reloadCardNames = reloadState.cardNames;
     result.reloadMainAnswerVisible = bodyContainsMainAnswer(
       reloadBodyText,
       parentMainAnswerText,
+    );
+    result.phaseBReloadVisible = bodyContainsMainAnswer(
+      reloadBodyText,
+      phaseBFollowUpText,
+    );
+    result.phaseBNtaMarkerVisible = /\{NTA\}/.test(
+      `${text}\n${reloadBodyText}`,
     );
     const unexpectedCriticalHttpErrorRoutes = [...httpErrorRoutes];
     result.consoleErrorCount = consoleErrors.length;
@@ -1076,8 +1341,18 @@ async function run() {
     result.criticalHttpErrorRoutes = summarizeRouteClasses(
       unexpectedCriticalHttpErrorRoutes,
     );
-    result.pass =
-      state.cardNames.length === REQUIRED_CARD_NAMES.length &&
+    const commonPass =
+      requiredCortexCoveragePass({
+        requiredNames: REQUIRED_CARD_NAMES,
+        initialNames: state.cardNames,
+        reloadNames: reloadState.cardNames,
+        storedNames: storedState.storedCardNames,
+        terminalNames: storedState.storedTerminalNames,
+        completeInsightNames: storedState.storedCompleteInsightNames,
+      }) &&
+      REQUIRED_CARD_NAMES.every((name) =>
+        storedState.storedSubstantiveInsightNames.includes(name),
+      ) &&
       state.forbiddenMatches.length === 0 &&
       state.mainErrorMatches.length === 0 &&
       storedState.parentHasVisibleMainAnswer &&
@@ -1088,15 +1363,33 @@ async function run() {
       state.hasTerminalState &&
       state.hasWhyThisRan &&
       result.runtimeProvisioningPass &&
-      storedState.storedCardNames.length === REQUIRED_CARD_NAMES.length &&
-      storedState.storedTerminalNames.length === REQUIRED_CARD_NAMES.length &&
-      storedState.storedCompleteInsightNames.length ===
-        REQUIRED_CARD_NAMES.length &&
-      result.criticalHttpErrorCount === 0 &&
-      reloadState.cardNames.length === REQUIRED_CARD_NAMES.length;
+      result.criticalHttpErrorCount === 0;
+    result.pass =
+      commonPass &&
+      phaseBExpectationPass({
+        expectedPhaseB: args.expectedPhaseB,
+        ...result,
+      });
   } catch (error) {
     result.error = sanitizePublicError(error?.message || error || "qa_failed");
   } finally {
+    if (args.privateTranscriptPath && privateTranscript) {
+      try {
+        fs.mkdirSync(path.dirname(args.privateTranscriptPath), { recursive: true });
+        fs.writeFileSync(
+          args.privateTranscriptPath,
+          `${JSON.stringify(
+            privateTranscript,
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
+      } catch (transcriptError) {
+        result.pass = false;
+        result.error = sanitizePublicError(transcriptError?.message || transcriptError);
+      }
+    }
     if (qaAuth) {
       try {
         const cleanup = await cleanupQaRunArtifacts({
@@ -1129,6 +1422,7 @@ async function run() {
     "# Background Agent Visible Cards Browser QA",
     "",
     `- Started: ${result.startedAt}`,
+    `- Expected Phase B outcome: ${result.expectedPhaseB}`,
     "- Scope: local synthetic browser run with public-safe hashes only; release approval still requires committed diffs, nested pin agreement, scans, and review-only gates.",
     "- Agent ID configuration: default local QA agent IDs are used unless VIVENTIUM_QA_REQUIRED_CORTEX_AGENT_IDS_JSON overrides them.",
     `- Client hash: \`${result.clientBaseHash}\``,
@@ -1158,6 +1452,16 @@ async function run() {
     `- Initial parent answer visible: ${Boolean(result.initialMainAnswerVisible)}`,
     `- Reload parent answer visible: ${Boolean(result.reloadMainAnswerVisible)}`,
     `- Phase B follow-up message count: ${result.phaseBFollowUpCount ?? 0}`,
+    `- Phase B structured follow-up count: ${result.phaseBStructuredFollowUpCount ?? 0}`,
+    `- Phase B decision result: ${result.phaseBDecisionResult || "missing"}`,
+    `- Phase B LLM result: ${result.phaseBLlmResult || "missing"}`,
+    `- Phase B selected strategy: ${result.phaseBSelectedStrategy || "missing"}`,
+    `- Phase B suppression reason: ${result.phaseBSuppressionReason || "none"}`,
+    `- Phase B follow-up text length: ${result.phaseBFollowUpTextLength ?? 0}`,
+    `- Phase B novel-token ratio: ${(result.phaseBNovelTokenRatio ?? 0).toFixed(3)}`,
+    `- Phase B initially visible: ${Boolean(result.phaseBInitialVisible)}`,
+    `- Phase B visible after reload: ${Boolean(result.phaseBReloadVisible)}`,
+    `- NTA marker visible: ${Boolean(result.phaseBNtaMarkerVisible)}`,
     `- Background-agent footer visible: ${Boolean(result.hasBackgroundAgentFooter)}`,
     `- Terminal state visible: ${Boolean(result.hasTerminalState)}`,
     `- Why-this-ran visible: ${Boolean(result.hasWhyThisRan)}`,
@@ -1187,4 +1491,15 @@ async function run() {
   process.exit(result.pass ? 0 : 1);
 }
 
-run();
+if (require.main === module) {
+  run();
+}
+
+module.exports = {
+  extractVisibleAnswerTextFromMessage,
+  isSubstantiveCortexInsight,
+  parseExpectedPhaseBExpectation,
+  phaseBExpectationPass,
+  requiredCortexCoveragePass,
+  waitForVisibleAnswerText,
+};

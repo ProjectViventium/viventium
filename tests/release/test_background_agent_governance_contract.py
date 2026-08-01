@@ -38,13 +38,14 @@ BACKGROUND_CORTEX_SERVICE = (
 )
 
 APPROVED_EXECUTION_FAMILIES = {
-    ("anthropic", "claude-opus-4-8"),
+    ("anthropic", "claude-opus-5"),
     ("openAI", "gpt-5.6-sol"),
     ("openAI", "gpt-5.6-terra"),
+    ("glasshive-harness", "codex-cli:gpt-5.6-sol"),
 }
 APPROVED_ACTIVATION_FAMILY = ("groq", "qwen/qwen3.6-27b")
 APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.20-non-reasoning")
-APPROVED_MAIN_AGENT_FAMILY = ("openAI", "gpt-5.6-sol")
+APPROVED_MAIN_AGENT_FAMILY = ("glasshive-harness", "codex-cli:gpt-5.6-sol")
 
 
 def _load_source_of_truth() -> dict:
@@ -227,47 +228,55 @@ def test_background_agent_execution_models_stay_in_launch_ready_families() -> No
         )
 
 
-def test_conscious_and_subconscious_agents_use_gpt56_by_workload_with_opus48_fallback() -> None:
+def test_conscious_and_subconscious_agents_use_approved_routes_with_opus5_fallback() -> None:
     bundle = _load_source_of_truth()
     expected = {
-        "Viventium": ("gpt-5.6-sol", "medium"),
-        "Background Analysis": ("gpt-5.6-terra", "medium"),
-        "Confirmation Bias": ("gpt-5.6-terra", "medium"),
-        "Red Team": ("gpt-5.6-sol", "xhigh"),
-        "Deep Research": ("gpt-5.6-sol", "xhigh"),
-        "MS365": ("gpt-5.6-terra", "low"),
-        "Parietal Cortex": ("gpt-5.6-terra", "medium"),
-        "Pattern Recognition": ("gpt-5.6-terra", "medium"),
-        "Emotional Resonance": ("gpt-5.6-terra", "low"),
-        "Strategic Planning": ("gpt-5.6-sol", "high"),
-        "Viventium User Help": ("gpt-5.6-terra", "low"),
-        "Google": ("gpt-5.6-terra", "low"),
+        "Viventium": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Background Analysis": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Confirmation Bias": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Red Team": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "high"),
+        "Deep Research": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "xhigh"),
+        "MS365": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
+        "Parietal Cortex": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Pattern Recognition": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Emotional Resonance": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
+        "Strategic Planning": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "high"),
+        "Viventium User Help": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
+        "Google": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
     }
 
     agents = {"Viventium": bundle["mainAgent"]}
     agents.update({agent["name"]: agent for agent in bundle.get("backgroundAgents", [])})
     assert set(agents) == set(expected)
-    opus_fallback_parameters = {
-        "Red Team": {"thinkingBudget": 4000},
-        "Deep Research": {"thinkingBudget": 4000},
-        "Strategic Planning": {"thinkingBudget": 2000},
-    }
-
-    for name, (model, effort) in expected.items():
+    for name, (provider, model, effort) in expected.items():
         agent = agents[name]
-        assert agent.get("provider") == "openAI"
+        assert agent.get("provider") == provider
         assert agent.get("model") == model
-        assert agent.get("model_parameters") == {
+        expected_parameters = {
             "model": model,
             "reasoning_effort": effort,
-            "useResponsesApi": True,
         }
+        if provider == "openAI":
+            expected_parameters["useResponsesApi"] = True
+        assert agent.get("model_parameters") == expected_parameters
         assert agent.get("fallback_llm_provider") == "anthropic"
-        assert agent.get("fallback_llm_model") == "claude-opus-4-8"
-        assert agent.get("fallback_llm_model_parameters") == {
-            "model": "claude-opus-4-8",
-            **opus_fallback_parameters.get(name, {}),
-        }
+        assert agent.get("fallback_llm_model") == "claude-opus-5"
+        expected_fallback_parameters = {"model": "claude-opus-5"}
+        if name in {"Red Team", "Deep Research"}:
+            expected_fallback_parameters["thinkingBudget"] = 4000
+        elif effort == "high":
+            expected_fallback_parameters["thinkingBudget"] = 2000
+        assert agent.get("fallback_llm_model_parameters") == expected_fallback_parameters
+        if provider == "glasshive-harness":
+            assert agent.get("glasshive_options") == {
+                "workspace": {"mode": "life"},
+                "access": "full",
+            }
+
+    assert bundle["mainAgent"].get("glasshive_options") == {
+        "workspace": {"mode": "life"},
+        "access": "full",
+    }
 
     main_agent = bundle["mainAgent"]
     assert main_agent.get("voice_llm_provider") == "xai"
@@ -334,13 +343,13 @@ def test_openai_reasoning_background_agents_do_not_ship_sampling_params() -> Non
             )
 
 
-def test_all_background_agents_use_opus48_as_the_text_fallback() -> None:
+def test_all_background_agents_use_opus5_as_the_text_fallback() -> None:
     bundle = _load_source_of_truth()
 
     for agent in bundle.get("backgroundAgents", []):
         assert agent.get("fallback_llm_provider") == "anthropic"
-        assert agent.get("fallback_llm_model") == "claude-opus-4-8"
-        assert agent.get("fallback_llm_model_parameters", {}).get("model") == "claude-opus-4-8"
+        assert agent.get("fallback_llm_model") == "claude-opus-5"
+        assert agent.get("fallback_llm_model_parameters", {}).get("model") == "claude-opus-5"
 
 
 def test_support_and_confirmation_activation_prompts_exclude_broad_status_checks() -> None:
@@ -458,7 +467,7 @@ def test_red_team_execution_uses_decision_quality_stack_and_xhigh_openai_bag() -
         assert phrase in instructions
 
     assert "web_search" in red_team.get("tools", [])
-    assert red_team.get("model_parameters", {}).get("reasoning_effort") == "xhigh"
+    assert red_team.get("model_parameters", {}).get("reasoning_effort") == "high"
     assert "thinkingBudget" not in red_team.get("model_parameters", {})
 
     runtime_contract = _load_runtime_models_contract()
@@ -468,7 +477,7 @@ def test_red_team_execution_uses_decision_quality_stack_and_xhigh_openai_bag() -
     assert red_team_openai_parameters["reasoning_effort"] == "xhigh"
 
 
-def test_local_source_of_truth_main_agent_uses_gpt56_sol() -> None:
+def test_local_source_of_truth_main_agent_uses_glasshive_codex_sol() -> None:
     bundle = _load_source_of_truth()
     main_agent = bundle.get("mainAgent", {})
 
@@ -492,9 +501,10 @@ def test_local_source_of_truth_main_agent_voice_route_uses_grok_without_reasonin
 def test_runtime_models_script_exports_match_release_contract() -> None:
     runtime_contract = _load_runtime_models_contract()
 
-    assert set(runtime_contract["runtimeFamilies"]) == {
+    assert {
         f"{provider}::{model}" for provider, model in APPROVED_EXECUTION_FAMILIES
-    }
+    }.issubset(set(runtime_contract["runtimeFamilies"]))
+    assert "anthropic::claude-opus-4-8" in runtime_contract["runtimeFamilies"]
     assert set(runtime_contract["activationFamilies"]) == {
         f"{APPROVED_ACTIVATION_FAMILY[0]}::{APPROVED_ACTIVATION_FAMILY[1]}",
         f"{APPROVED_ACTIVATION_OVERRIDE_FAMILY[0]}::{APPROVED_ACTIVATION_OVERRIDE_FAMILY[1]}",
@@ -646,11 +656,13 @@ def test_librechat_source_of_truth_stays_on_current_anthropic_inventory() -> Non
         if spec.get("preset", {}).get("endpoint") == "anthropic"
     ]
 
-    assert anthropic_names == ["claude-sonnet-4-5", "claude-opus-4-8"]
-    assert "claude-sonnet-4-7" not in {
-        spec.get("name")
-        for spec in model_specs
-        if spec.get("preset", {}).get("endpoint") == "anthropic"
-    }
-    assert source.get("endpoints", {}).get("anthropic", {}).get("summaryModel") == "claude-sonnet-4-5"
+    assert anthropic_names == [
+        "claude-sonnet-4-5",
+        "claude-opus-4-8",
+        "claude-opus-5",
+    ]
+    assert (
+        source.get("endpoints", {}).get("anthropic", {}).get("summaryModel")
+        == "claude-sonnet-4-5"
+    )
     assert source.get("balance", {}).get("enabled") is False

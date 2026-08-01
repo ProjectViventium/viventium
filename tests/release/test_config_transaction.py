@@ -14,6 +14,24 @@ TRANSACTION_SCRIPT = REPO_ROOT / "scripts" / "viventium" / "config_transaction.p
 CLI = REPO_ROOT / "bin" / "viventium"
 
 
+def extract_shell_function(text: str, name: str) -> str:
+    lines = text.splitlines()
+    start = next(
+        index
+        for index, line in enumerate(lines)
+        if line.strip() == f"{name}() {{"
+    )
+    collected: list[str] = []
+    depth = 0
+    for line in lines[start:]:
+        collected.append(line)
+        depth += line.count("{")
+        depth -= line.count("}")
+        if depth == 0:
+            break
+    return "\n".join(collected) + "\n"
+
+
 def run_transaction(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(TRANSACTION_SCRIPT), *args],
@@ -294,6 +312,212 @@ def test_cli_headless_paths_use_candidate_instead_of_direct_canonical_output() -
     assert "rollback_config_candidate" in source
     assert 'WIZARD_ARGS=(--output "$CONFIG_CANDIDATE_FILE")' in source
     assert 'scripts/viventium/config_transaction.py' in source
+    candidate_path = (
+        'ensure_config_candidate_components "$CONFIG_CANDIDATE_FILE"'
+    )
+    compiler_path = (
+        '"$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py"'
+    )
+    candidate_function = extract_shell_function(
+        source,
+        "prepare_config_candidate",
+    )
+    assert candidate_function.index(candidate_path) < candidate_function.index(
+        compiler_path
+    )
+
+
+def test_missing_fresh_clone_agent_bundle_bootstraps_candidate_components_before_compile(
+    tmp_path: Path,
+) -> None:
+    source = CLI.read_text(encoding="utf-8")
+    function = extract_shell_function(
+        source,
+        "ensure_config_candidate_components",
+    )
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "viventium").mkdir(parents=True)
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        "version: 1\ninstall:\n  mode: native\n",
+        encoding="utf-8",
+    )
+    lock_file = repo / "components.lock.json"
+    lock_file.write_text('{"version":1,"components":[]}\n', encoding="utf-8")
+    calls = tmp_path / "bootstrap-calls"
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == *repo_path_safety.py ]]; then exit 0; fi\n"
+        f"printf '%s\\n' \"$*\" >> {str(calls)!r}\n"
+        "mkdir -p \"$TEST_REPO/viventium_v0_4/LibreChat/viventium/source_of_truth\"\n"
+        "printf 'mainAgent: []\\n' > "
+        "\"$TEST_REPO/viventium_v0_4/LibreChat/viventium/source_of_truth/"
+        "local.viventium-agents.yaml\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"REPO_ROOT={str(repo)!r}\n"
+                f"LOCK_FILE={str(lock_file)!r}\n"
+                f"PYTHON_BIN={str(fake_python)!r}\n"
+                f"TEST_REPO={str(repo)!r}\n"
+                "export TEST_REPO\n"
+                "refresh_repo_python() { :; }\n"
+                f"{function}"
+                f"ensure_config_candidate_components {str(candidate)!r}\n"
+                f"ensure_config_candidate_components {str(candidate)!r}\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    recorded = calls.read_text(encoding="utf-8").splitlines()
+    assert len(recorded) == 2
+    for call in recorded:
+        assert "--repo-root" in call
+        assert f"--config {candidate}" in call
+        assert "--lock-file" in call
+
+
+def test_partial_candidate_component_bootstrap_retries_even_after_bundle_appears(
+    tmp_path: Path,
+) -> None:
+    source = CLI.read_text(encoding="utf-8")
+    function = extract_shell_function(
+        source,
+        "ensure_config_candidate_components",
+    )
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "viventium").mkdir(parents=True)
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text(
+        "version: 1\n"
+        "integrations:\n"
+        "  glasshive:\n"
+        "    enabled: true\n",
+        encoding="utf-8",
+    )
+    lock_file = repo / "components.lock.json"
+    lock_file.write_text('{"version":1,"components":[]}\n', encoding="utf-8")
+    calls = tmp_path / "bootstrap-calls"
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == *repo_path_safety.py ]]; then exit 0; fi\n"
+        f"printf 'call\\n' >> {str(calls)!r}\n"
+        "mkdir -p \"$TEST_REPO/viventium_v0_4/LibreChat/viventium/source_of_truth\"\n"
+        "printf 'mainAgent: []\\n' > "
+        "\"$TEST_REPO/viventium_v0_4/LibreChat/viventium/source_of_truth/"
+        "local.viventium-agents.yaml\"\n"
+        f"if [[ $(wc -l < {str(calls)!r}) -eq 1 ]]; then exit 9; fi\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -uo pipefail\n"
+                f"REPO_ROOT={str(repo)!r}\n"
+                f"LOCK_FILE={str(lock_file)!r}\n"
+                f"PYTHON_BIN={str(fake_python)!r}\n"
+                f"TEST_REPO={str(repo)!r}\n"
+                "export TEST_REPO\n"
+                "refresh_repo_python() { :; }\n"
+                f"{function}"
+                "first=0\n"
+                f"ensure_config_candidate_components {str(candidate)!r} || first=$?\n"
+                "second=0\n"
+                f"ensure_config_candidate_components {str(candidate)!r} || second=$?\n"
+                "printf '%s|%s\\n' \"$first\" \"$second\"\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip().endswith("1|0")
+    assert calls.read_text(encoding="utf-8").splitlines() == ["call", "call"]
+
+
+def test_candidate_component_bootstrap_rejects_internal_agent_bundle_parent_symlink(
+    tmp_path: Path,
+) -> None:
+    source = CLI.read_text(encoding="utf-8")
+    function = extract_shell_function(
+        source,
+        "ensure_config_candidate_components",
+    )
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts" / "viventium"
+    scripts.mkdir(parents=True)
+    (scripts / "repo_path_safety.py").write_bytes(
+        (REPO_ROOT / "scripts" / "viventium" / "repo_path_safety.py").read_bytes()
+    )
+    (scripts / "bootstrap_components.py").write_text(
+        "#!/usr/bin/env python3\nraise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate.yaml"
+    candidate.write_text("version: 1\n", encoding="utf-8")
+    lock_file = repo / "components.lock.json"
+    lock_file.write_text('{"version":1,"components":[]}\n', encoding="utf-8")
+    librechat = repo / "viventium_v0_4" / "LibreChat"
+    (librechat / "viventium").mkdir(parents=True)
+    external = tmp_path / "external-source-of-truth"
+    external.mkdir()
+    (external / "local.viventium-agents.yaml").write_text(
+        "mainAgent: []\n",
+        encoding="utf-8",
+    )
+    (librechat / "viventium" / "source_of_truth").symlink_to(
+        external,
+        target_is_directory=True,
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"REPO_ROOT={str(repo)!r}\n"
+                f"LOCK_FILE={str(lock_file)!r}\n"
+                f"PYTHON_BIN={sys.executable!r}\n"
+                "refresh_repo_python() { :; }\n"
+                f"{function}"
+                f"ensure_config_candidate_components {str(candidate)!r}\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "unsafe linked path" in completed.stderr
+    assert (
+        external / "local.viventium-agents.yaml"
+    ).read_text(encoding="utf-8") == "mainAgent: []\n"
 
 
 def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp_path: Path) -> None:
@@ -301,7 +525,19 @@ def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp
     app_support = home / "Library" / "Application Support" / "Viventium"
     config = app_support / "config.yaml"
     runtime = app_support / "runtime"
+    fake_applications = tmp_path / "Applications"
+    fake_codex = fake_applications / "Codex.app" / "Contents" / "Resources" / "codex"
     app_support.mkdir(parents=True)
+    fake_codex.parent.mkdir(parents=True)
+    fake_codex.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "login" ] && [ "$2" = "status" ]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
 
     existing = yaml.safe_load((REPO_ROOT / "config.minimal.example.yaml").read_text(encoding="utf-8"))
     replace_secret_references_with_synthetic_values(existing)
@@ -319,6 +555,7 @@ def test_headless_configure_preserves_existing_fields_and_compiles_candidate(tmp
         "VIVENTIUM_CONFIG_FILE": str(config),
         "VIVENTIUM_RUNTIME_DIR": str(runtime),
         "VIVENTIUM_PYTHON_BIN": sys.executable,
+        "VIVENTIUM_CODEX_APP_DIRS": str(fake_applications),
     }
 
     result = subprocess.run(

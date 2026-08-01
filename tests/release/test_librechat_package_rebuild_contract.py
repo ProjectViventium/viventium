@@ -15,3 +15,12 @@ def test_launcher_rebuild_contract_covers_api_source_freshness() -> None:
     assert '"$LIBRECHAT_DIR/packages/api/src"' in launcher_text
     assert '"$LIBRECHAT_DIR/packages/api/rollup.config.js"' in launcher_text
     assert '"$LIBRECHAT_DIR/packages/api/package.json"' in launcher_text
+
+
+def test_launcher_uses_librechats_declared_npm_for_dependency_installs() -> None:
+    launcher_text = LAUNCHER_PATH.read_text(encoding="utf-8")
+
+    assert "run_librechat_npm() {" in launcher_text
+    assert "corepack npm \"$@\"" in launcher_text
+    assert "run_librechat_npm ci" in launcher_text
+    assert "run_librechat_npm install" in launcher_text

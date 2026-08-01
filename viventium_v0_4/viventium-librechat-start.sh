@@ -47,6 +47,47 @@
 
 set -euo pipefail
 
+# Public invocations must pass through the CLI so upgrade recovery, locking,
+# active-checkout routing, and protected-state gates cannot be bypassed.
+if [[ "${VIVENTIUM_LAUNCHER_INTERNAL:-0}" != "1" ]]; then
+  LAUNCHER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if [[ "${1:-}" == "--stop" ]]; then
+    shift
+    exec "$LAUNCHER_REPO_ROOT/bin/viventium" stop "$@"
+  fi
+  exec "$LAUNCHER_REPO_ROOT/bin/viventium" start "$@"
+fi
+
+# === VIVENTIUM START ===
+# Feature: Quiesced successor-candidate acceptance.
+# Purpose: preserve the upgrade controller's stopped checkpoint while proving
+# the candidate's core artifact. The exact writer inventory is an internal
+# structural contract; a missing/extra identifier fails before runtime prep.
+SUCCESSOR_VALIDATION_EXPECTED_DISABLED_WRITERS="agent-seeding,canonical-uploads,channel-workers,glasshive-callbacks,librechat-mcp-oauth,prompt-workbench,rag-recall,remote-mapping,scheduler,stale-cortex-recovery,telegram,telegram-codex,voice-workers"
+SUCCESSOR_VALIDATION_REQUESTED_MODE="${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}"
+SUCCESSOR_VALIDATION_REQUESTED_WRITERS="${VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS:-}"
+
+validation_runtime_is_quiesced() {
+  [[ "$SUCCESSOR_VALIDATION_REQUESTED_MODE" == "quiesced" ]]
+}
+
+if [[ -n "$SUCCESSOR_VALIDATION_REQUESTED_MODE" ]]; then
+  if [[ "$SUCCESSOR_VALIDATION_REQUESTED_MODE" != "quiesced" ]] ||
+    [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_INTERNAL:-0}" != "1" ]]
+  then
+    echo "[viventium] Invalid or unauthorized successor validation mode" >&2
+    exit 1
+  fi
+  if [[ "$SUCCESSOR_VALIDATION_REQUESTED_WRITERS" != "$SUCCESSOR_VALIDATION_EXPECTED_DISABLED_WRITERS" ]]; then
+    echo "[viventium] Successor validation writer inventory mismatch" >&2
+    exit 1
+  fi
+  export VIVENTIUM_SUCCESSOR_VALIDATION_MODE="quiesced"
+  export VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS="$SUCCESSOR_VALIDATION_EXPECTED_DISABLED_WRITERS"
+  export VIVENTIUM_QUIESCED_API_STARTUP=1
+fi
+# === VIVENTIUM END ===
+
 # === VIVENTIUM START ===
 if [[ -d "/opt/homebrew/bin" ]]; then
   export PATH="/opt/homebrew/bin:${PATH}"
@@ -66,6 +107,12 @@ fi
 if [[ -d "/usr/local/opt/node@24/bin" ]]; then
   export PATH="/usr/local/opt/node@24/bin:${PATH}"
 fi
+VIVENTIUM_NODE_RUNTIME_VERSION="24.16.0"
+VIVENTIUM_NODE_RUNTIME_ARCH="$(uname -m 2>/dev/null || true)"
+VIVENTIUM_NODE_RUNTIME_BIN="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools/node/${VIVENTIUM_NODE_RUNTIME_VERSION}/${VIVENTIUM_NODE_RUNTIME_ARCH}/bin"
+if [[ -d "$VIVENTIUM_NODE_RUNTIME_BIN" ]]; then
+  export PATH="$VIVENTIUM_NODE_RUNTIME_BIN:${PATH}"
+fi
 # === VIVENTIUM END ===
 
 # Colors
@@ -75,50 +122,40 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-current_node_major_version() {
+current_node_version() {
   if ! command -v node >/dev/null 2>&1; then
     return 1
   fi
 
   local version=""
   version="$(node -v 2>/dev/null || true)"
-  version="${version#v}"
-  version="${version%%.*}"
-  if [[ ! "$version" =~ ^[0-9]+$ ]]; then
+  if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     return 1
   fi
 
   printf '%s\n' "$version"
 }
 
-prepend_node24_to_path() {
-  local node24_prefix=""
-  if command -v brew >/dev/null 2>&1; then
-    node24_prefix="$(brew --prefix node@24 2>/dev/null || true)"
-  fi
-  if [[ -n "$node24_prefix" && -d "$node24_prefix/bin" ]]; then
-    export PATH="$node24_prefix/bin:${PATH}"
+prepend_validated_node_runtime_to_path() {
+  if [[ -d "$VIVENTIUM_NODE_RUNTIME_BIN" ]]; then
+    export PATH="$VIVENTIUM_NODE_RUNTIME_BIN:${PATH}"
     hash -r 2>/dev/null || true
   fi
 }
 
 ensure_validated_node24_runtime() {
-  prepend_node24_to_path
+  prepend_validated_node_runtime_to_path
 
-  local major=""
-  major="$(current_node_major_version || true)"
-  if [[ "$major" == "24" ]] && command -v npm >/dev/null 2>&1; then
+  local version=""
+  local resolved_node=""
+  local resolved_npm=""
+  version="$(current_node_version || true)"
+  resolved_node="$(command -v node 2>/dev/null || true)"
+  resolved_npm="$(command -v npm 2>/dev/null || true)"
+  if [[ "$version" == "v${VIVENTIUM_NODE_RUNTIME_VERSION}" \
+    && "$resolved_node" == "${VIVENTIUM_NODE_RUNTIME_BIN}/node" \
+    && "$resolved_npm" == "${VIVENTIUM_NODE_RUNTIME_BIN}/npm" ]]; then
     return 0
-  fi
-
-  if ! command -v brew >/dev/null 2>&1; then
-    log_error "Validated node@24 runtime required, but Homebrew is unavailable to install it"
-    return 1
-  fi
-
-  if [[ "${VIVENTIUM_AUTO_INSTALL_NODE:-true}" != "true" ]]; then
-    log_error "Validated node@24 runtime required, but automatic node installation is disabled"
-    return 1
   fi
 
   local current_version="missing"
@@ -126,17 +163,8 @@ ensure_validated_node24_runtime() {
     current_version="$(node -v 2>/dev/null || printf 'unknown')"
   fi
 
-  log_warn "Validated node@24 runtime required; found ${current_version}. Installing/activating Homebrew node@24"
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install node@24 >/dev/null 2>&1 || return 1
-  prepend_node24_to_path
-
-  major="$(current_node_major_version || true)"
-  if [[ "$major" != "24" || ! "$(command -v npm || true)" ]]; then
-    log_error "Unable to activate the validated node@24 runtime after Homebrew install"
-    return 1
-  fi
-
-  return 0
+  log_error "Validated Node ${VIVENTIUM_NODE_RUNTIME_VERSION} runtime required at ${VIVENTIUM_NODE_RUNTIME_BIN}; found ${current_version} at ${resolved_node:-missing}. Run 'bin/viventium upgrade' to install the pinned official runtime"
+  return 1
 }
 
 detect_livekit_node_ip() {
@@ -185,20 +213,127 @@ readonly LIVEKIT_SERVER_VERSION="v1.13.4"
 readonly LIVEKIT_SERVER_SOURCE_COMMIT="0b3fd288e3ef3263ec475ba0d78cf3ad77459981"
 readonly LIVEKIT_SERVER_IMAGE="livekit/livekit-server:v1.13.4@sha256:189f7c81b704a36642bc5c7e2d3e1ae83744627c11978a23a251bf19fbec64e0"
 
+livekit_runtime_owner_id() {
+  local state_root="${1:-}"
+  local digest=""
+
+  [[ -n "$state_root" ]] || return 1
+  if command -v shasum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$state_root" | shasum -a 256 | awk '{print $1}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$state_root" | sha256sum | awk '{print $1}')"
+  elif command -v openssl >/dev/null 2>&1; then
+    digest="$(printf '%s' "$state_root" | openssl dgst -sha256 | awk '{print $NF}')"
+  fi
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$digest"
+}
+
+livekit_container_has_configured_http_port() {
+  local container_id="${1:-}"
+  local binding=""
+
+  [[ -n "$container_id" ]] || return 1
+  while IFS= read -r binding; do
+    if [[ "${binding##*:}" == "$LIVEKIT_HTTP_PORT" ]]; then
+      return 0
+    fi
+  done < <(docker port "$container_id" "${LIVEKIT_HTTP_PORT}/tcp" 2>/dev/null || true)
+  return 1
+}
+
+livekit_runtime_container_ids() {
+  local state="${1:-running}"
+  local owned=""
+  local candidates=""
+  local container_id=""
+  local owner_label=""
+  local stack_label=""
+  local service_label=""
+  local profile_label=""
+  local -a docker_ps_args=(ps -q)
+
+  if [[ "$state" == "exited" ]]; then
+    docker_ps_args=(ps -aq --filter "status=exited")
+  elif [[ "$state" != "running" ]]; then
+    return 2
+  fi
+
+  owned="$(
+    docker "${docker_ps_args[@]}" \
+      --filter "label=viventium.stack=viventium_v0_4" \
+      --filter "label=viventium.service=livekit" \
+      --filter "label=viventium.runtime-owner=${VIVENTIUM_LIVEKIT_RUNTIME_OWNER}" \
+      2>/dev/null || true
+  )"
+  if [[ -n "$owned" ]]; then
+    printf '%s\n' "$owned"
+    return 0
+  fi
+
+  # An alternate App Support runtime may only select its exact owner label.
+  # Legacy profile/port adoption is reserved for canonical migration because
+  # those older containers do not prove which local runtime owns them.
+  [[ "${GLOBAL_DOCKER_CLEANUP_ALLOWED:-true}" == "true" ]] || return 0
+
+  # Exited legacy containers have no trustworthy owner identity. Preserve them
+  # rather than deleting another local runtime's evidence during stale cleanup.
+  [[ "$state" == "running" ]] || return 0
+
+  candidates="$(
+    docker ps -q \
+      --filter "name=^/viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-" \
+      2>/dev/null || true
+  )"
+  if [[ -z "$candidates" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
+    candidates="$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null || true)"
+  fi
+  while IFS= read -r container_id; do
+    [[ -n "$container_id" ]] || continue
+    owner_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.runtime-owner" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    [[ -z "$owner_label" ]] || continue
+    stack_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.stack" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    service_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.service" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    profile_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.profile" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    [[ "$stack_label" == "viventium_v0_4" ]] || continue
+    [[ "$service_label" == "livekit" ]] || continue
+    [[ "$profile_label" == "$VIVENTIUM_RUNTIME_PROFILE" ]] || continue
+    if livekit_container_has_configured_http_port "$container_id"; then
+      printf '%s\n' "$container_id"
+    fi
+  done <<<"$candidates"
+}
+
 livekit_managed_container_matches_release() {
   local container_id="$1"
   local configured_image=""
   local image_label=""
   local source_label=""
+  local http_port_label=""
 
   [[ -n "$container_id" ]] || return 1
   configured_image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
   image_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.image" }}' "$container_id" 2>/dev/null || true)"
   source_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.source" }}' "$container_id" 2>/dev/null || true)"
+  http_port_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.http-port" }}' "$container_id" 2>/dev/null || true)"
 
   [[ "$configured_image" == "$LIVEKIT_SERVER_IMAGE" ]] &&
     [[ "$image_label" == "$LIVEKIT_SERVER_IMAGE" ]] &&
-    [[ "$source_label" == "$LIVEKIT_SERVER_SOURCE_COMMIT" ]]
+    [[ "$source_label" == "$LIVEKIT_SERVER_SOURCE_COMMIT" ]] &&
+    [[ "$http_port_label" == "$LIVEKIT_HTTP_PORT" ]] &&
+    livekit_container_has_configured_http_port "$container_id"
 }
 # === VIVENTIUM END ===
 
@@ -396,16 +531,30 @@ PLAYGROUND_DIR="$ROOT_DIR/agents-playground"
 MODERN_PLAYGROUND_DIR="$ROOT_DIR/agent-starter-react"
 VOICE_GATEWAY_DIR="$ROOT_DIR/voice-gateway"
 GOOGLE_MCP_DIR="$ROOT_DIR/MCPs/google_workspace_mcp"
-SCHEDULING_MCP_DIR="$LIBRECHAT_DIR/viventium/MCPs/scheduling-cortex"
+VIVENTIUM_APP_SUPPORT_ROOT="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
+# === VIVENTIUM START ===
+# Feature: Helper-safe installed Scheduling Cortex runtime component.
+# Purpose: a menu-bar launch must execute and build Scheduler only under App Support, never inside
+# a protected source checkout. Direct developer launches keep using the selected source checkout.
+SCHEDULING_MCP_SOURCE_DIR="$LIBRECHAT_DIR/viventium/MCPs/scheduling-cortex"
+SCHEDULING_MCP_INSTALLED_DIR="$VIVENTIUM_APP_SUPPORT_ROOT/runtime/components/scheduling-cortex"
+if [[ -n "${VIVENTIUM_HELPER_CORE_ROOT:-}" ]]; then
+  SCHEDULING_MCP_DIR="$SCHEDULING_MCP_INSTALLED_DIR"
+else
+  SCHEDULING_MCP_DIR="${VIVENTIUM_SCHEDULING_MCP_DIR:-$SCHEDULING_MCP_SOURCE_DIR}"
+fi
+# === VIVENTIUM END ===
 GLASSHIVE_DIR="$ROOT_DIR/GlassHive"
 GLASSHIVE_RUNTIME_DIR="$GLASSHIVE_DIR/runtime_phase1"
 GLASSHIVE_UI_DIR="$GLASSHIVE_DIR/frontends/glass-drive-ui"
 V1_AGENT_DIR="$LEGACY_V0_3_DIR/viventium_v1/backend/brain/frontal-cortex"
-TELEGRAM_DIR_PRIMARY="$ROOT_DIR/telegram-viventium"
+TELEGRAM_DIR_SOURCE_PRIMARY="$ROOT_DIR/telegram-viventium"
+TELEGRAM_DIR_PRIMARY="$TELEGRAM_DIR_SOURCE_PRIMARY"
 TELEGRAM_DIR_FALLBACK="$LEGACY_V0_3_DIR/interfaces/telegram-viventium"
+TELEGRAM_COMPONENT_SELECTION_FILE="${VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime/components/telegram-viventium.json}"
+TELEGRAM_COMPONENT_TOOL="${VIVENTIUM_TELEGRAM_COMPONENT_TOOL:-$VIVENTIUM_CORE_DIR/scripts/viventium/telegram_runtime_component.py}"
 TELEGRAM_CODEX_DIR="$ROOT_DIR/telegram-codex"
 CODE_INTERPRETER_DIR="$LIBRECHAT_DIR/viventium/services/librecodeinterpreter"
-VIVENTIUM_APP_SUPPORT_ROOT="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
 TELEGRAM_RUNTIME_CONFIG_ENV_FILE="${VIVENTIUM_TELEGRAM_RUNTIME_ENV_FILE:-}"
 if [[ -z "$TELEGRAM_RUNTIME_CONFIG_ENV_FILE" ]]; then
   if [[ -n "${VIVENTIUM_ENV_FILE:-}" ]]; then
@@ -447,13 +596,21 @@ TELEGRAM_CODEX_ENV_FILE="${VIVENTIUM_TELEGRAM_CODEX_ENV_FILE:-$(resolve_path_or_
 TELEGRAM_CODEX_SETTINGS_FILE="${VIVENTIUM_TELEGRAM_CODEX_SETTINGS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_SETTINGS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/settings.yaml" "$TELEGRAM_CODEX_DIR/config/settings.yaml")}"
 TELEGRAM_CODEX_PROJECTS_FILE="${VIVENTIUM_TELEGRAM_CODEX_PROJECTS_FILE:-$(resolve_path_or_default "$TELEGRAM_CODEX_RUNTIME_PROJECTS_FILE" "$VIVENTIUM_APP_SUPPORT_ROOT/runtime/telegram-codex/projects.yaml" "$TELEGRAM_CODEX_DIR/config/projects.yaml")}"
 # === VIVENTIUM END ===
-TELEGRAM_USER_CONFIGS_DIR="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-$(resolve_dir_or_default \
-  "$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs" \
-  "$TELEGRAM_DIR_PRIMARY/TelegramVivBot/user_configs" \
-  "$TELEGRAM_DIR_PRIMARY/user_configs" \
-  "$VIVENTIUM_PRIVATE_CURATED_DIR/runtime-state/telegram-user-configs" \
-  "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/telegram-viventium/TelegramVivBot/user_configs")}"
-mkdir -p "$TELEGRAM_USER_CONFIGS_DIR"
+# === VIVENTIUM START ===
+# Canonical user preferences are always private App Support state. Install/upgrade migrates the
+# legacy repo-local directory without deleting it; only an explicit operator override may select
+# another location. Keep the root owner-private from its first launcher-created state so upgrade
+# recovery can safely bind the same authority before the Telegram worker has ever run.
+ensure_private_telegram_user_configs_dir() {
+  local target="$1"
+  local helper="$VIVENTIUM_CORE_DIR/scripts/viventium/telegram_user_config_migration.py"
+  local python_command="${PYTHON_BIN:-python3}"
+  "$python_command" "$helper" --ensure-private-root "$target" >/dev/null
+}
+
+TELEGRAM_USER_CONFIGS_DIR="${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/state/telegram-user-configs}"
+ensure_private_telegram_user_configs_dir "$TELEGRAM_USER_CONFIGS_DIR"
+# === VIVENTIUM END ===
 SKYVERN_ENV_FILE="${VIVENTIUM_SKYVERN_ENV_FILE:-$(resolve_path_or_default \
   "$ROOT_DIR/docker/skyvern/.env" \
   "$ROOT_DIR/docker/skyvern/.env" \
@@ -807,6 +964,7 @@ regenerate_canonical_runtime_env_if_needed() {
   if [[ -f "$private_source_of_truth" ]]; then
     VIVENTIUM_ENV_FILE="$canonical_env_file" \
     VIVENTIUM_ENV_LOCAL_FILE="$canonical_runtime_dir/runtime.local.env" \
+    VIVENTIUM_APP_SUPPORT_DIR="$VIVENTIUM_APP_SUPPORT_ROOT" \
     VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile" \
     VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="" \
     VIVENTIUM_LIBRECHAT_PRIVATE_SOURCE_OF_TRUTH="$private_source_of_truth" \
@@ -818,6 +976,7 @@ regenerate_canonical_runtime_env_if_needed() {
   else
     VIVENTIUM_ENV_FILE="$canonical_env_file" \
     VIVENTIUM_ENV_LOCAL_FILE="$canonical_runtime_dir/runtime.local.env" \
+    VIVENTIUM_APP_SUPPORT_DIR="$VIVENTIUM_APP_SUPPORT_ROOT" \
     VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile" \
     VIVENTIUM_LIBRECHAT_SOURCE_OF_TRUTH="" \
     VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="$LIBRECHAT_CANONICAL_ENV_FILE" \
@@ -845,7 +1004,9 @@ import_legacy_agent_migration_before_runtime_regeneration() {
     --runtime-env "$canonical_env_file" >/dev/null
 }
 
-import_legacy_agent_migration_before_runtime_regeneration
+if ! validation_runtime_is_quiesced; then
+  import_legacy_agent_migration_before_runtime_regeneration
+fi
 regenerate_canonical_runtime_env_if_needed
 # === VIVENTIUM END ===
 
@@ -1079,6 +1240,13 @@ export VIVENTIUM_LOCAL_MEILI_VOLUME="${VIVENTIUM_LOCAL_MEILI_VOLUME:-${VIVENTIUM
 
 PROFILE_STATE_ROOT_DEFAULT="$VIVENTIUM_BASE_STATE_DIR/runtime/$VIVENTIUM_RUNTIME_PROFILE"
 export VIVENTIUM_STATE_ROOT="${VIVENTIUM_STATE_ROOT:-$PROFILE_STATE_ROOT_DEFAULT}"
+if ! VIVENTIUM_LIVEKIT_RUNTIME_OWNER="$(livekit_runtime_owner_id "$VIVENTIUM_STATE_ROOT")"; then
+  echo -e "${RED}[viventium]${NC} Could not derive the private LiveKit runtime owner identity"
+  exit 1
+fi
+export VIVENTIUM_LIVEKIT_RUNTIME_OWNER
+TELEGRAM_POLLER_STATE_DIR="${VIVENTIUM_TELEGRAM_POLLER_STATE_DIR:-$VIVENTIUM_STATE_ROOT/telegram-poller}"
+TELEGRAM_POLLER_HANDOFF_HELPER="${VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER:-$VIVENTIUM_CORE_DIR/scripts/viventium/telegram_poller_handoff.py}"
 TELEGRAM_LOCAL_BOT_API_STATE_DIR="${TELEGRAM_LOCAL_BOT_API_STATE_DIR:-$VIVENTIUM_STATE_ROOT/telegram-local-bot-api}"
 TELEGRAM_LOCAL_BOT_API_WORK_DIR="${TELEGRAM_LOCAL_BOT_API_WORK_DIR:-$TELEGRAM_LOCAL_BOT_API_STATE_DIR/work}"
 TELEGRAM_LOCAL_BOT_API_TEMP_DIR="${TELEGRAM_LOCAL_BOT_API_TEMP_DIR:-$TELEGRAM_LOCAL_BOT_API_STATE_DIR/tmp}"
@@ -1139,17 +1307,119 @@ TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viven
 TELEGRAM_BOT_WATCHDOG_PID_FILE="$LOG_ROOT/telegram_bot_watchdog.pid"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
+DETACHED_LAUNCH_MEMBERS_FILE="$LOG_ROOT/detached-launch.members"
+RUNTIME_STOP_AUTHORIZED_PGID=""
 LIBRECHAT_API_WATCHDOG_PID_FILE="$LOG_ROOT/librechat-api-watchdog.pid"
 LIBRECHAT_API_WATCHDOG_LOG_FILE="$LOG_DIR/librechat-api-watchdog.log"
 SCHEDULING_MCP_WATCHDOG_PID_FILE="$LOG_ROOT/scheduling_cortex_mcp_watchdog.pid"
 SCHEDULING_MCP_WATCHDOG_LOG_FILE="$LOG_DIR/scheduling_cortex_mcp_watchdog.log"
-MONGO_NATIVE_PID_FILE="$LOG_ROOT/mongodb-native.pid"
+MONGO_NATIVE_PID_FILE="${VIVENTIUM_MONGO_NATIVE_PID_FILE:-$VIVENTIUM_APP_SUPPORT_ROOT/state/native/mongod.pid}"
 MONGO_NATIVE_LOG_FILE="$LOG_DIR/mongodb-native.log"
+MONGO_ENGINE_IDENTITY_HELPER="$VIVENTIUM_CORE_DIR/scripts/viventium/mongo_engine_identity.py"
+MONGO_ENGINE_IDENTITY_PREPARED=false
 MEILI_NATIVE_PID_FILE="$LOG_ROOT/meilisearch-native.pid"
 MEILI_NATIVE_LOG_FILE="$LOG_DIR/meilisearch-native.log"
 PROMPT_WORKBENCH_WATCHDOG_PID_FILE="$LOG_ROOT/prompt-workbench-watchdog.pid"
 PROMPT_WORKBENCH_WATCHDOG_LOG_FILE="$LOG_DIR/prompt-workbench-watchdog.log"
-mkdir -p "$LOG_DIR" "$(dirname "$SCHEDULING_DB_PATH")"
+mkdir -p "$LOG_DIR" "$(dirname "$SCHEDULING_DB_PATH")" "$(dirname "$MONGO_NATIVE_PID_FILE")"
+
+# === VIVENTIUM START ===
+# Feature: Durable MongoDB engine identity across a clean stop.
+# Purpose: a stopped WiredTiger directory does not identify whether Docker or
+# native mongod last owned it. Persist only directly observed engine identity
+# while running, then seal the exact stopped storage anchor after shutdown.
+run_mongo_engine_identity_scope_action() {
+  local action="${1:-}"
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" "$action" \
+      --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+      --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
+      --native-only
+    return
+  fi
+  "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" "$action" \
+    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}"
+}
+
+record_mongo_engine_identity() {
+  if [[ "${MONGO_IS_LOCAL:-false}" != "true" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$MONGO_ENGINE_IDENTITY_HELPER" ]]; then
+    log_error "MongoDB engine identity helper is missing"
+    return 1
+  fi
+  run_mongo_engine_identity_scope_action record-mongo-engine >/dev/null
+}
+
+prepare_mongo_engine_identity_for_stop() {
+  MONGO_ENGINE_IDENTITY_PREPARED=false
+  resolve_mongo_connection
+  if [[ "$MONGO_IS_LOCAL" != "true" ]]; then
+    return 0
+  fi
+  if record_mongo_engine_identity; then
+    MONGO_ENGINE_IDENTITY_PREPARED=true
+    return 0
+  fi
+  local managed_mongo_running=false
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
+    port_has_listener "$MONGO_PORT"
+  then
+    managed_mongo_running=true
+  elif [[ -f "$MONGO_NATIVE_PID_FILE" ]]; then
+    local native_pid
+    native_pid="$(tr -d '[:space:]' <"$MONGO_NATIVE_PID_FILE" 2>/dev/null || true)"
+    if [[ "$native_pid" =~ ^[0-9]+$ ]] &&
+      kill -0 "$native_pid" >/dev/null 2>&1
+    then
+      managed_mongo_running=true
+    fi
+  fi
+  if [[ "$managed_mongo_running" != "true" ]] &&
+    [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
+    docker_daemon_ready &&
+    [[ "$(docker inspect -f '{{.State.Running}}' "$MONGO_CONTAINER_NAME" 2>/dev/null || true)" == "true" ]]
+  then
+    managed_mongo_running=true
+  fi
+  if [[ "$managed_mongo_running" == "true" ]]; then
+    log_error "Refusing a clean local stop without exact MongoDB engine proof"
+    log_error "Keep the runtime running, repair the engine-identity helper, then retry stop"
+    return 1
+  fi
+  return 0
+}
+
+seal_mongo_engine_identity_after_stop() {
+  if [[ "$MONGO_ENGINE_IDENTITY_PREPARED" != "true" ]]; then
+    return 0
+  fi
+  if ! run_mongo_engine_identity_scope_action seal-mongo-engine >/dev/null
+  then
+    log_error "MongoDB stopped, but its durable engine receipt could not be sealed"
+    log_error "Restart Viventium and retry a clean stop before upgrading"
+    return 1
+  fi
+  MONGO_ENGINE_IDENTITY_PREPARED=false
+}
+
+stop_recorded_native_mongo_engine() {
+  if [[ "$MONGO_ENGINE_IDENTITY_PREPARED" != "true" ]]; then
+    return 0
+  fi
+  if ! "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" stop-recorded-native-engine \
+    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
+    --pid-file "$MONGO_NATIVE_PID_FILE" \
+    >/dev/null
+  then
+    log_error "Native MongoDB process could not be stopped from its exact engine receipt"
+    return 1
+  fi
+}
+# === VIVENTIUM END ===
 
 LC_API_PORT="$VIVENTIUM_LC_API_PORT"
 LC_FRONTEND_PORT="$VIVENTIUM_LC_FRONTEND_PORT"
@@ -1188,10 +1458,12 @@ fi
 # === VIVENTIUM END ===
 
 # LiveKit defaults for dev mode
+livekit_api_host_is_managed_local() {
+  local api_host="${1:-}"
+  [[ "$api_host" == "http://localhost:${LIVEKIT_HTTP_PORT}" ]]
+}
+
 LIVEKIT_API_HOST_WAS_CONFIGURED=false
-if [[ -n "${LIVEKIT_API_HOST:-}" ]]; then
-  LIVEKIT_API_HOST_WAS_CONFIGURED=true
-fi
 export LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
 export LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
 export LIVEKIT_URL="${LIVEKIT_URL:-ws://localhost:${LIVEKIT_HTTP_PORT}}"
@@ -1220,6 +1492,9 @@ if [[ "${VIVENTIUM_RUNTIME_PROFILE}" == "isolated" ]]; then
   if [[ "${NEXT_PUBLIC_LIVEKIT_URL}" == "ws://localhost:7880" ]]; then
     export NEXT_PUBLIC_LIVEKIT_URL="$LIVEKIT_URL"
   fi
+fi
+if ! livekit_api_host_is_managed_local "$LIVEKIT_API_HOST"; then
+  LIVEKIT_API_HOST_WAS_CONFIGURED=true
 fi
 # === VIVENTIUM END ===
 # === VIVENTIUM START ===
@@ -1917,6 +2192,46 @@ fi
 [[ "$SKIP_V1_AGENT" == "true" ]] && START_V1_AGENT=false
 
 # === VIVENTIUM START ===
+# Quiesced validation uses an allowlisted core launch. These assignments happen
+# after canonical/user env loading and CLI normalization so configuration
+# cannot silently re-enable an autonomous or external writer.
+if validation_runtime_is_quiesced; then
+  SKIP_LIVEKIT=true
+  SKIP_VOICE_GATEWAY=true
+  SKIP_GOOGLE_MCP=true
+  SKIP_MS365_MCP=true
+  SKIP_SCHEDULING_MCP=true
+  SKIP_GLASSHIVE=true
+  SKIP_RAG_API=true
+  SKIP_SKYVERN=true
+  SKIP_CODE_INTERPRETER=true
+  SKIP_FIRECRAWL=true
+  SKIP_PROMPT_WORKBENCH=true
+  SKIP_TELEGRAM=true
+  SKIP_V1_AGENT=true
+  SKIP_V1_SYNC=true
+  SKIP_MCP_VERIFY=true
+  SKIP_BOOTSTRAP=true
+  START_GOOGLE_MCP=false
+  START_MS365_MCP=false
+  START_SCHEDULING_MCP=false
+  START_GLASSHIVE=false
+  START_RAG_API=false
+  START_SKYVERN=false
+  START_TELEGRAM=false
+  START_TELEGRAM_CODEX=false
+  START_CODE_INTERPRETER=false
+  START_SEARXNG=false
+  START_FIRECRAWL=false
+  START_PROMPT_WORKBENCH=false
+  START_V1_AGENT=false
+  VIVENTIUM_REMOTE_CALL_MODE=disabled
+  VIVENTIUM_VOICE_ENABLED=false
+  export VIVENTIUM_REMOTE_CALL_MODE VIVENTIUM_VOICE_ENABLED
+fi
+# === VIVENTIUM END ===
+
+# === VIVENTIUM START ===
 # Graceful fallback: some branches do not include the Scheduling Cortex MCP checkout.
 # Do not block full-stack startup on this optional service.
 if [[ "$START_SCHEDULING_MCP" == "true" && ! -d "$SCHEDULING_MCP_DIR" ]]; then
@@ -1930,6 +2245,7 @@ fi
 # === VIVENTIUM END ===
 
 RESTART_DOCKER_SERVICES="$RESTART_SERVICES"
+GLOBAL_DOCKER_CLEANUP_ALLOWED=true
 if [[ "$SKIP_DOCKER" == "true" ]]; then
   RESTART_DOCKER_SERVICES=false
   # Docker-only sidecars should never be pulled or restarted when the caller
@@ -2279,16 +2595,164 @@ read_detached_launch_process_group() {
   fi
 }
 
+process_start_identity() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+record_detached_launch_process_group_members() {
+  local recorded_pgid=""
+  local member_pid=""
+  local member_start=""
+  local temporary_file="${DETACHED_LAUNCH_MEMBERS_FILE}.tmp.$$"
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  : >"$temporary_file"
+  chmod 600 "$temporary_file" 2>/dev/null || true
+  while read -r member_pid; do
+    [[ "$member_pid" =~ ^[0-9]+$ ]] || continue
+    member_start="$(process_start_identity "$member_pid" || true)"
+    [[ -n "$member_start" ]] || continue
+    printf '%s\t%s\n' "$member_pid" "$member_start" >>"$temporary_file"
+  done < <(
+    ps -Ao pid=,pgid= 2>/dev/null |
+      awk -v target="$recorded_pgid" '$2 == target { print $1 }'
+  )
+
+  if [[ ! -s "$temporary_file" ]]; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  mv -f "$temporary_file" "$DETACHED_LAUNCH_MEMBERS_FILE"
+  chmod 600 "$DETACHED_LAUNCH_MEMBERS_FILE" 2>/dev/null || true
+}
+
+canonical_app_support_root() {
+  printf '%s\n' "$HOME/Library/Application Support/Viventium"
+}
+
+runtime_stop_requires_process_group() {
+  local current_root="${VIVENTIUM_APP_SUPPORT_ROOT%/}"
+  local canonical_root=""
+  canonical_root="$(canonical_app_support_root)"
+  canonical_root="${canonical_root%/}"
+  [[ "$current_root" != "$canonical_root" ]]
+}
+
+protect_noncanonical_runtime_from_global_docker_mutation() {
+  if runtime_stop_requires_process_group && [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]]; then
+    log_warn "Alternate App Support runtime detected; preserving canonical/shared Docker services"
+    GLOBAL_DOCKER_CLEANUP_ALLOWED=false
+    RESTART_DOCKER_SERVICES=false
+    # These launchers use machine-global Compose projects or container names. An alternate
+    # runtime may consume an already-running shared endpoint, but restart must not create,
+    # replace, or later clean up those global services without per-container ownership.
+    START_MS365_MCP=false
+    START_RAG_API=false
+    START_CODE_INTERPRETER=false
+    START_SKYVERN=false
+    START_FIRECRAWL=false
+    START_SEARXNG=false
+  fi
+}
+
+runtime_process_group_receipt_valid() {
+  local recorded_pgid=""
+  local member_pid=""
+  local recorded_start=""
+  local live_start=""
+  local live_pgid=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  if [[ -f "$DETACHED_LAUNCH_MEMBERS_FILE" ]]; then
+    while IFS=$'\t' read -r member_pid recorded_start; do
+      [[ "$member_pid" =~ ^[0-9]+$ && -n "$recorded_start" ]] || continue
+      live_pgid="$(ps -p "$member_pid" -o pgid= 2>/dev/null | tr -d '[:space:]' || true)"
+      [[ "$live_pgid" == "$recorded_pgid" ]] || continue
+      live_start="$(process_start_identity "$member_pid" || true)"
+      if [[ -n "$live_start" && "$live_start" == "$recorded_start" ]]; then
+        return 0
+      fi
+    done <"$DETACHED_LAUNCH_MEMBERS_FILE"
+    return 1
+  fi
+
+  # Existing canonical installs may predate the membership companion file. Alternate roots
+  # have no safe legacy fallback because another runtime can use the same checkout concurrently.
+  ! runtime_stop_requires_process_group
+}
+
+runtime_process_group_pids() {
+  local recorded_pgid=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 0
+  ps -Ao pid=,pgid=,state= 2>/dev/null |
+    awk -v target="$recorded_pgid" '$2 == target && $3 !~ /Z/ { print $1 }' |
+    xargs 2>/dev/null || true
+}
+
+authorize_runtime_process_group_stop() {
+  local recorded_pgid=""
+  local live_pids=""
+  RUNTIME_STOP_AUTHORIZED_PGID=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 0
+
+  live_pids="$(runtime_process_group_pids)"
+  if [[ -z "$live_pids" ]]; then
+    clear_detached_launch_process_group
+    return 0
+  fi
+  if ! runtime_process_group_receipt_valid; then
+    log_error "Refusing to stop an unverified detached runtime process group: $recorded_pgid"
+    return 1
+  fi
+  RUNTIME_STOP_AUTHORIZED_PGID="$recorded_pgid"
+}
+
+pid_matches_recorded_runtime_process_group() {
+  local pid="${1:-}"
+  local recorded_pgid=""
+  local pid_pgid=""
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+  if [[ "${RUNTIME_STOP_AUTHORIZED_PGID:-}" != "$recorded_pgid" ]]; then
+    runtime_process_group_receipt_valid || return 1
+  fi
+  pid_pgid="$(ps -p "$pid" -o pgid= 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$pid_pgid" == "$recorded_pgid" ]]
+}
+
+pid_matches_runtime_stop_identity() {
+  local pid="${1:-}"
+  local recorded_pgid=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  if [[ "$recorded_pgid" =~ ^[0-9]+$ ]]; then
+    pid_matches_recorded_runtime_process_group "$pid"
+    return
+  fi
+  # Canonical installs retain a legacy scope-only recovery path. Alternate App Support roots
+  # are isolation boundaries and must never select same-checkout processes without a runtime PGID.
+  ! runtime_stop_requires_process_group
+}
+
 record_detached_launch_process_group() {
   local pgid=""
   pgid="$(current_process_group_id)"
   if [[ "$pgid" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$pgid" >"$DETACHED_LAUNCH_PGID_FILE"
+    chmod 600 "$DETACHED_LAUNCH_PGID_FILE" 2>/dev/null || true
+    record_detached_launch_process_group_members
   fi
 }
 
 clear_detached_launch_process_group() {
-  rm -f "$DETACHED_LAUNCH_PGID_FILE"
+  rm -f "$DETACHED_LAUNCH_PGID_FILE" "$DETACHED_LAUNCH_MEMBERS_FILE"
 }
 
 kill_recorded_detached_launch_process_group() {
@@ -2303,12 +2767,24 @@ kill_recorded_detached_launch_process_group() {
   if [[ -n "$current_pgid" && "$recorded_pgid" == "$current_pgid" ]]; then
     return 0
   fi
-  pids="$(ps -Ao pid=,pgid= 2>/dev/null | awk -v target="$recorded_pgid" '$2 == target { print $1 }' | xargs 2>/dev/null || true)"
+  pids="$(runtime_process_group_pids)"
+  if [[ -z "$pids" ]]; then
+    clear_detached_launch_process_group
+    RUNTIME_STOP_AUTHORIZED_PGID=""
+    return 0
+  fi
+  if [[ "${RUNTIME_STOP_AUTHORIZED_PGID:-}" != "$recorded_pgid" ]] &&
+    ! runtime_process_group_receipt_valid
+  then
+    log_error "Refusing to stop an unverified detached runtime process group: $recorded_pgid"
+    return 1
+  fi
   if [[ -n "$pids" ]]; then
     log_warn "Stopping detached launch process group $recorded_pgid"
     kill_pids "$pids"
   fi
   clear_detached_launch_process_group
+  RUNTIME_STOP_AUTHORIZED_PGID=""
 }
 
 is_truthy() {
@@ -2468,13 +2944,13 @@ kill_pids_scoped() {
   local scoped_pids=()
   local pid
   for pid in $pids; do
-    if pid_matches_scope "$pid" "$scope"; then
+    if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       scoped_pids+=("$pid")
-    elif pid_matches_trashed_scope_variant "$pid" "$scope"; then
+    elif pid_matches_trashed_scope_variant "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       log_warn "Stopping stale trashed PID $pid for scope: $scope"
       scoped_pids+=("$pid")
     else
-      log_warn "Skipping PID $pid (outside scope: $scope)"
+      log_warn "Skipping PID $pid (outside runtime identity or scope: $scope)"
     fi
   done
   if [[ "${#scoped_pids[@]}" -gt 0 ]]; then
@@ -2749,6 +3225,85 @@ find_running_telegram_bot_pids() {
   find_scope_pattern_pids "python.*bot.py" "$telegram_dir_scope"
 }
 
+# === VIVENTIUM START ===
+# Feature: Cross-checkout Telegram poller handoff.
+# The Python helper validates token-hash receipts against PID start identity,
+# cwd, command, and uid before any signal. JSON parsing keeps secrets out of
+# command arguments and shell logs.
+telegram_handoff_json_field() {
+  local payload="${1:-}"
+  local field="${2:-}"
+  "$PYTHON_BIN" -c '
+import json, sys
+value = json.loads(sys.stdin.read()).get(sys.argv[1], "")
+if isinstance(value, bool):
+    print("true" if value else "false")
+elif value is not None:
+    print(value)
+' "$field" <<<"$payload"
+}
+
+normalize_telegram_handoff_timeouts() {
+  local raw_attach="${1:-}"
+  local raw_ready="${2:-}"
+  local raw_guard="${3:-}"
+  "$PYTHON_BIN" - "$raw_attach" "$raw_ready" "$raw_guard" <<'PY'
+import sys
+
+
+def bounded(value: str, *, default: int, minimum: int, maximum: int) -> int:
+    text = (value or "").strip()
+    if not text.isdigit():
+        return default
+    parsed = int(text, 10)
+    if parsed < minimum or parsed > maximum:
+        return default
+    return parsed
+
+
+attach = bounded(sys.argv[1], default=8, minimum=1, maximum=120)
+ready = bounded(sys.argv[2], default=75, minimum=1, maximum=600)
+minimum_guard = attach + ready + 15
+guard = bounded(
+    sys.argv[3],
+    default=minimum_guard,
+    minimum=minimum_guard,
+    maximum=900,
+)
+print(attach, ready, guard)
+PY
+}
+
+telegram_poller_status_json() {
+  local legacy_launch_script="$LOG_ROOT/telegram_bot_launch.sh"
+  [[ -f "$TELEGRAM_POLLER_HANDOFF_HELPER" && ! -L "$TELEGRAM_POLLER_HANDOFF_HELPER" ]] || return 1
+  "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" status \
+    --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
+    --pid-file "$TELEGRAM_BOT_PID_FILE" \
+    --legacy-launch-script "$legacy_launch_script"
+}
+
+telegram_poller_is_ready() {
+  local status_json=""
+  [[ -f "$TELEGRAM_POLLER_HANDOFF_HELPER" && ! -L "$TELEGRAM_POLLER_HANDOFF_HELPER" ]] || return 1
+  status_json="$("$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" health \
+    --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
+    --pid-file "$TELEGRAM_BOT_PID_FILE" 2>/dev/null)" || return 1
+  [[ "$(telegram_handoff_json_field "$status_json" running)" == "true" ]] || return 1
+  [[ "$(telegram_handoff_json_field "$status_json" ready)" == "true" ]]
+}
+
+stop_owned_telegram_poller() {
+  if [[ ! -f "$TELEGRAM_POLLER_HANDOFF_HELPER" || -L "$TELEGRAM_POLLER_HANDOFF_HELPER" ]]; then
+    log_warn "Telegram handoff helper unavailable; refusing to signal an unverified pid"
+    return 1
+  fi
+  "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" stop-owned \
+    --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
+    --pid-file "$TELEGRAM_BOT_PID_FILE" >/dev/null
+}
+# === VIVENTIUM END ===
+
 telegram_deferred_pid_is_running() {
   local pid
   pid="$(read_pid_file "$TELEGRAM_BOT_DEFERRED_PID_FILE")"
@@ -2809,7 +3364,9 @@ find_scope_runtime_pids() {
     cmd="${cmd#"${cmd%%[![:space:]]*}"}"
     case "$cmd" in
       "$scope"|"$scope"/*|*" $scope"|*" $scope"/*)
-        collected+=("$pid")
+        if pid_matches_runtime_stop_identity "$pid"; then
+          collected+=("$pid")
+        fi
         ;;
     esac
   done < <(ps -Ao pid=,command= 2>/dev/null || true)
@@ -2830,7 +3387,9 @@ find_scope_pattern_pids() {
   local pid
   while read -r pid; do
     [[ -z "$pid" ]] && continue
-    if pid_matches_scope "$pid" "$scope" || pid_matches_trashed_scope_variant "$pid" "$scope"; then
+    if pid_matches_runtime_stop_identity "$pid" &&
+      { pid_matches_scope "$pid" "$scope" || pid_matches_trashed_scope_variant "$pid" "$scope"; }
+    then
       collected+=("$pid")
     fi
   done < <(pgrep -f "$pattern" 2>/dev/null || true)
@@ -2953,13 +3512,13 @@ kill_port_listeners() {
   local scoped_port_pids=()
   local pid=""
   for pid in $pids; do
-    if pid_matches_scope "$pid" "$scope"; then
+    if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       scoped_port_pids+=("$pid")
-    elif pid_matches_trashed_scope_variant "$pid" "$scope"; then
+    elif pid_matches_trashed_scope_variant "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       log_warn "Stopping stale trashed PID $pid for scope: $scope"
       scoped_port_pids+=("$pid")
     else
-      log_warn "Skipping PID $pid (outside scope: $scope)"
+      log_warn "Skipping PID $pid (outside runtime identity or scope: $scope)"
     fi
   done
 
@@ -2987,11 +3546,11 @@ stop_pid_file_scoped() {
   pid=$(cat "$pid_file" 2>/dev/null || true)
   if [[ "$pid" =~ ^[0-9]+$ ]]; then
     if ps -p "$pid" >/dev/null 2>&1; then
-      if pid_matches_scope "$pid" "$scope"; then
+      if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
         log_warn "Stopping process from $pid_file"
         kill_pids "$pid"
       else
-        log_warn "Skipping PID $pid (outside scope: $scope)"
+        log_warn "Skipping PID $pid (outside runtime identity or scope: $scope)"
       fi
     fi
   fi
@@ -3542,10 +4101,23 @@ upsert_env_kv() {
   local tmp_file
   local line=""
   local updated=0
+  local matches=0
+  local exact_matches=0
   mkdir -p "$(dirname "$file")"
   if [[ ! -f "$file" ]]; then
     : >"$file"
     chmod 600 "$file" >/dev/null 2>&1 || true
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$key="* ]]; then
+      matches=$((matches + 1))
+      if [[ "$line" == "$key=$value" ]]; then
+        exact_matches=$((exact_matches + 1))
+      fi
+    fi
+  done <"$file"
+  if [[ "$matches" -eq 1 && "$exact_matches" -eq 1 ]]; then
+    return 0
   fi
   tmp_file="$(mktemp)"
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -3567,10 +4139,20 @@ remove_env_kv() {
   local key="$2"
   local tmp_file
   local line=""
+  local found=0
   mkdir -p "$(dirname "$file")"
   if [[ ! -f "$file" ]]; then
     : >"$file"
     chmod 600 "$file" >/dev/null 2>&1 || true
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$key="* ]]; then
+      found=1
+      break
+    fi
+  done <"$file"
+  if [[ "$found" -eq 0 ]]; then
+    return 0
   fi
   tmp_file="$(mktemp)"
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -3670,6 +4252,70 @@ read_env_kv() {
   return 1
 }
 
+env_file_has_assignment() {
+  local file="$1"
+  local key="$2"
+  local line=""
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$key="* ]]; then
+      return 0
+    fi
+  done <"$file"
+  return 1
+}
+
+resolve_persisted_owner_credential() {
+  local key="$1"
+  local value=""
+  if env_file_has_assignment "$LIBRECHAT_RUNTIME_ENV_FILE" "$key"; then
+    value="$(read_env_kv "$LIBRECHAT_RUNTIME_ENV_FILE" "$key" || true)"
+    printf '%s' "$value"
+    return 0
+  fi
+  if [[ -n "${!key:-}" ]]; then
+    printf '%s' "${!key}"
+    return 0
+  fi
+  if env_file_has_assignment "$LIBRECHAT_CANONICAL_ENV_FILE" "$key"; then
+    value="$(read_env_kv "$LIBRECHAT_CANONICAL_ENV_FILE" "$key" || true)"
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+# Quiesced upgrade validation must prove the candidate process without changing
+# the owner-controlled ignored .env before the outer transaction commits. The
+# existing auth/encryption state wins; a missing/default value gets an
+# in-process-only replacement so a first upgrade from an absent file can still
+# validate safely.
+prepare_librechat_env_for_quiesced_validation() {
+  local env_file="$LIBRECHAT_RUNTIME_ENV_FILE"
+  local key=""
+  local value=""
+  local bytes=32
+  if [[ -L "$env_file" ]] || [[ -e "$env_file" && ! -f "$env_file" ]]; then
+    log_error "LibreChat .env is not a safe regular file"
+    return 1
+  fi
+  for key in JWT_SECRET JWT_REFRESH_SECRET CREDS_KEY CREDS_IV; do
+    value="$(read_env_kv "$env_file" "$key" || true)"
+    if [[ -z "$value" ]] || is_librechat_default_secret "$key" "$value"; then
+      value="${!key:-}"
+    fi
+    if [[ -z "$value" ]] || is_librechat_default_secret "$key" "$value"; then
+      bytes=32
+      [[ "$key" == "CREDS_IV" ]] && bytes=16
+      value="$(generate_hex_secret "$bytes")"
+    fi
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done
+}
+
 # === VIVENTIUM START ===
 # Feature: Prefer LibreChat-local Google OAuth credentials for isolated runtime.
 # Purpose: Keep isolated local Google Workspace MCP aligned with the same
@@ -3677,15 +4323,16 @@ read_env_kv() {
 # instead of stale repo-root fallback Google client IDs/secrets.
 # === VIVENTIUM END ===
 load_google_oauth_from_librechat_env() {
-  local env_file="$LIBRECHAT_CANONICAL_ENV_FILE"
-  if [[ ! -f "$env_file" ]]; then
-    return 1
-  fi
-
   local client_id
   local client_secret
-  client_id=$(read_env_kv "$env_file" "GOOGLE_OAUTH_CLIENT_ID" || true)
-  client_secret=$(read_env_kv "$env_file" "GOOGLE_OAUTH_CLIENT_SECRET" || true)
+  client_id="$(
+    resolve_persisted_owner_credential "GOOGLE_OAUTH_CLIENT_ID" || true
+  )"
+  client_secret="$(
+    resolve_persisted_owner_credential "GOOGLE_OAUTH_CLIENT_SECRET" || true
+  )"
+  export GOOGLE_OAUTH_CLIENT_ID="$client_id"
+  export GOOGLE_OAUTH_CLIENT_SECRET="$client_secret"
   if [[ -z "$client_id" || -z "$client_secret" ]]; then
     return 1
   fi
@@ -3694,8 +4341,6 @@ load_google_oauth_from_librechat_env() {
     log_warn "Google OAuth client ID drift detected; using LibreChat source-of-truth credentials for isolated runtime"
   fi
 
-  export GOOGLE_OAUTH_CLIENT_ID="$client_id"
-  export GOOGLE_OAUTH_CLIENT_SECRET="$client_secret"
   return 0
 }
 
@@ -3828,6 +4473,12 @@ EOF
     log_warn "LibreChat env missing; created $env_file with local defaults"
   fi
 
+  local persisted_meili_master_key=""
+  persisted_meili_master_key="$(read_env_kv "$env_file" "MEILI_MASTER_KEY" || true)"
+  if [[ -n "$persisted_meili_master_key" ]]; then
+    meili_master_key="$persisted_meili_master_key"
+  fi
+
   local mongo_uri="${MONGO_URI:-}"
   if [[ -z "$mongo_uri" ]]; then
     mongo_uri="$(read_env_kv "$env_file" "MONGO_URI" || true)"
@@ -3873,36 +4524,52 @@ EOF
     fi
   fi
 
-  local jwt_secret="${JWT_SECRET:-}"
-  if [[ -z "$jwt_secret" ]]; then
-    jwt_secret="$(read_env_kv "$env_file" "JWT_SECRET" || true)"
+  local jwt_secret=""
+  local persist_jwt_secret=false
+  jwt_secret="$(read_env_kv "$env_file" "JWT_SECRET" || true)"
+  if [[ -z "$jwt_secret" ]] || is_librechat_default_secret "JWT_SECRET" "$jwt_secret"; then
+    jwt_secret="${JWT_SECRET:-}"
+    persist_jwt_secret=true
   fi
   if [[ -z "$jwt_secret" ]] || is_librechat_default_secret "JWT_SECRET" "$jwt_secret"; then
     jwt_secret="$(generate_hex_secret 32)"
+    persist_jwt_secret=true
   fi
 
-  local jwt_refresh_secret="${JWT_REFRESH_SECRET:-}"
-  if [[ -z "$jwt_refresh_secret" ]]; then
-    jwt_refresh_secret="$(read_env_kv "$env_file" "JWT_REFRESH_SECRET" || true)"
+  local jwt_refresh_secret=""
+  local persist_jwt_refresh_secret=false
+  jwt_refresh_secret="$(read_env_kv "$env_file" "JWT_REFRESH_SECRET" || true)"
+  if [[ -z "$jwt_refresh_secret" ]] || is_librechat_default_secret "JWT_REFRESH_SECRET" "$jwt_refresh_secret"; then
+    jwt_refresh_secret="${JWT_REFRESH_SECRET:-}"
+    persist_jwt_refresh_secret=true
   fi
   if [[ -z "$jwt_refresh_secret" ]] || is_librechat_default_secret "JWT_REFRESH_SECRET" "$jwt_refresh_secret"; then
     jwt_refresh_secret="$(generate_hex_secret 32)"
+    persist_jwt_refresh_secret=true
   fi
 
-  local creds_key="${CREDS_KEY:-}"
-  if [[ -z "$creds_key" ]]; then
-    creds_key="$(read_env_kv "$env_file" "CREDS_KEY" || true)"
+  local creds_key=""
+  local persist_creds_key=false
+  creds_key="$(read_env_kv "$env_file" "CREDS_KEY" || true)"
+  if [[ -z "$creds_key" ]] || is_librechat_default_secret "CREDS_KEY" "$creds_key"; then
+    creds_key="${CREDS_KEY:-}"
+    persist_creds_key=true
   fi
   if [[ -z "$creds_key" ]] || is_librechat_default_secret "CREDS_KEY" "$creds_key"; then
     creds_key="$(generate_hex_secret 32)"
+    persist_creds_key=true
   fi
 
-  local creds_iv="${CREDS_IV:-}"
-  if [[ -z "$creds_iv" ]]; then
-    creds_iv="$(read_env_kv "$env_file" "CREDS_IV" || true)"
+  local creds_iv=""
+  local persist_creds_iv=false
+  creds_iv="$(read_env_kv "$env_file" "CREDS_IV" || true)"
+  if [[ -z "$creds_iv" ]] || is_librechat_default_secret "CREDS_IV" "$creds_iv"; then
+    creds_iv="${CREDS_IV:-}"
+    persist_creds_iv=true
   fi
   if [[ -z "$creds_iv" ]] || is_librechat_default_secret "CREDS_IV" "$creds_iv"; then
     creds_iv="$(generate_hex_secret 16)"
+    persist_creds_iv=true
   fi
 
   upsert_env_kv "$env_file" "MONGO_URI" "$mongo_uri"
@@ -3933,10 +4600,18 @@ EOF
   upsert_env_kv "$env_file" "VIVENTIUM_REGISTRATION_APPROVAL" "$registration_approval"
   upsert_env_kv "$env_file" "SKYVERN_BASE_URL" "$SKYVERN_BASE_URL"
   upsert_env_kv "$env_file" "SKYVERN_APP_URL" "$SKYVERN_APP_URL"
-  upsert_env_kv "$env_file" "JWT_SECRET" "$jwt_secret"
-  upsert_env_kv "$env_file" "JWT_REFRESH_SECRET" "$jwt_refresh_secret"
-  upsert_env_kv "$env_file" "CREDS_KEY" "$creds_key"
-  upsert_env_kv "$env_file" "CREDS_IV" "$creds_iv"
+  if [[ "$persist_jwt_secret" == "true" ]]; then
+    upsert_env_kv "$env_file" "JWT_SECRET" "$jwt_secret"
+  fi
+  if [[ "$persist_jwt_refresh_secret" == "true" ]]; then
+    upsert_env_kv "$env_file" "JWT_REFRESH_SECRET" "$jwt_refresh_secret"
+  fi
+  if [[ "$persist_creds_key" == "true" ]]; then
+    upsert_env_kv "$env_file" "CREDS_KEY" "$creds_key"
+  fi
+  if [[ "$persist_creds_iv" == "true" ]]; then
+    upsert_env_kv "$env_file" "CREDS_IV" "$creds_iv"
+  fi
   # === VIVENTIUM START ===
   upsert_env_kv "$env_file" "OPENAI_MODELS" "$curated_openai_models"
   upsert_env_kv "$env_file" "ASSISTANTS_MODELS" "$curated_assistants_models"
@@ -3960,7 +4635,6 @@ EOF
   remove_env_kv "$env_file" "START_BALANCE"
   unset CHECK_BALANCE START_BALANCE
   if [[ "${VIVENTIUM_GOOGLE_PROVIDER_ENABLED:-false}" != "true" ]]; then
-    remove_env_kv "$env_file" "GOOGLE_API_KEY"
     unset GOOGLE_API_KEY
   fi
   # === VIVENTIUM END ===
@@ -4014,9 +4688,9 @@ EOF
   local canonical_env_source=""
   canonical_env_source="$(
     first_existing_path \
+      "$LIBRECHAT_CANONICAL_ENV_FILE" \
       "$VIVENTIUM_PRIVATE_CURATED_DIR/configs/librechat/librechat.env" \
-      "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/LibreChat/.env" \
-      "$LIBRECHAT_CANONICAL_ENV_FILE" || true
+      "$VIVENTIUM_PRIVATE_MIRROR_DIR/viventium_v0_4/LibreChat/.env" || true
   )"
   if [[ -n "$canonical_env_source" && "$canonical_env_source" != "$env_file" ]]; then
     local passthrough_keys=(
@@ -4045,8 +4719,16 @@ EOF
     )
     local passthrough_key=""
     local passthrough_value=""
+    local persisted_passthrough_value=""
     local imported_count=0
     for passthrough_key in "${passthrough_keys[@]}"; do
+      persisted_passthrough_value="$(
+        read_env_kv "$env_file" "$passthrough_key" || true
+      )"
+      if env_file_has_assignment "$env_file" "$passthrough_key"; then
+        export "$passthrough_key"="$persisted_passthrough_value"
+        continue
+      fi
       if [[ -n "${!passthrough_key:-}" ]]; then
         continue
       fi
@@ -4064,11 +4746,24 @@ EOF
   fi
 
   local librechat_code_baseurl="${LIBRECHAT_CODE_BASEURL:-http://localhost:${CODE_INTERPRETER_PORT}}"
-  local librechat_code_api_key="${LIBRECHAT_CODE_API_KEY:-${CODE_API_KEY:-viventium-local-code-api-key}}"
+  local librechat_code_api_key=""
+  librechat_code_api_key="$(read_env_kv "$env_file" "LIBRECHAT_CODE_API_KEY" || true)"
+  if [[ -z "$librechat_code_api_key" ]]; then
+    librechat_code_api_key="${LIBRECHAT_CODE_API_KEY:-${CODE_API_KEY:-viventium-local-code-api-key}}"
+  fi
+  local code_api_key=""
+  code_api_key="$(read_env_kv "$env_file" "CODE_API_KEY" || true)"
+  if [[ -z "$code_api_key" ]]; then
+    code_api_key="${CODE_API_KEY:-$librechat_code_api_key}"
+  fi
   local searxng_instance_url="${SEARXNG_INSTANCE_URL:-http://localhost:${SEARXNG_PORT}}"
   local searxng_base_url="${SEARXNG_BASE_URL:-${searxng_instance_url%/}/}"
   local firecrawl_base_url="${FIRECRAWL_BASE_URL:-http://localhost:${FIRECRAWL_PORT}}"
-  local firecrawl_api_key="${FIRECRAWL_API_KEY:-viventium-local-firecrawl-api-key}"
+  local firecrawl_api_key="" # gitleaks:allow — variable declaration, never a credential
+  firecrawl_api_key="$(read_env_kv "$env_file" "FIRECRAWL_API_KEY" || true)"
+  if [[ -z "$firecrawl_api_key" ]]; then
+    firecrawl_api_key="${FIRECRAWL_API_KEY:-viventium-local-firecrawl-api-key}"
+  fi
   local firecrawl_api_url="${FIRECRAWL_API_URL:-${firecrawl_base_url%/}}"
   local firecrawl_version="${FIRECRAWL_VERSION:-v2}"
   local glasshive_mcp_url="${GLASSHIVE_MCP_URL:-http://127.0.0.1:8767/mcp}"
@@ -4076,7 +4771,7 @@ EOF
 
   upsert_env_kv "$env_file" "LIBRECHAT_CODE_BASEURL" "$librechat_code_baseurl"
   upsert_env_kv "$env_file" "LIBRECHAT_CODE_API_KEY" "$librechat_code_api_key"
-  upsert_env_kv "$env_file" "CODE_API_KEY" "$librechat_code_api_key"
+  upsert_env_kv "$env_file" "CODE_API_KEY" "$code_api_key"
   upsert_env_kv "$env_file" "SEARXNG_INSTANCE_URL" "$searxng_instance_url"
   upsert_env_kv "$env_file" "SEARXNG_BASE_URL" "$searxng_base_url"
   upsert_env_kv "$env_file" "FIRECRAWL_BASE_URL" "$firecrawl_base_url"
@@ -4088,7 +4783,7 @@ EOF
 
   export LIBRECHAT_CODE_BASEURL="$librechat_code_baseurl"
   export LIBRECHAT_CODE_API_KEY="$librechat_code_api_key"
-  export CODE_API_KEY="$librechat_code_api_key"
+  export CODE_API_KEY="$code_api_key"
   export SEARXNG_INSTANCE_URL="$searxng_instance_url"
   export SEARXNG_BASE_URL="$searxng_base_url"
   export FIRECRAWL_BASE_URL="$firecrawl_base_url"
@@ -4388,11 +5083,19 @@ PY
   )
 }
 
+run_librechat_npm() {
+  if command -v corepack >/dev/null 2>&1; then
+    corepack npm "$@"
+    return
+  fi
+  npm "$@"
+}
+
 run_librechat_dependency_install() {
   if [[ -f "package-lock.json" ]]; then
-    npm ci
+    run_librechat_npm ci
   else
-    npm install
+    run_librechat_npm install
   fi
 }
 
@@ -4711,6 +5414,10 @@ PY
 }
 
 start_local_mongodb_container() {
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    log_info "Alternate App Support runtime detected; using runtime-local native MongoDB instead of a shared Docker container"
+    return 1
+  fi
   if [[ "$MONGO_IS_LOCAL" == "true" ]] && command -v mongod >/dev/null 2>&1; then
     if [[ -n "${VIVENTIUM_LOCAL_MONGO_DATA_PATH:-}" || "${VIVENTIUM_RUNTIME_PROFILE:-}" == "isolated" ]]; then
       log_info "Native mongod available for the local ${VIVENTIUM_RUNTIME_PROFILE:-isolated} runtime; skipping Docker Mongo bootstrap"
@@ -4796,7 +5503,7 @@ start_local_mongodb_native() {
     bind_args=("--bind_ip_all")
   fi
 
-  log_warn "Docker Mongo startup failed; trying native mongod fallback on ${MONGO_HOST}:${MONGO_PORT}"
+  log_warn "Docker Mongo runtime unavailable; starting native mongod on ${MONGO_HOST}:${MONGO_PORT}"
   : > "$MONGO_NATIVE_LOG_FILE"
   nohup mongod \
     --dbpath "${VIVENTIUM_LOCAL_MONGO_DATA_PATH:-$VIVENTIUM_STATE_ROOT/mongo-data}" \
@@ -4820,6 +5527,10 @@ ensure_mongodb_ready() {
   resolve_mongo_connection
 
   if mongo_ping "$MONGO_URI"; then
+    if ! record_mongo_engine_identity; then
+      log_error "MongoDB is reachable, but its exact runtime engine could not be recorded"
+      return 1
+    fi
     log_success "MongoDB ready at ${MONGO_HOST}:${MONGO_PORT}"
     return 0
   fi
@@ -4844,6 +5555,10 @@ ensure_mongodb_ready() {
   local retries=45
   for _ in $(seq 1 "$retries"); do
     if mongo_ping "$MONGO_URI"; then
+      if ! record_mongo_engine_identity; then
+        log_error "MongoDB started, but its exact runtime engine could not be recorded"
+        return 1
+      fi
       log_success "MongoDB ready at ${MONGO_HOST}:${MONGO_PORT}"
       return 0
     fi
@@ -5046,36 +5761,324 @@ meili_http_functional_ready() {
   meili_recent_failed_task_health "$host_url"
 }
 
+native_meilisearch_pid_matches_receipt() {
+  local data_root="${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-$VIVENTIUM_STATE_ROOT/meili-data}"
+  local http_address="${MEILI_BIND_HOST}:${MEILI_PORT}"
+  "$PYTHON_BIN" - "$MEILI_NATIVE_PID_FILE" "$data_root" "$http_address" <<'PY'
+import os
+from pathlib import Path
+import shlex
+import stat
+import subprocess
+import sys
+
+receipt = Path(sys.argv[1])
+expected_db = os.path.abspath(os.path.expanduser(sys.argv[2]))
+expected_http = sys.argv[3]
+try:
+    descriptor = os.open(
+        receipt,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+except OSError:
+    raise SystemExit(2)
+try:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise SystemExit(2)
+    raw_pid = os.read(descriptor, 64).decode("ascii").strip()
+finally:
+    os.close(descriptor)
+try:
+    pid = int(raw_pid)
+except ValueError:
+    raise SystemExit(2)
+if pid <= 1:
+    raise SystemExit(2)
+try:
+    completed = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "uid=", "-o", "command="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+except OSError:
+    raise SystemExit(2)
+if completed.returncode != 0 or not completed.stdout.strip():
+    raise SystemExit(1)
+row = completed.stdout.strip().split(None, 1)
+if len(row) != 2:
+    raise SystemExit(2)
+try:
+    uid = int(row[0])
+    arguments = shlex.split(row[1])
+except (ValueError, TypeError):
+    raise SystemExit(2)
+if uid != os.getuid() or not arguments:
+    raise SystemExit(2)
+if os.path.basename(arguments[0]) != "meilisearch":
+    raise SystemExit(2)
+
+def option_value(name: str) -> str:
+    for index, value in enumerate(arguments):
+        if value == name and index + 1 < len(arguments):
+            return arguments[index + 1]
+        prefix = name + "="
+        if value.startswith(prefix):
+            return value[len(prefix):]
+    return ""
+
+actual_db = option_value("--db-path")
+actual_http = option_value("--http-addr")
+if (
+    not actual_db
+    or os.path.abspath(os.path.expanduser(actual_db)) != expected_db
+    or actual_http != expected_http
+):
+    raise SystemExit(2)
+print(pid)
+PY
+}
+
 restart_viventium_owned_meilisearch_listener() {
   local restarted=false
   local existing=""
   local native_pid=""
+  local stack_label=""
+  local service_label=""
+  local native_status=0
+  local native_receipt_present=false
 
-  if command -v docker >/dev/null 2>&1; then
+  # Preflight every discovered target before stopping either one. A mixed
+  # owned/unowned pair must not produce a partial recycle.
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
+    command -v docker >/dev/null 2>&1
+  then
     existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
     if [[ -n "$existing" ]]; then
-      log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the local container"
-      docker rm -f "$existing" >/dev/null 2>&1 || true
-      restarted=true
+      stack_label="$(docker inspect -f '{{ index .Config.Labels "viventium.stack" }}' "$existing" 2>/dev/null || true)"
+      service_label="$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$existing" 2>/dev/null || true)"
+      if [[ "$stack_label" != "viventium_v0_4" || "$service_label" != "meilisearch" ]]; then
+        log_error "A foreign container uses the configured Meilisearch name; refusing to remove it"
+        return 2
+      fi
     fi
   fi
 
-  if [[ -f "$MEILI_NATIVE_PID_FILE" ]]; then
-    native_pid="$(tr -d '[:space:]' <"$MEILI_NATIVE_PID_FILE" 2>/dev/null || true)"
-    if [[ "$native_pid" =~ ^[0-9]+$ ]] && kill -0 "$native_pid" >/dev/null 2>&1; then
-      log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the native process"
-      kill "$native_pid" >/dev/null 2>&1 || true
-      sleep 1
-      kill -9 "$native_pid" >/dev/null 2>&1 || true
-      restarted=true
+  if [[ -e "$MEILI_NATIVE_PID_FILE" || -L "$MEILI_NATIVE_PID_FILE" ]]; then
+    native_receipt_present=true
+    native_status=0
+    native_pid="$(native_meilisearch_pid_matches_receipt)" || native_status=$?
+    if [[ "$native_status" == "2" ]]; then
+      log_error "Native Meilisearch PID receipt does not match the live process; refusing to signal it"
+      return 2
     fi
-    rm -f "$MEILI_NATIVE_PID_FILE"
+  fi
+
+  if [[ -n "$native_pid" ]]; then
+    log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the native process"
+    kill "$native_pid" >/dev/null 2>&1 || return 3
+    sleep 1
+    if kill -0 "$native_pid" >/dev/null 2>&1; then
+      local confirmed_pid=""
+      native_status=0
+      confirmed_pid="$(native_meilisearch_pid_matches_receipt)" || native_status=$?
+      if [[ "$native_status" != "0" || "$confirmed_pid" != "$native_pid" ]]; then
+        log_error "Native Meilisearch PID identity changed during shutdown; refusing SIGKILL"
+        return 2
+      fi
+      kill -9 "$native_pid" >/dev/null 2>&1 || return 3
+    fi
+    restarted=true
+  fi
+  if [[ "$native_receipt_present" == "true" ]]; then
+    rm -f "$MEILI_NATIVE_PID_FILE" || return 3
+  fi
+
+  if [[ -n "$existing" ]]; then
+    log_warn "Configured Meilisearch key does not match the Viventium-owned local listener; recycling the local container"
+    docker rm -f "$existing" >/dev/null 2>&1 || return 3
+    restarted=true
   fi
 
   [[ "$restarted" == "true" ]]
 }
 
+meili_log_indicates_incompatible_data() {
+  {
+    if command -v docker >/dev/null 2>&1; then
+      docker logs --tail 80 "$MEILI_CONTAINER_NAME" 2>/dev/null || true
+    fi
+    if [[ -f "$MEILI_NATIVE_LOG_FILE" && ! -L "$MEILI_NATIVE_LOG_FILE" ]]; then
+      tail -80 "$MEILI_NATIVE_LOG_FILE" 2>/dev/null || true
+    fi
+  } | grep -Eq \
+    'failed to infer the version of the database|database version .* is incompatible with your current engine version|incompatible with your current engine version'
+}
+
+archive_incompatible_local_meili_data() {
+  local data_root="${VIVENTIUM_LOCAL_MEILI_DATA_PATH:-$VIVENTIUM_STATE_ROOT/meili-data}"
+  "$PYTHON_BIN" - "$VIVENTIUM_STATE_ROOT" "$data_root" <<'PY'
+import datetime
+import os
+from pathlib import Path
+import stat
+import sys
+
+state_root = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
+data_root = Path(os.path.abspath(os.path.expanduser(sys.argv[2])))
+expected = state_root / "meili-data"
+if data_root != expected:
+    raise SystemExit(
+        "[viventium] Refusing to archive a custom Meilisearch data path automatically"
+    )
+
+current = Path(state_root.anchor)
+for part in state_root.parts[1:]:
+    current = current / part
+    metadata = os.lstat(current)
+    if stat.S_ISLNK(metadata.st_mode):
+        raise SystemExit(
+            "[viventium] Refusing to archive through a symlinked state path"
+        )
+state_metadata = state_root.lstat()
+if (
+    not stat.S_ISDIR(state_metadata.st_mode)
+    or state_metadata.st_uid != os.getuid()
+    or stat.S_IMODE(state_metadata.st_mode) & 0o022
+):
+    raise SystemExit(
+        "[viventium] Refusing to archive through a non-private state path"
+    )
+
+if os.path.lexists(data_root):
+    metadata = os.lstat(data_root)
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
+        raise SystemExit(
+            "[viventium] Refusing to archive an unsafe Meilisearch data path"
+        )
+else:
+    data_root.mkdir(mode=0o700)
+    raise SystemExit(0)
+
+archive_root = state_root / "backups"
+state_descriptor = os.open(
+    state_root,
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0),
+)
+try:
+    try:
+        os.mkdir("backups", mode=0o700, dir_fd=state_descriptor)
+    except FileExistsError:
+        pass
+    archive_descriptor = os.open(
+        "backups",
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=state_descriptor,
+    )
+except Exception:
+    os.close(state_descriptor)
+    raise
+archive_metadata = os.fstat(archive_descriptor)
+if (
+    not stat.S_ISDIR(archive_metadata.st_mode)
+    or archive_metadata.st_uid != os.getuid()
+    or stat.S_IMODE(archive_metadata.st_mode) & 0o022
+):
+    os.close(archive_descriptor)
+    os.close(state_descriptor)
+    raise SystemExit(
+        "[viventium] Refusing to archive through a non-private backup path"
+    )
+if stat.S_IMODE(archive_metadata.st_mode) != 0o700:
+    os.fchmod(archive_descriptor, 0o700)
+    os.fsync(archive_descriptor)
+stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+archive_name = f"meili-data-incompatible-{stamp}"
+suffix = 0
+while True:
+    try:
+        os.stat(
+            archive_name,
+            dir_fd=archive_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        break
+    suffix += 1
+    archive_name = f"meili-data-incompatible-{stamp}-{suffix}"
+try:
+    os.replace(
+        "meili-data",
+        archive_name,
+        src_dir_fd=state_descriptor,
+        dst_dir_fd=archive_descriptor,
+    )
+    os.mkdir("meili-data", mode=0o700, dir_fd=state_descriptor)
+    os.fsync(archive_descriptor)
+    os.fsync(state_descriptor)
+finally:
+    os.close(archive_descriptor)
+    os.close(state_descriptor)
+archive = archive_root / archive_name
+print(archive)
+PY
+}
+
+recover_incompatible_local_meili_data() {
+  if ! meili_log_indicates_incompatible_data; then
+    return 1
+  fi
+  log_warn "Detected incompatible derived Meilisearch data; archiving it privately and rebuilding search from Mongo"
+  local recycle_status=0
+  restart_viventium_owned_meilisearch_listener >/dev/null 2>&1 || recycle_status=$?
+  if (( recycle_status > 1 )); then
+    log_error "Derived-search recovery could not prove and stop every local listener; index data remains unchanged"
+    return 1
+  fi
+  if meili_http_ping "$MEILI_HOST"; then
+    log_error "A Meilisearch listener remains active; refusing derived-state recovery"
+    return 1
+  fi
+  local archive_path=""
+  if ! archive_path="$(archive_incompatible_local_meili_data)"; then
+    return 1
+  fi
+  log_info "Archived incompatible derived search state under the local runtime backup directory"
+  if ! start_local_meilisearch_container; then
+    if ! start_local_meilisearch_native; then
+      return 1
+    fi
+  fi
+  local retries=45
+  for _ in $(seq 1 "$retries"); do
+    if meili_http_functional_ready "$MEILI_HOST"; then
+      log_success "Meilisearch rebuilt and ready at ${MEILI_BIND_HOST}:${MEILI_PORT}"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 start_local_meilisearch_container() {
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    log_info "Alternate App Support runtime detected; using runtime-local native Meilisearch instead of a shared Docker container"
+    return 1
+  fi
   if ! command -v docker >/dev/null 2>&1; then
     log_error "Docker not found (required for local Meilisearch auto-start)"
     return 1
@@ -5087,6 +6090,14 @@ start_local_meilisearch_container() {
   local existing
   existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
   if [[ -n "$existing" ]]; then
+    local stack_label
+    local service_label
+    stack_label="$(docker inspect -f '{{ index .Config.Labels "viventium.stack" }}' "$existing" 2>/dev/null || true)"
+    service_label="$(docker inspect -f '{{ index .Config.Labels "viventium.service" }}' "$existing" 2>/dev/null || true)"
+    if [[ "$stack_label" != "viventium_v0_4" || "$service_label" != "meilisearch" ]]; then
+      log_error "A foreign container uses the configured Meilisearch name; refusing to start or replace it"
+      return 1
+    fi
     local running
     running=$(docker inspect -f '{{.State.Running}}' "$existing" 2>/dev/null || true)
     if [[ "$running" == "true" ]]; then
@@ -5099,13 +6110,6 @@ start_local_meilisearch_container() {
       return 1
     fi
     return 0
-  fi
-
-  if ! docker image inspect "$MEILI_IMAGE" >/dev/null 2>&1; then
-    if command -v meilisearch >/dev/null 2>&1; then
-      log_warn "Meilisearch image $MEILI_IMAGE is not cached locally; preferring native meilisearch fallback for this run"
-      return 1
-    fi
   fi
 
   local publish_arg="127.0.0.1:${MEILI_PORT}:7700"
@@ -5174,7 +6178,7 @@ start_local_meilisearch_native() {
     meili_args+=(--no-analytics)
   fi
 
-  log_warn "Docker Meilisearch startup failed; trying native meilisearch fallback on ${MEILI_BIND_HOST}:${MEILI_PORT}"
+  log_warn "Docker Meilisearch runtime unavailable; starting native meilisearch on ${MEILI_BIND_HOST}:${MEILI_PORT}"
   : > "$MEILI_NATIVE_LOG_FILE"
   MEILI_MAX_INDEXING_MEMORY="$MEILI_MAX_INDEXING_MEMORY" \
     MEILI_MAX_INDEXING_THREADS="$MEILI_MAX_INDEXING_THREADS" \
@@ -5245,6 +6249,9 @@ ensure_meilisearch_ready() {
     sleep 1
   done
 
+  if recover_incompatible_local_meili_data; then
+    return 0
+  fi
   log_error "Meilisearch did not become ready in time at ${MEILI_BIND_HOST}:${MEILI_PORT}"
   if command -v docker >/dev/null 2>&1; then
     docker logs --tail 40 "$MEILI_CONTAINER_NAME" 2>/dev/null || true
@@ -5406,6 +6413,9 @@ PY
 }
 
 prepare_remote_call_access() {
+  if validation_runtime_is_quiesced; then
+    return 0
+  fi
   if ! remote_call_mode_enabled; then
     return 0
   fi
@@ -5576,6 +6586,9 @@ prepare_remote_call_access() {
 }
 
 prewarm_remote_call_access() {
+  if validation_runtime_is_quiesced; then
+    return 0
+  fi
   if [[ "${VIVENTIUM_REMOTE_CALL_PREWARM:-true}" != "true" ]]; then
     return 0
   fi
@@ -5643,6 +6656,9 @@ remote_call_mapping_refresh_pid_is_running() {
 }
 
 start_remote_call_mapping_refresh_worker() {
+  if validation_runtime_is_quiesced; then
+    return 0
+  fi
   if ! remote_call_public_edge_mode; then
     return 0
   fi
@@ -5786,11 +6802,159 @@ stop_prompt_workbench_if_managed() {
   PROMPT_WORKBENCH_STARTED_BY_SCRIPT=false
 }
 
+stop_scheduling_mcp_for_runtime() {
+  SCHEDULING_MCP_STOP_FAILED=false
+  local scheduler_pid=""
+  local scheduler_pid_scope=""
+  local scheduler_pid_stop_scope=""
+  local scheduling_source_dir="${SCHEDULING_MCP_SOURCE_DIR:-$SCHEDULING_MCP_DIR}"
+  if [[ -f "$SCHEDULING_MCP_PID_FILE" ]]; then
+    scheduler_pid="$(tr -d '[:space:]' <"$SCHEDULING_MCP_PID_FILE" 2>/dev/null || true)"
+    if [[ "$scheduler_pid" =~ ^[0-9]+$ ]] &&
+      ps -p "$scheduler_pid" >/dev/null 2>&1
+    then
+      if pid_matches_scope "$scheduler_pid" "$SCHEDULING_MCP_DIR"; then
+        scheduler_pid_scope="selected"
+        scheduler_pid_stop_scope="$SCHEDULING_MCP_DIR"
+      elif [[ "$scheduling_source_dir" != "$SCHEDULING_MCP_DIR" ]] &&
+        pid_matches_scope "$scheduler_pid" "$scheduling_source_dir"
+      then
+        scheduler_pid_scope="source"
+        scheduler_pid_stop_scope="$scheduling_source_dir"
+      elif [[ "$SCHEDULING_MCP_INSTALLED_DIR" != "$SCHEDULING_MCP_DIR" ]] &&
+        [[ "$SCHEDULING_MCP_INSTALLED_DIR" != "$scheduling_source_dir" ]] &&
+        pid_matches_scope "$scheduler_pid" "$SCHEDULING_MCP_INSTALLED_DIR"
+      then
+        scheduler_pid_scope="installed"
+        scheduler_pid_stop_scope="$SCHEDULING_MCP_INSTALLED_DIR"
+      else
+        scheduler_pid_scope="foreign"
+      fi
+    else
+      scheduler_pid_scope="stale"
+    fi
+  fi
+  if ! port_has_listener "$SCHEDULING_MCP_PORT"; then
+    if [[ "$scheduler_pid_scope" == "selected" ||
+      "$scheduler_pid_scope" == "source" ||
+      "$scheduler_pid_scope" == "installed" ]]
+    then
+      # The helper-started process may still be between spawn and bind while
+      # activation changes the selected component or source checkout.
+      stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$scheduler_pid_stop_scope"
+    elif [[ "$scheduler_pid_scope" == "stale" ]]; then
+      rm -f "$SCHEDULING_MCP_PID_FILE"
+    fi
+    return 0
+  fi
+  local scheduler_health_payload=""
+  local scheduler_matches_runtime=false
+  scheduler_health_payload="$(curl --noproxy '*' -fsS --max-time 3 "http://localhost:${SCHEDULING_MCP_PORT}/health" 2>/dev/null || true)"
+  if [[ -n "$scheduler_health_payload" ]] &&
+    "${PYTHON_BIN:-python3}" - "$SCHEDULING_DB_PATH" "$scheduler_health_payload" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+expected = hashlib.sha256(str(Path(sys.argv[1]).expanduser().resolve()).encode("utf-8")).hexdigest()
+try:
+    payload = json.loads(sys.argv[2])
+except Exception:
+    raise SystemExit(1)
+if payload.get("status") == "ok" and str(payload.get("db_path_sha256") or "") == expected:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    scheduler_matches_runtime=true
+  fi
+
+  if [[ -n "$scheduler_health_payload" && "$scheduler_matches_runtime" != "true" ]]; then
+    log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT belongs to a different runtime or older health contract; leaving it running during this runtime stop"
+    return 0
+  fi
+  kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
+  if [[ "$scheduler_matches_runtime" == "true" ]] &&
+    port_has_listener "$SCHEDULING_MCP_PORT" &&
+    [[ "$scheduling_source_dir" != "$SCHEDULING_MCP_DIR" ]]
+  then
+    # Helper mode selects the installed component, but activation may still
+    # encounter a same-database scheduler launched from the declared source
+    # checkout. Identity must match before this extra lexical scope is used.
+    kill_port_listeners "$SCHEDULING_MCP_PORT" "$scheduling_source_dir"
+  fi
+  if [[ "$scheduler_matches_runtime" == "true" ]] &&
+    port_has_listener "$SCHEDULING_MCP_PORT" &&
+    [[ "$SCHEDULING_MCP_INSTALLED_DIR" != "$SCHEDULING_MCP_DIR" ]] &&
+    [[ "$SCHEDULING_MCP_INSTALLED_DIR" != "$scheduling_source_dir" ]]
+  then
+    # Activation may already have renamed the installed component into its
+    # rollback slot. Keep using the stable lexical scope recorded in the
+    # process command rather than treating the missing directory as proof that
+    # no same-runtime process remains.
+    kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_INSTALLED_DIR"
+  fi
+  local scheduling_stop_settle_retries="${VIVENTIUM_SCHEDULING_MCP_STOP_SETTLE_RETRIES:-30}"
+  local scheduling_stop_settle_interval="${VIVENTIUM_SCHEDULING_MCP_STOP_SETTLE_INTERVAL_S:-0.1}"
+  if [[ ! "$scheduling_stop_settle_retries" =~ ^[0-9]+$ ]]; then
+    scheduling_stop_settle_retries=30
+  fi
+  if [[ ! "$scheduling_stop_settle_interval" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    scheduling_stop_settle_interval=0.1
+  fi
+  local scheduling_stop_settle_try=0
+  while [[ "$scheduler_matches_runtime" == "true" ]] &&
+    port_has_listener "$SCHEDULING_MCP_PORT" &&
+    [[ "$scheduling_stop_settle_try" -lt "$scheduling_stop_settle_retries" ]]
+  do
+    sleep "$scheduling_stop_settle_interval"
+    scheduling_stop_settle_try=$((scheduling_stop_settle_try + 1))
+  done
+  if [[ "$scheduler_matches_runtime" == "true" ]] &&
+    port_has_listener "$SCHEDULING_MCP_PORT"
+  then
+    log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is still listening after identity-bound stop; refusing to continue"
+    # Do not return nonzero here: this function is also called from `set -e`
+    # cleanup paths. Report the failure so upgrade/stop can fail closed only
+    # after the rest of the managed stack has been drained.
+    SCHEDULING_MCP_STOP_FAILED=true
+    return 0
+  fi
+  if [[ "$scheduler_matches_runtime" == "true" ]] &&
+    [[ "$scheduler_pid_scope" == "stale" ]]
+  then
+    rm -f "$SCHEDULING_MCP_PID_FILE"
+  elif [[ "$scheduler_pid_scope" == "selected" ]] &&
+    { [[ -z "$scheduler_pid" ]] || ! ps -p "$scheduler_pid" >/dev/null 2>&1; }
+  then
+    stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
+  elif [[ "$scheduler_pid_scope" == "source" ]] &&
+    { [[ -z "$scheduler_pid" ]] || ! ps -p "$scheduler_pid" >/dev/null 2>&1; }
+  then
+    stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$scheduling_source_dir"
+  elif [[ "$scheduler_matches_runtime" == "true" ]] &&
+    [[ "$scheduler_pid_scope" == "installed" ]] &&
+    { [[ -z "$scheduler_pid" ]] || ! ps -p "$scheduler_pid" >/dev/null 2>&1; }
+  then
+    stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_INSTALLED_DIR"
+  fi
+  return 0
+}
+
 stop_running_services() {
   local reason="${1:-Restart requested - stopping running services}"
   local done_msg="${2:-Restart cleanup complete}"
+  local scheduling_stop_failed=false
   local stop_excluded_pids=("$$" "${BASHPID:-}" "$PPID")
   log_warn "$reason"
+  protect_noncanonical_runtime_from_global_docker_mutation
+  if ! authorize_runtime_process_group_stop; then
+    return 1
+  fi
+  if ! prepare_mongo_engine_identity_for_stop; then
+    return 1
+  fi
   stop_detached_librechat_api_watchdog
   stop_prompt_workbench_watchdog
   stop_prompt_workbench_if_managed
@@ -5866,12 +7030,8 @@ stop_running_services() {
   else
     telegram_dir=""
   fi
-  local telegram_pid
-  telegram_pid="$(read_pid_file "$TELEGRAM_BOT_PID_FILE")"
-  if [[ -n "$telegram_pid" ]]; then
-    kill_pids "$telegram_pid"
-    rm -f "$TELEGRAM_BOT_PID_FILE"
-  fi
+  # Receipt-backed stop rejects PID reuse and never signals an unknown process.
+  stop_owned_telegram_poller || true
   stop_telegram_launchctl_job
   stop_telegram_local_bot_api
   local telegram_deferred_pid
@@ -5881,11 +7041,8 @@ stop_running_services() {
     rm -f "$TELEGRAM_BOT_DEFERRED_PID_FILE"
   fi
   rm -f "$TELEGRAM_BOT_DEFERRED_MARKER_FILE"
-  kill_by_pattern_scoped "TelegramVivBot.*bot.py" "$ROOT_DIR"
-  if [[ -n "$telegram_dir" ]]; then
-    kill_by_pattern_scoped "uv run python bot.py" "$telegram_dir"
-    kill_by_pattern_scoped "python.*bot.py" "$telegram_dir/TelegramVivBot"
-  fi
+  # Do not fall back to pattern kills: an unrecognized bot.py process may
+  # belong to another project or user-managed runtime.
 
   local telegram_codex_pid
   telegram_codex_pid="$(read_pid_file "$TELEGRAM_CODEX_PID_FILE")"
@@ -5911,39 +7068,8 @@ stop_running_services() {
   # === VIVENTIUM START ===
   # Feature: Ensure Scheduling Cortex MCP restarts with fresh env on stack restart.
   # === VIVENTIUM END ===
-  if [[ -d "$SCHEDULING_MCP_DIR" || -f "$SCHEDULING_MCP_PID_FILE" ]]; then
-    stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
-    if port_has_listener "$SCHEDULING_MCP_PORT"; then
-      local scheduler_health_payload=""
-      local scheduler_matches_runtime=false
-      scheduler_health_payload="$(curl -fsS --max-time 3 "http://localhost:${SCHEDULING_MCP_PORT}/health" 2>/dev/null || true)"
-      if [[ -n "$scheduler_health_payload" ]] &&
-        "${PYTHON_BIN:-python3}" - "$SCHEDULING_DB_PATH" "$scheduler_health_payload" <<'PY'
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-expected = hashlib.sha256(str(Path(sys.argv[1]).expanduser().resolve()).encode("utf-8")).hexdigest()
-try:
-    payload = json.loads(sys.argv[2])
-except Exception:
-    raise SystemExit(1)
-if payload.get("status") == "ok" and str(payload.get("db_path_sha256") or "") == expected:
-    raise SystemExit(0)
-raise SystemExit(1)
-PY
-      then
-        scheduler_matches_runtime=true
-      fi
-
-      if [[ -n "$scheduler_health_payload" && "$scheduler_matches_runtime" != "true" ]]; then
-        log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT belongs to a different runtime or older health contract; leaving it running during this runtime stop"
-      else
-        kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
-      fi
-    fi
-  fi
+  stop_scheduling_mcp_for_runtime
+  scheduling_stop_failed="$SCHEDULING_MCP_STOP_FAILED"
 
   if [[ -d "$GLASSHIVE_RUNTIME_DIR" || -f "$GLASSHIVE_RUNTIME_PID_FILE" || -f "$GLASSHIVE_MCP_PID_FILE" ]]; then
     stop_pid_file_scoped "$GLASSHIVE_RUNTIME_PID_FILE" "$GLASSHIVE_RUNTIME_DIR"
@@ -5986,7 +7112,9 @@ PY
   if [[ -d "$V1_AGENT_DIR" || -n "${MS365_MCP_CALLBACK_PORT:-}" ]]; then
     kill_port_listeners "$MS365_MCP_CALLBACK_PORT" "$VIVENTIUM_CORE_DIR"
   fi
-  if command -v docker >/dev/null 2>&1; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKIP_DOCKER" != "true" ]] &&
+    command -v docker >/dev/null 2>&1
+  then
     if docker_daemon_ready; then
       if [[ -d "$CODE_INTERPRETER_DIR" ]]; then
           local ci_compose_file="$CODE_INTERPRETER_DIR/docker-compose.ghcr.yml"
@@ -6072,24 +7200,29 @@ PY
         fi
       fi
 
-      local livekit_containers
-      livekit_containers=$(
-        docker ps -q \
-          --filter "label=viventium.stack=viventium_v0_4" \
-          --filter "label=viventium.service=livekit" \
-          2>/dev/null || true
-      )
-      if [[ -z "$livekit_containers" ]]; then
-        livekit_containers=$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null || true)
-      fi
-      if [[ -n "$livekit_containers" ]]; then
-        docker rm -f $livekit_containers >/dev/null 2>&1 || true
-      fi
     else
       log_warn "Docker is not running; skipping container cleanup"
     fi
   fi
 
+  if [[ "$SKIP_DOCKER" != "true" ]] && docker_daemon_ready; then
+    local livekit_containers
+    livekit_containers="$(livekit_runtime_container_ids running)"
+    if [[ -n "$livekit_containers" ]]; then
+      docker rm -f $livekit_containers >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! stop_recorded_native_mongo_engine; then
+    return 1
+  fi
+  if ! seal_mongo_engine_identity_after_stop; then
+    return 1
+  fi
+  if [[ "$scheduling_stop_failed" == "true" ]]; then
+    log_warn "Scheduling Cortex MCP stop failed because its identity-bound listener survived; managed cleanup completed and this stop is failing closed"
+    return 1
+  fi
   log_success "$done_msg"
 }
 
@@ -6103,16 +7236,31 @@ cleanup_stale_containers() {
   if ! docker_daemon_ready; then
     return 0
   fi
-  local stale
-  stale=$(docker ps -aq --filter "label=viventium.stack=viventium_v0_4" --filter "status=exited" 2>/dev/null || true)
+  local livekit_stale
+  livekit_stale="$(livekit_runtime_container_ids exited)"
+  if [[ -n "$livekit_stale" ]]; then
+    docker rm $livekit_stale >/dev/null 2>&1 || true
+  fi
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    return 0
+  fi
+  local stale_candidates
+  local stale=""
+  local stale_id=""
+  local stale_service=""
+  stale_candidates=$(docker ps -aq --filter "label=viventium.stack=viventium_v0_4" --filter "status=exited" 2>/dev/null || true)
+  while IFS= read -r stale_id; do
+    [[ -n "$stale_id" ]] || continue
+    stale_service="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.service" }}' \
+        "$stale_id" 2>/dev/null || true
+    )"
+    [[ "$stale_service" == "livekit" ]] && continue
+    stale="${stale}${stale:+ }${stale_id}"
+  done <<<"$stale_candidates"
   if [[ -n "$stale" ]]; then
     log_warn "Removing stale Viventium containers"
     docker rm $stale >/dev/null 2>&1 || true
-  fi
-  local livekit_stale
-  livekit_stale=$(docker ps -aq --filter "name=^/viventium-livekit-" --filter "status=exited" 2>/dev/null || true)
-  if [[ -n "$livekit_stale" ]]; then
-    docker rm $livekit_stale >/dev/null 2>&1 || true
   fi
   local ms365_stale
   ms365_stale=$(docker ps -aq --filter "name=^/viventium_ms365_mcp$" --filter "status=exited" 2>/dev/null || true)
@@ -6141,6 +7289,8 @@ cleanup_stale_containers() {
   fi
   cleanup_code_interpreter_exec_containers "stale cleanup" "exited"
 }
+
+protect_noncanonical_runtime_from_global_docker_mutation
 
 if [[ "$STOP_ONLY" == "true" ]]; then
   CLEANUP_ENABLED=false
@@ -6305,6 +7455,71 @@ librechat_api_healthy() {
   librechat_api_http_healthy && librechat_sandpack_healthy
 }
 
+# === VIVENTIUM START ===
+# Feature: Deferred post-commit finalization for intentionally stopped installs.
+# Purpose: Preserve stopped intent during upgrade, then terminalize the exact
+# bridge receipt only after the user's first later API start has completed its
+# durable startup mutator receipt and protected config continuity recheck.
+stop_owned_runtime_after_postcommit_failure() {
+  "$VIVENTIUM_CORE_DIR/bin/viventium" \
+    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+    --config-file "${VIVENTIUM_CONFIG_FILE:-$VIVENTIUM_APP_SUPPORT_ROOT/config.yaml}" \
+    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
+    --lock-file "$VIVENTIUM_CORE_DIR/components.lock.json" \
+    stop >/dev/null 2>&1 || true
+}
+
+finalize_pending_postcommit_after_first_start() {
+  [[ -n "${VIVENTIUM_POSTCOMMIT_FINALIZATION_ID:-}" ]] || return 0
+  [[ -n "${VIVENTIUM_POSTCOMMIT_SOURCE_ID:-}" ]] || return 1
+  if "$PYTHON_BIN" \
+    "$VIVENTIUM_CORE_DIR/scripts/viventium/first_upgrade_bridge.py" \
+    finalize-pending-after-first-start \
+    --repo-root "$VIVENTIUM_CORE_DIR" \
+    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+    --config-file "${VIVENTIUM_CONFIG_FILE:-$VIVENTIUM_APP_SUPPORT_ROOT/config.yaml}" \
+    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
+    --lock-file "$VIVENTIUM_CORE_DIR/components.lock.json" >/dev/null
+  then
+    return 0
+  fi
+  log_error "Post-upgrade terminal continuity verification failed; stopping the owned runtime"
+  stop_owned_runtime_after_postcommit_failure
+  return 1
+}
+
+wait_for_postcommit_api_readiness() {
+  local retries="${VIVENTIUM_POSTCOMMIT_FINALIZATION_RETRIES:-$(default_librechat_health_retries)}"
+  if ! [[ "$retries" =~ ^[0-9]+$ ]] || [[ "$retries" -lt 1 ]]; then
+    retries=30
+  fi
+  for _ in $(seq 1 "$retries"); do
+    # curl -f inside librechat_api_http_healthy is intentional: an upgrade
+    # finalization 503 is pending, not a reachable-success signal.
+    if librechat_api_http_healthy; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+start_deferred_postcommit_finalizer() {
+  [[ -n "${VIVENTIUM_POSTCOMMIT_FINALIZATION_ID:-}" ]] || return 0
+  local finalizer_log="$VIVENTIUM_APP_SUPPORT_ROOT/logs/postcommit-finalization.log"
+  mkdir -p "$(dirname "$finalizer_log")"
+  (
+    if wait_for_postcommit_api_readiness; then
+      finalize_pending_postcommit_after_first_start
+    else
+      log_error "Post-upgrade API finalization did not become ready; stopping the owned runtime"
+      stop_owned_runtime_after_postcommit_failure
+      exit 1
+    fi
+  ) >>"$finalizer_log" 2>&1 &
+}
+# === VIVENTIUM END ===
+
 wait_for_librechat_runtime() {
   local label="$1"
   local retries="${2:-30}"
@@ -6327,12 +7542,12 @@ scheduling_mcp_health_url() {
 }
 
 scheduling_mcp_health_reachable() {
-  curl -fsS --max-time 3 "$(scheduling_mcp_health_url)" >/dev/null 2>&1
+  curl --noproxy '*' -fsS --max-time 3 "$(scheduling_mcp_health_url)" >/dev/null 2>&1
 }
 
 scheduling_mcp_matches_runtime() {
   local payload
-  payload="$(curl -fsS --max-time 3 "$(scheduling_mcp_health_url)" 2>/dev/null)" || return 1
+  payload="$(curl --noproxy '*' -fsS --max-time 3 "$(scheduling_mcp_health_url)" 2>/dev/null)" || return 1
   local python_cmd="${PYTHON_BIN:-python3}"
   "$python_cmd" - "$SCHEDULING_DB_PATH" "$payload" <<'PY'
 import hashlib
@@ -6654,8 +7869,7 @@ start_detached_librechat_api_watchdog() {
 
 restart_scheduling_mcp_runtime() {
   log_warn "Scheduling Cortex MCP watchdog is restarting the local MCP runtime"
-  stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
-  kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
+  stop_scheduling_mcp_for_runtime
   if port_in_use "$SCHEDULING_MCP_PORT"; then
     log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is still owned outside the scheduler scope"
     return 1
@@ -6748,9 +7962,7 @@ start_telegram_bot_watchdog() {
 
     while true; do
       sleep "$interval_s"
-      local telegram_pid
-      telegram_pid="$(read_pid_file "$TELEGRAM_BOT_PID_FILE")"
-      if [[ -n "$telegram_pid" ]] && ps -p "$telegram_pid" >/dev/null 2>&1; then
+      if telegram_poller_is_ready; then
         consecutive_failures=0
         continue
       fi
@@ -6866,14 +8078,11 @@ detached_start_requested() {
 }
 
 if detached_start_requested; then
-  record_detached_launch_process_group
   # Detached helper launches must let local child services outlive this shell.
   # Ignoring SIGHUP here propagates to background jobs so user-facing processes
   # (LibreChat, playground, voice, Telegram, MCPs) are not torn down when the
   # detached launcher exits.
   trap '' HUP
-else
-  clear_detached_launch_process_group
 fi
 
 queue_parallel_optional_start() {
@@ -7060,19 +8269,26 @@ load_ms365_credentials_from_file() {
 # truth instead of stale repo-root or v1 fallback credentials from older setups.
 # === VIVENTIUM END ===
 load_ms365_credentials_from_librechat_env() {
-  local env_file="$LIBRECHAT_CANONICAL_ENV_FILE"
-  if [[ ! -f "$env_file" ]]; then
-    return 1
-  fi
-
   local client_id
   local tenant_id
   local client_secret
   local business_email
-  client_id=$(read_env_kv "$env_file" "MS365_MCP_CLIENT_ID" || true)
-  tenant_id=$(read_env_kv "$env_file" "MS365_MCP_TENANT_ID" || true)
-  client_secret=$(read_env_kv "$env_file" "MS365_MCP_CLIENT_SECRET" || true)
-  business_email=$(read_env_kv "$env_file" "MS365_BUSINESS_EMAIL" || true)
+  client_id="$(
+    resolve_persisted_owner_credential "MS365_MCP_CLIENT_ID" || true
+  )"
+  tenant_id="$(
+    resolve_persisted_owner_credential "MS365_MCP_TENANT_ID" || true
+  )"
+  client_secret="$(
+    resolve_persisted_owner_credential "MS365_MCP_CLIENT_SECRET" || true
+  )"
+  business_email="$(
+    resolve_persisted_owner_credential "MS365_BUSINESS_EMAIL" || true
+  )"
+  MS365_MCP_CLIENT_ID="$client_id"
+  MS365_MCP_TENANT_ID="$tenant_id"
+  MS365_MCP_CLIENT_SECRET="$client_secret"
+  MS365_BUSINESS_EMAIL="$business_email"
   if [[ -z "$client_id" || -z "$tenant_id" ]]; then
     return 1
   fi
@@ -7084,14 +8300,6 @@ load_ms365_credentials_from_librechat_env() {
     log_warn "MS365 tenant drift detected; using LibreChat source-of-truth credentials for isolated runtime"
   fi
 
-  MS365_MCP_CLIENT_ID="$client_id"
-  MS365_MCP_TENANT_ID="$tenant_id"
-  if [[ -n "$client_secret" ]]; then
-    MS365_MCP_CLIENT_SECRET="$client_secret"
-  fi
-  if [[ -n "$business_email" ]]; then
-    MS365_BUSINESS_EMAIL="$business_email"
-  fi
   return 0
 }
 
@@ -7100,6 +8308,15 @@ load_ms365_credentials() {
   if [[ "$VIVENTIUM_RUNTIME_PROFILE" == "isolated" ]]; then
     if load_ms365_credentials_from_librechat_env; then
       return 0
+    fi
+    if env_file_has_assignment \
+      "$LIBRECHAT_RUNTIME_ENV_FILE" "MS365_MCP_CLIENT_ID" ||
+      env_file_has_assignment \
+        "$LIBRECHAT_RUNTIME_ENV_FILE" "MS365_MCP_TENANT_ID"
+    then
+      # An explicit persisted empty value is an owner deletion, not permission
+      # to resurrect a stale legacy credential file.
+      return 1
     fi
   fi
   if [[ -n "${MS365_MCP_CLIENT_ID:-}" && -n "${MS365_MCP_TENANT_ID:-}" ]]; then
@@ -7668,6 +8885,10 @@ cleanup() {
   fi
   echo ""
   echo -e "${YELLOW}[viventium]${NC} Shutting down..."
+  if ! prepare_mongo_engine_identity_for_stop; then
+    echo -e "${RED}[viventium]${NC} Local MongoDB engine identity could not be preserved; leaving managed services running." >&2
+    return 1
+  fi
   stop_detached_librechat_api_watchdog
   stop_prompt_workbench_watchdog
   stop_scheduling_mcp_watchdog
@@ -7701,8 +8922,7 @@ cleanup() {
   [[ "$GOOGLE_MCP_STARTED_BY_SCRIPT" == "true" && -n "${GOOGLE_MCP_PID:-}" ]] && kill "${GOOGLE_MCP_PID}" 2>/dev/null || true
   stop_remote_call_tunnels
   stop_pid_file_scoped "$GOOGLE_MCP_PID_FILE" "$GOOGLE_MCP_DIR"
-  [[ "$SCHEDULING_MCP_STARTED_BY_SCRIPT" == "true" && -n "${SCHEDULING_MCP_PID:-}" ]] && kill "${SCHEDULING_MCP_PID}" 2>/dev/null || true
-  stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
+  stop_scheduling_mcp_for_runtime
   [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" && -n "${GLASSHIVE_RUNTIME_PID:-}" ]] && kill "${GLASSHIVE_RUNTIME_PID}" 2>/dev/null || true
   [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" && -n "${GLASSHIVE_MCP_PID:-}" ]] && kill "${GLASSHIVE_MCP_PID}" 2>/dev/null || true
   [[ "${GLASSHIVE_STARTED_BY_SCRIPT:-false}" == "true" && -n "${GLASSHIVE_UI_PID:-}" ]] && kill "${GLASSHIVE_UI_PID}" 2>/dev/null || true
@@ -7712,7 +8932,7 @@ cleanup() {
     stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
   fi
   [[ "$MS365_CALLBACK_STARTED_BY_SCRIPT" == "true" && -n "${MS365_MCP_CALLBACK_PID:-}" ]] && kill "${MS365_MCP_CALLBACK_PID}" 2>/dev/null || true
-  if [[ "$SKIP_DOCKER" != "true" ]]; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKIP_DOCKER" != "true" ]]; then
     if [[ "$MS365_STARTED_BY_SCRIPT" == "true" ]]; then
       docker compose -f "$ROOT_DIR/docker/ms365-mcp/docker-compose.yml" down >/dev/null 2>&1 || true
     fi
@@ -7767,18 +8987,11 @@ cleanup() {
         docker rm -f "$mongo_container" >/dev/null 2>&1 || true
       fi
     fi
-    if [[ "$LIVEKIT_STARTED_BY_SCRIPT" == "true" && -n "${LIVEKIT_CONTAINER_ID:-}" ]]; then
-      docker rm -f "${LIVEKIT_CONTAINER_ID}" >/dev/null 2>&1 || true
-    fi
   fi
-  if [[ "$MONGO_NATIVE_STARTED_BY_SCRIPT" == "true" && -f "$MONGO_NATIVE_PID_FILE" ]]; then
-    local mongo_native_pid
-    mongo_native_pid="$(cat "$MONGO_NATIVE_PID_FILE" 2>/dev/null || true)"
-    if [[ -n "$mongo_native_pid" ]]; then
-      kill "$mongo_native_pid" 2>/dev/null || true
-    fi
-    rm -f "$MONGO_NATIVE_PID_FILE"
+  if [[ "$SKIP_DOCKER" != "true" && "$LIVEKIT_STARTED_BY_SCRIPT" == "true" && -n "${LIVEKIT_CONTAINER_ID:-}" ]]; then
+    docker rm -f "${LIVEKIT_CONTAINER_ID}" >/dev/null 2>&1 || true
   fi
+  stop_recorded_native_mongo_engine || return 1
   if [[ "$MEILI_NATIVE_STARTED_BY_SCRIPT" == "true" && -f "$MEILI_NATIVE_PID_FILE" ]]; then
     local meili_native_pid
     meili_native_pid="$(cat "$MEILI_NATIVE_PID_FILE" 2>/dev/null || true)"
@@ -7789,7 +9002,7 @@ cleanup() {
   fi
   ## === VIVENTIUM START ===
   # Feature: Symmetric cleanup for Skyvern helper script lifecycle
-  if [[ "$SKYVERN_STARTED_BY_SCRIPT" == "true" ]]; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKYVERN_STARTED_BY_SCRIPT" == "true" ]]; then
     local skyvern_script="$ROOT_DIR/viventium-skyvern-start.sh"
     if [[ -x "$skyvern_script" ]]; then
       "$skyvern_script" stop >/dev/null 2>&1 || true
@@ -7803,6 +9016,9 @@ cleanup() {
     fi
   fi
   ## === VIVENTIUM END ===
+  if ! seal_mongo_engine_identity_after_stop; then
+    return 1
+  fi
   echo -e "${GREEN}[viventium]${NC} All services stopped."
 }
 trap cleanup INT TERM EXIT
@@ -8087,16 +9303,14 @@ start_scheduling_mcp() {
     # === VIVENTIUM END ===
     if [[ "$RESTART_SERVICES" == "true" ]]; then
       log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is occupied but unhealthy - restarting"
-      stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
-      kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
+      stop_scheduling_mcp_for_runtime
       if port_in_use "$SCHEDULING_MCP_PORT"; then
         log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT still in use (outside scope); skipping restart"
         return 1
       fi
     else
       log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT is occupied but health check failed; attempting scoped repair"
-      stop_pid_file_scoped "$SCHEDULING_MCP_PID_FILE" "$SCHEDULING_MCP_DIR"
-      kill_port_listeners "$SCHEDULING_MCP_PORT" "$SCHEDULING_MCP_DIR"
+      stop_scheduling_mcp_for_runtime
       if port_in_use "$SCHEDULING_MCP_PORT"; then
         log_warn "Scheduling Cortex MCP port $SCHEDULING_MCP_PORT still in use (outside scope); cannot repair"
         return 1
@@ -8493,7 +9707,11 @@ acquire_rag_compose_lock() {
     fi
 
     lock_age="$(rag_compose_lock_age_seconds "$lock_dir")"
-    if [[ "$lock_age" -lt "$stale_grace" ]]; then
+    # The owner PID is published immediately after the atomic mkdir. With
+    # second-resolution mtimes, a newly created directory can already report
+    # an age equal to the grace threshold. Preserve that boundary so another
+    # starter cannot steal an initializing lock before its PID is written.
+    if [[ "$lock_age" -le "$stale_grace" ]]; then
       sleep 1
       attempt=$((attempt + 1))
       continue
@@ -8788,6 +10006,52 @@ prepare_rag_pgdata_path() {
   esac
 }
 
+# === VIVENTIUM START ===
+# Feature: Existing-install RAG PostgreSQL credential continuity.
+# Purpose:
+# - The official PostgreSQL image applies POSTGRES_PASSWORD only to an empty PGDATA directory.
+# - Reconcile a stable owner-only credential against recognized persisted RAG clusters before the
+#   RAG API starts, without putting that secret in generated LibreChat env or command arguments.
+# Added: 2026-07-24
+# === VIVENTIUM END ===
+prepare_rag_postgres_credentials() {
+  local migration_helper="$VIVENTIUM_CORE_DIR/scripts/viventium/rag_postgres_migration.py"
+  local state_dir="${VIVENTIUM_RAG_POSTGRES_STATE_DIR:-$VIVENTIUM_STATE_ROOT/rag-postgres}"
+  local credential_file="$state_dir/postgres-password"
+  local postgres_password=""
+
+  if [[ ! -f "$migration_helper" || -L "$migration_helper" ]]; then
+    log_error "The selected Viventium runtime does not contain the RAG PostgreSQL migration helper"
+    return 1
+  fi
+  if ! PYTHONDONTWRITEBYTECODE=1 "$PYTHON_BIN" "$migration_helper" \
+    --compose-file "$LIBRECHAT_DIR/rag.yml" \
+    --project-name "$VIVENTIUM_RAG_COMPOSE_PROJECT_NAME" \
+    --pgdata-path "$VIVENTIUM_RAG_PGDATA_PATH" \
+    --pgdata-path-mode "$VIVENTIUM_RAG_PGDATA_PATH_MODE" \
+    --state-dir "$state_dir" >/dev/null; then
+    log_error "RAG PostgreSQL credential continuity could not be proven"
+    return 1
+  fi
+  if [[ ! -f "$credential_file" || -L "$credential_file" ]]; then
+    log_error "RAG PostgreSQL credential continuity completed without an owner credential"
+    return 1
+  fi
+  if ! IFS= read -r postgres_password <"$credential_file"; then
+    log_error "RAG PostgreSQL owner credential could not be read"
+    return 1
+  fi
+  if ! [[ "$postgres_password" =~ ^[0-9a-f]{64}$ ]]; then
+    postgres_password=""
+    log_error "RAG PostgreSQL owner credential is invalid"
+    return 1
+  fi
+
+  POSTGRES_PASSWORD="$postgres_password"
+  export POSTGRES_PASSWORD
+  postgres_password=""
+}
+
 prepare_rag_document_route_path() {
   local selected_route="$LIBRECHAT_DIR/viventium/rag_api_overrides/app/routes/document_routes.py"
   local candidate_route="${VIVENTIUM_RAG_DOCUMENT_ROUTE_PATH:-$selected_route}"
@@ -8897,6 +10161,10 @@ _start_rag_api_locked() {
       log_error "RAG API port $rag_port is still in use; skipping startup"
       return 1
     fi
+  fi
+
+  if ! prepare_rag_postgres_credentials; then
+    return "$RAG_COMPOSE_UNRECOVERABLE_EXIT"
   fi
 
   local rag_compose_up_timeout="${VIVENTIUM_RAG_API_DOCKER_COMPOSE_UP_TIMEOUT_SECONDS:-1800}"
@@ -9536,6 +10804,10 @@ start_telegram_bot() {
   local _saved_telegram_local_bot_api_binary_path="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH-$_env_unset_marker}"
   local _saved_telegram_local_bot_api_api_id="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID-$_env_unset_marker}"
   local _saved_telegram_local_bot_api_api_hash="${VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH-$_env_unset_marker}"
+  local _saved_telegram_owner_receipt="${VIVENTIUM_TELEGRAM_OWNER_RECEIPT-$_env_unset_marker}"
+  local _saved_telegram_owner_repo_root="${VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT-$_env_unset_marker}"
+  local _saved_telegram_execution_root="${VIVENTIUM_TELEGRAM_EXECUTION_ROOT-$_env_unset_marker}"
+  local _saved_telegram_owner_launch_script="${VIVENTIUM_TELEGRAM_OWNER_LAUNCH_SCRIPT-$_env_unset_marker}"
 
   restore_telegram_env() {
     if [[ "$_saved_api_key" == "$_env_unset_marker" ]]; then unset API_KEY; else export API_KEY="$_saved_api_key"; fi
@@ -9562,10 +10834,54 @@ start_telegram_bot() {
     if [[ "$_saved_telegram_local_bot_api_binary_path" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_BINARY_PATH="$_saved_telegram_local_bot_api_binary_path"; fi
     if [[ "$_saved_telegram_local_bot_api_api_id" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_ID="$_saved_telegram_local_bot_api_api_id"; fi
     if [[ "$_saved_telegram_local_bot_api_api_hash" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH; else export VIVENTIUM_TELEGRAM_LOCAL_BOT_API_API_HASH="$_saved_telegram_local_bot_api_api_hash"; fi
+    if [[ "$_saved_telegram_owner_receipt" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_OWNER_RECEIPT; else export VIVENTIUM_TELEGRAM_OWNER_RECEIPT="$_saved_telegram_owner_receipt"; fi
+    if [[ "$_saved_telegram_owner_repo_root" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT; else export VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT="$_saved_telegram_owner_repo_root"; fi
+    if [[ "$_saved_telegram_execution_root" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_EXECUTION_ROOT; else export VIVENTIUM_TELEGRAM_EXECUTION_ROOT="$_saved_telegram_execution_root"; fi
+    if [[ "$_saved_telegram_owner_launch_script" == "$_env_unset_marker" ]]; then unset VIVENTIUM_TELEGRAM_OWNER_LAUNCH_SCRIPT; else export VIVENTIUM_TELEGRAM_OWNER_LAUNCH_SCRIPT="$_saved_telegram_owner_launch_script"; fi
   }
 
-  local telegram_dir
-  telegram_dir=$(resolve_telegram_dir)
+  local telegram_dir=""
+  local telegram_component_json=""
+  local telegram_component_python=""
+  local telegram_component_execution_root=""
+  local telegram_use_installed_component=false
+  local telegram_installed_component_required=false
+  if detached_start_requested || [[ -n "${VIVENTIUM_HELPER_CORE_ROOT:-}" ]]; then
+    telegram_installed_component_required=true
+  fi
+  if [[ "$telegram_installed_component_required" == "true" ]] &&
+    [[ -f "$TELEGRAM_COMPONENT_SELECTION_FILE" && ! -L "$TELEGRAM_COMPONENT_SELECTION_FILE" ]]
+  then
+    if ! telegram_component_json="$(
+      "$PYTHON_BIN" "$TELEGRAM_COMPONENT_TOOL" resolve \
+        --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+        --selection-file "$TELEGRAM_COMPONENT_SELECTION_FILE"
+    )"; then
+      log_error "Detached Telegram runtime component failed integrity verification"
+      return 1
+    fi
+    telegram_dir="$(telegram_handoff_json_field "$telegram_component_json" telegram_root)"
+    telegram_component_python="$(telegram_handoff_json_field "$telegram_component_json" python)"
+    telegram_component_execution_root="$(
+      telegram_handoff_json_field "$telegram_component_json" execution_root
+    )"
+    if [[ -z "$telegram_dir" || -z "$telegram_component_python" ||
+      -z "$telegram_component_execution_root" ]]
+    then
+      log_error "Detached Telegram runtime component selection is incomplete"
+      return 1
+    fi
+    telegram_use_installed_component=true
+  elif [[ "$telegram_installed_component_required" == "true" ]] &&
+    { [[ "$(uname -s)" == "Darwin" ]] || [[ -e "$TELEGRAM_COMPONENT_SELECTION_FILE" ]] ||
+      [[ -L "$TELEGRAM_COMPONENT_SELECTION_FILE" ]]; }
+  then
+    log_error "Detached Telegram runtime component selection is missing or unsafe"
+    return 1
+  fi
+  if [[ "$telegram_use_installed_component" != "true" ]]; then
+    telegram_dir=$(resolve_telegram_dir)
+  fi
   if [[ -z "$telegram_dir" ]]; then
     log_warn "Telegram bot directory not found (expected $TELEGRAM_DIR_PRIMARY or $TELEGRAM_DIR_FALLBACK)"
     return 1
@@ -9610,6 +10926,25 @@ start_telegram_bot() {
     popd >/dev/null
     return 1
   fi
+  if [[ ! -f "$TELEGRAM_POLLER_HANDOFF_HELPER" || -L "$TELEGRAM_POLLER_HANDOFF_HELPER" ]]; then
+    log_error "Telegram poller handoff helper is missing or unsafe"
+    restore_telegram_env
+    popd >/dev/null
+    return 1
+  fi
+  if [[ "$RESTART_SERVICES" != "true" ]]; then
+    local telegram_existing_status=""
+    telegram_existing_status="$(telegram_poller_status_json 2>/dev/null)" || true
+    if [[ "$(telegram_handoff_json_field "$telegram_existing_status" running 2>/dev/null || true)" == "true" ]]; then
+      local telegram_existing_pid=""
+      telegram_existing_pid="$(telegram_handoff_json_field "$telegram_existing_status" pid)"
+      printf '%s\n' "$telegram_existing_pid" >"$TELEGRAM_BOT_PID_FILE"
+      log_success "Telegram bot already running with verified ownership (PID: $telegram_existing_pid)"
+      restore_telegram_env
+      popd >/dev/null
+      return 0
+    fi
+  fi
   if ! ensure_telegram_media_prereqs; then
     log_error "Telegram bot cannot start without ffmpeg for supported voice/video media"
     restore_telegram_env
@@ -9651,40 +10986,6 @@ start_telegram_bot() {
   else
     log_info "Starting Telegram bot (backend=librechat)..."
   fi
-  if [[ "$RESTART_SERVICES" == "true" ]]; then
-    stop_telegram_launchctl_job
-    # Stale pidfile-free Telegram bot processes can keep the BotFather polling lock
-    # while making a restart look healthy. Kill only bot.py processes whose cwd is
-    # inside this Viventium Telegram bot directory.
-    kill_by_pattern_scoped "python.*bot.py" "$PWD"
-  fi
-  EXISTING_TELEGRAM_PIDS=""
-  if telegram_pid_is_running; then
-    EXISTING_TELEGRAM_PIDS="$(read_pid_file "$TELEGRAM_BOT_PID_FILE")"
-  fi
-  if [[ -z "$EXISTING_TELEGRAM_PIDS" ]]; then
-    EXISTING_TELEGRAM_PIDS="$(find_running_telegram_bot_pids "$PWD")"
-    if [[ -n "$EXISTING_TELEGRAM_PIDS" ]]; then
-      log_warn "Telegram bot process is running without a current pid file; reconciling"
-    fi
-  fi
-  if [[ -n "$EXISTING_TELEGRAM_PIDS" ]]; then
-    local existing_telegram_pid_count
-    existing_telegram_pid_count="$(printf '%s\n' "$EXISTING_TELEGRAM_PIDS" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
-    if [[ "$RESTART_SERVICES" == "true" || "${existing_telegram_pid_count:-0}" -gt 1 ]]; then
-      log_warn "Existing Telegram bot process detected - restarting"
-      kill_pids "$EXISTING_TELEGRAM_PIDS"
-      rm -f "$TELEGRAM_BOT_PID_FILE"
-      sleep 1
-    else
-      printf '%s\n' "$EXISTING_TELEGRAM_PIDS" >"$TELEGRAM_BOT_PID_FILE"
-      log_success "Telegram bot already running (PID: $EXISTING_TELEGRAM_PIDS)"
-      restore_telegram_env
-      popd >/dev/null
-      return 0
-    fi
-  fi
-
   export VIVENTIUM_TELEGRAM_BACKEND="$telegram_backend"
   if [[ "$telegram_backend" == "librechat" ]]; then
     export VIVENTIUM_LIBRECHAT_ORIGIN="${VIVENTIUM_LIBRECHAT_ORIGIN:-${LC_API_URL}}"
@@ -9692,16 +10993,29 @@ start_telegram_bot() {
     export LIVEKIT_AGENT_NAME="$telegram_agent_name"
   fi
   pushd TelegramVivBot >/dev/null
-  if [[ ( -e ".venv" || -L ".venv" ) && ! -d ".venv" ]]; then
+  if [[ "$telegram_use_installed_component" != "true" ]] &&
+    [[ ( -e ".venv" || -L ".venv" ) && ! -d ".venv" ]]; then
     log_warn "Telegram bot venv path exists but is not a directory; rebuilding"
     rm -f ".venv"
   fi
-  if [[ -d ".venv" && ( ! -f ".venv/pyvenv.cfg" || ! -e ".venv/bin" ) ]]; then
+  if [[ "$telegram_use_installed_component" != "true" ]] &&
+    [[ -d ".venv" && ( ! -f ".venv/pyvenv.cfg" || ! -e ".venv/bin" ) ]]; then
     log_warn "Telegram bot venv is incomplete; rebuilding"
     rm -rf ".venv"
   fi
   local telegram_python=""
-  if [[ -f "pyproject.toml" && -f "uv.lock" ]] && command -v uv >/dev/null 2>&1; then
+  if [[ "$telegram_use_installed_component" == "true" ]]; then
+    if [[ "$PWD" != "$telegram_component_execution_root" ||
+      ! -x "$telegram_component_python" ]]
+    then
+      log_error "Installed Telegram runtime selection does not match its execution identity"
+      restore_telegram_env
+      popd >/dev/null
+      popd >/dev/null
+      return 1
+    fi
+    telegram_python="$telegram_component_python"
+  elif [[ -f "pyproject.toml" && -f "uv.lock" ]] && command -v uv >/dev/null 2>&1; then
     local deps_signature_file="$LOG_DIR/telegram_bot_deps.sha256"
     local deps_signature=""
     local cached_signature=""
@@ -9748,7 +11062,9 @@ PY
       log_success "Telegram bot dependencies already up to date"
     fi
   fi
-  if [[ -x ".venv/bin/python" ]]; then
+  if [[ -n "$telegram_python" ]]; then
+    :
+  elif [[ -x ".venv/bin/python" ]]; then
     telegram_python=".venv/bin/python"
   else
     telegram_python="$PYTHON_BIN"
@@ -9763,7 +11079,10 @@ PY
   #   is something else, so the Telegram runtime still needs the optional MLX deps available.
   # - Keep this install scoped to macOS/Apple Silicon hosts that can actually run the provider.
   local telegram_mlx_req="../../voice-gateway/requirements.mlx_audio_darwin.txt"
-  if host_supports_local_chatterbox_mlx && [[ -x "$telegram_python" && -f "$telegram_mlx_req" ]]; then
+  if [[ "$telegram_use_installed_component" != "true" ]] &&
+    host_supports_local_chatterbox_mlx &&
+    [[ -x "$telegram_python" && -f "$telegram_mlx_req" ]]
+  then
     if ! "$telegram_python" - <<'PY' >/dev/null 2>&1
 import importlib.util
 raise SystemExit(
@@ -9795,8 +11114,39 @@ PY
   local telegram_launch_logname="${LOGNAME:-$telegram_launch_user}"
   local telegram_launch_shell="${SHELL:-/bin/zsh}"
   local telegram_launch_path="${PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
-  local telegram_launch_script="$LOG_ROOT/telegram_bot_launch.sh"
-  local telegram_runtime_env_file="$LOG_ROOT/telegram_bot_runtime.env"
+  local telegram_legacy_launch_script="$LOG_ROOT/telegram_bot_launch.sh"
+  local telegram_repo_launch_id=""
+  telegram_repo_launch_id="$(printf "%s\n%s" "$VIVENTIUM_CORE_DIR" "$PWD" | "$PYTHON_BIN" -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])')"
+  local telegram_launch_attempt_id=""
+  telegram_launch_attempt_id="$("$PYTHON_BIN" -c 'import secrets; print(secrets.token_hex(8))')"
+  local telegram_token_hash=""
+  telegram_token_hash="$(printf '%s' "$BOT_TOKEN" | "$PYTHON_BIN" -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read().strip()).hexdigest())')"
+  local telegram_launch_dir="$TELEGRAM_POLLER_STATE_DIR/launches/${telegram_repo_launch_id}-${telegram_launch_attempt_id}"
+  mkdir -p "$telegram_launch_dir" "$TELEGRAM_POLLER_STATE_DIR"
+  chmod 700 "$telegram_launch_dir" "$TELEGRAM_POLLER_STATE_DIR"
+  local telegram_launch_script="$telegram_launch_dir/telegram_bot_launch.sh"
+  local telegram_runtime_env_file="$telegram_launch_dir/telegram_bot_runtime.env"
+  local telegram_overlay_env_file="$telegram_launch_dir/telegram_overlay.env"
+  cleanup_current_telegram_launch_package() {
+    [[ "$telegram_launch_dir" == "$TELEGRAM_POLLER_STATE_DIR"/launches/* ]] || return 1
+    [[ ! -L "$telegram_launch_dir" ]] || return 1
+    local package_file=""
+    for package_file in \
+      "$telegram_launch_script" \
+      "$telegram_runtime_env_file" \
+      "$telegram_overlay_env_file"
+    do
+      if [[ -e "$package_file" || -L "$package_file" ]]; then
+        [[ -f "$package_file" && ! -L "$package_file" && -O "$package_file" ]] || return 1
+        rm -f "$package_file"
+      fi
+    done
+    rmdir "$telegram_launch_dir" 2>/dev/null || true
+  }
+  export VIVENTIUM_TELEGRAM_OWNER_RECEIPT="$TELEGRAM_POLLER_STATE_DIR/owner-${telegram_token_hash:0:24}.json"
+  export VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT="$VIVENTIUM_CORE_DIR"
+  export VIVENTIUM_TELEGRAM_EXECUTION_ROOT="$PWD"
+  export VIVENTIUM_TELEGRAM_OWNER_LAUNCH_SCRIPT="$telegram_launch_script"
   local telegram_clean_env=(
     env -i
     "HOME=$HOME"
@@ -9817,6 +11167,23 @@ PY
   )
   : >"$telegram_runtime_env_file"
   chmod 600 "$telegram_runtime_env_file"
+  : >"$telegram_overlay_env_file"
+  chmod 600 "$telegram_overlay_env_file"
+  if [[ -e "$TELEGRAM_CONFIG_ENV_FILE" || -L "$TELEGRAM_CONFIG_ENV_FILE" ]]; then
+    if [[ ! -f "$TELEGRAM_CONFIG_ENV_FILE" ||
+      -L "$TELEGRAM_CONFIG_ENV_FILE" ||
+      ! -O "$TELEGRAM_CONFIG_ENV_FILE" ]]
+    then
+      log_error "Telegram configuration overlay is not a trusted owner file"
+      cleanup_current_telegram_launch_package || true
+      restore_telegram_env
+      popd >/dev/null
+      popd >/dev/null
+      return 1
+    fi
+    /bin/cp "$TELEGRAM_CONFIG_ENV_FILE" "$telegram_overlay_env_file"
+    chmod 600 "$telegram_overlay_env_file"
+  fi
   local telegram_runtime_env_names=(
     API_KEY
     OPENAI_API_KEY
@@ -9851,7 +11218,6 @@ PY
     CHAT_MODE
     PASS_HISTORY
     LONG_TEXT
-    LONG_TEXT_SPLIT
     FILE_UPLOAD_MESS
     WEB_HOOK
     whitelist
@@ -9904,6 +11270,14 @@ PY
     VIVENTIUM_TELEGRAM_FOLLOWUP_GRACE_S
     VIVENTIUM_TELEGRAM_FOLLOWUP_TIMEOUT_S
     VIVENTIUM_TELEGRAM_GLASSHIVE_TIMEOUT_S
+    VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S
+    VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_MAX_BACKOFF_S
+    VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_BATCH_SIZE
+    VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_LEASE_MS
+    VIVENTIUM_TELEGRAM_OWNER_RECEIPT
+    VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT
+    VIVENTIUM_TELEGRAM_EXECUTION_ROOT
+    VIVENTIUM_TELEGRAM_OWNER_LAUNCH_SCRIPT
     VIVENTIUM_TELEGRAM_SERIALIZE_PER_CHAT
     VIVENTIUM_TELEGRAM_TRACE
     VIVENTIUM_TELEGRAM_TIMING_ENABLED
@@ -9927,22 +11301,113 @@ PY
   done
   cat >"$telegram_launch_script" <<EOF
 #!/usr/bin/env bash
+# viventium-launch-package-schema: 1
 set -euo pipefail
+telegram_launch_package_dir="\$(cd -- "\$(dirname -- "\${BASH_SOURCE[0]}")" && pwd -P)"
 set -a
-if [[ -f "$telegram_runtime_env_file" ]]; then source "$telegram_runtime_env_file"; fi
-if [[ -f "$TELEGRAM_CONFIG_ENV_FILE" ]]; then source "$TELEGRAM_CONFIG_ENV_FILE"; fi
+source "\$telegram_launch_package_dir/telegram_bot_runtime.env"
+source "\$telegram_launch_package_dir/telegram_overlay.env"
 set +a
 if [[ -z "\${API_KEY:-}" && -n "\${OPENAI_API_KEY:-}" ]]; then export API_KEY="\$OPENAI_API_KEY"; fi
 if [[ -z "\${BASE_URL:-}" ]]; then export BASE_URL="https://api.openai.com/v1"; fi
 export CONFIG_DIR="$TELEGRAM_USER_CONFIGS_DIR"
 export VIVENTIUM_TELEGRAM_BACKEND="$telegram_backend"
 export VIVENTIUM_LIBRECHAT_ORIGIN="\${VIVENTIUM_LIBRECHAT_ORIGIN:-$LC_API_URL}"
+export VIVENTIUM_TELEGRAM_OWNER_RECEIPT="$VIVENTIUM_TELEGRAM_OWNER_RECEIPT"
+export VIVENTIUM_TELEGRAM_OWNER_REPO_ROOT="$VIVENTIUM_CORE_DIR"
+export VIVENTIUM_TELEGRAM_EXECUTION_ROOT="$PWD"
+export VIVENTIUM_TELEGRAM_OWNER_LAUNCH_SCRIPT="$telegram_launch_script"
+export PYTHONDONTWRITEBYTECODE=1
 cd "$PWD"
 exec "$telegram_python_path" bot.py
 EOF
   chmod 700 "$telegram_launch_script"
+  local telegram_handoff_json=""
+  local telegram_handoff_action=""
+  local telegram_handoff_transaction=""
+  local telegram_attach_timeout="${VIVENTIUM_TELEGRAM_HANDOFF_ATTACH_TIMEOUT_S:-8}"
+  local telegram_ready_timeout="${VIVENTIUM_TELEGRAM_HANDOFF_READY_TIMEOUT_S:-75}"
+  local telegram_guard_timeout="${VIVENTIUM_TELEGRAM_HANDOFF_GUARD_TIMEOUT_S:-}"
+  local telegram_timeout_values=""
+  telegram_timeout_values="$(
+    normalize_telegram_handoff_timeouts \
+      "$telegram_attach_timeout" \
+      "$telegram_ready_timeout" \
+      "$telegram_guard_timeout"
+  )" || {
+    log_error "Telegram handoff timeout normalization failed"
+    restore_telegram_env
+    popd >/dev/null
+    popd >/dev/null
+    return 1
+  }
+  read -r telegram_attach_timeout telegram_ready_timeout telegram_guard_timeout \
+    <<<"$telegram_timeout_values"
+  local telegram_handoff_args=(
+    prepare
+    --state-dir "$TELEGRAM_POLLER_STATE_DIR"
+    --pid-file "$TELEGRAM_BOT_PID_FILE"
+    --legacy-launch-script "$telegram_legacy_launch_script"
+    --candidate-repo "$VIVENTIUM_CORE_DIR"
+    --candidate-execution-root "$PWD"
+    --candidate-launch-script "$telegram_launch_script"
+    --guard-timeout "$telegram_guard_timeout"
+  )
+  if [[ "$RESTART_SERVICES" == "true" ]]; then
+    telegram_handoff_args+=(--takeover)
+  fi
+  if ! telegram_handoff_json="$(
+    "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" "${telegram_handoff_args[@]}"
+  )"; then
+    log_error "Telegram poller predecessor handoff could not be prepared"
+    cleanup_current_telegram_launch_package || true
+    restore_telegram_env
+    popd >/dev/null
+    popd >/dev/null
+    return 1
+  fi
+  telegram_handoff_action="$(telegram_handoff_json_field "$telegram_handoff_json" action)"
+  telegram_handoff_transaction="$(telegram_handoff_json_field "$telegram_handoff_json" transaction)"
+  if [[ "$telegram_handoff_action" == "already-running" ]]; then
+    TELEGRAM_BOT_PID="$(telegram_handoff_json_field "$telegram_handoff_json" pid)"
+    printf '%s\n' "$TELEGRAM_BOT_PID" >"$TELEGRAM_BOT_PID_FILE"
+    log_success "Telegram bot already running with verified ownership (PID: $TELEGRAM_BOT_PID)"
+    cleanup_current_telegram_launch_package || true
+    restore_telegram_env
+    popd >/dev/null
+    popd >/dev/null
+    return 0
+  fi
+  if [[ "$telegram_handoff_action" != "start" ]]; then
+    log_error "Telegram poller handoff helper returned an unsupported action"
+    cleanup_current_telegram_launch_package || true
+    restore_telegram_env
+    popd >/dev/null
+    popd >/dev/null
+    return 1
+  fi
+  if [[ "$RESTART_SERVICES" == "true" ]]; then
+    stop_telegram_launchctl_job
+  fi
   local telegram_started_with_launchctl=false
-  if detached_start_requested && [[ "$(uname -s)" == "Darwin" ]] && command -v launchctl >/dev/null 2>&1; then
+  local telegram_launchctl_eligible=true
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local telegram_configs_resolved=""
+    telegram_configs_resolved="$(cd "$TELEGRAM_USER_CONFIGS_DIR" 2>/dev/null && pwd -P)" || true
+    case "$telegram_configs_resolved" in
+      "$HOME/Documents"|"$HOME/Documents"/*|\
+      "$HOME/Desktop"|"$HOME/Desktop"/*|\
+      "$HOME/Downloads"|"$HOME/Downloads"/*)
+        telegram_launchctl_eligible=false
+        log_warn "Telegram preferences use a macOS protected folder; preserving that explicit location and using direct detached startup"
+        ;;
+    esac
+  fi
+  if detached_start_requested &&
+    [[ "$telegram_launchctl_eligible" == "true" ]] &&
+    [[ "$(uname -s)" == "Darwin" ]] &&
+    command -v launchctl >/dev/null 2>&1
+  then
     local telegram_launch_service="gui/$(id -u)/${TELEGRAM_BOT_LAUNCHCTL_LABEL}"
     stop_telegram_launchctl_job
     if "${telegram_clean_env[@]}" launchctl submit \
@@ -9981,19 +11446,74 @@ EOF
   fi
   TELEGRAM_STARTED_BY_SCRIPT=true
   printf '%s\n' "$TELEGRAM_BOT_PID" >"$TELEGRAM_BOT_PID_FILE"
+  if [[ -n "$telegram_handoff_transaction" ]] && ! "$PYTHON_BIN" \
+    "$TELEGRAM_POLLER_HANDOFF_HELPER" attach-candidate \
+      --transaction "$telegram_handoff_transaction" \
+      --pid "$TELEGRAM_BOT_PID" \
+      --timeout "$telegram_attach_timeout" >/dev/null; then
+    "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" rollback \
+      --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
+      --transaction "$telegram_handoff_transaction" >/dev/null 2>&1 || true
+    stop_telegram_launchctl_job
+    rm -f "$TELEGRAM_BOT_PID_FILE"
+    log_error "Telegram candidate identity could not be attached to the handoff"
+    popd >/dev/null
+    popd >/dev/null
+    restore_telegram_env
+    return 1
+  fi
+  local telegram_ready_json=""
+  local telegram_ready_args=(
+    wait-ready
+    --state-dir "$TELEGRAM_POLLER_STATE_DIR"
+    --candidate-repo "$VIVENTIUM_CORE_DIR"
+    --candidate-execution-root "$PWD"
+    --candidate-pid "$TELEGRAM_BOT_PID"
+    --timeout "$telegram_ready_timeout"
+  )
+  if [[ -n "$telegram_handoff_transaction" ]]; then
+    telegram_ready_args+=(--transaction "$telegram_handoff_transaction")
+  fi
+  if ! telegram_ready_json="$(
+    "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" "${telegram_ready_args[@]}"
+  )"; then
+    rm -f "$TELEGRAM_BOT_PID_FILE"
+    if [[ -n "$telegram_handoff_transaction" ]]; then
+      "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" rollback \
+        --state-dir "$TELEGRAM_POLLER_STATE_DIR" \
+        --transaction "$telegram_handoff_transaction" >/dev/null 2>&1 || true
+    else
+      stop_owned_telegram_poller || true
+      cleanup_current_telegram_launch_package || true
+    fi
+    stop_telegram_launchctl_job
+    log_error "Telegram bot failed readiness; a recognized predecessor was restored when safe"
+    tail -30 "$LOG_DIR/telegram_bot.log" 2>/dev/null || true
+    popd >/dev/null
+    popd >/dev/null
+    restore_telegram_env
+    if [[ "$telegram_backend" == "livekit" ]]; then
+      export LIVEKIT_AGENT_NAME="$previous_agent_name"
+    fi
+    return 1
+  fi
+  TELEGRAM_BOT_PID="$(telegram_handoff_json_field "$telegram_ready_json" pid)"
+  printf '%s\n' "$TELEGRAM_BOT_PID" >"$TELEGRAM_BOT_PID_FILE"
+  if [[ -n "$telegram_handoff_transaction" ]]; then
+    "$PYTHON_BIN" "$TELEGRAM_POLLER_HANDOFF_HELPER" commit \
+      --transaction "$telegram_handoff_transaction" >/dev/null || {
+      log_error "Telegram bot became ready but its handoff could not be committed"
+      popd >/dev/null
+      popd >/dev/null
+      restore_telegram_env
+      return 1
+    }
+  fi
   popd >/dev/null
   popd >/dev/null
   restore_telegram_env
   if [[ "$telegram_backend" == "livekit" ]]; then
     export LIVEKIT_AGENT_NAME="$previous_agent_name"
-  fi
-
-  sleep 3
-  if ! ps -p "$TELEGRAM_BOT_PID" >/dev/null 2>&1; then
-    rm -f "$TELEGRAM_BOT_PID_FILE"
-    log_error "Telegram bot failed to start (see $LOG_DIR/telegram_bot.log)"
-    tail -30 "$LOG_DIR/telegram_bot.log" 2>/dev/null || true
-    return 1
   fi
   log_success "Telegram bot started (PID: $TELEGRAM_BOT_PID)"
   return 0
@@ -10188,6 +11708,72 @@ queue_optional_services_parallel_with_librechat() {
   fi
 }
 
+# === VIVENTIUM START ===
+# Feature: Canonical App Support storage for source-install uploads.
+# Purpose: Migrate the recognized nested-checkout predecessor before any
+# upload-consuming service starts. A running predecessor must be restarted;
+# moving files while LibreChat can still write them is intentionally forbidden.
+CANONICAL_UPLOADS_READY=false
+
+migrate_canonical_uploads_before_librechat_start() {
+  if validation_runtime_is_quiesced; then
+    CANONICAL_UPLOADS_READY=true
+    return 0
+  fi
+  local migration_helper="$VIVENTIUM_CORE_DIR/scripts/viventium/uploads_migration.py"
+  local canonical_root="${VIVENTIUM_LIBRECHAT_UPLOADS_ROOT:-$VIVENTIUM_APP_SUPPORT_ROOT/data/uploads}"
+  if [[ "$canonical_root" != "$VIVENTIUM_APP_SUPPORT_ROOT/data/uploads" ]]; then
+    log_error "Canonical uploads root is outside Viventium App Support"
+    return 1
+  fi
+  if [[ ! -f "$migration_helper" || -L "$migration_helper" ]]; then
+    log_error "Canonical uploads migration helper is unavailable"
+    return 1
+  fi
+  if ! "$PYTHON_BIN" "$migration_helper" \
+    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+    --librechat-dir "$LIBRECHAT_DIR" \
+    --canonical-root "${VIVENTIUM_LIBRECHAT_UPLOADS_ROOT:-$VIVENTIUM_APP_SUPPORT_ROOT/data/uploads}" \
+    >/dev/null; then
+    log_error "Canonical uploads migration failed; LibreChat was not started"
+    return 1
+  fi
+  CANONICAL_UPLOADS_READY=true
+  return 0
+}
+
+prepare_canonical_uploads_before_parallel_services() {
+  if validation_runtime_is_quiesced; then
+    CANONICAL_UPLOADS_READY=true
+    return 0
+  fi
+  local canonical_root="${VIVENTIUM_LIBRECHAT_UPLOADS_ROOT:-$VIVENTIUM_APP_SUPPORT_ROOT/data/uploads}"
+  local legacy_root="$LIBRECHAT_DIR/uploads"
+  if [[ "$SKIP_LIBRECHAT" == "true" && "$START_GLASSHIVE" != "true" ]]; then
+    return 0
+  fi
+  if port_in_use "$LC_API_PORT"; then
+    if [[ "$RESTART_SERVICES" == "true" ]]; then
+      log_info "Stopping the scoped LibreChat predecessor before canonical uploads migration"
+      kill_port_listeners "$LC_API_PORT" "$LIBRECHAT_DIR"
+      kill_port_listeners "$LC_FRONTEND_PORT" "$LIBRECHAT_DIR"
+      kill_port_listeners "$VIVENTIUM_SANDPACK_BUNDLER_PORT" "$LIBRECHAT_DIR"
+      if port_in_use "$LC_API_PORT"; then
+        log_error "LibreChat remains active; refusing to migrate uploads while files may be changing"
+        return 1
+      fi
+    elif [[ -L "$legacy_root" && "$(readlink "$legacy_root")" == "$canonical_root" ]]; then
+      CANONICAL_UPLOADS_READY=true
+      return 0
+    else
+      log_error "LibreChat must be restarted once to migrate uploads into App Support safely"
+      return 1
+    fi
+  fi
+  migrate_canonical_uploads_before_librechat_start
+}
+# === VIVENTIUM END ===
+
 echo ""
 echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}  Viventium LibreChat Voice Stack${NC}"
@@ -10301,6 +11887,10 @@ if [[ "$RESTART_SERVICES" == "true" ]]; then
   stop_running_services
 fi
 
+# Preserve the predecessor receipt through restart cleanup, then bind the successor group.
+# Both public foreground start and helper/installer detached start own a distinct process group.
+record_detached_launch_process_group
+
 cleanup_stale_containers
 
 # Enable cleanup once we've printed config and are about to start services.
@@ -10400,23 +11990,7 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
         exit 1
       fi
 
-      EXISTING=$(docker ps -q \
-        --filter "label=viventium.stack=viventium_v0_4" \
-        --filter "label=viventium.service=livekit" \
-        --filter "label=viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}" \
-        2>/dev/null | head -1)
-      if [[ -z "$EXISTING" ]]; then
-        EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-" 2>/dev/null | head -1)
-      fi
-      if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
-        EXISTING=$(docker ps -q \
-          --filter "label=viventium.stack=viventium_v0_4" \
-          --filter "label=viventium.service=livekit" \
-          2>/dev/null | head -1)
-      fi
-      if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
-        EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null | head -1)
-      fi
+      EXISTING="$(livekit_runtime_container_ids running | head -1)"
 
       if [[ -n "$EXISTING" ]] && ! livekit_managed_container_matches_release "$EXISTING"; then
         log_warn "Replacing stale managed LiveKit container ${EXISTING:0:12} with ${LIVEKIT_SERVER_VERSION}"
@@ -10461,6 +12035,8 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
             --label "viventium.stack=viventium_v0_4"
             --label "viventium.service=livekit"
             --label "viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}"
+            --label "viventium.runtime-owner=${VIVENTIUM_LIVEKIT_RUNTIME_OWNER}"
+            --label "viventium.livekit.http-port=${LIVEKIT_HTTP_PORT}"
             --label "viventium.livekit.image=${LIVEKIT_SERVER_IMAGE}"
             --label "viventium.livekit.source=${LIVEKIT_SERVER_SOURCE_COMMIT}"
             -p "${LIVEKIT_HTTP_PORT}:${LIVEKIT_HTTP_PORT}"
@@ -10500,10 +12076,17 @@ fi
 # Prepare the local LibreChat runtime files before optional services start.
 # RAG and related compose stacks mount LibreChat/.env and librechat.yaml directly.
 if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
-  ensure_librechat_env || {
-    log_error "Failed to prepare LibreChat .env"
-    exit 1
-  }
+  if validation_runtime_is_quiesced; then
+    prepare_librechat_env_for_quiesced_validation || {
+      log_error "Failed to prepare protected in-process LibreChat environment"
+      exit 1
+    }
+  else
+    ensure_librechat_env || {
+      log_error "Failed to prepare LibreChat .env"
+      exit 1
+    }
+  fi
   ensure_librechat_yaml || log_warn "LibreChat config missing; using default config"
   render_librechat_config || log_warn "LibreChat config generation failed; using default config"
 fi
@@ -10518,6 +12101,7 @@ if ! start_code_interpreter; then
 fi
 
 start_dependency_bound_optional_services
+prepare_canonical_uploads_before_parallel_services || exit 1
 queue_optional_services_parallel_with_librechat
 
 # === VIVENTIUM START ===
@@ -10574,12 +12158,12 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     echo -e "${RED}[viventium]${NC} LibreChat directory not found: $LIBRECHAT_DIR"
     exit 1
   fi
-  require_cmd node
-  require_cmd npm
   ensure_validated_node24_runtime || {
-    log_error "LibreChat startup requires the validated node@24 runtime"
+    log_error "LibreChat startup requires the validated Node ${VIVENTIUM_NODE_RUNTIME_VERSION} runtime"
     exit 1
   }
+  require_cmd node
+  require_cmd npm
 
   if ! ensure_mongodb_ready; then
     log_error "MongoDB is required for LibreChat startup"
@@ -10688,11 +12272,21 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
   if [[ "$START_LIBRECHAT" != "true" ]]; then
     :
   else
+    if [[ "$LIBRECHAT_BACKEND_ALREADY_RUNNING" != "true" && "$CANONICAL_UPLOADS_READY" != "true" ]]; then
+      migrate_canonical_uploads_before_librechat_start || exit 1
+    fi
     refresh_parallel_runtime_endpoint_overrides
-    ensure_librechat_env || {
-      log_error "Failed to prepare LibreChat .env"
-      exit 1
-    }
+    if validation_runtime_is_quiesced; then
+      prepare_librechat_env_for_quiesced_validation || {
+        log_error "Failed to prepare protected in-process LibreChat environment"
+        exit 1
+      }
+    else
+      ensure_librechat_env || {
+        log_error "Failed to prepare LibreChat .env"
+        exit 1
+      }
+    fi
     ensure_librechat_yaml || log_warn "LibreChat config missing; using default config"
     render_librechat_config || log_warn "LibreChat config generation failed; using default config"
 
@@ -10721,7 +12315,9 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     exit 1
   fi
 
-  ensure_memory_unique_indexes_if_clean
+  if ! validation_runtime_is_quiesced; then
+    ensure_memory_unique_indexes_if_clean
+  fi
 
   if is_truthy "${SEARCH:-false}"; then
     if ! ensure_meilisearch_ready; then
@@ -10751,13 +12347,15 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     LIBRECHAT_CLIENT_BUNDLE_BUILT_THIS_RUN=true
   fi
 
-  reconcile_viventium_user_defaults || \
-    log_warn "Viventium local user defaults may not fully reflect install defaults for this run"
+  if ! validation_runtime_is_quiesced; then
+    reconcile_viventium_user_defaults || \
+      log_warn "Viventium local user defaults may not fully reflect install defaults for this run"
 
-  ensure_viventium_agents_seeded || {
-    log_error "Failed to seed built-in Viventium agents"
-    exit 1
-  }
+    ensure_viventium_agents_seeded || {
+      log_error "Failed to seed built-in Viventium agents"
+      exit 1
+    }
+  fi
 
   echo -e "${CYAN}[viventium]${NC} Starting LibreChat (backend+frontend) ..."
 
@@ -11346,11 +12944,14 @@ sleep 3
 
 if detached_start_requested; then
   start_detached_librechat_api_watchdog
+  start_deferred_postcommit_finalizer
   log_info "Skipping blocking post-start health checks for detached launch; detached watchdog will monitor LibreChat API/artifact health while helper/user surfaces monitor readiness"
 elif [[ "$SKIP_HEALTH_CHECKS" != "true" ]]; then
   run_health_checks
+  finalize_pending_postcommit_after_first_start
 else
   log_info "Skipping health checks"
+  start_deferred_postcommit_finalizer
 fi
 
 prewarm_remote_call_access
@@ -11483,6 +13084,9 @@ if ! detached_start_requested; then
 fi
 # === VIVENTIUM END ===
 
+# Refresh after service startup so both foreground and detached receipts include durable children.
+# A detached launcher exits below; foreground supervisors remain and then block in wait.
+record_detached_launch_process_group_members
 if [[ "${VIVENTIUM_DETACHED_START:-false}" == "1" || "${VIVENTIUM_DETACHED_START:-false}" == "true" ]]; then
   CLEANUP_ENABLED=false
   log_success "Detached launch submitted; services will keep warming in the background"

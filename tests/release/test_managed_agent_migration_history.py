@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,33 +8,22 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIBRECHAT_ROOT = REPO_ROOT / "viventium_v0_4" / "LibreChat"
 GENERATOR = LIBRECHAT_ROOT / "scripts" / "viventium-generate-managed-agent-migrations.js"
-ARTIFACT = (
-    LIBRECHAT_ROOT
-    / "viventium"
-    / "source_of_truth"
-    / "managed-agent-baseline-migration.json"
-)
 
 
-def test_standalone_librechat_checkout_verifies_all_predecessors_without_parent_repo(
+def test_librechat_checkout_verifies_all_predecessors_without_parent_history(
     tmp_path: Path,
 ) -> None:
-    standalone = tmp_path / "standalone-librechat"
-    subprocess.run(
-        ["git", "clone", "--quiet", "--shared", str(LIBRECHAT_ROOT), str(standalone)],
-        check=True,
-    )
-    shutil.copy2(GENERATOR, standalone / "scripts" / GENERATOR.name)
-    shutil.copy2(
-        ARTIFACT,
-        standalone / "viventium" / "source_of_truth" / ARTIFACT.name,
-    )
+    # A component bootstrapped with Git's blob filter is intentionally a partial
+    # clone. Cloning that checkout locally produces a child whose origin cannot
+    # satisfy missing promised blobs, so it is not a faithful public-install
+    # simulation. Run the component-owned hermetic audit from an unrelated cwd
+    # instead: no parent-root argument or parent history is available to the
+    # generator, while its real public origin remains able to satisfy blobs.
     assert not (tmp_path / "components.lock.json").exists()
 
     completed = subprocess.run(
-        ["node", str(standalone / "scripts" / GENERATOR.name), "--check"],
-        cwd=standalone,
-        env={**os.environ, "NODE_PATH": str(LIBRECHAT_ROOT / "node_modules")},
+        ["node", str(GENERATOR), "--check"],
+        cwd=tmp_path,
         check=False,
         capture_output=True,
         text=True,
@@ -44,12 +31,12 @@ def test_standalone_librechat_checkout_verifies_all_predecessors_without_parent_
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "self-contained and matches all 62 predecessor objects" in completed.stdout
+    assert "self-contained and matches all 65 predecessor objects" in completed.stdout
 
 
 def test_explicit_parent_history_audit_matches_the_hermetic_artifact() -> None:
     completed = subprocess.run(
-        ["node", str(GENERATOR), "--check", f"--parent-root={REPO_ROOT}"],
+        ["node", str(GENERATOR), "--check", f"--parent-root={REPO_ROOT}", "--parent-rev=HEAD"],
         cwd=LIBRECHAT_ROOT,
         check=False,
         capture_output=True,

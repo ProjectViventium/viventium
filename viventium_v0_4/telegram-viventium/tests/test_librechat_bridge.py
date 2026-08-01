@@ -10,6 +10,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from TelegramVivBot.utils.librechat_bridge import (
+    TELEGRAM_CALLBACK_INTERRUPTED_NOTICE,
+    _async_client_options_for_url,
     _bridge_error_event,
     _strip_markdown,
     _start_chat_error_message,
@@ -29,12 +31,86 @@ from TelegramVivBot.utils.librechat_bridge import (
     has_active_cortex,
     LibreChatBridge,
     LibreChatSession,
+    apply_structured_delivery_controls,
     payload_has_glasshive_tool_call,
     render_telegram_markdown,
     sanitize_telegram_display_text,
     sanitize_telegram_text,
     _XAI_WRAPPING_TAG_NAMES,
 )
+from TelegramVivBot.utils.telegram_chunks import telegram_text_units
+
+
+def test_loopback_http_bridge_skips_unused_tls_bundle_and_proxy_environment():
+    assert _async_client_options_for_url("http://127.0.0.1:3180/api") == {
+        "trust_env": False,
+        "verify": False,
+    }
+    assert _async_client_options_for_url("http://localhost:3180/api") == {
+        "trust_env": False,
+        "verify": False,
+    }
+    assert _async_client_options_for_url("http://[::1]:3180/api") == {
+        "trust_env": False,
+        "verify": False,
+    }
+
+
+def test_remote_https_bridge_keeps_normal_certificate_and_environment_handling():
+    assert _async_client_options_for_url("https://example.com/api") == {}
+    assert _async_client_options_for_url("http://example.com/api") == {}
+    assert _async_client_options_for_url("https://localhost:3180/api") == {}
+    assert _async_client_options_for_url("http://localhost.evil.example/api") == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("origin", "expected_options"),
+    [
+        ("http://127.0.0.1:3180", {"trust_env": False, "verify": False}),
+        ("https://example.com", {}),
+    ],
+)
+async def test_glasshive_delivery_claim_applies_client_policy_on_actual_hot_path(
+    monkeypatch,
+    origin,
+    expected_options,
+):
+    import TelegramVivBot.utils.librechat_bridge as bridge_module
+
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"deliveries": []}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setattr(bridge_module.httpx, "AsyncClient", _FakeClient)
+    bridge = _make_bridge()
+    bridge.base_url = origin
+
+    assert await bridge._claim_glasshive_deliveries(limit=1) == []
+    observed_options = {
+        key: captured[key]
+        for key in ("trust_env", "verify")
+        if key in captured
+    }
+    assert observed_options == expected_options
 
 
 def test_sanitize_telegram_text_removes_citations():
@@ -43,6 +119,33 @@ def test_sanitize_telegram_text_removes_citations():
     assert "\ue202turn0search0" not in cleaned
     assert "[12]" not in cleaned
     assert "Hello world done" in cleaned
+
+
+def test_sanitize_telegram_text_hides_delivery_controls_without_eating_final_literals():
+    complete = sanitize_telegram_text("First beat.\n{MSG_BREAK}\nSecond beat.\n{SKIP_VOICE}")
+    final_partial_literal = sanitize_telegram_text("First beat.\n{MSG_")
+    streaming_partial = sanitize_telegram_text(
+        "First beat.\n{MSG_",
+        streaming_preview=True,
+    )
+    protected = sanitize_telegram_text("```text\n{MSG_BREAK}\n```")
+
+    assert complete == "First beat.\n\nSecond beat."
+    assert final_partial_literal == "First beat.\n{MSG_"
+    assert streaming_partial == "First beat."
+    assert "{MSG_BREAK}" in protected
+
+
+def test_structured_followup_delivery_rebuilds_transport_controls_only():
+    rebuilt = apply_structured_delivery_controls(
+        "First beat.\n\nSecond beat.",
+        {
+            "skipVoice": True,
+            "segments": ["First beat.", "Second beat."],
+        },
+    )
+
+    assert rebuilt == "First beat.\n{MSG_BREAK}\nSecond beat.\n{SKIP_VOICE}"
 
 
 def test_payload_has_glasshive_tool_call_uses_mcp_server_identity():
@@ -189,6 +292,66 @@ def test_bridge_defaults_glasshive_poll_timeout_for_long_host_tasks(monkeypatch)
         set_conversation_id=lambda _chat_id, _conversation_id: None,
     )
     assert bridge.glasshive_timeout_s == 600.0
+
+
+def test_bridge_defaults_dependency_failure_backoff_without_changing_healthy_poll_interval(
+    monkeypatch,
+):
+    monkeypatch.delenv(
+        "VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_MAX_BACKOFF_S", raising=False
+    )
+    bridge = LibreChatBridge(
+        get_conversation_id=lambda _chat_id: "",
+        set_conversation_id=lambda _chat_id, _conversation_id: None,
+    )
+    assert bridge.glasshive_delivery_poll_s == 5.0
+    assert bridge.glasshive_delivery_max_backoff_s == 60.0
+
+
+@pytest.mark.asyncio
+async def test_glasshive_dispatcher_backs_off_and_deduplicates_dependency_failures(
+    monkeypatch, caplog
+):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    bridge = _make_bridge()
+    bridge.glasshive_delivery_poll_s = 5.0
+    bridge.glasshive_delivery_max_backoff_s = 20.0
+    attempts = 0
+    sleeps = []
+
+    async def fake_claim(*, limit):
+        nonlocal attempts
+        assert limit == bridge.glasshive_delivery_batch_size
+        attempts += 1
+        if attempts <= 3:
+            raise RuntimeError("dependency unavailable")
+        return []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+        if attempts >= 4:
+            raise asyncio.CancelledError
+
+    bridge._claim_glasshive_deliveries = fake_claim  # type: ignore[assignment]
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await bridge._run_glasshive_delivery_dispatcher()
+
+    assert sleeps == [5.0, 10.0, 20.0, 5.0]
+    repeated = [
+        record
+        for record in caplog.records
+        if "GlassHive delivery dispatcher dependency unavailable" in record.message
+    ]
+    recovered = [
+        record
+        for record in caplog.records
+        if "GlassHive delivery dispatcher dependency recovered" in record.message
+    ]
+    assert len(repeated) == 1
+    assert len(recovered) == 1
 
 
 def test_sanitize_telegram_text_normalizes_em_dash_clause_breaks():
@@ -366,6 +529,28 @@ def test_extract_final_response_text_uses_response_text():
         },
     }
     assert extract_final_response_text(payload) == "Hello"
+
+
+def test_extract_final_response_text_preserves_delivery_controls_for_transport():
+    payload = {
+        "final": True,
+        "responseMessage": {
+            "text": "Copy-ready draft.\n{MSG_BREAK}\nOne afterthought.\n{SKIP_VOICE}",
+        },
+    }
+
+    assert extract_final_response_text(payload) == (
+        "Copy-ready draft.\n{MSG_BREAK}\nOne afterthought.\n{SKIP_VOICE}"
+    )
+
+
+def test_extract_text_deltas_preserves_split_delivery_control_for_final_parser():
+    chunks = [
+        extract_text_deltas({"text": "Copy-ready draft.\n{SKIP_"}),
+        extract_text_deltas({"text": "VOICE}"}),
+    ]
+
+    assert chunks == [["Copy-ready draft.\n{SKIP_"], ["VOICE}"]]
 
 
 def test_extract_final_response_text_from_content_string():
@@ -712,7 +897,7 @@ async def test_deliver_callback_splits_long_text_and_attaches_voice_only_to_last
 
     long_text = "\n\n".join(
         [
-            f"Section {index}: " + ("word " * 180)
+            f"Section {index}: " + ("word " * 240)
             for index in range(1, 5)
         ]
     )
@@ -730,6 +915,96 @@ async def test_deliver_callback_splits_long_text_and_attaches_voice_only_to_last
     assert all(message[2] == "HTML" for message in messages)
     assert all(message[3] is None for message in messages[:-1])
     assert messages[-1][3] == b"voice-bytes"
+
+
+@pytest.mark.asyncio
+async def test_deliver_callback_skip_voice_keeps_clean_text_and_avoids_tts(monkeypatch):
+    bridge = _make_bridge()
+    messages = []
+    synthesized = []
+
+    async def _capture(chat_id, message, parse_mode=None, voice_audio=None):
+        messages.append((chat_id, message, parse_mode, voice_audio))
+
+    bridge.set_on_message_callback(_capture)
+    fake_config = types.SimpleNamespace(
+        Users=types.SimpleNamespace(get_config=lambda _convo_id, _key: True)
+    )
+    monkeypatch.setitem(sys.modules, "config", fake_config)
+    fake_utils_pkg = types.ModuleType("utils")
+    fake_voice_mod = types.ModuleType("utils.voice")
+    fake_tts_mod = types.ModuleType("utils.tts")
+    fake_voice_mod.should_send_voice_reply = lambda **_kwargs: True
+
+    async def _fake_tts(text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        synthesized.append(text)
+        return b"voice-bytes"
+
+    fake_tts_mod.synthesize_speech = _fake_tts
+    monkeypatch.setitem(sys.modules, "utils", fake_utils_pkg)
+    monkeypatch.setitem(sys.modules, "utils.voice", fake_voice_mod)
+    monkeypatch.setitem(sys.modules, "utils.tts", fake_tts_mod)
+
+    raw = "**Draft** for qa@example.com.\n{SKIP_VOICE}"
+    await bridge._deliver_callback(
+        912,
+        render_telegram_markdown(raw),
+        parse_mode="HTML",
+        preference_convo_id="912",
+        raw_message=raw,
+    )
+
+    assert synthesized == []
+    assert len(messages) == 1
+    assert messages[0][3] is None
+    assert "SKIP_VOICE" not in messages[0][1]
+    assert "qa@example.com" in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_deliver_callback_message_break_sends_bubbles_with_audio_only_on_last(monkeypatch):
+    bridge = _make_bridge()
+    messages = []
+    synthesized = []
+
+    async def _capture(chat_id, message, parse_mode=None, voice_audio=None):
+        messages.append((chat_id, message, parse_mode, voice_audio))
+
+    bridge.set_on_message_callback(_capture)
+    fake_config = types.SimpleNamespace(
+        Users=types.SimpleNamespace(get_config=lambda _convo_id, _key: True)
+    )
+    monkeypatch.setitem(sys.modules, "config", fake_config)
+    fake_utils_pkg = types.ModuleType("utils")
+    fake_voice_mod = types.ModuleType("utils.voice")
+    fake_tts_mod = types.ModuleType("utils.tts")
+    fake_voice_mod.should_send_voice_reply = lambda **_kwargs: True
+
+    async def _fake_tts(text, _convo_id, *, voice_route=None):
+        _ = voice_route
+        synthesized.append(text)
+        return b"voice-bytes"
+
+    fake_tts_mod.synthesize_speech = _fake_tts
+    monkeypatch.setitem(sys.modules, "utils", fake_utils_pkg)
+    monkeypatch.setitem(sys.modules, "utils.voice", fake_voice_mod)
+    monkeypatch.setitem(sys.modules, "utils.tts", fake_tts_mod)
+
+    raw = "First beat.\n{MSG_BREAK}\nSecond beat."
+    await bridge._deliver_callback(
+        913,
+        render_telegram_markdown(raw),
+        parse_mode="HTML",
+        preference_convo_id="913",
+        raw_message=raw,
+    )
+
+    assert synthesized == ["First beat.\n\nSecond beat."]
+    assert len(messages) == 2
+    assert all("MSG_BREAK" not in item[1] for item in messages)
+    assert messages[0][3] is None
+    assert messages[1][3] == b"voice-bytes"
 # === VIVENTIUM END ===
 
 
@@ -3229,7 +3504,7 @@ async def test_send_followup_text_splits_long_proactive_messages():
     bridge.set_on_message_callback(on_message)
     long_text = "\n\n".join(
         [
-            f"Section {index}: " + ("word " * 180)
+            f"Section {index}: " + ("word " * 240)
             for index in range(1, 5)
         ]
     )
@@ -3241,3 +3516,57 @@ async def test_send_followup_text_splits_long_proactive_messages():
     assert all(message[2] == "HTML" for message in messages)
     assert all(message[3] is None for message in messages)
     assert all(len(message[1]) < 4096 for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_callback_without_raw_message_still_chunks_oversized_html():
+    bridge = _make_bridge()
+    messages = []
+
+    async def on_message(chat_id, text, parse_mode=None, voice_audio=None):
+        messages.append((chat_id, text, parse_mode, voice_audio))
+
+    bridge.set_on_message_callback(on_message)
+    rendered = "<b>" + ("synthetic &amp; text " * 600) + "</b>"
+
+    sent = await bridge._deliver_callback(
+        505,
+        rendered,
+        parse_mode="HTML",
+        raw_message=None,
+    )
+
+    assert sent is True
+    assert len(messages) > 1
+    assert all(message[0] == 505 for message in messages)
+    assert all(message[2] == "HTML" for message in messages)
+    assert all(telegram_text_units(message[1]) <= 4000 for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_chunked_callback_failure_reports_visible_interruption_without_audio():
+    bridge = _make_bridge()
+    messages = []
+    attempts = 0
+
+    async def on_message(chat_id, text, parse_mode=None, voice_audio=None):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise RuntimeError("synthetic second chunk failure")
+        messages.append((chat_id, text, parse_mode, voice_audio))
+
+    bridge.set_on_message_callback(on_message)
+    long_text = "\n\n".join(
+        f"Section {index}: " + ("word " * 300)
+        for index in range(1, 5)
+    )
+
+    sent = await bridge._send_followup_text("505:666", long_text, stream_id="stream-6")
+
+    assert sent is False
+    assert len(messages) == 2
+    assert messages[0][2] == "HTML"
+    assert messages[-1][1] == TELEGRAM_CALLBACK_INTERRUPTED_NOTICE
+    assert messages[-1][2] is None
+    assert all(message[3] is None for message in messages)

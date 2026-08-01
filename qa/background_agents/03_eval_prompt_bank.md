@@ -462,3 +462,49 @@ shipped background-agent roster.
   - Runtime resolves the reference through the canonical prompt registry.
   - The rendered policy contains the referenced instructions and never `[object Object]`.
 - Last run: `PASS` on 2026-07-10 in the nested schema/runtime tests and focused exact-model probe.
+
+### ACT-46 Specialist output ownership
+
+- User prompt:
+  - "Reply first with exactly `Validate before building.` Let Red Team and Confirmation Bias inspect whether one buyer's praise is enough evidence. If they find a material test I missed, add one short later continuation."
+- Expected primary activations:
+  - `Red Team`
+  - `Confirmation Bias`
+- Outcome assertions:
+  - Phase A obeys the exact initial response constraint.
+  - Each required specialist produces task-relevant evidence; neither echoes the Main-only exact
+    sentence as its specialist result.
+  - The universal endpoint's flattened native instruction ends by reasserting the current system
+    snapshot's authority, so a trailing user transcript cannot win through recency alone.
+  - Universal safety/permission constraints and any instruction explicitly addressed to the
+    background agents remain binding.
+
+### ACT-47 GlassHive runtime-lane capacity release
+
+- Scenario:
+  - Multiple conversation-mode Codex cortices queue behind one host-native Codex CLI lane while a
+    separate Claude or mission-mode lane also has delayed work.
+- Outcome assertions:
+  - A terminal Codex conversation run wakes only the matching Codex/host/conversation lane after a
+    fresh capacity check.
+  - Success, failure, pause, interrupt, running cancellation, termination, max-duration termination,
+    and recovered terminal state all release capacity.
+  - A host-busy requeue or a capacity check that still reports busy wakes nothing.
+  - Unrelated profile/mode delays remain intact and no queued request dispatches twice.
+
+### ACT-48 Phase B additive-value and consent gate
+
+- Positive prompt:
+  - "Give me a one-line initial answer. Let Red Team and Confirmation Bias inspect the plan, and add
+    one later continuation only if they find a material fact, risk, decision, or action missing from
+    that first line."
+- Negative control:
+  - "State that one buyer is not demand evidence, require ten independent paid-pilot asks, and stop
+    or resegment unless three equivalent commitments arrive within 30 days. Do not add a later
+    continuation unless a cortex finds a material test absent from that answer."
+- Outcome assertions:
+  - The Main adjudicator receives the original request, the already-visible Phase A answer, and
+    completed specialist evidence.
+  - Same-topic but concretely novel evidence may produce exactly one additive continuation when the
+    user authorized it; copied facts/actions resolve to `{NTA}`.
+  - `{NTA}` stays internal, terminal decision metadata persists, and reload shows no duplicate.

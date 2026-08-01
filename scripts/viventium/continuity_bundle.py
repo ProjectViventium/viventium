@@ -49,6 +49,56 @@ CONTINUITY_TRANSACTION_OVERHEAD_BYTES = 16 * 1024 * 1024
 MONGO_CAPTURE_ESTIMATE_MULTIPLIER = 4
 MONGO_CLAIM_COLLECTION = "__viventium_restore_claim__"
 
+
+def preserved_other_runtime_uploads_link_is_receipted(
+    *,
+    legacy: Path,
+    app_support: Path,
+) -> bool:
+    try:
+        raw_target = Path(os.readlink(legacy))
+        if not raw_target.is_absolute():
+            return False
+        target = raw_target
+        target = lexical(target)
+        receipt = app_support / "state" / "continuity" / "uploads-migration" / "receipt.json"
+        for directory in (
+            app_support,
+            receipt.parent.parent.parent,
+            receipt.parent.parent,
+            receipt.parent,
+        ):
+            metadata = directory.lstat()
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+            ):
+                return False
+        metadata = receipt.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+            or metadata.st_mode & 0o077
+        ):
+            return False
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        return (
+            isinstance(payload, dict)
+            and payload.get("schemaVersion") == 1
+            and payload.get("legacyCompatibility")
+            == "other_runtime_exact_symlink_preserved"
+            and payload.get("mode") == "isolated_runtime_root"
+            and payload.get("observedLinkTargetSha256")
+            == hashlib.sha256(os.fsencode(str(target))).hexdigest()
+            and payload.get("canonicalStorage") == "app_support_data_uploads"
+        )
+    except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
+        return False
+
+
 MONGO_SAFE_COLLECTIONS = (
     "accessroles",
     "aclentries",
@@ -1327,6 +1377,67 @@ def restore_storage_capacity_plan(
     return storage_capacity_plan(entries)
 
 
+def resolve_uploads_capture_source(repo_root: Path, app_support: Path) -> Path:
+    """Prefer canonical storage; use the source predecessor only before migration."""
+
+    repo_root = lexical(repo_root)
+    app_support = lexical(app_support)
+    canonical = lexical(app_support / "data" / "uploads")
+    legacy = lexical(repo_root / "viventium_v0_4" / "LibreChat" / "uploads")
+    contained(canonical, app_support, "Canonical uploads")
+    contained(legacy, repo_root, "Legacy LibreChat uploads")
+    canonical_metadata = None
+    legacy_metadata = None
+    try:
+        canonical_metadata = canonical.lstat()
+    except FileNotFoundError:
+        pass
+    try:
+        legacy_metadata = legacy.lstat()
+    except FileNotFoundError:
+        pass
+    if legacy_metadata is not None and stat.S_ISLNK(legacy_metadata.st_mode):
+        try:
+            target = Path(os.readlink(legacy))
+        except OSError as error:
+            raise RestoreTransactionError(
+                "Legacy uploads compatibility link is unreadable"
+            ) from error
+        if target.is_absolute() and lexical(target) == canonical:
+            return canonical
+        if (
+            canonical_metadata is not None
+            and stat.S_ISDIR(canonical_metadata.st_mode)
+            and canonical_metadata.st_uid == os.getuid()
+            and preserved_other_runtime_uploads_link_is_receipted(
+                legacy=legacy,
+                app_support=app_support,
+            )
+        ):
+            return canonical
+        raise RestoreTransactionError("Legacy uploads root is an unexpected symlink")
+    if canonical_metadata is None:
+        return legacy
+    if legacy_metadata is None:
+        return canonical
+    if not stat.S_ISDIR(canonical_metadata.st_mode) or not stat.S_ISDIR(
+        legacy_metadata.st_mode
+    ):
+        raise RestoreTransactionError("Canonical or legacy uploads root is unsafe")
+    try:
+        with os.scandir(canonical) as entries:
+            canonical_has_entries = next(entries, None) is not None
+        with os.scandir(legacy) as entries:
+            legacy_has_entries = next(entries, None) is not None
+    except OSError as error:
+        raise RestoreTransactionError("Uploads roots cannot be compared safely") from error
+    if canonical_has_entries and legacy_has_entries:
+        raise RestoreTransactionError(
+            "Canonical and legacy uploads roots are both populated"
+        )
+    return legacy if legacy_has_entries else canonical
+
+
 def capture_bundle(
     *,
     repo_root: Path,
@@ -1361,10 +1472,15 @@ def capture_bundle(
     schedule_path = lexical(Path(runtime_env.get("SCHEDULING_DB_PATH") or default_schedule))
     contained(schedule_path, app_support, "Schedule database")
     source_uploads = lexical(
-        uploads_dir if uploads_dir is not None else repo_root / "viventium_v0_4" / "LibreChat" / "uploads"
+        uploads_dir
+        if uploads_dir is not None
+        else resolve_uploads_capture_source(repo_root, app_support)
     )
     if uploads_dir is None:
-        contained(source_uploads, repo_root, "LibreChat uploads")
+        try:
+            contained(source_uploads, app_support, "Canonical uploads")
+        except RestoreTransactionError:
+            contained(source_uploads, repo_root, "Legacy LibreChat uploads")
     else:
         try:
             contained(source_uploads, repo_root, "LibreChat uploads")
@@ -2307,15 +2423,13 @@ def restore_bundle(
     librechat_root = contained(target_repo / "viventium_v0_4" / "LibreChat", target_repo, "LibreChat target")
     if not librechat_root.is_dir():
         raise RestoreTransactionError("Independent target checkout lacks the LibreChat component")
-    uploads_target = librechat_root / "uploads"
-    if domains["files"]["status"] == "captured" and (uploads_target.exists() or uploads_target.is_symlink()):
-        raise RestoreTransactionError("Independent target uploads directory must not already exist")
+    uploads_target = target / "data" / "uploads"
 
     require_storage_capacity(
         restore_storage_capacity_plan(
             payload,
             target_parent=target.parent,
-            uploads_parent=librechat_root,
+            uploads_parent=target.parent,
             target_mongo_data_path=validated_mongo_data_path,
         ),
         "continuity restore",
@@ -2325,7 +2439,7 @@ def restore_bundle(
 
     transaction_id = uuid.uuid4().hex
     stage = target.parent / f".{target.name}.restore-stage.{transaction_id}"
-    uploads_stage = librechat_root / f".uploads.restore-stage.{transaction_id}"
+    uploads_stage = stage / "data" / "uploads"
     mongo_scratch = target.parent / f".{target.name}.mongo-stage.{transaction_id}"
     journal = target.parent / f".{target.name}.restore-transaction.json"
     for candidate in (stage, uploads_stage, mongo_scratch, journal):
@@ -2463,14 +2577,8 @@ def restore_bundle(
         if fault_after == "mongo_restored":
             raise RestoreTransactionError("Injected restore fault after Mongo restore")
 
-        if domains["files"]["status"] == "captured":
-            state["uploadsActivationPending"] = True
-            write_json_atomic(journal, state)
-            os.replace(uploads_stage, uploads_target)
-            if fault_after == "uploads_renamed":
-                raise RestoreTransactionError("Injected restore fault after uploads activation")
-            state["uploadsCreated"] = True
-            write_json_atomic(journal, state)
+        if domains["files"]["status"] == "captured" and fault_after == "uploads_renamed":
+            raise RestoreTransactionError("Injected restore fault after uploads staging")
         state["targetActivationPending"] = True
         write_json_atomic(journal, state)
         os.replace(stage, target)
@@ -2518,19 +2626,6 @@ def restore_bundle(
                 shutil.rmtree(target)
             except Exception:
                 rollback_errors.append("target")
-        owns_uploads = bool(
-            state.get("uploadsCreated")
-            or (
-                state.get("uploadsActivationPending")
-                and uploads_target.exists()
-                and not uploads_stage.exists()
-            )
-        )
-        if owns_uploads and uploads_target.exists():
-            try:
-                shutil.rmtree(uploads_target)
-            except Exception:
-                rollback_errors.append("uploads")
         if state.get("mongoClaimPending") or state.get("mongoClaimed"):
             try:
                 drop_mongo_database(target_mongo_uri, target_repo, transaction_id)

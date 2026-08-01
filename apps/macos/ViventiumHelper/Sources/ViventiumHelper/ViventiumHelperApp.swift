@@ -4,12 +4,235 @@ import Darwin
 import Foundation
 import SwiftUI
 
+enum RuntimeDesiredState: String, Codable, Equatable {
+    case running
+    case stopped
+}
+
+struct RuntimeSupervisionState: Codable, Equatable {
+    let schemaVersion: Int
+    var desiredState: RuntimeDesiredState
+    var consecutiveLaunchAttempts: Int
+    var nextLaunchAttemptAt: Date?
+    var healthySince: Date?
+
+    static let defaultRunning = RuntimeSupervisionState(
+        schemaVersion: 1,
+        desiredState: .running,
+        consecutiveLaunchAttempts: 0,
+        nextLaunchAttemptAt: nil,
+        healthySince: nil
+    )
+
+    func shouldLaunch(at date: Date) -> Bool {
+        guard self.desiredState == .running else {
+            return false
+        }
+        return self.nextLaunchAttemptAt.map { $0 <= date } ?? true
+    }
+
+    mutating func requestRunning() {
+        self.desiredState = .running
+        self.resetBackoff()
+    }
+
+    mutating func requestStopped() {
+        self.desiredState = .stopped
+        self.resetBackoff()
+    }
+
+    mutating func recordLaunchAttempt(
+        at date: Date,
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) {
+        self.healthySince = nil
+        self.consecutiveLaunchAttempts = min(self.consecutiveLaunchAttempts + 1, 16)
+        self.nextLaunchAttemptAt = date.addingTimeInterval(
+            self.backoffDelay(baseDelay: baseDelay, maximumDelay: maximumDelay)
+        )
+    }
+
+    mutating func recordLaunchFailure(
+        at date: Date,
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) {
+        self.healthySince = nil
+        self.nextLaunchAttemptAt = date.addingTimeInterval(
+            self.backoffDelay(baseDelay: baseDelay, maximumDelay: maximumDelay)
+        )
+    }
+
+    mutating func recordHealthy(at date: Date, stabilityWindow: TimeInterval) {
+        guard self.desiredState == .running, self.consecutiveLaunchAttempts > 0 else {
+            return
+        }
+        guard let healthySince else {
+            self.healthySince = date
+            return
+        }
+        if date.timeIntervalSince(healthySince) >= stabilityWindow {
+            self.resetBackoff()
+        }
+    }
+
+    mutating func recordUnhealthy(
+        at date: Date,
+        stabilityWindow: TimeInterval,
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) {
+        guard let healthySince else {
+            return
+        }
+        if date.timeIntervalSince(healthySince) >= stabilityWindow {
+            self.resetBackoff()
+            return
+        }
+        self.healthySince = nil
+        if self.consecutiveLaunchAttempts > 0 {
+            self.nextLaunchAttemptAt = date.addingTimeInterval(
+                self.backoffDelay(baseDelay: baseDelay, maximumDelay: maximumDelay)
+            )
+        }
+    }
+
+    private func backoffDelay(
+        baseDelay: TimeInterval,
+        maximumDelay: TimeInterval
+    ) -> TimeInterval {
+        let exponent = max(0, min(self.consecutiveLaunchAttempts - 1, 16))
+        return min(maximumDelay, baseDelay * pow(2.0, Double(exponent)))
+    }
+
+    private mutating func resetBackoff() {
+        self.consecutiveLaunchAttempts = 0
+        self.nextLaunchAttemptAt = nil
+        self.healthySince = nil
+    }
+}
+
 private struct HelperConfig: Codable, Equatable {
     let repoRoot: String
     let appSupportDir: String
     var allowProtectedRepoRoot: Bool?
     var showInStatusBar: Bool?
     var nativeRuntime: Bool? = nil
+    var runtimeSupervision: RuntimeSupervisionState? = nil
+}
+
+private struct TelegramRecoverySelection: Decodable {
+    let schemaVersion: Int
+    let component: String
+    let codeRoot: String
+    let python: String
+    let compatLauncher: String
+    let componentTool: String
+    let handoffHelper: String
+    let disposition: String?
+    let predecessorRepo: String?
+    let wasRunning: Bool?
+    let selectionFile: String?
+    let userConfigsRoot: String?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case component
+        case codeRoot = "code_root"
+        case python
+        case compatLauncher = "compat_launcher"
+        case componentTool = "component_tool"
+        case handoffHelper = "handoff_helper"
+        case disposition
+        case predecessorRepo = "predecessor_repo"
+        case wasRunning = "was_running"
+        case selectionFile = "selection_file"
+        case userConfigsRoot = "user_configs_root"
+    }
+}
+
+private struct TelegramRecoveryReceipt: Decodable {
+    let schemaVersion: Int
+    let kind: String
+    let status: String
+    let wasRunning: Bool
+    let selection: TelegramRecoverySelection
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case kind
+        case status
+        case wasRunning = "was_running"
+        case selection
+    }
+}
+
+private enum HelperConfigPreservingEncoder {
+    private enum EncodingFailure: Error {
+        case invalidRoot
+    }
+
+    static func encode(config: HelperConfig, existingData: Data?) throws -> Data {
+        let typedData = try JSONEncoder().encode(config)
+        guard
+            let typedRoot = try JSONSerialization.jsonObject(with: typedData)
+                as? [String: Any]
+        else {
+            throw EncodingFailure.invalidRoot
+        }
+        let existingRoot: [String: Any]
+        if let existingData,
+           let decoded = try? JSONSerialization.jsonObject(with: existingData)
+                as? [String: Any]
+        {
+            existingRoot = decoded
+        } else {
+            existingRoot = [:]
+        }
+        let merged = self.merge(typedRoot, into: existingRoot)
+        return try JSONSerialization.data(
+            withJSONObject: merged,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+    }
+
+    private static func merge(
+        _ typed: [String: Any],
+        into existing: [String: Any]
+    ) -> [String: Any] {
+        var merged = existing
+        for (key, typedValue) in typed {
+            if let typedObject = typedValue as? [String: Any],
+               let existingObject = existing[key] as? [String: Any]
+            {
+                merged[key] = self.merge(typedObject, into: existingObject)
+            } else {
+                merged[key] = typedValue
+            }
+        }
+        return merged
+    }
+}
+
+private enum HelperConfigPreservingStore {
+    static func save(config: HelperConfig, to configURL: URL) throws {
+        let existingData = try? Data(contentsOf: configURL)
+        let data = try HelperConfigPreservingEncoder.encode(
+            config: config,
+            existingData: existingData
+        )
+        try FileManager.default.createDirectory(
+            at: configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        try data.write(to: configURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: configURL.path
+        )
+    }
 }
 
 private struct ActiveRuntimeCheckout: Decodable {
@@ -153,17 +376,19 @@ final class HelperController: ObservableObject {
     private let helperLogURL: URL?
     private var timer: Timer?
     private let envParser = RuntimeEnvParser()
-    private let launchDate = Date()
-    private let autoStartRetryWindowSeconds: TimeInterval = 45
     private let launchHealthTimeoutSeconds: Int = 1800
     private let stopHealthTimeoutSeconds: Int = 120
     private let postTimeoutStopGraceSeconds: Int = 30
     private let busyStateHandoffGraceSeconds: TimeInterval = 8
+    private let runtimeSupervisionBaseDelaySeconds: TimeInterval = 15
+    private let runtimeSupervisionMaximumDelaySeconds: TimeInterval = 900
+    private let runtimeSupervisionStableHealthSeconds: TimeInterval = 300
     private static let transcriptPartialExitStatus: Int32 = 2
     // Heavy local stacks can legitimately take several minutes to drain all owned sidecars
     // after the initial bounded stop command has returned.
     private let delayedQuitWatchTimeoutSeconds: Int = 420
-    private var didAttemptLaunchAutostart = false
+    private var runtimeSupervision = RuntimeSupervisionState.defaultRunning
+    private var runtimeSupervisionCheckInFlight = false
     private var delayedQuitWatchTask: Task<Void, Never>?
     private var busyStateGraceDeadline: Date?
     private var activatedHelperLifecycle = false
@@ -175,6 +400,7 @@ final class HelperController: ObservableObject {
     init() {
         ProcessInfo.processInfo.disableAutomaticTermination(self.automaticTerminationReason)
         self.config = Self.loadConfig()
+        self.runtimeSupervision = self.config?.runtimeSupervision ?? .defaultRunning
         self.helperLogURL = Self.makeHelperLogURL(appSupportDir: self.config?.appSupportDir)
         self.launchAtLoginEnabled = Self.launchAtLoginFastPathEnabled()
         self.showInStatusBarEnabled = self.config?.showInStatusBar ?? true
@@ -543,7 +769,12 @@ final class HelperController: ObservableObject {
             alert.runModal()
             return
         }
-        guard !Self.configUsesProtectedRepoRoot(config) else {
+        let protectedRecovery = Self.loadTelegramRecoverySelection(
+            appSupportDir: config.appSupportDir
+        )
+        guard !Self.configUsesProtectedRepoRoot(config) ||
+            protectedRecovery != nil
+        else {
             self.presentProtectedCheckoutAlert(action: "ingest meeting transcripts")
             return
         }
@@ -668,7 +899,12 @@ final class HelperController: ObservableObject {
             self.presentMissingConfigAlert()
             return
         }
-        guard !Self.configUsesProtectedRepoRoot(config) else {
+        let protectedRecovery = Self.loadTelegramRecoverySelection(
+            appSupportDir: config.appSupportDir
+        )
+        guard !Self.configUsesProtectedRepoRoot(config) ||
+            protectedRecovery != nil
+        else {
             self.presentProtectedCheckoutAlert(action: "choose a transcripts folder")
             return
         }
@@ -1072,12 +1308,12 @@ final class HelperController: ObservableObject {
         self.timer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshState()
-                self?.maybeAutoStartOnLaunch(trigger: "poll")
+                self?.reconcileRuntimeSupervision(trigger: "poll")
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
             Task { @MainActor in
-                self?.maybeAutoStartOnLaunch(trigger: "launch")
+                self?.reconcileRuntimeSupervision(trigger: "launch")
             }
         }
     }
@@ -1099,7 +1335,9 @@ final class HelperController: ObservableObject {
     private func startStack(
         openWhenReady: Bool,
         openPath: String? = nil,
-        launchReason: String = "manual"
+        launchReason: String = "manual",
+        recordsDesiredRunning: Bool = true,
+        supervisedLaunch: Bool = false
     ) {
         self.cancelDelayedQuitWatch()
         guard let config else {
@@ -1107,9 +1345,17 @@ final class HelperController: ObservableObject {
             self.stackState = .unavailable("Missing helper config")
             return
         }
-        guard !Self.configUsesProtectedRepoRoot(config) else {
+        let protectedRecoveryPointer = Self.telegramRecoveryPointerExists(
+            appSupportDir: config.appSupportDir
+        )
+        guard !Self.configUsesProtectedRepoRoot(config) ||
+            protectedRecoveryPointer
+        else {
             self.presentProtectedCheckoutAlert(action: "start Viventium")
             return
+        }
+        if recordsDesiredRunning {
+            self.setRuntimeDesiredState(.running)
         }
         self.log("Starting stack (\(launchReason))")
         self.beginBusyState(.starting)
@@ -1143,6 +1389,9 @@ final class HelperController: ObservableObject {
                 logFileName: "helper-start.log"
             ) else {
                 await MainActor.run {
+                    if supervisedLaunch {
+                        self.recordSupervisedLaunchFailure()
+                    }
                     self.log("CLI detached start submission failed (\(launchReason))")
                     self.refreshState(force: true)
                     self.log("Stack did not become healthy after \(launchReason)")
@@ -1174,6 +1423,17 @@ final class HelperController: ObservableObject {
                 startLogOffset: startLogOffset
             )
             await MainActor.run {
+                if supervisedLaunch {
+                    if started {
+                        self.runtimeSupervision.recordHealthy(
+                            at: Date(),
+                            stabilityWindow: self.runtimeSupervisionStableHealthSeconds
+                        )
+                        self.persistRuntimeSupervision()
+                    } else {
+                        self.recordSupervisedLaunchFailure()
+                    }
+                }
                 self.refreshState(force: true)
                 self.log(started ? "Stack healthy after \(launchReason)" : "Stack did not become healthy after \(launchReason)")
                 if started && openWhenReady {
@@ -1206,10 +1466,16 @@ final class HelperController: ObservableObject {
             }
             return
         }
-        guard !Self.configUsesProtectedRepoRoot(config) else {
+        let protectedRecoveryPointer = Self.telegramRecoveryPointerExists(
+            appSupportDir: config.appSupportDir
+        )
+        guard !Self.configUsesProtectedRepoRoot(config) ||
+            protectedRecoveryPointer
+        else {
             self.presentProtectedCheckoutAlert(action: "stop Viventium")
             return
         }
+        self.setRuntimeDesiredState(.stopped)
         self.log(terminateWhenDone ? "Stopping stack before helper exit" : "Stopping stack")
         self.beginBusyState(.stopping)
         Task.detached(priority: .userInitiated) {
@@ -1564,75 +1830,142 @@ final class HelperController: ObservableObject {
         alert.runModal()
     }
 
-    private func maybeAutoStartOnLaunch(trigger: String) {
-        guard !self.didAttemptLaunchAutostart else {
+    private func reconcileRuntimeSupervision(trigger: String) {
+        guard !self.runtimeSupervisionCheckInFlight,
+              self.runtimeSupervision.desiredState == .running,
+              let config
+        else {
             return
         }
-        guard let config else {
-            self.log("Auto-start skipped; missing helper config")
-            self.didAttemptLaunchAutostart = true
-            return
-        }
-        guard !Self.configUsesProtectedRepoRoot(config) else {
-            self.log("Auto-start skipped; helper is still bound to a protected-folder checkout")
-            self.stackState = .unavailable("Protected Checkout")
-            self.didAttemptLaunchAutostart = true
-            return
-        }
-        if Date().timeIntervalSince(self.launchDate) > self.autoStartRetryWindowSeconds {
-            self.log("Auto-start window expired before a launch attempt")
-            self.didAttemptLaunchAutostart = true
+        let now = Date()
+        if self.runtimeSupervision.healthySince == nil,
+           !self.runtimeSupervision.shouldLaunch(at: now)
+        {
             return
         }
 
-        Task.detached(priority: .utility) {
+        self.runtimeSupervisionCheckInFlight = true
+        Task { @MainActor in
+            defer {
+                self.runtimeSupervisionCheckInFlight = false
+            }
             let runtime = RuntimeEnvParser().readRuntime(appSupportDir: config.appSupportDir)
+            let snapshot = await self.stackHealthSnapshot(runtime: runtime)
             if await Self.stackOwnedByDifferentRepo(
                 runtime: runtime,
                 appSupportDir: config.appSupportDir,
-                expectedRepoRoot: config.repoRoot
+                expectedRepoRoot: config.repoRoot,
+                knownSnapshot: snapshot
             ) {
-                await MainActor.run {
-                    self.log("Auto-start blocked; split-workspace state detected (\(trigger))")
-                    self.stackState = .unavailable("Split Workspace")
-                    self.didAttemptLaunchAutostart = true
+                if self.stackState != .unavailable("Split Workspace") {
+                    self.log("Runtime supervision blocked; split-workspace state detected (\(trigger))")
                 }
-                return
-            }
-            let snapshot = await Self.stackHealthSnapshot(runtime: runtime, appSupportDir: config.appSupportDir)
-            if snapshot.healthy {
-                await MainActor.run {
-                    self.log("Auto-start skipped; stack already healthy (\(trigger))")
-                    self.stackState = .running
-                    self.didAttemptLaunchAutostart = true
-                }
-                return
-            }
-            if snapshot.needsAttention {
-                await MainActor.run {
-                    self.log("Auto-start skipped; stack needs attention (\(trigger))")
-                    self.stackState = .needsAttention
-                    self.didAttemptLaunchAutostart = true
-                }
-                return
-            }
-            if Self.cliOperationStillRunning(appSupportDir: config.appSupportDir) {
-                await MainActor.run {
-                    self.log("Auto-start deferred; CLI operation already running (\(trigger))")
-                }
+                self.stackState = .unavailable("Split Workspace")
                 return
             }
 
-            await MainActor.run {
-                guard !self.stackState.actionBusy else {
-                    self.log("Auto-start deferred; helper busy as \(self.statusLabel) (\(trigger))")
-                    return
-                }
-                self.didAttemptLaunchAutostart = true
-                self.log("Auto-start launching stack (\(trigger))")
-                self.startStack(openWhenReady: false, launchReason: "auto-start:\(trigger)")
+            guard self.runtimeSupervision.desiredState == .running else {
+                return
             }
+            let observedAt = Date()
+            if snapshot.healthy {
+                let previous = self.runtimeSupervision
+                self.runtimeSupervision.recordHealthy(
+                    at: observedAt,
+                    stabilityWindow: self.runtimeSupervisionStableHealthSeconds
+                )
+                if self.runtimeSupervision != previous {
+                    self.persistRuntimeSupervision()
+                }
+                self.stackState = .running
+                return
+            }
+
+            let previous = self.runtimeSupervision
+            self.runtimeSupervision.recordUnhealthy(
+                at: observedAt,
+                stabilityWindow: self.runtimeSupervisionStableHealthSeconds,
+                baseDelay: self.runtimeSupervisionBaseDelaySeconds,
+                maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
+            )
+            if self.runtimeSupervision != previous {
+                self.persistRuntimeSupervision()
+            }
+            if snapshot.needsAttention {
+                self.stackState = .needsAttention
+            }
+            guard self.runtimeSupervision.shouldLaunch(at: observedAt),
+                  !Self.cliOperationStillRunning(appSupportDir: config.appSupportDir),
+                  !self.stackState.actionBusy
+            else {
+                return
+            }
+            // Full sealed-controller validation runs once inside the detached
+            // launch submission. Supervision needs only the private receipt's
+            // stopped/running intent before deciding whether to submit.
+            let recoveryPointerExists = Self.telegramRecoveryPointerExists(
+                appSupportDir: config.appSupportDir
+            )
+            let recoveryWasRunning = recoveryPointerExists
+                ? Self.telegramRecoveryWasRunning(
+                    appSupportDir: config.appSupportDir
+                )
+                : nil
+            guard !recoveryPointerExists || recoveryWasRunning == true
+            else {
+                return
+            }
+
+            self.runtimeSupervision.recordLaunchAttempt(
+                at: observedAt,
+                baseDelay: self.runtimeSupervisionBaseDelaySeconds,
+                maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
+            )
+            self.persistRuntimeSupervision()
+            self.log(
+                "Runtime supervision launching stack attempt \(self.runtimeSupervision.consecutiveLaunchAttempts) (\(trigger))"
+            )
+            self.startStack(
+                openWhenReady: false,
+                launchReason: "supervisor:\(trigger)",
+                recordsDesiredRunning: false,
+                supervisedLaunch: true
+            )
         }
+    }
+
+    private func setRuntimeDesiredState(_ desiredState: RuntimeDesiredState) {
+        if desiredState == .running {
+            self.runtimeSupervision.requestRunning()
+        } else {
+            self.runtimeSupervision.requestStopped()
+        }
+        self.persistRuntimeSupervision()
+    }
+
+    private func recordSupervisedLaunchFailure() {
+        self.runtimeSupervision.recordLaunchFailure(
+            at: Date(),
+            baseDelay: self.runtimeSupervisionBaseDelaySeconds,
+            maximumDelay: self.runtimeSupervisionMaximumDelaySeconds
+        )
+        self.persistRuntimeSupervision()
+        if let nextAttemptAt = self.runtimeSupervision.nextLaunchAttemptAt {
+            let delay = max(0, Int(nextAttemptAt.timeIntervalSinceNow.rounded()))
+            self.log("Runtime supervision backing off for \(delay) seconds")
+        }
+    }
+
+    private func persistRuntimeSupervision() {
+        guard var config, config.runtimeSupervision != self.runtimeSupervision else {
+            return
+        }
+        config.runtimeSupervision = self.runtimeSupervision
+        guard Self.saveConfig(config) else {
+            self.log("Runtime supervision state could not be saved")
+            return
+        }
+        self.config = config
     }
 
     private func log(_ message: String) {
@@ -1675,16 +2008,8 @@ final class HelperController: ObservableObject {
     private static func saveConfig(_ config: HelperConfig) -> Bool {
         let configURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Viventium/helper-config.json")
-        guard let data = try? JSONEncoder().encode(config) else {
-            return false
-        }
         do {
-            try FileManager.default.createDirectory(
-                at: configURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true,
-                attributes: nil
-            )
-            try data.write(to: configURL, options: .atomic)
+            try HelperConfigPreservingStore.save(config: config, to: configURL)
             return true
         } catch {
             return false
@@ -1698,7 +2023,8 @@ final class HelperController: ObservableObject {
                 appSupportDir: config.appSupportDir,
                 allowProtectedRepoRoot: config.allowProtectedRepoRoot,
                 showInStatusBar: config.showInStatusBar,
-                nativeRuntime: config.nativeRuntime
+                nativeRuntime: config.nativeRuntime,
+                runtimeSupervision: config.runtimeSupervision
             )
         }
         let resolvedRepoRoot = self.resolveSafeRuntimeRepoRoot(config.repoRoot)
@@ -1710,7 +2036,8 @@ final class HelperController: ObservableObject {
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: false,
             showInStatusBar: config.showInStatusBar,
-            nativeRuntime: config.nativeRuntime
+            nativeRuntime: config.nativeRuntime,
+            runtimeSupervision: config.runtimeSupervision
         )
     }
 
@@ -1736,7 +2063,8 @@ final class HelperController: ObservableObject {
             appSupportDir: config.appSupportDir,
             allowProtectedRepoRoot: activeCheckout.allowProtectedFolderAccess == true,
             showInStatusBar: config.showInStatusBar,
-            nativeRuntime: config.nativeRuntime
+            nativeRuntime: config.nativeRuntime,
+            runtimeSupervision: config.runtimeSupervision
         )
     }
 
@@ -2059,7 +2387,7 @@ final class HelperController: ObservableObject {
         } else {
             playgroundReady = false
         }
-        let optionalSurfacesReady = self.optionalSurfacesReady(
+        let optionalSurfacesReady = await self.optionalSurfacesReady(
             runtime: runtime,
             appSupportDir: appSupportDir
         )
@@ -2072,7 +2400,10 @@ final class HelperController: ObservableObject {
         )
     }
 
-    private nonisolated static func optionalSurfacesReady(runtime: RuntimePorts, appSupportDir: String?) -> Bool {
+    private nonisolated static func optionalSurfacesReady(
+        runtime: RuntimePorts,
+        appSupportDir: String?
+    ) async -> Bool {
         guard let appSupportDir else {
             return true
         }
@@ -2089,7 +2420,7 @@ final class HelperController: ObservableObject {
         if runtime.startTelegramCodex && !self.telegramCodexRunning(runtime: runtime, appSupportDir: appSupportDir) {
             return false
         }
-        return true
+        return await self.managedServicesHealthy(runtime: runtime)
     }
 
     private nonisolated static func frontendURLString(host: String, port: Int) -> String {
@@ -2432,8 +2763,14 @@ final class HelperController: ObservableObject {
         }
     }
 
-    private nonisolated static func defaultCLIPath(homeDirectory: String, inheritedPath: String?) -> String {
+    private nonisolated static func defaultCLIPath(
+        homeDirectory: String,
+        appSupportDirectory: String,
+        inheritedPath: String?
+    ) -> String {
         let candidates = [
+            "\(appSupportDirectory)/runtime-tools/node/24.16.0/arm64/bin",
+            "\(appSupportDirectory)/runtime-tools/node/24.16.0/x86_64/bin",
             "/opt/homebrew/bin",
             "/opt/homebrew/sbin",
             "/usr/local/bin",
@@ -2470,6 +2807,8 @@ final class HelperController: ObservableObject {
     private nonisolated static func makeCLIEnvironment() -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+        let appSupportDirectory = inherited["VIVENTIUM_APP_SUPPORT_DIR"]
+            ?? "\(homeDirectory)/Library/Application Support/Viventium"
         let userName = inherited["USER"] ?? inherited["LOGNAME"] ?? NSUserName()
         var environment: [String: String] = [
             "HOME": homeDirectory,
@@ -2477,7 +2816,11 @@ final class HelperController: ObservableObject {
             "LOGNAME": inherited["LOGNAME"] ?? userName,
             "SHELL": inherited["SHELL"] ?? "/bin/zsh",
             "TMPDIR": inherited["TMPDIR"] ?? NSTemporaryDirectory(),
-            "PATH": self.defaultCLIPath(homeDirectory: homeDirectory, inheritedPath: inherited["PATH"]),
+            "PATH": self.defaultCLIPath(
+                homeDirectory: homeDirectory,
+                appSupportDirectory: appSupportDirectory,
+                inheritedPath: inherited["PATH"]
+            ),
             "LANG": inherited["LANG"] ?? "C.UTF-8",
             "LC_ALL": inherited["LC_ALL"] ?? inherited["LANG"] ?? "C.UTF-8",
             "LC_CTYPE": inherited["LC_CTYPE"] ?? inherited["LANG"] ?? "C.UTF-8",
@@ -2699,6 +3042,281 @@ final class HelperController: ObservableObject {
         }
     }
 
+    private nonisolated static func hasNoSymlinkComponents(_ path: String) -> Bool {
+        let normalized = URL(
+            fileURLWithPath: path
+        ).standardizedFileURL.path
+        let components = URL(
+            fileURLWithPath: normalized
+        ).pathComponents
+        guard !components.isEmpty else {
+            return false
+        }
+        var current = components[0]
+        for component in components.dropFirst() {
+            current = URL(
+                fileURLWithPath: current,
+                isDirectory: true
+            )
+            .appendingPathComponent(component)
+            .path
+            var metadata = stat()
+            if lstat(current, &metadata) != 0 ||
+                metadata.st_mode & S_IFMT == S_IFLNK
+            {
+                return false
+            }
+        }
+        return true
+    }
+
+    private nonisolated static func privateOwnedRegularFile(_ path: String) -> Bool {
+        var metadata = stat()
+        return self.hasNoSymlinkComponents(path) &&
+            lstat(path, &metadata) == 0 &&
+            metadata.st_mode & S_IFMT == S_IFREG &&
+            metadata.st_uid == getuid() &&
+            metadata.st_nlink == 1 &&
+            metadata.st_mode & 0o077 == 0
+    }
+
+    private nonisolated static func ownerControlledDirectory(_ path: String) -> Bool {
+        var metadata = stat()
+        return self.hasNoSymlinkComponents(path) &&
+            lstat(path, &metadata) == 0 &&
+            metadata.st_mode & S_IFMT == S_IFDIR &&
+            metadata.st_uid == getuid() &&
+            metadata.st_mode & 0o022 == 0
+    }
+
+    private nonisolated static func ownerControlledExecutable(
+        _ path: String,
+        within boundary: String
+    ) -> Bool {
+        guard self.path(path, isLexicallyWithin: boundary),
+              self.ownerControlledDirectory(
+                  (path as NSString).deletingLastPathComponent
+              )
+        else {
+            return false
+        }
+        var selectedMetadata = stat()
+        guard lstat(path, &selectedMetadata) == 0,
+              selectedMetadata.st_mode & S_IFMT == S_IFREG ||
+                  selectedMetadata.st_mode & S_IFMT == S_IFLNK
+        else {
+            return false
+        }
+        let resolved = URL(
+            fileURLWithPath: path
+        ).resolvingSymlinksInPath().path
+        var resolvedMetadata = stat()
+        return stat(resolved, &resolvedMetadata) == 0 &&
+            resolvedMetadata.st_mode & S_IFMT == S_IFREG &&
+            (
+                resolvedMetadata.st_uid == getuid() ||
+                    resolvedMetadata.st_uid == 0
+            ) &&
+            resolvedMetadata.st_mode & 0o022 == 0 &&
+            access(resolved, X_OK) == 0
+    }
+
+    private nonisolated static func telegramRecoverySelectionPath(
+        appSupportDir: String
+    ) -> String {
+        URL(
+            fileURLWithPath: appSupportDir,
+            isDirectory: true
+        )
+        .appendingPathComponent(
+            "state/continuity/telegram-recovery-active.json"
+        )
+        .path
+    }
+
+    private nonisolated static func telegramRecoveryPointerExists(
+        appSupportDir: String
+    ) -> Bool {
+        var metadata = stat()
+        return lstat(
+            self.telegramRecoverySelectionPath(
+                appSupportDir: appSupportDir
+            ),
+            &metadata
+        ) == 0
+    }
+
+    private nonisolated static func telegramRecoveryWasRunning(
+        appSupportDir: String
+    ) -> Bool? {
+        let path = self.telegramRecoverySelectionPath(
+            appSupportDir: appSupportDir
+        )
+        guard self.privateOwnedRegularFile(path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let receipt = try? JSONDecoder().decode(
+                  TelegramRecoveryReceipt.self,
+                  from: data
+              ),
+              receipt.schemaVersion == 1,
+              receipt.kind == "viventium-telegram-runtime-recovery",
+              receipt.status == "armed"
+        else {
+            return nil
+        }
+        return receipt.wasRunning
+    }
+
+    private nonisolated static func path(
+        _ candidate: String,
+        isLexicallyWithin boundary: String
+    ) -> Bool {
+        let normalizedCandidate = URL(
+            fileURLWithPath: candidate,
+            isDirectory: true
+        ).standardizedFileURL.path
+        let normalizedBoundary = URL(
+            fileURLWithPath: boundary,
+            isDirectory: true
+        ).standardizedFileURL.path
+        return normalizedCandidate == normalizedBoundary ||
+            normalizedCandidate.hasPrefix("\(normalizedBoundary)/")
+    }
+
+    private nonisolated static func loadTelegramRecoverySelection(
+        appSupportDir: String
+    ) -> (
+        selection: TelegramRecoverySelection,
+        selectionPath: String,
+        userConfigsRoot: String
+    )? {
+        let selectionPath = self.telegramRecoverySelectionPath(
+            appSupportDir: appSupportDir
+        )
+        guard self.privateOwnedRegularFile(selectionPath),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: selectionPath)),
+              let receipt = try? JSONDecoder().decode(
+                  TelegramRecoveryReceipt.self,
+                  from: data
+              ),
+              receipt.schemaVersion == 1,
+              receipt.kind == "viventium-telegram-runtime-recovery",
+              receipt.status == "armed",
+              {
+                  let selection = receipt.selection
+                  return selection.schemaVersion == 2 &&
+                      selection.component == "telegram-viventium"
+              }(),
+              {
+                  let selection = receipt.selection
+                  return !selection.componentTool.isEmpty
+              }()
+        else {
+            return nil
+        }
+        let selection = receipt.selection
+        guard
+              selection.schemaVersion == 2,
+              selection.component == "telegram-viventium"
+        else {
+            return nil
+        }
+        let componentBoundary = URL(
+            fileURLWithPath: appSupportDir,
+            isDirectory: true
+        )
+        .appendingPathComponent(
+            "runtime-components/telegram-viventium",
+            isDirectory: true
+        )
+        .path
+        let componentPaths = [
+            selection.codeRoot,
+            selection.compatLauncher,
+            selection.componentTool,
+            selection.handoffHelper,
+        ]
+        let dependencyBoundary = URL(
+            fileURLWithPath: componentBoundary,
+            isDirectory: true
+        )
+        .appendingPathComponent("venv", isDirectory: true)
+        .path
+        guard self.ownerControlledDirectory(componentBoundary),
+        self.ownerControlledDirectory(dependencyBoundary),
+        self.ownerControlledDirectory(selection.codeRoot),
+        componentPaths.allSatisfy({
+            self.path($0, isLexicallyWithin: componentBoundary)
+        }),
+        self.ownerControlledExecutable(
+            selection.python,
+            within: dependencyBoundary
+        ),
+        self.privateOwnedRegularFile(selection.compatLauncher),
+        self.privateOwnedRegularFile(selection.componentTool),
+        self.privateOwnedRegularFile(selection.handoffHelper)
+        else {
+            return nil
+        }
+        let resolver = Process()
+        resolver.executableURL = URL(fileURLWithPath: selection.python)
+        resolver.arguments = [
+            selection.componentTool,
+            "resolve-recovery",
+            "--app-support-dir",
+            appSupportDir,
+        ]
+        resolver.currentDirectoryURL = URL(
+            fileURLWithPath: appSupportDir,
+            isDirectory: true
+        )
+        resolver.standardInput = FileHandle.nullDevice
+        let resolverOutput = Pipe()
+        resolver.standardOutput = resolverOutput
+        resolver.standardError = FileHandle.nullDevice
+        do {
+            try resolver.run()
+            let deadline = Date().addingTimeInterval(30)
+            while resolver.isRunning && Date() < deadline {
+                usleep(50_000)
+            }
+            if resolver.isRunning {
+                resolver.terminate()
+                resolver.waitUntilExit()
+                return nil
+            }
+        } catch {
+            return nil
+        }
+        guard resolver.terminationReason == .exit,
+              resolver.terminationStatus == 0,
+              let resolvedData = try? resolverOutput.fileHandleForReading.readToEnd(),
+              let resolved = try? JSONDecoder().decode(
+                  TelegramRecoverySelection.self,
+                  from: resolvedData
+              ),
+              resolved.disposition == "recovery",
+              resolved.wasRunning != nil,
+              let resolvedSelectionPath = resolved.selectionFile,
+              let userConfigsRoot = resolved.userConfigsRoot,
+              resolved.schemaVersion == selection.schemaVersion,
+              resolved.component == selection.component,
+              resolved.codeRoot == selection.codeRoot,
+              resolved.python == selection.python,
+              resolved.compatLauncher == selection.compatLauncher,
+              resolved.componentTool == selection.componentTool,
+              resolved.handoffHelper == selection.handoffHelper,
+              self.path(
+                  resolvedSelectionPath,
+                  isLexicallyWithin: appSupportDir
+              ),
+              self.privateOwnedRegularFile(resolvedSelectionPath)
+        else {
+            return nil
+        }
+        return (resolved, resolvedSelectionPath, userConfigsRoot)
+    }
+
     private nonisolated static func submitDetachedStart(
         repoRoot: String,
         appSupportDir: String,
@@ -2737,8 +3355,19 @@ final class HelperController: ObservableObject {
         commandArguments: [String],
         environmentOverrides: [String: String]
     ) -> Int32? {
+        let recoveryPointerExists = self.telegramRecoveryPointerExists(
+            appSupportDir: appSupportDir
+        )
+        let recovery = self.loadTelegramRecoverySelection(
+            appSupportDir: appSupportDir
+        )
+        if recoveryPointerExists && recovery == nil {
+            return nil
+        }
         let binViventiumPath = "\(repoRoot)/bin/viventium"
-        guard FileManager.default.isExecutableFile(atPath: binViventiumPath) else {
+        if recovery == nil &&
+            !FileManager.default.isExecutableFile(atPath: binViventiumPath)
+        {
             return nil
         }
         let logURL = Self.makeNamedHelperLogURL(appSupportDir: appSupportDir, logFileName: logFileName)
@@ -2767,14 +3396,52 @@ final class HelperController: ObservableObject {
         try? FileManager.default.removeItem(at: pidFileURL)
         try? FileManager.default.removeItem(at: runnerScriptURL)
         try? FileManager.default.removeItem(at: legacyRunnerScriptURL)
-        let escapedAppSupportDir = self.shellQuoted(appSupportDir)
+        let recoveryCommand: [String]?
+        var recoveryEnvironment: [String: String] = [:]
+        if let recovery {
+            guard commandArguments == ["launch"] || commandArguments == ["stop"] else {
+                return nil
+            }
+            recoveryCommand = [
+                "/bin/bash",
+                recovery.selection.compatLauncher,
+                commandArguments == ["stop"] ? "--stop" : "--restart",
+            ]
+            let runtimeDir = "\(appSupportDir)/runtime"
+            recoveryEnvironment = [
+                "VIVENTIUM_LAUNCHER_INTERNAL": "1",
+                "VIVENTIUM_HELPER_V0_ROOT": "\(repoRoot)/viventium_v0_4",
+                "VIVENTIUM_HELPER_CORE_ROOT": repoRoot,
+                "VIVENTIUM_HELPER_WORKSPACE_ROOT": (
+                    repoRoot as NSString
+                ).deletingLastPathComponent,
+                "VIVENTIUM_APP_SUPPORT_DIR": appSupportDir,
+                "VIVENTIUM_ENV_FILE": "\(runtimeDir)/runtime.env",
+                "VIVENTIUM_COMPONENTS_LOCK_FILE": "\(repoRoot)/components.lock.json",
+                "VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE": recovery.selectionPath,
+                "VIVENTIUM_TELEGRAM_COMPONENT_TOOL": recovery.selection.componentTool,
+                "VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER": recovery.selection.handoffHelper,
+                "VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR": recovery.userConfigsRoot,
+            ]
+            if commandArguments == ["launch"] {
+                recoveryEnvironment["VIVENTIUM_DETACHED_START"] = "true"
+            } else {
+                recoveryEnvironment["VIVENTIUM_HELPER_STOP_BACKGROUND_NATIVE"] = "1"
+            }
+        } else {
+            recoveryCommand = nil
+        }
+        let workingDirectory = recovery?.selection.codeRoot ?? appSupportDir
+        let escapedWorkingDirectory = self.shellQuoted(workingDirectory)
         let escapedPidPath = self.shellQuoted(pidFileURL.path)
-        let escapedCommand = (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)
+        let command = recoveryCommand ??
+            (["/bin/bash", binViventiumPath, "--app-support-dir", appSupportDir] + commandArguments)
+        let escapedCommand = command
             .map(self.shellQuoted)
             .joined(separator: " ")
         let detachedCommand = """
 set -euo pipefail
-cd \(escapedAppSupportDir)
+cd \(escapedWorkingDirectory)
 nohup \(escapedCommand) 2>&1 < /dev/null &
 pid=$!
 printf '%s\\n' "$pid" > \(escapedPidPath)
@@ -2783,11 +3450,15 @@ printf '%s\\n' "$pid" > \(escapedPidPath)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = ["-lc", detachedCommand]
-        process.currentDirectoryURL = URL(fileURLWithPath: appSupportDir, isDirectory: true)
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
+        var mergedOverrides = environmentOverrides
+        for (key, value) in recoveryEnvironment {
+            mergedOverrides[key] = value
+        }
         process.environment = self.makeHelperStackEnvironment(
             repoRoot: repoRoot,
             appSupportDir: appSupportDir,
-            environmentOverrides: environmentOverrides
+            environmentOverrides: mergedOverrides
         )
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = logHandle

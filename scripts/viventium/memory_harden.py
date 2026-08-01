@@ -10,6 +10,7 @@ import json
 import os
 import plistlib
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -349,6 +350,124 @@ def read_launch_agent_payload(plist_path: Path) -> dict[str, object] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def snapshot_regular_file(path: Path) -> dict[str, object]:
+    """Capture exact restorable bytes without following a user-controlled symlink."""
+    if path.is_symlink():
+        raise SystemExit(f"refusing to reconcile unsafe symlink: {path}")
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return {"installed": False, "bytes": None, "mode": None}
+    if not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(f"refusing to reconcile non-regular file: {path}")
+    if metadata.st_uid != os.getuid():
+        raise SystemExit(f"refusing to reconcile file not owned by the current user: {path}")
+    return {
+        "installed": True,
+        "bytes": path.read_bytes(),
+        "mode": stat.S_IMODE(metadata.st_mode),
+    }
+
+
+def write_regular_file_atomic(path: Path, payload: bytes, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
+    try:
+        with temporary_path.open("wb") as handle:
+            handle.write(payload)
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def restore_regular_file_snapshot(path: Path, snapshot: dict[str, object]) -> None:
+    installed = snapshot.get("installed") is True
+    if not installed:
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to remove unsafe symlink while restoring {path}")
+        if path.exists():
+            snapshot_regular_file(path)
+            path.unlink()
+        return
+    payload = snapshot.get("bytes")
+    mode = snapshot.get("mode")
+    if not isinstance(payload, bytes) or not isinstance(mode, int):
+        raise RuntimeError(f"invalid file snapshot for {path}")
+    if path.is_symlink():
+        raise RuntimeError(f"refusing to replace unsafe symlink while restoring {path}")
+    if path.exists():
+        snapshot_regular_file(path)
+    write_regular_file_atomic(path, payload, mode)
+
+
+def regular_file_snapshot_matches(path: Path, snapshot: dict[str, object]) -> bool:
+    try:
+        return snapshot_regular_file(path) == snapshot
+    except (OSError, SystemExit):
+        return False
+
+
+def capture_launch_agent_snapshot(plist_path: Path) -> dict[str, object]:
+    file_snapshot = snapshot_regular_file(plist_path)
+    loaded, _probe = launch_agent_loaded()
+    if loaded and file_snapshot.get("installed") is not True:
+        raise SystemExit(
+            "refusing to mutate a loaded memory hardening LaunchAgent without a restorable plist"
+        )
+    return {"file": file_snapshot, "loaded": loaded}
+
+
+def restore_launch_agent_snapshot(
+    plist_path: Path,
+    snapshot: dict[str, object],
+) -> tuple[bool, str | None]:
+    file_snapshot = snapshot.get("file")
+    prior_loaded = snapshot.get("loaded") is True
+    if not isinstance(file_snapshot, dict):
+        return False, "invalid_launch_agent_snapshot"
+    try:
+        current_loaded, _probe = launch_agent_loaded()
+        if regular_file_snapshot_matches(plist_path, file_snapshot) and current_loaded == prior_loaded:
+            return True, None
+
+        if current_loaded:
+            bootout = subprocess.run(
+                ["launchctl", "bootout", launch_agent_target()],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            still_loaded, _verify = launch_agent_loaded()
+            if bootout.returncode != 0 or still_loaded:
+                return False, "rollback_launchctl_bootout_failed"
+
+        restore_regular_file_snapshot(plist_path, file_snapshot)
+        if prior_loaded:
+            if file_snapshot.get("installed") is not True:
+                return False, "rollback_missing_prior_plist"
+            bootstrap = subprocess.run(
+                ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            restored_loaded, _verify = launch_agent_loaded()
+            if bootstrap.returncode != 0 or not restored_loaded:
+                return False, "rollback_launchctl_bootstrap_failed"
+        else:
+            restored_loaded, _verify = launch_agent_loaded()
+            if restored_loaded:
+                return False, "rollback_launchctl_verify_failed"
+
+        if not regular_file_snapshot_matches(plist_path, file_snapshot):
+            return False, "rollback_plist_verify_failed"
+        return True, None
+    except BaseException as error:
+        return False, f"rollback_{type(error).__name__}"
+
+
 def desired_launch_agent_payload(
     args: argparse.Namespace,
     runtime_env: dict[str, str],
@@ -415,16 +534,7 @@ def launch_agent_generation_hash(payload: dict[str, object]) -> str:
 
 
 def write_launch_agent_payload(plist_path: Path, payload: dict[str, object]) -> None:
-    plist_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = plist_path.with_name(f".{plist_path.name}.tmp-{os.getpid()}-{time.time_ns()}")
-    try:
-        with temporary_path.open("wb") as handle:
-            plistlib.dump(payload, handle, sort_keys=True)
-        os.chmod(temporary_path, 0o644)
-        os.replace(temporary_path, plist_path)
-    finally:
-        if temporary_path.exists():
-            temporary_path.unlink()
+    write_regular_file_atomic(plist_path, plistlib.dumps(payload, sort_keys=True), 0o644)
 
 
 def write_schedule_lifecycle_receipt(
@@ -440,6 +550,8 @@ def write_schedule_lifecycle_receipt(
     bootout_returncode: int | None = None,
     bootstrap_returncode: int | None = None,
     error_class: str | None = None,
+    rollback_status: str | None = None,
+    rollback_error_class: str | None = None,
 ) -> Path:
     now = utc_now()
     hour, minute = cron_to_launchd_time(schedule)
@@ -470,6 +582,10 @@ def write_schedule_lifecycle_receipt(
     }
     if error_class:
         payload["error_class"] = error_class
+    if rollback_status:
+        payload["rollback_status"] = rollback_status
+    if rollback_error_class:
+        payload["rollback_error_class"] = rollback_error_class
     events_dir = schedule_lifecycle_events_dir(args.app_support_dir)
     event_path = events_dir / f"{event_id}.json"
     write_json_private(event_path, payload)
@@ -507,9 +623,13 @@ def _install_schedule_locked(args: argparse.Namespace, runtime_env: dict[str, st
     cron_to_launchd_time(schedule)
     plist_path = launch_agent_path()
     desired_payload = desired_launch_agent_payload(args, runtime_env, schedule)
+    prior_snapshot = capture_launch_agent_snapshot(plist_path)
     current_payload = read_launch_agent_payload(plist_path)
-    prior_installed = plist_path.exists()
-    prior_loaded, _probe = launch_agent_loaded()
+    prior_file_snapshot = prior_snapshot["file"]
+    if not isinstance(prior_file_snapshot, dict):
+        raise SystemExit("could not capture the prior memory hardening LaunchAgent")
+    prior_installed = prior_file_snapshot.get("installed") is True
+    prior_loaded = prior_snapshot.get("loaded") is True
     payload_matches = current_payload == desired_payload
 
     if payload_matches and prior_loaded:
@@ -533,16 +653,67 @@ def _install_schedule_locked(args: argparse.Namespace, runtime_env: dict[str, st
 
     action = "bootstrap" if payload_matches else ("reinstall" if prior_installed or prior_loaded else "install")
     bootout_returncode: int | None = None
-    if prior_loaded and not payload_matches:
-        bootout = subprocess.run(
-            ["launchctl", "bootout", launch_agent_target()],
+    bootstrap_returncode: int | None = None
+    loaded_verified = False
+    failure_phase = "schedule_reconcile_failed"
+    try:
+        if prior_loaded and not payload_matches:
+            failure_phase = "launchctl_bootout_failed"
+            bootout = subprocess.run(
+                ["launchctl", "bootout", launch_agent_target()],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            bootout_returncode = int(bootout.returncode)
+            still_loaded, _ = launch_agent_loaded()
+            if bootout.returncode != 0 or still_loaded:
+                raise SystemExit("failed to unload the previous memory hardening LaunchAgent")
+
+        if not payload_matches:
+            failure_phase = "plist_write_failed"
+            write_launch_agent_payload(plist_path, desired_payload)
+
+        failure_phase = "launchctl_bootstrap_failed"
+        bootstrap = subprocess.run(
+            ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
             check=False,
             capture_output=True,
             text=True,
         )
-        bootout_returncode = int(bootout.returncode)
-        still_loaded, _ = launch_agent_loaded()
-        if bootout.returncode != 0 or still_loaded:
+        bootstrap_returncode = int(bootstrap.returncode)
+        loaded_verified, _verify = launch_agent_loaded()
+        if bootstrap.returncode != 0 or not loaded_verified:
+            failure_phase = (
+                "launchctl_bootstrap_failed"
+                if bootstrap.returncode != 0
+                else "launchctl_verify_failed"
+            )
+            detail = (bootstrap.stderr or bootstrap.stdout or "").strip()
+            raise SystemExit(
+                "failed to install memory hardening LaunchAgent"
+                + (f": {detail}" if detail else "")
+            )
+
+        failure_phase = "receipt_write_failed"
+        write_schedule_lifecycle_receipt(
+            args,
+            action=action,
+            status="success",
+            schedule=schedule,
+            desired_payload=desired_payload,
+            prior_installed=prior_installed,
+            prior_loaded=prior_loaded,
+            loaded_verified=True,
+            bootout_returncode=bootout_returncode,
+            bootstrap_returncode=bootstrap_returncode,
+        )
+    except BaseException:
+        rollback_restored, rollback_error_class = restore_launch_agent_snapshot(
+            plist_path,
+            prior_snapshot,
+        )
+        try:
             write_schedule_lifecycle_receipt(
                 args,
                 action=action,
@@ -551,53 +722,21 @@ def _install_schedule_locked(args: argparse.Namespace, runtime_env: dict[str, st
                 desired_payload=desired_payload,
                 prior_installed=prior_installed,
                 prior_loaded=prior_loaded,
-                loaded_verified=False,
+                loaded_verified=loaded_verified,
                 bootout_returncode=bootout_returncode,
-                error_class="launchctl_bootout_failed",
+                bootstrap_returncode=bootstrap_returncode,
+                error_class=failure_phase,
+                rollback_status="restored" if rollback_restored else "failed",
+                rollback_error_class=rollback_error_class,
             )
-            raise SystemExit("failed to unload the previous memory hardening LaunchAgent")
-
-    if not payload_matches:
-        write_launch_agent_payload(plist_path, desired_payload)
-
-    bootstrap = subprocess.run(
-        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    loaded_verified, _verify = launch_agent_loaded()
-    if bootstrap.returncode != 0 or not loaded_verified:
-        write_schedule_lifecycle_receipt(
-            args,
-            action=action,
-            status="failed",
-            schedule=schedule,
-            desired_payload=desired_payload,
-            prior_installed=prior_installed,
-            prior_loaded=prior_loaded,
-            loaded_verified=loaded_verified,
-            bootout_returncode=bootout_returncode,
-            bootstrap_returncode=int(bootstrap.returncode),
-            error_class="launchctl_bootstrap_failed" if bootstrap.returncode != 0 else "launchctl_verify_failed",
-        )
-        detail = (bootstrap.stderr or bootstrap.stdout or "").strip()
-        raise SystemExit(
-            "failed to install memory hardening LaunchAgent"
-            + (f": {detail}" if detail else "")
-        )
-    write_schedule_lifecycle_receipt(
-        args,
-        action=action,
-        status="success",
-        schedule=schedule,
-        desired_payload=desired_payload,
-        prior_installed=prior_installed,
-        prior_loaded=prior_loaded,
-        loaded_verified=True,
-        bootout_returncode=bootout_returncode,
-        bootstrap_returncode=int(bootstrap.returncode),
-    )
+        except BaseException:
+            pass
+        if not rollback_restored:
+            raise SystemExit(
+                "memory hardening LaunchAgent reconciliation failed and the prior state "
+                f"could not be restored ({rollback_error_class or 'unknown rollback error'})"
+            )
+        raise
     return schedule_install_result(
         schedule=schedule,
         runtime_env=runtime_env,
@@ -616,7 +755,19 @@ def install_schedule(args: argparse.Namespace, runtime_env: dict[str, str]) -> d
 
 def _uninstall_schedule_locked(args: argparse.Namespace) -> dict[str, object]:
     plist_path = launch_agent_path()
-    current_payload = read_launch_agent_payload(plist_path) or {
+    prior_snapshot = capture_launch_agent_snapshot(plist_path) if sys.platform == "darwin" else {
+        "file": snapshot_regular_file(plist_path),
+        "loaded": False,
+    }
+    prior_file_snapshot = prior_snapshot["file"]
+    if not isinstance(prior_file_snapshot, dict):
+        raise SystemExit("could not capture the prior memory hardening LaunchAgent")
+    prior_bytes = prior_file_snapshot.get("bytes")
+    try:
+        parsed_prior = plistlib.loads(prior_bytes) if isinstance(prior_bytes, bytes) else None
+    except plistlib.InvalidFileException:
+        parsed_prior = None
+    current_payload = parsed_prior if isinstance(parsed_prior, dict) else {
         "Label": LAUNCH_AGENT_LABEL,
         "StartCalendarInterval": {"Hour": 0, "Minute": 0},
     }
@@ -624,19 +775,59 @@ def _uninstall_schedule_locked(args: argparse.Namespace) -> dict[str, object]:
     calendar = current_payload.get("StartCalendarInterval")
     if isinstance(calendar, dict):
         schedule = f"{int(calendar.get('Minute') or 0)} {int(calendar.get('Hour') or 0)} * * *"
-    prior_installed = plist_path.exists()
-    prior_loaded, _probe = launch_agent_loaded() if sys.platform == "darwin" else (False, None)
+    prior_installed = prior_file_snapshot.get("installed") is True
+    prior_loaded = prior_snapshot.get("loaded") is True
+    marker = args.app_support_dir / "state" / "memory-hardening" / "dry-run-first-complete"
+    marker_snapshot = snapshot_regular_file(marker)
     bootout_returncode: int | None = None
-    if prior_loaded:
-        bootout = subprocess.run(
-            ["launchctl", "bootout", launch_agent_target()],
-            check=False,
-            capture_output=True,
-            text=True,
+    action = (
+        "uninstall"
+        if prior_installed or prior_loaded or marker_snapshot.get("installed") is True
+        else "noop"
+    )
+    failure_phase = "schedule_uninstall_failed"
+    try:
+        if prior_loaded:
+            failure_phase = "launchctl_bootout_failed"
+            bootout = subprocess.run(
+                ["launchctl", "bootout", launch_agent_target()],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            bootout_returncode = int(bootout.returncode)
+            still_loaded, _ = launch_agent_loaded()
+            if bootout.returncode != 0 or still_loaded:
+                raise SystemExit("failed to unload the memory hardening LaunchAgent")
+        failure_phase = "plist_remove_failed"
+        if plist_path.exists():
+            plist_path.unlink()
+        failure_phase = "marker_remove_failed"
+        if marker.exists():
+            marker.unlink()
+        failure_phase = "receipt_write_failed"
+        write_schedule_lifecycle_receipt(
+            args,
+            action=action,
+            status="success",
+            schedule=schedule,
+            desired_payload=current_payload,
+            prior_installed=prior_installed,
+            prior_loaded=prior_loaded,
+            loaded_verified=False,
+            bootout_returncode=bootout_returncode,
         )
-        bootout_returncode = int(bootout.returncode)
-        still_loaded, _ = launch_agent_loaded()
-        if bootout.returncode != 0 or still_loaded:
+    except BaseException:
+        rollback_restored, rollback_error_class = restore_launch_agent_snapshot(
+            plist_path,
+            prior_snapshot,
+        )
+        try:
+            restore_regular_file_snapshot(marker, marker_snapshot)
+        except BaseException as marker_error:
+            rollback_restored = False
+            rollback_error_class = f"rollback_marker_{type(marker_error).__name__}"
+        try:
             write_schedule_lifecycle_receipt(
                 args,
                 action="uninstall",
@@ -647,26 +838,18 @@ def _uninstall_schedule_locked(args: argparse.Namespace) -> dict[str, object]:
                 prior_loaded=prior_loaded,
                 loaded_verified=False,
                 bootout_returncode=bootout_returncode,
-                error_class="launchctl_bootout_failed",
+                error_class=failure_phase,
+                rollback_status="restored" if rollback_restored else "failed",
+                rollback_error_class=rollback_error_class,
             )
-            raise SystemExit("failed to unload the memory hardening LaunchAgent")
-    if plist_path.exists():
-        plist_path.unlink()
-    marker = args.app_support_dir / "state" / "memory-hardening" / "dry-run-first-complete"
-    if marker.exists():
-        marker.unlink()
-    action = "uninstall" if prior_installed or prior_loaded else "noop"
-    write_schedule_lifecycle_receipt(
-        args,
-        action=action,
-        status="success",
-        schedule=schedule,
-        desired_payload=current_payload,
-        prior_installed=prior_installed,
-        prior_loaded=prior_loaded,
-        loaded_verified=False,
-        bootout_returncode=bootout_returncode,
-    )
+        except BaseException:
+            pass
+        if not rollback_restored:
+            raise SystemExit(
+                "memory hardening LaunchAgent uninstall failed and the prior state "
+                f"could not be restored ({rollback_error_class or 'unknown rollback error'})"
+            )
+        raise
     return {
         "installed": False,
         "loaded": False,

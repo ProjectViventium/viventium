@@ -9,6 +9,19 @@
 | `LDS-003` | `10_Open_Source_Web_Search.md` bounded local Firecrawl profile | Local Firecrawl starts with laptop-appropriate limits and honest health checks | Docker/API/logs | Compose inspection, `docker stats`, HTTP probes | 2026-05-19 `PASS` ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
 | `LDS-004` | `10_Open_Source_Web_Search.md` SearXNG readiness; `45_Runtime_Feature_QA_Map.md` web search prerequisites | SearXNG is visibly reachable and bounded enough for local runtime use | Browser/Docker/logs | Playwright snapshot, compose inspection, logs | 2026-05-19 `PASS` ([report](reports/2026-05-19-meilisearch-firecrawl-resource-audit.md)) |
 
+## `LDS-005` - Incompatible Derived Meilisearch Recovery Is Owned And Recoverable
+
+- Requirement: conversation search may rebuild from Mongo without risking canonical conversations
+  or foreign services.
+- Steps: present an incompatible default `meili-data`, a symlinked backup root, foreign same-name
+  container, reused native PID, mixed owned/unowned targets, and owned-listener stop failure.
+- Expected result: only the exact default derived index is moved into an owner-private no-follow
+  backup after all ownership checks pass; pinned Meilisearch starts and search rebuilds from Mongo.
+- Forbidden result: custom/canonical data movement, foreign signal/container removal, archive after
+  stop failure, backup escape, or preference/conversation mutation.
+- Last run: PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25. Archive, symlink, ownership, mixed-target, and
+  stop-failure regressions pass; one local derived index was recoverably archived and rebuilt.
+
 ## Natural User Use Case Checklist
 
 | Use Case ID | Natural user action | Requirement / case link | Real surface to use | Supporting evidence to compare | Expected visible result | Last run |

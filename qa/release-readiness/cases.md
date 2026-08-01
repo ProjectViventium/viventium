@@ -207,12 +207,13 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Forbidden result: stale ref or unreviewed local nested changes.
 - Evidence to capture: parent diff and nested SHA.
 - Automation: git inspection.
-- Last run: PASS 2026-07-22. `components.lock.json` declares `merged` and contains all 11 fetched
-  nested `origin/main` refs. The Native policy also declares `merged`; both point LibreChat to
-  `38527a8651653f5f7d0cba48038421653312d999`, whose tree equals corrected audited head
-  `44ac1f7a149e5a915e52f2f9f54fce5d38bab710`, and every other managed ref equals fetched nested
-  `origin/main` with reviewed-tree equality. Built, shipped, and installed identities remain
-  separately partial under `REL-008`.
+- Last run: PASS 2026-08-01. `components.lock.json` declares `merged` and contains all 12 fetched
+  nested `origin/main` refs. It pins LibreChat to
+  `e40a1f3fe4a7c697cba52b7861c3d51f4fa8edc1` and GlassHive to
+  `5c2117ab7ebfa94a6556aba8822b34fcab44c54d`; unauthenticated remote-main lookup and local
+  nested-tree inspection matched both exact refs. The Native policy declares `merged`, pins the
+  same LibreChat ref, and intentionally contains no GlassHive component. Built, shipped, and
+  installed identities remain separately governed by `REL-008`.
 
 ## `REL-004` - Browser-Visible Background Cards
 

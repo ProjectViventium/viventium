@@ -87,7 +87,7 @@ class BrowseTaskRequest(BaseModel):
     """Request to run a browser automation task."""
     task: str
     start_url: Optional[str] = None
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-opus-5"
     timeout: int = 120
 
 

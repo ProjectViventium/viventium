@@ -30,7 +30,7 @@ jobs:
           python -m pytest
           tests/release/test_public_bootstrap_manifests.py
           tests/release/test_private_repo_resolution_contract.py
-          tests/release/test_qa_operating_contract.py::test_release_tests_have_central_qa_ownership
+          tests/release/test_qa_operating_contract.py
           tests/release/test_qa_storage_guard.py
           -q
       - name: Verify merged component refs are live public main tips

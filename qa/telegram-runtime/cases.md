@@ -117,6 +117,105 @@
 - **Last run:** PASS 2026-07-20. Disabled/no-receipt and valid-receipt paths pass; isolated Easy
   Install stop produced no Telegram launchctl access.
 
+## Case TR-011: Upgrade Handoff Preserves One Recognized Poller
+
+- **Expected outcome:** A restart from a different checkout validates the stable token-hash owner
+  receipt, process-start identity, command, cwd, uid, and rollback descriptor; it stops only that
+  predecessor, then commits only after pinned PTB reports both its receive Updater and Application
+  running with typed polling/webhook proof. The rollback guard covers the complete attach and
+  bounded cold/network readiness budget plus recovery margin. A failure after `post_init` but
+  before polling keeps rollback live and restores the predecessor, while an attached candidate
+  process exit is detected immediately.
+- **Forbidden result:** a bare pid file is treated as sufficient ownership, PID reuse is signalled,
+  an unknown `bot.py` process is pattern-killed, a token enters a receipt/transaction, or a failed
+  candidate leaves no recognized poller when safe rollback was available; the guard must not expire
+  before the readiness deadline it is meant to protect.
+- **Evidence to capture:** synthetic receipt/process cases, launcher contract, token-leak assertion,
+  shell syntax check, bot readiness test, and an isolated two-checkout runtime exercise.
+- **Last run:** PASS-AUTOMATED/PARTIAL 2026-07-25. Exact post-init/pre-poll failure injection,
+  premature-ready guard rejection, real pinned PTB 22.5 lifecycle state, source, and synthetic
+  process/transaction coverage pass. A bounded live same-repo launchd handoff stopped one recognized
+  predecessor and published candidate polling readiness, and direct clean-environment launch
+  reached readiness. External Telegram message delivery remains pending. See
+  `reports/2026-07-25-upgrade-handoff-readiness-qa.md`.
+
+## Case TR-012: Delivery Dependency Failure Backs Off Without Delaying Healthy Polls
+
+- **Expected outcome:** repeated LibreChat delivery-ledger failures wait 5, 10, 20 seconds up to the
+  configured cap, emit one outage warning and one recovery message, then return to the normal
+  five-second healthy empty-ledger poll.
+- **Forbidden result:** the same dependency exception is logged every five seconds indefinitely,
+  or healthy/late callback delivery inherits the failure backoff after recovery.
+- **Evidence to capture:** async bridge test with deterministic attempts, delays, warning count, and
+  recovery reset.
+- **Last run:** PASS-AUTOMATED 2026-07-24.
+
+## Case TR-013: Loopback Delivery Polling Cannot Stall Telegram Ingress On TLS Setup
+
+- **Expected outcome:** HTTPX clients for the local `http://127.0.0.1`/`localhost`/`::1` LibreChat
+  hop skip proxy environment and the unused TLS verifier across bridge and attachment requests, so
+  local request setup cannot synchronously block Bot API update handling while opening a CA bundle.
+  Remote or HTTPS origins retain normal certificate verification.
+- **Forbidden result:** any plain-HTTP loopback LibreChat request loads a CA bundle on the event
+  loop, an incoming Telegram update stays queued while the bot process appears alive, or the local
+  optimization disables certificate verification for a remote/HTTPS or lookalike host origin.
+- **Evidence to capture:** loopback/remote option regressions, complete Telegram bridge suite, live
+  process sample before repair, Bot API pending-update count, restart, visible synthetic
+  send/reply timing, sanitized bridge log timing, and a second-turn/restart repeat.
+- **Last run:** PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25. The escaped live process was sampled blocked
+  in CA-bundle loading while a synthetic update remained queued; 347 Telegram tests pass with the
+  shared loopback-only client policy. The sample proves the stall location but not which local
+  caller initiated that anomalously slow open. Post-restart visible reply timing remains required. See
+  `reports/2026-07-25-loopback-client-latency-recovery.md`.
+
+## Case TR-014: Installed Telegram Is Source-Independent And Preserves Legacy Preferences
+
+- **Expected outcome:** install, helper refresh, upgrade, and cross-checkout activation stage a
+  code-and-dependency content-addressed Telegram runtime under private App Support. Detached macOS
+  execution uses only its verified Python, code root, recovery launcher, and schema-2 execution
+  identity. Legacy repo-local preferences migrate into canonical App Support without deleting the
+  source; active legacy values, canonical-only values, explicit custom directories, and a byte-exact
+  displaced canonical backup are preserved. Repeated startup performs no preference rewrite.
+  Apple Silicon uses the compatible locked wheel while Intel uses the upstream-supported source
+  build without broken wheel repair; both import the native transcription module before publishing.
+  Recovery selections are immutable per attempt, custom/canonical root selection is durable across
+  a cold start, migration/root receipt refresh happens before rollback, and helper supervision does
+  not hash the full environment on its four-second UI poll. Each handoff seals the launcher and both
+  sourced environment files as one hash-bound transaction package; commit/rollback removes the
+  inactive credential-bearing package, and native predecessors cannot downgrade to legacy grace.
+- **Forbidden result:** launchd reads Python, code, or preferences from a protected source checkout;
+  a missing/tampered selection falls back to source; startup installs packages or rewrites defaults;
+  an untracked allowed-suffix file enters the component; a failed candidate restores an older
+  source-only launcher; a modified launcher/runtime-env/overlay executes during rollback; a native
+  predecessor is accepted through legacy grace; stale secret-bearing launch attempts accumulate; or
+  staging changes the live selection before its owning transaction. An Intel source build may not
+  die in pywhispercpp wheel repair, and a failed sealed stage may not mask its root cause with a
+  cleanup permission error.
+- **Evidence to capture:** component/tree and dependency-manifest hashes, exact selection bytes
+  before injected failure, schema-2 receipt cwd/Python, migration receipt/backup hashes, first and
+  second start preference fingerprints, launch-package tamper/cleanup cases, helper/CLI tests, real
+  message latency, native dependency import on arm64 and x86_64, and public-safe logs.
+- **Last run:** PASS-ARM64/PENDING-HOSTED-X86_64 2026-07-31. The complete 2,100-passed/8-skipped
+  release suite, 18-case focused runtime-component set, fresh sealed Apple Silicon environment and
+  native import probe, Intel environment selection, sealed-stage cleanup, exact shipped-predecessor
+  matrix, process-group recovery, immutable staging, handoff, atomic ACL, and startup no-write
+  regressions pass. The final public x86_64 easy-install job and post-change installed Telegram
+  delivery/restart remain required; see
+  `reports/2026-07-31-cross-architecture-dependency-assembly.md`.
+
+## Case TR-015: Legacy Canonical Preferences Harden Without Byte Drift
+
+- **Expected outcome:** an existing owner-controlled `0755` / `0644` canonical preference tree is
+  accepted before publication, then hardened under stopped-writer control through no-follow
+  descriptors. Content, custom roots, prompts, and unknown personalization fields remain exact.
+- **Forbidden result:** first-upgrade refusal solely because of safe legacy read modes; default
+  rewrite; mutation while a writer is active; symlink/hard-link traversal; or an outside chmod after
+  a validation/open race.
+- **Evidence to capture:** pre/post content fingerprint, modes, authority/journal selection,
+  active-writer refusal, deterministic swap probe, installed restart, and real reply.
+- **Last run:** PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-25. All 22 migration cases and the
+  descriptor-bound adversarial swap probe pass; installed candidate restart/reply remains required.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Telegram Runtime. Add narrower feature-specific
@@ -133,6 +232,10 @@ rows before claiming a pass when the feature behavior changes.
 | `TELEGRAM-UC-007` | Ask Telegram to launch a synthetic GlassHive task, then send a terse status/wait follow-up. | `TR-008`, `AGCFG-005` | dedicated synthetic Telegram identity and isolated LibreChat/GlassHive runtime | visible messages, provider-bound tools, persisted fixture calls, GlassHive run/events, logs, latency | Both turns retain tools, the task is actually launched/checked, and no false unavailable claim appears. | PASS-AUTOMATED/PARTIAL 2026-07-13; binding/discovery regressions pass, dedicated Telegram user path NOT RUN |
 | `TELEGRAM-UC-008` | Send natural positive, calm, and negative always-voice turns without naming voice controls. | `TR-009`, `TGVOICE-005`, `EMO-036` | dedicated synthetic Telegram identity and configured TTS fixture | clean bubbles, delivered/played audio, marker counts, provider telemetry, prompt-frame layers, synthetic Feeling state | Expressive moments use fitting supported controls, calm delivery remains restrained, no markup leaks, Current reacts while Nature stays fixed, and no prompt layer is unclassified | PASS-AUTOMATED/PARTIAL 2026-07-16; provider-boundary fixtures pass, dedicated Telegram delivery/playback NOT RUN ([report](../emotional-cortex/reports/2026-07-16-feelings-range-potency-and-telegram-replay.md)) |
 | `TELEGRAM-UC-009` | Stop or restart Viventium with Telegram disabled and no ownership receipt, then repeat with a synthetic valid receipt. | `TR-010` | launcher stop/restart path with synthetic launchctl recorder | recorder calls, receipt mode/content, isolated stop log, and release test | No-receipt state makes no launchctl call; valid ownership removes only the receipt-backed label and clears the receipt. | PASS 2026-07-20; automated two-sided test and isolated Easy Install stop evidence |
+| `TELEGRAM-UC-010` | Upgrade/restart from a second checkout, then repeat with candidate failure, PID reuse, and an unknown process fixture. | `TR-011` | isolated launcher/poller state and synthetic process identities | owner/transaction receipts, process start identities, launcher logs, rollback result, and no-signal assertions | Exactly one recognized poller owns the token; readiness commits success, safe rollback restores failure, and unknown/reused PIDs remain untouched. | PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25; real launchd predecessor/candidate handoff and synthetic success-edge exit/reuse coverage pass; external message delivery remains pending ([report](reports/2026-07-25-upgrade-handoff-readiness-qa.md)) |
+| `TELEGRAM-UC-011` | Hold the durable delivery API unavailable through repeated poll attempts, recover it, then enqueue a synthetic late callback. | `TR-012` | Telegram LibreChat bridge dispatcher | deterministic delays, warning/recovery logs, callback delivery timing and ledger status | Failure polling backs off to the cap without log spam; recovery immediately restores the normal poll interval and late delivery semantics. | PASS-AUTOMATED 2026-07-24; external callback delivery not run |
+| `TELEGRAM-UC-012` | Send a synthetic text turn while the empty GlassHive delivery poller is active, then repeat after a runtime restart. | `TR-013` | real Telegram bot chat and promoted local runtime | visible send/reply timestamps, pending-update count, process sample, bridge/API logs, active checkout identity | Both updates leave the Bot API queue promptly and receive a visible reply; local polling performs no unused CA-bundle work, and HTTPS verification remains unchanged. | PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25; escaped stall reproduced, post-fix visible rerun pending |
+| `TELEGRAM-UC-013` | Upgrade or activate from a checkout with legacy repo-local Telegram preferences, then force a candidate failure and restart twice. | `TR-014`, `CONT-014` | supported CLI/helper, installed Telegram component, App Support preference state, real Telegram | component/selection/receipt identities, migration backup hashes, source-tree no-write proof, visible replies and latency | Preferences remain behaviorally intact, the source tree is untouched, rollback and success both execute from App Support, and the second start is byte-exact. | PASS-AUTOMATED/PARTIAL-INSTALLED 2026-07-25; complete 2,063-passed/11-skipped release and 347 Telegram cases pass, including real process-group SIGKILL recovery; installed restart/message lane pending |
 
 ## Release Test Traceability
 
@@ -140,3 +243,6 @@ rows before claiming a pass when the feature behavior changes.
 - `tests/release/test_telegram_lazy_startup_contract.py`
 - `tests/release/test_telegram_launchctl_ownership.py`
 - `tests/release/test_telegram_transcription_error_contract.py`
+- `tests/release/test_telegram_poller_handoff.py`
+- `tests/release/test_telegram_runtime_component.py`
+- `tests/release/test_telegram_user_config_migration.py`

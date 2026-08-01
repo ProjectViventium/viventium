@@ -111,11 +111,12 @@ def test_playground_identity_rejects_a_generic_healthy_http_service() -> None:
     assert result.returncode != 0
 
 
-def test_both_playground_surfaces_publish_build_bound_versioned_identity() -> None:
-    for route, config, variant in (
-        (MODERN_IDENTITY_ROUTE, MODERN_NEXT_CONFIG, "modern"),
-        (CLASSIC_IDENTITY_ROUTE, CLASSIC_NEXT_CONFIG, "classic"),
-    ):
+def test_checked_out_playground_surfaces_publish_build_bound_versioned_identity() -> None:
+    surfaces = [(MODERN_IDENTITY_ROUTE, MODERN_NEXT_CONFIG, "modern")]
+    if CLASSIC_IDENTITY_ROUTE.parent.parent.parent.parent.exists():
+        surfaces.append((CLASSIC_IDENTITY_ROUTE, CLASSIC_NEXT_CONFIG, "classic"))
+
+    for route, config, variant in surfaces:
         content = route.read_text()
         config_content = config.read_text()
         assert "schema_version: 1" in content

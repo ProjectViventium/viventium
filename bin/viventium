@@ -96,6 +96,7 @@ resolve_upgrade_transaction_python() {
 }
 
 APP_SUPPORT_DIR="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
+export VIVENTIUM_APP_SUPPORT_DIR="$APP_SUPPORT_DIR"
 CONFIG_FILE="${VIVENTIUM_CONFIG_FILE:-$APP_SUPPORT_DIR/config.yaml}"
 RUNTIME_DIR="${VIVENTIUM_RUNTIME_DIR:-$APP_SUPPORT_DIR/runtime}"
 GENERATED_ENV="$RUNTIME_DIR/runtime.env"
@@ -123,6 +124,7 @@ UPGRADE_TRANSACTION_ACTIVE=0
 UPGRADE_TRANSACTION_WAS_RUNNING=0
 UPGRADE_CANDIDATE_CONFIG=""
 UPGRADE_CANDIDATE_RUNTIME=""
+SUCCESSOR_VALIDATION_DISABLED_WRITERS="agent-seeding,canonical-uploads,channel-workers,glasshive-callbacks,librechat-mcp-oauth,prompt-workbench,rag-recall,remote-mapping,scheduler,stale-cortex-recovery,telegram,telegram-codex,voice-workers"
 INSTALL_WAIT_TAGLINES=(
   "Go scroll some reels while I take care of this for you."
   "Failed.......................... JK, it's going well ;)"
@@ -253,6 +255,36 @@ bootstrap_components() {
     "$@"
 }
 
+config_file_sha256() {
+  refresh_repo_python
+  "$PYTHON_BIN" - "$1" <<'PY'
+import errno
+import hashlib
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+nofollow = getattr(os, "O_NOFOLLOW", None)
+if nofollow is None:
+    raise OSError(errno.ENOTSUP, "no-follow config reads are unavailable", path)
+descriptor = os.open(path, os.O_RDONLY | nofollow)
+try:
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise OSError(errno.EINVAL, "canonical config is not a regular file", path)
+    digest = hashlib.sha256()
+    while True:
+        chunk = os.read(descriptor, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    print(digest.hexdigest())
+finally:
+    os.close(descriptor)
+PY
+}
+
 bootstrap_components_upgrade_checked() {
   local bootstrap_output=""
   if ! bootstrap_output="$(bootstrap_components "$@")"; then
@@ -324,6 +356,19 @@ cleanup_cli_lock() {
   CLI_LOCK_OWNER=0
   export VIVENTIUM_CLI_LOCK_HELD=0
   unset VIVENTIUM_CLI_LOCK_DIR VIVENTIUM_CLI_LOCK_OWNER_PID
+}
+
+exit_cli_on_signal() {
+  local exit_status="${1:-1}"
+  trap - INT TERM
+  cleanup_cli_lock
+  exit "$exit_status"
+}
+
+install_cli_lock_traps() {
+  trap cleanup_cli_lock EXIT
+  trap 'exit_cli_on_signal 130' INT
+  trap 'exit_cli_on_signal 143' TERM
 }
 
 stack_owner_state_file() {
@@ -412,7 +457,8 @@ drain_failed_install_runtime() {
     done < <(find "$APP_SUPPORT_DIR/state/runtime" -type f -name detached-launch.pgid -print 2>/dev/null)
   fi
 
-  for recorded_pgid in "${candidates[@]}"; do
+  for recorded_pgid in "${candidates[@]-}"; do
+    [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || continue
     if [[ "$seen_pgids" == *" $recorded_pgid "* ]]; then
       continue
     fi
@@ -425,7 +471,7 @@ drain_failed_install_runtime() {
   done
 
   if [[ -d "$APP_SUPPORT_DIR/state/runtime" ]]; then
-    find "$APP_SUPPORT_DIR/state/runtime" -type f \( -name detached-launch.pgid -o -name mongodb-native.pid \) -delete 2>/dev/null || true
+    find "$APP_SUPPORT_DIR/state/runtime" -type f \( -name detached-launch.pgid -o -name detached-launch.members -o -name mongodb-native.pid \) -delete 2>/dev/null || true
   fi
 }
 
@@ -512,6 +558,20 @@ print("on" if payload.get("showInStatusBar", True) else "off")
 PY
 )"
   [[ "$status" == "on" ]]
+}
+
+set_helper_runtime_intent() {
+  local desired_state="${1:-}"
+  case "$desired_state" in
+    running|stopped) ;;
+    *)
+      echo "Invalid helper runtime intent: $desired_state" >&2
+      return 2
+      ;;
+  esac
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/helper_runtime_intent.py" \
+    --config "$(helper_config_file)" \
+    --desired "$desired_state"
 }
 
 read_cli_lock_metadata() {
@@ -618,12 +678,13 @@ acquire_cli_lock() {
   export VIVENTIUM_CLI_LOCK_DIR="$CLI_LOCK_DIR"
   export VIVENTIUM_CLI_LOCK_OWNER_PID="$$"
   CLI_LOCK_OWNER=1
-  trap cleanup_cli_lock EXIT INT TERM
+  install_cli_lock_traps
 }
 
 run_preflight() {
   refresh_repo_python
   local apply_mode="${1:-check}"
+  local preflight_status=0
   local args=(
     --config "$CONFIG_FILE"
   )
@@ -636,9 +697,10 @@ run_preflight() {
     fi
   fi
   ensure_brew_paths_on_path
-  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/preflight.py" "${args[@]}"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/preflight.py" "${args[@]}" || preflight_status=$?
   refresh_repo_python
   ensure_brew_paths_on_path
+  return "$preflight_status"
 }
 
 reattach_stdin_from_tty_if_available() {
@@ -1082,11 +1144,724 @@ compile_config() {
   fi
 }
 
+telegram_component_selection_file() {
+  local runtime_dir="${1:-$RUNTIME_DIR}"
+  printf '%s\n' "$runtime_dir/components/telegram-viventium.json"
+}
+
+prepare_telegram_runtime_component() {
+  local source_repo="${1:-$REPO_ROOT}"
+  local runtime_dir="${2:-$RUNTIME_DIR}"
+  local selection_override="${3:-}"
+  local source_mode="${4:-}"
+  local component_tool="${VIVENTIUM_TELEGRAM_COMPONENT_ASSEMBLER:-$REPO_ROOT/scripts/viventium/telegram_runtime_component.py}"
+  local selection_file=""
+  local predecessor_runtime=0
+  if [[ -n "$selection_override" ]]; then
+    selection_file="$selection_override"
+  else
+    selection_file="$(telegram_component_selection_file "$runtime_dir")"
+  fi
+  if [[ ! -f "$component_tool" || -L "$component_tool" ]]; then
+    echo "Telegram runtime component assembler is missing or unsafe." >&2
+    return 1
+  fi
+  if [[ "$source_mode" == "predecessor" ]]; then
+    predecessor_runtime=1
+  fi
+  VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME="$predecessor_runtime" \
+    "$PYTHON_BIN" "$component_tool" prepare \
+    --repo-root "$source_repo" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --selection-file "$selection_file" \
+    --sync-dependencies >/dev/null
+}
+
+stage_telegram_runtime_component() {
+  local source_repo="${1:-$REPO_ROOT}"
+  local source_mode="${2:-}"
+  local staging_dir="$APP_SUPPORT_DIR/state/runtime-component-staging"
+  local staged_selection=""
+  mkdir -p "$staging_dir"
+  chmod 700 "$staging_dir"
+  staged_selection="$(
+    mktemp "$staging_dir/telegram-viventium-predecessor.json.XXXXXXXX"
+  )" || return 1
+  if ! prepare_telegram_runtime_component \
+    "$source_repo" \
+    "$RUNTIME_DIR" \
+    "$staged_selection" \
+    "$source_mode"
+  then
+    rm -f -- "$staged_selection"
+    return 1
+  fi
+  STAGED_TELEGRAM_RECOVERY_SELECTION="$staged_selection"
+  STAGED_TELEGRAM_COMPAT_LAUNCHER="$(
+    json_string_field "$staged_selection" compat_launcher
+  )"
+  STAGED_TELEGRAM_COMPONENT_TOOL="$(
+    json_string_field "$staged_selection" component_tool
+  )"
+  STAGED_TELEGRAM_HANDOFF_HELPER="$(
+    json_string_field "$staged_selection" handoff_helper
+  )"
+  if [[ -z "$STAGED_TELEGRAM_COMPAT_LAUNCHER" ||
+    -z "$STAGED_TELEGRAM_COMPONENT_TOOL" ||
+    -z "$STAGED_TELEGRAM_HANDOFF_HELPER" ]]
+  then
+    echo "Telegram recovery controller selection is incomplete." >&2
+    return 1
+  fi
+}
+
+resolve_predecessor_telegram_user_config_root() {
+  local source_repo="${1:-$REPO_ROOT}"
+  "$PYTHON_BIN" - "$source_repo" "$APP_SUPPORT_DIR" <<'PY'
+import json
+import hashlib
+import os
+from pathlib import Path
+import shlex
+import stat
+import sys
+
+repo = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
+support = Path(os.path.abspath(os.path.expanduser(sys.argv[2])))
+canonical = support / "state" / "telegram-user-configs"
+authority = (
+    support / "state" / "telegram-user-config-migration" / "authority.json"
+)
+root_selection = (
+    support
+    / "state"
+    / "telegram-user-config-migration"
+    / "explicit-authority.json"
+)
+
+def validated_preference_root(raw_value, label, *, allow_missing=False):
+    value = str(raw_value or "").strip()
+    if not value:
+        raise ValueError(f"{label} is empty")
+    path = Path(os.path.abspath(os.path.expanduser(value)))
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current = current / part
+        if not os.path.lexists(current):
+            break
+        metadata = os.lstat(current)
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"{label} contains a symlink")
+        if current != path and not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError(f"{label} contains a non-directory parent")
+    if not path.exists():
+        if allow_missing:
+            return path
+        raise ValueError(f"{label} is unavailable")
+    metadata = os.lstat(path)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise ValueError(f"{label} is unsafe")
+    return path
+
+explicit = str(os.environ.get("VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR") or "").strip()
+if explicit:
+    print(validated_preference_root(explicit, "Explicit Telegram preference root"))
+    raise SystemExit(0)
+if os.path.lexists(root_selection):
+    try:
+        metadata = os.lstat(root_selection)
+        payload = json.loads(root_selection.read_text(encoding="utf-8"))
+        selected = Path(
+            os.path.abspath(
+                os.path.expanduser(str(payload.get("preference_root") or ""))
+            )
+        )
+        expected_generation = hashlib.sha256(
+            ("explicit-authority\0" + str(selected)).encode("utf-8")
+        ).hexdigest()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+            or payload.get("schema_version") != 2
+            or payload.get("kind")
+            != "viventium-telegram-explicit-preference-authority"
+            or payload.get("status") != "committed"
+            or payload.get("generation") != expected_generation
+        ):
+            raise ValueError("invalid selection authority")
+        print(
+            validated_preference_root(
+                selected,
+                "Telegram preference root selection authority",
+                allow_missing=selected == canonical,
+            )
+        )
+        raise SystemExit(0)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print(
+            f"Telegram preference root selection authority is unsafe: {error}",
+            file=sys.stderr,
+        )
+        raise SystemExit(4)
+durable_candidate = None
+owner_root = support / "state" / "runtime" / "isolated" / "telegram-poller"
+receipts = sorted(
+    owner_root.glob("owner-*.json"),
+    key=lambda path: path.stat().st_mtime_ns if path.is_file() else -1,
+    reverse=True,
+)
+for receipt in receipts:
+    try:
+        metadata = os.lstat(receipt)
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        value = str(payload.get("user_configs_root") or "").strip()
+        if (
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_uid == os.getuid()
+            and value
+        ):
+            durable_candidate = Path(
+                os.path.abspath(os.path.expanduser(value))
+            )
+            break
+    except (OSError, ValueError, json.JSONDecodeError):
+        continue
+bridge_state = (
+    support / "state" / "continuity" / "first-upgrade-bridge.json"
+)
+if (
+    durable_candidate is None
+    and bridge_state.is_file()
+    and not bridge_state.is_symlink()
+):
+    try:
+        metadata = os.lstat(bridge_state)
+        payload = json.loads(bridge_state.read_text(encoding="utf-8"))
+        telegram = payload.get("telegramContinuity")
+        value = (
+            str(telegram.get("effectivePreferenceRoot") or "").strip()
+            if isinstance(telegram, dict)
+            and telegram.get("status") == "migration-finalized"
+            else ""
+        )
+        if (
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_uid == os.getuid()
+            and value
+        ):
+            durable_candidate = Path(
+                os.path.abspath(os.path.expanduser(value))
+            )
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+launch_script = (
+    support / "state" / "runtime" / "isolated" / "telegram_bot_launch.sh"
+)
+if (
+    durable_candidate is None
+    and launch_script.is_file()
+    and not launch_script.is_symlink()
+):
+    for line in launch_script.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("export CONFIG_DIR="):
+            continue
+        try:
+            words = shlex.split(line[len("export "):])
+        except ValueError:
+            break
+        if len(words) == 1 and words[0].startswith("CONFIG_DIR="):
+            value = words[0].split("=", 1)[1]
+            if value:
+                durable_candidate = Path(
+                    os.path.abspath(os.path.expanduser(value))
+                )
+                break
+
+def is_legacy_preference_root(path):
+    parts = path.parts
+    suffixes = (
+        (
+            "viventium_v0_4",
+            "telegram-viventium",
+            "TelegramVivBot",
+            "user_configs",
+        ),
+        ("viventium_v0_4", "telegram-viventium", "user_configs"),
+        ("runtime-state", "telegram-user-configs"),
+    )
+    return any(
+        len(parts) >= len(suffix)
+        and tuple(parts[-len(suffix):]) == suffix
+        for suffix in suffixes
+    )
+
+if (
+    durable_candidate is not None
+    and durable_candidate != canonical
+    and not is_legacy_preference_root(durable_candidate)
+):
+    print(
+        validated_preference_root(
+            durable_candidate,
+            "Durably observed Telegram preference root",
+        )
+    )
+    raise SystemExit(0)
+if authority.is_file() and not authority.is_symlink():
+    print(canonical)
+    raise SystemExit(0)
+if durable_candidate is not None:
+    print(durable_candidate)
+    raise SystemExit(0)
+repo_candidates = []
+durable_repo_candidates = []
+for state_file in (
+    support / "state" / "active-checkout.json",
+    support / "helper-config.json",
+):
+    if not state_file.is_file() or state_file.is_symlink():
+        continue
+    try:
+        metadata = os.lstat(state_file)
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+        value = str(payload.get("repoRoot") or "").strip()
+        if stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid() and value:
+            candidate_repo = Path(os.path.abspath(os.path.expanduser(value)))
+            if candidate_repo not in repo_candidates:
+                repo_candidates.append(candidate_repo)
+                durable_repo_candidates.append(candidate_repo)
+    except (OSError, ValueError, json.JSONDecodeError):
+        continue
+if repo not in repo_candidates:
+    repo_candidates.append(repo)
+candidates = []
+for candidate_repo in repo_candidates:
+    candidates.extend(
+        [
+            candidate_repo
+            / "viventium_v0_4"
+            / "telegram-viventium"
+            / "TelegramVivBot"
+            / "user_configs",
+            candidate_repo
+            / "viventium_v0_4"
+            / "telegram-viventium"
+            / "user_configs",
+        ]
+    )
+private_curated = str(os.environ.get("VIVENTIUM_PRIVATE_CURATED_DIR") or "").strip()
+private_mirror = str(os.environ.get("VIVENTIUM_PRIVATE_MIRROR_DIR") or "").strip()
+if private_curated:
+    candidates.append(
+        Path(os.path.abspath(os.path.expanduser(private_curated)))
+        / "runtime-state"
+        / "telegram-user-configs"
+    )
+if private_mirror:
+    candidates.append(
+        Path(os.path.abspath(os.path.expanduser(private_mirror)))
+        / "viventium_v0_4"
+        / "telegram-viventium"
+        / "TelegramVivBot"
+        / "user_configs"
+    )
+for candidate in candidates:
+    if candidate.is_dir() and not candidate.is_symlink():
+        print(candidate)
+        raise SystemExit(0)
+for candidate_repo in durable_repo_candidates:
+    if candidate_repo == repo:
+        continue
+    if candidate_repo.is_dir() and not candidate_repo.is_symlink():
+        continue
+    print(
+        candidate_repo
+        / "viventium_v0_4"
+        / "telegram-viventium"
+        / "TelegramVivBot"
+        / "user_configs"
+    )
+    raise SystemExit(0)
+print(canonical)
+PY
+}
+
+migrate_telegram_user_configs() {
+  local source_repo="${1:-$REPO_ROOT}"
+  local active_config_root="${2:-}"
+  if [[ -z "$active_config_root" ]]; then
+    active_config_root="$(resolve_predecessor_telegram_user_config_root "$source_repo")"
+  fi
+  local migration_tool="$REPO_ROOT/scripts/viventium/telegram_user_config_migration.py"
+  if [[ ! -f "$migration_tool" || -L "$migration_tool" ]]; then
+    echo "Telegram preference migration helper is missing or unsafe." >&2
+    return 1
+  fi
+  TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$active_config_root"
+  refresh_repo_python
+  local migration_result=""
+  if ! migration_result="$("$PYTHON_BIN" "$migration_tool" \
+    --repo-root "$source_repo" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --active-config-root "$active_config_root" \
+    --writer-stopped)"
+  then
+    return 1
+  fi
+  local migration_status=""
+  migration_status="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("status", ""))' \
+      "$migration_result"
+  )" || return 1
+  if [[ "$migration_status" != "explicit-override-preserved" ]]; then
+    TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$APP_SUPPORT_DIR/state/telegram-user-configs"
+  fi
+}
+
+resume_telegram_user_config_migration_if_pending() {
+  local pending="$APP_SUPPORT_DIR/state/telegram-user-config-migration/pending.json"
+  if [[ ! -e "$pending" && ! -L "$pending" ]]; then
+    return 0
+  fi
+  if [[ -L "$pending" || ! -f "$pending" ]]; then
+    echo "Telegram preference migration recovery journal is unsafe." >&2
+    return 1
+  fi
+  migrate_telegram_user_configs "$REPO_ROOT"
+}
+
+initialize_telegram_user_config_authority() {
+  local migration_tool="$REPO_ROOT/scripts/viventium/telegram_user_config_migration.py"
+  if [[ ! -f "$migration_tool" || -L "$migration_tool" ]]; then
+    echo "Telegram preference migration helper is missing or unsafe." >&2
+    return 1
+  fi
+  local active_config_root=""
+  active_config_root="$(resolve_predecessor_telegram_user_config_root "$REPO_ROOT")"
+  refresh_repo_python
+  if ! "$PYTHON_BIN" "$migration_tool" \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --active-config-root "$active_config_root" >/dev/null
+  then
+    echo "Install found legacy Telegram preferences whose active writer is unknown." >&2
+    echo "Use bin/viventium upgrade --restart so the prior bot is stopped and its preferences are handed off safely." >&2
+    return 1
+  fi
+}
+
+load_telegram_predecessor_recovery_component() {
+  local staged_selection="${STAGED_TELEGRAM_RECOVERY_SELECTION:-$APP_SUPPORT_DIR/state/runtime-component-staging/telegram-viventium-predecessor.json}"
+  local staged_tool="${STAGED_TELEGRAM_COMPONENT_TOOL:-}"
+  if [[ -z "${STAGED_TELEGRAM_RECOVERY_SELECTION:-}" &&
+    ! -f "$staged_selection" && ! -L "$staged_selection" ]]
+  then
+    local staging_dir="$APP_SUPPORT_DIR/state/runtime-component-staging"
+    local -a legacy_candidates=()
+    local candidate=""
+    shopt -s nullglob
+    legacy_candidates=(
+      "$staging_dir"/telegram-viventium-predecessor.json.*
+    )
+    shopt -u nullglob
+    if [[ "${#legacy_candidates[@]}" == "1" ]]; then
+      candidate="${legacy_candidates[0]}"
+      if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+        staged_selection="$candidate"
+      fi
+    fi
+  fi
+  if [[ -z "$staged_tool" && -f "$staged_selection" && ! -L "$staged_selection" ]]; then
+    staged_tool="$(json_string_field "$staged_selection" component_tool || true)"
+  fi
+  if [[ -z "$staged_tool" || ! -f "$staged_tool" || -L "$staged_tool" ]]; then
+    echo "Telegram predecessor recovery controller is unavailable." >&2
+    return 1
+  fi
+  if ! "$PYTHON_BIN" "$staged_tool" resolve \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --selection-file "$staged_selection" >/dev/null
+  then
+    return 1
+  fi
+  STAGED_TELEGRAM_COMPAT_LAUNCHER="$(
+    json_string_field "$staged_selection" compat_launcher
+  )"
+  STAGED_TELEGRAM_COMPONENT_TOOL="$(
+    json_string_field "$staged_selection" component_tool
+  )"
+  STAGED_TELEGRAM_HANDOFF_HELPER="$(
+    json_string_field "$staged_selection" handoff_helper
+  )"
+  STAGED_TELEGRAM_RECOVERY_SELECTION="$staged_selection"
+  [[ -n "$STAGED_TELEGRAM_COMPAT_LAUNCHER" &&
+    -n "$STAGED_TELEGRAM_COMPONENT_TOOL" &&
+    -n "$STAGED_TELEGRAM_HANDOFF_HELPER" ]]
+}
+
+load_active_telegram_recovery_component() {
+  local expected_kind="${1:-}"
+  local expected_path="${2:-}"
+  local source_tool=""
+  local resolved=""
+  local disposition=""
+  source_tool="$(
+    "$PYTHON_BIN" - "$APP_SUPPORT_DIR" <<'PY'
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+
+support = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
+receipt = support / "state" / "continuity" / "telegram-recovery-active.json"
+try:
+    receipt_metadata = os.lstat(receipt)
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    selection = payload.get("selection")
+    raw_tool = selection.get("component_tool") if isinstance(selection, dict) else None
+    if (
+        not stat.S_ISREG(receipt_metadata.st_mode)
+        or stat.S_ISLNK(receipt_metadata.st_mode)
+        or receipt_metadata.st_uid != os.getuid()
+        or stat.S_IMODE(receipt_metadata.st_mode) & 0o077
+        or not isinstance(raw_tool, str)
+        or not raw_tool
+    ):
+        raise ValueError("unsafe receipt")
+    tool = Path(os.path.abspath(os.path.expanduser(raw_tool)))
+    boundary = support / "runtime-components" / "telegram-viventium"
+    tool.relative_to(boundary)
+    current = support
+    for part in tool.relative_to(support).parts:
+        current = current / part
+        metadata = os.lstat(current)
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or (
+                current != tool
+                and not stat.S_ISDIR(metadata.st_mode)
+            )
+        ):
+            raise ValueError("unsafe component chain")
+    metadata = os.lstat(tool)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+    ):
+        raise ValueError("unsafe component tool")
+except (
+    FileNotFoundError,
+    json.JSONDecodeError,
+    OSError,
+    TypeError,
+    ValueError,
+):
+    raise SystemExit(1)
+print(tool)
+PY
+  )" || return 1
+  resolved="$(
+    "$PYTHON_BIN" "$source_tool" resolve-recovery \
+      --app-support-dir "$APP_SUPPORT_DIR"
+  )" || return 1
+  disposition="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("disposition", ""))' \
+      "$resolved"
+  )" || return 1
+  if [[ "$disposition" != "passive" && "$disposition" != "recovery" ]]; then
+    return 1
+  fi
+  if [[ "$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("transaction_kind", ""))' \
+      "$resolved"
+  )" != "$expected_kind" ]] ||
+    [[ "$(
+      "$PYTHON_BIN" -c \
+        'import json,sys; print(json.loads(sys.argv[1]).get("transaction_path", ""))' \
+        "$resolved"
+    )" != "$expected_path" ]]
+  then
+    return 1
+  fi
+  STAGED_TELEGRAM_COMPAT_LAUNCHER="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("compat_launcher", ""))' \
+      "$resolved"
+  )" || return 1
+  STAGED_TELEGRAM_COMPONENT_TOOL="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("component_tool", ""))' \
+      "$resolved"
+  )" || return 1
+  STAGED_TELEGRAM_HANDOFF_HELPER="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("handoff_helper", ""))' \
+      "$resolved"
+  )" || return 1
+  STAGED_TELEGRAM_RECOVERY_SELECTION="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("selection_file", ""))' \
+      "$resolved"
+  )" || return 1
+  TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("user_configs_root", ""))' \
+      "$resolved"
+  )" || return 1
+  [[ -n "$STAGED_TELEGRAM_COMPAT_LAUNCHER" &&
+    -n "$STAGED_TELEGRAM_COMPONENT_TOOL" &&
+    -n "$STAGED_TELEGRAM_HANDOFF_HELPER" &&
+    -n "$STAGED_TELEGRAM_RECOVERY_SELECTION" &&
+    -n "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" ]]
+}
+
+verify_loaded_telegram_recovery_after_rollback() {
+  local expected_kind="${1:-}"
+  local expected_path="${2:-}"
+  local resolved=""
+  local disposition=""
+  if [[ -z "${STAGED_TELEGRAM_COMPONENT_TOOL:-}" ]] ||
+    [[ ! -f "$STAGED_TELEGRAM_COMPONENT_TOOL" ]] ||
+    [[ -L "$STAGED_TELEGRAM_COMPONENT_TOOL" ]]
+  then
+    return 1
+  fi
+  resolved="$(
+    "$PYTHON_BIN" "$STAGED_TELEGRAM_COMPONENT_TOOL" resolve-recovery \
+      --app-support-dir "$APP_SUPPORT_DIR"
+  )" || return 1
+  disposition="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("disposition", ""))' \
+      "$resolved"
+  )" || return 1
+  [[ "$disposition" == "recovery" ]] || return 1
+  [[ "$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("transaction_kind", ""))' \
+      "$resolved"
+  )" == "$expected_kind" ]] || return 1
+  [[ "$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("transaction_path", ""))' \
+      "$resolved"
+  )" == "$expected_path" ]] || return 1
+  [[ "$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("selection_file", ""))' \
+      "$resolved"
+  )" == "$STAGED_TELEGRAM_RECOVERY_SELECTION" ]] || return 1
+  [[ "$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("user_configs_root", ""))' \
+      "$resolved"
+  )" == "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" ]]
+}
+
+active_telegram_recovery_selection_file() {
+  printf '%s\n' "$APP_SUPPORT_DIR/state/continuity/telegram-recovery-active.json"
+}
+
+publish_active_telegram_recovery_component() {
+  local transaction_kind="${1:-upgrade}"
+  local transaction_path="${2:-${UPGRADE_TRANSACTION_DIR:-}}"
+  local source_selection="${STAGED_TELEGRAM_RECOVERY_SELECTION:-}"
+  local component_tool="${STAGED_TELEGRAM_COMPONENT_TOOL:-}"
+  local active_config_root="${TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT:-$APP_SUPPORT_DIR/state/telegram-user-configs}"
+  if [[ -z "$source_selection" || -z "$component_tool" ]] ||
+    [[ ! -f "$source_selection" || -L "$source_selection" ]] ||
+    [[ ! -f "$component_tool" || -L "$component_tool" ]] ||
+    [[ -z "$transaction_path" ]]
+  then
+    echo "Telegram recovery component cannot be made durable." >&2
+    return 1
+  fi
+  "$PYTHON_BIN" "$component_tool" publish-recovery \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --selection-file "$source_selection" \
+    --transaction-kind "$transaction_kind" \
+    --transaction-path "$transaction_path" \
+    --user-configs-root "$active_config_root" >/dev/null
+}
+
+clear_active_telegram_recovery_component() {
+  local component_tool="${STAGED_TELEGRAM_COMPONENT_TOOL:-$REPO_ROOT/scripts/viventium/telegram_runtime_component.py}"
+  if [[ ! -f "$component_tool" || -L "$component_tool" ]]; then
+    echo "Telegram recovery controller cannot be retired safely." >&2
+    return 1
+  fi
+  if ! "$PYTHON_BIN" "$component_tool" \
+    clear-recovery \
+    --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+  then
+    return 1
+  fi
+  local staged_selection="${STAGED_TELEGRAM_RECOVERY_SELECTION:-}"
+  case "$staged_selection" in
+    "$APP_SUPPORT_DIR"/state/runtime-component-staging/telegram-viventium-predecessor.json.*|\
+    "$APP_SUPPORT_DIR"/state/runtime-component-staging/first-upgrade-telegram-recovery-*.json|\
+    "$APP_SUPPORT_DIR"/state/runtime-component-staging/telegram-viventium-predecessor.json)
+      if [[ -f "$staged_selection" && ! -L "$staged_selection" ]]; then
+        rm -f -- "$staged_selection"
+      fi
+      ;;
+  esac
+}
+
+bootstrap_life() {
+  local life_bootstrap_script="$REPO_ROOT/scripts/viventium/life_bootstrap.py"
+  local runtime_env="${1:-$GENERATED_ENV}"
+  if [[ ! -f "$runtime_env" || ! -f "$life_bootstrap_script" ]]; then
+    return 0
+  fi
+  local life_bootstrap_status=0
+  "$PYTHON_BIN" "$life_bootstrap_script" \
+    --runtime-env "$runtime_env" \
+    --state-file "$APP_SUPPORT_DIR/state/life-bootstrap.json" || life_bootstrap_status=$?
+  if [[ "$life_bootstrap_status" -ne 0 ]]; then
+    if (
+      set +u
+      START_GLASSHIVE=false
+      # shellcheck disable=SC1090
+      source "$runtime_env"
+      case "${START_GLASSHIVE:-false}" in
+        1|true|TRUE|True|yes|YES|Yes|on|ON|On) exit 0 ;;
+        *) exit 1 ;;
+      esac
+    ); then
+      echo "[viventium] Error: canonical LIFE bootstrap is required by the enabled GlassHive runtime." >&2
+      echo "[viventium] Resolve the reported LIFE path conflict before starting chat." >&2
+      return "$life_bootstrap_status"
+    fi
+    echo "[viventium] Warning: canonical LIFE bootstrap could not complete; chat startup will continue." >&2
+    echo "[viventium] Fix the configured LIFE path, then rerun bin/viventium configure or start." >&2
+  fi
+  return 0
+}
+
 sync_memory_hardening_schedule() {
   if [[ "$(uname -s)" != "Darwin" || ! -f "$GENERATED_ENV" ]]; then
     return 0
   fi
-  local enabled schedule plist_path
+  local canonical_app_support_dir enabled schedule plist_path
+  canonical_app_support_dir="$HOME/Library/Application Support/Viventium"
+  if [[ "$APP_SUPPORT_DIR" != "$canonical_app_support_dir" && "${VIVENTIUM_ALLOW_NONCANONICAL_SCHEDULE_MUTATION:-0}" != "1" ]]; then
+    echo "Warning: Skipping the machine-global memory hardening schedule for a noncanonical Application Support directory." >&2
+    echo "Set VIVENTIUM_ALLOW_NONCANONICAL_SCHEDULE_MUTATION=1 only when this installation intentionally owns the single user LaunchAgent." >&2
+    return 0
+  fi
   enabled="$(
     awk -F= '$1=="VIVENTIUM_MEMORY_HARDENING_ENABLED"{print $2; exit}' "$GENERATED_ENV" | sed "s/^'//;s/'$//"
   )"
@@ -1146,6 +1921,39 @@ CONFIG_TRANSACTION_BACKUP=""
 CONFIG_TRANSACTION_HAD_EXISTING="false"
 CONFIG_TRANSACTION_APPLIED=0
 
+ensure_config_candidate_components() {
+  local candidate_config="${1:-}"
+  local agents_bundle="$REPO_ROOT/viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml"
+  if [[ ! -f "$candidate_config" || -L "$candidate_config" ]]; then
+    echo "Configuration candidate is unavailable for component selection." >&2
+    return 1
+  fi
+
+  echo "Verifying the pinned components required to validate this configuration..."
+  refresh_repo_python
+  if ! VIVENTIUM_DISABLE_PRIVATE_SNAPSHOTS=1 \
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/bootstrap_components.py" \
+      --repo-root "$REPO_ROOT" \
+      --lock-file "$LOCK_FILE" \
+      --config "$candidate_config"
+  then
+    echo "Fresh-install component bootstrap failed before configuration was applied." >&2
+    return 1
+  fi
+  if [[ ! -f "$agents_bundle" || -L "$agents_bundle" ]]; then
+    echo "Pinned LibreChat agent source-of-truth is unavailable after component bootstrap." >&2
+    return 1
+  fi
+  if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/repo_path_safety.py" \
+    --repo-root "$REPO_ROOT" \
+    --file "$agents_bundle" \
+    --label "pinned LibreChat agent source-of-truth" >/dev/null
+  then
+    echo "Pinned LibreChat agent source-of-truth has an unsafe linked path." >&2
+    return 1
+  fi
+}
+
 prepare_config_candidate() {
   local config_input="$1"
   local candidate_root="$APP_SUPPORT_DIR/state/config-candidates"
@@ -1186,6 +1994,9 @@ prepare_config_candidate() {
     return 1
   fi
   if ! apply_default_nightly_routines "$CONFIG_CANDIDATE_FILE"; then
+    return 1
+  fi
+  if ! ensure_config_candidate_components "$CONFIG_CANDIDATE_FILE"; then
     return 1
   fi
   if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
@@ -1303,6 +2114,28 @@ display_safe_path() {
   fi
 }
 
+compare_upgrade_continuity_audits() {
+  local pre_upgrade_manifest="${1:-}"
+  local post_upgrade_manifest="${2:-}"
+  local label="${3:-upgrade-continuity-comparison}"
+  local output_path=""
+  local comparison_status=""
+  [[ -f "$pre_upgrade_manifest" && -f "$post_upgrade_manifest" ]] || return 1
+  output_path="$(continuity_audit_path "$label")"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/continuity_audit.py" compare \
+    --snapshot-manifest "$pre_upgrade_manifest" \
+    --live-manifest "$post_upgrade_manifest" \
+    --strict-semantic \
+    --output "$output_path" >/dev/null
+  comparison_status="$(continuity_audit_status "$output_path")"
+  echo "Upgrade continuity comparison written to $(display_safe_path "$output_path")"
+  if [[ "$comparison_status" != "ok" ]]; then
+    echo "Upgrade-protected config, conversations, memory, prompts, auth/channel state, or schedules could not be proven unchanged; rolling back." >&2
+    echo "Review $(display_safe_path "$output_path") before retrying." >&2
+    return 1
+  fi
+}
+
 continuity_audit_status() {
   local audit_path="$1"
   if [[ ! -f "$audit_path" ]]; then
@@ -1343,6 +2176,34 @@ run_macos_helper_installer() {
     --repo-root "$REPO_ROOT" \
     --app-support-dir "$APP_SUPPORT_DIR" \
     "$@"
+}
+
+arm_persistent_telegram_recovery_helper() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local helper_config="$APP_SUPPORT_DIR/helper-config.json"
+  local helper_bundle="${VIVENTIUM_HELPER_APP_BUNDLE:-${VIVENTIUM_HELPER_APP_DIR:-$HOME/Applications}/Viventium.app}"
+  if [[ ! -f "$helper_config" || -L "$helper_config" ||
+    ! -d "$helper_bundle" || -L "$helper_bundle" ]]
+  then
+    return 0
+  fi
+  local before_hash=""
+  local after_hash=""
+  before_hash="$(shasum -a 256 "$helper_config" | awk '{print $1}')"
+  if ! VIVENTIUM_HELPER_RECOVERY_ARM=1 \
+    run_macos_helper_installer install \
+      --no-launch \
+      --preserve-helper-config \
+      --recovery-bundle-only
+  then
+    echo "Upgrade could not pre-activate its persistent rollback-aware helper." >&2
+    return 1
+  fi
+  after_hash="$(shasum -a 256 "$helper_config" | awk '{print $1}')"
+  if [[ -z "$before_hash" || "$after_hash" != "$before_hash" ]]; then
+    echo "Persistent recovery helper activation changed protected helper configuration." >&2
+    return 1
+  fi
 }
 
 install_ownership_receipt_file() {
@@ -1670,6 +2531,25 @@ runtime_checkout_refresh_helper() {
   echo "Viventium status-bar helper refreshed and relaunched."
 }
 
+recover_interrupted_helper_install() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local receipt="$APP_SUPPORT_DIR/state/helper-install-in-progress.json"
+  [[ -e "$receipt" ]] || return 0
+  if [[ -L "$receipt" || ! -f "$receipt" ]]; then
+    echo "Refusing unsafe interrupted helper-install receipt: $(display_safe_path "$receipt")" >&2
+    return 1
+  fi
+  echo "Finishing an interrupted Viventium helper installation..."
+  if ! runtime_checkout_refresh_helper; then
+    echo "Interrupted helper installation is still pending and will retry on the next start." >&2
+    return 1
+  fi
+  if [[ -e "$receipt" ]]; then
+    echo "Helper installer returned without clearing its durable recovery receipt." >&2
+    return 1
+  fi
+}
+
 runtime_checkout_status() {
   local active_repo=""
   local helper_repo=""
@@ -1849,9 +2729,362 @@ dev_env_command() {
     "$@"
 }
 
+dev_runtime_activation_tool() {
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/dev_runtime_activation.py" "$@"
+}
+
+quiesce_macos_helper_process_for_activation() {
+  local transaction_dir="${1:-}"
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local helper_app_dir="${VIVENTIUM_HELPER_APP_DIR:-$HOME/Applications}"
+  local helper_bundle="${VIVENTIUM_HELPER_APP_BUNDLE:-$helper_app_dir/Viventium.app}"
+  local legacy_bundle="${VIVENTIUM_HELPER_LEGACY_APP_BUNDLE:-$helper_app_dir/Viventium Helper.app}"
+  dev_runtime_activation_tool quiesce-helper-process \
+    --transaction-dir "$transaction_dir" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --helper-executable "$helper_bundle/Contents/MacOS/ViventiumHelper" \
+    --helper-executable "$legacy_bundle/Contents/MacOS/ViventiumHelper" >/dev/null
+}
+
+restore_dev_runtime_helper_process_after_rollback() {
+  local transaction_dir="${1:-}"
+  dev_runtime_activation_tool restore-helper-process \
+    --transaction-dir "$transaction_dir" \
+    --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+}
+
+dev_runtime_owner_env_alignment_required() {
+  local transaction_dir="${1:-}"
+  local alignment_json=""
+  alignment_json="$(
+    dev_runtime_activation_tool alignment-status \
+      --transaction-dir "$transaction_dir" \
+      --app-support-dir "$APP_SUPPORT_DIR"
+  )" || return 1
+  printf '%s\n' "$alignment_json" |
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(1 if json.load(sys.stdin).get("required") else 0)'
+}
+
+align_committed_dev_runtime_owner_env() {
+  local transaction_dir="${1:-}"
+  local alignment_json=""
+  local expected_receipt=""
+  alignment_json="$(
+    dev_runtime_activation_tool alignment-status \
+      --transaction-dir "$transaction_dir" \
+      --app-support-dir "$APP_SUPPORT_DIR"
+  )" || return 1
+  expected_receipt="$(
+    printf '%s\n' "$alignment_json" |
+      "$PYTHON_BIN" -c \
+        'import json,sys; print(json.dumps(json.load(sys.stdin).get("currentReceipt"), sort_keys=True))'
+  )" || return 1
+  if [[ -z "$expected_receipt" || "$expected_receipt" == "null" ]]; then
+    echo "Committed runtime owner-environment alignment receipt is unavailable." >&2
+    return 1
+  fi
+  # The current candidate owner file may contain a preserved post-acceptance
+  # edit. Use that exact file as canonical during the alignment restart so a
+  # deleted provider key cannot be resurrected from the older staged snapshot.
+  export VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE="$REPO_ROOT/viventium_v0_4/LibreChat/.env"
+  if ! force_restart_stack_after_owner_env_alignment; then
+    unset VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE
+    return 1
+  fi
+  unset VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE
+  dev_runtime_activation_tool mark-aligned \
+    --transaction-dir "$transaction_dir" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --expected-receipt-json "$expected_receipt" >/dev/null
+}
+
+remove_dev_runtime_activation_transaction() {
+  local transaction_dir="${1:-}"
+  local telegram_recovery_receipt=""
+  telegram_recovery_receipt="$(active_telegram_recovery_selection_file)"
+  if [[ -e "$telegram_recovery_receipt" || -L "$telegram_recovery_receipt" ]]; then
+    echo "Refusing to remove a dev-runtime transaction while Telegram recovery is still active." >&2
+    return 1
+  fi
+  case "$transaction_dir" in
+    "$APP_SUPPORT_DIR"/state/dev-runtime-activation.*)
+      rm -rf -- "$transaction_dir"
+      ;;
+    *)
+      echo "Refusing to remove an unrecognized dev-runtime activation path." >&2
+      return 1
+      ;;
+  esac
+}
+
+rollback_prepared_dev_runtime_activation() {
+  local transaction_dir="${1:-}"
+  local recovery_receipt_loaded=0
+  local active_receipt=""
+  active_receipt="$(active_telegram_recovery_selection_file)"
+  if [[ -e "$active_receipt" || -L "$active_receipt" ]]; then
+    if ! load_active_telegram_recovery_component \
+      "dev-runtime-activation" "$transaction_dir"
+    then
+      echo "Prepared activation rollback could not validate its sealed Telegram recovery receipt." >&2
+      return 1
+    fi
+    recovery_receipt_loaded=1
+  fi
+  if ! dev_runtime_activation_tool rollback \
+    --transaction-dir "$transaction_dir" \
+    --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+  then
+    echo "Prepared activation rollback failed closed; the transaction remains for recovery." >&2
+    return 1
+  fi
+  if [[ "$recovery_receipt_loaded" == "1" ]] &&
+    ! verify_loaded_telegram_recovery_after_rollback \
+      "dev-runtime-activation" "$transaction_dir"
+  then
+    echo "Prepared activation rollback restored state, but its sealed Telegram recovery receipt no longer matches." >&2
+    return 1
+  fi
+  if ! restore_dev_runtime_helper_process_after_rollback "$transaction_dir"; then
+    echo "Prepared activation rolled back, but its prior helper process could not be restored." >&2
+    return 1
+  fi
+  if [[ "$recovery_receipt_loaded" == "1" ]] &&
+    ! clear_active_telegram_recovery_component
+  then
+    echo "Prepared activation rolled back, but its sealed Telegram recovery receipt could not be retired." >&2
+    return 1
+  fi
+  remove_dev_runtime_activation_transaction "$transaction_dir"
+}
+
+restore_previous_dev_runtime_after_failure() {
+  local transaction_dir="${1:-}"
+  local previous_repo="${2:-}"
+  local was_running="${3:-0}"
+  local rollback_status=0
+  local recovery_receipt_loaded=0
+  local loaded_receipt_config_root=""
+
+  if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 \
+    VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1 \
+    VIVENTIUM_CLI_LOCK_INHERITED_ONCE=1 \
+    stop_stack_for_upgrade >/dev/null 2>&1
+  then
+    echo "Candidate runtime could not be stopped; refusing to replace live generated state during rollback." >&2
+    echo "The recoverable activation transaction remains at $(display_safe_path "$transaction_dir")." >&2
+    return 1
+  fi
+  if load_active_telegram_recovery_component \
+    "dev-runtime-activation" "$transaction_dir"
+  then
+    recovery_receipt_loaded=1
+    loaded_receipt_config_root="$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT"
+  elif ! load_telegram_predecessor_recovery_component; then
+    echo "The prior runtime's staged Telegram recovery component is unavailable." >&2
+    return 1
+  fi
+  if ! resume_telegram_user_config_migration_if_pending; then
+    echo "Dev-runtime rollback could not complete its stopped-writer Telegram preference journal." >&2
+    echo "The recoverable activation transaction remains at $(display_safe_path "$transaction_dir")." >&2
+    return 1
+  fi
+  if ! migrate_telegram_user_configs \
+    "$previous_repo" "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT"
+  then
+    echo "Dev-runtime rollback could not reconcile the stopped-writer Telegram preference authority." >&2
+    echo "The recoverable activation transaction remains at $(display_safe_path "$transaction_dir")." >&2
+    return 1
+  fi
+  TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+    resolve_predecessor_telegram_user_config_root "$previous_repo"
+  )" || return 1
+  if [[ "$recovery_receipt_loaded" != "1" ||
+    "$loaded_receipt_config_root" != "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" ]]
+  then
+    if ! publish_active_telegram_recovery_component \
+      "dev-runtime-activation" "$transaction_dir" ||
+      ! load_active_telegram_recovery_component \
+        "dev-runtime-activation" "$transaction_dir"
+    then
+      echo "Dev-runtime rollback could not bind sealed recovery to the committed Telegram preference authority." >&2
+      return 1
+    fi
+    recovery_receipt_loaded=1
+    loaded_receipt_config_root="$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT"
+  fi
+  dev_runtime_activation_tool rollback \
+    --transaction-dir "$transaction_dir" \
+    --app-support-dir "$APP_SUPPORT_DIR" >/dev/null || rollback_status=$?
+  if [[ "$rollback_status" != "0" ]]; then
+    echo "Dev-runtime activation rollback failed closed; the transaction remains at $(display_safe_path "$transaction_dir")." >&2
+    return "$rollback_status"
+  fi
+  if [[ "$recovery_receipt_loaded" == "1" ]]; then
+    if ! verify_loaded_telegram_recovery_after_rollback \
+      "dev-runtime-activation" "$transaction_dir"
+    then
+      echo "The prior runtime was restored, but its sealed Telegram recovery receipt no longer matches." >&2
+      return 1
+    fi
+  else
+    echo "The prior runtime was restored without a validated Telegram recovery receipt." >&2
+    return 1
+  fi
+  if [[ "$was_running" == "1" ]]; then
+    if [[ -z "$previous_repo" ]] ||
+      ! path_is_viventium_runtime_repo_root "$previous_repo"
+    then
+      echo "The prior runtime files and binding were restored, but its checkout could not be resolved for restart." >&2
+      return 1
+    fi
+    if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 \
+      VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1 \
+      VIVENTIUM_DETACHED_INHERIT_CLI_LOCK=1 \
+      VIVENTIUM_DETACHED_REPO_ROOT="$previous_repo" \
+      VIVENTIUM_DETACHED_LOCK_FILE="$previous_repo/components.lock.json" \
+      VIVENTIUM_DETACHED_COMPAT_LAUNCHER="$STAGED_TELEGRAM_COMPAT_LAUNCHER" \
+      VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE="$STAGED_TELEGRAM_RECOVERY_SELECTION" \
+      VIVENTIUM_TELEGRAM_COMPONENT_TOOL="$STAGED_TELEGRAM_COMPONENT_TOOL" \
+      VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER="$STAGED_TELEGRAM_HANDOFF_HELPER" \
+      VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR="${TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT:-$APP_SUPPORT_DIR/state/telegram-user-configs}" \
+      VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="" \
+      launch_stack_detached
+    then
+      echo "The prior runtime files and binding were restored, but its running state could not be resumed." >&2
+      return 1
+    fi
+    if ! wait_for_upgrade_runtime_health; then
+      echo "The prior checkout relaunched but did not return to full configured health." >&2
+      return 1
+    fi
+  fi
+  if ! restore_dev_runtime_helper_process_after_rollback "$transaction_dir"; then
+    echo "The prior runtime was restored, but its prior helper process could not be restored." >&2
+    return 1
+  fi
+  if ! clear_active_telegram_recovery_component; then
+    echo "The prior runtime and helper were restored, but Telegram recovery could not be retired safely." >&2
+    return 1
+  fi
+  remove_dev_runtime_activation_transaction "$transaction_dir"
+}
+
+recover_interrupted_dev_runtime_activations() {
+  local transaction_dir=""
+  local status_json=""
+  local activation_status=""
+  local previous_repo=""
+  local was_running=""
+  if [[ "${VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL:-0}" == "1" ]]; then
+    return 0
+  fi
+  DEV_RUNTIME_RECOVERY_PERFORMED=0
+  for transaction_dir in "$APP_SUPPORT_DIR"/state/dev-runtime-activation.*; do
+    [[ -d "$transaction_dir" ]] || continue
+    status_json="$(
+      dev_runtime_activation_tool status \
+        --transaction-dir "$transaction_dir" \
+        --app-support-dir "$APP_SUPPORT_DIR"
+    )" || return 1
+    activation_status="$(
+      printf '%s\n' "$status_json" |
+        "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))'
+    )" || return 1
+    previous_repo="$(
+      printf '%s\n' "$status_json" |
+        "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("previousRepo", ""))'
+    )" || return 1
+    was_running="$(
+      printf '%s\n' "$status_json" |
+        "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("wasRunning") else "0")'
+    )" || return 1
+    TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+      printf '%s\n' "$status_json" |
+        "$PYTHON_BIN" -c \
+          'import json,sys; print(json.load(sys.stdin).get("telegramPreferenceRoot", ""))'
+    )" || return 1
+    STAGED_TELEGRAM_RECOVERY_SELECTION="$(
+      printf '%s\n' "$status_json" |
+        "$PYTHON_BIN" -c \
+          'import json,sys; print(json.load(sys.stdin).get("telegramRecoverySelection", ""))'
+    )" || return 1
+    case "$activation_status" in
+      committed)
+        clear_active_telegram_recovery_component || return 1
+        remove_dev_runtime_activation_transaction "$transaction_dir"
+        ;;
+      rolled_back)
+        restore_previous_dev_runtime_after_failure \
+          "$transaction_dir" "$previous_repo" "$was_running" || return 1
+        DEV_RUNTIME_RECOVERY_PERFORMED=1
+        ;;
+      core_committed)
+        local alignment_required=0
+        alignment_required="$(
+          dev_runtime_owner_env_alignment_required "$transaction_dir"
+        )" || return 1
+        if [[ "$alignment_required" == "1" ]]; then
+          if is_stack_running; then
+            echo "Realigning the committed runtime to a preserved owner environment edit..."
+            if ! align_committed_dev_runtime_owner_env "$transaction_dir"; then
+              echo "The candidate runtime remains committed, but owner-environment alignment will retry on the next start or dev-runtime command." >&2
+              return 1
+            fi
+          elif ! dev_runtime_activation_tool mark-aligned \
+            --transaction-dir "$transaction_dir" \
+            --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+          then
+            echo "The stopped candidate remains committed, but owner-environment alignment acknowledgement will retry on the next start or dev-runtime command." >&2
+            return 1
+          fi
+        fi
+        echo "Finishing the committed local-runtime helper refresh..."
+        if ! runtime_checkout_refresh_helper; then
+          echo "The candidate runtime remains committed and healthy; helper refresh will retry on the next start or dev-runtime command." >&2
+          return 1
+        fi
+        if ! dev_runtime_activation_tool finalize-helper \
+          --transaction-dir "$transaction_dir" \
+          --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+        then
+          echo "The candidate runtime remains committed; helper finalization receipt is still pending." >&2
+          return 1
+        fi
+        clear_active_telegram_recovery_component || return 1
+        remove_dev_runtime_activation_transaction "$transaction_dir"
+        DEV_RUNTIME_RECOVERY_PERFORMED=1
+        ;;
+      prepared)
+        # The old process may already have been stopped immediately before
+        # the activator died, and a passive recovery receipt may already
+        # reference this prepared ledger even when the prior runtime was
+        # intentionally stopped.
+        restore_previous_dev_runtime_after_failure \
+          "$transaction_dir" "$previous_repo" "$was_running" || return 1
+        DEV_RUNTIME_RECOVERY_PERFORMED=1
+        ;;
+      publishing|runtime_backed_up|published|binding_applied|commit_env_accepted|commit_env_finalizing)
+        restore_previous_dev_runtime_after_failure \
+          "$transaction_dir" "$previous_repo" "$was_running" || return 1
+        DEV_RUNTIME_RECOVERY_PERFORMED=1
+        ;;
+      *)
+        echo "Unknown interrupted dev-runtime activation stage: $activation_status" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
 dev_runtime_command() {
   local action="${1:-status}"
   shift || true
+  if ! recover_interrupted_dev_runtime_activations; then
+    echo "Interrupted dev-runtime activation recovery failed closed." >&2
+    return 1
+  fi
   case "$action" in
     status)
       runtime_checkout_status
@@ -1864,6 +3097,8 @@ dev_runtime_command() {
       local restart=0
       local allow_protected=0
       local allow_dirty=0
+      local activation_config_sha256=""
+      local current_config_sha256=""
       while [[ $# -gt 0 ]]; do
         case "${1:-}" in
           --validate)
@@ -1892,39 +3127,487 @@ dev_runtime_command() {
             ;;
         esac
       done
-      if [[ "$allow_dirty" != "1" ]]; then
-        ensure_upgradeable_git_state 0
+      ensure_upgradeable_git_state "$allow_dirty" 0
+      if ! ensure_local_checkout_alignment "$allow_dirty"; then
+        echo "Dev-runtime activation aborted before config, runtime, helper, or binding mutation." >&2
+        return 1
+      fi
+      if [[ "$restart" == "1" && "$validate" != "1" ]]; then
+        echo "dev-runtime restart requires --validate so promotion can be rolled back safely." >&2
+        return 1
+      fi
+      if [[ "$validate" != "1" ]]; then
+        local runtime_checkout_args=(use --this --no-helper-refresh)
+        if [[ "$allow_protected" == "1" ]]; then
+          runtime_checkout_args+=(--allow-protected-folder)
+        fi
+        runtime_checkout_command "${runtime_checkout_args[@]}"
+        return 0
+      fi
+
+      if ! activation_config_sha256="$(config_file_sha256 "$CONFIG_FILE")"; then
+        echo "Dev-runtime activation could not bind the canonical config to this attempt." >&2
+        echo "Config, runtime, helper, and binding state were not changed." >&2
+        return 1
+      fi
+      if ! bootstrap_components --prefer-existing-checkout-head \
+        --expected-config-sha256 "$activation_config_sha256"
+      then
+        echo "Dev-runtime activation could not bootstrap the configured pinned components." >&2
+        echo "Config, runtime, helper, and binding state were not changed." >&2
+        return 1
+      fi
+      if ! bootstrap_components --validate-only --strict-pinned \
+        --expected-config-sha256 "$activation_config_sha256"
+      then
+        echo "Dev-runtime activation found a selected component outside its exact clean pin." >&2
+        echo "Config, runtime, helper, and binding state were not changed." >&2
+        return 1
+      fi
+      if ! ensure_local_checkout_alignment "$allow_dirty" "$activation_config_sha256"; then
+        echo "Dev-runtime activation aborted before App Support or live runtime mutation because component bootstrap did not reach a safe aligned state." >&2
+        return 1
+      fi
+      if ! bootstrap_components --validate-only --strict-pinned \
+        --expected-config-sha256 "$activation_config_sha256"
+      then
+        echo "Dev-runtime activation detected component selection drift before App Support mutation." >&2
+        echo "Config, runtime, helper, and binding state were not changed." >&2
+        return 1
+      fi
+      current_config_sha256="$(
+        config_file_sha256 "$CONFIG_FILE" 2>/dev/null || true
+      )"
+      if [[ "$current_config_sha256" != "$activation_config_sha256" ]]; then
+        echo "Dev-runtime activation detected a concurrent canonical config change." >&2
+        echo "Config, runtime, helper, and binding state were not changed." >&2
+        return 1
+      fi
+
+      ensure_app_support_layout "$APP_SUPPORT_DIR"
+      refresh_repo_python
+      if ! VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile" \
+        "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
+          --config "$CONFIG_FILE" \
+          --output-dir "$RUNTIME_DIR" \
+          --dry-run >/dev/null
+      then
+        echo "Runtime activation validation failed before Telegram staging; binding, live runtime, helper, and running state were not changed." >&2
+        return 1
+      fi
+      local activation_dir=""
+      local candidate_runtime=""
+      local previous_repo=""
+      local owner_repo=""
+      local activation_commit_status=""
+      local activation_begin_json=""
+      local owner_env_source=""
+      local owner_env_destination=""
+      local owner_env_manifest=""
+      local candidate_commit=""
+      local owner_env_source_is_candidate=0
+      local owner_env_alignment_required=0
+      local telegram_predecessor_source_mode=""
+      local established_runtime=0
+      local was_running=0
+      local was_running_arg="--no-was-running"
+
+      previous_repo="$(
+        active_runtime_checkout_repo_root "$APP_SUPPORT_DIR" 2>/dev/null || true
+      )"
+      if [[ -n "$previous_repo" ]]; then
+        established_runtime=1
+        telegram_predecessor_source_mode="predecessor"
+      fi
+      owner_repo="$(
+        json_string_field "$(stack_owner_state_file)" repoRoot 2>/dev/null || true
+      )"
+      if [[ -z "$previous_repo" ]]; then
+        previous_repo="$owner_repo"
+        if [[ -n "$previous_repo" ]]; then
+          established_runtime=1
+          telegram_predecessor_source_mode="predecessor"
+        fi
+      fi
+      if [[ "$established_runtime" != "1" ]] &&
+        ! prove_fresh_dev_runtime_activation
+      then
+        echo "Dev-runtime activation found durable Viventium state but no trustworthy active-checkout owner receipt." >&2
+        echo "Activation failed closed so existing configuration, accounts, conversations, schedules, and credentials cannot be mistaken for a fresh install." >&2
+        return 1
+      fi
+      if [[ -z "$previous_repo" ]]; then
+        previous_repo="$REPO_ROOT"
+      fi
+      TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+        resolve_predecessor_telegram_user_config_root "$previous_repo"
+      )"
+      if ! stage_telegram_runtime_component \
+        "$previous_repo" \
+        "$telegram_predecessor_source_mode"
+      then
+        echo "Dev-runtime activation could not stage a rollback-safe Telegram predecessor component." >&2
+        echo "Binding, generated runtime, helper, and running state were not changed." >&2
+        return 1
+      fi
+      candidate_commit="$(
+        git -C "$REPO_ROOT/viventium_v0_4/LibreChat" rev-parse --verify HEAD
+      )"
+      if ! owner_env_source="$(
+        resolve_dev_runtime_librechat_owner_env_source \
+          "$previous_repo" "$established_runtime"
+      )"; then
+        echo "Candidate activation could not prove the owner-managed LibreChat environment." >&2
+        return 1
+      fi
+      if [[ -n "$owner_env_source" &&
+        "$owner_env_source" == "$REPO_ROOT/viventium_v0_4/LibreChat/.env" ]]
+      then
+        owner_env_source_is_candidate=1
+      fi
+      if is_stack_running; then
+        was_running=1
+        was_running_arg="--was-running"
+      fi
+      if [[ "$was_running" == "1" && "$restart" != "1" ]]; then
+        echo "A running local runtime can only be promoted with --validate --restart." >&2
+        return 1
+      fi
+      activation_begin_json="$(
+        dev_runtime_activation_tool begin-new \
+        --transaction-parent "$APP_SUPPORT_DIR/state" \
+        --app-support-dir "$APP_SUPPORT_DIR" \
+        --runtime-dir "$RUNTIME_DIR" \
+        --runtime-checkout-file "$(runtime_checkout_file)" \
+        --helper-config-file "$(helper_config_file)" \
+        --previous-repo "$previous_repo" \
+        --telegram-preference-root "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" \
+        --telegram-recovery-selection "$STAGED_TELEGRAM_RECOVERY_SELECTION" \
+        --candidate-repo "$REPO_ROOT" \
+        "$was_running_arg"
+      )"
+      activation_dir="$(
+        printf '%s\n' "$activation_begin_json" |
+          "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["transactionDir"])'
+      )"
+      candidate_runtime="$(
+        printf '%s\n' "$activation_begin_json" |
+          "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["candidateRuntime"])'
+      )"
+      if ! publish_active_telegram_recovery_component \
+        "dev-runtime-activation" "$activation_dir"
+      then
+        echo "Runtime activation could not publish transaction-bound passive helper recovery." >&2
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running"
+        return 1
+      fi
+      if ! quiesce_macos_helper_process_for_activation "$activation_dir"; then
+        rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+        echo "Runtime activation could not pause the installed helper process; live runtime and checkout state were not changed." >&2
+        return 1
+      fi
+      if ! dev_runtime_activation_tool quiesce-helper \
+        --transaction-dir "$activation_dir" \
+        --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+      then
+        rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+        echo "Runtime activation could not transactionally quiesce helper supervision; live runtime and checkout state were not changed." >&2
+        return 1
+      fi
+
+      if [[ -n "$owner_env_source" ]]; then
+        owner_env_destination="$candidate_runtime/service-env/librechat.owner.env"
+        owner_env_manifest="$candidate_runtime/service-env/librechat.owner.manifest.json"
+        if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" stage \
+          --source "$owner_env_source" \
+          --runtime-dir "$candidate_runtime" \
+          --destination "$owner_env_destination" \
+          --manifest "$owner_env_manifest" \
+          --target-repo "$REPO_ROOT" \
+          --target-commit "$candidate_commit" >/dev/null
+        then
+          rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+          echo "Runtime activation could not snapshot the established LibreChat owner environment; binding, live runtime, helper, and running state were not changed." >&2
+          return 1
+        fi
+        if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify-compatible \
+          --manifest "$owner_env_manifest" \
+          --target "$REPO_ROOT/viventium_v0_4/LibreChat/.env" >/dev/null
+        then
+          rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+          echo "Candidate LibreChat owner state conflicts with the established runtime; the candidate environment was restored exactly." >&2
+          return 1
+        fi
+        if ! dev_runtime_activation_tool owner-env-planned \
+          --transaction-dir "$activation_dir" \
+          --app-support-dir "$APP_SUPPORT_DIR" \
+          --owner-env-manifest "$owner_env_manifest" >/dev/null
+        then
+          rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+          echo "Runtime activation could not bind the owner environment to its rollback transaction." >&2
+          return 1
+        fi
+        if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify-source \
+          --manifest "$owner_env_manifest" \
+          --source "$owner_env_source" >/dev/null
+        then
+          rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+          echo "Established LibreChat owner state changed before materialization; the candidate environment was restored exactly." >&2
+          return 1
+        fi
+        if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" materialize \
+          --manifest "$owner_env_manifest" \
+          --snapshot "$owner_env_destination" \
+          --target-repo "$REPO_ROOT" \
+          --target-env "$REPO_ROOT/viventium_v0_4/LibreChat/.env" \
+          --target-commit "$candidate_commit" >/dev/null
+        then
+          rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+          echo "Runtime activation could not materialize the protected LibreChat owner environment; the candidate environment was restored exactly." >&2
+          return 1
+        fi
+        if ! dev_runtime_activation_tool owner-env-materialized \
+          --transaction-dir "$activation_dir" \
+          --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+        then
+          rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+          echo "Runtime activation could not bind the materialized owner environment to its rollback transaction." >&2
+          return 1
+        fi
+      fi
+
+      export VIVENTIUM_LIBRECHAT_SOURCE_PHASE="compile"
+      local compiler_status=0
+      if [[ -n "$owner_env_source" ]]; then
+        VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="$owner_env_destination" \
+          "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
+            --config "$CONFIG_FILE" \
+            --output-dir "$candidate_runtime" || compiler_status=$?
+      else
+        "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
+          --config "$CONFIG_FILE" \
+          --output-dir "$candidate_runtime" || compiler_status=$?
+      fi
+      if [[ "$compiler_status" != "0" ]]; then
+        unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE
+        rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+        echo "Runtime activation validation failed during candidate config compilation; binding, live runtime, helper, and running state were not changed." >&2
+        return 1
+      fi
+      unset VIVENTIUM_LIBRECHAT_SOURCE_PHASE
+      if ! prepare_telegram_runtime_component "$REPO_ROOT" "$candidate_runtime"; then
+        rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+        echo "Runtime activation could not stage its Telegram runtime component; binding, live runtime, helper, and running state were not changed." >&2
+        return 1
+      fi
+      if ! "$REPO_ROOT/scripts/viventium/doctor.sh" \
+        --config "$CONFIG_FILE" \
+        --runtime-dir "$candidate_runtime" \
+        --repo-root "$REPO_ROOT" \
+        --lock-file "$LOCK_FILE" \
+        --prefer-existing-checkout-head
+      then
+        rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+        echo "Runtime activation validation failed during candidate doctor checks; binding, live runtime, helper, and running state were not changed." >&2
+        return 1
+      fi
+      if [[ -n "$owner_env_source" ]]; then
+        if {
+          [[ "$owner_env_source_is_candidate" != "1" ]] &&
+            ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify-source \
+              --manifest "$owner_env_manifest" \
+              --source "$owner_env_source" >/dev/null
+        } ||
+          ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify \
+            --manifest "$owner_env_manifest" \
+            --target "$REPO_ROOT/viventium_v0_4/LibreChat/.env" \
+            --target-repo "$REPO_ROOT" \
+            --target-commit "$candidate_commit" >/dev/null ||
+          {
+            [[ "$owner_env_source_is_candidate" != "1" ]] &&
+              ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify-source \
+                --manifest "$owner_env_manifest" \
+                --source "$REPO_ROOT/viventium_v0_4/LibreChat/.env" >/dev/null
+          }
+        then
+          rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+          echo "LibreChat owner state changed during candidate validation; the candidate environment was restored exactly before publication." >&2
+          return 1
+        fi
+      fi
+      if [[ "$(uname -s)" == "Darwin" ]] &&
+        ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/helper_artifact_verify.py" \
+          --package-dir "$REPO_ROOT/apps/macos/ViventiumHelper"
+      then
+        rollback_prepared_dev_runtime_activation "$activation_dir" || return 1
+        echo "Runtime activation validation failed during helper artifact verification; binding, live runtime, helper, and running state were not changed." >&2
+        return 1
+      fi
+      if [[ "$was_running" == "1" ]]; then
+        if ! stop_stack_for_upgrade; then
+          if ! rollback_prepared_dev_runtime_activation "$activation_dir"; then
+            echo "Runtime activation stop failed and exact helper-intent restoration also failed; the prepared transaction remains for recovery." >&2
+            return 1
+          fi
+          echo "Runtime activation could not stop the prior checkout; no binding or generated-runtime change was published." >&2
+          return 1
+        fi
+      fi
+      if ! migrate_telegram_user_configs "$previous_repo"; then
+        echo "Runtime activation could not preserve legacy Telegram preferences in canonical App Support state." >&2
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running"
+        return 1
+      fi
+      if ! publish_active_telegram_recovery_component \
+        "dev-runtime-activation" "$activation_dir"
+      then
+        echo "Runtime activation could not bind its migrated Telegram preference authority to rollback." >&2
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running"
+        return 1
+      fi
+      if ! arm_persistent_telegram_recovery_helper; then
+        echo "Runtime activation could not arm persistent helper recovery before publication." >&2
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running"
+        return 1
+      fi
+
+      if ! dev_runtime_activation_tool publish \
+        --transaction-dir "$activation_dir" \
+        --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+      then
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running" || true
+        return 1
       fi
       local runtime_checkout_args=(use --this --no-helper-refresh)
       if [[ "$allow_protected" == "1" ]]; then
         runtime_checkout_args+=(--allow-protected-folder)
       fi
-      runtime_checkout_command "${runtime_checkout_args[@]}"
-      if [[ "$validate" == "1" ]]; then
-        if ! compile_config; then
-          echo "Runtime activation validation failed during config compilation; the running stack was not restarted." >&2
-          return 1
-        fi
-        if ! "$REPO_ROOT/scripts/viventium/doctor.sh" \
-          --config "$CONFIG_FILE" \
-          --runtime-dir "$RUNTIME_DIR" \
-          --repo-root "$REPO_ROOT" \
-          --lock-file "$LOCK_FILE" \
-          --prefer-existing-checkout-head; then
-          echo "Runtime activation validation failed during doctor checks; the running stack was not restarted." >&2
-          return 1
-        fi
-        if ! runtime_checkout_refresh_helper; then
-          echo "Runtime activation validation could not refresh the helper; the running stack was not restarted." >&2
-          return 1
-        fi
+      if ! runtime_checkout_command "${runtime_checkout_args[@]}"; then
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running" || true
+        return 1
+      fi
+      if ! dev_runtime_activation_tool binding-applied \
+        --transaction-dir "$activation_dir" \
+        --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+      then
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running" || true
+        return 1
       fi
       if [[ "$restart" == "1" ]]; then
-        if is_stack_running; then
-          stop_stack_for_upgrade
+        if [[ -n "$owner_env_source" ]]; then
+          export VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE="$RUNTIME_DIR/service-env/librechat.owner.env"
         fi
-        restart_stack_after_upgrade
+        if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 \
+          VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1 restart_stack_after_upgrade
+        then
+          unset VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE
+          echo "Candidate runtime restart failed; restoring the prior checkout and generated runtime." >&2
+          restore_previous_dev_runtime_after_failure \
+            "$activation_dir" "$previous_repo" "$was_running"
+          return 1
+        fi
+        unset VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE
+        if [[ -n "$owner_env_source" ]] &&
+          ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify \
+            --manifest "$RUNTIME_DIR/service-env/librechat.owner.manifest.json" \
+            --target "$REPO_ROOT/viventium_v0_4/LibreChat/.env" \
+            --target-repo "$REPO_ROOT" \
+            --target-commit "$candidate_commit" >/dev/null
+        then
+          echo "Candidate runtime changed protected LibreChat auth or owner environment state; restoring the prior checkout and generated runtime." >&2
+          restore_previous_dev_runtime_after_failure \
+            "$activation_dir" "$previous_repo" "$was_running"
+          return 1
+        fi
       fi
+      if [[ -n "$owner_env_source" ]] &&
+        {
+          {
+            [[ "$owner_env_source_is_candidate" != "1" ]] &&
+              ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify-source \
+                --manifest "$RUNTIME_DIR/service-env/librechat.owner.manifest.json" \
+                --source "$owner_env_source" >/dev/null
+          } ||
+          ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" verify \
+            --manifest "$RUNTIME_DIR/service-env/librechat.owner.manifest.json" \
+            --target "$REPO_ROOT/viventium_v0_4/LibreChat/.env" \
+            --target-repo "$REPO_ROOT" \
+            --target-commit "$candidate_commit" >/dev/null
+        }
+      then
+        echo "LibreChat owner source or candidate revision changed at the activation commit boundary; restoring the prior checkout and generated runtime." >&2
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running"
+        return 1
+      fi
+      if ! dev_runtime_activation_tool commit \
+          --transaction-dir "$activation_dir" \
+          --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+      then
+        activation_commit_status="$(
+          dev_runtime_activation_tool status \
+            --transaction-dir "$activation_dir" \
+            --app-support-dir "$APP_SUPPORT_DIR" 2>/dev/null |
+            "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))' \
+              2>/dev/null || true
+        )"
+        if [[ "$activation_commit_status" == "core_committed" ||
+          "$activation_commit_status" == "committed" ]]
+        then
+          echo "Candidate runtime and binding committed, but forward helper finalization is still pending." >&2
+          echo "The next start or dev-runtime command will reconcile it safely." >&2
+          return 1
+        fi
+        echo "Candidate activation could not commit its local transaction; restoring the prior checkout and runtime." >&2
+        restore_previous_dev_runtime_after_failure \
+          "$activation_dir" "$previous_repo" "$was_running"
+        return 1
+      fi
+      owner_env_alignment_required="$(
+        dev_runtime_owner_env_alignment_required "$activation_dir"
+      )" || return 1
+      if [[ "$owner_env_alignment_required" == "1" ]]; then
+        if [[ "$restart" == "1" ]]; then
+          if ! align_committed_dev_runtime_owner_env "$activation_dir"; then
+            echo "Candidate runtime committed and preserved a concurrent owner environment edit, but its alignment restart is incomplete." >&2
+            echo "The helper will retry the committed candidate without rolling back the owner edit." >&2
+            return 1
+          fi
+        elif ! dev_runtime_activation_tool mark-aligned \
+          --transaction-dir "$activation_dir" \
+          --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+        then
+          echo "Candidate runtime committed and preserved a concurrent owner environment edit, but its alignment restart is incomplete." >&2
+          echo "The helper will retry the committed candidate without rolling back the owner edit." >&2
+          return 1
+        fi
+      fi
+      if ! runtime_checkout_refresh_helper; then
+        echo "Candidate runtime and binding committed, but helper refresh is incomplete." >&2
+        echo "The next start or dev-runtime command will retry the helper refresh without rolling back the healthy candidate." >&2
+        return 1
+      fi
+      if ! dev_runtime_activation_tool finalize-helper \
+        --transaction-dir "$activation_dir" \
+        --app-support-dir "$APP_SUPPORT_DIR" >/dev/null
+      then
+        echo "Candidate runtime and helper refresh completed, but the forward-finalization receipt is still pending." >&2
+        echo "The next start or dev-runtime command will reconcile it safely." >&2
+        return 1
+      fi
+      if ! clear_active_telegram_recovery_component; then
+        echo "Candidate runtime and helper committed, but stale Telegram recovery state could not be cleared." >&2
+        return 1
+      fi
+      remove_dev_runtime_activation_transaction "$activation_dir"
+      echo "Current checkout passed candidate validation and was activated transactionally."
       ;;
     --help|-h|help)
       subcommand_usage dev-runtime
@@ -2216,7 +3899,9 @@ prepare_runtime_exports() {
   if [[ -f "$private_root_env_local" ]]; then
     export VIVENTIUM_ENV_LOCAL_FILE="$private_root_env_local"
   fi
-  if [[ -f "$private_librechat_env" ]]; then
+  if [[ -n "${VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE:-}" ]]; then
+    export VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="$VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE"
+  elif [[ -f "$private_librechat_env" ]]; then
     export VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE="$private_librechat_env"
   fi
   if [[ -f "$private_source_of_truth" ]]; then
@@ -2580,6 +4265,7 @@ drain_native_stack_before_state_removal() {
   # state is still present for command-line matching.
   prepare_runtime_exports
   if [[ -f "$GENERATED_ENV" ]]; then
+    set -a
     set +u
     # shellcheck disable=SC1090
     source "$GENERATED_ENV"
@@ -2588,8 +4274,12 @@ drain_native_stack_before_state_removal() {
       source "$GENERATED_LOCAL_ENV"
     fi
     set -u
+    set +a
   fi
-  "$REPO_ROOT/scripts/viventium/native_stack.sh" stop >/dev/null 2>&1 || true
+  if ! "$REPO_ROOT/scripts/viventium/native_stack.sh" stop; then
+    echo "Native services did not drain; refusing to remove Viventium state." >&2
+    return 1
+  fi
 }
 
 reset_local_install_state() {
@@ -2599,7 +4289,10 @@ reset_local_install_state() {
     echo "Stopping the current Viventium stack before reset..."
     stop_stack_for_upgrade
   fi
-  drain_native_stack_before_state_removal
+  if ! drain_native_stack_before_state_removal; then
+    echo "Factory reset stopped before any Viventium state was removed." >&2
+    return 1
+  fi
   if [[ -e "$APP_SUPPORT_DIR" || -f "$CONFIG_FILE" ]]; then
     backup_dir="$(backup_install_state_for_removal "reset")"
   fi
@@ -2619,7 +4312,10 @@ uninstall_local_installation() {
     echo "Stopping the current Viventium stack before uninstall..."
     stop_stack_for_upgrade
   fi
-  drain_native_stack_before_state_removal
+  if ! drain_native_stack_before_state_removal; then
+    echo "Uninstall stopped before any Viventium state was removed." >&2
+    return 1
+  fi
   helper_ownership="$(read_install_helper_ownership)"
   if [[ "$helper_ownership" == "unknown" ]] && legacy_helper_ownership_matches_install; then
     helper_ownership="legacy-owned"
@@ -2744,6 +4440,30 @@ read_generated_env_value() {
   fi
 }
 
+read_local_env_assignment() {
+  local file="${1:-}"
+  local key="${2:-}"
+  local line=""
+  local value=""
+  [[ -n "$file" && -n "$key" && -f "$file" && ! -L "$file" ]] || return 1
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$key="* ]]; then
+      value="${line#*=}"
+      value="${value%%#*}"
+      value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      value="${value#\"}"
+      value="${value%\"}"
+      value="${value#\'}"
+      value="${value%\'}"
+      [[ -n "$value" ]] || return 1
+      printf '%s' "$value"
+      return 0
+    fi
+  done <"$file"
+  return 1
+}
+
 runtime_env_true() {
   local key="${1:-}"
   local default_value="${2:-false}"
@@ -2831,6 +4551,34 @@ raise SystemExit(0 if isinstance(payload, dict) and payload.get("status") == "UP
 PY
 }
 
+http_json_status_healthy() {
+  local url="${1:-}"
+  local timeout_seconds="${2:-2}"
+  [[ -n "$url" ]] || return 1
+
+  "$PYTHON_BIN" - "$url" "$timeout_seconds" <<'PY'
+import json
+import sys
+import urllib.request
+
+url = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
+request = urllib.request.Request(url, method="GET")
+try:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        if getattr(response, "status", 200) != 200:
+            raise SystemExit(1)
+        payload = json.load(response)
+except Exception:
+    raise SystemExit(1)
+
+status = payload.get("status") if isinstance(payload, dict) else None
+raise SystemExit(
+    0 if isinstance(status, str) and status.strip().lower() in {"up", "ok"} else 1
+)
+PY
+}
+
 http_url_reachable() {
   local url="${1:-}"
   local timeout_seconds="${2:-2}"
@@ -2876,6 +4624,79 @@ local_http_surface_healthy() {
 api_surface_healthy() {
   local port="${1:-}"
   local_http_surface_healthy "$port" "/api/health"
+}
+
+postcommit_api_finalization_ready() {
+  local run_id="${VIVENTIUM_POSTCOMMIT_FINALIZATION_ID:-}"
+  local source_id="${VIVENTIUM_POSTCOMMIT_SOURCE_ID:-}"
+  local receipt="$APP_SUPPORT_DIR/state/continuity/postcommit-api-finalization.json"
+  [[ -n "$run_id" ]] || return 0
+
+  "$PYTHON_BIN" - "$APP_SUPPORT_DIR" "$receipt" "$run_id" "$source_id" <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+app_support = Path(os.path.abspath(sys.argv[1]))
+receipt = Path(os.path.abspath(sys.argv[2]))
+run_id = sys.argv[3]
+source_id = sys.argv[4]
+required = {
+    "database-connected",
+    "database-seed-ready",
+    "startup-checks-ready",
+    "interface-permissions-ready",
+    "mcp-runtime-ready",
+    "oauth-reconnect-ready",
+    "channel-persistence-ready",
+    "permission-migration-inspection",
+    "stale-cortex-recovery",
+    "generation-runtime-ready",
+}
+if not re.fullmatch(r"[0-9a-f]{64}", run_id):
+    raise SystemExit(1)
+if not re.fullmatch(r"[0-9a-f]{40,64}", source_id):
+    raise SystemExit(1)
+try:
+    receipt.relative_to(app_support)
+    if os.path.realpath(receipt) != str(receipt):
+        raise SystemExit(1)
+    metadata = receipt.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise SystemExit(1)
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+except (OSError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+completed = payload.get("completed")
+degraded = payload.get("degraded")
+valid = (
+    payload.get("schemaVersion") == 1
+    and payload.get("runId") == run_id
+    and payload.get("sourceId") == source_id
+    and payload.get("status") == "ready"
+    and payload.get("stage") == "ready"
+    and isinstance(payload.get("attempt"), int)
+    and not isinstance(payload.get("attempt"), bool)
+    and payload["attempt"] >= 1
+    and isinstance(completed, list)
+    and all(isinstance(item, str) for item in completed)
+    and required.issubset(set(completed))
+    and isinstance(degraded, list)
+    and {
+        "stage": "derived-search-index",
+        "code": "best-effort-derived-state",
+    }
+    in degraded
+)
+raise SystemExit(0 if valid else 1)
+PY
 }
 
 frontend_surface_healthy() {
@@ -3003,6 +4824,121 @@ mcp_url_surface_reachable() {
   http_url_reachable "$url" 3
 }
 
+scheduling_surface_healthy() {
+  local url=""
+  local db_path=""
+  local state_root=""
+  url="$(read_generated_env_value "SCHEDULING_MCP_URL" "http://localhost:7110/mcp")"
+  db_path="$(read_generated_env_value "SCHEDULING_DB_PATH" "")"
+  if [[ -z "$db_path" ]]; then
+    state_root="$(read_generated_env_value "VIVENTIUM_STATE_ROOT" "")"
+    if [[ -z "$state_root" ]]; then
+      state_root="$APP_SUPPORT_DIR/state/runtime/${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+    fi
+    db_path="$state_root/scheduling/schedules.db"
+  fi
+  url="${url%/}"
+  url="${url%/mcp}"
+  [[ -n "$db_path" ]] || return 1
+
+  "$PYTHON_BIN" - "${url}/health" "$db_path" <<'PY'
+import hashlib
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+url = sys.argv[1]
+db_path = str(Path(sys.argv[2]).expanduser().resolve())
+expected_db_hash = hashlib.sha256(db_path.encode("utf-8")).hexdigest()
+request = urllib.request.Request(url, method="GET")
+try:
+    with urllib.request.urlopen(request, timeout=2) as response:
+        if getattr(response, "status", 200) != 200:
+            raise SystemExit(1)
+        payload = json.load(response)
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(payload, dict):
+    raise SystemExit(1)
+if payload.get("status") != "ok":
+    raise SystemExit(1)
+if payload.get("service") != "scheduling-cortex":
+    raise SystemExit(1)
+if payload.get("db_path_sha256") != expected_db_hash:
+    raise SystemExit(1)
+PY
+}
+
+livekit_surface_healthy() {
+  local url=""
+  url="$(read_generated_env_value "LIVEKIT_API_HOST" "")"
+  url="${url%/}"
+  [[ -n "$url" ]] || return 1
+  http_url_reachable "$url" 3
+}
+
+voice_gateway_surface_healthy() {
+  local port=""
+  port="$(read_generated_env_value "VIVENTIUM_VOICE_GATEWAY_HEALTH_PORT" "")"
+  local_http_surface_healthy "$port" "/health"
+}
+
+code_interpreter_surface_healthy() {
+  local port=""
+  port="$(read_generated_env_value "VIVENTIUM_CODE_INTERPRETER_PORT" "8101")"
+  local_http_surface_healthy "$port" "/health"
+}
+
+skyvern_surface_healthy() {
+  local port=""
+  port="$(read_generated_env_value "VIVENTIUM_SKYVERN_API_PORT" "8200")"
+  local_http_surface_healthy "$port" "/api/v1/health" ||
+    local_http_surface_healthy "$port" "/docs" ||
+    local_http_surface_healthy "$port" "/openapi.json"
+}
+
+remote_tunnel_surface_healthy() {
+  local mode=""
+  local state_root=""
+  local state_file=""
+  mode="$(read_generated_env_value "VIVENTIUM_REMOTE_CALL_MODE" "disabled")"
+  [[ -n "$mode" && "$mode" != "disabled" ]] || return 0
+  state_root="$(read_generated_env_value "VIVENTIUM_STATE_ROOT" "")"
+  if [[ -z "$state_root" ]]; then
+    state_root="$APP_SUPPORT_DIR/state/runtime/${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  fi
+  state_file="$state_root/public-network.json"
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/remote_call_tunnel.py" status \
+    --state-file "$state_file" >/dev/null 2>&1
+}
+
+glasshive_surface_healthy() {
+  local runtime_port=""
+  local ui_port=""
+  runtime_port="$(read_generated_env_value "GLASSHIVE_RUNTIME_PORT" "8766")"
+  ui_port="$(read_generated_env_value "GLASSHIVE_UI_PORT" "8780")"
+  {
+    http_json_status_healthy "http://localhost:${runtime_port}/health" ||
+      http_json_status_healthy "http://127.0.0.1:${runtime_port}/health"
+  } &&
+    # The MCP transport itself is the supported liveness contract. FastMCP
+    # correctly returns a protocol-level 4xx to an unauthenticated GET, while
+    # older deployed builds do not expose a separate /health route.
+    mcp_url_surface_reachable "GLASSHIVE_MCP_URL" "http://127.0.0.1:8767/mcp" &&
+    {
+      http_json_status_healthy "http://localhost:${ui_port}/health" ||
+        http_json_status_healthy "http://127.0.0.1:${ui_port}/health"
+    }
+}
+
+prompt_workbench_surface_healthy() {
+  local port=""
+  port="$(read_generated_env_value "VIVENTIUM_PROMPT_WORKBENCH_PORT" "8781")"
+  local_http_surface_healthy "$port" "/api/health"
+}
+
 runtime_pid_file_running() {
   local pid_file_name="${1:-}"
   [[ -n "$pid_file_name" ]] || return 1
@@ -3030,11 +4966,25 @@ telegram_bridge_surface_healthy() {
   local api_port=""
   local frontend_port=""
   local playground_port=""
+  local state_root=""
+  local health_json=""
   assign_runtime_ports api_port frontend_port playground_port
-  (
-    runtime_pid_file_running "telegram_bot.pid" ||
-      runtime_pid_file_running "telegram_bot_deferred.pid"
-  ) && api_surface_healthy "$api_port"
+  state_root="$(read_generated_env_value "VIVENTIUM_STATE_ROOT" "")"
+  if [[ -z "$state_root" ]]; then
+    state_root="$APP_SUPPORT_DIR/state/runtime/${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  fi
+  health_json="$(
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/telegram_poller_handoff.py" health \
+      --state-dir "$state_root/telegram-poller" \
+      --pid-file "$state_root/telegram_bot.pid" \
+      --require-receipt 2>/dev/null
+  )" || return 1
+  "$PYTHON_BIN" -c '
+import json, sys
+payload = json.loads(sys.stdin.read())
+raise SystemExit(0 if payload.get("running") is True and payload.get("ready") is True else 1)
+' <<<"$health_json" &&
+    api_surface_healthy "$api_port"
 }
 
 telegram_codex_surface_healthy() {
@@ -3061,12 +5011,36 @@ runtime_optional_surfaces_healthy() {
   if runtime_env_true "START_MS365_MCP" "false" && ! mcp_url_surface_reachable "MS365_MCP_SERVER_URL" "http://localhost:6274/mcp"; then
     return 1
   fi
+  if runtime_env_true "START_SCHEDULING_MCP" "false" && ! scheduling_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "START_GLASSHIVE" "false" && ! glasshive_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "START_PROMPT_WORKBENCH" "false" && ! prompt_workbench_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "START_CODE_INTERPRETER" "false" && ! code_interpreter_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "START_SKYVERN" "false" && ! skyvern_surface_healthy; then
+    return 1
+  fi
+  if runtime_env_true "VIVENTIUM_VOICE_ENABLED" "false"; then
+    if ! livekit_surface_healthy || ! voice_gateway_surface_healthy; then
+      return 1
+    fi
+  fi
   if runtime_env_true "START_TELEGRAM" "false" && ! telegram_bridge_surface_healthy; then
     return 1
   fi
   if runtime_env_true "START_TELEGRAM_CODEX" "false" && ! telegram_codex_surface_healthy; then
     return 1
   fi
+  # Public-edge setup depends on router ownership and other external network
+  # state. Its owning contract explicitly keeps localhost running and records
+  # an actionable degraded status when mappings conflict. Do not turn that
+  # expected degradation into an endless local upgrade rollback.
   optional_install_surfaces_healthy
 }
 
@@ -3087,6 +5061,19 @@ pid_matches_repo_scope() {
   return 1
 }
 
+pid_matches_runtime_process_group() {
+  local pid="${1:-}"
+  local recorded_pgid=""
+  local current_pgid=""
+  [[ -n "$pid" ]] || return 1
+
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  current_pgid="$(ps -p "$pid" -o pgid= 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$current_pgid" == "$recorded_pgid" ]]
+}
+
 pattern_running_in_repo() {
   local pattern="${1:-}"
   [[ -n "$pattern" ]] || return 1
@@ -3096,7 +5083,7 @@ pattern_running_in_repo() {
 
   local pid
   for pid in $pids; do
-    if pid_matches_repo_scope "$pid"; then
+    if pid_matches_repo_scope "$pid" && pid_matches_runtime_process_group "$pid"; then
       return 0
     fi
   done
@@ -3172,10 +5159,16 @@ launch_stack_detached() {
     echo "Run: bin/viventium install" >&2
     exit 1
   fi
+  if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
+    if ! initialize_telegram_user_config_authority; then
+      echo "Viventium start stopped before Telegram could select an ambiguous preference root." >&2
+      return 1
+    fi
+  fi
   local core_surfaces_healthy=1
   if user_surface_healthy; then
     core_surfaces_healthy=0
-    if runtime_optional_surfaces_healthy; then
+    if runtime_optional_surfaces_healthy && postcommit_api_finalization_ready; then
       echo "Viventium is already running."
       return 0
     fi
@@ -3194,14 +5187,18 @@ launch_stack_detached() {
   local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
   mkdir -p "$(dirname "$launch_log")"
   capture_detached_start_log_offset "$launch_log"
+  local detached_repo_root="${VIVENTIUM_DETACHED_REPO_ROOT:-$REPO_ROOT}"
+  local detached_lock_file="${VIVENTIUM_DETACHED_LOCK_FILE:-$LOCK_FILE}"
+  local detached_runtime_profile="${VIVENTIUM_RUNTIME_PROFILE:-isolated}"
+  local detached_state_root="$APP_SUPPORT_DIR/state/runtime/$detached_runtime_profile"
   local child_pid
   child_pid="$(
-    "$PYTHON_BIN" - "$launch_log" "$REPO_ROOT" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$LOCK_FILE" "$@" <<'PY'
+    "$PYTHON_BIN" - "$launch_log" "$detached_repo_root" "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$detached_lock_file" "$detached_state_root" "$detached_runtime_profile" "$@" <<'PY'
 import os
 import subprocess
 import sys
 
-launch_log, repo_root, app_support_dir, config_file, runtime_dir, lock_file, *extra_args = sys.argv[1:]
+launch_log, repo_root, app_support_dir, config_file, runtime_dir, lock_file, state_root, runtime_profile, *extra_args = sys.argv[1:]
 env = os.environ.copy()
 inherit_cli_lock = env.pop("VIVENTIUM_DETACHED_INHERIT_CLI_LOCK", "0") == "1"
 if inherit_cli_lock:
@@ -3211,21 +5208,34 @@ else:
     env.pop("VIVENTIUM_CLI_LOCK_DIR", None)
     env.pop("VIVENTIUM_CLI_LOCK_OWNER_PID", None)
 env["VIVENTIUM_DETACHED_START"] = "1"
-
-cmd = [
-    os.path.join(repo_root, "bin", "viventium"),
-    "--app-support-dir",
-    app_support_dir,
-    "--config-file",
-    config_file,
-    "--runtime-dir",
-    runtime_dir,
-    "--lock-file",
-    lock_file,
-    "start",
-    "--restart",
-    *extra_args,
-]
+env["VIVENTIUM_BASE_STATE_DIR"] = os.path.join(app_support_dir, "state")
+env["VIVENTIUM_STATE_ROOT"] = state_root
+env["VIVENTIUM_RUNTIME_PROFILE"] = runtime_profile
+compat_launcher = env.pop("VIVENTIUM_DETACHED_COMPAT_LAUNCHER", "").strip()
+if compat_launcher:
+    env["VIVENTIUM_LAUNCHER_INTERNAL"] = "1"
+    env["VIVENTIUM_HELPER_V0_ROOT"] = os.path.join(repo_root, "viventium_v0_4")
+    env["VIVENTIUM_HELPER_CORE_ROOT"] = repo_root
+    env["VIVENTIUM_HELPER_WORKSPACE_ROOT"] = os.path.dirname(repo_root)
+    env["VIVENTIUM_APP_SUPPORT_DIR"] = app_support_dir
+    env["VIVENTIUM_ENV_FILE"] = os.path.join(runtime_dir, "runtime.env")
+    env["VIVENTIUM_COMPONENTS_LOCK_FILE"] = lock_file
+    cmd = ["/bin/bash", compat_launcher, "--restart", *extra_args]
+else:
+    cmd = [
+        os.path.join(repo_root, "bin", "viventium"),
+        "--app-support-dir",
+        app_support_dir,
+        "--config-file",
+        config_file,
+        "--runtime-dir",
+        runtime_dir,
+        "--lock-file",
+        lock_file,
+        "start",
+        "--restart",
+        *extra_args,
+    ]
 
 with open(launch_log, "ab", buffering=0) as log:
     proc = subprocess.Popen(
@@ -3330,6 +5340,11 @@ launch_log_indicates_startup_failure() {
       grep -vF '[viventium] LibreChat dependency install failed; cleaning dependency trees and retrying once...' ||
       true
   })"
+  tail_output="$({
+    printf '%s\n' "$tail_output" |
+      grep -vF 'Remote access setup failed; local startup will continue without it:' ||
+      true
+  })"
   [[ -n "$tail_output" ]] || return 1
 
   if printf '%s\n' "$tail_output" | grep -Eq \
@@ -3342,6 +5357,16 @@ launch_log_indicates_startup_failure() {
     '(\[viventium\].*(LibreChat ports? .*skipping startup|LibreChat port [0-9]+.*skipping startup|Port [0-9]+ in use - skipping LibreChat startup|Playground port [0-9]+.*skipping playground startup))'
 }
 
+launch_log_indicates_detached_submission() {
+  local launch_log="${1:-}"
+  local start_offset="${2:-${DETACHED_START_LOG_OFFSET:-0}}"
+  [[ -f "$launch_log" ]] || return 1
+  [[ "$start_offset" =~ ^[0-9]+$ ]] || start_offset=0
+
+  tail -c "+$((start_offset + 1))" "$launch_log" 2>/dev/null |
+    grep -F 'Detached Startup Submitted' >/dev/null
+}
+
 detached_start_failed_early() {
   local launch_log="${1:-}"
 
@@ -3350,6 +5375,14 @@ detached_start_failed_early() {
   # must win over process-liveness signals.
   if launch_log_indicates_startup_failure "$launch_log"; then
     return 0
+  fi
+
+  # A detached launcher is intentionally finite: after it publishes the
+  # submission marker, long-lived children and watchdogs own readiness. Its
+  # clean wrapper exit must not roll a healthy-but-still-warming candidate
+  # back. Explicit fatal evidence above remains authoritative.
+  if launch_log_indicates_detached_submission "$launch_log"; then
+    return 1
   fi
 
   if [[ -n "$DETACHED_START_PID" ]]; then
@@ -3418,6 +5451,51 @@ install_waiting_on_surfaces() {
     else
       waiting_on+=("$(firecrawl_install_wait_label)")
     fi
+  fi
+  if runtime_env_true "START_RAG_API" "false" && ! rag_api_surface_healthy; then
+    waiting_on+=("Recall/RAG")
+  fi
+  if runtime_env_true "START_GOOGLE_MCP" "false" &&
+    ! mcp_url_surface_reachable "GOOGLE_WORKSPACE_MCP_URL" "http://localhost:8111/mcp"
+  then
+    waiting_on+=("Google Workspace")
+  fi
+  if runtime_env_true "START_MS365_MCP" "false" &&
+    ! mcp_url_surface_reachable "MS365_MCP_SERVER_URL" "http://localhost:6274/mcp"
+  then
+    waiting_on+=("Microsoft 365")
+  fi
+  if runtime_env_true "START_SCHEDULING_MCP" "false" && ! scheduling_surface_healthy; then
+    waiting_on+=("Scheduling Cortex")
+  fi
+  if runtime_env_true "START_GLASSHIVE" "false" && ! glasshive_surface_healthy; then
+    waiting_on+=("GlassHive")
+  fi
+  if runtime_env_true "START_PROMPT_WORKBENCH" "false" && ! prompt_workbench_surface_healthy; then
+    waiting_on+=("Prompt Workbench")
+  fi
+  if runtime_env_true "START_CODE_INTERPRETER" "false" && ! code_interpreter_surface_healthy; then
+    waiting_on+=("Code Interpreter")
+  fi
+  if runtime_env_true "START_SKYVERN" "false" && ! skyvern_surface_healthy; then
+    waiting_on+=("Skyvern")
+  fi
+  if runtime_env_true "VIVENTIUM_VOICE_ENABLED" "false"; then
+    if ! livekit_surface_healthy; then
+      waiting_on+=("LiveKit")
+    fi
+    if ! voice_gateway_surface_healthy; then
+      waiting_on+=("Voice Gateway")
+    fi
+  fi
+  if runtime_env_true "START_TELEGRAM" "false" && ! telegram_bridge_surface_healthy; then
+    waiting_on+=("Telegram")
+  fi
+  if runtime_env_true "START_TELEGRAM_CODEX" "false" && ! telegram_codex_surface_healthy; then
+    waiting_on+=("Telegram Codex")
+  fi
+  if ! remote_tunnel_surface_healthy; then
+    waiting_on+=("Remote access tunnel")
   fi
 
   if (( ${#waiting_on[@]} == 0 )); then
@@ -3877,6 +5955,84 @@ start_stack_for_install() {
   return 1
 }
 
+wait_for_upgrade_runtime_health() {
+  local timeout_seconds="${VIVENTIUM_UPGRADE_RUNTIME_HEALTH_TIMEOUT_SECONDS:-${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}}"
+  local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while (( SECONDS < deadline )); do
+    if install_surfaces_healthy &&
+      runtime_optional_surfaces_healthy &&
+      postcommit_api_finalization_ready
+    then
+      return 0
+    fi
+    if detached_start_failed_early "$launch_log"; then
+      return 2
+    fi
+    sleep "$poll_interval"
+  done
+  return 1
+}
+
+wait_for_quiesced_runtime_health() {
+  local timeout_seconds="${VIVENTIUM_UPGRADE_RUNTIME_HEALTH_TIMEOUT_SECONDS:-${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}}"
+  local poll_interval="${VIVENTIUM_INSTALL_START_POLL_SECONDS:-2}"
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while (( SECONDS < deadline )); do
+    # Quiesced successor acceptance intentionally proves only the core
+    # user-facing process artifact. Configured sidecars are held until the
+    # outer transaction commits and are verified by the ordinary full-runtime
+    # health gate during post-commit finalization.
+    if install_surfaces_healthy; then
+      return 0
+    fi
+    if detached_start_failed_early "$launch_log"; then
+      return 2
+    fi
+    sleep "$poll_interval"
+  done
+  return 1
+}
+
+restart_quiesced_runtime_after_upgrade() {
+  local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
+  local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
+  local wait_status=0
+  local waiting_on=""
+
+  DETACHED_START_PID=""
+  echo "Starting Viventium successor in protected validation mode..."
+  VIVENTIUM_SUCCESSOR_VALIDATION_INTERNAL=1 \
+    VIVENTIUM_SUCCESSOR_VALIDATION_MODE=quiesced \
+    VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS="$SUCCESSOR_VALIDATION_DISABLED_WRITERS" \
+    VIVENTIUM_DETACHED_INHERIT_CLI_LOCK=1 \
+    launch_stack_detached
+
+  wait_for_quiesced_runtime_health
+  wait_status=$?
+  if [[ "$wait_status" == "0" ]]; then
+    return 0
+  fi
+
+  waiting_on="$(install_waiting_on_surfaces || true)"
+  [[ -n "$waiting_on" ]] || waiting_on="quiesced core readiness checks"
+  if [[ "$wait_status" == "2" ]]; then
+    echo "Viventium successor stopped during protected validation startup." >&2
+  else
+    echo "Viventium successor did not become healthy before the protected validation timeout (${timeout_seconds}s)." >&2
+  fi
+  echo "Still waiting on: $waiting_on" >&2
+  if [[ -f "$launch_log" ]]; then
+    echo "Check the detached start log: $launch_log" >&2
+  fi
+  print_install_timeout_log_excerpt "$launch_log"
+  return 1
+}
+
 restart_stack_after_upgrade() {
   local launch_log="$APP_SUPPORT_DIR/logs/helper-start.log"
   local timeout_seconds="${VIVENTIUM_INSTALL_START_HEALTH_TIMEOUT_SECONDS:-1800}"
@@ -3891,14 +6047,17 @@ restart_stack_after_upgrade() {
   fi
   DETACHED_START_PID=""
 
-  if install_surfaces_healthy; then
+  if install_surfaces_healthy &&
+    runtime_optional_surfaces_healthy &&
+    postcommit_api_finalization_ready
+  then
     return 0
   fi
 
   echo "Restarting Viventium..."
   VIVENTIUM_DETACHED_INHERIT_CLI_LOCK=1 launch_stack_detached
 
-  wait_for_install_stack_health
+  wait_for_upgrade_runtime_health
   wait_status=$?
   if [[ "$wait_status" == "0" ]]; then
     return 0
@@ -3922,8 +6081,224 @@ restart_stack_after_upgrade() {
   return 1
 }
 
+force_restart_stack_after_owner_env_alignment() {
+  # The ordinary restart helper intentionally no-ops when surfaces are already
+  # healthy. A preserved post-acceptance owner edit requires a real stop/start
+  # so the running process loads the durable owner environment.
+  if ! VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1 stop_stack_for_upgrade; then
+    return 1
+  fi
+  set_helper_runtime_intent running
+  VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 \
+    VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1 restart_stack_after_upgrade
+}
+
+finalize_first_upgrade_bridge_after_commit() {
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/first_upgrade_bridge.py" \
+    finalize-after-commit \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --config-file "$CONFIG_FILE" \
+    --runtime-dir "$RUNTIME_DIR" \
+    --lock-file "$LOCK_FILE" >/dev/null
+}
+
+finalize_quiesced_upgrade_session_after_commit() {
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/first_upgrade_bridge.py" \
+    finalize-session-after-commit \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --config-file "$CONFIG_FILE" \
+    --runtime-dir "$RUNTIME_DIR" \
+    --lock-file "$LOCK_FILE" >/dev/null
+}
+
+validate_quiesced_upgrade_session_before_post_capture() {
+  "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/first_upgrade_bridge.py" \
+    validate-session \
+    --repo-root "$REPO_ROOT" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --config-file "$CONFIG_FILE" \
+    --runtime-dir "$RUNTIME_DIR" \
+    --lock-file "$LOCK_FILE" >/dev/null
+}
+
+recover_pending_quiesced_upgrade_finalization() {
+  local active_pointer="$APP_SUPPORT_DIR/state/upgrade-transaction-active.json"
+  local session_state="$APP_SUPPORT_DIR/state/continuity/quiesced-upgrade-session.json"
+  local bridge_state="$APP_SUPPORT_DIR/state/continuity/first-upgrade-bridge.json"
+  if [[ "${VIVENTIUM_QUIESCED_FINALIZATION_INTERNAL:-0}" == "1" ]]; then
+    return 0
+  fi
+  [[ ! -e "$active_pointer" ]] || return 0
+  if [[ -e "$session_state" ]]; then
+    finalize_quiesced_upgrade_session_after_commit
+  fi
+  if [[ -e "$bridge_state" ]]; then
+    finalize_first_upgrade_bridge_after_commit
+  fi
+}
+
+inherit_quiesced_successor_validation_if_active() {
+  local active_pointer="$APP_SUPPORT_DIR/state/upgrade-transaction-active.json"
+  local bridge_state="$APP_SUPPORT_DIR/state/continuity/first-upgrade-bridge.json"
+  local session_state="$APP_SUPPORT_DIR/state/continuity/quiesced-upgrade-session.json"
+  local inspection=""
+  local status=""
+
+  if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" == "quiesced" ]]; then
+    return 0
+  fi
+  if [[ ! -e "$active_pointer" ]] ||
+    [[ ! -e "$bridge_state" && ! -e "$session_state" ]]
+  then
+    return 0
+  fi
+  inspection="$(
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/first_upgrade_bridge.py" \
+      active-quiesced \
+      --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR"
+  )" || return 1
+  status="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1]).get("status", ""))' \
+      "$inspection"
+  )" || return 1
+  if [[ "$status" != "active" ]]; then
+    return 0
+  fi
+  VIVENTIUM_SUCCESSOR_VALIDATION_INTERNAL=1
+  VIVENTIUM_SUCCESSOR_VALIDATION_MODE=quiesced
+  VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS="$SUCCESSOR_VALIDATION_DISABLED_WRITERS"
+  export VIVENTIUM_SUCCESSOR_VALIDATION_INTERNAL
+  export VIVENTIUM_SUCCESSOR_VALIDATION_MODE
+  export VIVENTIUM_SUCCESSOR_VALIDATION_DISABLED_WRITERS
+}
+
+inherit_pending_postcommit_finalization_if_needed() {
+  local inspection=""
+  local status=""
+  local bridge_state="$APP_SUPPORT_DIR/state/continuity/first-upgrade-bridge.json"
+  local session_state="$APP_SUPPORT_DIR/state/continuity/quiesced-upgrade-session.json"
+  if [[ -n "${VIVENTIUM_POSTCOMMIT_FINALIZATION_ID:-}" ]]; then
+    return 0
+  fi
+  if [[ ! -e "$bridge_state" && ! -e "$session_state" ]]; then
+    return 0
+  fi
+  inspection="$(
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/first_upgrade_bridge.py" \
+      pending-postcommit \
+      --repo-root "$REPO_ROOT" \
+      --app-support-dir "$APP_SUPPORT_DIR"
+  )" || return 1
+  status="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1]).get("status", ""))' \
+      "$inspection"
+  )" || return 1
+  if [[ "$status" == "inactive" ]]; then
+    return 0
+  fi
+  if [[ "$status" != "pending" ]]; then
+    return 1
+  fi
+  VIVENTIUM_POSTCOMMIT_FINALIZATION_ID="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1]).get("runId", ""))' \
+      "$inspection"
+  )" || return 1
+  VIVENTIUM_POSTCOMMIT_SOURCE_ID="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1]).get("sourceId", ""))' \
+      "$inspection"
+  )" || return 1
+  local telegram_preference_root=""
+  telegram_preference_root="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("telegramPreferenceRoot", ""))' \
+      "$inspection"
+  )" || return 1
+  [[ "$VIVENTIUM_POSTCOMMIT_FINALIZATION_ID" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "$VIVENTIUM_POSTCOMMIT_SOURCE_ID" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+  export VIVENTIUM_POSTCOMMIT_FINALIZATION_ID
+  export VIVENTIUM_POSTCOMMIT_SOURCE_ID
+  if [[ -n "$telegram_preference_root" ]]; then
+    VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR="$telegram_preference_root"
+    export VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR
+  fi
+}
+
+finalize_deferred_uploads_after_upgrade_commit() {
+  local legacy_root="$REPO_ROOT/viventium_v0_4/LibreChat/uploads"
+  local canonical_root="$APP_SUPPORT_DIR/data/uploads"
+  local migration_helper="$REPO_ROOT/scripts/viventium/uploads_migration.py"
+  local migration_needed=0
+  local stopped_for_migration=0
+
+  migration_needed="$(
+    "$PYTHON_BIN" - "$legacy_root" "$canonical_root" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+legacy = Path(sys.argv[1])
+canonical = Path(sys.argv[2])
+try:
+    legacy_meta = legacy.lstat()
+except FileNotFoundError:
+    print(0)
+    raise SystemExit(0)
+if stat.S_ISLNK(legacy_meta.st_mode) or not stat.S_ISDIR(legacy_meta.st_mode):
+    print(0)
+    raise SystemExit(0)
+try:
+    legacy_populated = next(os.scandir(legacy), None) is not None
+except OSError:
+    print(0)
+    raise SystemExit(0)
+try:
+    canonical_meta = canonical.lstat()
+except FileNotFoundError:
+    canonical_populated = False
+else:
+    if stat.S_ISLNK(canonical_meta.st_mode) or not stat.S_ISDIR(canonical_meta.st_mode):
+        print(0)
+        raise SystemExit(0)
+    canonical_populated = next(os.scandir(canonical), None) is not None
+print(1 if legacy_populated and not canonical_populated else 0)
+PY
+  )"
+  [[ "$migration_needed" == "1" ]] || return 0
+
+  if [[ "${UPGRADE_TRANSACTION_WAS_RUNNING:-0}" == "1" ]]; then
+    if ! stop_stack_for_upgrade; then
+      echo "Committed upgrade could not stop writers for canonical uploads finalization." >&2
+      return 1
+    fi
+    stopped_for_migration=1
+  fi
+  if ! "$PYTHON_BIN" "$migration_helper" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --librechat-dir "$REPO_ROOT/viventium_v0_4/LibreChat" \
+    --canonical-root "$canonical_root" >/dev/null
+  then
+    echo "Committed upgrade kept the predecessor uploads tree because canonical migration failed." >&2
+    if [[ "$stopped_for_migration" == "1" ]]; then
+      set_helper_runtime_intent running
+      restart_stack_after_upgrade || true
+    fi
+    return 1
+  fi
+  if [[ "$stopped_for_migration" == "1" ]]; then
+    set_helper_runtime_intent running
+    if ! restart_stack_after_upgrade; then
+      echo "Uploads migration committed, but the validated runtime did not restart." >&2
+      return 1
+    fi
+  fi
+}
+
 recover_running_stack_after_failed_upgrade() {
-  local exit_status=$?
+  local exit_status="${1:-$?}"
 
   # Prevent recursive signal/EXIT handling while rollback and recovery run.
   trap - EXIT INT TERM
@@ -3936,9 +6311,70 @@ recover_running_stack_after_failed_upgrade() {
       cleanup_cli_lock
       exit "$exit_status"
     fi
-    if upgrade_transaction_rollback; then
+    local telegram_recovery_ready=0
+    local telegram_controller_ready=0
+    local recovery_receipt_loaded=0
+    local loaded_receipt_config_root=""
+    if load_active_telegram_recovery_component \
+      "upgrade" "$UPGRADE_TRANSACTION_DIR"
+    then
+      recovery_receipt_loaded=1
+      loaded_receipt_config_root="$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT"
+      telegram_controller_ready=1
+    elif load_telegram_predecessor_recovery_component; then
+      telegram_controller_ready=1
+    else
+      echo "Rollback paused because its sealed Telegram predecessor controller is unavailable." >&2
+    fi
+    if [[ "$telegram_controller_ready" == "1" ]] &&
+      ! resume_telegram_user_config_migration_if_pending
+    then
+      echo "Rollback paused because its stopped-writer Telegram preference journal could not be completed." >&2
+      telegram_controller_ready=0
+    fi
+    if [[ "$telegram_controller_ready" == "1" ]]; then
+      TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+        resolve_predecessor_telegram_user_config_root "$REPO_ROOT"
+      )" || TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT=""
+      if [[ -n "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" ]] &&
+        {
+          [[ "$recovery_receipt_loaded" == "1" &&
+            "$loaded_receipt_config_root" == "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" ]] ||
+            {
+              publish_active_telegram_recovery_component \
+                "upgrade" "$UPGRADE_TRANSACTION_DIR" &&
+                load_active_telegram_recovery_component \
+                  "upgrade" "$UPGRADE_TRANSACTION_DIR"
+            }
+        }
+      then
+        telegram_recovery_ready=1
+      else
+        echo "Rollback paused because sealed Telegram recovery could not adopt the committed preference authority." >&2
+      fi
+    fi
+    if [[ "$telegram_recovery_ready" != "1" ]]; then
+      echo "The recovery transaction remains active at $(display_safe_path "$UPGRADE_TRANSACTION_DIR")." >&2
+      cleanup_cli_lock
+      exit "$exit_status"
+    fi
+    if upgrade_transaction_rollback &&
+      verify_loaded_telegram_recovery_after_rollback \
+        "upgrade" "$UPGRADE_TRANSACTION_DIR"
+    then
       if [[ "${UPGRADE_TRANSACTION_WAS_RUNNING:-0}" == "1" ]]; then
-        if restart_stack_after_upgrade; then
+        # The internal upgrade stop deliberately suppresses helper relaunches by
+        # persisting "stopped". Restore the user's prior running intent before
+        # handing the verified predecessor back to detached supervision.
+        set_helper_runtime_intent running
+        if [[ "$telegram_recovery_ready" == "1" ]] &&
+          VIVENTIUM_DETACHED_COMPAT_LAUNCHER="$STAGED_TELEGRAM_COMPAT_LAUNCHER" \
+          VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE="$STAGED_TELEGRAM_RECOVERY_SELECTION" \
+          VIVENTIUM_TELEGRAM_COMPONENT_TOOL="$STAGED_TELEGRAM_COMPONENT_TOOL" \
+          VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER="$STAGED_TELEGRAM_HANDOFF_HELPER" \
+          VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR="${TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT:-$APP_SUPPORT_DIR/state/telegram-user-configs}" \
+          restart_stack_after_upgrade
+        then
           echo "The previous verified Viventium runtime and running state were restored." >&2
         else
           echo "The previous on-disk state was restored, but automatic restart failed. Run: bin/viventium launch" >&2
@@ -3946,8 +6382,9 @@ recover_running_stack_after_failed_upgrade() {
       else
         echo "The previous verified Viventium on-disk state was restored and remains stopped." >&2
       fi
+      launch_macos_helper_app || true
     else
-      echo "Rollback failed closed before overwriting unrecognized local work. The recovery transaction remains active." >&2
+      echo "Rollback failed closed before exposing an unverified recovery runtime. The recovery transaction remains active." >&2
       echo "Resolve the reported local-state conflict, then rerun bin/viventium upgrade." >&2
     fi
   fi
@@ -3970,6 +6407,7 @@ upgrade_transaction_begin() {
     --config-file "$CONFIG_FILE"
     --runtime-dir "$RUNTIME_DIR"
     --lock-file "$LOCK_FILE"
+    --telegram-preference-root "${TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT:-}"
     --was-running "$([[ "${UPGRADE_STACK_WAS_RUNNING:-0}" == "1" ]] && printf true || printf false)"
   )
   if [[ -n "$target_head" ]]; then
@@ -4036,11 +6474,14 @@ upgrade_transaction_commit() {
   "$UPGRADE_TRANSACTION_PYTHON" "$UPGRADE_TRANSACTION_RUNNER" commit \
     --transaction "$UPGRADE_TRANSACTION_DIR" >/dev/null
   UPGRADE_TRANSACTION_ACTIVE=0
-  trap cleanup_cli_lock EXIT INT TERM
+  install_cli_lock_traps
 }
 
 recover_interrupted_upgrade_transaction() {
   local active_info=""
+  local active_status=""
+  local recovery_receipt_loaded=0
+  local loaded_receipt_config_root=""
   active_info="$(upgrade_transaction_active_info)" || {
     local status=$?
     if [[ "$status" == "1" ]]; then
@@ -4059,18 +6500,123 @@ recover_interrupted_upgrade_transaction() {
   UPGRADE_TRANSACTION_WAS_RUNNING="$(
     "$PYTHON_BIN" -c 'import json,sys; print(1 if json.loads(sys.argv[1])["was_running"] else 0)' "$active_info"
   )"
+  active_status="$(
+    "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])["status"])' "$active_info"
+  )"
+  TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.loads(sys.argv[1]).get("telegram_preference_root", ""))' \
+      "$active_info"
+  )" || exit 1
   UPGRADE_TRANSACTION_ACTIVE=1
+  if [[ "$active_status" == "committed" ]]; then
+    echo "A committed upgrade left a recovery pointer. Completing its idempotent cleanup..." >&2
+    if ! upgrade_transaction_commit; then
+      echo "The committed upgrade cleanup could not be completed safely." >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [[ "$active_status" == "rolled_back" ]]; then
+    echo "A rolled-back upgrade left a recovery pointer. Completing its idempotent cleanup..." >&2
+    if ! upgrade_transaction_rollback; then
+      echo "The rolled-back upgrade cleanup could not be completed safely." >&2
+      exit 1
+    fi
+    return 0
+  fi
   echo "An interrupted upgrade was found. Recovering its verified pre-upgrade checkpoint before any new mutation..." >&2
   if ! stop_stack_for_upgrade; then
     echo "Interrupted-upgrade recovery stopped because the current runtime could not be drained safely." >&2
     exit 1
   fi
+  if load_active_telegram_recovery_component \
+    "upgrade" "$UPGRADE_TRANSACTION_DIR"
+  then
+    recovery_receipt_loaded=1
+    loaded_receipt_config_root="$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT"
+  else
+    if [[ -z "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" ]]; then
+      TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+        resolve_predecessor_telegram_user_config_root "$REPO_ROOT"
+      )"
+    fi
+    if ! load_telegram_predecessor_recovery_component; then
+      if ! stage_telegram_runtime_component "$REPO_ROOT" ||
+        ! load_telegram_predecessor_recovery_component
+      then
+        local active_recovery_receipt=""
+        local pending_telegram_migration="$APP_SUPPORT_DIR/state/telegram-user-config-migration/pending.json"
+        active_recovery_receipt="$(active_telegram_recovery_selection_file)"
+        if [[ ! -e "$active_recovery_receipt" &&
+          ! -L "$active_recovery_receipt" &&
+          ! -e "$pending_telegram_migration" &&
+          ! -L "$pending_telegram_migration" ]]
+        then
+          echo "Interrupted-upgrade recovery could not seal a Telegram compatibility component; restoring the verified core checkpoint in stopped mode." >&2
+          set_helper_runtime_intent stopped
+          if upgrade_transaction_rollback; then
+            set_helper_runtime_intent stopped
+            echo "The verified pre-upgrade source and state were restored and remain stopped. Run bin/viventium launch from the restored checkout." >&2
+            cleanup_cli_lock
+            exit 4
+          fi
+        fi
+        echo "Interrupted-upgrade recovery could not seal a Telegram predecessor component before rollback." >&2
+        exit 1
+      fi
+    fi
+  fi
+  if ! resume_telegram_user_config_migration_if_pending; then
+    echo "Interrupted-upgrade recovery could not complete its stopped-writer Telegram preference journal." >&2
+    echo "The upgrade transaction remains active and no rollback mutation was attempted." >&2
+    exit 1
+  fi
+  # The transaction records the root observed before shutdown. A crash can
+  # occur after migration commits a newer canonical/custom authority but
+  # before the passive recovery receipt is refreshed, so always reconcile
+  # against the durable root-selection authority before rollback/restart.
+  TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+    resolve_predecessor_telegram_user_config_root "$REPO_ROOT"
+  )" || exit 1
+  if [[ "$recovery_receipt_loaded" != "1" ||
+    "$loaded_receipt_config_root" != "$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT" ]]
+  then
+    if ! publish_active_telegram_recovery_component \
+      "upgrade" "$UPGRADE_TRANSACTION_DIR" ||
+      ! load_active_telegram_recovery_component \
+        "upgrade" "$UPGRADE_TRANSACTION_DIR"
+    then
+      echo "Interrupted-upgrade recovery could not bind sealed recovery to the committed Telegram preference authority." >&2
+      exit 1
+    fi
+    recovery_receipt_loaded=1
+    loaded_receipt_config_root="$TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT"
+  fi
   if ! upgrade_transaction_rollback; then
     echo "Interrupted-upgrade rollback refused to overwrite unrecognized local work." >&2
     exit 1
   fi
+  if [[ "$recovery_receipt_loaded" == "1" ]]; then
+    if ! verify_loaded_telegram_recovery_after_rollback \
+      "upgrade" "$UPGRADE_TRANSACTION_DIR"
+    then
+      echo "Interrupted-upgrade rollback could not verify its sealed Telegram recovery receipt." >&2
+      exit 1
+    fi
+  else
+    echo "Interrupted-upgrade rollback completed without a validated Telegram recovery receipt." >&2
+    exit 1
+  fi
   if [[ "$UPGRADE_TRANSACTION_WAS_RUNNING" == "1" ]]; then
-    if ! restart_stack_after_upgrade; then
+    set_helper_runtime_intent running
+    if ! VIVENTIUM_DETACHED_COMPAT_LAUNCHER="$STAGED_TELEGRAM_COMPAT_LAUNCHER" \
+      VIVENTIUM_TELEGRAM_COMPONENT_SELECTION_FILE="$STAGED_TELEGRAM_RECOVERY_SELECTION" \
+      VIVENTIUM_TELEGRAM_COMPONENT_TOOL="$STAGED_TELEGRAM_COMPONENT_TOOL" \
+      VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER="$STAGED_TELEGRAM_HANDOFF_HELPER" \
+      VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR="${TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT:-$APP_SUPPORT_DIR/state/telegram-user-configs}" \
+      restart_stack_after_upgrade
+    then
       echo "The interrupted upgrade was rolled back, but the prior runtime did not restart." >&2
       exit 1
     fi
@@ -4078,6 +6624,15 @@ recover_interrupted_upgrade_transaction() {
   echo "Interrupted upgrade rolled back successfully. Rerun the upgrade command to start a new transaction." >&2
   cleanup_cli_lock
   exit 4
+}
+
+recover_interrupted_upgrade_before_runtime_start() {
+  if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_INTERNAL:-0}" == "1" ]] ||
+    [[ "${UPGRADE_TRANSACTION_ACTIVE:-0}" == "1" ]]
+  then
+    return 0
+  fi
+  recover_interrupted_upgrade_transaction
 }
 
 stop_stack_for_upgrade() {
@@ -4124,6 +6679,44 @@ PY
   echo "[viventium] Native runtime cleanup continuing in background (pid ${child_pid}, log: ${stop_log})"
 }
 
+ensure_supported_upgrade_predecessor() {
+  local policy="$REPO_ROOT/release/upgrade-support.json"
+  [[ -f "$policy" ]] || return 0
+  if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/upgrade_support.py" \
+    --repo-root "$REPO_ROOT" \
+    --policy "$policy" \
+    --app-support-dir "$APP_SUPPORT_DIR" \
+    --runtime-dir "$RUNTIME_DIR"; then
+    echo "This install is outside the reviewed universal-upgrade range." >&2
+    echo "Create a supported backup/restore transfer or upgrade through a reviewed intermediate release." >&2
+    return 1
+  fi
+}
+
+repair_shallow_upgrade_history() {
+  local shallow=""
+  shallow="$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || true)"
+  [[ "$shallow" == "true" ]] || return 0
+
+  local current_branch=""
+  local configured_remote=""
+  local merge_ref=""
+  current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  configured_remote="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.remote" || true)"
+  merge_ref="$(git -C "$REPO_ROOT" config --get "branch.${current_branch}.merge" || true)"
+  if [[ -z "$configured_remote" || "$merge_ref" != refs/heads/* ]]; then
+    echo "Upgrade cannot repair this legacy shallow checkout without its configured remote branch." >&2
+    return 1
+  fi
+
+  echo "Retrieving Viventium upgrade history for this legacy shallow checkout..."
+  if ! git -C "$REPO_ROOT" fetch --unshallow "$configured_remote" "$merge_ref" >/dev/null; then
+    echo "Upgrade could not retrieve the history required to validate this checkout." >&2
+    echo "Restore network access to '$configured_remote' and retry; no working-tree or runtime changes were made." >&2
+    return 1
+  fi
+}
+
 ensure_upgradeable_git_state() {
   local allow_dirty="${1:-0}"
   local require_remote="${2:-1}"
@@ -4157,6 +6750,152 @@ ensure_upgradeable_git_state() {
   # nested component directories are not mistaken for unrelated parent user work.
   # Keep the argument in this gate's interface because the structured check applies it.
   : "$allow_dirty"
+}
+
+ensure_local_checkout_alignment() {
+  local allow_dirty="${1:-0}"
+  local expected_config_sha256="${2:-}"
+  local check_args=(
+    --repo-root "$REPO_ROOT"
+    --app-support-dir "$APP_SUPPORT_DIR"
+    --no-fetch
+    --json
+  )
+  if [[ -f "$CONFIG_FILE" ]]; then
+    check_args+=(--config-file "$CONFIG_FILE")
+  fi
+  if [[ -n "$expected_config_sha256" ]]; then
+    check_args+=(--expected-config-sha256 "$expected_config_sha256")
+  fi
+  if [[ "$allow_dirty" == "1" ]]; then
+    check_args+=(--allow-dirty-parent)
+  fi
+
+  local report=""
+  local status=0
+  report="$("$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/upgrade_check.py" "${check_args[@]}")" ||
+    status=$?
+  if [[ "$status" -eq 0 ]]; then
+    return 0
+  fi
+
+  "$PYTHON_BIN" - "$report" <<'PY' >&2
+import json
+import sys
+
+try:
+    report = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError):
+    print("Local checkout safety inspection did not return readable status.")
+    raise SystemExit(0)
+
+for blocker in report.get("blockers", []):
+    print(f"Local checkout blocker: {blocker}")
+for item in report.get("component_lock_drift", []):
+    if not isinstance(item, dict):
+        continue
+    name = str(item.get("name") or "managed component")
+    status = str(item.get("status") or "unsafe")
+    print(f"Managed component blocker: {name} ({status})")
+PY
+  return "$status"
+}
+
+prove_fresh_dev_runtime_activation() {
+  "$PYTHON_BIN" - "$APP_SUPPORT_DIR" "$CONFIG_FILE" "$RUNTIME_DIR" "$CLI_LOCK_DIR" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+app_support = Path(os.path.abspath(os.path.expanduser(sys.argv[1])))
+config = Path(os.path.abspath(os.path.expanduser(sys.argv[2])))
+runtime = Path(os.path.abspath(os.path.expanduser(sys.argv[3])))
+cli_lock = Path(os.path.abspath(os.path.expanduser(sys.argv[4])))
+
+for path in (
+    config,
+    app_support / "helper-config.json",
+    app_support / "state" / "install-ownership.json",
+    app_support / "state" / "runtime-checkout.json",
+):
+    if path.exists() or path.is_symlink():
+        raise SystemExit(1)
+
+for root in (
+    runtime,
+    app_support / "data",
+    app_support / "state",
+):
+    if not root.exists() and not root.is_symlink():
+        continue
+    if root.is_symlink() or not root.is_dir():
+        raise SystemExit(1)
+    for current, directories, files in os.walk(
+        root,
+        topdown=True,
+        followlinks=False,
+    ):
+        current_path = Path(current)
+        directories[:] = [
+            name
+            for name in directories
+            if current_path / name != cli_lock
+        ]
+        for name in directories:
+            if (current_path / name).is_symlink():
+                raise SystemExit(1)
+        if files:
+            raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+
+resolve_dev_runtime_librechat_owner_env_source() {
+  local previous_repo="${1:-}"
+  local established_runtime="${2:-0}"
+  local candidate_env="$REPO_ROOT/viventium_v0_4/LibreChat/.env"
+  local previous_env=""
+  if [[ -n "$previous_repo" ]]; then
+    previous_env="$previous_repo/viventium_v0_4/LibreChat/.env"
+  fi
+
+  if [[ "$established_runtime" == "1" ]]; then
+    if [[ ! -e "$previous_env" && ! -L "$previous_env" ]]; then
+      echo "Established runtime has no provable LibreChat owner environment." >&2
+      return 1
+    fi
+    if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" inspect \
+      --source "$previous_env" >/dev/null
+    then
+      echo "Established LibreChat owner environment is unsafe or unreadable." >&2
+      return 1
+    fi
+    printf '%s\n' "$previous_env"
+    return 0
+  fi
+
+  local explicit_env="${VIVENTIUM_LIBRECHAT_CANONICAL_ENV_FILE:-}"
+  local private_env=""
+  if [[ -n "$PRIVATE_CURATED_DIR_DEFAULT" ]]; then
+    private_env="$PRIVATE_CURATED_DIR_DEFAULT/configs/librechat/librechat.env"
+  fi
+  local source=""
+  for source in "$explicit_env" "$private_env" "$candidate_env"; do
+    [[ -n "$source" ]] || continue
+    if [[ ! -e "$source" && ! -L "$source" ]]; then
+      continue
+    fi
+    if ! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" inspect \
+      --source "$source" >/dev/null
+    then
+      echo "LibreChat owner environment is unsafe or unreadable." >&2
+      return 1
+    fi
+    printf '%s\n' "$source"
+    return 0
+  done
+  return 0
 }
 
 fetch_current_branch_target() {
@@ -4267,7 +7006,7 @@ case "$COMMAND" in
     INSTALL_ARGS=()
     CURRENT_INSTALL_STAGE="configure"
     INSTALL_TRAP_ACTIVE=1
-    trap 'install_status=$?; if [[ "${INSTALL_TRAP_ACTIVE:-0}" == "1" && "$install_status" -ne 0 ]]; then drain_failed_install_runtime || true; rollback_config_candidate || true; write_install_stage "$CURRENT_INSTALL_STAGE"; print_install_recovery_guidance "$CURRENT_INSTALL_STAGE"; fi; cleanup_config_candidate || true; exit "$install_status"' EXIT
+    trap 'install_status=$?; if [[ "${INSTALL_TRAP_ACTIVE:-0}" == "1" && "$install_status" -ne 0 ]]; then drain_failed_install_runtime || true; rollback_config_candidate || true; write_install_stage "$CURRENT_INSTALL_STAGE"; print_install_recovery_guidance "$CURRENT_INSTALL_STAGE"; fi; cleanup_config_candidate || true; cleanup_cli_lock || true; exit "$install_status"' EXIT
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage install
       exit 0
@@ -4352,6 +7091,10 @@ case "$COMMAND" in
     else
       compile_config
     fi
+    prepare_telegram_runtime_component "$REPO_ROOT" "$RUNTIME_DIR"
+    CURRENT_INSTALL_STAGE="bootstrap-life"
+    write_install_stage "$CURRENT_INSTALL_STAGE"
+    bootstrap_life
     echo "Config written to $CONFIG_FILE"
     echo "Generated runtime files in $RUNTIME_DIR"
     CURRENT_INSTALL_STAGE="doctor"
@@ -4374,7 +7117,7 @@ case "$COMMAND" in
         exit 1
       fi
       INSTALL_TRAP_ACTIVE=0
-      trap - EXIT
+      trap cleanup_cli_lock EXIT
       finish_config_candidate
       clear_install_stage
       launch_macos_helper_app
@@ -4384,7 +7127,7 @@ case "$COMMAND" in
       exit 0
     fi
     INSTALL_TRAP_ACTIVE=0
-    trap - EXIT
+    trap cleanup_cli_lock EXIT
     finish_config_candidate
     clear_install_stage
     print_install_summary 0
@@ -4433,6 +7176,11 @@ case "$COMMAND" in
       fi
       exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/upgrade_check.py" "${check_args[@]}"
     fi
+    if [[ "$AUTO_RESTART" != "1" ]]; then
+      echo "A mutating upgrade must restart and validate the candidate runtime before commit." >&2
+      echo "Rerun with: bin/viventium upgrade --restart" >&2
+      exit 1
+    fi
     if [[ "$ALLOW_DIRTY" == "1" && "$SKIP_PULL" != "1" ]]; then
       echo "--allow-dirty is only safe with --skip-pull; refusing to fetch or merge into a dirty checkout." >&2
       exit 1
@@ -4440,6 +7188,11 @@ case "$COMMAND" in
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     acquire_cli_lock "$COMMAND"
     recover_interrupted_upgrade_transaction
+    if ! recover_pending_quiesced_upgrade_finalization; then
+      echo "A previously committed upgrade still needs a healthy full-runtime finalization." >&2
+      echo "Resolve the reported runtime prerequisite and rerun upgrade --restart." >&2
+      exit 1
+    fi
     ensure_no_pending_agent_migration
     if [[ ! -f "$CONFIG_FILE" ]]; then
       echo "Missing config: $CONFIG_FILE" >&2
@@ -4501,7 +7254,10 @@ PY
       echo "Upgrade aborted before pull or component mutation because local safety blockers must be resolved first." >&2
       exit "$UPGRADE_SAFETY_STATUS"
     fi
+    repair_shallow_upgrade_history
+    ensure_supported_upgrade_predecessor
     UPGRADE_AUDIT_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+    UPGRADE_AGENT_PREDECESSOR_SOURCE_REF="$(capture_agent_source_ref)"
     VIVENTIUM_CONTINUITY_AUDIT_SKIP_PYTHON_REFRESH=1
     PRE_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "pre-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
     unset VIVENTIUM_CONTINUITY_AUDIT_SKIP_PYTHON_REFRESH
@@ -4512,7 +7268,21 @@ PY
       echo "Review $(display_safe_path "$PRE_UPGRADE_CONTINUITY_AUDIT") before changing the installed runtime." >&2
       exit 1
     fi
-    UPGRADE_AGENT_PREDECESSOR_SOURCE_REF="$(capture_agent_source_ref)"
+    UPGRADE_TELEGRAM_SOURCE_MODE="predecessor"
+    if [[ "$ALLOW_DIRTY" == "1" ]]; then
+      UPGRADE_TELEGRAM_SOURCE_MODE=""
+    fi
+    if ! stage_telegram_runtime_component \
+      "$REPO_ROOT" \
+      "$UPGRADE_TELEGRAM_SOURCE_MODE"
+    then
+      echo "Upgrade could not stage a rollback-safe Telegram predecessor component." >&2
+      if [[ "$ALLOW_DIRTY" == "1" ]]; then
+        echo "Preserve or commit the local changes, then retry without --allow-dirty." >&2
+      fi
+      echo "Source, generated runtime, helper, and running state were not changed." >&2
+      exit 1
+    fi
     UPGRADE_TARGET_HEAD=""
     if [[ "$SKIP_PULL" != "1" ]]; then
       # Fetch updates Git metadata only; if the network fails, the still-running
@@ -4521,8 +7291,19 @@ PY
     fi
     # Register rollback ownership and arm the trap while the old runtime is
     # still healthy. The mutable data checkpoint is taken only after shutdown.
-    trap recover_running_stack_after_failed_upgrade EXIT INT TERM
+    trap recover_running_stack_after_failed_upgrade EXIT
+    trap 'recover_running_stack_after_failed_upgrade 130' INT
+    trap 'recover_running_stack_after_failed_upgrade 143' TERM
+    TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
+      resolve_predecessor_telegram_user_config_root "$REPO_ROOT"
+    )"
     upgrade_transaction_begin "$UPGRADE_TARGET_HEAD"
+    if ! publish_active_telegram_recovery_component \
+      "upgrade" "$UPGRADE_TRANSACTION_DIR"
+    then
+      echo "Upgrade could not publish transaction-bound passive helper recovery before shutdown." >&2
+      exit 1
+    fi
     if [[ "$UPGRADE_STACK_WAS_RUNNING" == "1" ]]; then
       echo "Running Viventium stack detected. Stopping before component refresh..."
       if ! stop_stack_for_upgrade; then
@@ -4530,6 +7311,20 @@ PY
         echo "No source pull or component refresh was attempted. Resolve the stop failure, then retry." >&2
         exit 1
       fi
+    fi
+    if ! migrate_telegram_user_configs "$REPO_ROOT"; then
+      echo "Upgrade could not preserve legacy Telegram preferences in canonical App Support state." >&2
+      exit 1
+    fi
+    if ! publish_active_telegram_recovery_component \
+      "upgrade" "$UPGRADE_TRANSACTION_DIR"
+    then
+      echo "Upgrade could not bind its migrated Telegram preference authority to rollback." >&2
+      exit 1
+    fi
+    if ! arm_persistent_telegram_recovery_helper; then
+      echo "Upgrade could not arm persistent helper recovery before candidate mutation." >&2
+      exit 1
     fi
     upgrade_transaction_snapshot_stopped_state
     upgrade_transaction_prepare_candidate
@@ -4559,6 +7354,7 @@ PY
     "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py" \
       --config "$UPGRADE_CANDIDATE_CONFIG" \
       --output-dir "$UPGRADE_CANDIDATE_RUNTIME"
+    prepare_telegram_runtime_component "$REPO_ROOT" "$UPGRADE_CANDIDATE_RUNTIME"
     "$REPO_ROOT/scripts/viventium/doctor.sh" \
       --config "$UPGRADE_CANDIDATE_CONFIG" \
       --runtime-dir "$UPGRADE_CANDIDATE_RUNTIME" \
@@ -4571,6 +7367,10 @@ PY
     upgrade_transaction_checkpoint "candidate_validated"
     upgrade_transaction_activate_candidate
     upgrade_transaction_checkpoint "candidate_activated"
+    if ! validate_quiesced_upgrade_session_before_post_capture; then
+      echo "Upgrade candidate could not start and validate its protected quiesced runtime; rolling back." >&2
+      exit 1
+    fi
     POST_UPGRADE_CONTINUITY_AUDIT="$(capture_continuity_audit "post-upgrade-${UPGRADE_AUDIT_TIMESTAMP}")"
     POST_UPGRADE_CONTINUITY_STATUS="$(continuity_audit_status "$POST_UPGRADE_CONTINUITY_AUDIT")"
     echo "Post-upgrade continuity audit written to $(display_safe_path "$POST_UPGRADE_CONTINUITY_AUDIT")"
@@ -4586,24 +7386,60 @@ PY
         exit 1
         ;;
     esac
-    if [[ "$AUTO_RESTART" == "1" ]]; then
-      if ! restart_stack_after_upgrade; then
+    if ! compare_upgrade_continuity_audits \
+      "$PRE_UPGRADE_CONTINUITY_AUDIT" \
+      "$POST_UPGRADE_CONTINUITY_AUDIT" \
+      "upgrade-comparison-${UPGRADE_AUDIT_TIMESTAMP}"; then
+      exit 1
+    fi
+    upgrade_transaction_checkpoint "continuity_verified"
+    if [[ "$UPGRADE_STACK_WAS_RUNNING" == "1" ]]; then
+      set_helper_runtime_intent running
+    else
+      echo "Returning Viventium to its pre-upgrade stopped state..."
+      if ! stop_stack_for_upgrade; then
+        echo "Upgrade candidate could not preserve the prior stopped state; rolling back." >&2
         exit 1
       fi
-      upgrade_transaction_checkpoint "restart_healthy"
+      set_helper_runtime_intent stopped
     fi
+    upgrade_transaction_checkpoint "continuity_and_runtime_intent_verified"
     upgrade_transaction_commit
-    if ! maybe_install_macos_helper --no-launch; then
-      echo "Warning: the core upgrade is healthy, but the macOS helper refresh failed. Run: bin/viventium install-helper" >&2
+    postcommit_life_bootstrap_status=0
+    bootstrap_life || postcommit_life_bootstrap_status=$?
+    if ! finalize_quiesced_upgrade_session_after_commit; then
+      echo "The source upgrade committed, but protected runtime finalization is incomplete." >&2
+      echo "Resolve the reported runtime health failure, then rerun bin/viventium upgrade --restart." >&2
+      exit 1
     fi
+    if ! finalize_deferred_uploads_after_upgrade_commit; then
+      echo "The source upgrade committed safely, but uploads finalization still needs recovery." >&2
+      echo "Rerun bin/viventium upgrade --restart to complete the remaining local migration." >&2
+      exit 1
+    fi
+    # LaunchAgents are derived host state, not part of the App Support/source
+    # transaction. Reconcile only after commit and protected runtime finalization;
+    # the loader restores the exact prior plist/load state if reconciliation fails.
     if ! sync_memory_hardening_schedule; then
-      echo "Warning: the core upgrade is healthy, but the maintenance schedule refresh needs attention." >&2
+      echo "The core upgrade is finalized, but the maintenance schedule refresh failed; the previous LaunchAgent state was restored." >&2
+      echo "Resolve the reported launchctl or filesystem error, then rerun: bin/viventium compile-config" >&2
+      exit 1
     fi
-    if [[ "$AUTO_RESTART" == "1" ]]; then
-      launch_macos_helper_app
-      exit 0
+    if ! maybe_install_macos_helper --no-launch; then
+      echo "The core upgrade is finalized, but the macOS helper refresh failed. Run: bin/viventium install-helper" >&2
+      exit 1
     fi
-    echo "Upgrade complete. Next: bin/viventium start (the helper remains closed so it cannot auto-start the stack)."
+    if ! clear_active_telegram_recovery_component; then
+      echo "The upgrade committed, but stale Telegram recovery state could not be cleared." >&2
+      exit 1
+    fi
+    launch_macos_helper_app
+    if [[ "$postcommit_life_bootstrap_status" -ne 0 ]]; then
+      echo "The upgrade and protected runtime finalization completed, but canonical LIFE is not ready." >&2
+      echo "Resolve the reported LIFE path conflict, then rerun: bin/viventium start" >&2
+      exit "$postcommit_life_bootstrap_status"
+    fi
+    exit 0
     ;;
   configure|wizard)
     acquire_cli_lock "$COMMAND"
@@ -4650,7 +7486,7 @@ PY
       "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/wizard.py" "${WIZARD_ARGS[@]}"
       apply_default_nightly_routines
     fi
-    if ! compile_config || ! ensure_configured_prerequisites || ! sync_memory_hardening_schedule; then
+    if ! bootstrap_components || ! compile_config || ! bootstrap_life || ! ensure_configured_prerequisites || ! sync_memory_hardening_schedule; then
       rollback_config_candidate || true
       cleanup_config_candidate || true
       exit 1
@@ -4664,6 +7500,7 @@ PY
   compile-config)
     acquire_cli_lock "$COMMAND"
     apply_default_nightly_routines
+    bootstrap_components
     compile_config "$@"
     sync_memory_hardening_schedule
     ;;
@@ -4739,6 +7576,22 @@ PY
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage launch
       exit 0
+    fi
+    # Authenticate an exact receipt-bound quiesced successor before generic
+    # interrupted-upgrade recovery. Otherwise a detached successor launched by
+    # the still-lock-owning outer transaction mistakes that same transaction for
+    # an interruption and deadlocks trying to recover itself.
+    if ! inherit_quiesced_successor_validation_if_active; then
+      echo "Active upgrade validation state is unsafe; refusing to launch writers." >&2
+      exit 1
+    fi
+    recover_interrupted_upgrade_before_runtime_start
+    if ! recover_interrupted_helper_install; then
+      echo "Interrupted helper installation recovery failed closed." >&2
+      exit 1
+    fi
+    if [[ "${VIVENTIUM_DETACHED_START:-false}" != "true" ]]; then
+      set_helper_runtime_intent running
     fi
     launch_stack_detached "$@"
     ;;
@@ -4821,7 +7674,7 @@ PY
       fi
       set +a
     fi
-    exec "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/memory_harden.py" \
+    "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/memory_harden.py" \
       --repo-root "$REPO_ROOT" \
       --app-support-dir "$APP_SUPPORT_DIR" \
       --runtime-dir "$RUNTIME_DIR" \
@@ -4858,7 +7711,7 @@ PY
       fi
       set +a
     fi
-    exec node "$REPO_ROOT/viventium_v0_4/LibreChat/scripts/viventium-memory-dedupe.js" "$@"
+    node "$REPO_ROOT/viventium_v0_4/LibreChat/scripts/viventium-memory-dedupe.js" "$@"
     ;;
   status-bar)
     acquire_cli_lock "$COMMAND"
@@ -4938,11 +7791,95 @@ PY
     fi
     run_macos_helper_installer uninstall "$@"
     ;;
+  _first-upgrade-runtime)
+    # Internal successor-owned bridge invoked only from continuity_audit.py while
+    # a verified predecessor upgrade still owns the CLI lock. This must not be a
+    # public lock-bypass surface.
+    if [[ "${VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL:-0}" != "1" ]] ||
+      [[ "${VIVENTIUM_CLI_LOCK_HELD:-0}" != "1" ]] ||
+      [[ "${VIVENTIUM_CLI_LOCK_DIR:-}" != "$CLI_LOCK_DIR" ]]
+    then
+      echo "First-upgrade runtime bridge requires a verified parent upgrade lock." >&2
+      exit 1
+    fi
+    bridge_lock_pid="$(read_cli_lock_metadata | sed -n '1p')"
+    if [[ -z "$bridge_lock_pid" || "$bridge_lock_pid" != "${VIVENTIUM_CLI_LOCK_OWNER_PID:-}" ]] ||
+      ! cli_lock_active_owner "$bridge_lock_pid"
+    then
+      echo "First-upgrade runtime bridge parent lock is no longer trustworthy." >&2
+      exit 1
+    fi
+    bridge_action="${1:-}"
+    case "$bridge_action" in
+      start-quiesced-and-wait)
+        UPGRADE_TRANSACTION_ACTIVE=1
+        if ! restart_quiesced_runtime_after_upgrade; then
+          exit 1
+        fi
+        ;;
+      start-full-and-wait)
+        UPGRADE_TRANSACTION_ACTIVE=1
+        if ! restart_stack_after_upgrade; then
+          exit 1
+        fi
+        if ! ensure_no_pending_agent_migration; then
+          echo "First-upgrade runtime did not finish its managed-agent migration." >&2
+          exit 1
+        fi
+        ;;
+      restore-stopped)
+        VIVENTIUM_CLI_LOCK_INHERITED_ONCE=1 \
+          "$REPO_ROOT/bin/viventium" \
+          --app-support-dir "$APP_SUPPORT_DIR" \
+          --config-file "$CONFIG_FILE" \
+          --runtime-dir "$RUNTIME_DIR" \
+          --lock-file "$LOCK_FILE" \
+          stop
+        ;;
+      *)
+        echo "Unknown first-upgrade runtime bridge action: $bridge_action" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   start)
     acquire_cli_lock "$COMMAND"
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
       subcommand_usage start
       exit 0
+    fi
+    # The exact active successor receipt is the only permitted pre-recovery
+    # exception. Unrelated or malformed active pointers remain subject to the
+    # generic fail-closed interrupted-upgrade path below.
+    if ! inherit_quiesced_successor_validation_if_active; then
+      echo "Active upgrade validation state is unsafe; refusing to start writers." >&2
+      exit 1
+    fi
+    recover_interrupted_upgrade_before_runtime_start
+    if ! recover_interrupted_helper_install; then
+      echo "Interrupted helper installation recovery failed closed." >&2
+      exit 1
+    fi
+    if ! recover_interrupted_dev_runtime_activations; then
+      echo "Interrupted local-runtime promotion recovery failed closed." >&2
+      exit 1
+    fi
+    if [[ "${DEV_RUNTIME_RECOVERY_PERFORMED:-0}" == "1" ]]; then
+      echo "Recovered the interrupted local-runtime promotion. Rerun start from the active checkout if you still want to start it."
+      exit 0
+    fi
+    if ! recover_pending_quiesced_upgrade_finalization; then
+      echo "A committed upgrade is waiting for full-runtime recovery; start remains failed closed." >&2
+      exit 1
+    fi
+    if ! inherit_pending_postcommit_finalization_if_needed; then
+      echo "Pending post-upgrade runtime finalization is unsafe; refusing to start writers." >&2
+      exit 1
+    fi
+    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" &&
+      "${VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT:-0}" != "1" ]]
+    then
+      set_helper_runtime_intent running
     fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -4950,16 +7887,23 @@ PY
       echo "Run: bin/viventium install" >&2
       exit 1
     fi
-    bootstrap_components
+    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
+      bootstrap_components
+    fi
     # === VIVENTIUM START ===
     # Feature: Canonical runtime regeneration on every start.
     # Purpose: prevent stale generated runtime files from surviving across installer/compiler
     # fixes and silently leaving the machine in an older behavior state than the current branch.
     # compile_config is cheap relative to stack startup and keeps start deterministic.
     # === VIVENTIUM END ===
-    apply_default_nightly_routines
+    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
+      apply_default_nightly_routines
+    fi
     compile_config
-    sync_memory_hardening_schedule
+    if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" != "quiesced" ]]; then
+      bootstrap_life
+      sync_memory_hardening_schedule
+    fi
     prepare_runtime_exports
 
     EXTRA_ARGS=()
@@ -4972,7 +7916,22 @@ PY
         source "$GENERATED_LOCAL_ENV"
       fi
       set +a
+      if [[ "${VIVENTIUM_SUCCESSOR_VALIDATION_MODE:-}" == "quiesced" ]]; then
+        VIVENTIUM_VOICE_ENABLED=false
+        export VIVENTIUM_VOICE_ENABLED
+      fi
       if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
+        if [[ -z "${MEILI_MASTER_KEY:-}" ]]; then
+          persisted_meili_master_key="$(
+            read_local_env_assignment \
+              "$REPO_ROOT/viventium_v0_4/LibreChat/.env" \
+              "MEILI_MASTER_KEY" || true
+          )"
+          if [[ -n "$persisted_meili_master_key" ]]; then
+            MEILI_MASTER_KEY="$persisted_meili_master_key"
+            export MEILI_MASTER_KEY
+          fi
+        fi
         write_stack_owner_state "$COMMAND"
         NATIVE_STACK_SKIP_MEILI=0
         if express_install_experience; then
@@ -4990,6 +7949,12 @@ PY
       if express_install_experience; then
         EXTRA_ARGS+=(--skip-playground)
       fi
+    fi
+    if [[ -z "${VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR:-}" ]]; then
+      VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR="$(
+        resolve_predecessor_telegram_user_config_root "$REPO_ROOT"
+      )"
+      export VIVENTIUM_TELEGRAM_USER_CONFIGS_DIR
     fi
 
     if [[ -z "${VIVENTIUM_CALL_SESSION_SECRET:-}" ]]; then
@@ -5051,7 +8016,7 @@ PY
     # otherwise status, Stop/Quit, and manual memory-hardening jobs are blocked
     # while Viventium is healthy and running.
     cleanup_cli_lock
-    "${START_CMD[@]}"
+    VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"
     exit $?
     ;;
   stop)
@@ -5060,14 +8025,24 @@ PY
       subcommand_usage stop
       exit 0
     fi
+    if [[ "${VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT:-0}" != "1" ]]; then
+      set_helper_runtime_intent stopped
+    fi
     stop_status=0
     prepare_runtime_exports
     if [[ -f "$GENERATED_ENV" ]]; then
+      set -a
       # shellcheck disable=SC1090
       source "$GENERATED_ENV"
+      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LOCAL_ENV"
+      fi
+      set +a
     fi
     write_stack_owner_state "$COMMAND"
-    "$REPO_ROOT/viventium_v0_4/viventium-librechat-start.sh" --stop "$@" || stop_status=$?
+    VIVENTIUM_LAUNCHER_INTERNAL=1 \
+      "$REPO_ROOT/viventium_v0_4/viventium-librechat-start.sh" --stop "$@" || stop_status=$?
     # Native state can linger across mode switches or older runs. Stop cleanup
     # should drain owned native services whenever they exist, not only when the
     # current config still says "native".
@@ -5086,7 +8061,8 @@ PY
     fi
     ensure_app_support_layout "$APP_SUPPORT_DIR"
     prepare_runtime_exports
-    exec "$REPO_ROOT/viventium_v0_4/viventium-local-state-snapshot.sh" \
+    VIVENTIUM_PYTHON_BIN="$PYTHON_BIN" \
+      "$REPO_ROOT/viventium_v0_4/viventium-local-state-snapshot.sh" \
       --output-root "$APP_SUPPORT_DIR/snapshots" \
       "$@"
     ;;

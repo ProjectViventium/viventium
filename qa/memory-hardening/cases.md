@@ -20,6 +20,7 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
 | `MEMHARD-010` | Scheduled hardening leaves an authoritative public-safe trigger receipt. | Nightly QA can prove the macOS maintenance job fired without guessing from UTC timestamps, travel, DST, or wake state. | LaunchAgent fixture, wrapper trigger receipt, hardener summary, automation report | `tests/release/test_memory_hardening_contract.py` trigger-receipt regressions plus isolated scheduled run | PASS-AUTOMATED/PARTIAL 2026-07-18; synthetic receipt success/failure/skip and correlation regressions pass, isolated real-time LaunchAgent fire NOT RUN |
 | `MEMHARD-011` | Proposal apply, replay, and rollback are revision protected across delete/recreate generations. | Nightly maintenance cannot overwrite, erase, or resurrect over a newer channel/web/voice memory write. | proposal/apply/rollback, fixture tombstone revisions, isolated rollback snapshot, public-safe summary | hardener and fixture DB memory CAS regressions | PASS-AUTOMATED 2026-07-14; retained-tombstone ABA, exact rollback, duplicate fail-closed, and path-redaction regressions pass |
 | `MEMHARD-012` | The 03:00 LaunchAgent is single-trigger, idempotently reconciled, and lifecycle-receipted. | Repeated start/upgrade cannot unload a healthy agent, reset its evidence, or create a competing model cadence. | compiler, CLI sync, LaunchAgent fixture, trigger/lifecycle receipts | memory-hardening contract tests plus isolated plist/status | PASS-AUTOMATED/PARTIAL 2026-07-18; single-trigger/reconcile/receipt fixtures pass, isolated real-time scheduled fire NOT RUN |
+| `MEMHARD-013` | LaunchAgent reconciliation and upgrade ordering preserve exact prior user state on failure. | A failed schedule refresh cannot leave an existing job unloaded, replace its plist/marker, or mutate it before upgrade commit. | memory-harden loader, upgrade CLI ordering, synthetic plist/marker, fake launchctl | memory-hardening contract and upgrade-order regressions | PASS-AUTOMATED 2026-07-24 ([report](reports/2026-07-24-launchagent-transaction-rollback.md)); exact bytes/modes/load state, fresh-install cleanup, ownership fail-closed, and post-commit ordering pass |
 
 ## `MEMHARD-001` - Core User Flow
 
@@ -323,6 +324,27 @@ Use stable `MEMHARD-NNN` IDs for memory hardening cases.
   system-local calendar trigger, no competing interval trigger, and lifecycle receipt behavior.
   Isolated real-time scheduled execution and provider tuple proof are NOT RUN.
 
+## `MEMHARD-013` - Transactional LaunchAgent Reconciliation
+
+- Capture the exact prior plist and dry-run marker bytes/modes plus the current launchd loaded state
+  before install, reinstall, or uninstall mutation.
+- Inject desired-bootstrap failure, post-bootstrap verification failure, and success-receipt write
+  failure. Confirm the prior artifacts and loaded/unloaded state are restored exactly and the
+  available failed lifecycle receipt says `rollback_status: restored`.
+- Present a symlink, special file, or file not owned by the current user and confirm reconciliation
+  fails before any `launchctl` or filesystem mutation.
+- Inspect upgrade ordering and confirm schedule sync occurs only after strict continuity comparison,
+  source commit, protected runtime finalization, and deferred uploads finalization.
+- Expected: a schedule failure is resumable through `bin/viventium compile-config`; it never rolls
+  back an already committed core upgrade and never leaves derived host state partially changed.
+- Forbidden: precommit `bootout`, parsed-payload-only restoration, mode drift, missing marker,
+  loaded-state drift, or treating a failed post-commit schedule refresh as a rolled-back upgrade.
+- Evidence: synthetic temporary files, fake launchctl state machine, lifecycle receipt fields,
+  static upgrade-order regression, focused/full owning test results, and public-safety scan.
+- Last run: PASS-AUTOMATED 2026-07-24
+  ([report](reports/2026-07-24-launchagent-transaction-rollback.md)); no live LaunchAgent or private
+  App Support state was touched.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Memory Hardening. Add narrower feature-specific
@@ -344,6 +366,7 @@ rows before claiming a pass when the feature behavior changes.
 
 | `MEMHARD-UC-012` | Apply, replay, and roll back a synthetic proposal while another surface advances the same key. | `20_Memory_System.md` / `MEMHARD-011` | hardener CLI, Mongo revisions, Telegram/web write | apply/rollback summaries, revision conflicts, preserved final value | Stale apply/rollback loses the race visibly and never erases the newer value. | PASS-AUTOMATED 2026-07-11; live smoke pending |
 | `MEMHARD-UC-013` | Re-run start/upgrade reconciliation, then inspect the overnight job after a synthetic timezone/sleep transition. | `20_Memory_System.md` / `MEMHARD-012` | LaunchAgent fixture, `memory-harden status`, trigger/lifecycle receipts | synthetic timezone, single calendar trigger, loaded state, generation hash, latest exit/run fixture | Reconciliation is a no-op when healthy; the calendar fire is judged from its receipt without a competing model cadence. | PASS-AUTOMATED/PARTIAL 2026-07-18; reconciliation/receipt fixtures pass, isolated real-time fire NOT RUN |
+| `MEMHARD-UC-014` | Upgrade or reconcile while launchctl/filesystem/receipt work fails. | `20_Memory_System.md`, `39_Installer_and_Config_Compiler.md` / `MEMHARD-013` | synthetic LaunchAgent/marker, fake launchctl, upgrade CLI source | exact before/after bytes and modes, loaded state, failed receipt rollback status, upgrade call order | The prior schedule remains exact and loaded as before; a committed upgrade gives a truthful retry command. | PASS-AUTOMATED 2026-07-24 ([report](reports/2026-07-24-launchagent-transaction-rollback.md)); live LaunchAgent mutation intentionally NOT RUN |
 
 ## Release Test Traceability
 

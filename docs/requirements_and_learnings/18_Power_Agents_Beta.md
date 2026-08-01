@@ -291,7 +291,7 @@ Scripts must be run in this order - LibreChat first, then Power Agents.
 | `CLAUDE_CODE_USE_FOUNDRY` | Enable Azure Foundry mode | - |
 | `ANTHROPIC_FOUNDRY_API_KEY` | Azure Foundry API key | - |
 | `ANTHROPIC_FOUNDRY_RESOURCE` | Azure resource name | - |
-| `ANTHROPIC_MODEL` | Model to use | claude-opus-4-5 |
+| `ANTHROPIC_MODEL` | Model to use | claude-opus-5 |
 | `OPENAI_API_KEY` | OpenAI key for Codex | - |
 | `POWER_AGENT_DATA_DIR` | User workspace base dir | ~/.viventium/power-agents-beta/users |
 | `POWER_AGENT_PORT_START` | Starting port for containers | 9100 |
@@ -307,7 +307,7 @@ For enterprise deployments using Azure AI Foundry:
 export CLAUDE_CODE_USE_FOUNDRY=1
 export ANTHROPIC_FOUNDRY_API_KEY="your-foundry-key"
 export ANTHROPIC_FOUNDRY_RESOURCE="your-resource-name"
-export ANTHROPIC_MODEL="claude-opus-4-5"
+export ANTHROPIC_MODEL="claude-opus-5"
 ```
 
 ---
@@ -628,5 +628,5 @@ codex --full-auto exec --skip-git-repo-check "task"
 export CLAUDE_CODE_USE_FOUNDRY=1
 export ANTHROPIC_FOUNDRY_API_KEY="..."
 export ANTHROPIC_FOUNDRY_RESOURCE="..."
-export ANTHROPIC_MODEL="claude-opus-4-5"
+export ANTHROPIC_MODEL="claude-opus-5"
 ```

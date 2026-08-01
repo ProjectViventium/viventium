@@ -33,6 +33,13 @@ Minimum evidence for dev/prod coexistence:
 - shared singleton services are not started a second time by default
 - `bin/viventium dev-runtime status` shows the installed runtime checkout separately from the dev env
 - `bin/viventium dev-runtime activate-current --validate --restart` uses runtime-checkout state and
-  does not copy source into an install path
+  does not copy source into an install path; candidate outputs validate before live mutation, and
+  the owner-private activation journal restores binding/runtime/helper intent/prior state after a
+  pre-commit failure or interrupted publish. After healthy core commit, helper refresh is
+  receipt-backed forward-finalization and retries without a false wider-ecosystem rollback claim;
+  the helper installer also keeps its own durable phase receipt and atomic side-file replacements
+  so a killed config/Scheduler/launcher/bundle/registration phase converges on the next start
+- helper supervision evaluates configured managed-sidecar health, including Scheduling Cortex,
+  and a `Needs Attention` state remains eligible for bounded repair
 - helper utility actions such as `Advanced > Prompt Workbench > Stop` do not invoke or affect the
   main stack stop path

@@ -96,6 +96,19 @@ Use stable `REMOTE-NNN` IDs for remote access cases.
 - Last run: NOT RUN for this public candidate. Acceptance requires an isolated lab edge/router,
   synthetic account, selected public media pair, fixture transcript, and exact cleanup evidence.
 
+## `REMOTE-005` - Public-Edge Degradation Does Not Break Local Upgrade
+
+- Requirement: a conflicting/unavailable router mapping keeps localhost running and records the
+  exact blocker.
+- Steps: run upgrade/recovery with healthy local core/sidecars and a synthetic or real
+  `public_https_edge` mapping conflict.
+- Expected result: activation health accepts the local runtime, status remains Action Required for
+  remote access with the exact `public-network.json` error, and no config is silently changed.
+- Forbidden result: false remote success, hidden error, local rollback/restart loop, or automatic
+  takeover of a foreign router mapping.
+- Last run: PASS-AUTOMATED/PARTIAL-LIVE 2026-07-25. Health-gate regression passes and a real router
+  conflict remained visible; off-LAN public-media acceptance is still NOT RUN.
+
 ## Natural User Use Case Checklist
 
 These rows are the minimum natural-user checklist gate for Remote Access. Add narrower feature-specific

@@ -11,6 +11,9 @@ background-cortex runtime remain truthful for fresh installs and local restarts.
 
 Additional current QA artifacts:
 
+- `qa/background_agents/reports/2026-08-01-glasshive-phase-b-web-telegram.md` — real web and
+  Telegram Phase B acceptance for GlassHive cortices, including useful continuation, `{NTA}`,
+  moved-on suppression, Agent Builder, Mongo/log/GlassHive correlation, and provider effort mapping
 - `qa/background_agents/report.md` — historical April 5, 2026 Anthropic execution compatibility report
 - `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
 - `qa/background_agents/telegram_scheduler_fallback_2026-04-24.md` — scheduled Telegram degraded-delivery regression for deferred fallback provenance
@@ -48,18 +51,18 @@ sarcasm, denial, and recent-context carryover.
   explicitly in the source-of-truth bundle.
 - Deep Research must ship with `web_search` in its built-in tool surface whenever runtime web
   search is enabled.
-- Deep Research on `openAI / gpt-5.6-sol` must ship
-  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must
-  not drift onto Anthropic/Google-only `thinkingBudget`.
+- Deep Research on GlassHive Codex/Sol must ship `model_parameters.reasoning_effort: xhigh`
+  without direct-provider-only `useResponsesApi` or Anthropic-only `thinkingBudget`.
 - Red Team must ship with `web_search` in its built-in tool surface whenever runtime web search is
   enabled.
-- Red Team on `openAI / gpt-5.6-sol` must ship and runtime-normalize to
-  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must not drift onto
-  Anthropic/Google-only `thinkingBudget`.
-- The conscious agent uses Sol/medium; Strategic Planning uses Sol/high; Background Analysis,
-  Confirmation Bias, Parietal Cortex, and Pattern Recognition use Terra/medium; MS365, Google,
-  Emotional Resonance, and Viventium User Help use Terra/low.
-- Every conscious/subconscious text route uses `anthropic / claude-opus-4-8` as fallback. Voice
+- Red Team on GlassHive Codex/Sol must ship and runtime-normalize to
+  `model_parameters.reasoning_effort: high` without direct-provider-only `useResponsesApi` or
+  Anthropic-only `thinkingBudget`.
+- The conscious agent uses GlassHive Sol/medium; Strategic Planning uses GlassHive Sol/high;
+  Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition use GlassHive
+  Sol/medium; MS365, Google, Emotional Resonance, and Viventium User Help use GlassHive Sol/low.
+- Every conscious/subconscious text route uses `anthropic / claude-opus-5` as the managed fallback
+  for new installs. Explicit existing user-selected Anthropic fallback models remain protected. Voice
   remains `xai / grok-4.3 / none` with a latency-preserving Terra/none voice fallback.
 - High-effort Opus fallbacks preserve the source-owned Anthropic thinking budgets, and cross-provider
   fallback initialization strips OpenAI-only `reasoning_effort` and `useResponsesApi` fields.
@@ -98,7 +101,7 @@ sarcasm, denial, and recent-context carryover.
    - the documented OpenAI-only, Anthropic-only, and mixed execution matrix matches compiler
      assignments
    - GPT-5.6 Sol/Terra and effort assignments match the documented workload map
-   - Anthropic Opus 4.8 is the explicit fallback for every conscious/subconscious text route
+   - Anthropic Opus 5 is the managed fallback for every conscious/subconscious text route
    - runtime normalization and seed/upsert repair stale cross-provider model-parameter drift
 7. Start-script inspection verifies local startup still re-seeds built-ins from the source-of-truth
    agents bundle through `viventium-seed-agents.js`.
@@ -112,7 +115,8 @@ sarcasm, denial, and recent-context carryover.
   - `web_search` when runtime web search is enabled
   - `reasoning_effort: xhigh` on the shipped OpenAI execution bag
 - The provider-matrix audit proves OpenAI-capable installs use the GPT-5.6 workload map and
-  Anthropic-only installs use the explicit Opus 4.8 fallback profile for built-in agents.
+  Anthropic-only fresh installs use the Opus 5 fallback profile for built-in agents without
+  replacing an existing user's explicit Anthropic model selection.
 - Start-path inspection confirms fresh installs and restarts consume the corrected bundle instead of
   relying on live Mongo edits.
 - Live QA separates activation success from downstream user-scoped auth:

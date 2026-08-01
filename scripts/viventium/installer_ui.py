@@ -48,7 +48,11 @@ class InstallerUI:
         self.interactive = bool(
             sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get("TERM", "") != "dumb"
         )
-        self.rich_enabled = Console is not None
+        # Rich tables adapt to terminal width and can wrap individual cells. In captured
+        # output (CI, logs, pipes), that makes prerequisite names unstable and can split
+        # machine-searchable diagnostics across lines. Keep Rich for the interactive
+        # installer experience and use the deterministic plain renderer everywhere else.
+        self.rich_enabled = Console is not None and self.interactive
         self.questionary_enabled = questionary is not None and self.interactive
         self._questionary_fallback_notified = False
         self._password_fallback_notified = False

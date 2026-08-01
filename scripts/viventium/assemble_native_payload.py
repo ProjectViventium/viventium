@@ -42,7 +42,17 @@ EXCLUDED_NAMES = {
     "playwright-report",
     "test-results",
 }
-SECRET_NAMES = {".env", "id_rsa", "id_ed25519"}
+SECRET_NAMES = {
+    ".env",
+    ".env.local",
+    "librechat.env",
+    "librechat.owner.env",
+    "runtime.env",
+    "runtime.local.env",
+    "id_rsa",
+    "id_ed25519",
+}
+SECRET_DIRECTORY_NAMES = {"service-env"}
 SANDPACK_INDEX_SHA256 = "ace51687532a2e9cbfcc11d790bc96b250c477cfa3545ab285915b9eca8e7aa6"
 SANDPACK_ON_PREM_MARKER = b'IS_ONPREM:"true"'
 
@@ -75,10 +85,12 @@ def copy_safe(
     source_date_epoch: int,
     active: tuple[Path, ...] = (),
 ) -> None:
-    if should_exclude(source):
-        return
+    if source.name in SECRET_DIRECTORY_NAMES:
+        raise AssemblyError(f"secret-shaped input directory is forbidden: {source.name}")
     if source.name in SECRET_NAMES:
         raise AssemblyError(f"secret-shaped input is forbidden: {source.name}")
+    if should_exclude(source):
+        return
     try:
         metadata = source.lstat()
     except OSError as error:
@@ -135,6 +147,28 @@ def read_components(path: Path) -> dict[str, object]:
     if payload.get("schema_version") != 1:
         raise AssemblyError("Native component policy schema is unsupported")
     return payload
+
+
+def validate_native_compiled_defaults(compiled: Path) -> None:
+    """Reject provider advertisements for runtimes absent from the Native payload."""
+
+    forbidden_markers = ("glasshive-harness", "glasshive-workers-projects")
+    for name in (
+        "librechat.yaml",
+        "prompt-bundle.json",
+        "native-runtime.env",
+        "viventium-agents.yaml",
+    ):
+        path = compiled / name
+        try:
+            body = path.read_text(encoding="utf-8").lower()
+        except OSError as error:
+            raise AssemblyError(f"Native compiled default is unavailable: {name}") from error
+        leaked = next((marker for marker in forbidden_markers if marker in body), "")
+        if leaked:
+            raise AssemblyError(
+                f"Native compiled defaults advertise unavailable GlassHive runtime: {name}"
+            )
 
 
 def is_lower_hex(value: object, length: int) -> bool:
@@ -318,6 +352,7 @@ def assemble(args: argparse.Namespace) -> dict[str, object]:
     if args.source_date_epoch < 315532800:
         raise AssemblyError("source date epoch is outside the supported range")
     validate_built_librechat(librechat)
+    validate_native_compiled_defaults(compiled)
     components = read_components(args.components)
     component_manifest = release_component_manifest(components, args.arch)
     if args.mode == "candidate":

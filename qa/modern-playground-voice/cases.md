@@ -974,15 +974,18 @@
   4. Seed an older synthetic Viventium-managed container and prove it is replaced without volumes.
   5. Bind an unrelated or explicitly configured external LiveKit endpoint and prove Viventium does
      not delete or relabel it.
-  6. Exercise v1.13 TURN configuration with TTL-aware credentials and classify any legacy no-TTL
+  6. Run two local runtimes with the same profile but distinct state roots/ports; stopping or
+     upgrading either runtime must leave the other runtime's LiveKit container healthy.
+  7. Exercise v1.13 TURN configuration with TTL-aware credentials and classify any legacy no-TTL
      configuration as migration-required rather than healthy.
-  7. Record logical and physical Docker disk usage before and after; remove only named QA resources.
+  8. Record logical and physical Docker disk usage before and after; remove only named QA resources.
 - Expected Result: runtime identity matches the immutable lock; exact containers are stable; stale
-  managed containers upgrade automatically; external/unrelated state is preserved; TURN and storage
-  evidence are truthful.
+  managed containers upgrade automatically; runtime-owner labels prevent cross-runtime deletion;
+  external/unrelated state is preserved; TURN and storage evidence are truthful.
 - Forbidden Result: `latest` or an unqualified repository name; treating the nested placeholder SHA
   as the Docker artifact; silently reusing a stale managed container; deleting unrelated resources;
-  calling digest provenance a publisher signature; or accepting TURN from a listening port alone.
+  deleting a same-profile container owned by another runtime; calling digest provenance a publisher
+  signature; or accepting TURN from a listening port alone.
 - Evidence: `release/optional-runtime-components.json`,
   `tests/release/test_optional_runtime_provenance.py`, sanitized container inspect/health evidence,
   TURN selected-pair evidence, and a bounded cleanup ledger.

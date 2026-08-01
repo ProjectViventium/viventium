@@ -31,7 +31,7 @@ Use stable `INST-NNN` IDs for installer resilience cases.
 | `INST-021` | The planned Easy Install Docker profile changes only declared capability adapters and preserves the safe Native onboarding/readiness/rollback contract. | A user can deliberately choose the Docker profile without receiving a different or more brittle core product. | physical Mac, Docker Desktop, capability services, browser/status | Native-versus-Docker delta matrix | PARTIAL 2026-07-20; an isolated no-host-mount Apple-silicon Docker VM passed core source-candidate install/start, browser Connected Accounts and Feelings discovery, supported stop/start, local password recovery/fresh login, daemon loss/recovery, named-volume user continuity, loopback binds, and preserve-data uninstall. A shipped Easy Docker artifact, Docker Desktop GUI/TCC/Keychain, physical sleep/wake/resource behavior, optional Recall/RAG, exact component bootstrap, and parity remain open. |
 | `INST-022` | Every nested component commit, parent pin, compiled artifact, and installed artifact under test is identical. | A clean install receives the behavior that QA approved. | nested repos, `components.lock.json`, built client, public payload, installed runtime | Commit/pin/hash and runtime artifact alignment checks | PARTIAL 2026-07-22; all 11 clean nested changes are merged, every fetched `origin/main` and parent ref equals its captured hosted merge commit, and every merged tree equals its audited review head. Rebuilt payload, shipped, and installed identity remain open. |
 | `INST-023` | Onboarding and recovery remain usable with keyboard, screen reader, narrow/mobile layout, localization, reduced motion, and high contrast. | Nontechnical users are not excluded by presentation or input mode. | installer/helper/browser dialogs and controls | Accessibility/localization browser and native UI matrix | PARTIAL 2026-07-21; the existing LibreChat matrix passes, and a fresh modern-playground Chromium run now proves named keyboard stops, 320 px reflow, forced colors, zero retained motion durations under Reduce Motion, and non-clipped tall content after two fixes. Complete translations, native VoiceOver/helper/Keychain/TCC interaction, Intel, and exact shipped-artifact proof remain open. |
-| `INST-024` | Preflight, doctor, build, launchers, helper, packaged runtime, and diagnostics select one supported Node major. | A first install or upgrade does not download two runtimes, build under one runtime, launch under another, or resurrect an obsolete runtime through an optional feature. | preflight/common/doctor, LibreChat and optional launchers, macOS helper, dependency install, client build, packaged runtime | Cross-layer version contract plus clean-install process/path provenance and exact-artifact build/start QA | PARTIAL 2026-07-19; six source surfaces align on Node 24, the full parent suite and helper rebuild pass, and the VM built/started/restarted under Node 24; exact-payload process-path provenance remains unrun |
+| `INST-024` | Preflight, doctor, build, launchers, helper, packaged runtime, and diagnostics select one exact compatibility-qualified Node runtime. | A first install or upgrade does not download two runtimes, build under one runtime, launch under another, or accept an untested newer patch through a broad major-only check. | preflight/common/doctor, LibreChat and optional launchers, macOS helper, dependency install, client build, packaged runtime | Cross-layer exact-version contract plus clean-install process/path provenance, provider transport probe, and exact-artifact build/start QA | PARTIAL 2026-08-01; Node 24.18.1 patch drift was reproduced as a pre-HTTP provider transport failure while exact 24.16.0 passed. Source preflight now stages the official digest- and publisher-verified 24.16.0 runtime for both architectures and exact-version contracts plus the real provider/agent probe pass. Post-upgrade live-process provenance and rebuilt exact-payload QA remain required. |
 | `INST-025` | Source helper install/uninstall mutates only an owned Viventium bundle through a same-filesystem rollback transaction. | A personal app or external symlink target is never deleted because its filename resembles Viventium. | `install_macos_helper.sh`, `~/Applications`, current and legacy helper bundles | Ownership/symlink/sentinel/rollback tests plus headed installed-helper QA | PARTIAL 2026-07-20; synthetic symlink, unrelated-app install/uninstall, owned rollback, exact legacy migration, universal prebuilt source/binary digest, and clean synthetic prebuilt-install regressions pass; installed headed behavior and publisher signing/notarization remain unrun |
 | `INST-026` | Native compliance inventories the exact physical pruned payload and the entire compiled-client module closure, and fails closed on unreviewed license expressions or absent notice bytes. | A published payload has path-accurate SBOM/notices instead of treating export subpaths as packages, trusting a declaration without its notice, or omitting browser-only/vendored runtime licenses. | exact Native payload, physical npm graph, Rollup closure, minimal Python, MongoDB, SPDX/notice/scan bundle | Exact-layout fixtures, compiled-closure/tamper/hash checks, and generator/verifier on the assembled payload | BLOCKED 2026-07-20; the earlier rejected payload proved that a physical production-node inventory alone omits browser code already compiled into `client/dist`. Minimal component staging and hash-bound Python manifests now pass focused tests, while the full rendered-client notice closure and replacement exact-payload generator/verifier run are still in progress. No legal approval or missing notice content is inferred. |
 | `INST-027` | Native runtime defaults are compiler-owned, secret-free, relocatable, and registration/default-agent closure is synchronous. | A clean user creates the only first admin, direct registration closes before success returns, the default agent exists after restart, and no build-host credential reaches a child service. | Native compiler/defaults, assembler, supervisor/private API socket, MongoDB, browser proxy 3190 | Strict env/assembly tests plus exact-candidate first-admin, zero-3180-listener, login, DB/default-agent, restart, process-env, and log evidence | FAIL 2026-07-20 for the provisional exact payload. After the pruned dependency defect was corrected, headed QA found that the one-time page could not post under its CSP and omitted `confirm_password`; ordinary `/register` also led to an unexplained rejection. The proxy now uses an HttpOnly SameSite cookie and clean URL, permits only same-origin setup POSTs, supplies matching confirmation, intercepts `/register`, exposes progress/retry errors, and retains fail-closed replay/close behavior. The backend now uses an owner-checked private Unix socket so a foreign process on historical port `3180` receives zero traffic. Focused supervisor/proxy/socket tests pass; replacement exact-payload registration, DB/default-agent, restart, helper/browser QA remain pending. |
@@ -39,6 +39,7 @@ Use stable `INST-NNN` IDs for installer resilience cases.
 | `INST-030` | Browser artifact code runs from a separately owned, loopback-only, upgrade-safe origin in Native, source, dev, and Docker profiles. | Artifacts work without sharing the authenticated app origin, colliding with local prod, going stale across upgrade, or producing false-ready installer/helper status. | LibreChat API listener, Native proxy, source launcher, Docker image, compiler/dev offsets, installer/status/helper | `test_sandpack_runtime_contract.py`, Native assembler/proxy tests, LibreChat listener/adapter tests, real two-origin browser and upgrade QA | PARTIAL 2026-07-22; exact reviewed source heads, the complete post-merge 1,542-test parent suite, the recorded post-merge 128-test workflow/manifest/payload/public-safety slice, historical pre-merge 311-test slice, focused browser contracts, and the exact modern-playground headed accessibility/loopback run pass. Corrected LibreChat reviewed head `44ac1f7a...` is locally and hosted green; its exact tree is merged and pinned at `38527a8651...`. The exact replacement payload, headed upgrade persistence, and exact Docker-image browser proof remain required. |
 | `INST-031` | First-run Connected Accounts is truthful, dismissible, and network-quiet before the user connects a provider. | A novice can inspect or close provider setup without contradictory credential promises, keyboard traps, hidden retries, unsolicited cloud requests, or noisy missing-credential errors. | first-admin handoff, Connected Accounts dialog, provider model discovery, Native logs | LibreChat dialog/keyboard/provider-config regressions plus exact-payload headed browser and network/log trace | PARTIAL 2026-07-22; the provisional payload failure remains historical, and the structural fixes now pass focused source and all 15 hosted LibreChat checks. Corrected LibreChat reviewed head `44ac1f7a...` is locally and hosted green; its exact tree is merged and pinned at `38527a8651...`. The exact replacement payload, headed first-run/network trace, and installed-artifact proof remain open. |
 | `INST-032` | Disposable release QA is single-VM, receipt-owned, storage-budgeted, and fail-closed. | Clean-machine proof cannot silently fill an owner's disk or delete unrelated Tart/Docker state. | QA host lease/receipt, Tart clone/delete, Docker baseline, sparse-disk and host free-space monitor | `tests/release/test_qa_storage_guard.py` with fake tools only; one guarded disposable-Mac acceptance run after the release candidate is frozen | PARTIAL 2026-07-21; twenty-one fake-tool regressions pass and qualify the storage-guard contract, but the guarded real-VM run remains open and must create and delete exactly one VM. |
+| `INST-034` | An established Custom Settings user can upgrade to a reviewed source candidate without losing or silently reconciling personal configuration, users, chats, memories, feelings, files, agents, prompts, schedules, provider state, or channel ownership. | The running installation advances to the exact reviewed code while all pre-existing user-owned state stays exact and explicitly recovered credentials remain persistent. | complete snapshot, activation/restart, browser Settings, agent compare, Mongo/scheduler/config fingerprints, Telegram, status/logs | Complete-snapshot equality plus activation, focused release/nested suites, headed responsive browser, refresh/restart, read-only agent drift review, and synthetic Telegram round trip | PARTIAL 2026-07-25; the installed source-candidate activation and exact recoverable-state equality passed. The signed/notarized immutable replacement payload and pristine physical/Intel upgrade matrix remain open. See `reports/2026-07-25-existing-user-upgrade-settings-continuity.md`. |
 
 These are umbrella installer cases. Feature owners retain detailed authority: `INST-005` links to
 `qa/continuity-ops/`; `INST-007` incorporates rather than replaces `PIPE-001` under
@@ -128,7 +129,7 @@ These cases are intentionally separate so one broad `PARTIAL` cannot hide a miss
 | `INST-021` Docker delta | Docker adds only selected adapters; core onboarding remains equivalent. | Docker masks a Native defect or becomes an undeclared prerequisite. | Side-by-side physical-Mac comparison. | BLOCKED |
 | `INST-022` delivery alignment | Nested commit, pin, build, payload and installed runtime hashes agree. | A dirty source candidate is treated as the public artifact. | Commit/hash ledger at all five surfaces. | PARTIAL; all 11 nested changes are merged, every parent ref equals fetched `origin/main`, and every merged tree equals its audited review head. Replacement build/payload/shipped/installed identity remains open. |
 | `INST-023` inclusive UX | All critical steps remain perceivable and operable across the declared matrix. | Pointer-only, English-only, or desktop-width success is generalized. | Accessibility tree, keyboard, viewport and localization ledger. | PARTIAL |
-| `INST-024` Node runtime alignment | Every install/build/start/status layer uses the same supported Node major carried by the exact payload. | Preflight passes under one major while startup installs or forces another. | Version-contract test, clean-install PATH/process provenance, production build and restart on the exact artifact. | PARTIAL |
+| `INST-024` Node runtime alignment | Every install/build/start/status layer uses the same exact compatibility-qualified Node runtime carried by the payload. | A broad major-only check accepts an unqualified patch that breaks provider transport. | Exact-version contract, clean-install PATH/process provenance, real provider probe, production build and restart on the exact artifact. | PARTIAL 2026-08-01; exact managed runtime and real provider probe pass, live post-upgrade process provenance remains. |
 | `INST-032` storage-bounded QA | One receipt-owned VM stays within host/Docker budgets and is deleted immediately after evidence capture. | Parallel clones, automatic pruning, global cleanup, or an abandoned lease is accepted. | Guard receipt, before/peak/after metrics, exact Tart events, Docker baseline survival, and empty QA-VM inventory. | PARTIAL; automated fake-tool guard contracts pass, while the guarded real candidate run remains unrun. |
 
 ### `INST-020` / `INST-023` Finder-launched Easy Install bootstrap procedure
@@ -269,42 +270,45 @@ These cases are intentionally separate so one broad `PARTIAL` cannot hide a miss
   reconstructed source passed post-merge `python3 -m pytest tests/release/ -q` with 1,542 passed,
   11 skipped, and 0 failed in 293.15 seconds. Staged and remote parent-PR exactness remain open.
 
-## `INST-003` - Profile-Aware Nightly Workflow Install And Upgrade
+## `INST-003` - Profile-Aware Optional Workflow Install And Upgrade
 
-- Requirement: all supported paths carry the nightly-workflow capability without hardcoding a
-  developer account or relying on owner-machine leftovers. New Easy Install Native installs defer its
-  activation until post-ready worker setup; Custom Settings Install choices and existing explicit upgrade
-  state are preserved.
+- Requirement: supported source/Docker paths carry the nightly-workflow capability without
+  hardcoding a developer account or relying on owner-machine leftovers. Easy Install Native
+  truthfully compiles the unshipped GlassHive/Workbench stack out; Custom Settings Install choices
+  and existing explicit source/Docker upgrade state are preserved.
 - Risk covered: new users install Viventium successfully but do not get the intended nightly
   reflection/memory workflow, or the workflow only works on the original developer laptop.
 - Preconditions: synthetic config/temp state can be used; at least one positive worker-auth case
   and one missing-auth case must be exercised without writing private account details to public QA.
 - Steps:
-  1. Build a new Easy Install Native config and confirm GlassHive worker execution, Prompt Workbench
-     schedule activation, and memory hardening are setup-pending and do not block core preflight.
-  2. Activate worker setup and prove the same canonical capability becomes runnable without
-     reinstalling the core.
+  1. Build a new Easy Install Native config and confirm GlassHive provider/model choices, Prompt
+     Workbench schedules, and scheduled memory hardening are absent rather than advertised as
+     setup-pending capabilities.
+  2. Build the supported source/Docker configuration and prove the canonical capability becomes
+     runnable after worker setup without changing the Native artifact.
   3. Run the reconciler over legacy, explicitly active, and explicitly disabled upgrade-shaped
      configs and confirm each posture is preserved while `operator_user_email` remains empty.
   4. Simulate Codex-ready and Claude-ready machines and confirm an empty generated worker profile is
      filled from the signed-in CLI instead of a hardcoded developer machine value.
   5. Confirm an explicit existing worker profile is preserved even when another CLI is detected.
-  6. Simulate no signed-in Codex/Claude CLI: Easy Install Native core passes with worker setup pending;
-     an explicitly activated worker fails only that capability with one clear sign-in action.
+  6. Simulate no signed-in Codex/Claude CLI: Easy Install Native core passes without an unavailable
+     worker surface; an explicitly activated source/Docker worker fails only that capability with
+     one clear sign-in action.
   7. Compile config and inspect generated env for `START_GLASSHIVE`, `START_PROMPT_WORKBENCH`,
      `VIVENTIUM_PROMPT_WORKBENCH_SEED_NIGHTLY_*`, `GLASSHIVE_DEFAULT_WORKER_PROFILE`, and memory
      hardening env keys.
   8. Start or harness Prompt Workbench with a synthetic admin and confirm the built-in
      `Subconscious Deep Thought` schedule is active, `glasshive_host`, and uses the selected worker
      profile.
-  9. Inspect install-summary rows and confirm the user sees GlassHive, Prompt Workbench, Nightly
-     Reflection, and Memory Hardening status without private account/path leakage.
-- Expected result: new Easy Install Native reaches first chat without worker CLI auth; later activation
-  compiles a runnable nightly workflow; upgrades preserve explicit state; no owner/private identity,
-  raw prompt, local path, or manual App Support edit is required.
-- Forbidden result: capability code omitted from Easy Install, missing worker auth blocks first chat,
-  upgrade flips an explicit active/disabled choice, setup-pending is called Ready, or any public
-  artifact contains a real user email/path/token/raw prompt.
+  9. Inspect install-summary output and confirm source/Docker users see GlassHive, Prompt Workbench,
+     Nightly Reflection, and Memory Hardening status while Native users receive truthful omission
+     wording, all without private account/path leakage.
+- Expected result: new Easy Install Native reaches first chat without advertising an unshipped
+  worker; source/Docker setup compiles a runnable nightly workflow; upgrades preserve explicit
+  state; no owner/private identity, raw prompt, local path, or manual App Support edit is required.
+- Forbidden result: Native advertises an unshipped capability, missing worker auth blocks Native
+  first chat, upgrade flips an explicit source/Docker active/disabled choice, setup-pending is
+  called Ready, or any public artifact contains a real user email/path/token/raw prompt.
 - Evidence to capture: focused release-test results, sanitized generated env key summary, preflight
   item statuses for Codex/Claude/none scenarios, Workbench synthetic seed row, install-summary rows,
   public-safety scan, and Claude review summary when used.
@@ -833,9 +837,9 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
 
 - Requirement: preflight, shared PATH setup, doctor, dependency installation, production build,
   every product/optional launcher, the macOS helper, packaged runtime, status, and diagnostics select
-  the same supported Node major.
-- Risk covered: a fresh install downloads two Node runtimes, validates/builds under one major, then
-  launches under another or fails because the second undeclared formula is unavailable.
+  the same exact compatibility-qualified Node runtime.
+- Risk covered: a fresh install downloads two Node runtimes, validates/builds under one version,
+  then launches under another, or a major-only check accepts an incompatible newer patch.
 - Preconditions: disposable clean macOS target, exact candidate payload, no host/global Node path,
   and process/path tracing enabled.
 - Steps:
@@ -849,20 +853,19 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
      download before the first answer.
 - Expected result: one supported pinned runtime owns every stage; unsupported PATH entries cannot
   override it; failures name one repair action and retain the last healthy release.
-- Forbidden result: preflight passes Node 24 while the launcher installs/prepends/requires Node 20;
-  build-only success is described as runtime acceptance; Homebrew silently supplies a second major.
+- Forbidden result: preflight passes any Node 24 patch while the launcher resolves another patch;
+  build-only success is described as runtime acceptance; Homebrew silently overrides the pin.
 - Evidence to capture: cross-layer contract output, installed files/formulas, resolved executable
   paths, process environment, build/start/restart versions, exact payload digest, timing/resource
   delta, and visible failure/recovery wording.
-- Automation: a source contract that compares the owning Node-major constant/reference across
-  preflight/common/doctor/LibreChat launcher/optional launcher/helper/package, plus exact-artifact
-  clean-install behavioral QA.
-- Last run: PARTIAL 2026-07-19. Cross-layer regressions reproduced and then closed the Node 20/24
-  split across preflight/common/doctor, the LibreChat and Skyvern launchers, and the macOS helper.
-  Six source surfaces now select Node 24, both shell launchers pass syntax, the helper rebuilds, the
-  complete parent release suite passes, and the VM built, started, and restarted the source candidate
-  under Node 24. Exact-payload process-path provenance and proof that no second runtime is resolved on
-  a pristine install remain open.
+- Automation: a source contract that compares the owning exact Node version/archive against the
+  Native component manifest across preflight/common/doctor/LibreChat launcher/optional launcher/
+  helper/package, plus archive safety, publisher, real-provider, and exact-artifact QA.
+- Last run: PARTIAL 2026-08-01. Node 24.18.1 deterministically timed out before HTTP for both direct
+  provider fetch and `@librechat/agents`, while exact 24.16.0 passed. The official pinned arm64
+  archive was downloaded, digest/publisher/version checked, and passed the real provider path;
+  archive/path contracts, shell syntax, and helper build pass. A clean upgrade/restart must still
+  prove the live API executable path on both architectures and the rebuilt exact payload.
 
 ## `INST-025` - Helper Bundle Ownership And Rollback
 
@@ -1049,23 +1052,32 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
 - Risk covered: owner-machine leftovers masquerading as product defaults; raw credentials in
   browser or generated files; Groq/Grok custom-endpoint drift; hidden responsive navigation;
   optional channel failures blocking first chat; reinstall/upgrade data loss; unrelated-process or
-  personal-state removal during uninstall.
+  personal-state removal during uninstall; stale installer-operation locks blocking the next user
+  action; a plain clone failing configuration before its pinned LibreChat agent source-of-truth can
+  be bootstrapped.
 - Preconditions: isolated support, cache, temp, browser, database, ports, and synthetic account
   roots; loopback-only synthetic providers; no owner runtime or personal state in scope.
 - Steps:
-  1. Run the public headless Easy Install source entrypoint with the minimal Native/non-Docker
-     profile; open its browser handoff and create the first local synthetic administrator.
-  2. Connect OpenAI, Groq, and Grok/xAI independently; for each, obtain two useful answers, refresh,
+  1. Start from a plain clone with no managed component directories. Run the public headless Easy
+     Install source entrypoint with the minimal Native/non-Docker profile; verify the candidate
+     selects and fetches its complete pinned compile prerequisites before compiler validation;
+     inject a partial bootstrap that creates LibreChat before failing, retry, and test linked
+     component roots/ancestors plus an internal linked agent-bundle parent; then open its
+     browser handoff and create the first local synthetic administrator.
+  2. Exercise help, invalid headless input, a successful no-start install, a successful runtime
+     handoff, snapshot, memory hardening, and memory dedupe; after every process exit, verify the CLI
+     operation lock is absent and the next command starts without stale-lock recovery.
+  3. Connect OpenAI, Groq, and Grok/xAI independently; for each, obtain two useful answers, refresh,
      restart, exercise invalid credential, quota, provider outage, network failure, Disconnect, and
      re-add, then confirm no request occurs while disconnected.
-  3. Confirm the public main/core/background agent inventory and prompts match source of truth, and
+  4. Confirm the public main/core/background agent inventory and prompts match source of truth, and
      confirm a custom provider's base URL and headers survive Background Cortex initialization.
-  4. Open Settings > Channels on desktop and 320-pixel layouts. Exercise Telegram, Slack Socket
+  5. Open Settings > Channels on desktop and 320-pixel layouts. Exercise Telegram, Slack Socket
      Mode, and WhatsApp Business Cloud API setup/cancel paths, secret masking, official setup links,
      secret-free Slack manifest, keyboard operation, refresh/reopen, and degraded recovery.
-  5. Rerun Easy Install, perform the supported established-user upgrade/restart, and compare user,
+  6. Rerun Easy Install, perform the supported established-user upgrade/restart, and compare user,
      conversation, message, agent, prompt, provider, and channel state before and after.
-  6. Uninstall through the supported command. Confirm only the isolated owned runtime is stopped or
+  7. Uninstall through the supported command. Confirm only the isolated owned runtime is stopped or
      removed, its preserved state is recoverable as promised, and all task listeners close.
 - Expected result: one command reaches a useful first chat; the user receives the public optimized
   Viventium configuration but no owner's conversations or database; provider and optional-channel
@@ -1073,7 +1085,11 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   ownership-bounded.
 - Forbidden result: owner-specific state or prompts, raw secret persistence, `user_provided` used as
   an API key, silent provider remapping, old LiveKit playground routing, invisible navigation
-  intercepting Settings, optional-channel failure blocking chat, data loss, or unrelated cleanup.
+  intercepting Settings, optional-channel failure blocking chat, compiler validation failing before
+  a fresh clone can fetch its pinned agent bundle, accepting an incomplete selected component set
+  because LibreChat already exists, following a component or internal source-of-truth symlink
+  outside the checkout, ingesting a private external agent bundle, a stale operation lock after the
+  installer process exits, data loss, or unrelated cleanup.
 - Evidence to capture: sanitized command/timing ledger; headed browser outcomes and accessibility
   scan; loopback request counters; before/after counts and hashes; generated config and component
   pin identity; listener ownership; uninstall result; public-safety scan.
@@ -1085,6 +1101,39 @@ Google/Microsoft OAuth detail remains in `qa/mcp-oauth/`.
   evidence are recorded in the dated report. Vendor-side message delivery and a signed/notarized
   immutable Native payload remain separately scoped external acceptance gates, not source-path
   failures.
+
+## `INST-034` - Existing-User Universal Upgrade Continuity
+
+- Requirement: advance an established Custom Settings installation to one exact reviewed parent and
+  component identity while preserving all user-owned state and keeping runtime-owned migrations
+  narrow, transactional, and observable.
+- Risk covered: overwriting local config or agent instructions; losing users, chats, saved memory,
+  feelings, files, schedules, prompts, provider credentials, pairing state, or active checkout
+  selection; running source different from the reviewed pin; duplicate Telegram ownership; a UI
+  that reports false missing credentials or unavailable channels after a successful upgrade.
+- Steps:
+  1. Create a complete owner-only logical snapshot before activation and verify it is recoverable.
+  2. Validate and activate the exact reviewed source checkout through the supported local-prod path,
+     restart, and prove API/web/scheduler health plus parent/component pin identity.
+  3. Compare canonical config, schedule database, and every recoverable Mongo collection before and
+     after. Review live agent-vs-source drift without pushing or reconciling it.
+  4. In a real signed-in browser, inspect Connected Accounts, Channels, responsive phone/desktop
+     geometry, refresh, and restart persistence. Verify credentials by state only, never by value.
+  5. Run a synthetic Telegram Desktop turn and current memory-hardening dry run; correlate visible
+     delivery with logs and DB timestamps. Remove only QA-created state using guarded exact-before
+     records, then repeat the complete snapshot comparison.
+- Expected result: the installed runtime uses the exact reviewed source and component; all
+  recoverable pre-existing user state is byte-identical; intentional credential recovery persists;
+  local prompt/model/tool drift remains protected; optional integrations are truthful; one Telegram
+  reply arrives without duplicate ownership.
+- Forbidden result: broad restore, owner-state reset, default agent push, credential disclosure,
+  duplicate poller, generated source masquerading as the reviewed component, silent fallback model
+  remapping, QA messages or memory residue, or a universal-release claim without exact signed
+  artifact and physical clean-Mac proof.
+- Last run: PARTIAL 2026-07-25. The installed source-candidate path, responsive
+  browser, refresh/restart, agent-drift protection, provider-state persistence, Telegram delivery,
+  and exact post-cleanup snapshot comparison passed. The final immutable release artifact and wider
+  hardware/security matrix remain open.
 
 ## Natural User Use Case Checklist
 
@@ -1112,6 +1161,7 @@ rows before claiming a pass when the feature behavior changes.
 | `INST-UC-017` | Force a failed start, stop with Telegram disabled, restart after Docker-daemon loss, and uninstall from a new shell. | `39_Installer_and_Config_Compiler.md` / `INST-019`, `TR-010` | isolated CLI install/start/stop/preflight/uninstall, process table, Docker endpoint/volume | process group and pid records, receipt mode/decision, launchctl recorder, ports, Docker health, recoverable backup | Only exact target-owned processes/jobs are drained; outage is honest; retry works; uninstall preserves state and never infers helper ownership from transient environment. | PARTIAL 2026-07-21; the expanded 300-case synthetic fault/native slice and disposable source-candidate paths cover failure/recovery/removal ownership. Exact signed artifact and wider physical fault matrix remain open. |
 | `INST-UC-018` | Freeze one candidate, run its clean-machine matrix through the storage guard, then remove the only disposable VM. | `39_Installer_and_Config_Compiler.md` / `INST-032` | QA host guard, Tart, Docker baseline, candidate VM and private evidence | persistent receipt, exact argv/events, host/Docker before/peak/after metrics, baseline resource sets, final QA-VM inventory | The run cannot start beside another QA VM, stops at budget limits, preserves unrelated state, and releases its lease only after exact cleanup. | PARTIAL 2026-07-21; fake-tool automation passed, while the real frozen-candidate run remains blocked pending an exact candidate and isolated machine. |
 | `INST-UC-019` | Run the supported non-Docker source Easy Install from one command through first chat, providers, Channels, restart, reinstall, upgrade, and owned uninstall. | `39_Installer_and_Config_Compiler.md` / `INST-033` | Isolated public source entrypoint, headed browser, generated config, local DB/state, CLI lifecycle | Sanitized timings, visible setup/chat/Channels results, loopback request ledger, counts/hashes, agent baseline, component pins, listeners, uninstall receipt | A novice immediately gets the optimized public Viventium configuration without owner data; failures recover; continuity holds; cleanup touches only the isolated install. | PASS 2026-07-23; complete isolated source-path acceptance recorded in the dated report. |
+| `INST-UC-020` | Upgrade an established personalized Custom Settings installation, restart, inspect Accounts/Channels/scheduler, send one Telegram turn, then compare and clean the QA state. | `39_Installer_and_Config_Compiler.md` / `INST-034` | Supported local-prod activation, complete snapshot, headed Chrome, Telegram Desktop, status, Mongo/scheduler/config | Exact parent/component identity; all safe collection counts/hashes; config/schedule hashes; agent drift counts/fields; credential retention state; responsive geometry; bridge delivery timestamps | Existing state remains exact, intentionally recovered provider keys persist, local agent drift is not pushed, Channels and scheduler load, the Telegram bridge responds once, and the QA turn leaves no durable residue. | PARTIAL 2026-07-25; all `22` recoverable Mongo collection fingerprints plus canonical config and schedules were identical after guarded QA cleanup. Signed/notarized immutable artifact, Gatekeeper/Developer ID, pristine physical/Intel, and wider failure matrix remain open. |
 
 ## Release Test Traceability
 

@@ -112,7 +112,9 @@ See `config.env.example` for all available options.
 - ✅ **Text Chat**: Send messages via Telegram, receive responses from Viventium
 - ✅ **Voice Notes**: Transcribe voice messages and send to Viventium
 - ✅ **Voice Replies**: Uses the linked user's saved modern Speaking route for voice notes and
-  always-voice text replies
+  Smart voice for text replies; the Main Agent can keep read-first artifacts text-only
+- ✅ **Natural Message Bubbles**: Conversational answers can use a small number of model-selected
+  message boundaries while copy-ready artifacts remain intact
 - ✅ **Image Support**: Send images, extract text, and process with Viventium
 - ✅ **Document Processing**: Extract text from PDFs and documents
 - ✅ **Multi-user Support**: Each Telegram user gets their own LiveKit room
@@ -126,8 +128,12 @@ This bot uses **LibreChat Agents**, meaning:
 - Same system prompts, tools, MCPs, and capabilities as the web UI
 - Consistent behavior across Telegram and LibreChat
 - No LiveKit dependency for text chat
-- Voice output preferences are routed before generation. A voice note or always-voice text turn
-  requests LibreChat `voiceMode=true`; disabled voice replies request text-only output.
+- Voice output preferences are routed before generation, but Telegram remains a LibreChat text-mode
+  surface (`voiceMode=false`). A voice note or Smart voice for text turn can add one audio
+  attachment after generation; disabled voice replies remain text-only.
+- Registered surface prompts let the selected Main Agent emit standalone `{SKIP_VOICE}` when
+  optional audio would reduce usefulness and `{MSG_BREAK}` between complete conversational beats.
+  Runtime consumes these controls, persists one clean turn, and never guesses intent from keywords.
 - Cartesia Speaking routes always use Sonic-3 with the selected voice persona. Model-authored
   Cartesia SSML/emotion markers are preserved for TTS and sanitized from Telegram-visible text.
 

@@ -530,6 +530,11 @@ commit_and_push_repo() {
             echo "  - $name: failed to add changes" >&2
             return 1
         }
+        python3 "$PROJECT_ROOT/scripts/viventium/verify_staged_public_safety.py" \
+            --repo "$path" || {
+            echo "  - $name: staged public-safety verification failed; refusing to commit or push" >&2
+            return 1
+        }
         if ! git -C "$path" diff --cached --quiet; then
             git -C "$path" commit -m "$message" || {
                 echo "  - $name: commit failed" >&2

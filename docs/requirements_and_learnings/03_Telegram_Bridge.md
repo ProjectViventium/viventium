@@ -41,9 +41,64 @@ stream back to Telegram through the existing bridge.
   (`127.0.0.1`) to avoid localhost address-family ambiguity during restart windows. Status must
   treat Telegram as degraded when the bot process is alive but the configured LibreChat API origin
   cannot be reached.
+- HTTP clients created for an `http://` loopback LibreChat origin must not consult machine proxy
+  environment or synchronously load an unused TLS CA bundle on the Telegram event loop. This local
+  optimization must stay scheme- and host-bound: remote or HTTPS origins retain HTTPX's normal
+  certificate verification and environment behavior. It applies to bridge requests and attachment
+  downloads. No local request setup path may block the Bot API receive loop while preparing an
+  unused TLS verifier.
 - Successful LibreChat stream jobs must remain available briefly after completion so Telegram retry
   or resume can recover the final event. A late reconnect after a completed response must not become
   a synthetic generic connection error just because the generation job was deleted immediately.
+
+## Smart Messaging Delivery Controls
+
+Telegram text and optional audio are two delivery views of one Main Agent answer. The selected
+agent decides whether audio is useful and where a conversational answer has natural bubble
+boundaries; runtime only consumes these explicit structural controls:
+
+- `{SKIP_VOICE}` on a standalone line suppresses optional audio for that turn while preserving the
+  complete text. It is appropriate for read/copy/edit-first artifacts such as emails, code, tables,
+  exact wording, and dense reference material. It must not be used merely because conversation is
+  detailed or long. An explicit request for text only/no audio requires suppression, while an
+  explicit request to hear/read/speak takes precedence over the default semantic appraisal.
+- `{MSG_BREAK}` on a standalone line separates complete conversational beats. The agent usually
+  emits none and may emit at most two, so one logical turn creates at most three semantic bubbles.
+  It must not split code, quotations, emails, documents, tables, lists, or tiny fragments.
+
+Controls are case/whitespace tolerant only as standalone lines outside fenced code and block
+quotes. Literal mentions in prose, inline code, fenced examples, and quotes remain user content.
+Incomplete reserved suffixes are hidden during streaming. Streaming may update one reversible
+preview bubble, but it must not publish irreversible length chunks before the complete logical
+answer has been parsed for delivery controls. After parsing, each semantic segment is rendered once
+to Telegram HTML and then split into tag-balanced physical messages measured against Telegram's
+post-entity UTF-16 limit. This preserves code fences, expanded tables, emoji, and an early
+`{SKIP_VOICE}` or `{MSG_BREAK}` even when the answer later exceeds the transport limit.
+Preview coalescing happens before Markdown rendering so rapid token deltas do not repeatedly pay the
+full render/split cost. If a final or proactive multi-message delivery stops after any text has been
+shown, the runtime suppresses audio and sends a short visible interruption notice rather than
+silently presenting a truncated answer as complete.
+
+The clean response persists as one logical assistant turn. Semantic bubbles are transport messages,
+not duplicate history. Telegram-safe post-parse chunking remains an additional size guard: the
+at-most-three limit applies to semantic bubbles, while a response over the transport threshold can
+require more physical messages. If audio is sent, the clean logical answer is synthesized once and
+delivered once after the final physical text message. Runtime must never infer these choices from
+keywords, length, provider labels, agent names, or prompt text. Physical size splitting is mandatory
+and is not exposed as a user preference because Telegram cannot accept an oversized message.
+If a response stream fails after useful partial text arrives, the reversible preview is finalized
+with a clear retry notice and optional audio is suppressed. A transient final edit retries the same
+formatted HTML; only an explicit entity-parse failure uses a plain-text fallback. Failure to deliver
+text always suppresses audio.
+
+The grammar is versioned and shared by the LibreChat/JavaScript persistence boundary and Python
+messaging adapters. Compatible future adapters consume this contract instead of inventing
+channel-specific tokens. Telegram exposes the existing `ALWAYS_VOICE_RESPONSE` preference as
+`Smart voice for text`.
+
+The legacy `LONG_TEXT_SPLIT` preference is retired and is no longer forwarded to the bot. Physical
+Telegram limit enforcement is mandatory and semantic bubble boundaries belong only to the
+versioned `{MSG_BREAK}` control.
 
 ## Public-Safe Implementation Notes
 
@@ -69,8 +124,12 @@ stream back to Telegram through the existing bridge.
   canonical Keychain token compile to `service-env/telegram.config.env` with mode `0600` and use the
   existing supervised adapter path.
 - Browser and operator ownership are mutually exclusive. If the supervised operator bridge is
-  enabled or Telegram reports another poller, Settings must fail closed with a repair action. It
-  must never stop an unknown poller or silently replace the owner's established bridge.
+  enabled, Settings must identify Telegram as managed by Custom Settings Install, suppress its
+  browser-owned setup/pairing/test/disconnect controls, and reject those mutation endpoints even
+  when called directly. If an otherwise browser-owned Telegram connection reports another poller,
+  Settings must fail closed with a repair action. Viventium must never stop an unknown poller or
+  silently replace the owner's established bridge. Operator ownership alone does not prove delivery
+  health; health remains owned by Custom Settings Install status and diagnostics.
 - Core web chat remains healthy when Telegram is disconnected, misconfigured, degraded, or waiting
   for user action.
 
@@ -297,12 +356,48 @@ stream back to Telegram through the existing bridge.
 - Telegram GlassHive delivery dispatcher tuning is operational only:
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_POLL_S` controls the background delivery poll interval
     and defaults to 5 seconds.
+  - Dependency failures use capped exponential backoff rather than retrying and logging every five
+    seconds. `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_MAX_BACKOFF_S` defaults to 60 seconds. The
+    first failure and the eventual recovery are logged once; healthy empty-ledger polling returns
+    immediately to the normal five-second interval so late-reply correctness does not regress.
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_BATCH_SIZE` controls each claim batch and is capped at
     25.
   - `VIVENTIUM_TELEGRAM_GLASSHIVE_DELIVERY_LEASE_MS` controls the claim lease and defaults to 10
     minutes, capped at 10 minutes. A lost claim must be returned as a conflict and logged as
     observability, not silently treated as a successful status update.
   - These knobs must not replace the durable delivery ledger or become correctness requirements.
+
+## Poller Ownership Across Upgrades
+
+The same-token lock remains the final BotFather `getUpdates` exclusion boundary, but a bare PID is
+not sufficient runtime ownership evidence. Local runtime startup also maintains an owner-only,
+stable-state poller receipt containing only the token SHA-256 hash, PID, process-start identity,
+checkout root, working directory, launch descriptor path, readiness state, and a typed readiness
+proof. The token itself is never persisted in a receipt or transaction.
+
+Before an upgrade signals a predecessor, current process identity must agree with the receipt:
+owner uid, PID, process start identity, recognized `TelegramVivBot/bot.py` command, working
+directory, and checkout scope. A mismatch is treated as PID reuse or unknown ownership and must not
+be signalled. Pattern-based `bot.py` kills are not an allowed fallback.
+
+Restart handoff is transactional:
+
+1. Prove the predecessor and its owner-only rollback launch descriptor.
+2. Save a token-hash-only handoff transaction in stable runtime state.
+3. Stop only the revalidated predecessor with a graceful signal.
+4. Start the selected checkout and attach its revalidated process identity.
+5. `post_init` may schedule readiness observation but cannot publish it. Commit only after pinned
+   PTB reports both its Updater receive loop and Application update processor running, and the
+   receipt carries `polling_started` or `webhook_started`. A pre-poll `ready=true`, missing/unknown
+   proof, or failure between `post_init` and updater/application start keeps the transaction
+   rollback-capable.
+6. If startup fails or the launcher is interrupted, a detached guard restores the prior recognized
+   launch descriptor when it remains safe to do so.
+
+Older supported launchers that predate owner receipts may be migrated only from a current
+owner-controlled pid file whose live process is independently recognized by uid, command, and
+Telegram working directory. Their stable, owner-controlled launch descriptor must already exist
+before takeover; otherwise the predecessor remains untouched.
 
 ## Telegram Attachments
 

@@ -10,7 +10,9 @@ prepend_path_if_dir() {
 
 ensure_brew_paths_on_path() {
   local mongodb_arch=""
+  local node_arch=""
   mongodb_arch="$(uname -m 2>/dev/null || true)"
+  node_arch="$mongodb_arch"
   prepend_path_if_dir "${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools/mongodb/8.0.23/${mongodb_arch}/bin"
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/opt/homebrew/sbin"
@@ -18,6 +20,9 @@ ensure_brew_paths_on_path() {
   prepend_path_if_dir "/usr/local/sbin"
   prepend_path_if_dir "/opt/homebrew/opt/node@24/bin"
   prepend_path_if_dir "/usr/local/opt/node@24/bin"
+  prepend_path_if_dir "${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools/node/24.16.0/${node_arch}/bin"
+  prepend_path_if_dir "/opt/homebrew/opt/pnpm@10/bin"
+  prepend_path_if_dir "/usr/local/opt/pnpm@10/bin"
   prepend_path_if_dir "/opt/homebrew/opt/python@3.12/libexec/bin"
   prepend_path_if_dir "/usr/local/opt/python@3.12/libexec/bin"
   prepend_path_if_dir "/Applications/Docker.app/Contents/Resources/bin"
@@ -27,13 +32,85 @@ ensure_brew_paths_on_path() {
   export PATH
 }
 
+validate_viventium_app_support_root() {
+  local candidate="${1:-}"
+  local protected=""
+  local prefix=""
+  local part=""
+  local nearest=""
+  local parts=()
+
+  [[ "$candidate" == /* ]] || return 1
+  [[ "$candidate" != "/" ]] || return 1
+  [[ "$candidate" != */ ]] || return 1
+  [[ "$candidate" != *"//"* ]] || return 1
+  [[ "$candidate" != *"/../"* && "$candidate" != */.. ]] || return 1
+  [[ "$candidate" != *"/./"* && "$candidate" != */. ]] || return 1
+
+  for protected in \
+    "${HOME:-}" \
+    "${HOME:-}/Documents" \
+    "${HOME:-}/Desktop" \
+    "${HOME:-}/Downloads" \
+    "${HOME:-}/Library" \
+    "${HOME:-}/Library/Application Support"
+  do
+    [[ -n "$protected" && "$candidate" != "$protected" ]] || return 1
+  done
+
+  protected="${REPO_ROOT:-}"
+  if [[ -n "$protected" ]]; then
+    case "$candidate/" in
+      "$protected/"*) return 1 ;;
+    esac
+  fi
+  protected="${WORKSPACE_ROOT:-}"
+  [[ -z "$protected" || "$candidate" != "$protected" ]] || return 1
+
+  IFS='/' read -r -a parts <<<"${candidate#/}"
+  for part in "${parts[@]}"; do
+    [[ -n "$part" ]] || continue
+    prefix="$prefix/$part"
+    [[ ! -L "$prefix" ]] || return 1
+  done
+
+  nearest="$candidate"
+  while [[ ! -e "$nearest" && ! -L "$nearest" ]]; do
+    nearest="$(dirname "$nearest")"
+  done
+  [[ -d "$nearest" && ! -L "$nearest" ]] || return 1
+  [[ -O "$nearest" ]] || return 1
+}
+
 ensure_app_support_layout() {
   local app_support_dir="$1"
-  mkdir -p "$app_support_dir"
-  mkdir -p "$app_support_dir/runtime"
-  mkdir -p "$app_support_dir/state"
-  mkdir -p "$app_support_dir/snapshots"
-  mkdir -p "$app_support_dir/logs"
+  local directory=""
+  if ! validate_viventium_app_support_root "$app_support_dir"; then
+    echo "Refusing an unsafe Viventium App Support root." >&2
+    return 1
+  fi
+  for directory in \
+    "$app_support_dir" \
+    "$app_support_dir/runtime" \
+    "$app_support_dir/state" \
+    "$app_support_dir/state/continuity" \
+    "$app_support_dir/snapshots" \
+    "$app_support_dir/logs"
+  do
+    if [[ -L "$directory" || ( -e "$directory" && ! -d "$directory" ) ]]; then
+      echo "Viventium App Support contains an unsafe managed directory" >&2
+      return 1
+    fi
+    (
+      umask 077
+      mkdir -p "$directory"
+    )
+    if [[ -L "$directory" || ! -d "$directory" ]]; then
+      echo "Viventium App Support directory could not be secured" >&2
+      return 1
+    fi
+    chmod 700 "$directory"
+  done
 }
 
 path_is_git_repo_root() {
@@ -340,20 +417,10 @@ resolve_repo_python() {
     if [[ -z "$candidate" ]]; then
       continue
     fi
-    if command -v "$candidate" >/dev/null 2>&1; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  for candidate in "${candidates[@]}"; do
-    if [[ -z "$candidate" ]]; then
-      continue
-    fi
-    if command -v "$candidate" >/dev/null 2>&1; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    python_runs_inline_script "$candidate" || continue
+    printf '%s\n' "$candidate"
+    return 0
   done
 
   echo "Unable to locate a usable Python interpreter." >&2
@@ -395,30 +462,284 @@ bootstrap_python_root() {
   printf '%s\n' "${VIVENTIUM_BOOTSTRAP_PYTHON_ROOT:-$app_support_dir/state/bootstrap-python}"
 }
 
+prepare_bootstrap_python_parent() {
+  local root=""
+  local app_support_dir="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}"
+  root="$(bootstrap_python_root)"
+
+  if [[ -z "${VIVENTIUM_BOOTSTRAP_PYTHON_ROOT:-}" ]]; then
+    [[ "$root" == "$app_support_dir/state/bootstrap-python" ]] || return 1
+    ensure_app_support_layout "$app_support_dir"
+  fi
+}
+
+validate_bootstrap_python_root() {
+  local root="${1:-}"
+  local parent=""
+  local logical_parent=""
+  local physical_parent=""
+
+  [[ "$root" == /* ]] || return 1
+  [[ "$root" != *"/../"* && "$root" != */.. && "$root" != *"/./"* && "$root" != */. ]] || return 1
+  [[ "$(basename "$root")" == "bootstrap-python" ]] || return 1
+  [[ ! -L "$root" ]] || return 1
+
+  parent="$(dirname "$root")"
+  [[ -d "$parent" && ! -L "$parent" && -O "$parent" ]] || return 1
+  logical_parent="$(cd -L "$parent" 2>/dev/null && pwd)" || return 1
+  physical_parent="$(cd -P "$parent" 2>/dev/null && pwd)" || return 1
+  [[ "$logical_parent" == "$physical_parent" ]] || return 1
+  [[ "$root" == "$logical_parent/bootstrap-python" ]] || return 1
+}
+
+bootstrap_python_lock_dir() {
+  local root
+  root="$(bootstrap_python_root)"
+  printf '%s.lock\n' "$root"
+}
+
+bootstrap_python_process_start() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  ps -p "$pid" -o lstart= 2>/dev/null |
+    tr -s '[:space:]' ' ' |
+    sed 's/^ //; s/ $//'
+}
+
+bootstrap_python_path_mtime() {
+  local path="${1:-}"
+  stat -f '%m' "$path" 2>/dev/null || stat -c '%Y' "$path" 2>/dev/null
+}
+
+bootstrap_python_lock_value() {
+  local owner_file="$1"
+  local key="$2"
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$owner_file"
+}
+
+clear_stale_bootstrap_python_lock() {
+  local lock_dir="$1"
+  local owner_file="$lock_dir/owner"
+  local lock_pid=""
+  local lock_start=""
+  local current_start=""
+  local lock_mtime=""
+  local now=""
+  local candidate=""
+
+  [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || return 1
+
+  if [[ -f "$owner_file" && ! -L "$owner_file" && -O "$owner_file" ]]; then
+    lock_pid="$(bootstrap_python_lock_value "$owner_file" pid 2>/dev/null || true)"
+    lock_start="$(bootstrap_python_lock_value "$owner_file" start 2>/dev/null || true)"
+    if [[ "$lock_pid" =~ ^[0-9]+$ && -n "$lock_start" ]]; then
+      current_start="$(bootstrap_python_process_start "$lock_pid" 2>/dev/null || true)"
+      if [[ -n "$current_start" && "$current_start" == "$lock_start" ]]; then
+        return 1
+      fi
+    fi
+  else
+    lock_mtime="$(bootstrap_python_path_mtime "$lock_dir" 2>/dev/null || true)"
+    now="$(date +%s)"
+    [[ "$lock_mtime" =~ ^[0-9]+$ && $((now - lock_mtime)) -ge 2 ]] || return 1
+  fi
+
+  rm -f -- "$owner_file" "$lock_dir/pid"
+  for candidate in "$lock_dir"/owner.tmp.*; do
+    [[ -f "$candidate" && ! -L "$candidate" && -O "$candidate" ]] || continue
+    rm -f -- "$candidate"
+  done
+  rmdir "$lock_dir" 2>/dev/null
+}
+
+acquire_bootstrap_python_lock() {
+  local root
+  root="$(bootstrap_python_root)"
+  local lock_dir=""
+  local owner_temporary=""
+  local process_start=""
+  local created=""
+  local current_pid="${BASHPID:-$$}"
+  local attempt=0
+
+  if ! validate_bootstrap_python_root "$root"; then
+    echo "Refusing an unsafe Viventium bootstrap Python root." >&2
+    return 1
+  fi
+
+  lock_dir="$(bootstrap_python_lock_dir)"
+  [[ ! -L "$lock_dir" ]] || {
+    echo "Refusing a symlinked Viventium bootstrap Python lock." >&2
+    return 1
+  }
+
+  while ! mkdir -m 700 "$lock_dir" 2>/dev/null; do
+    [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || {
+      echo "Viventium bootstrap Python lock path is unsafe." >&2
+      return 1
+    }
+    if clear_stale_bootstrap_python_lock "$lock_dir"; then
+      continue
+    fi
+    attempt=$((attempt + 1))
+    if (( attempt >= 300 )); then
+      echo "Timed out waiting for the Viventium bootstrap Python lock." >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+
+  VIVENTIUM_BOOTSTRAP_LOCK_TOKEN="$current_pid.$(date +%s).$RANDOM.$RANDOM"
+  process_start="$(bootstrap_python_process_start "$current_pid")" || return 1
+  created="$(date +%s)"
+  owner_temporary="$lock_dir/owner.tmp.$current_pid"
+  (
+    umask 077
+    {
+      printf 'pid=%s\n' "$current_pid"
+      printf 'start=%s\n' "$process_start"
+      printf 'token=%s\n' "$VIVENTIUM_BOOTSTRAP_LOCK_TOKEN"
+      printf 'created=%s\n' "$created"
+    } >"$owner_temporary"
+  )
+  chmod 600 "$owner_temporary"
+  mv "$owner_temporary" "$lock_dir/owner"
+  export VIVENTIUM_BOOTSTRAP_LOCK_TOKEN
+}
+
+release_bootstrap_python_lock() {
+  local lock_dir=""
+  local owner_file=""
+  local recorded_pid=""
+  local recorded_start=""
+  local recorded_token=""
+  local current_start=""
+  local current_pid="${BASHPID:-$$}"
+  lock_dir="$(bootstrap_python_lock_dir)"
+  owner_file="$lock_dir/owner"
+  [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || return 0
+  [[ -f "$owner_file" && ! -L "$owner_file" && -O "$owner_file" ]] || return 0
+  recorded_pid="$(bootstrap_python_lock_value "$owner_file" pid 2>/dev/null || true)"
+  recorded_start="$(bootstrap_python_lock_value "$owner_file" start 2>/dev/null || true)"
+  recorded_token="$(bootstrap_python_lock_value "$owner_file" token 2>/dev/null || true)"
+  current_start="$(bootstrap_python_process_start "$current_pid" 2>/dev/null || true)"
+  [[ "$recorded_pid" == "$current_pid" ]] || return 0
+  [[ -n "$current_start" && "$recorded_start" == "$current_start" ]] || return 0
+  [[ -n "${VIVENTIUM_BOOTSTRAP_LOCK_TOKEN:-}" &&
+    "$recorded_token" == "$VIVENTIUM_BOOTSTRAP_LOCK_TOKEN" ]] || return 0
+  rm -f -- "$owner_file"
+  rmdir "$lock_dir" 2>/dev/null || true
+  unset VIVENTIUM_BOOTSTRAP_LOCK_TOKEN
+}
+
+with_bootstrap_python_lock() (
+  acquire_bootstrap_python_lock || exit 1
+  trap 'release_bootstrap_python_lock' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  "$@"
+)
+
+remove_bootstrap_python_temporary_tree() {
+  local root="$1"
+  local temporary_path="${2:-}"
+  case "$temporary_path" in
+    "$root.build."*|"$root.previous."*)
+      rm -rf -- "$temporary_path"
+      ;;
+    "")
+      ;;
+    *)
+      echo "Refusing to remove an unexpected Viventium bootstrap Python path." >&2
+      return 1
+      ;;
+  esac
+}
+
+create_bootstrap_python_unlocked() {
+  local base_python="$1"
+  local root="$2"
+  local preferred="${VIVENTIUM_PYTHON_BIN:-}"
+  local python_bin="$root/bin/python3"
+  local candidate=""
+  local resolved_candidate=""
+  local seen_candidates="|"
+  local staging_root=""
+  local staging_python=""
+  local previous_root=""
+  local candidates=()
+
+  if [[ -x "$python_bin" ]]; then
+    if python_runs_inline_script "$python_bin" &&
+      "$python_bin" -m pip --version >/dev/null 2>&1
+    then
+      printf '%s\n' "$python_bin"
+      return 0
+    fi
+  fi
+
+  candidates+=("$base_python")
+  [[ -n "$preferred" ]] && candidates+=("$preferred")
+  candidates+=(python3.12 python3.11 python3.10 python3 python)
+
+  for candidate in "${candidates[@]}"; do
+    [[ -n "$candidate" ]] || continue
+    resolved_candidate="$(command -v "$candidate" 2>/dev/null || true)"
+    [[ -n "$resolved_candidate" ]] || continue
+    case "$seen_candidates" in
+      *"|$resolved_candidate|"*) continue ;;
+    esac
+    seen_candidates="${seen_candidates}${resolved_candidate}|"
+    python_runs_inline_script "$candidate" || continue
+
+    staging_root="$(mktemp -d "$root.build.XXXXXX")" || return 1
+    chmod 700 "$staging_root"
+    staging_python="$staging_root/bin/python3"
+    if "$candidate" -m venv "$staging_root" >/dev/null 2>&1 &&
+      [[ -x "$staging_python" ]] &&
+      python_runs_inline_script "$staging_python" &&
+      "$staging_python" -m pip --version >/dev/null 2>&1
+    then
+      if [[ -e "$root" ]]; then
+        previous_root="$(mktemp -d "$root.previous.XXXXXX")" || {
+          remove_bootstrap_python_temporary_tree "$root" "$staging_root"
+          return 1
+        }
+        rmdir "$previous_root"
+        if ! mv "$root" "$previous_root"; then
+          remove_bootstrap_python_temporary_tree "$root" "$staging_root"
+          return 1
+        fi
+      fi
+      if ! mv "$staging_root" "$root"; then
+        [[ -n "$previous_root" && -e "$previous_root" ]] && mv "$previous_root" "$root" 2>/dev/null || true
+        remove_bootstrap_python_temporary_tree "$root" "$staging_root"
+        return 1
+      fi
+      remove_bootstrap_python_temporary_tree "$root" "$previous_root"
+      printf '%s\n' "$python_bin"
+      return 0
+    fi
+    remove_bootstrap_python_temporary_tree "$root" "$staging_root"
+    staging_root=""
+  done
+
+  echo "Failed to create a usable Viventium bootstrap Python environment with the available interpreters." >&2
+  return 1
+}
+
 create_bootstrap_python() {
   local base_python="$1"
   local root
   root="$(bootstrap_python_root)"
-  local python_bin="$root/bin/python3"
 
-  if [[ -x "$python_bin" ]]; then
-    if python_runs_inline_script "$python_bin"; then
-      printf '%s\n' "$python_bin"
-      return 0
-    fi
-    rm -rf "$root"
-  fi
-
-  mkdir -p "$(dirname "$root")"
-  if ! "$base_python" -m venv "$root" >/dev/null 2>&1; then
-    echo "Failed to create the Viventium bootstrap Python environment." >&2
+  prepare_bootstrap_python_parent || return 1
+  if ! validate_bootstrap_python_root "$root"; then
+    echo "Refusing an unsafe Viventium bootstrap Python root." >&2
     return 1
   fi
-  if [[ -x "$python_bin" ]]; then
-    printf '%s\n' "$python_bin"
-  else
-    printf '%s\n' "$base_python"
-  fi
+  with_bootstrap_python_lock create_bootstrap_python_unlocked "$base_python" "$root"
 }
 
 python_uses_bootstrap_root() {
@@ -433,21 +754,10 @@ python_uses_bootstrap_root() {
   return 1
 }
 
-ensure_python_module() {
-  local python_bin="$1"
+ensure_python_module_unlocked() {
+  local target_python="$1"
   local module_name="$2"
-  local package_name="${3:-$module_name}"
-  local target_python="$python_bin"
-
-  if python_has_module "$target_python" "$module_name"; then
-    printf '%s\n' "$target_python"
-    return 0
-  fi
-
-  target_python="$(create_bootstrap_python "$python_bin")" || return 1
-  if [[ ! -x "$target_python" ]]; then
-    target_python="$python_bin"
-  fi
+  local package_name="$3"
 
   if ! python_runs_inline_script "$target_python"; then
     echo "Selected Python interpreter cannot execute inline scripts: $target_python" >&2
@@ -489,21 +799,34 @@ ensure_python_module() {
   printf '%s\n' "$target_python"
 }
 
-ensure_python_requirements_file() {
+ensure_python_module() {
   local python_bin="$1"
-  local requirements_file="$2"
+  local module_name="$2"
+  local package_name="${3:-$module_name}"
   local target_python="$python_bin"
-  local stamp_path=""
 
-  [[ -f "$requirements_file" ]] || {
-    echo "Installer requirements file not found: $requirements_file" >&2
-    return 1
-  }
-
+  if python_has_module "$target_python" "$module_name"; then
+    printf '%s\n' "$target_python"
+    return 0
+  fi
   target_python="$(create_bootstrap_python "$python_bin")" || return 1
   if [[ ! -x "$target_python" ]]; then
     target_python="$python_bin"
   fi
+
+  if python_uses_bootstrap_root "$target_python"; then
+    with_bootstrap_python_lock \
+      ensure_python_module_unlocked "$target_python" "$module_name" "$package_name"
+  else
+    ensure_python_module_unlocked "$target_python" "$module_name" "$package_name"
+  fi
+}
+
+ensure_python_requirements_file_unlocked() {
+  local target_python="$1"
+  local requirements_file="$2"
+  local stamp_path=""
+  local stamp_temporary=""
 
   if ! python_runs_inline_script "$target_python"; then
     echo "Selected Python interpreter cannot execute inline scripts: $target_python" >&2
@@ -541,8 +864,33 @@ ensure_python_requirements_file() {
     fi
   fi
 
-  printf '%s\n' "$requirements_hash" >"$stamp_path"
+  stamp_temporary="${stamp_path}.tmp.$$"
+  printf '%s\n' "$requirements_hash" >"$stamp_temporary"
+  mv "$stamp_temporary" "$stamp_path"
   printf '%s\n' "$target_python"
+}
+
+ensure_python_requirements_file() {
+  local python_bin="$1"
+  local requirements_file="$2"
+  local target_python="$python_bin"
+
+  [[ -f "$requirements_file" ]] || {
+    echo "Installer requirements file not found: $requirements_file" >&2
+    return 1
+  }
+
+  target_python="$(create_bootstrap_python "$python_bin")" || return 1
+  if [[ ! -x "$target_python" ]]; then
+    target_python="$python_bin"
+  fi
+
+  if python_uses_bootstrap_root "$target_python"; then
+    with_bootstrap_python_lock \
+      ensure_python_requirements_file_unlocked "$target_python" "$requirements_file"
+  else
+    ensure_python_requirements_file_unlocked "$target_python" "$requirements_file"
+  fi
 }
 
 viventium_port_listener_active() {

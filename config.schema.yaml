@@ -485,6 +485,41 @@ properties:
         properties:
           enabled:
             type: boolean
+          provider:
+            type: object
+            description: Core Agent Builder provider surface backed by GlassHive harness workers.
+            properties:
+              enabled:
+                type: boolean
+              base_url:
+                type: string
+                description: OpenAI-compatible GlassHive base URL as reached by LibreChat.
+              life_dir:
+                type: string
+                description: Absolute canonical per-user Viventium LIFE folder on the GlassHive host; a leading ~ is supported.
+              principal_id:
+                type: string
+                description: Server-owned principal used for portable clients without delegated identity.
+              tenant_id:
+                type: string
+                description: Server-owned tenant scope for provider requests.
+              trust_identity_headers:
+                type: boolean
+                description: Permit the trusted LibreChat service credential to delegate authenticated user identity.
+              default_access:
+                type: string
+                enum: [full, workspace]
+                description: Default harness access recorded in provider capabilities and runtime configuration.
+              allow_full_access:
+                type: boolean
+                description: Permit trusted agents to disable harness sandbox and approval gates.
+              allowed_workspace_roots:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+                description: Absolute server-side roots within which custom working folders may be selected; a leading ~ is supported.
           host_worker:
             type: object
             properties:

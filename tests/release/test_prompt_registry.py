@@ -91,6 +91,8 @@ def test_public_prompt_registry_validates_and_compiles() -> None:
     assert "main.conscious_agent" in bundle["prompts"]
     assert "surface.voice.provider.cartesia" in bundle["prompts"]
     assert "surface.voice.feeling_expression" in bundle["prompts"]
+    assert "surface.messaging.optional_audio" in bundle["prompts"]
+    assert "surface.messaging.bubble_boundaries" in bundle["prompts"]
     assert "surface.telegram.audio_output" in bundle["prompts"]
     assert "surface.telegram.audio_provider.cartesia" in bundle["prompts"]
     assert "surface.telegram.audio_provider.chatterbox" in bundle["prompts"]
@@ -316,6 +318,7 @@ def test_phase_b_follow_up_prompts_render_with_declared_variables() -> None:
         registry,
         variables={
             "surface_rules": "WEB TEXT MODE:",
+            "user_request": "Give a short answer and add a continuation only for new evidence.",
             "recent_response_context": "Here is the response you JUST sent to the user:",
             "continuation_context": "",
             "background_insights": "- worker: The task finished.",
@@ -472,6 +475,8 @@ def test_scheduling_cortex_fastmcp_instructions_match_registry_prompt() -> None:
 
 
 def _load_glasshive_instruction_namespace():
+    if not GLASSHIVE_MCP_SERVER.is_file():
+        pytest.skip("GlassHive component is not checked out for this parent-only test run")
     tree = ast.parse(GLASSHIVE_MCP_SERVER.read_text(encoding="utf-8"))
     selected_names = {
         "_allowed_worker_profiles",

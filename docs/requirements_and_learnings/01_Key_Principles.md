@@ -744,13 +744,17 @@ A developer referring to a single document about a respective feature **must per
 #### Model Governance Rule (Launch-Ready Baseline)
 - Out-of-the-box Viventium conscious and subconscious execution must stay within the current
   launch-ready model families unless a newer documented evaluation replaces them:
-  - `openAI / gpt-5.6-sol` for the conscious agent and quality-first reasoning cortices
-  - `openAI / gpt-5.6-terra` for balanced, latency-sensitive, and tool-heavy cortices
-  - `anthropic / claude-opus-4-8` as the text-execution fallback
+  - `glasshive-harness / codex-cli:gpt-5.6-sol` for the conscious agent and every substantive
+    background cortex when the local GlassHive provider is enabled
+  - the workload-owned effort map remains `low|medium|high|xhigh`; Red Team and Deep Research use
+    `xhigh`, Strategic Planning uses `high`, and lighter cortices retain their lower effort
+  - direct `openAI / gpt-5.6-sol|terra` or `anthropic / claude-opus-5` execution is the explicit
+    GlassHive-disabled install profile, not the default for a GlassHive-enabled install
+  - `anthropic / claude-opus-5` as the text-execution fallback
   - voice remains the explicit `xai / grok-4.3` route with `reasoning_effort: none`
-- Memory writers, activation classifiers, helper/title models, and GlassHive workers are separate
-  workloads with their own documented model contracts; do not infer their model from the
-  conscious/subconscious execution matrix.
+- Memory writers, activation classifiers, helper/title models, and autonomous GlassHive mission
+  workers are separate workloads with their own documented model contracts; do not infer their
+  model from the GlassHive conversation-provider matrix.
 - Unattended analytical automations default to OpenAI `gpt-5.6-sol` with `xhigh` reasoning. This
   includes Prompt Workbench/GlassHive scheduled analysis and OpenAI memory hardening. A different
   route must be an explicit, documented operator fallback with visible requested/effective model
@@ -760,16 +764,26 @@ A developer referring to a single document about a respective feature **must per
   their own evaluated contracts. The GlassHive host Codex substrate is shared with direct host
   delegations, so its Sol/xHigh deployment default also applies there unless explicitly overridden.
 - Do not add a model picker entry or built-in agent assignment for a model that the target provider
-  inventory does not expose. As of the local May 6, 2026 inventory, `claude-sonnet-4-7` is not a
-  supported Anthropic model for Viventium; use `claude-sonnet-4-5` or `claude-opus-4-8` until a
-  verified provider catalog and model QA update replace this baseline.
+  inventory does not expose. The current verified Anthropic managed default is
+  `claude-opus-5`; explicit existing model overrides remain protected compatibility state.
+- Anthropic's canonical Opus 5 ID is `claude-opus-5`; Google Cloud uses the same ID and the newer
+  Bedrock Mantle Messages API uses `anthropic.claude-opus-5`. Official specifications are a
+  1M-token context, 128K maximum output, and standard pricing of $5 input / $25 output per million
+  tokens. The API effort ladder is `low|medium|high|xhigh|max`; `xhigh` is the recommended starting
+  point for coding and agentic work, while `max` is reserved for capability-critical work:
+  <https://platform.claude.com/docs/en/about-claude/models/whats-new-opus-5>.
+- Opus 5 thinking is on by default and explicit adaptive thinking remains valid. Thinking may be
+  disabled only at `high` effort or below; a disabled-thinking request at `xhigh` or `max` must fail
+  clearly before provider dispatch. Opus 5 requests must not carry sampling parameters. LibreChat's
+  existing `bedrock` endpoint is the legacy Converse transport, so it must not advertise Opus 5
+  until the separate Mantle Messages API transport is implemented.
 - Picker availability and built-in assignment are separate decisions. Direct OpenAI API-key routes
   expose `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The distinct ChatGPT
   connected-account route exposes only the provider-verified `gpt-5.6-sol` and `gpt-5.6-terra`
   slugs after the July 9, 2026 Agent Builder QA pass. The built-in execution matrix therefore uses
   explicit Sol/Terra slugs rather than the alias or Luna so API-key and connected-account installs
   share one proven model surface.
-- GPT-5.6 Agent Builder records default `useResponsesApi: true` when that field is unset because
+- Direct OpenAI GPT-5.6 Agent Builder records default `useResponsesApi: true` when that field is unset because
   reasoning, tool use, and multi-turn agents are the Responses-shaped workload. Preserve an explicit
   user choice. Do not invent a `gpt-5.6-pro` slug: GPT-5.6 Pro is an API reasoning mode, not a model.
 - GPT-5.6 effort is workload-owned:
@@ -787,7 +801,9 @@ A developer referring to a single document about a respective feature **must per
     Scout's July 17, 2026 shutdown superseded its April benchmark
   - Anthropic Haiku-class activation is acceptable as a fallback or alternative only when the
     benchmark for the target environment proves it fits the chosen budget
-  - at least one of `OpenAI` or `Anthropic` must be configured for main/background execution on install
+  - at least one of `OpenAI` or `Anthropic` remains required for auxiliary/direct fallback routes on
+    install; when GlassHive is enabled, conscious and cortex authoring use its authenticated harness
+    endpoint instead of depending on each LibreChat user having direct execution credentials
   - do not treat `x_ai` alone as a sufficient built-in background-agent foundation for launch-ready installs
 - Do **not** silently drift back to older defaults such as `gpt-4o` or `gpt-4o-mini` just because a pull or reset changed stored config.
 - The same rule applies to secondary runtime paths such as deferred/background follow-up generation:
@@ -833,6 +849,73 @@ A developer referring to a single document about a respective feature **must per
   - reason: stale picker defaults and title-model entries quietly reintroduce old-model drift even when the agent source-of-truth bundle is correct
 - If a required provider session drops locally (for example OpenAI account disconnects in the desktop app), reconnect the provider and then re-run the real product QA flows. Do not "fix" the situation by silently downgrading shipped agent models to stale families such as `gpt-4o`.
 
+#### GlassHive Core Provider Rule
+
+- `glasshive-harness` is a real Agent Provider/Model choice, not an MCP tool wrapped by another LLM
+  and not a parallel conscious-engine field. Any main agent or substantive cortex may select it.
+- Its exact initial model IDs are `codex-cli:gpt-5.6-sol` and `claude-code:opus`. Provider/model
+  resolution must fail visibly on an unknown value; it must never coerce an unknown provider to
+  OpenAI.
+- The portable baseline is ordinary authenticated OpenAI Chat Completions: a client may send only
+  `model`, `messages`, and `stream`. Viventium session, activity, workspace, and access context are
+  optional extensions layered on that baseline, not prerequisites that couple GlassHive to
+  LibreChat. Common non-shape tuning fields may be accepted and ignored for client portability;
+  unsupported orchestration shapes such as client-owned tools or response formats fail with an
+  OpenAI-shaped error.
+- GlassHive also exposes an additive OpenAI Responses adapter for new direct clients. It must share
+  the exact Chat Completions request/session/run core, not fork orchestration. Simple text/messages,
+  instructions, streaming, reasoning effort, and same-owner `previous_response_id` continuity are
+  supported; unsupported tool or multimodal shapes fail loudly. Chat Completions remains supported
+  for broad custom-provider compatibility.
+- This dual surface follows the current portability boundary documented by the upstream projects:
+  OpenAI recommends Responses for new API clients while continuing to support Chat Completions;
+  OpenAI-compatible clients and gateways commonly expose either protocol. ACP is a JSON-RPC
+  process/thread contract between an editor and an external agent, and MCP connects an AI host to
+  tools and context. Neither replaces a general HTTP conversation endpoint. The Claude Agent SDK is
+  an implementation option behind GlassHive's harness profile, not a client-facing provider
+  protocol. See the official
+  [OpenAI migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses),
+  [OpenAI Chat reference](https://developers.openai.com/api/reference/resources/chat),
+  [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python),
+  [Agent Client Protocol](https://zed.dev/acp), and
+  [MCP architecture](https://modelcontextprotocol.io/docs/learn/architecture).
+- Provider, GlassHive control-plane/runtime, and MCP broker credentials are separate trust domains.
+  A provider bearer token maps to a server-configured principal and tenant. Caller-supplied owner
+  identity and full-host access are honored only when that credential has an explicit server-side
+  delegation/access grant; ordinary endpoint clients default to workspace access.
+- Trusted capability/bootstrap bundles are freshness-bounded and HMAC-authenticated with a
+  dedicated broker secret before GlassHive may project environment or harness configuration. A
+  provider bearer alone must never be able to inject a bootstrap bundle.
+- Provider behavior is selected from compiled capability metadata. GlassHive is eligible for main
+  chat, cortex execution, and Phase-B follow-up, but not Phase-A classification, real-time Voice LLM,
+  or automatic fallback selection. Do not branch on its label.
+- A harness-backed turn has one authoring intelligence. GlassHive executes harness-native and
+  brokered tools itself; LibreChat owns the existing graph, persistence, content parts, and UI but
+  does not place a wrapper model in front of the harness.
+- Conversation mode is distinct from a delegated mission. It answers naturally in the selected
+  working folder, may clarify, and must not create mission scaffolding, force artifacts or a
+  `FINAL REPORT`, or write runtime logs/transcripts into LIFE.
+- The default binding is the canonical per-user `~/Documents/Viventium/Life`, full access, and the
+  selected model's declared recommended effort. Those defaults are compiler/capability-owned, not
+  UI literals. Full access disables harness sandbox and approval gates and is appropriate only for
+  the deliberately trusted local profile. `AGENTS.md` is canonical for Codex and Claude.
+- The standard stream always exposes an OpenAI-compatible lifecycle. The currently shipped Codex
+  and Claude CLI profiles expose safe normalized activity while working and publish assistant text
+  only after their native terminal event. `/v1/models` therefore declares `incremental_text: false`
+  for both. Adapters must not fabricate token deltas, working preambles, or hidden reasoning.
+- One native session is active per tenant/owner/conversation/agent. Reconnect attaches to the same
+  request/session; explicit user cancel is the only browser action that terminates it. Once native
+  execution starts, no retry, overflow recovery, speculative redo, or model fallback may create a
+  second authoring run.
+- Main, Phase B, and cortex requests use distinct structured idempotency roles. The provider's
+  `workspace` access setting limits writes to the chosen folder but does not pretend required
+  runtime reads are a filesystem chroot; the UI and QA must describe this honestly.
+- Requests without an explicit message/idempotency identity are independent turns, even when their
+  text is identical. Only an explicit stable key may reattach a transport retry to an existing
+  authoring run.
+- The broader v0.5 Brain Pack, night-worker, and Insights thesis is not activated by this provider.
+  This is the smallest core upgrade: supported Provider/Model integration plus canonical LIFE.
+
 #### Fail-Loud Source-Of-Truth Rule
 - When an operator tool needs a default bundle or schedule input, prefer explicit current
   source-of-truth files or verified reviewed artifacts only.
@@ -870,7 +953,7 @@ A developer referring to a single document about a respective feature **must per
 ### Deployment Env Parity (Model Lists)
 - **`<PROVIDER>_MODELS` env vars take absolute priority** over hard-coded model lists in LibreChat code
 - When set, `getAnthropicModels()` / `getGoogleModels()` / etc. return `splitAndTrim(process.env.<PROVIDER>_MODELS)` directly
-- **When adding new models** (e.g., `claude-sonnet-4-5`), update the env var on the container — no code changes or rebuild needed:
+- **When adding new models** (e.g., `claude-opus-5`), update the env var on the container — no code changes or rebuild needed:
   ```bash
   update the target runtime env so `ANTHROPIC_MODELS` includes the new values
   ```

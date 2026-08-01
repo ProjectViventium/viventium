@@ -28,6 +28,18 @@ This document defines what belongs in public, private personal, and private ente
 - Secret-bearing snapshot payloads, backup archives, restore pre-backups, and companion-enriched
   continuity bundles must stay machine-local or in the private companion repo. They must never land
   in `docs/`, `qa/`, `tests/`, fixtures, or git history for the public repo.
+- Generated `runtime.env`, `runtime.local.env`, `service-env/**`, `librechat.env`,
+  `librechat.owner.env`, `upgrade-backups/**`, and `successor-bridge/**` are secret-capable
+  machine-local artifacts. Git ignore rules, the staged
+  commit/push gate, Native assembler, Native final verifier, continuity snapshot, metadata audit,
+  and diagnostic surfaces must each exclude or reject them independently. Weakly formatted values
+  do not make one of these paths public-safe.
+- Private upgrade transactions may checkpoint those files only under owner-only transaction
+  storage. Terminal commit/rollback removes ordinary checkpoints, and successful first-upgrade
+  finalization removes only its known secret-bearing successor copies after continuity proof while
+  retaining known sanitized receipts. An incomplete cleanup remains retryable and is not labeled
+  fully cleaned. No raw value may enter a public manifest, command output, QA report, or release
+  payload.
 - Memory hardening raw workpacks, model proposals, rollback snapshots, and local account backup
   manifests are private runtime artifacts. They may exist under App Support or an operator-chosen
   private local backup directory, but must never be copied into public docs, QA evidence, fixtures,
@@ -83,7 +95,7 @@ This document defines what belongs in public, private personal, and private ente
 
 | Runtime/artifact | Current license/distribution boundary | Easy Install Native decision |
 | --- | --- | --- |
-| Node.js supported LTS official macOS runtime | Node is MIT with bundled third-party notices; preserve the complete upstream license/notice set. Node 20 is EOL. | Compatibility-test and pin the latest supported Node 24 LTS patch per architecture; Node 22 is fallback only if required by proven compatibility. Do not ship Node 20. |
+| Node.js supported LTS official macOS runtime | Node is MIT with bundled third-party notices; preserve the complete upstream license/notice set. Node 20 is EOL. | Compatibility-test and pin one exact supported Node 24 LTS patch per architecture; do not accept an unqualified newer patch by major alone. Node 22 is fallback only if required by proven compatibility. Do not ship Node 20. |
 | MongoDB Community Server 8 macOS archive | SSPL is source-available, not OSI open source. MongoDB documents redistribution, but public conveyance still needs explicit notice/compliance/legal review. | The implemented producer downloads the exact official per-architecture archive, verifies digest/version/publisher, and can place the allowed runtime files in the payload. Candidate and release workflows fail closed until `release/native-payload/mongodb-redistribution-approved` records the required approval; do not upload or publish the bundled candidate before then. |
 | Meilisearch Community Edition | Community code/assets are MIT; the repository also has separately licensed enterprise functionality. | If runtime evidence proves chat works without it, defer it. Otherwise select only an exact Community Edition asset, preserve MIT notices, and cap memory/threads. Never select an enterprise asset by pattern or `latest`. |
 | Sparkle updater | Sparkle is MIT; archive/feed signing does not replace Apple code signing/notarization or Viventium's runtime/data health gate. | Candidate for the small macOS helper only after dependency/security review. Runtime payload activation remains Viventium-owned and health-gated. |

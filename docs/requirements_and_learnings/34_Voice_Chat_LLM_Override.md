@@ -14,7 +14,9 @@ the main route.
 3. When both fields are set and all three voice activation conditions are met, the agent's
    model/provider are swapped at runtime before validation and the dedicated voice parameter bag is
    merged over the primary model parameters for that runtime call only.
-4. When fields are null/empty, the agent's main model/provider are used (fully backward compatible).
+4. When fields are null/empty, a voice-capable agent's main model/provider are used. If the primary
+   provider declares `realtime_voice: false`, runtime fails visibly and requires an explicit
+   supported Voice Call LLM; it must never dispatch that text-only provider into LiveKit.
 5. Follow-up service (background cortex insights) also uses the voice model during voice calls.
 6. Sync scripts include voice fields for YAML import/export.
 7. Hidden machine-level voice config must not override or replace the agent-visible Voice Call LLM.
@@ -111,7 +113,10 @@ parameter bag for that spoken follow-up path.
 
 ## Edge Cases
 - **One field set, other null**: Override skipped (both required). UI enforces linked comboboxes.
-- **Invalid voice model**: Warning logged, fallback to main model. Never fails the request.
+- **Invalid voice model**: Warning logged and falls back only when the main model is itself
+  voice-capable; otherwise the call fails visibly.
+- **Text-only main provider**: An absent or invalid Voice Call LLM fails the call visibly when the
+  primary provider declares `realtime_voice: false`; falling back to that primary is forbidden.
 - **Legacy machine env voice settings present**: Ignored for Voice Call LLM selection.
 - **modelsConfig unavailable**: Voice model trusted from DB (allows cold-start scenarios).
 - **Existing agents without voice fields**: UI shows "Using main model" and runtime stays on the

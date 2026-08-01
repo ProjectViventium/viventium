@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 import threading
@@ -34,6 +35,20 @@ HELPER_SOURCE = (
     / "ViventiumHelper"
     / "ViventiumHelperApp.swift"
 )
+FULL_STACK_LAUNCHER = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
+
+
+def extract_shell_function(source: str, name: str) -> str:
+    start = source.index(f"{name}() {{")
+    collected: list[str] = []
+    depth = 0
+    for line in source[start:].splitlines():
+        collected.append(line)
+        depth += line.count("{")
+        depth -= line.count("}")
+        if depth == 0:
+            break
+    return "\n".join(collected) + "\n"
 
 
 def minimal_config() -> dict:
@@ -82,17 +97,538 @@ def test_dev_runtime_validation_fails_closed_before_restart() -> None:
     source = BIN_VIVENTIUM.read_text(encoding="utf-8")
     activation = source[source.index("dev_runtime_command() {") : source.index("workflows_command() {")]
 
-    compile_guard = 'if ! compile_config; then'
+    compile_invocation = '"$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/config_compiler.py"'
+    compile_guard = 'if [[ "$compiler_status" != "0" ]]; then'
     doctor_guard = 'if ! "$REPO_ROOT/scripts/viventium/doctor.sh" \\\n'
+    artifact_guard = '! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/helper_artifact_verify.py"'
+    stop_gate = "dev_runtime_activation_tool quiesce-helper"
+    helper_process_gate = "quiesce_macos_helper_process_for_activation"
+    telegram_migration_gate = 'migrate_telegram_user_configs "$previous_repo"'
+    telegram_recovery_publish_gate = (
+        'publish_active_telegram_recovery_component \\\n'
+        '        "dev-runtime-activation" "$activation_dir"'
+    )
+    telegram_helper_arm_gate = "arm_persistent_telegram_recovery_helper"
+    begin_gate = "dev_runtime_activation_tool begin-new"
+    publish_gate = "if ! dev_runtime_activation_tool publish"
+    commit_gate = "if ! dev_runtime_activation_tool commit"
     helper_guard = 'if ! runtime_checkout_refresh_helper; then'
+    helper_receipt = "if ! dev_runtime_activation_tool finalize-helper"
     restart_gate = 'if [[ "$restart" == "1" ]]; then'
+    component_bootstrap = "bootstrap_components --prefer-existing-checkout-head"
+    strict_component_validation = "bootstrap_components --validate-only --strict-pinned"
+    config_digest_flag = "--expected-config-sha256"
+    app_support_gate = 'ensure_app_support_layout "$APP_SUPPORT_DIR"'
     assert compile_guard in activation
     assert doctor_guard in activation
+    assert artifact_guard in activation
+    assert begin_gate in activation
     assert helper_guard in activation
-    assert "the running stack was not restarted" in activation
+    assert "binding, live runtime, helper, and running state were not changed" in activation
+    assert "restore_previous_dev_runtime_after_failure" in activation
+    assert component_bootstrap in activation
+    assert strict_component_validation in activation
+    assert config_digest_flag in activation
+    assert activation.count("ensure_local_checkout_alignment") >= 2
+    first_alignment = activation.index("ensure_local_checkout_alignment")
+    second_alignment = activation.index(
+        "ensure_local_checkout_alignment",
+        first_alignment + 1,
+    )
+    assert first_alignment < activation.index(component_bootstrap)
+    assert activation.index(component_bootstrap) < activation.index(strict_component_validation)
+    assert activation.index(strict_component_validation) < second_alignment
+    assert second_alignment < activation.index(app_support_gate)
+    assert activation.index(app_support_gate) < activation.index(begin_gate)
+    assert activation.index(compile_invocation) < activation.index(compile_guard)
     assert activation.index(compile_guard) < activation.index(doctor_guard)
-    assert activation.index(doctor_guard) < activation.index(helper_guard)
-    assert activation.index(helper_guard) < activation.index(restart_gate)
+    assert activation.index(doctor_guard) < activation.index(artifact_guard)
+    assert activation.index(begin_gate) < activation.index(helper_process_gate)
+    assert activation.index(helper_process_gate) < activation.index(stop_gate)
+    assert activation.index(helper_process_gate) < activation.index(compile_guard)
+    assert (
+        activation.index(telegram_migration_gate)
+        < activation.index(
+            telegram_recovery_publish_gate,
+            activation.index(telegram_migration_gate),
+        )
+        < activation.index(telegram_helper_arm_gate)
+        < activation.index(publish_gate)
+    )
+    assert "rollback_prepared_dev_runtime_activation" in activation
+    assert "mktemp -d" not in activation
+    assert activation.index(artifact_guard) < activation.index(publish_gate)
+    assert activation.index(publish_gate) < activation.index(restart_gate)
+    assert activation.index(restart_gate) < activation.index(commit_gate)
+    assert (
+        activation.index(commit_gate)
+        < activation.index("dev_runtime_activation_tool commit", activation.index(commit_gate))
+    )
+    assert (
+        "VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 \\\n"
+        "          VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1 restart_stack_after_upgrade"
+        in activation
+    )
+    assert activation.index(commit_gate) < activation.index(helper_guard)
+    assert activation.index(helper_guard) < activation.index(helper_receipt)
+    postcommit = activation[activation.index(commit_gate) :]
+    assert "restoring the prior checkout and runtime" not in postcommit[
+        postcommit.index(helper_guard) :
+    ]
+
+
+def test_dev_runtime_activation_rollback_and_interruption_recovery_fail_closed() -> None:
+    source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    restore = source[
+        source.index("restore_previous_dev_runtime_after_failure() {") :
+        source.index("recover_interrupted_dev_runtime_activations() {")
+    ]
+    recovery = source[
+        source.index("recover_interrupted_dev_runtime_activations() {") :
+        source.index("dev_runtime_command() {")
+    ]
+    activation = source[
+        source.index("dev_runtime_command() {") :
+        source.index("workflows_command() {")
+    ]
+    prepared_rollback = extract_shell_function(
+        source,
+        "rollback_prepared_dev_runtime_activation",
+    )
+    start = source.rsplit("  start)", 1)[1].split("  launch)", 1)[0]
+
+    assert (
+        "if ! VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 \\\n"
+        "    VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1 \\\n"
+        "    VIVENTIUM_CLI_LOCK_INHERITED_ONCE=1 \\\n"
+        "    stop_stack_for_upgrade"
+        in restore
+    )
+    assert "refusing to replace live generated state during rollback" in restore
+    assert restore.index(
+        "resume_telegram_user_config_migration_if_pending"
+    ) < restore.index("dev_runtime_activation_tool rollback")
+    assert restore.index(
+        "migrate_telegram_user_configs"
+    ) < restore.index("publish_active_telegram_recovery_component")
+    assert restore.index(
+        "resolve_predecessor_telegram_user_config_root"
+    ) < restore.index("dev_runtime_activation_tool rollback")
+    assert restore.index(
+        "publish_active_telegram_recovery_component"
+    ) < restore.index("dev_runtime_activation_tool rollback")
+    assert restore.index("clear_active_telegram_recovery_component") < (
+        restore.index("remove_dev_runtime_activation_transaction")
+    )
+    assert "VIVENTIUM_DETACHED_LOCK_FILE=\"$previous_repo/components.lock.json\"" in (
+        restore
+    )
+    assert "|| true" not in restore.split("dev_runtime_activation_tool rollback", 1)[0]
+    assert (
+        "publishing|runtime_backed_up|published|binding_applied|"
+        "commit_env_accepted|commit_env_finalizing"
+    ) in recovery
+    assert "restore_previous_dev_runtime_after_failure" in recovery
+    rolled_back_recovery = recovery.split("rolled_back)", 1)[1].split(
+        "core_committed)",
+        1,
+    )[0]
+    assert "restore_previous_dev_runtime_after_failure" in rolled_back_recovery
+    assert "remove_dev_runtime_activation_transaction" not in (
+        rolled_back_recovery
+    )
+    committed_recovery = recovery.split("core_committed)", 1)[1].split(
+        "prepared)",
+        1,
+    )[0]
+    assert "dev_runtime_owner_env_alignment_required" in committed_recovery
+    assert "align_committed_dev_runtime_owner_env" in committed_recovery
+    assert "runtime_checkout_refresh_helper" in committed_recovery
+    assert "dev_runtime_activation_tool finalize-helper" in committed_recovery
+    assert "restore_previous_dev_runtime_after_failure" not in committed_recovery
+    assert committed_recovery.index(
+        "dev_runtime_owner_env_alignment_required"
+    ) < committed_recovery.index("runtime_checkout_refresh_helper")
+    align_helper = source[
+        source.index("align_committed_dev_runtime_owner_env() {") :
+        source.index("remove_dev_runtime_activation_transaction() {")
+    ]
+    assert "currentReceipt" in align_helper
+    assert "--expected-receipt-json" in align_helper
+    assert (
+        'VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE="$REPO_ROOT/'
+        'viventium_v0_4/LibreChat/.env"'
+    ) in align_helper
+    assert (
+        'VIVENTIUM_LIBRECHAT_PROMOTION_OWNER_ENV_FILE="$RUNTIME_DIR/'
+        'service-env/librechat.owner.env"'
+    ) not in align_helper
+    assert align_helper.index("alignment-status") < align_helper.index(
+        "force_restart_stack_after_owner_env_alignment"
+    )
+    prepared_recovery = recovery.split("prepared)", 1)[1].split(
+        "publishing|runtime_backed_up",
+        1,
+    )[0]
+    assert "restore_previous_dev_runtime_after_failure" in prepared_recovery
+    assert "recover_interrupted_dev_runtime_activations" in activation
+    assert "recover_interrupted_dev_runtime_activations" in start
+    assert (
+        "restore_dev_runtime_helper_process_after_rollback"
+        in prepared_rollback
+    )
+    assert "restore_dev_runtime_helper_process_after_rollback" in restore
+    assert (
+        "VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1 \\\n"
+        "      VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL=1"
+        in restore
+    )
+    rolled_back_recovery = recovery[
+        recovery.index("      rolled_back)") :
+        recovery.index("      core_committed)")
+    ]
+    assert "restore_previous_dev_runtime_after_failure" in (
+        rolled_back_recovery
+    )
+    assert "remove_dev_runtime_activation_transaction" not in (
+        rolled_back_recovery
+    )
+    stop_failure = activation[
+        activation.index('if [[ "$was_running" == "1" ]]; then') :
+        activation.index("if ! dev_runtime_activation_tool publish")
+    ]
+    assert "rollback_prepared_dev_runtime_activation" in stop_failure
+    commit_boundary = activation.split(
+        "LibreChat owner source or candidate revision changed at the activation commit boundary",
+        1,
+    )[0].rsplit('if [[ -n "$owner_env_source" ]]', 1)[1]
+    assert '[[ "$owner_env_source_is_candidate" != "1" ]] &&' in commit_boundary
+    assert (
+        '! "$PYTHON_BIN" "$REPO_ROOT/scripts/viventium/librechat_owner_env.py" '
+        "verify-source"
+    ) in commit_boundary
+    precommit_restart = activation.split(
+        'if [[ "$restart" == "1" ]]; then',
+        1,
+    )[1].split('if [[ -n "$owner_env_source" ]] &&', 1)[0]
+    assert "restart_stack_after_upgrade" in precommit_restart
+    assert "set_helper_runtime_intent running" not in precommit_restart
+    assert "VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1" in precommit_restart
+    assert (
+        "VIVENTIUM_PRESERVE_HELPER_RUNTIME_INTENT=1"
+        in restore.split("stop_stack_for_upgrade", 1)[0]
+    )
+    stop_failure = activation.split(
+        'echo "Runtime activation could not stop the prior checkout',
+        1,
+    )[0].rsplit("if ! stop_stack_for_upgrade; then", 1)[1]
+    assert "rollback_prepared_dev_runtime_activation" in stop_failure
+    assert "set_helper_runtime_intent running" not in stop_failure
+    assert "VIVENTIUM_DETACHED_REPO_ROOT=\"$previous_repo\"" in restore
+    assert "VIVENTIUM_DETACHED_LOCK_FILE=\"$previous_repo/components.lock.json\"" in (
+        restore
+    )
+    assert "load_telegram_predecessor_recovery_component" in restore
+    assert "VIVENTIUM_DETACHED_COMPAT_LAUNCHER" in restore
+    assert "VIVENTIUM_TELEGRAM_COMPONENT_TOOL" in restore
+    assert "VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER" in restore
+    assert '"$previous_repo/bin/viventium"' not in restore
+    detached = source[
+        source.index("launch_stack_detached() {") :
+        source.index("detached_start_failed_early() {")
+    ]
+    assert 'VIVENTIUM_DETACHED_REPO_ROOT:-$REPO_ROOT' in detached
+    assert 'VIVENTIUM_DETACHED_LOCK_FILE:-$LOCK_FILE' in detached
+
+
+def test_dev_runtime_process_loss_reloads_exact_staged_telegram_controller() -> None:
+    source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    activation = source[
+        source.index("dev_runtime_command() {") :
+        source.index("workflows_command() {")
+    ]
+    recovery = extract_shell_function(
+        source,
+        "recover_interrupted_dev_runtime_activations",
+    )
+
+    assert (
+        '--telegram-recovery-selection "$STAGED_TELEGRAM_RECOVERY_SELECTION"'
+        in activation
+    )
+    selection_load = recovery.index("telegramRecoverySelection")
+    rollback = recovery.index("restore_previous_dev_runtime_after_failure")
+    assert selection_load < rollback
+
+
+def test_interrupted_core_commit_retains_journal_when_finalization_fails(
+    tmp_path: Path,
+) -> None:
+    function = extract_shell_function(
+        BIN_VIVENTIUM.read_text(encoding="utf-8"),
+        "recover_interrupted_dev_runtime_activations",
+    )
+    support = tmp_path / "support"
+    transaction = support / "state" / "dev-runtime-activation.synthetic"
+    transaction.mkdir(parents=True)
+    remove_marker = tmp_path / "remove-called"
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                "set -u\n"
+                'APP_SUPPORT_DIR="$SUPPORT"\n'
+                'PYTHON_BIN="$PYTHON_FOR_TEST"\n'
+                "dev_runtime_activation_tool() {\n"
+                '  if [[ "$1" == "status" ]]; then\n'
+                "    printf '%s\\n' "
+                '\'{"status":"core_committed","previousRepo":"/synthetic",'
+                '"wasRunning":false}\'\n'
+                "    return 0\n"
+                "  fi\n"
+                '  if [[ "$1" == "finalize-helper" ]]; then return 1; fi\n'
+                "  return 0\n"
+                "}\n"
+                "dev_runtime_owner_env_alignment_required() { printf '0\\n'; }\n"
+                "runtime_checkout_refresh_helper() { return 0; }\n"
+                "is_stack_running() { return 1; }\n"
+                "align_committed_dev_runtime_owner_env() { return 1; }\n"
+                "restore_dev_runtime_helper_process_after_rollback() { return 0; }\n"
+                "restore_previous_dev_runtime_after_failure() { return 0; }\n"
+                "remove_dev_runtime_activation_transaction() {\n"
+                '  printf "called\\n" >"$REMOVE_MARKER"\n'
+                '  rm -rf -- "$1"\n'
+                "}\n"
+                f"{function}"
+                "recover_interrupted_dev_runtime_activations\n"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "HOME": str(tmp_path / "home"),
+            "LANG": os.environ.get("LANG", "C"),
+            "PATH": os.environ["PATH"],
+            "PYTHON_FOR_TEST": sys.executable,
+            "REMOVE_MARKER": str(remove_marker),
+            "SUPPORT": str(support),
+            "TMPDIR": str(tmp_path),
+        },
+    )
+
+    assert completed.returncode != 0
+    assert "helper finalization receipt is still pending" in completed.stderr
+    assert transaction.is_dir()
+    assert not remove_marker.exists()
+
+
+def test_dev_runtime_rollback_nested_stop_inherits_recovery_and_cli_lock(
+    tmp_path: Path,
+) -> None:
+    function = extract_shell_function(
+        BIN_VIVENTIUM.read_text(encoding="utf-8"),
+        "restore_previous_dev_runtime_after_failure",
+    )
+    capture = tmp_path / "nested stop environment"
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                "set -euo pipefail\n"
+                "stop_stack_for_upgrade() { "
+                "printf 'stop:%s:%s\\n' "
+                '"${VIVENTIUM_DEV_RUNTIME_RECOVERY_INTERNAL:-}" '
+                '"${VIVENTIUM_CLI_LOCK_INHERITED_ONCE:-}" >"$CAPTURE_FILE"; '
+                "}\n"
+                    "dev_runtime_activation_tool() { printf 'rollback\\n'; }\n"
+                    "load_active_telegram_recovery_component() { "
+                    "TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT=/tmp/synthetic-preferences; }\n"
+                    "load_telegram_predecessor_recovery_component() { :; }\n"
+                    "resume_telegram_user_config_migration_if_pending() { :; }\n"
+                    "migrate_telegram_user_configs() { :; }\n"
+                    "resolve_predecessor_telegram_user_config_root() { "
+                    "printf '/tmp/synthetic-preferences\\n'; }\n"
+                    "publish_active_telegram_recovery_component() { :; }\n"
+                    "verify_loaded_telegram_recovery_after_rollback() { :; }\n"
+                    "clear_active_telegram_recovery_component() { :; }\n"
+                    "restore_dev_runtime_helper_process_after_rollback() { :; }\n"
+                    "remove_dev_runtime_activation_transaction() { printf 'remove\\n'; }\n"
+                f"{function}"
+                "restore_previous_dev_runtime_after_failure "
+                '"/tmp/synthetic-transaction" "/tmp/synthetic-previous" 0\n'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "APP_SUPPORT_DIR": str(tmp_path / "synthetic support"),
+            "CAPTURE_FILE": str(capture),
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert capture.read_text(encoding="utf-8") == "stop:1:1\n"
+    assert completed.stdout.splitlines() == ["remove"]
+
+
+def test_dev_runtime_transaction_cannot_be_removed_while_recovery_is_active(
+    tmp_path: Path,
+) -> None:
+    function = extract_shell_function(
+        BIN_VIVENTIUM.read_text(encoding="utf-8"),
+        "remove_dev_runtime_activation_transaction",
+    )
+    support = tmp_path / "support"
+    transaction = support / "state" / "dev-runtime-activation.synthetic"
+    receipt = support / "state" / "continuity" / "telegram-recovery-active.json"
+    transaction.mkdir(parents=True)
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"status":"armed"}\n', encoding="utf-8")
+    command = (
+        "set -u\n"
+        f"APP_SUPPORT_DIR={shlex.quote(str(support))}\n"
+        "active_telegram_recovery_selection_file() { "
+        f"printf '%s\\n' {shlex.quote(str(receipt))}; "
+        "}\n"
+        f"{function}"
+        f"remove_dev_runtime_activation_transaction {shlex.quote(str(transaction))}\n"
+    )
+
+    blocked = subprocess.run(
+        ["bash", "-c", command],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert blocked.returncode != 0
+    assert "recovery is still active" in blocked.stderr
+    assert transaction.is_dir()
+    receipt.unlink()
+    removed = subprocess.run(
+        ["bash", "-c", command],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert removed.returncode == 0, removed.stderr
+    assert not transaction.exists()
+
+
+def test_dev_runtime_activation_never_passes_large_transaction_json_as_argv() -> None:
+    source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    activation_helpers = source[
+        source.index("dev_runtime_owner_env_alignment_required() {") :
+        source.index("dev_runtime_command() {")
+    ]
+    activation = source[
+        source.index("dev_runtime_command() {") :
+        source.index("workflows_command() {")
+    ]
+
+    assert "json.loads(sys.argv[1])" not in activation_helpers
+    assert "json.loads(sys.argv[1])" not in activation
+    assert activation_helpers.count("json.load(sys.stdin)") >= 5
+    assert activation.count("json.load(sys.stdin)") >= 3
+    assert 'printf \'%s\\n\' "$status_json" |' in activation_helpers
+    assert 'printf \'%s\\n\' "$activation_begin_json" |' in activation
+    assert "activation_commit_json" not in activation
+
+
+def test_start_and_launch_recover_interrupted_helper_install_before_runtime() -> None:
+    source = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    recovery = source[
+        source.index("recover_interrupted_helper_install() {") :
+        source.index("runtime_checkout_status() {")
+    ]
+    start = source.rsplit("  start)", 1)[1].split("  launch)", 1)[0]
+    launch = source.rsplit("  launch)", 1)[1].split("  install-helper)", 1)[0]
+
+    assert "helper-install-in-progress.json" in recovery
+    assert "runtime_checkout_refresh_helper" in recovery
+    assert "without clearing its durable recovery receipt" in recovery
+    assert "recover_interrupted_helper_install" in start
+    assert "recover_interrupted_helper_install" in launch
+
+
+def test_runtime_entrypoints_fail_closed_through_upgrade_recovery_gate() -> None:
+    cli = BIN_VIVENTIUM.read_text(encoding="utf-8")
+    launcher = FULL_STACK_LAUNCHER.read_text(encoding="utf-8")
+    start = cli.rsplit("  start)", 1)[1].split("  launch)", 1)[0]
+    launch = cli.rsplit("  launch)", 1)[1].split("  install-helper)", 1)[0]
+
+    assert "recover_interrupted_upgrade_before_runtime_start" in start
+    assert "recover_interrupted_upgrade_before_runtime_start" in launch
+    assert (
+        start.index("inherit_quiesced_successor_validation_if_active")
+        < start.index("recover_interrupted_upgrade_before_runtime_start")
+    )
+    assert (
+        launch.index("inherit_quiesced_successor_validation_if_active")
+        < launch.index("recover_interrupted_upgrade_before_runtime_start")
+    )
+    assert (
+        start.index("recover_interrupted_upgrade_before_runtime_start")
+        < start.index("recover_pending_quiesced_upgrade_finalization")
+    )
+    assert 'if [[ "${VIVENTIUM_LAUNCHER_INTERNAL:-0}" != "1" ]]' in launcher
+    assert 'exec "$LAUNCHER_REPO_ROOT/bin/viventium" start "$@"' in launcher
+    assert 'exec "$LAUNCHER_REPO_ROOT/bin/viventium" stop "$@"' in launcher
+    assert 'VIVENTIUM_LAUNCHER_INTERNAL=1 "${START_CMD[@]}"' in cli
+    assert "VIVENTIUM_LAUNCHER_INTERNAL=1 \\" in cli
+
+
+@pytest.mark.parametrize(
+    ("launcher_args", "expected_args"),
+    [
+        (("--fast",), ("start", "--fast")),
+        (("--stop", "--skip-docker"), ("stop", "--skip-docker")),
+    ],
+)
+def test_direct_full_stack_launcher_routes_through_public_cli(
+    tmp_path: Path,
+    launcher_args: tuple[str, ...],
+    expected_args: tuple[str, ...],
+) -> None:
+    repo = tmp_path / "repo"
+    launcher = repo / "viventium_v0_4" / "viventium-librechat-start.sh"
+    cli = repo / "bin" / "viventium"
+    capture = tmp_path / "cli-args.json"
+    launcher.parent.mkdir(parents=True)
+    cli.parent.mkdir(parents=True)
+    launcher.write_bytes(FULL_STACK_LAUNCHER.read_bytes())
+    launcher.chmod(0o755)
+    cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIVENTIUM_QA_CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+
+    environment = os.environ.copy()
+    environment["VIVENTIUM_QA_CAPTURE"] = str(capture)
+    environment.pop("VIVENTIUM_LAUNCHER_INTERNAL", None)
+    subprocess.run(
+        [str(launcher), *launcher_args],
+        check=True,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert json.loads(capture.read_text(encoding="utf-8")) == list(expected_args)
 
 
 def test_compile_config_preserves_compiler_failure_status() -> None:
@@ -1756,8 +2292,10 @@ def test_helper_lifecycle_qa_uses_localhost_health_probes() -> None:
 def test_cli_optional_telegram_surface_requires_api_health() -> None:
     source = BIN_VIVENTIUM.read_text(encoding="utf-8")
     assert "telegram_bridge_surface_healthy() {" in source
-    assert 'runtime_pid_file_running "telegram_bot.pid"' in source
-    assert 'runtime_pid_file_running "telegram_bot_deferred.pid"' in source
+    assert "scripts/viventium/telegram_poller_handoff.py\" health" in source
+    assert "--require-receipt" in source
+    assert 'runtime_pid_file_running "telegram_bot.pid"' not in source
+    assert 'runtime_pid_file_running "telegram_bot_deferred.pid"' not in source
     assert 'api_surface_healthy "$api_port"' in source
 
 

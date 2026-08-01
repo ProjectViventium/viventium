@@ -130,6 +130,20 @@ def test_capture_manifest_uses_public_safe_path_labels(tmp_path: Path) -> None:
         "VIVENTIUM_RAG_EMBEDDINGS_MODEL=qwen3-embedding:0.6b\n",
         encoding="utf-8",
     )
+    (runtime_dir / "runtime.local.env").write_text(
+        "OWNER_LOCAL_SENTINEL=must-not-emit-local\n",
+        encoding="utf-8",
+    )
+    service_env = runtime_dir / "service-env"
+    service_env.mkdir()
+    (service_env / "librechat.env").write_text(
+        "MONGO_URI=mongodb://synthetic-user:synthetic-password@127.0.0.1:1/NoDatabase\n",
+        encoding="utf-8",
+    )
+    (service_env / "librechat.owner.env").write_text(
+        "OWNER_SERVICE_SENTINEL=must-not-emit-owner\n",
+        encoding="utf-8",
+    )
 
     manifest = continuity_audit.capture_manifest(
         type(
@@ -149,6 +163,15 @@ def test_capture_manifest_uses_public_safe_path_labels(tmp_path: Path) -> None:
         if isinstance(value, str):
             assert not value.startswith(str(Path.home()))
             assert not value.startswith("/")
+    serialized = json.dumps(manifest, sort_keys=True)
+    for forbidden in (
+        "synthetic-user",
+        "synthetic-password",
+        "must-not-emit-local",
+        "must-not-emit-owner",
+        "librechat.owner.env",
+    ):
+        assert forbidden not in serialized
 
 
 def test_python_and_bash_path_sanitizers_match(tmp_path: Path) -> None:
@@ -427,6 +450,977 @@ def test_compare_manifests_warns_on_recall_and_runtime_metadata_drift(tmp_path: 
         "surfaces.recall.rebuildRequired",
     }
     assert str(Path.home()) not in json.dumps(result)
+
+
+def test_schedule_digest_protects_runtime_outcomes_and_user_changes(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    schedule_db = tmp_path / "schedules.db"
+    connection = sqlite3.connect(schedule_db)
+    connection.execute(
+        """
+        CREATE TABLE scheduled_tasks (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          schedule_json TEXT NOT NULL,
+          channel TEXT NOT NULL,
+          executor TEXT NOT NULL,
+          conversation_policy TEXT NOT NULL,
+          conversation_id TEXT,
+          active INTEGER NOT NULL,
+          created_by TEXT NOT NULL,
+          created_source TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          updated_by TEXT NOT NULL,
+          updated_source TEXT NOT NULL,
+          last_run_at TEXT,
+          next_run_at TEXT,
+          last_status TEXT,
+          last_error TEXT,
+          last_delivery_outcome TEXT,
+          last_delivery_reason TEXT,
+          last_delivery_at TEXT,
+          last_generated_text TEXT,
+          last_delivery_json TEXT,
+          metadata_json TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO scheduled_tasks (
+          id, user_id, agent_id, prompt, schedule_json, channel, executor,
+          conversation_policy, conversation_id, active, created_by, created_source,
+          created_at, updated_at, updated_by, updated_source, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "schedule-1",
+            "user-1",
+            "agent-1",
+            "synthetic reminder",
+            '{"hour":9}',
+            "telegram",
+            "viventium_agent",
+            "new",
+            None,
+            1,
+            "user-1",
+            "ui",
+            "2026-07-01T00:00:00Z",
+            "2026-07-01T00:00:00Z",
+            "user-1",
+            "ui",
+            '{"timezone":"UTC"}',
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    before, before_warnings = continuity_audit.read_schedule_summary(schedule_db)
+    assert before_warnings == []
+    assert before["configurationCount"] == 1
+    assert len(before["configurationSha256"]) == 64
+
+    connection = sqlite3.connect(schedule_db)
+    connection.execute(
+        """
+        UPDATE scheduled_tasks
+        SET updated_at = ?, last_run_at = ?, next_run_at = ?, last_status = ?,
+            last_error = ?, last_delivery_outcome = ?, last_delivery_reason = ?,
+            last_delivery_at = ?, last_generated_text = ?, last_delivery_json = ?
+        WHERE id = ?
+        """,
+        (
+            "2026-07-24T09:00:01Z",
+            "2026-07-24T09:00:00Z",
+            "2026-07-25T09:00:00Z",
+            "success",
+            None,
+            "sent",
+            "synthetic",
+            "2026-07-24T09:00:01Z",
+            "private generated output",
+            '{"outcome":"sent"}',
+            "schedule-1",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    after_runtime, after_runtime_warnings = continuity_audit.read_schedule_summary(schedule_db)
+    assert after_runtime_warnings == []
+    assert after_runtime["configurationSha256"] != before["configurationSha256"]
+
+    connection = sqlite3.connect(schedule_db)
+    connection.execute(
+        "UPDATE scheduled_tasks SET prompt = ? WHERE id = ?",
+        ("changed user reminder", "schedule-1"),
+    )
+    connection.commit()
+    connection.close()
+
+    after_user_change, _ = continuity_audit.read_schedule_summary(schedule_db)
+    assert after_user_change["configurationSha256"] != after_runtime["configurationSha256"]
+
+
+def test_strict_semantic_compare_rejects_protected_state_drift(tmp_path: Path) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    base = {
+        "schemaVersion": 2,
+        "surfaces": {
+            "messages": {"latestTimestamp": "2026-07-24T09:00:00Z"},
+            "savedMemory": {"latestTimestamp": "2026-07-24T09:00:00Z"},
+            "schedules": {"latestTimestamp": "2026-07-24T09:00:00Z"},
+        },
+        "semantic": {
+            "config": {
+                "available": True,
+                "leafCount": 1,
+                "leafDigests": ["0" * 64],
+                "sha256": "0" * 64,
+            },
+            "mongo": {
+                "available": True,
+                "collections": {
+                    "conversations": {"count": 2, "sha256": "a" * 64},
+                    "messages": {"count": 4, "sha256": "b" * 64},
+                },
+            },
+            "schedules": {
+                "available": True,
+                "configurationCount": 1,
+                "configurationSha256": "c" * 64,
+            },
+        },
+    }
+    changed = json.loads(json.dumps(base))
+    changed["semantic"]["mongo"]["collections"]["messages"]["count"] = 3
+    snapshot_manifest.write_text(json.dumps(base), encoding="utf-8")
+    live_manifest.write_text(json.dumps(changed), encoding="utf-8")
+
+    result = continuity_audit.compare_manifests(
+        type(
+            "Args",
+            (),
+            {
+                "snapshot_manifest": str(snapshot_manifest),
+                "live_manifest": str(live_manifest),
+                "strict_semantic": True,
+            },
+        )()
+    )
+
+    assert result["status"] == "error"
+    assert result["semanticDifferences"] == [
+        {
+            "field": "semantic.mongo.collections.messages.count",
+            "snapshotValue": 4,
+            "liveValue": 3,
+        }
+    ]
+    assert any("protected continuity state changed" in error for error in result["errors"])
+
+
+def test_emit_json_atomically_replaces_output_once(tmp_path: Path) -> None:
+    continuity_audit = load_continuity_audit_module()
+    output = tmp_path / "continuity.json"
+    output.write_text('{"stale":true}\n', encoding="utf-8")
+
+    result = continuity_audit.emit_json({"status": "ok"}, str(output))
+
+    assert result == 0
+    assert json.loads(output.read_text(encoding="utf-8")) == {"status": "ok"}
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.glob(".continuity.json.*.tmp")) == []
+
+
+def test_emit_json_creates_private_output_directory_under_public_umask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    output = tmp_path / "state" / "continuity" / "audit.json"
+    previous_umask = os.umask(0o022)
+    try:
+        result = continuity_audit.emit_json({"status": "ok"}, str(output))
+    finally:
+        os.umask(previous_umask)
+
+    assert result == 0
+    assert (tmp_path / "state").stat().st_mode & 0o777 == 0o700
+    assert output.parent.stat().st_mode & 0o777 == 0o700
+    assert output.stat().st_mode & 0o777 == 0o600
+
+
+def test_strict_semantic_compare_allows_only_expired_ttl_documents_to_disappear(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    expired_digest = "1" * 64
+    active_digest = "2" * 64
+    durable_connection_digest = "3" * 64
+    durable_mapping_digest = "4" * 64
+    base = {
+        "schemaVersion": 2,
+        "capturedAt": "2026-07-24T09:00:00Z",
+        "surfaces": {
+            "messages": {"latestTimestamp": "2026-07-24T09:00:00Z"},
+            "savedMemory": {"latestTimestamp": "2026-07-24T09:00:00Z"},
+            "schedules": {"latestTimestamp": "2026-07-24T09:00:00Z"},
+        },
+        "semantic": {
+            "config": {
+                "available": True,
+                "leafCount": 1,
+                "leafDigests": ["0" * 64],
+                "sha256": "0" * 64,
+            },
+            "mongo": {
+                "available": True,
+                "collections": {
+                    "gatewaylinktokens": {
+                        "count": 2,
+                        "sha256": "a" * 64,
+                        "ttl": {
+                            "field": "expiresAt",
+                            "expireAfterSeconds": 0,
+                            "documents": [
+                                {
+                                    "sha256": expired_digest,
+                                    "effectiveExpiryUnixMs": 1784883599000,
+                                },
+                                {
+                                    "sha256": active_digest,
+                                    "effectiveExpiryUnixMs": 1784887200000,
+                                },
+                            ],
+                            "nonExpiring": {
+                                "count": 0,
+                                "sha256": hashlib.sha256().hexdigest(),
+                            },
+                        },
+                    },
+                    "channelconnections": {
+                        "count": 1,
+                        "sha256": durable_connection_digest,
+                    },
+                    "gatewayusermappings": {
+                        "count": 1,
+                        "sha256": durable_mapping_digest,
+                    },
+                },
+            },
+            "schedules": {
+                "available": True,
+                "configurationCount": 1,
+                "configurationSha256": "5" * 64,
+            },
+        },
+    }
+    live = json.loads(json.dumps(base))
+    live["capturedAt"] = "2026-07-24T09:05:00Z"
+    live["semantic"]["mongo"]["collections"]["gatewaylinktokens"] = {
+        "count": 1,
+        "sha256": "b" * 64,
+        "ttl": {
+            "field": "expiresAt",
+            "expireAfterSeconds": 0,
+            "documents": [
+                {
+                    "sha256": active_digest,
+                    "effectiveExpiryUnixMs": 1784887200000,
+                }
+            ],
+            "nonExpiring": {
+                "count": 0,
+                "sha256": hashlib.sha256().hexdigest(),
+            },
+        },
+    }
+    snapshot_manifest.write_text(json.dumps(base), encoding="utf-8")
+    live_manifest.write_text(json.dumps(live), encoding="utf-8")
+    args = type(
+        "Args",
+        (),
+        {
+            "snapshot_manifest": str(snapshot_manifest),
+            "live_manifest": str(live_manifest),
+            "strict_semantic": True,
+        },
+    )()
+
+    allowed = continuity_audit.compare_manifests(args)
+    assert allowed["status"] == "ok"
+    assert allowed["semanticDifferences"] == []
+
+    live["semantic"]["mongo"]["collections"]["gatewaylinktokens"]["ttl"]["documents"] = []
+    live["semantic"]["mongo"]["collections"]["gatewaylinktokens"]["count"] = 0
+    live_manifest.write_text(json.dumps(live), encoding="utf-8")
+    active_token_lost = continuity_audit.compare_manifests(args)
+    assert active_token_lost["status"] == "error"
+    assert active_token_lost["semanticDifferences"] == [
+        {
+            "field": (
+                "semantic.mongo.collections.gatewaylinktokens."
+                "unexpiredDocuments"
+            ),
+            "snapshotValue": 1,
+            "liveValue": 0,
+        }
+    ]
+
+    live = json.loads(json.dumps(base))
+    live["capturedAt"] = "2026-07-24T09:05:00Z"
+    live["semantic"]["mongo"]["collections"]["channelconnections"]["sha256"] = "6" * 64
+    live_manifest.write_text(json.dumps(live), encoding="utf-8")
+    durable_state_changed = continuity_audit.compare_manifests(args)
+    assert durable_state_changed["status"] == "error"
+    assert {
+        "field": "semantic.mongo.collections.channelconnections.sha256",
+        "snapshotValue": durable_connection_digest,
+        "liveValue": "6" * 64,
+    } in durable_state_changed["semanticDifferences"]
+
+    malformed = json.loads(json.dumps(base))
+    malformed["capturedAt"] = "2026-07-24T09:05:00Z"
+    malformed["semantic"]["mongo"]["collections"]["gatewaylinktokens"]["ttl"][
+        "documents"
+    ][1]["sha256"] = "malformed"
+    live_manifest.write_text(json.dumps(malformed), encoding="utf-8")
+    malformed_ledger = continuity_audit.compare_manifests(args)
+    assert malformed_ledger["status"] == "error"
+    assert any(
+        "mongo TTL lifecycle ledger (gatewaylinktokens)" in error
+        for error in malformed_ledger["errors"]
+    )
+
+    missing_cutoff = json.loads(json.dumps(base))
+    missing_cutoff.pop("capturedAt")
+    live_manifest.write_text(json.dumps(missing_cutoff), encoding="utf-8")
+    unavailable_cutoff = continuity_audit.compare_manifests(args)
+    assert unavailable_cutoff["status"] == "error"
+    assert any(
+        "mongo TTL lifecycle ledger (gatewaylinktokens)" in error
+        for error in unavailable_cutoff["errors"]
+    )
+
+
+def test_mongo_fingerprint_covers_user_agents_auth_and_channel_personalization() -> None:
+    source = (
+        REPO_ROOT / "scripts" / "viventium" / "continuity_mongo.cjs"
+    ).read_text(encoding="utf-8")
+
+    for collection in (
+        "actions",
+        "agentapikeys",
+        "channelconnections",
+        "channelpairingcodes",
+        "channelthreads",
+        "gatewaylinktokens",
+        "gatewayusermappings",
+        "mcpservers",
+        "pluginauths",
+        "telegramlinktokens",
+    ):
+        assert f"'{collection}'" in source
+    assert "managedAgentIds(repoRoot, YAML)" in source
+    assert "collections.useragents" in source
+    assert "managed-agent-baseline-migration.json" in source
+    assert "local.viventium-agents.yaml" in source
+    assert "const fingerprintNames = [...present]" in source
+    assert "!name.startsWith('system.')" in source
+    assert "viventiumglasshivecallbackdeliveries" in source
+    for lifecycle_collection in (
+        "channeldeliveries",
+        "channelingressquotas",
+        "channelpairingattempts",
+        "channelworkerleases",
+        "viventiumgatewayingressevents",
+        "viventiumtelegramingressevents",
+        "viventiumvoiceingressevents",
+    ):
+        assert f"{lifecycle_collection}:" in source
+
+
+def test_strict_compare_protects_unknown_future_mongo_collection_deletion(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    base = {
+        "schemaVersion": 2,
+        "surfaces": {
+            "messages": {},
+            "savedMemory": {},
+            "schedules": {},
+        },
+        "semantic": {
+            "config": {"available": True, "leafDigests": []},
+            "mongo": {
+                "available": True,
+                "collections": {
+                    "futurecustomstate": {
+                        "count": 1,
+                        "sha256": "a" * 64,
+                    }
+                },
+            },
+            "schedules": {
+                "available": True,
+                "configurationCount": 0,
+                "configurationSha256": hashlib.sha256().hexdigest(),
+            },
+        },
+    }
+    live = json.loads(json.dumps(base))
+    live["semantic"]["mongo"]["collections"] = {}
+    snapshot_manifest.write_text(json.dumps(base), encoding="utf-8")
+    live_manifest.write_text(json.dumps(live), encoding="utf-8")
+
+    result = continuity_audit.compare_manifests(
+        type(
+            "Args",
+            (),
+            {
+                "snapshot_manifest": str(snapshot_manifest),
+                "live_manifest": str(live_manifest),
+                "strict_semantic": True,
+            },
+        )()
+    )
+
+    assert result["status"] == "error"
+    assert {
+        "field": "semantic.mongo.collections.futurecustomstate",
+        "snapshotValue": {"count": 1, "sha256": "a" * 64},
+        "liveValue": None,
+    } in result["semanticDifferences"]
+
+
+def test_strict_compare_protects_toolcalls_and_active_channel_delivery_ttl(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    active = "1" * 64
+    expired = "2" * 64
+    empty = hashlib.sha256().hexdigest()
+    base = {
+        "schemaVersion": 2,
+        "capturedAt": "2026-07-24T10:00:00Z",
+        "surfaces": {"messages": {}, "savedMemory": {}, "schedules": {}},
+        "semantic": {
+            "config": {"available": True, "leafDigests": []},
+            "mongo": {
+                "available": True,
+                "collections": {
+                    "toolcalls": {"count": 1, "sha256": "a" * 64},
+                    "channeldeliveries": {
+                        "count": 2,
+                        "sha256": "b" * 64,
+                        "ttl": {
+                            "field": "expiresAt",
+                            "expireAfterSeconds": 0,
+                            "documents": [
+                                {
+                                    "sha256": expired,
+                                    "effectiveExpiryUnixMs": 1784887199000,
+                                },
+                                {
+                                    "sha256": active,
+                                    "effectiveExpiryUnixMs": 1784890800000,
+                                },
+                            ],
+                            "nonExpiring": {"count": 0, "sha256": empty},
+                        },
+                    },
+                },
+            },
+            "schedules": {
+                "available": True,
+                "configurationCount": 0,
+                "configurationSha256": empty,
+            },
+        },
+    }
+    live = json.loads(json.dumps(base))
+    live["capturedAt"] = "2026-07-24T10:05:00Z"
+    delivery = live["semantic"]["mongo"]["collections"]["channeldeliveries"]
+    delivery["count"] = 1
+    delivery["sha256"] = "c" * 64
+    delivery["ttl"]["documents"] = [delivery["ttl"]["documents"][1]]
+    snapshot_manifest.write_text(json.dumps(base), encoding="utf-8")
+    live_manifest.write_text(json.dumps(live), encoding="utf-8")
+    args = type(
+        "Args",
+        (),
+        {
+            "snapshot_manifest": str(snapshot_manifest),
+            "live_manifest": str(live_manifest),
+            "strict_semantic": True,
+        },
+    )()
+    assert continuity_audit.compare_manifests(args)["status"] == "ok"
+
+    live["semantic"]["mongo"]["collections"]["channeldeliveries"]["ttl"][
+        "documents"
+    ] = []
+    live["semantic"]["mongo"]["collections"]["channeldeliveries"]["count"] = 0
+    live["semantic"]["mongo"]["collections"].pop("toolcalls")
+    live_manifest.write_text(json.dumps(live), encoding="utf-8")
+    lost = continuity_audit.compare_manifests(args)
+    assert lost["status"] == "error"
+    assert any(
+        difference["field"]
+        == "semantic.mongo.collections.channeldeliveries.unexpiredDocuments"
+        for difference in lost["semanticDifferences"]
+    )
+    assert any(
+        difference["field"] == "semantic.mongo.collections.toolcalls"
+        for difference in lost["semanticDifferences"]
+    )
+
+
+def test_schedule_fingerprint_protects_runtime_state_and_prompt_runs(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    database = tmp_path / "schedules.db"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE scheduled_tasks (
+              id TEXT PRIMARY KEY,
+              active INTEGER NOT NULL,
+              last_conversation_id TEXT,
+              next_run_at TEXT,
+              last_status TEXT,
+              last_delivery_outcome TEXT
+            );
+            CREATE TABLE scheduled_prompt_runs (
+              id TEXT PRIMARY KEY,
+              definition_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              delivered_at TEXT
+            );
+            INSERT INTO scheduled_tasks VALUES (
+              'task-1', 1, 'conversation-1', '2026-07-25T10:00:00Z', 'ok', 'sent'
+            );
+            INSERT INTO scheduled_prompt_runs VALUES (
+              'run-1', 'definition-1', 'delivered', '2026-07-24T10:00:00Z'
+            );
+            """
+        )
+
+    before, warnings = continuity_audit.read_schedule_summary(database)
+    assert warnings == []
+    assert before["configurationTables"] == {
+        "scheduled_prompt_runs": 1,
+        "scheduled_tasks": 1,
+    }
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            UPDATE scheduled_tasks
+               SET last_conversation_id = NULL,
+                   next_run_at = NULL,
+                   last_status = 'pending',
+                   last_delivery_outcome = NULL
+             WHERE id = 'task-1'
+            """
+        )
+        connection.execute("DELETE FROM scheduled_prompt_runs WHERE id = 'run-1'")
+
+    after, warnings = continuity_audit.read_schedule_summary(database)
+    assert warnings == []
+    assert after["configurationCount"] == 1
+    assert after["configurationSha256"] != before["configurationSha256"]
+
+
+def test_strict_semantic_compare_fails_closed_when_fingerprints_are_unavailable(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    payload = {
+        "schemaVersion": 2,
+        "surfaces": {
+            "messages": {"latestTimestamp": None},
+            "savedMemory": {"latestTimestamp": None},
+            "schedules": {"latestTimestamp": None},
+        },
+        "semantic": {
+            "mongo": {"available": False, "collections": {}},
+            "schedules": {"available": False},
+        },
+    }
+    snapshot_manifest.write_text(json.dumps(payload), encoding="utf-8")
+    live_manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = continuity_audit.compare_manifests(
+        type(
+            "Args",
+            (),
+            {
+                "snapshot_manifest": str(snapshot_manifest),
+                "live_manifest": str(live_manifest),
+                "strict_semantic": True,
+            },
+        )()
+    )
+
+    assert result["status"] == "error"
+    assert any("could not be proven" in error for error in result["errors"])
+
+
+def test_strict_semantic_compare_accepts_schedule_store_absent_on_both_sides(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    payload = {
+        "schemaVersion": 2,
+        "surfaces": {
+            "messages": {"latestTimestamp": None},
+            "savedMemory": {"latestTimestamp": None},
+            "schedules": {"latestTimestamp": None, "dbPresent": False},
+        },
+        "semantic": {
+            "config": {"available": True, "leafDigests": []},
+            "mongo": {"available": True, "collections": {}},
+            "schedules": {
+                "available": False,
+                "configurationCount": None,
+                "configurationSha256": None,
+                "configurationTables": {},
+            },
+        },
+    }
+    snapshot_manifest.write_text(json.dumps(payload), encoding="utf-8")
+    live_manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = continuity_audit.compare_manifests(
+        type(
+            "Args",
+            (),
+            {
+                "snapshot_manifest": str(snapshot_manifest),
+                "live_manifest": str(live_manifest),
+                "strict_semantic": True,
+            },
+        )()
+    )
+
+    assert result["status"] == "ok"
+    assert result["semanticDifferences"] == []
+
+
+def test_config_semantic_fingerprint_allows_new_defaults_but_rejects_changed_personalization(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    before_config = tmp_path / "before.yaml"
+    additive_config = tmp_path / "additive.yaml"
+    changed_config = tmp_path / "changed.yaml"
+    before_config.write_text(
+        "version: 1\nllm:\n  primary:\n    model: synthetic-user-model\n",
+        encoding="utf-8",
+    )
+    additive_config.write_text(
+        "version: 1\nllm:\n  primary:\n    model: synthetic-user-model\n"
+        "maintenance:\n  enabled: true\n",
+        encoding="utf-8",
+    )
+    changed_config.write_text(
+        "version: 1\nllm:\n  primary:\n    model: overwritten-model\n",
+        encoding="utf-8",
+    )
+    before, before_warnings = continuity_audit.read_config_semantic_fingerprint(before_config)
+    additive, additive_warnings = continuity_audit.read_config_semantic_fingerprint(additive_config)
+    changed, changed_warnings = continuity_audit.read_config_semantic_fingerprint(changed_config)
+    assert before_warnings == additive_warnings == changed_warnings == []
+    assert set(before["leafDigests"]).issubset(additive["leafDigests"])
+    assert not set(before["leafDigests"]).issubset(changed["leafDigests"])
+    assert "synthetic-user-model" not in json.dumps(before)
+
+    def manifest(config_semantic: dict) -> dict:
+        return {
+            "schemaVersion": 2,
+            "surfaces": {
+                "messages": {"latestTimestamp": None},
+                "savedMemory": {"latestTimestamp": None},
+                "schedules": {"latestTimestamp": None},
+            },
+            "semantic": {
+                "config": config_semantic,
+                "mongo": {"available": True, "collections": {}},
+                "schedules": {
+                    "available": True,
+                    "configurationCount": 0,
+                    "configurationSha256": "a" * 64,
+                    "configurationTables": {},
+                },
+            },
+        }
+
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    snapshot_manifest.write_text(json.dumps(manifest(before)), encoding="utf-8")
+    live_manifest.write_text(json.dumps(manifest(additive)), encoding="utf-8")
+    additive_result = continuity_audit.compare_manifests(
+        type(
+            "Args",
+            (),
+            {
+                "snapshot_manifest": str(snapshot_manifest),
+                "live_manifest": str(live_manifest),
+                "strict_semantic": True,
+            },
+        )()
+    )
+    assert additive_result["status"] == "ok"
+
+    live_manifest.write_text(json.dumps(manifest(changed)), encoding="utf-8")
+    changed_result = continuity_audit.compare_manifests(
+        type(
+            "Args",
+            (),
+            {
+                "snapshot_manifest": str(snapshot_manifest),
+                "live_manifest": str(live_manifest),
+                "strict_semantic": True,
+            },
+        )()
+    )
+    assert changed_result["status"] == "error"
+    assert changed_result["semanticDifferences"][0]["field"] == (
+        "semantic.config.protectedLeaves"
+    )
+
+
+def test_uploads_semantic_fingerprint_is_root_independent_and_private(tmp_path: Path) -> None:
+    continuity_audit = load_continuity_audit_module()
+    legacy = tmp_path / "legacy" / "uploads"
+    canonical = tmp_path / "app-support" / "data" / "uploads"
+    for root in (legacy, canonical):
+        private = root / "synthetic-private-user" / "conversation"
+        private.mkdir(parents=True)
+        (private / "secret-name.txt").write_text(
+            "synthetic private upload content\n",
+            encoding="utf-8",
+        )
+        (root / "empty").mkdir()
+
+    legacy_result, legacy_warnings = continuity_audit.read_uploads_semantic_fingerprint(legacy)
+    canonical_result, canonical_warnings = continuity_audit.read_uploads_semantic_fingerprint(
+        canonical
+    )
+
+    assert legacy_warnings == canonical_warnings == []
+    assert legacy_result == canonical_result
+    assert legacy_result["available"] is True
+    assert legacy_result["fileCount"] == 1
+    assert legacy_result["totalBytes"] == len(b"synthetic private upload content\n")
+    rendered = json.dumps(legacy_result)
+    assert "synthetic-private-user" not in rendered
+    assert "secret-name.txt" not in rendered
+    assert "synthetic private upload content" not in rendered
+
+
+def test_uploads_semantic_fingerprint_rejects_unsafe_tree_without_leaking_path(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    private_name = "synthetic-private-link-name"
+    (uploads / private_name).symlink_to(tmp_path / "outside")
+
+    result, warnings = continuity_audit.read_uploads_semantic_fingerprint(uploads)
+
+    assert result["available"] is False
+    assert result["fileCount"] is None
+    assert private_name not in json.dumps(result)
+    assert private_name not in json.dumps(warnings)
+
+
+def test_uploads_audit_uses_predecessor_until_migration_is_proven(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    repo = tmp_path / "repo"
+    app_support = tmp_path / "app-support"
+    legacy = repo / "viventium_v0_4" / "LibreChat" / "uploads"
+    canonical = app_support / "data" / "uploads"
+    legacy.mkdir(parents=True)
+    (legacy / "legacy.txt").write_text("legacy\n", encoding="utf-8")
+    canonical.mkdir(parents=True)
+    runtime_env = {"VIVENTIUM_LIBRECHAT_UPLOADS_ROOT": str(canonical)}
+
+    selected, warnings = continuity_audit.resolve_uploads_audit_root(
+        repo_root=repo,
+        app_support_dir=app_support,
+        runtime_env=runtime_env,
+    )
+    assert selected == legacy
+    assert warnings == []
+
+    (canonical / "canonical.txt").write_text("canonical\n", encoding="utf-8")
+    selected, warnings = continuity_audit.resolve_uploads_audit_root(
+        repo_root=repo,
+        app_support_dir=app_support,
+        runtime_env=runtime_env,
+    )
+    assert selected is None
+    assert warnings == [
+        "Uploads semantic fingerprint failed: canonical and predecessor trees are both populated."
+    ]
+
+
+def test_uploads_audit_uses_current_runtime_root_when_other_runtime_link_is_receipted(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    repo = tmp_path / "repo"
+    legacy = repo / "viventium_v0_4" / "LibreChat" / "uploads"
+    legacy.parent.mkdir(parents=True)
+    current_support = tmp_path / "runtime-b" / "Viventium"
+    current_canonical = current_support / "data" / "uploads"
+    current_canonical.mkdir(parents=True)
+    other_canonical = tmp_path / "runtime-a" / "Viventium" / "data" / "uploads"
+    other_canonical.mkdir(parents=True)
+    legacy.symlink_to(other_canonical, target_is_directory=True)
+    receipt = (
+        current_support / "state" / "continuity" / "uploads-migration" / "receipt.json"
+    )
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "legacyCompatibility": "other_runtime_exact_symlink_preserved",
+                "mode": "isolated_runtime_root",
+                "observedLinkTargetSha256": hashlib.sha256(
+                    os.fsencode(str(other_canonical))
+                ).hexdigest(),
+                "canonicalStorage": "app_support_data_uploads",
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt.chmod(0o600)
+
+    selected, warnings = continuity_audit.resolve_uploads_audit_root(
+        repo_root=repo,
+        app_support_dir=current_support,
+        runtime_env={"VIVENTIUM_LIBRECHAT_UPLOADS_ROOT": str(current_canonical)},
+    )
+
+    assert selected == current_canonical
+    assert warnings == []
+
+    corrupted = json.loads(receipt.read_text(encoding="utf-8"))
+    corrupted["observedLinkTargetSha256"] = "0" * 64
+    receipt.write_text(json.dumps(corrupted), encoding="utf-8")
+    receipt.chmod(0o600)
+    selected, warnings = continuity_audit.resolve_uploads_audit_root(
+        repo_root=repo,
+        app_support_dir=current_support,
+        runtime_env={"VIVENTIUM_LIBRECHAT_UPLOADS_ROOT": str(current_canonical)},
+    )
+    assert selected is None
+    assert warnings == [
+        "Uploads semantic fingerprint failed: predecessor root is an unexpected symlink."
+    ]
+
+
+def test_strict_semantic_compare_gates_upload_content_and_unavailable_proof(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+
+    def manifest(uploads: dict) -> dict:
+        return {
+            "schemaVersion": 2,
+            "surfaces": {
+                "messages": {"latestTimestamp": None},
+                "savedMemory": {"latestTimestamp": None},
+                "schedules": {"latestTimestamp": None},
+            },
+            "semantic": {
+                "config": {"available": True, "leafDigests": []},
+                "mongo": {"available": True, "collections": {}},
+                "schedules": {
+                    "available": True,
+                    "configurationCount": 0,
+                    "configurationSha256": "a" * 64,
+                    "configurationTables": {},
+                },
+                "uploads": uploads,
+            },
+        }
+
+    protected = {
+        "available": True,
+        "fileCount": 1,
+        "totalBytes": 9,
+        "treeSha256": "b" * 64,
+    }
+    snapshot_manifest.write_text(json.dumps(manifest(protected)), encoding="utf-8")
+    changed = dict(protected)
+    changed["treeSha256"] = "c" * 64
+    live_manifest.write_text(json.dumps(manifest(changed)), encoding="utf-8")
+
+    args = type(
+        "Args",
+        (),
+        {
+            "snapshot_manifest": str(snapshot_manifest),
+            "live_manifest": str(live_manifest),
+            "strict_semantic": True,
+        },
+    )()
+    changed_result = continuity_audit.compare_manifests(args)
+    assert changed_result["status"] == "error"
+    assert changed_result["semanticDifferences"] == [
+        {
+            "field": "semantic.uploads.treeSha256",
+            "snapshotValue": "b" * 64,
+            "liveValue": "c" * 64,
+        }
+    ]
+
+    live_manifest.write_text(
+        json.dumps(
+            manifest(
+                {
+                    "available": False,
+                    "fileCount": None,
+                    "totalBytes": None,
+                    "treeSha256": None,
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+    unavailable_result = continuity_audit.compare_manifests(args)
+    assert unavailable_result["status"] == "error"
+    assert any("uploads" in error for error in unavailable_result["errors"])
 
 
 def test_snapshot_wrapper_writes_manifest_without_private_helper(tmp_path: Path) -> None:

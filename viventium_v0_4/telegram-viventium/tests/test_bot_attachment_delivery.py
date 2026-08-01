@@ -11,7 +11,11 @@ BOT_DIR = ROOT / "TelegramVivBot"
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
-from utils.librechat_attachments import send_librechat_attachments  # noqa: E402
+from utils import librechat_attachments as attachments_module  # noqa: E402
+from utils.librechat_attachments import (  # noqa: E402
+    fetch_librechat_bytes,
+    send_librechat_attachments,
+)
 
 
 class _FakeTelegramBot:
@@ -33,6 +37,66 @@ class _FakeTelegramBot:
 class _FakeContext:
     def __init__(self) -> None:
         self.bot = _FakeTelegramBot()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "expected_options"),
+    [
+        (
+            "http://127.0.0.1:3180/api/viventium/telegram/files/download/file-1",
+            {"trust_env": False, "verify": False},
+        ),
+        ("https://example.com/download/file-1", {}),
+    ],
+)
+async def test_attachment_download_applies_loopback_http_client_policy(
+    monkeypatch,
+    url,
+    expected_options,
+):
+    captured = {}
+
+    class _FakeResponse:
+        content = b"fixture"
+        headers = {"content-type": "application/octet-stream"}
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setattr(attachments_module.httpx, "AsyncClient", _FakeClient)
+
+    content, content_type = await fetch_librechat_bytes(
+        base_url=url.split("/api", 1)[0],
+        secret="synthetic-secret",
+        url=url,
+        telegram_user_id="1",
+        telegram_username="synthetic",
+        telegram_chat_id="2",
+    )
+
+    assert content == b"fixture"
+    assert content_type == "application/octet-stream"
+    observed_options = {
+        key: captured[key]
+        for key in ("trust_env", "verify")
+        if key in captured
+    }
+    assert observed_options == expected_options
 
 
 @pytest.mark.asyncio

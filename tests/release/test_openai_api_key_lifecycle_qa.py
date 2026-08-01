@@ -17,6 +17,13 @@ HARNESS = (
 )
 
 
+def _local_qa_environment(**overrides: str) -> dict[str, str]:
+    environment = {**os.environ, **overrides}
+    environment.pop("CI", None)
+    environment["NODE_ENV"] = "test"
+    return environment
+
+
 def test_api_key_lifecycle_harness_owns_the_stable_easy_install_contract() -> None:
     source = HARNESS.read_text(encoding="utf-8")
 
@@ -154,12 +161,11 @@ def test_anthropic_messages_provider_stub_self_test_is_sanitized() -> None:
 
 
 def test_api_key_lifecycle_harness_rejects_non_loopback_and_ci_targets() -> None:
-    base_env = {
-        **os.environ,
-        "VIVENTIUM_QA_CLIENT_BASE": "https://example.com",
-        "VIVENTIUM_QA_EMAIL": "synthetic@example.invalid",
-        "VIVENTIUM_QA_PASSWORD": "synthetic-password",
-    }
+    base_env = _local_qa_environment(
+        VIVENTIUM_QA_CLIENT_BASE="https://example.com",
+        VIVENTIUM_QA_EMAIL="synthetic@example.invalid",
+        VIVENTIUM_QA_PASSWORD="synthetic-password",
+    )
     non_loopback = subprocess.run(
         ["node", str(HARNESS), "--contract-check"],
         cwd=REPO_ROOT,
@@ -190,13 +196,12 @@ def test_api_key_lifecycle_harness_rejects_non_loopback_and_ci_targets() -> None
 
 
 def test_api_key_lifecycle_harness_requires_backend_loopback_provider_target() -> None:
-    base_env = {
-        **os.environ,
-        "VIVENTIUM_QA_CLIENT_BASE": "http://127.0.0.1:3190",
-        "VIVENTIUM_QA_EMAIL": "synthetic@example.invalid",
-        "VIVENTIUM_QA_PASSWORD": "synthetic-password",
-        "VIVENTIUM_QA_PROVIDER_PORT": "14661",
-    }
+    base_env = _local_qa_environment(
+        VIVENTIUM_QA_CLIENT_BASE="http://127.0.0.1:3190",
+        VIVENTIUM_QA_EMAIL="synthetic@example.invalid",
+        VIVENTIUM_QA_PASSWORD="synthetic-password",
+        VIVENTIUM_QA_PROVIDER_PORT="14661",
+    )
     missing = subprocess.run(
         ["node", str(HARNESS), "--contract-check"],
         cwd=REPO_ROOT,
@@ -240,18 +245,17 @@ def test_browser_launch_failure_releases_the_synthetic_provider_port(
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "PLAYWRIGHT_BROWSERS_PATH": str(tmp_path / "empty-playwright-cache"),
-            "VIVENTIUM_QA_CLIENT_BASE": "http://127.0.0.1:3190",
-            "VIVENTIUM_QA_EMAIL": "synthetic@example.invalid",
-            "VIVENTIUM_QA_PASSWORD": "synthetic-password",
-            "VIVENTIUM_QA_PROVIDER_PORT": str(provider_port),
-            "OPENAI_REVERSE_PROXY": f"http://127.0.0.1:{provider_port}/v1",
-            "VIVENTIUM_QA_RESTART_ARGV_JSON": '["/usr/bin/true"]',
-            "VIVENTIUM_QA_PRIVATE_EVIDENCE_DIR": str(tmp_path / "evidence"),
-            "VIVENTIUM_QA_PLAYWRIGHT_MODULE": str(playwright_fixture),
-        },
+        env=_local_qa_environment(
+            PLAYWRIGHT_BROWSERS_PATH=str(tmp_path / "empty-playwright-cache"),
+            VIVENTIUM_QA_CLIENT_BASE="http://127.0.0.1:3190",
+            VIVENTIUM_QA_EMAIL="synthetic@example.invalid",
+            VIVENTIUM_QA_PASSWORD="synthetic-password",
+            VIVENTIUM_QA_PROVIDER_PORT=str(provider_port),
+            OPENAI_REVERSE_PROXY=f"http://127.0.0.1:{provider_port}/v1",
+            VIVENTIUM_QA_RESTART_ARGV_JSON='["/usr/bin/true"]',
+            VIVENTIUM_QA_PRIVATE_EVIDENCE_DIR=str(tmp_path / "evidence"),
+            VIVENTIUM_QA_PLAYWRIGHT_MODULE=str(playwright_fixture),
+        ),
         timeout=30,
     )
 
