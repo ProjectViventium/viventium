@@ -297,6 +297,7 @@ def test_express_native_uses_pinned_vendor_mongodb_archive_instead_of_homebrew_t
     monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
     monkeypatch.setattr(module, "pnpm_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "uv_runtime_ready", lambda: True)
+    monkeypatch.setattr(module, "meilisearch_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "command_exists", lambda _command: True)
     monkeypatch.setattr(module, "xcode_cli_tools_installed", lambda: True)
 
@@ -343,6 +344,7 @@ def test_custom_native_preserves_existing_homebrew_mongodb_install_boundary(monk
     module = load_preflight_module()
     monkeypatch.setattr(module, "refresh_brew_paths", lambda: None)
     monkeypatch.setattr(module, "mongod_runtime_ready", lambda: False)
+    monkeypatch.setattr(module, "meilisearch_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "node_runtime_supported", lambda: True)
     monkeypatch.setattr(module, "pnpm_runtime_ready", lambda: True)
     monkeypatch.setattr(module, "uv_runtime_ready", lambda: True)

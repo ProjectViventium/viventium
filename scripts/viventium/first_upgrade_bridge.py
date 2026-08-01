@@ -808,6 +808,7 @@ def _bridge_environment() -> dict[str, str]:
     environment["VIVENTIUM_FIRST_UPGRADE_BRIDGE_INTERNAL"] = "1"
     environment["VIVENTIUM_QUIESCED_FINALIZATION_INTERNAL"] = "1"
     environment["VIVENTIUM_CLI_LOCK_INHERITED_ONCE"] = "1"
+    environment["VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME"] = "0"
     return environment
 
 

@@ -1079,11 +1079,15 @@ def test_exact_model_eval_harness_requires_local_jwt_opt_in(tmp_path: Path) -> N
     try:
         private_dir = tmp_path / "private"
         public_report = tmp_path / "public-report.md"
-        env = {
-            **os.environ,
-            "VIVENTIUM_QA_PASSWORD": "",
-            "VIVENTIUM_QA_ALLOW_LOCAL_JWT": "",
-        }
+        env = os.environ.copy()
+        env.pop("CI", None)
+        env.update(
+            {
+                "NODE_ENV": "test",
+                "VIVENTIUM_QA_PASSWORD": "",
+                "VIVENTIUM_QA_ALLOW_LOCAL_JWT": "",
+            }
+        )
 
         result = subprocess.run(
             [

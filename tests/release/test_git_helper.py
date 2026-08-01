@@ -25,7 +25,18 @@ def test_git_helper_list_includes_public_repo_catalog() -> None:
     result = run_helper("list")
 
     assert result.returncode == 0, result.stderr
-    assert "main|.|https://github.com/ProjectViventium/viventium.git" in result.stdout
+    main_line = next(
+        (
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("main|.|")
+        ),
+        "",
+    )
+    assert main_line, result.stdout
+    assert main_line.removesuffix(".git") == (
+        "main|.|https://github.com/ProjectViventium/viventium"
+    )
     assert "LibreChat|viventium_v0_4/LibreChat|https://github.com/ProjectViventium/viventium-librechat.git" in result.stdout
     assert "GlassHive|viventium_v0_4/GlassHive|https://github.com/ProjectViventium/GlassHive.git" in result.stdout
 

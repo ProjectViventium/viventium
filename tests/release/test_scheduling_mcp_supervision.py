@@ -483,14 +483,12 @@ ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 """.lstrip(),
         encoding="utf-8",
     )
-    runner = process_root / "python"
-    runner.symlink_to(sys.executable)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         port = int(probe.getsockname()[1])
 
     process = subprocess.Popen(
-        [str(runner), str(server_script), str(port), served_hash],
+        [sys.executable, str(server_script), str(port), served_hash],
         cwd=process_root,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

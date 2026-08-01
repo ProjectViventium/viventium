@@ -94,7 +94,7 @@ VOICE_SUPPORT_FILES = (
     "requirements.mlx_audio_darwin.txt",
     "sse.py",
 )
-REQUIRED_COMPONENT_FILES = (
+PREDECESSOR_REQUIRED_COMPONENT_FILES = (
     "bin/viventium",
     "scripts/viventium/telegram_poller_handoff.py",
     "scripts/viventium/telegram_runtime_component.py",
@@ -105,13 +105,16 @@ REQUIRED_COMPONENT_FILES = (
     "viventium_v0_4/telegram-viventium/TelegramVivBot/uv.lock",
     "viventium_v0_4/telegram-viventium/TelegramVivBot/utils/singleton.py",
     "viventium_v0_4/shared/no_response.py",
-    "viventium_v0_4/shared/voice/tts_provider_capabilities.json",
     "viventium_v0_4/shared/voice/cartesia_sonic3_capabilities.json",
     "viventium_v0_4/shared/voice/xai_tts_capabilities.json",
     "viventium_v0_4/voice-gateway/local_chatterbox_config.py",
     "viventium_v0_4/voice-gateway/mlx_chatterbox_tts.py",
     "viventium_v0_4/voice-gateway/requirements.mlx_audio_darwin.txt",
     "viventium_v0_4/voice-gateway/sse.py",
+)
+CURRENT_REQUIRED_COMPONENT_FILES = (
+    *PREDECESSOR_REQUIRED_COMPONENT_FILES,
+    "viventium_v0_4/shared/voice/tts_provider_capabilities.json",
 )
 
 
@@ -219,7 +222,11 @@ def _walk_selected_tree(root: Path, destination_prefix: Path) -> Iterator[tuple[
             yield candidate, destination_prefix / relative
 
 
-def _selected_sources(repo_root: Path) -> list[tuple[Path, Path]]:
+def _selected_sources(
+    repo_root: Path,
+    *,
+    predecessor_runtime: bool = False,
+) -> list[tuple[Path, Path]]:
     root = _lexical(repo_root)
     _validate_existing_real_chain(root, "Telegram runtime repository")
     if root.is_symlink() or not root.is_dir():
@@ -266,7 +273,12 @@ def _selected_sources(repo_root: Path) -> list[tuple[Path, Path]]:
     destinations = [destination.as_posix() for _, destination in selected]
     if len(destinations) != len(set(destinations)):
         raise ComponentError("Telegram runtime component contains duplicate destination paths")
-    missing = sorted(set(REQUIRED_COMPONENT_FILES) - set(destinations))
+    required = (
+        PREDECESSOR_REQUIRED_COMPONENT_FILES
+        if predecessor_runtime
+        else CURRENT_REQUIRED_COMPONENT_FILES
+    )
+    missing = sorted(set(required) - set(destinations))
     if missing:
         raise ComponentError(
             "Telegram runtime component is missing required public code: "
@@ -962,7 +974,13 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     _ensure_private_directory(app_support)
     _validate_existing_real_chain(selection_file.parent, "Telegram runtime selection")
     store_root = app_support / "runtime-components" / COMPONENT_NAME
-    selected = _selected_sources(repo_root)
+    predecessor_runtime = (
+        os.environ.get("VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME") == "1"
+    )
+    selected = _selected_sources(
+        repo_root,
+        predecessor_runtime=predecessor_runtime,
+    )
     manifest = _source_manifest(selected)
     with _component_lock(store_root):
         code_root, reused_code = _install_code(store_root, selected, manifest)

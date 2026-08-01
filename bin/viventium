@@ -1153,8 +1153,10 @@ prepare_telegram_runtime_component() {
   local source_repo="${1:-$REPO_ROOT}"
   local runtime_dir="${2:-$RUNTIME_DIR}"
   local selection_override="${3:-}"
+  local source_mode="${4:-}"
   local component_tool="${VIVENTIUM_TELEGRAM_COMPONENT_ASSEMBLER:-$REPO_ROOT/scripts/viventium/telegram_runtime_component.py}"
   local selection_file=""
+  local predecessor_runtime=0
   if [[ -n "$selection_override" ]]; then
     selection_file="$selection_override"
   else
@@ -1164,7 +1166,11 @@ prepare_telegram_runtime_component() {
     echo "Telegram runtime component assembler is missing or unsafe." >&2
     return 1
   fi
-  "$PYTHON_BIN" "$component_tool" prepare \
+  if [[ "$source_mode" == "predecessor" ]]; then
+    predecessor_runtime=1
+  fi
+  VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME="$predecessor_runtime" \
+    "$PYTHON_BIN" "$component_tool" prepare \
     --repo-root "$source_repo" \
     --app-support-dir "$APP_SUPPORT_DIR" \
     --selection-file "$selection_file" \
@@ -1173,6 +1179,7 @@ prepare_telegram_runtime_component() {
 
 stage_telegram_runtime_component() {
   local source_repo="${1:-$REPO_ROOT}"
+  local source_mode="${2:-}"
   local staging_dir="$APP_SUPPORT_DIR/state/runtime-component-staging"
   local staged_selection=""
   mkdir -p "$staging_dir"
@@ -1183,7 +1190,8 @@ stage_telegram_runtime_component() {
   if ! prepare_telegram_runtime_component \
     "$source_repo" \
     "$RUNTIME_DIR" \
-    "$staged_selection"
+    "$staged_selection" \
+    "$source_mode"
   then
     rm -f -- "$staged_selection"
     return 1
@@ -3199,6 +3207,7 @@ dev_runtime_command() {
       local candidate_commit=""
       local owner_env_source_is_candidate=0
       local owner_env_alignment_required=0
+      local telegram_predecessor_source_mode=""
       local established_runtime=0
       local was_running=0
       local was_running_arg="--no-was-running"
@@ -3208,6 +3217,7 @@ dev_runtime_command() {
       )"
       if [[ -n "$previous_repo" ]]; then
         established_runtime=1
+        telegram_predecessor_source_mode="predecessor"
       fi
       owner_repo="$(
         json_string_field "$(stack_owner_state_file)" repoRoot 2>/dev/null || true
@@ -3216,6 +3226,7 @@ dev_runtime_command() {
         previous_repo="$owner_repo"
         if [[ -n "$previous_repo" ]]; then
           established_runtime=1
+          telegram_predecessor_source_mode="predecessor"
         fi
       fi
       if [[ "$established_runtime" != "1" ]] &&
@@ -3231,7 +3242,10 @@ dev_runtime_command() {
       TELEGRAM_PREDECESSOR_ACTIVE_CONFIG_ROOT="$(
         resolve_predecessor_telegram_user_config_root "$previous_repo"
       )"
-      if ! stage_telegram_runtime_component "$previous_repo"; then
+      if ! stage_telegram_runtime_component \
+        "$previous_repo" \
+        "$telegram_predecessor_source_mode"
+      then
         echo "Dev-runtime activation could not stage a rollback-safe Telegram predecessor component." >&2
         echo "Binding, generated runtime, helper, and running state were not changed." >&2
         return 1
@@ -7215,8 +7229,18 @@ PY
       echo "Review $(display_safe_path "$PRE_UPGRADE_CONTINUITY_AUDIT") before changing the installed runtime." >&2
       exit 1
     fi
-    if ! stage_telegram_runtime_component "$REPO_ROOT"; then
+    UPGRADE_TELEGRAM_SOURCE_MODE="predecessor"
+    if [[ "$ALLOW_DIRTY" == "1" ]]; then
+      UPGRADE_TELEGRAM_SOURCE_MODE=""
+    fi
+    if ! stage_telegram_runtime_component \
+      "$REPO_ROOT" \
+      "$UPGRADE_TELEGRAM_SOURCE_MODE"
+    then
       echo "Upgrade could not stage a rollback-safe Telegram predecessor component." >&2
+      if [[ "$ALLOW_DIRTY" == "1" ]]; then
+        echo "Preserve or commit the local changes, then retry without --allow-dirty." >&2
+      fi
       echo "Source, generated runtime, helper, and running state were not changed." >&2
       exit 1
     fi

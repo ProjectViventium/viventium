@@ -316,6 +316,31 @@
   Telegram API's bounded cold/network path, and an attached candidate exit fails immediately.
   Successful installed promotion/restart remains pending.
 
+## SDR-012A: Predecessor Telegram Recovery Tolerates Successor-Only Contracts
+
+- Requirement: `50_Stable_Dev_Runtime.md`
+- Surfaces: `dev-runtime activate-current`, `upgrade`, Telegram runtime-component staging
+- Preconditions: a clean current candidate and a supported predecessor checkout created before a
+  newly required current Telegram/voice contract existed
+- Steps: stage the predecessor with the current recovery controller, then stage the candidate;
+  repeat through the activation and upgrade shell paths, including an older component assembler
+  that ignores the predecessor compatibility environment field
+- Expected Result: the predecessor component contains its complete tracked public runtime and the
+  stable recovery baseline, the candidate still fails loud if any current required contract is
+  missing, first activation and dirty local upgrades stay strict, and staging finishes before any
+  binding, generated-runtime, helper, or process mutation
+- Forbidden Result: requiring a successor-only file from the predecessor, relaxing the candidate
+  contract, passing a new mandatory CLI flag to an older assembler, or mutating live state before
+  either component is safely staged
+- Evidence: `tests/release/test_telegram_runtime_component.py`,
+  `tests/release/test_cli_upgrade.py`, and an installed activation retry
+- Last Run: PARTIAL 2026-07-31; the installed activation reproduced the pre-mutation refusal,
+  all 197 CLI-upgrade/helper/first-bridge tests and 26 of 27 component tests passed with the final
+  production implementation; the only failure was the test's source-slice endpoint. After correcting
+  that assertion, all 27 component tests and all 26 QA operating-contract tests passed. The
+  component suite executes the env-only older-assembler seam and strict reset. Installed activation
+  retry is pending.
+
 ## SDR-013: Local Checkout Promotion Does Not Require A Cloud Upstream
 
 - Requirement: `50_Stable_Dev_Runtime.md`

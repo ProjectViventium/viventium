@@ -642,7 +642,8 @@ prepare_telegram_runtime_component() {
   local python_bin
   local selection_file="$APP_SUPPORT_DIR/runtime/components/telegram-viventium.json"
   python_bin="$(resolve_repo_python)"
-  "$python_bin" "$SCRIPT_DIR/telegram_runtime_component.py" prepare \
+  VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME=0 \
+    "$python_bin" "$SCRIPT_DIR/telegram_runtime_component.py" prepare \
     --repo-root "$HELPER_RUNTIME_REPO_ROOT" \
     --app-support-dir "$APP_SUPPORT_DIR" \
     --selection-file "$selection_file" \

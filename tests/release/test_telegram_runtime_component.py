@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import stat
 import subprocess
 import sys
@@ -21,6 +22,9 @@ COMPONENT_TOOL = (
 LAUNCHER = REPO_ROOT / "viventium_v0_4" / "viventium-librechat-start.sh"
 CLI = REPO_ROOT / "bin" / "viventium"
 HELPER_INSTALLER = REPO_ROOT / "scripts" / "viventium" / "install_macos_helper.sh"
+FIRST_UPGRADE_BRIDGE = (
+    REPO_ROOT / "scripts" / "viventium" / "first_upgrade_bridge.py"
+)
 
 
 def _load_component_module():
@@ -281,6 +285,7 @@ def _prepare(
     selection: Path,
     *,
     sync_dependencies: bool = True,
+    predecessor_runtime_environment: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         sys.executable,
@@ -295,7 +300,18 @@ def _prepare(
     ]
     if sync_dependencies:
         command.append("--sync-dependencies")
-    return subprocess.run(command, check=False, capture_output=True, text=True)
+    environment = os.environ.copy()
+    if predecessor_runtime_environment is not None:
+        environment["VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME"] = (
+            predecessor_runtime_environment
+        )
+    return subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
 
 
 def test_component_prepare_is_content_addressed_and_public_code_only(
@@ -353,6 +369,112 @@ def test_component_prepare_is_content_addressed_and_public_code_only(
     assert second_payload["code_digest"] == first_payload["code_digest"]
     assert second_payload["code_root"] == first_payload["code_root"]
     assert second_payload["reused_code"] is True
+
+
+def test_predecessor_prepare_allows_successor_only_voice_contract_to_be_absent(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "predecessor"
+    app_support = tmp_path / "app-support"
+    current_selection = app_support / "state" / "candidate" / "current.json"
+    predecessor_selection = app_support / "state" / "candidate" / "predecessor.json"
+    _make_runtime_repo(repo)
+    (
+        repo
+        / "viventium_v0_4"
+        / "shared"
+        / "voice"
+        / "tts_provider_capabilities.json"
+    ).unlink()
+
+    current = _prepare(
+        repo,
+        app_support,
+        current_selection,
+        predecessor_runtime_environment="0",
+    )
+    predecessor = _prepare(
+        repo,
+        app_support,
+        predecessor_selection,
+        predecessor_runtime_environment="1",
+    )
+
+    assert current.returncode != 0
+    assert "tts_provider_capabilities.json" in current.stderr
+    assert predecessor.returncode == 0, predecessor.stderr
+    selected = json.loads(predecessor_selection.read_text(encoding="utf-8"))
+    assert not (
+        Path(selected["code_root"])
+        / "viventium_v0_4"
+        / "shared"
+        / "voice"
+        / "tts_provider_capabilities.json"
+    ).exists()
+
+
+def test_shell_predecessor_mode_is_env_only_and_resets_current_mode(
+    tmp_path: Path,
+) -> None:
+    cli = CLI.read_text(encoding="utf-8")
+    prepare_function = cli[
+        cli.index("prepare_telegram_runtime_component() {") :
+        cli.index("stage_telegram_runtime_component() {")
+    ]
+    fake_assembler = tmp_path / "legacy-assembler.py"
+    event_log = tmp_path / "events.jsonl"
+    _write(
+        fake_assembler,
+        """\
+import json
+import os
+from pathlib import Path
+import sys
+
+Path(os.environ["EVENT_LOG"]).open("a", encoding="utf-8").write(
+    json.dumps({
+        "argv": sys.argv[1:],
+        "predecessor": os.environ.get(
+            "VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME"
+        ),
+    }) + "\\n"
+)
+""",
+    )
+    fake_assembler.chmod(0o755)
+    selection = tmp_path / "selection.json"
+    command = (
+        "set -euo pipefail\n"
+        f"APP_SUPPORT_DIR={shlex.quote(str(tmp_path / 'support'))}\n"
+        "RUNTIME_DIR=/synthetic/runtime\n"
+        "REPO_ROOT=/synthetic/current\n"
+        f"PYTHON_BIN={shlex.quote(sys.executable)}\n"
+        f"VIVENTIUM_TELEGRAM_COMPONENT_ASSEMBLER={shlex.quote(str(fake_assembler))}\n"
+        f"EVENT_LOG={shlex.quote(str(event_log))}\n"
+        "export EVENT_LOG\n"
+        f"{prepare_function}"
+        "prepare_telegram_runtime_component /synthetic/predecessor "
+        f"/synthetic/runtime {shlex.quote(str(selection))} predecessor\n"
+        "VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME=1\n"
+        "export VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME\n"
+        "prepare_telegram_runtime_component /synthetic/current "
+        f"/synthetic/runtime {shlex.quote(str(selection))}\n"
+    )
+
+    completed = subprocess.run(
+        ["bash", "-c", command],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    events = [
+        json.loads(line)
+        for line in event_log.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["predecessor"] for event in events] == ["1", "0"]
+    assert all("--predecessor-runtime" not in event["argv"] for event in events)
 
 
 def test_component_resolve_rejects_mode_drift(tmp_path: Path) -> None:
@@ -1122,6 +1244,7 @@ def test_optional_voice_requirements_advance_dependency_identity(
 def test_runtime_wiring_prepares_candidate_before_publication_and_start() -> None:
     cli = CLI.read_text(encoding="utf-8")
     helper = HELPER_INSTALLER.read_text(encoding="utf-8")
+    first_upgrade_bridge = FIRST_UPGRADE_BRIDGE.read_text(encoding="utf-8")
     launcher = LAUNCHER.read_text(encoding="utf-8")
 
     activation_start = cli.index("\n    activate-current)")
@@ -1135,6 +1258,23 @@ def test_runtime_wiring_prepares_candidate_before_publication_and_start() -> Non
     activation_before_begin = activation[: activation.index("dev_runtime_activation_tool begin-new")]
     assert 'prepare_telegram_runtime_component "$previous_repo" "$RUNTIME_DIR"' not in (
         activation_before_begin
+    )
+    stage_function = cli[
+        cli.index("stage_telegram_runtime_component() {") :
+        cli.index("resolve_predecessor_telegram_user_config_root() {")
+    ]
+    prepare_function = cli[
+        cli.index("prepare_telegram_runtime_component() {") :
+        cli.index("stage_telegram_runtime_component() {")
+    ]
+    assert 'VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME="$predecessor_runtime"' in (
+        prepare_function
+    )
+    assert '"$source_mode"' in stage_function
+    assert activation.count('telegram_predecessor_source_mode="predecessor"') == 2
+    assert (
+        '"$telegram_predecessor_source_mode"'
+        in activation
     )
 
     upgrade_start = cli.index("\n  upgrade|update)")
@@ -1152,6 +1292,26 @@ def test_runtime_wiring_prepares_candidate_before_publication_and_start() -> Non
     assert 'prepare_telegram_runtime_component "$REPO_ROOT" "$RUNTIME_DIR"' not in (
         upgrade_before_begin
     )
+    assert 'UPGRADE_TELEGRAM_SOURCE_MODE="predecessor"' in upgrade
+    assert 'if [[ "$ALLOW_DIRTY" == "1" ]]; then' in upgrade
+    assert 'UPGRADE_TELEGRAM_SOURCE_MODE=""' in upgrade
+    assert '"$UPGRADE_TELEGRAM_SOURCE_MODE"' in upgrade
+    assert "retry without --allow-dirty" in upgrade
+    interrupted_recovery = cli[
+        cli.index("recover_interrupted_upgrade_transaction() {") :
+        cli.index("recover_interrupted_upgrade_before_runtime_start() {")
+    ]
+    assert 'stage_telegram_runtime_component "$REPO_ROOT"' in interrupted_recovery
+    assert (
+        'stage_telegram_runtime_component "$REPO_ROOT" "predecessor"'
+        not in interrupted_recovery
+    )
+    assert "VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME=0" in helper
+    assert (
+        'environment["VIVENTIUM_TELEGRAM_PREDECESSOR_RUNTIME"] = "0"'
+        in first_upgrade_bridge
+    )
+    assert cli.count("stage_telegram_runtime_component") == 4
     assert "prepare_telegram_runtime_component" in helper
     assert "TELEGRAM_COMPONENT_SELECTION_FILE" in launcher
     assert "VIVENTIUM_TELEGRAM_EXECUTION_ROOT" in launcher

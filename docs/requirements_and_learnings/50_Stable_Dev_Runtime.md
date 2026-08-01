@@ -440,7 +440,15 @@ selection. After an accepted candidate publishes, detached macOS startup require
 identity. On rollback, the current packaged compatibility launcher is retained with the staged
 component and runs against predecessor source roots while forcing Telegram code, dependencies,
 handoff helper, and preference state through App Support. This preserves compatibility even when
-the predecessor checkout predates installed-component awareness.
+the predecessor checkout predates installed-component awareness. Predecessor packaging requires
+the stable recovery baseline but permits successor-only public contracts to be absent; candidate
+packaging still requires the complete current contract. The compatibility signal is passed through
+an environment field ignored by older component assemblers, so a newly added prepare flag cannot
+make an otherwise recoverable predecessor impossible to stage. Only established activation
+checkpoints and non-dirty upgrade predecessors set that mode. A first activation with no established
+runtime and an explicit dirty local upgrade remain strict. Interrupted-upgrade recovery and every
+candidate/helper/first-upgrade prepare path also pin strict mode so ambient state or a torn successor
+tree cannot relax the current contract.
 
 An established repo-local `TelegramVivBot/user_configs` directory is a legacy personalization
 source, not a runtime location. After the predecessor writer is quiesced, activation migrates it into
