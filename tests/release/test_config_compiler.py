@@ -881,6 +881,26 @@ def test_native_agent_bundle_rewrites_main_parameters_for_direct_anthropic_profi
     assert "glasshive_options" not in compiled["mainAgent"]
 
 
+def test_native_agent_bundle_keeps_interactive_glasshive_red_team_at_high_effort() -> None:
+    config = minimal_compile_config()
+    config["integrations"]["glasshive"] = {
+        "enabled": True,
+        "provider": {"enabled": True},
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+
+    compiled = config_compiler.render_native_agents_bundle(config, assignments, set())
+    red_team = next(
+        agent
+        for agent in compiled["backgroundAgents"]
+        if agent["id"] == "agent_viventium_red_team_95aeb3"
+    )
+
+    assert red_team["provider"] == "glasshive-harness"
+    assert red_team["model"] == "codex-cli:gpt-5.6-sol"
+    assert red_team["model_parameters"]["reasoning_effort"] == "high"
+
+
 def test_runtime_env_disables_automatic_mongoose_index_creation() -> None:
     config = minimal_compile_config()
     env = config_compiler.render_runtime_env(
@@ -1777,6 +1797,8 @@ def test_config_compiler_minimal(tmp_path: Path) -> None:
     assert "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS=1300" in librechat_env
     assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in runtime_env
     assert "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS=6000" in librechat_env
+    assert "VIVENTIUM_CORTEX_EXECUTION_TIMEOUT_MS=3600000" in runtime_env
+    assert "VIVENTIUM_CORTEX_EXECUTION_TIMEOUT_MS=3600000" in librechat_env
     assert "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD=true" in librechat_env
     assert "VIVENTIUM_VOICE_LOG_LATENCY=1" in librechat_env
     assert "VIVENTIUM_LIBRECHAT_ORIGIN=http://127.0.0.1:3180" in runtime_env

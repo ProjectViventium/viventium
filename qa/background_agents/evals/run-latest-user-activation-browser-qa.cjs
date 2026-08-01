@@ -502,6 +502,66 @@ function cortexPartsFromMessage(message) {
     : [];
 }
 
+function isTerminalFollowUpDecision(decision) {
+  return (
+    decision &&
+    typeof decision === "object" &&
+    ["persisted", "suppressed", "empty", "skipped"].includes(
+      String(decision.result || ""),
+    )
+  );
+}
+
+async function waitForSetupTerminalFollowUpDecision({
+  qaAuth,
+  conversationId,
+  userMessageId,
+  timeoutMs,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const parent = await qaAuth.db.collection("messages").findOne(
+      {
+        user: qaAuth.userId,
+        conversationId,
+        isCreatedByUser: false,
+        parentMessageId: userMessageId,
+      },
+      { sort: { createdAt: 1, _id: 1 } },
+    );
+    const decision = parent?.metadata?.viventium?.cortexFollowUpDecision;
+    if (parent?.messageId && isTerminalFollowUpDecision(decision)) {
+      const structuredFollowUpCount = await qaAuth.db
+        .collection("messages")
+        .countDocuments({
+          user: qaAuth.userId,
+          conversationId,
+          isCreatedByUser: false,
+          "metadata.viventium.type": "cortex_followup",
+          "metadata.viventium.parentMessageId": parent.messageId,
+        });
+      const durableDecision =
+        decision.result === "persisted"
+          ? structuredFollowUpCount === 1
+          : structuredFollowUpCount === 0;
+      if (durableDecision) {
+        return {
+          setupParentHash: hashValue(parent.messageId),
+          setupFollowUpDecisionTerminal: true,
+          setupFollowUpDecisionResult: String(decision.result || ""),
+          setupFollowUpLlmResult: String(decision.llmResult || ""),
+          setupFollowUpSuppressionReason: String(
+            decision.suppressionReason || "",
+          ),
+          setupStructuredFollowUpCount: structuredFollowUpCount,
+        };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("missing_setup_terminal_followup_decision");
+}
+
 async function waitForUserMessage({
   qaAuth,
   conversationId,
@@ -598,6 +658,17 @@ async function readLatestTurnState({
     })
     .sort({ createdAt: 1, _id: 1 })
     .toArray();
+  const structuredPhaseBChildren = await qaAuth.db
+    .collection("messages")
+    .find({
+      user: qaAuth.userId,
+      conversationId,
+      isCreatedByUser: false,
+      "metadata.viventium.type": "cortex_followup",
+      "metadata.viventium.parentMessageId": assistantMessageId,
+    })
+    .sort({ createdAt: 1, _id: 1 })
+    .toArray();
   const directChildren = await qaAuth.db
     .collection("messages")
     .find({
@@ -627,6 +698,7 @@ async function readLatestTurnState({
     directAssistantCount: directChildren.length,
     phaseBChildCount: phaseBChildren.length,
     phaseBChildVisibleTextCount: childVisibleTextCount,
+    latestStructuredFollowUpCount: structuredPhaseBChildren.length,
     scopedCortexPartCount: allCortexParts.length,
     scopedCortexNames: Array.from(
       new Set(
@@ -658,6 +730,12 @@ async function run() {
     conversationIdHash: "",
     setupCardsVisible: false,
     setupFollowUpReady: false,
+    setupParentHash: "",
+    setupFollowUpDecisionTerminal: false,
+    setupFollowUpDecisionResult: "",
+    setupFollowUpLlmResult: "",
+    setupFollowUpSuppressionReason: "",
+    setupStructuredFollowUpCount: 0,
     latestParentHash: "",
     latestParentTextLength: 0,
     latestParentIncludesTestOk: false,
@@ -665,6 +743,7 @@ async function run() {
     latestDirectAssistantCount: 0,
     latestPhaseBChildCount: 0,
     latestPhaseBChildVisibleTextCount: 0,
+    latestStructuredFollowUpCount: 0,
     latestScopedCortexPartCount: 0,
     latestScopedCortexNames: [],
     directAccessTokenFallbackUsed: false,
@@ -792,6 +871,15 @@ async function run() {
 
     // Wait past the normal activation/status window so a stale-history activation has time to attach.
     await page.waitForTimeout(Math.max(0, args.settleMs));
+    Object.assign(
+      result,
+      await waitForSetupTerminalFollowUpDecision({
+        qaAuth,
+        conversationId,
+        userMessageId: setupUserMessage.messageId,
+        timeoutMs: args.timeoutMs,
+      }),
+    );
     const latestState = await readLatestTurnState({
       qaAuth,
       conversationId,
@@ -814,6 +902,8 @@ async function run() {
       latestPhaseBChildCount: latestState.phaseBChildCount,
       latestPhaseBChildVisibleTextCount:
         latestState.phaseBChildVisibleTextCount,
+      latestStructuredFollowUpCount:
+        latestState.latestStructuredFollowUpCount,
       latestScopedCortexPartCount: latestState.scopedCortexPartCount,
       latestScopedCortexNames: latestState.scopedCortexNames,
     });
@@ -847,13 +937,16 @@ async function run() {
     result.pass =
       result.setupCardsVisible &&
       result.setupFollowUpReady &&
+      result.setupFollowUpDecisionTerminal &&
       result.latestParentIncludesTestOk &&
       result.latestParentExactExpectedText &&
       result.testOkVisibleBeforeReload &&
       result.testOkVisibleAfterReload &&
       result.qaProvenancePersisted &&
       result.latestScopedCortexPartCount === 0 &&
-      result.latestPhaseBChildVisibleTextCount === 0;
+      result.latestPhaseBChildCount === 0 &&
+      result.latestPhaseBChildVisibleTextCount === 0 &&
+      result.latestStructuredFollowUpCount === 0;
   } catch (error) {
     if (
       error?.qaBlocked ||
@@ -908,6 +1001,12 @@ async function run() {
     `- Conversation hash: \`${result.conversationIdHash || "unverified"}\``,
     `- Setup cards visible: ${Boolean(result.setupCardsVisible)}`,
     `- Setup follow-up ready: ${Boolean(result.setupFollowUpReady)}`,
+    `- Setup parent hash: \`${result.setupParentHash || "unverified"}\``,
+    `- Setup follow-up decision terminal: ${Boolean(result.setupFollowUpDecisionTerminal)}`,
+    `- Setup follow-up decision result: ${result.setupFollowUpDecisionResult || "missing"}`,
+    `- Setup follow-up LLM result: ${result.setupFollowUpLlmResult || "missing"}`,
+    `- Setup follow-up suppression reason: ${result.setupFollowUpSuppressionReason || "none"}`,
+    `- Setup structured follow-up count: ${result.setupStructuredFollowUpCount}`,
     `- Latest assistant hash: \`${result.latestParentHash || "unverified"}\``,
     `- Latest parent text length: ${result.latestParentTextLength}`,
     `- Expected text: \`${hashValue(args.testExpectedText)}\``,
@@ -919,6 +1018,7 @@ async function run() {
     `- Latest direct assistant count: ${result.latestDirectAssistantCount}`,
     `- Latest Phase B child count: ${result.latestPhaseBChildCount}`,
     `- Latest Phase B visible child count: ${result.latestPhaseBChildVisibleTextCount}`,
+    `- Latest structured follow-up count: ${result.latestStructuredFollowUpCount}`,
     `- Latest scoped cortex part count: ${result.latestScopedCortexPartCount}`,
     `- Latest scoped cortex names: ${result.latestScopedCortexNames.join(", ") || "none"}`,
     `- Direct access-token fallback used: ${Boolean(result.directAccessTokenFallbackUsed)}`,

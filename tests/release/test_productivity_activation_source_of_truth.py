@@ -501,12 +501,12 @@ def test_retired_deep_research_keeps_reasoning_config_without_live_web_tool() ->
     assert "thinkingBudget" not in deep_research["model_parameters"]
 
 
-def test_red_team_ships_with_web_search_and_glasshive_xhigh_reasoning_effort() -> None:
+def test_red_team_ships_with_web_search_and_glasshive_high_reasoning_effort() -> None:
     agents_by_id = _load_background_agents_by_id()
     red_team = agents_by_id["agent_viventium_red_team_95aeb3"]
 
     assert "web_search" in red_team["tools"]
-    assert red_team["model_parameters"]["reasoning_effort"] == "xhigh"
+    assert red_team["model_parameters"]["reasoning_effort"] == "high"
     assert "thinkingBudget" not in red_team["model_parameters"]
     assert "useResponsesApi" not in red_team["model_parameters"]
 

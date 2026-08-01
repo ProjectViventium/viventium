@@ -89,6 +89,7 @@ DEFAULT_PUBLIC_GLASSHIVE_WATCH_SESSION_SECONDS = 1800
 SUPPORTED_GLASSHIVE_WORKER_PROFILES = {"codex-cli", "claude-code", "openclaw-general"}
 DEFAULT_CORTEX_PHASE_A_NOTICE_MODE = "any_activated_on_voice"
 DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS = "6000"
+DEFAULT_CORTEX_EXECUTION_TIMEOUT_MS = "3600000"
 DEFAULT_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS = 1600
 DEFAULT_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS = 2500
 DEFAULT_VIVENTIUM_TIMEZONE = "local"
@@ -861,6 +862,11 @@ BACKGROUND_AGENT_REASONING_EFFORT_BY_ID = {
     "agent_viventium_strategic_planning_95aeb3": "high",
     "agent_viventium_support_95aeb3": "low",
     "agent_8Y1d7JNhpubtvzYz3hvEv": "low",
+}
+BACKGROUND_AGENT_GLASSHIVE_REASONING_EFFORT_BY_ID = {
+    **BACKGROUND_AGENT_REASONING_EFFORT_BY_ID,
+    # Keep interactive Red Team latency below the measured xhigh queue/deadline risk.
+    "agent_viventium_red_team_95aeb3": "high",
 }
 MODEL_OVERRIDE_ROLES = AGENT_ASSIGNMENT_ROLES | {
     "glasshive_codex",
@@ -4270,6 +4276,10 @@ def render_runtime_env(
     # This is a total background budget across the configured fallback chain and never extends the
     # main-answer wait. Six seconds covers the evaluated Qwen tail plus bounded fallbacks.
     env["VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS"] = DEFAULT_CORTEX_LATE_DETECT_TIMEOUT_MS
+    # Harness-backed cortices may queue behind another authenticated CLI worker and an xhigh run
+    # can legitimately approach three minutes. Keep the execution window longer than the supported
+    # ten-minute worker path so normal capacity queueing does not discard a completed insight.
+    env["VIVENTIUM_CORTEX_EXECUTION_TIMEOUT_MS"] = DEFAULT_CORTEX_EXECUTION_TIMEOUT_MS
     env["VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD"] = "true"
     env["VIVENTIUM_VOICE_LOG_LATENCY"] = "1"
     # Enable LibreChat structured/redacted/rotated debug logs (debug-YYYY-MM-DD.log). Without this,
@@ -4800,7 +4810,11 @@ def render_native_agents_bundle(
             if not role or role not in assignments:
                 continue
             provider, model = assignments[role]
-            effort = BACKGROUND_AGENT_REASONING_EFFORT_BY_ID[agent_id]
+            effort = (
+                BACKGROUND_AGENT_GLASSHIVE_REASONING_EFFORT_BY_ID[agent_id]
+                if provider == GLASSHIVE_PROVIDER_ID
+                else BACKGROUND_AGENT_REASONING_EFFORT_BY_ID[agent_id]
+            )
             agent["provider"] = provider
             agent["model"] = model
             if provider == GLASSHIVE_PROVIDER_ID:
@@ -5382,6 +5396,7 @@ def render_service_envs(output_dir: Path, env: dict[str, str]) -> None:
         "VIVENTIUM_TEXT_PHASE_A_AWAIT_MS",
         "VIVENTIUM_CORTEX_DETECT_TIMEOUT_MS",
         "VIVENTIUM_CORTEX_LATE_DETECT_TIMEOUT_MS",
+        "VIVENTIUM_CORTEX_EXECUTION_TIMEOUT_MS",
         "VIVENTIUM_ACTIVATION_PRIMARY_ATTEMPT_TIMEOUT_MS",
         "VIVENTIUM_ACTIVATION_FALLBACK_ATTEMPT_TIMEOUT_MS",
         "VIVENTIUM_VOICE_PHASE_A_ASYNC_ALLOW_TOOL_HOLD",

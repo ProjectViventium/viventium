@@ -318,6 +318,7 @@ def test_phase_b_follow_up_prompts_render_with_declared_variables() -> None:
         registry,
         variables={
             "surface_rules": "WEB TEXT MODE:",
+            "user_request": "Give a short answer and add a continuation only for new evidence.",
             "recent_response_context": "Here is the response you JUST sent to the user:",
             "continuation_context": "",
             "background_insights": "- worker: The task finished.",

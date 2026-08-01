@@ -234,7 +234,7 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_opus5_fallba
         "Viventium": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
         "Background Analysis": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
         "Confirmation Bias": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
-        "Red Team": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "xhigh"),
+        "Red Team": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "high"),
         "Deep Research": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "xhigh"),
         "MS365": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
         "Parietal Cortex": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
@@ -262,7 +262,7 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_opus5_fallba
         assert agent.get("fallback_llm_provider") == "anthropic"
         assert agent.get("fallback_llm_model") == "claude-opus-5"
         expected_fallback_parameters = {"model": "claude-opus-5"}
-        if effort == "xhigh":
+        if name in {"Red Team", "Deep Research"}:
             expected_fallback_parameters["thinkingBudget"] = 4000
         elif effort == "high":
             expected_fallback_parameters["thinkingBudget"] = 2000
@@ -467,7 +467,7 @@ def test_red_team_execution_uses_decision_quality_stack_and_xhigh_openai_bag() -
         assert phrase in instructions
 
     assert "web_search" in red_team.get("tools", [])
-    assert red_team.get("model_parameters", {}).get("reasoning_effort") == "xhigh"
+    assert red_team.get("model_parameters", {}).get("reasoning_effort") == "high"
     assert "thinkingBudget" not in red_team.get("model_parameters", {})
 
     runtime_contract = _load_runtime_models_contract()

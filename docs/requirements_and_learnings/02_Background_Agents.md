@@ -39,6 +39,9 @@ For the manager-readable handbook, start with:
     fields such as `thinkingBudget`
   - on the direct OpenAI execution family it must use the Responses API because this is a
     reasoning-plus-tools workload; GlassHive executes it through the harness-native endpoint
+  - the interactive GlassHive baseline uses `high`: a real xhigh Red Team turn took 177 seconds
+    before queue time, too close to the old three-minute cortex deadline for reliable Phase B. The
+    direct OpenAI fallback remains xhigh, and Deep Research remains GlassHive xhigh.
 - Shipping a specialist background agent does not require the main Viventium agent to auto-activate
   it. In the current local baseline, the main agent keeps `Deep Research`, `MS365`, and `Google`
   background activation disabled. Live web/productivity execution should be handled by the
@@ -99,12 +102,33 @@ browser-only post-connect side effect.
   specialists remain independent sessions inside the same visible conversation instead of falling
   back to orphaned generated conversation IDs. This applies to ordinary, speculative, late-recovery,
   configured-fallback, and detached Emotional Reaction execution.
+- A substantive cortex is the specialist, not the Main agent. Main-only wording and response-shape
+  instructions in the originating request are context for the specialist's analysis, not constraints
+  on its result. Universal safety/permission constraints and instructions explicitly addressed to
+  background agents still apply. A cortex must not restate or quote the original request or Phase A;
+  it returns only independent specialist findings that add information. This prevents a specialist
+  from echoing the Phase A answer instead of producing independent evidence.
+- GlassHive's universal conversation endpoint preserves OpenAI role authority when translating the
+  ordered message array into a native CLI instruction: it carries one authoritative system snapshot,
+  labels visible conversation roles, and ends the flattened transcript with a compact reminder to
+  verify the response against that system snapshot. Recency in a user message must not silently
+  outrank the agent/cortex contract.
 - Specialist cortices do not receive Feelings. The main speaking path—including a GlassHive-backed
   main—receives the request-pinned capsule exactly once.
 - Harness-backed runs remove the GlassHive self-delegation MCP through declared capability metadata,
   preventing GlassHive-inside-GlassHive recursion while retaining other declared tools.
 - Speculative Phase-A redo is disabled for a harness-backed main. After native execution starts,
   transport recovery may reattach to the same idempotent request but cannot dispatch a second run.
+- Browser refresh, relay timeout, or transport disconnect detaches the consumer; it does not cancel
+  the harness. GlassHive must continue reconciling the durable provider request from the worker run
+  so a completed result becomes terminal exactly once and a reconnect can recover it.
+- Host-native CLI authentication isolation remains serial per CLI family and conversation lane.
+  `host_worker_busy` is therefore normal capacity queueing: it uses a short bounded retry cadence,
+  its own long retry budget, and an immediate wake when the active worker releases the lane. It must
+  not consume the shorter generic provider-failure retry budget or strand later cortices. A wake is
+  scoped to the exact runtime lane (harness profile, host execution, and conversation/mission mode),
+  rechecks real capacity before clearing delays, and occurs after every terminal release path—not
+  only successful completion. Requeueing a still-busy worker must not wake or erase unrelated lanes.
 
 - The tracked source-of-truth bundle in
   `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml` is the
@@ -122,7 +146,7 @@ Authoritative execution matrix:
 | Viventium conscious | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `openAI / gpt-5.6-sol` | `anthropic / claude-opus-5` | `openAI / gpt-5.6-sol` |
 | Background Analysis | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
 | Confirmation Bias | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
-| Red Team | `GlassHive Codex / Sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
+| Red Team | `GlassHive Codex / Sol / high` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
 | Deep Research | `GlassHive Codex / Sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
 | MS365 | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
 | Parietal Cortex | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
@@ -162,7 +186,10 @@ Model inventory rule:
   Viventium's configured `gpt-5.4` activation run must not receive `temperature`, `topP`, penalties,
   `n`, or logprob sampling controls.
 - Phase B execution has a bounded outer guard so a stuck or aborted background run cannot leave the
-  UI on permanent progress. The guard is the agent execution timeout plus a small grace window;
+  UI on permanent progress. The default agent execution timeout is 3,600,000 ms, covering the
+  supported ten-minute harness path plus multiple serialized cortices and single-CLI capacity
+  queueing. The guard is the
+  agent execution timeout plus a small grace window;
   `VIVENTIUM_CORTEX_EXECUTION_GUARD_GRACE_MS` may tune only that grace window, defaults to 15s,
   and is clamped between 0s and 60s.
 
@@ -328,6 +355,11 @@ Requirements:
   evidence as an injected continuation prompt, compares it to the response the main agent already
   gave, and either writes a concise same-conversation follow-up as a new assistant message or outputs
   exactly `{NTA}`.
+- The adjudicator also receives the original user request so it can honor whether the user allowed
+  or prohibited a later continuation. Same-topic evidence is not automatically redundant: the
+  comparison is against concrete facts, risks, decisions, and actions already present in Phase A.
+  When the requested Phase A output bound is already satisfied and no later continuation was
+  authorized, the adjudicator must resolve silently to `{NTA}`.
 - Phase B follow-ups are nonblocking additions. Runtime must not replace, overwrite, or rewrite the
   original Phase A assistant message when Phase B completes.
 - Phase B may still upsert structured cortex status/insight parts onto the Phase A message for
@@ -349,11 +381,12 @@ Requirements:
   apply to scheduled `{NTA}` holds, and must preserve structured cortex parts on the same parent.
 - If a user surface already received visible Phase A assistant text but the canonical text aggregator
   did not advance, runtime must repair the canonical parent from the emitted visible delta before
-  Phase B adjudication. That repaired visible answer is treated as the authored Phase A answer; Phase B
-  must fail closed and record a silent terminal decision rather than using deterministic fallback text
-  that could contradict the already-delivered answer. This guard is structural and surface-neutral:
-  it keys on stream/canonical mismatch evidence, not user wording, provider labels, agent names, or
-  safety-policy text.
+  Phase B adjudication. That repaired visible answer is treated as the authored Phase A answer and
+  must still be passed to the normal Main adjudicator: substantive new evidence may produce one
+  additive continuation, while no new value resolves to `{NTA}`. A later exact replay of the same
+  repaired text must collapse to one Phase A copy without collapsing legitimate repeated prose.
+  These guards are structural and surface-neutral: they key on stream/canonical mismatch evidence,
+  not user wording, provider labels, agent names, or safety-policy text.
 - If the main model stream terminates after visible assistant text already exists, runtime must
   preserve the authored text and structured cortex parts without appending a generic fatal error
   card to the same message. The failure remains diagnostic/log evidence. Error-only turns and
@@ -435,7 +468,7 @@ Requirements:
   the required path for reasoning plus tools, while Chat Completions function tools are compatible
   only at effective reasoning `none`.
 - The explicit effort map is part of the runtime contract: GlassHive Sol/medium for the conscious
-  agent and general analytical cortices, GlassHive Sol/xhigh for Red Team and Deep Research,
+  agent and general analytical cortices, GlassHive Sol/high for Red Team, GlassHive Sol/xhigh for Deep Research,
   GlassHive Sol/high for Strategic Planning, and GlassHive Sol/low for MS365, Google, Emotional
   Resonance, and Viventium User Help. GlassHive-disabled profiles preserve the direct Sol/Terra map.
 

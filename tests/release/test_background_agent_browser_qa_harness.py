@@ -292,3 +292,298 @@ const db = {
         "phaseBNovelTokenRatio",
     ):
         assert required_contract in visible_cards_source
+
+
+def test_visible_cards_harness_supports_generated_and_nta_phase_b_expectations() -> None:
+    harness = (
+        ROOT
+        / "qa"
+        / "background_agents"
+        / "evals"
+        / "run-visible-cards-browser-qa.cjs"
+    )
+    source = harness.read_text(encoding="utf-8")
+
+    assert "VIVENTIUM_QA_EXPECT_PHASE_B" in source
+    assert 'expectedPhaseB: parseExpectedPhaseBExpectation(' in source
+    assert 'expectedPhaseB === "generated"' in source
+    assert 'expectedPhaseB === "nta"' in source
+
+    # Generated mode retains every existing positive continuation assertion.
+    for generated_contract in (
+        "phaseBStructuredFollowUpCount === 1",
+        'phaseBDecisionResult === "persisted"',
+        'phaseBLlmResult === "generated"',
+        "phaseBFollowUpTextLength > 0",
+        "phaseBNovelTokenRatio >= 0.1",
+        "phaseBInitialVisible",
+        "phaseBReloadVisible",
+    ):
+        assert generated_contract in source
+
+    # NTA mode proves a durable silent terminal decision and no persisted/visible follow-up.
+    for nta_contract in (
+        "phaseBFollowUpCount === 0",
+        "phaseBStructuredFollowUpCount === 0",
+        'phaseBDecisionResult === "suppressed"',
+        'phaseBLlmResult === "nta"',
+        'phaseBSuppressionReason === "no_response_tag"',
+        "phaseBFollowUpTextLength === 0",
+        "!phaseBInitialVisible",
+        "!phaseBReloadVisible",
+    ):
+        assert nta_contract in source
+
+    output = run_node(
+        r"""
+const assert = require('assert');
+const qa = require('./qa/background_agents/evals/run-visible-cards-browser-qa.cjs');
+
+assert.strictEqual(qa.parseExpectedPhaseBExpectation(undefined), 'generated');
+assert.strictEqual(qa.parseExpectedPhaseBExpectation(' GENERATED '), 'generated');
+assert.strictEqual(qa.parseExpectedPhaseBExpectation('NTA'), 'nta');
+assert.throws(() => qa.parseExpectedPhaseBExpectation('optional'), /must be either generated or nta/);
+
+const generated = {
+  expectedPhaseB: 'generated',
+  phaseBFollowUpCount: 1,
+  phaseBStructuredFollowUpCount: 1,
+  phaseBDecisionResult: 'persisted',
+  phaseBLlmResult: 'generated',
+  phaseBSuppressionReason: '',
+  phaseBFollowUpTextLength: 120,
+  phaseBNovelTokenRatio: 0.5,
+  phaseBInitialVisible: true,
+  phaseBReloadVisible: true,
+  phaseBNtaMarkerVisible: false,
+};
+assert.strictEqual(qa.phaseBExpectationPass(generated), true);
+assert.strictEqual(
+  qa.phaseBExpectationPass({ ...generated, phaseBReloadVisible: false }),
+  false,
+);
+
+const nta = {
+  expectedPhaseB: 'nta',
+  phaseBFollowUpCount: 0,
+  phaseBStructuredFollowUpCount: 0,
+  phaseBDecisionResult: 'suppressed',
+  phaseBLlmResult: 'nta',
+  phaseBSuppressionReason: 'no_response_tag',
+  phaseBFollowUpTextLength: 0,
+  phaseBNovelTokenRatio: 0,
+  phaseBInitialVisible: false,
+  phaseBReloadVisible: false,
+  phaseBNtaMarkerVisible: false,
+};
+assert.strictEqual(qa.phaseBExpectationPass(nta), true);
+assert.strictEqual(
+  qa.phaseBExpectationPass({ ...nta, phaseBStructuredFollowUpCount: 1 }),
+  false,
+);
+assert.strictEqual(
+  qa.phaseBExpectationPass({ ...nta, phaseBNtaMarkerVisible: true }),
+  false,
+);
+console.log('OK');
+"""
+    )
+
+    assert output == "OK"
+
+
+def test_visible_cards_harness_waits_for_generated_phase_b_before_initial_snapshot() -> None:
+    harness = (
+        ROOT
+        / "qa"
+        / "background_agents"
+        / "evals"
+        / "run-visible-cards-browser-qa.cjs"
+    )
+    source = harness.read_text(encoding="utf-8")
+
+    assert "waitForVisibleAnswerText" in source
+    assert re.search(
+        r"await\s+waitForVisibleAnswerText\(\s*page,\s*phaseBFollowUpText",
+        source,
+    )
+
+    output = run_node(
+        r"""
+const assert = require('assert');
+const qa = require('./qa/background_agents/evals/run-visible-cards-browser-qa.cjs');
+(async () => {
+  let observed = null;
+  const page = {
+    async waitForFunction(_predicate, answerText, options) {
+      observed = { answerText, options };
+    },
+  };
+  assert.strictEqual(
+    await qa.waitForVisibleAnswerText(page, 'A genuinely new Phase B continuation.', 1234),
+    true,
+  );
+  assert.deepStrictEqual(observed, {
+    answerText: 'A genuinely new Phase B continuation.',
+    options: { timeout: 1234 },
+  });
+  assert.strictEqual(await qa.waitForVisibleAnswerText(page, '', 1234), false);
+  console.log('OK');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+    )
+    assert output == "OK"
+
+
+def test_visible_cards_harness_requires_named_cortices_without_rejecting_other_successful_reviews() -> None:
+    harness = (
+        ROOT
+        / "qa"
+        / "background_agents"
+        / "evals"
+        / "run-visible-cards-browser-qa.cjs"
+    )
+    source = harness.read_text(encoding="utf-8")
+
+    # The storage poll must accept extra activated cortices while still waiting for every observed
+    # card to reach a terminal successful state.
+    assert source.count("initialNames: latest.storedCardNames") == 2
+    assert source.count("reloadNames: latest.storedCardNames") == 2
+
+    output = run_node(
+        r"""
+const assert = require('assert');
+const qa = require('./qa/background_agents/evals/run-visible-cards-browser-qa.cjs');
+
+assert.strictEqual(
+  qa.requiredCortexCoveragePass({
+    requiredNames: ['Red Team', 'Confirmation Bias'],
+    initialNames: ['Confirmation Bias', 'Pattern Recognition', 'Red Team'],
+    reloadNames: ['Red Team', 'Pattern Recognition', 'Confirmation Bias'],
+    storedNames: ['Confirmation Bias', 'Pattern Recognition', 'Red Team'],
+    terminalNames: ['Pattern Recognition', 'Confirmation Bias', 'Red Team'],
+    completeInsightNames: ['Red Team', 'Confirmation Bias', 'Pattern Recognition'],
+  }),
+  true,
+);
+assert.strictEqual(
+  qa.requiredCortexCoveragePass({
+    requiredNames: ['Red Team', 'Confirmation Bias'],
+    initialNames: ['Red Team'],
+    reloadNames: ['Red Team'],
+    storedNames: ['Red Team'],
+    terminalNames: ['Red Team'],
+    completeInsightNames: ['Red Team'],
+  }),
+  false,
+);
+assert.strictEqual(
+  qa.requiredCortexCoveragePass({
+    requiredNames: ['Red Team', 'Confirmation Bias'],
+    initialNames: ['Red Team', 'Confirmation Bias', 'Pattern Recognition'],
+    reloadNames: ['Red Team', 'Confirmation Bias', 'Pattern Recognition'],
+    storedNames: ['Red Team', 'Confirmation Bias', 'Pattern Recognition'],
+    terminalNames: ['Red Team', 'Confirmation Bias'],
+    completeInsightNames: ['Red Team', 'Confirmation Bias'],
+  }),
+  false,
+);
+assert.strictEqual(
+  qa.requiredCortexCoveragePass({
+    requiredNames: ['Red Team', 'Confirmation Bias'],
+    initialNames: ['Red Team', 'Confirmation Bias', 'Pattern Recognition'],
+    reloadNames: ['Red Team', 'Confirmation Bias', 'Pattern Recognition'],
+    storedNames: ['Red Team', 'Confirmation Bias'],
+    terminalNames: ['Red Team', 'Confirmation Bias'],
+    completeInsightNames: ['Red Team', 'Confirmation Bias'],
+  }),
+  false,
+);
+console.log('OK');
+"""
+    )
+    assert output == "OK"
+
+
+def test_visible_cards_harness_does_not_double_count_mirrored_message_text_parts() -> None:
+    output = run_node(
+        r"""
+const assert = require('assert');
+const qa = require('./qa/background_agents/evals/run-visible-cards-browser-qa.cjs');
+
+assert.strictEqual(
+  qa.extractVisibleAnswerTextFromMessage({
+    text: 'Validate before building.',
+    content: [{ type: 'text', text: 'Validate before building.' }],
+  }),
+  'Validate before building.',
+);
+assert.strictEqual(
+  qa.extractVisibleAnswerTextFromMessage({
+    text: 'First part.',
+    content: [{ type: 'text', text: 'Second distinct part.' }],
+  }),
+  'First part.\nSecond distinct part.',
+);
+console.log('OK');
+"""
+    )
+    assert output == "OK"
+
+
+def test_visible_cards_harness_rejects_echoes_as_substantive_cortex_insights() -> None:
+    output = run_node(
+        r"""
+const assert = require('assert');
+const qa = require('./qa/background_agents/evals/run-visible-cards-browser-qa.cjs');
+
+assert.strictEqual(
+  qa.isSubstantiveCortexInsight({
+    insight: 'Validate before building.',
+    parentText: 'Validate before building.',
+  }),
+  false,
+);
+assert.strictEqual(
+  qa.isSubstantiveCortexInsight({
+    insight: 'Validate before building. Indeed.',
+    parentText: 'Validate before building.',
+  }),
+  false,
+);
+assert.strictEqual(
+  qa.isSubstantiveCortexInsight({
+    insight: 'One friendly buyer is not representative demand evidence; require a paid pilot and a precommitted stop threshold.',
+    parentText: 'Validate before building.',
+  }),
+  true,
+);
+assert.strictEqual(
+  qa.isSubstantiveCortexInsight({ insight: '{NTA}', parentText: 'Initial answer.' }),
+  false,
+);
+console.log('OK');
+"""
+    )
+    assert output == "OK"
+
+
+def test_latest_user_harness_waits_for_setup_terminal_decision_and_rejects_stale_followup() -> None:
+    harness = (
+        ROOT
+        / "qa"
+        / "background_agents"
+        / "evals"
+        / "run-latest-user-activation-browser-qa.cjs"
+    )
+    source = harness.read_text(encoding="utf-8")
+
+    assert "waitForSetupTerminalFollowUpDecision" in source
+    assert "setupFollowUpDecisionTerminal" in source
+    assert "setupFollowUpDecisionResult" in source
+    assert "latestStructuredFollowUpCount" in source
+    assert "result.latestPhaseBChildCount === 0" in source
+    assert "result.latestStructuredFollowUpCount === 0" in source

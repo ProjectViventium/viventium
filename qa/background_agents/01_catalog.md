@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | Background Analysis | `agent_viventium_background_analysis_95aeb3` | `GlassHive Codex / Sol / medium` | `groq / qwen/qwen3.6-27b` | blind spots, critical analysis |
 | Confirmation Bias | `agent_viventium_confirmation_bias_95aeb3` | `GlassHive Codex / Sol / medium` | `groq / qwen/qwen3.6-27b` | overconfidence, unchecked assumptions |
-| Red Team | `agent_viventium_red_team_95aeb3` | `GlassHive Codex / Sol / xhigh` | `groq / qwen/qwen3.6-27b` | challenge claims, evidence pressure |
+| Red Team | `agent_viventium_red_team_95aeb3` | `GlassHive Codex / Sol / high` | `groq / qwen/qwen3.6-27b` | challenge claims, evidence pressure |
 | Deep Research | `agent_viventium_deep_research_95aeb3` | `GlassHive Codex / Sol / xhigh` | `groq / qwen/qwen3.6-27b` | explicit research and comparison requests |
 | MS365 | `agent_viventium_online_tool_use_95aeb3` | `GlassHive Codex / Sol / low` | `groq / qwen/qwen3.6-27b` | `productivity_ms365` live Outlook/MS365 actions |
 | Parietal Cortex | `agent_viventium_parietal_cortex_95aeb3` | `GlassHive Codex / Sol / medium` | `groq / qwen/qwen3.6-27b` | math, statistics, first-principles reasoning |

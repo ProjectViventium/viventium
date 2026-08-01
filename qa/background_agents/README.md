@@ -11,6 +11,9 @@ background-cortex runtime remain truthful for fresh installs and local restarts.
 
 Additional current QA artifacts:
 
+- `qa/background_agents/reports/2026-08-01-glasshive-phase-b-web-telegram.md` — real web and
+  Telegram Phase B acceptance for GlassHive cortices, including useful continuation, `{NTA}`,
+  moved-on suppression, Agent Builder, Mongo/log/GlassHive correlation, and provider effort mapping
 - `qa/background_agents/report.md` — historical April 5, 2026 Anthropic execution compatibility report
 - `qa/background_agents/activation_reliability_2026-04-12.md` — corrected live activation-provider benchmark using the Anthropic connected-account path, Mongo-backed runtime bootstrapping, and per-scenario cooldown reset
 - `qa/background_agents/telegram_scheduler_fallback_2026-04-24.md` — scheduled Telegram degraded-delivery regression for deferred fallback provenance
@@ -53,7 +56,7 @@ sarcasm, denial, and recent-context carryover.
 - Red Team must ship with `web_search` in its built-in tool surface whenever runtime web search is
   enabled.
 - Red Team on GlassHive Codex/Sol must ship and runtime-normalize to
-  `model_parameters.reasoning_effort: xhigh` without direct-provider-only `useResponsesApi` or
+  `model_parameters.reasoning_effort: high` without direct-provider-only `useResponsesApi` or
   Anthropic-only `thinkingBudget`.
 - The conscious agent uses GlassHive Sol/medium; Strategic Planning uses GlassHive Sol/high;
   Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition use GlassHive

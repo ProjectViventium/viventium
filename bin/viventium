@@ -4440,6 +4440,30 @@ read_generated_env_value() {
   fi
 }
 
+read_local_env_assignment() {
+  local file="${1:-}"
+  local key="${2:-}"
+  local line=""
+  local value=""
+  [[ -n "$file" && -n "$key" && -f "$file" && ! -L "$file" ]] || return 1
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$key="* ]]; then
+      value="${line#*=}"
+      value="${value%%#*}"
+      value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      value="${value#\"}"
+      value="${value%\"}"
+      value="${value#\'}"
+      value="${value%\'}"
+      [[ -n "$value" ]] || return 1
+      printf '%s' "$value"
+      return 0
+    fi
+  done <"$file"
+  return 1
+}
+
 runtime_env_true() {
   local key="${1:-}"
   local default_value="${2:-false}"
@@ -7897,6 +7921,17 @@ PY
         export VIVENTIUM_VOICE_ENABLED
       fi
       if [[ "${VIVENTIUM_INSTALL_MODE:-docker}" == "native" ]]; then
+        if [[ -z "${MEILI_MASTER_KEY:-}" ]]; then
+          persisted_meili_master_key="$(
+            read_local_env_assignment \
+              "$REPO_ROOT/viventium_v0_4/LibreChat/.env" \
+              "MEILI_MASTER_KEY" || true
+          )"
+          if [[ -n "$persisted_meili_master_key" ]]; then
+            MEILI_MASTER_KEY="$persisted_meili_master_key"
+            export MEILI_MASTER_KEY
+          fi
+        fi
         write_stack_owner_state "$COMMAND"
         NATIVE_STACK_SKIP_MEILI=0
         if express_install_experience; then

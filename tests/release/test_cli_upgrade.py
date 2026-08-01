@@ -5512,11 +5512,15 @@ printf '%s\\n' "$*" > "${TEST_ROOT}/start-args.txt"
 exit 0
 """
     write_executable(repo_root / "viventium_v0_4" / "viventium-librechat-start.sh", start_sh)
+    librechat_env = repo_root / "viventium_v0_4" / "LibreChat" / ".env"
+    librechat_env.parent.mkdir(parents=True, exist_ok=True)
+    librechat_env.write_text("MEILI_MASTER_KEY=persisted-meili\n", encoding="utf-8")
 
     native_stack_sh = """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$1" > "${TEST_ROOT}/native-stack-action.txt"
 printf '%s\\n' "${VIVENTIUM_NATIVE_STACK_SKIP_MEILI:-0}" > "${TEST_ROOT}/native-stack-skip-meili.txt"
+printf '%s\\n' "${MEILI_MASTER_KEY:-}" > "${TEST_ROOT}/native-stack-meili-key.txt"
 exit 0
 """
     write_executable(repo_root / "scripts" / "viventium" / "native_stack.sh", native_stack_sh)
@@ -5552,6 +5556,7 @@ exit 0
     assert "--skip-docker" not in start_args
     assert "--skip-playground" not in start_args
     assert (tmp_path / "native-stack-skip-meili.txt").read_text(encoding="utf-8").strip() == "0"
+    assert (tmp_path / "native-stack-meili-key.txt").read_text(encoding="utf-8").strip() == "persisted-meili"
 
     config_path.write_text(
         "version: 1\ninstall:\n  mode: native\n  experience: express\nvoice:\n  mode: disabled\n",
