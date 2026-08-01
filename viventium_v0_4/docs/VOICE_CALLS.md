@@ -85,6 +85,13 @@ stream, TTS, follow-up polling, tools, background cortices, title generation, or
   user-facing recovery text.
 - Visible-page End Call is intentional. Recovery logic should only restart after a background or
   sleep return, not after the user explicitly disconnects.
+- The End Call control first asks the modern playground's server proxy to cancel the exact active
+  call-session generation. LibreChat carries `user_cancelled` across its job transport (including
+  Redis replicas) so a harness provider receives native cancellation. A later reasonless voice
+  transport abort acknowledges the already-started cancellation instead of racing it.
+- Browser reload/network loss does not send explicit cancellation. This prevents an accidental
+  `user_cancelled` provider stop; successful refresh reattachment remains a distinct user-grade QA
+  requirement rather than an inference from that safeguard.
 
 ## Localhost vs Public Voice Origins
 - The modern LiveKit playground (`agent-starter-react`) is the default enabled playground for

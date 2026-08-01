@@ -209,9 +209,10 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Automation: git inspection.
 - Last run: PARTIAL 2026-08-01. The GlassHive Voice Call LLM review candidate deliberately declares
   `review-head-pending-merge`. It pins LibreChat PR 90 head
-  `d0ea10e15dc24dd86feb2d91b4f5b90d00b0617a` and GlassHive PR 48 head
+  `75c5ca87f53c4975a6e00e4b9e12fde45a9bc5c9`, agent-starter-react PR 10 head
+  `65714e490a2b0976d115a539003f7da3d7510063`, and GlassHive PR 48 head
   `a887434aed9a8b2c365efddc2ceea0eb751d46cc`; the Native policy pins the same LibreChat head and
-  intentionally contains no GlassHive component. Replace the refs with merged public-main commits,
+  intentionally contains no GlassHive or playground component. Replace the refs with merged public-main commits,
   restore `merged`, and rerun remote-main/install identity gates before release acceptance.
 
 ## `REL-004` - Browser-Visible Background Cards

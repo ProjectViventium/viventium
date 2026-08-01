@@ -2,7 +2,7 @@
 
 ## Current result
 
-- Result: `PARTIAL` while live audible and final merged-component gates are still running.
+- Result: `PARTIAL` while post-fix cancellation/reconnect and final merged-component gates run.
 - Architecture: GlassHive is an optional author in the existing LiveKit STT -> LLM -> TTS pipeline;
   it does not claim native speech-to-speech support.
 - Default: the existing lighter Voice Call LLM remains unchanged. GlassHive is an explicit Agent
@@ -21,8 +21,10 @@
 | Config compiler | `PASS` | 173 compiler tests and generated App Support config inspection. |
 | Production client compilation | `PASS` | Vite transformed 8,354 modules and emitted the UI. The subsequent compliance collector correctly rejected a pnpm-realpath dependency tree against its npm package-lock allowlist; a clean npm install remains the release build gate. |
 | Public safety | `PASS` | Exact staged diffs scanned with gitleaks plus identity/home-path patterns; zero findings. |
-| Live Agent Builder save/reload | `NOT RUN` | Pending installed activation and real browser QA. |
-| Audible GlassHive call | `NOT RUN` | Pending real modern-playground call, interruption, logs, Mongo, and GlassHive session correlation. |
+| Live Agent Builder save/reload | `PASS` | Synthetic agent saved GlassHive Codex with low voice effort; refresh and Mongo round trip retained exact provider/model/options. |
+| Audible GlassHive call | `PASS` | Real Modern Playground turn produced the requested audible sentence once; LibreChat, voice-gateway, Mongo, and GlassHive request/session evidence agreed. |
+| Explicit End Call | `PARTIAL` | The first live run stopped media but exposed a worker that continued. The fix now scopes by user/call metadata, propagates `user_cancelled` across Redis, suppresses duplicate transport abort, and passes 98 focused tests; post-fix live rerun remains. |
+| Refresh in flight | `NOT RUN` | Passive disconnect does not request native cancellation, but reattachment/terminal delivery is not yet claimed. |
 | Claude Opus 5 review | `BLOCKED` | Claude Desktop reports no remaining Opus usage until the displayed reset; no weaker model substituted. |
 | Nested/public component identity | `PARTIAL` | LibreChat PR 90 and GlassHive PR 48 are open; parent manifests truthfully declare review-head pending merge. |
 
@@ -41,13 +43,12 @@ Primary sources are recorded in
 
 ## Remaining user-grade gates
 
-1. Activate the clean parent candidate and verify the live generated config and process identity.
-2. Use the real Agent Builder to select GlassHive Codex at low effort on a synthetic QA agent, save,
-   reload, refresh, and inspect the exact Agent API/Mongo fields.
-3. Run an audible modern-playground call, then interrupt a second turn and verify one worker, native
-   cancel, no late speech, and no duplicate persisted answer across logs and state.
-4. Exercise stopped provider and invalid model/effort paths and verify visible, accurate failure.
-5. Merge nested refs only after hosted checks, update parent pins to public-main commits, run the
+1. Activate the cancellation fix and rerun a long GlassHive turn followed by explicit End Call;
+   verify one native cancel, no late speech/message, and no duplicate across logs and state.
+2. Reload during a separate in-flight turn and prove whether terminal delivery reattaches; do not
+   infer resumability from the absence of native cancellation.
+3. Exercise stopped provider and invalid model/effort paths and verify visible, accurate failure.
+4. Merge nested refs only after hosted checks, update parent pins to public-main commits, run the
    clean npm build and supported install/upgrade identity gates, then change this report to final.
 
 ## Public-safety boundary

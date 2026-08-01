@@ -1130,10 +1130,12 @@
      selected workspace without exposing private content.
   3. Verify one GlassHive session/request, one persisted user turn, one assistant answer, spoken TTS,
      and matching surface/input/agent/conversation metadata across logs and state.
-  4. Interrupt a second in-flight turn and verify LiveKit abort reaches GlassHive cancellation with
-     no late audio, persisted duplicate, or replacement authoring run.
-  5. Refresh/reconnect and restart the supported runtime; verify saved selection and conversation
-     continuity remain exact.
+  4. Press End Call during a second in-flight turn and verify the explicit call-session endpoint
+     reaches GlassHive cancellation with no late audio, persisted duplicate, or replacement run.
+     Verify a later reasonless voice-gateway abort is acknowledged without racing job finalization.
+  5. Separately refresh during an in-flight turn and prove real stream reattachment and terminal
+     delivery without native harness cancellation; restart the supported runtime and verify saved
+     selection and conversation continuity remain exact.
 - Unhappy Path: unsupported model/effort, missing registry, disabled/stopped provider, missing
   harness authentication/binary, rate limit, CLI crash, network interruption, and invalid workspace
   each fail with an accurate class. No path silently executes OpenAI, starts a duplicate harness, or
@@ -1148,7 +1150,11 @@
   duplicate worker; late speech after cancel; or a native speech-to-speech claim.
 - Evidence: focused schema/API/client/voice tests, compiler diff, real browser save/reload,
   user-grade audible call, linked-chat refresh, Mongo/provider/session/log correlation, and restart.
-- Last Run: NOT RUN for this implementation candidate.
+- Last Run: 2026-08-01 `PARTIAL`. Real Agent Builder save/reload, one audible GlassHive Codex call,
+  exact Mongo/provider/session correlation, and no duplicate answer passed. The first End Call run
+  correctly stopped media but exposed a native worker cancellation gap. Exact scoped cancellation,
+  privacy, duplicate-abort, and Redis reason propagation are fixed with 98 focused tests plus a
+  production playground build; post-fix End Call and refresh-in-flight user-path reruns remain.
 
 ## Release Test Traceability
 

@@ -306,6 +306,14 @@ background-cortex behavior.
 - Background/sleep recovery must not treat an intentional visible-page disconnect as a dropped
   connection. End Call should leave the page in the pre-connect state without silently starting a
   new LiveKit participant or duplicate worker job.
+- End Call must also cancel the exact active provider generation for that authenticated call
+  session. The browser never receives the shared call-session secret; the modern playground proxies
+  the intent server-side, LibreChat scopes it by user plus call-session metadata, and the structured
+  `user_cancelled` reason reaches the generating replica and harness. A later reasonless gateway
+  abort must not race a second finalization.
+- Reload, background suspension, and network loss do not call the explicit End Call endpoint. They
+  therefore do not request native harness cancellation, but full refresh/reconnect continuity must
+  still be proven on the real surface before it is reported as resumable.
 
 ### Live Response Streaming
 - Live voice calls should stream the response after the user finishes speaking.

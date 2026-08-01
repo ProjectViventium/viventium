@@ -85,6 +85,21 @@ Performance contract:
 - Do not enable speculative/preemptive generation for a harness execution until cancellation and
   idempotency prove that an unconfirmed user turn cannot start irreversible or duplicate work.
 
+Cancellation contract:
+
+- **End Call** is explicit user intent. The playground sends the opaque call-session ID through its
+  server-side proxy; LibreChat matches the exact user and call-session generation job and aborts it
+  with `user_cancelled`. That reason must survive Redis pub/sub so the replica actually running the
+  provider cancels the native GlassHive request.
+- A passive page/network disconnect is not automatically user cancellation. It must never be
+  upgraded to `user_cancelled` merely because the media/SSE transport disappeared.
+- If the voice gateway posts its normal transport abort after explicit End Call has already started,
+  LibreChat acknowledges the existing cancellation instead of racing a second job finalization.
+- End Call is single-flight in the UI. Upstream cancellation failure is logged without session,
+  stream, provider-error, or secret values; the room still disconnects after the bounded attempt.
+- Refresh/reconnect continuity is a separate acceptance claim: absence of native cancellation is
+  necessary but does not by itself prove successful stream reattachment and terminal delivery.
+
 ## Activation Conditions (all three required)
 | Condition | Source | Check |
 |-----------|--------|-------|
