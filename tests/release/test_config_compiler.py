@@ -1256,6 +1256,8 @@ def test_glasshive_compiles_as_exact_core_agent_provider(
     assert capability["cortex_execution"] is True
     assert capability["phase_b_followup"] is True
     assert capability["activation_classifier"] is False
+    assert capability["voice_pipeline_llm"] is True
+    assert capability["native_realtime_voice"] is False
     assert capability["realtime_voice"] is False
     assert capability["automatic_fallback_target"] is False
     assert capability["responses_api"] is False

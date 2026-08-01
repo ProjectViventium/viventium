@@ -1,14 +1,14 @@
 {
   "version": 1,
   "generated_from": "devops/git/repos.json",
-  "publication_state": "merged",
+  "publication_state": "review-head-pending-merge",
   "components": [
     {
       "name": "LibreChat",
       "path": "viventium_v0_4/LibreChat",
       "origin": "https://github.com/ProjectViventium/viventium-librechat.git",
       "upstream": "https://github.com/danny-avila/LibreChat.git",
-      "ref": "e40a1f3fe4a7c697cba52b7861c3d51f4fa8edc1"
+      "ref": "d0ea10e15dc24dd86feb2d91b4f5b90d00b0617a"
     },
     {
       "name": "agents-playground",
@@ -43,7 +43,7 @@
       "path": "viventium_v0_4/GlassHive",
       "origin": "https://github.com/ProjectViventium/GlassHive.git",
       "upstream": "",
-      "ref": "5c2117ab7ebfa94a6556aba8822b34fcab44c54d"
+      "ref": "a887434aed9a8b2c365efddc2ceea0eb751d46cc"
     },
     {
       "name": "Viventium-Health",

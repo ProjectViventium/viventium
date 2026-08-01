@@ -89,6 +89,11 @@ background-cortex behavior.
 - The main agent provider/model is the default LLM for live voice calls.
 - The agent may optionally expose a dedicated Voice Call LLM via explicit `voice_llm_provider` and
   `voice_llm_model` fields.
+- Provider capability metadata distinguishes `voice_pipeline_llm` (can author text in the existing
+  LiveKit STT -> LLM -> TTS pipeline) from `native_realtime_voice` (owns a live audio session).
+  Legacy `realtime_voice: true` remains accepted as a compatibility alias for the cascaded picker.
+  GlassHive declares pipeline support and no native audio support, so it is an ordinary optional
+  Voice Call LLM without being mislabeled as speech-to-speech.
 - A dedicated Voice Call LLM must pass the same prompt-owned recall/tool-ownership acceptance case
   as the text route. Lower latency is not parity when explicit prior-conversation questions skip
   healthy retrieval and produce an unsupported no-memory answer.
@@ -110,6 +115,8 @@ background-cortex behavior.
   `VIVENTIUM_VOICE_FAST_LLM_PROVIDER` must not override the agent-visible Voice Call LLM contract.
 - If an explicit Voice Call LLM is invalid or lacks a required server credential, runtime should log
   the skip and fall back to the agent primary model/provider.
+- Capability-backed voice routes must validate their exact model and effort during Agent create,
+  update, and runtime initialization. Unsupported values fail visibly and never remap to OpenAI.
 
 ### Agent Fallback LLM Contract
 - Agent Builder must expose a user-visible `Fallback Model` route from the Model Parameters page.

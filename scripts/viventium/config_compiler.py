@@ -2649,6 +2649,8 @@ def build_agent_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
             "cortex_execution": True,
             "phase_b_followup": True,
             "activation_classifier": False,
+            "voice_pipeline_llm": True,
+            "native_realtime_voice": False,
             "realtime_voice": False,
             "automatic_fallback_target": False,
             "workspace_binding": True,

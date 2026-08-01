@@ -887,8 +887,10 @@ A developer referring to a single document about a respective feature **must per
   dedicated broker secret before GlassHive may project environment or harness configuration. A
   provider bearer alone must never be able to inject a bootstrap bundle.
 - Provider behavior is selected from compiled capability metadata. GlassHive is eligible for main
-  chat, cortex execution, and Phase-B follow-up, but not Phase-A classification, real-time Voice LLM,
-  or automatic fallback selection. Do not branch on its label.
+  chat, cortex execution, Phase-B follow-up, and the cascaded Voice Call LLM pipeline, but not
+  Phase-A classification, native real-time speech-to-speech, or automatic fallback selection. The
+  capability contract keeps `voice_pipeline_llm` separate from `native_realtime_voice`; the legacy
+  `realtime_voice` flag is only a backward-compatibility alias. Do not branch on its label.
 - A harness-backed turn has one authoring intelligence. GlassHive executes harness-native and
   brokered tools itself; LibreChat owns the existing graph, persistence, content parts, and UI but
   does not place a wrapper model in front of the harness.

@@ -1111,6 +1111,45 @@
   actual Redis. The headed retry/error path, registered LiveKit worker, selected provider readiness,
   and audible synthetic call remain unrun; end-to-end Voice readiness is not claimed.
 
+## MPV-030 GlassHive Is An Optional Voice Call LLM
+
+- Requirement: `docs/requirements_and_learnings/34_Voice_Chat_LLM_Override.md` and the provider
+  capability split in `docs/requirements_and_learnings/01_Key_Principles.md`.
+- User Outcome: Agent Builder offers **GlassHive** for the Voice Call LLM, persists an exact Codex
+  or Claude model and supported effort, and a real call is authored once by that worker through the
+  existing LiveKit cascade.
+- Surfaces: Agent Builder, Agent create/update/version persistence, generated LibreChat config,
+  Voice gateway, modern playground, linked chat, Mongo, GlassHive provider/session/activity state,
+  cancellation, and runtime logs.
+- Preconditions: provider enabled and ready; synthetic public-safe Agent and voice prompt; canonical
+  LIFE or a synthetic temporary workspace; working STT/TTS/LiveKit route.
+- Happy Path:
+  1. Select GlassHive in Voice Call LLM, choose Codex and low effort, save, reload, and verify exact
+     fields in the Agent API/DB and friendly labels in the UI.
+  2. Start a modern-playground call and speak a synthetic request that proves the worker can use its
+     selected workspace without exposing private content.
+  3. Verify one GlassHive session/request, one persisted user turn, one assistant answer, spoken TTS,
+     and matching surface/input/agent/conversation metadata across logs and state.
+  4. Interrupt a second in-flight turn and verify LiveKit abort reaches GlassHive cancellation with
+     no late audio, persisted duplicate, or replacement authoring run.
+  5. Refresh/reconnect and restart the supported runtime; verify saved selection and conversation
+     continuity remain exact.
+- Unhappy Path: unsupported model/effort, missing registry, disabled/stopped provider, missing
+  harness authentication/binary, rate limit, CLI crash, network interruption, and invalid workspace
+  each fail with an accurate class. No path silently executes OpenAI, starts a duplicate harness, or
+  speaks hidden reasoning/activity.
+- Performance: compare low and medium effort first-audio/terminal-answer latency. GlassHive's
+  terminal-text-only profile is reported honestly; the lighter existing Voice Call LLM remains the
+  default and must not regress.
+- Expected Result: selectable, exact, persistent, cancellable GlassHive pipeline LLM with truthful
+  latency and no native-realtime claim.
+- Forbidden Result: GlassHive missing from the picker; raw provider ID as the visible label; stale
+  OpenAI Responses parameters; unsupported effort; wrapper LLM; fabricated token streaming;
+  duplicate worker; late speech after cancel; or a native speech-to-speech claim.
+- Evidence: focused schema/API/client/voice tests, compiler diff, real browser save/reload,
+  user-grade audible call, linked-chat refresh, Mongo/provider/session/log correlation, and restart.
+- Last Run: NOT RUN for this implementation candidate.
+
 ## Release Test Traceability
 
 - `tests/release/test_voice_call_startup_guard.py`
