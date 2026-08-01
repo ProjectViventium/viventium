@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULING_ROOT = (
     REPO_ROOT / "viventium_v0_4" / "LibreChat" / "viventium" / "MCPs" / "scheduling-cortex"
 )
+SYNTHETIC_SCHEDULER_STARTUP_TIMEOUT_SECONDS = 30.0
 if str(SCHEDULING_ROOT) not in sys.path:
     sys.path.insert(0, str(SCHEDULING_ROOT))
 
@@ -72,7 +73,7 @@ def wait_for_synthetic_server_port(
     process: subprocess.Popen[bytes],
     stderr_path: Path,
     *,
-    timeout: float = 10.0,
+    timeout: float = SYNTHETIC_SCHEDULER_STARTUP_TIMEOUT_SECONDS,
 ) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -94,6 +95,52 @@ def wait_for_synthetic_server_port(
             return port
         raise AssertionError(f"synthetic scheduler published invalid port: {port}")
     raise AssertionError("synthetic scheduler did not publish its bound port")
+
+
+def synthetic_scheduler_server_source() -> str:
+    """Return a minimal local HTTP health server for process-ownership tests."""
+    return """
+import json
+import socket
+import sys
+from pathlib import Path
+
+payload = json.dumps({"status": "ok", "db_path_sha256": sys.argv[1]}).encode()
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", 0))
+server.listen()
+port_file = Path(sys.argv[2])
+temporary_port_file = port_file.with_suffix(".tmp")
+temporary_port_file.write_text(str(server.getsockname()[1]), encoding="utf-8")
+temporary_port_file.replace(port_file)
+
+while True:
+    connection, _address = server.accept()
+    with connection:
+        request = connection.recv(4096)
+        if request.startswith(b"GET /health "):
+            response = (
+                b"HTTP/1.1 200 OK\\r\\n"
+                b"Content-Type: application/json\\r\\n"
+                + b"Content-Length: " + str(len(payload)).encode() + b"\\r\\n\\r\\n"
+                + payload
+            )
+        else:
+            response = b"HTTP/1.1 404 Not Found\\r\\nContent-Length: 0\\r\\n\\r\\n"
+        connection.sendall(response)
+""".lstrip()
+
+
+def test_synthetic_scheduler_fixture_uses_lightweight_loopback_http_server() -> None:
+    """The ownership harness must not depend on a slow threaded-server import."""
+    source = synthetic_scheduler_server_source()
+
+    assert "ThreadingHTTPServer" not in source
+    assert "import socket" in source
+    assert 'bind(("127.0.0.1", 0))' in source
+    assert 'b"HTTP/1.1 200 OK\\r\\n"' in source
+    assert SYNTHETIC_SCHEDULER_STARTUP_TIMEOUT_SECONDS >= 30.0
 
 
 def test_scheduling_mcp_has_health_checked_watchdog_contract() -> None:
@@ -529,39 +576,7 @@ def test_scheduler_stop_handles_real_process_across_activation_scopes(
     served_hash = expected_hash if matching_identity else "0" * 64
 
     server_script = process_root / "server.py"
-    server_script.write_text(
-        """
-import json
-import sys
-from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-payload = json.dumps({"status": "ok", "db_path_sha256": sys.argv[1]}).encode()
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path != "/health":
-            self.send_response(404)
-            self.end_headers()
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def log_message(self, *_args):
-        return
-
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-port_file = Path(sys.argv[2])
-temporary_port_file = port_file.with_suffix(".tmp")
-temporary_port_file.write_text(str(server.server_address[1]), encoding="utf-8")
-temporary_port_file.replace(port_file)
-server.serve_forever()
-""".lstrip(),
-        encoding="utf-8",
-    )
+    server_script.write_text(synthetic_scheduler_server_source(), encoding="utf-8")
     port_file = tmp_path / "synthetic-scheduler.port"
     stderr_path = tmp_path / "synthetic-scheduler.stderr"
     server_environment = os.environ.copy()
