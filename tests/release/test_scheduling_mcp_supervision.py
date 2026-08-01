@@ -463,6 +463,8 @@ def test_scheduler_stop_handles_real_process_across_activation_scopes(
     expected_running: bool,
 ) -> None:
     if not shutil.which("lsof"):
+        if os.environ.get("CI"):
+            pytest.fail("lsof is required for hosted scheduler ownership acceptance")
         pytest.skip("lsof is required for real scheduler ownership acceptance")
 
     for proxy_variable in (

@@ -209,7 +209,7 @@ Use `REL-NNN` for release-readiness and public-push packaging checks.
 - Automation: git inspection.
 - Last run: PASS 2026-08-01. `components.lock.json` declares `merged` and contains all 12 fetched
   nested `origin/main` refs. It pins LibreChat to
-  `3cc5d5dc71e9533d661ca7e55e958d2b30275c20` and GlassHive to
+  `37a49ccc738eca031022d9d1fa4a95f566dfc183` and GlassHive to
   `1a407a4e90ceea7cd9febcf56b0759ff46f35af0`; unauthenticated remote-main lookup and local
   nested-tree inspection matched both exact refs. The Native policy declares `merged`, pins the
   same LibreChat ref, and intentionally contains no GlassHive component. Built, shipped, and

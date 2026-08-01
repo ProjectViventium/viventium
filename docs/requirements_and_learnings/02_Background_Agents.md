@@ -92,6 +92,11 @@ browser-only post-connect side effect.
 - Phase B uses the originating main agent's provider. A GlassHive main reuses the same native
   `(owner, conversation, agent)` session; a direct main with a GlassHive cortex remains direct for
   adjudication.
+- Every substantive GlassHive cortex receives the canonical persisted conversation ID while
+  retaining its own Agent ID. GlassHive session identity includes both conversation and agent, so
+  specialists remain independent sessions inside the same visible conversation instead of falling
+  back to orphaned generated conversation IDs. This applies to ordinary, speculative, late-recovery,
+  configured-fallback, and detached Emotional Reaction execution.
 - Specialist cortices do not receive Feelings. The main speaking path—including a GlassHive-backed
   main—receives the request-pinned capsule exactly once.
 - Harness-backed runs remove the GlassHive self-delegation MCP through declared capability metadata,
