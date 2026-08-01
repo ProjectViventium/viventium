@@ -97,6 +97,15 @@ def test_installer_lifecycle_inventory_current_refs_match_components_lock() -> N
     for entry in lock_payload["components"]:
         assert f"| {entry['name']} | `{entry['ref']}` |" in current_section
 
+    librechat_ref = next(
+        entry["ref"] for entry in lock_payload["components"] if entry["name"] == "LibreChat"
+    )
+    for source_of_truth in (
+        REPO_ROOT / "docs" / "requirements_and_learnings" / "39_Installer_and_Config_Compiler.md",
+        REPO_ROOT / "qa" / "release-readiness" / "cases.md",
+    ):
+        assert librechat_ref in source_of_truth.read_text(encoding="utf-8")
+
 
 def test_components_lock_covers_all_public_v0_4_manifest_components() -> None:
     repos_payload = load_json(REPO_ROOT / "devops" / "git" / "repos.json")

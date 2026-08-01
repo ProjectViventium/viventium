@@ -6544,7 +6544,7 @@ stop_scheduling_mcp_for_runtime() {
   fi
   local scheduler_health_payload=""
   local scheduler_matches_runtime=false
-  scheduler_health_payload="$(curl -fsS --max-time 3 "http://localhost:${SCHEDULING_MCP_PORT}/health" 2>/dev/null || true)"
+  scheduler_health_payload="$(curl --noproxy '*' -fsS --max-time 3 "http://localhost:${SCHEDULING_MCP_PORT}/health" 2>/dev/null || true)"
   if [[ -n "$scheduler_health_payload" ]] &&
     "${PYTHON_BIN:-python3}" - "$SCHEDULING_DB_PATH" "$scheduler_health_payload" <<'PY'
 import hashlib

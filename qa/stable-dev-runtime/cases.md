@@ -443,8 +443,8 @@
 
 - Requirement: `11_Scheduling_Cortex.md`, `50_Stable_Dev_Runtime.md`
 - Surfaces: launcher, activation/upgrade shutdown, hosted release runners
-- Preconditions: a real local Scheduler process and poisoned `HTTP_PROXY`/`HTTPS_PROXY` values with
-  no `NO_PROXY` exemption
+- Preconditions: a real local Scheduler process and poisoned uppercase/lowercase HTTP and all-proxy
+  variables with no `NO_PROXY` exemption
 - Steps: start the Scheduler, run its readiness and ownership checks, then stop it across the
   activation-scope scenarios
 - Expected Result: hardcoded loopback probes bypass ambient proxies, identify the exact Scheduler
@@ -453,9 +453,11 @@
   activation/upgrade stop
 - Evidence: `tests/release/test_scheduling_mcp_supervision.py` poisoned-proxy cases and hosted
   `Easy Install core` checks
-- Last Run: PASS-AUTOMATED 2026-07-31; 3/3 previously failing scenarios and the focused Scheduler
-  suite (16 passed, 1 platform skip) passed with poisoned proxy variables. Current-head hosted rerun
-  remains pending.
+- Last Run: PASS-AUTOMATED 2026-08-01; the launcher stop probe passed across all three
+  activation-scope scenarios with poisoned uppercase/lowercase HTTP and all-proxy variables. The
+  readiness and identity probes are covered by the launcher-wide source contract. The focused
+  Scheduler suite passed all 17 cases with its declared runtime dependencies. Current-head hosted
+  rerun remains pending.
 
 ## Natural User Use Case Checklist
 

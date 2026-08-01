@@ -69,7 +69,17 @@ def test_scheduling_mcp_has_health_checked_watchdog_contract() -> None:
     assert "restart_scheduling_mcp_runtime() {" in launcher_text
     assert "start_scheduling_mcp_watchdog() {" in launcher_text
     assert "stop_scheduling_mcp_watchdog() {" in launcher_text
-    assert launcher_text.count("curl --noproxy '*' -fsS --max-time 3") == 2
+    scheduler_health_curl_lines = [
+        line
+        for line in launcher_text.splitlines()
+        if "curl " in line
+        and (
+            "SCHEDULING_MCP_PORT}/health" in line
+            or "scheduling_mcp_health_url" in line
+        )
+    ]
+    assert scheduler_health_curl_lines
+    assert all("--noproxy '*'" in line for line in scheduler_health_curl_lines)
     assert 'scheduling_python="$PWD/.venv/bin/python"' in launcher_text
     assert '"$scheduling_python" -m scheduling_cortex.server' in launcher_text
     assert (
@@ -411,8 +421,15 @@ def test_scheduler_stop_handles_real_process_across_activation_scopes(
     if not shutil.which("lsof"):
         pytest.skip("lsof is required for real scheduler ownership acceptance")
 
-    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
-    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    for proxy_variable in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ):
+        monkeypatch.setenv(proxy_variable, "http://127.0.0.1:1")
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
 

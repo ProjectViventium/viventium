@@ -50,6 +50,7 @@ BIN_VIVENTIUM = REPO_ROOT / "bin" / "viventium"
 HELPER_TRANSACTION_MODULE = (
     REPO_ROOT / "scripts" / "viventium" / "helper_bundle_transaction.py"
 )
+LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _load_helper_transaction_module():
@@ -506,7 +507,7 @@ def test_installed_scheduler_component_syncs_and_serves_matching_health(
                 if process.poll() is not None:
                     break
                 try:
-                    with urllib.request.urlopen(
+                    with LOOPBACK_OPENER.open(
                         f"http://127.0.0.1:{port}/health",
                         timeout=1,
                     ) as response:
