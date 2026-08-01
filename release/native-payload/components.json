@@ -2,7 +2,7 @@
   "schema_version": 1,
   "publication_state": "merged",
   "librechat": {
-    "commit": "37a49ccc738eca031022d9d1fa4a95f566dfc183"
+    "commit": "a1f8782b711f4cfb051ebd1ad98c791738e45bdd"
   },
   "mongodb": {
     "version": "8.0.23",

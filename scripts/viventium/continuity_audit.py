@@ -25,6 +25,62 @@ MAX_UPLOAD_ENTRIES = 200_000
 MAX_UPLOAD_PATH_BYTES = 1024
 MAX_UPLOAD_PATH_DEPTH = 32
 
+
+def preserved_other_runtime_uploads_link_is_receipted(
+    *,
+    legacy: Path,
+    app_support_dir: Path,
+) -> bool:
+    try:
+        raw_target = Path(os.readlink(legacy))
+        if not raw_target.is_absolute():
+            return False
+        target = raw_target
+        target = Path(os.path.abspath(os.path.expanduser(str(target))))
+        receipt = (
+            app_support_dir
+            / "state"
+            / "continuity"
+            / "uploads-migration"
+            / "receipt.json"
+        )
+        for directory in (
+            app_support_dir,
+            receipt.parent.parent.parent,
+            receipt.parent.parent,
+            receipt.parent,
+        ):
+            metadata = directory.lstat()
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+            ):
+                return False
+        metadata = receipt.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+            or metadata.st_mode & 0o077
+        ):
+            return False
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        return (
+            isinstance(payload, dict)
+            and payload.get("schemaVersion") == 1
+            and payload.get("legacyCompatibility")
+            == "other_runtime_exact_symlink_preserved"
+            and payload.get("mode") == "isolated_runtime_root"
+            and payload.get("observedLinkTargetSha256")
+            == hashlib.sha256(os.fsencode(str(target))).hexdigest()
+            and payload.get("canonicalStorage") == "app_support_data_uploads"
+        )
+    except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
+        return False
+
+
 def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -288,6 +344,16 @@ def resolve_uploads_audit_root(
                 "Uploads semantic fingerprint failed: predecessor link is unreadable."
             ]
         if link_target.is_absolute() and Path(os.path.abspath(str(link_target))) == canonical:
+            return canonical, []
+        if (
+            canonical_metadata is not None
+            and stat.S_ISDIR(canonical_metadata.st_mode)
+            and canonical_metadata.st_uid == os.getuid()
+            and preserved_other_runtime_uploads_link_is_receipted(
+                legacy=legacy,
+                app_support_dir=app_support_dir,
+            )
+        ):
             return canonical, []
         return None, [
             "Uploads semantic fingerprint failed: predecessor root is an unexpected symlink."

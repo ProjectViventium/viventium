@@ -2076,6 +2076,45 @@ def test_build_service_rows_does_not_report_scheduler_running_for_foreign_http_2
     assert "identity" in services["Scheduler"][1].lower()
 
 
+def test_build_service_rows_reports_explicitly_disabled_scheduler_without_health_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    install_summary = load_install_summary_module()
+    monkeypatch.setattr(
+        install_summary,
+        "scheduler_health_matches",
+        lambda _url, _db_path: (False, "synthetic endpoint unavailable"),
+    )
+    monkeypatch.setattr(install_summary, "local_network_host", lambda: None)
+
+    rows = install_summary.build_service_rows(
+        {
+            "runtime": {
+                "ports": {
+                    "lc_frontend_port": 3190,
+                    "lc_api_port": 3180,
+                    "playground_port": 3300,
+                }
+            },
+            "llm": {"primary": {"auth_mode": "connected_account"}},
+            "voice": {"mode": "local"},
+            "integrations": {},
+        },
+        {
+            "START_SCHEDULING_MCP": "false",
+            "SCHEDULING_MCP_URL": "http://localhost:7110/mcp",
+            "SCHEDULING_DB_PATH": str(tmp_path / "schedules.db"),
+        },
+        runtime_dir=tmp_path,
+        probe_live=True,
+    )
+    services = {name: (status, detail) for name, status, detail in rows}
+
+    assert services["Scheduler"][0] == "Disabled"
+    assert "not enabled" in services["Scheduler"][1].lower()
+    assert "unavailable" not in services["Scheduler"][1].lower()
+
+
 def test_build_service_rows_reports_semantic_memory_hardening_health(
     monkeypatch, tmp_path: Path
 ) -> None:

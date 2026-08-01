@@ -1760,6 +1760,8 @@ def _docker_container_mongo_inventory(
 def _observe_running_mongo_storage(
     support: Path,
     runtime_dir: Path,
+    *,
+    include_docker: bool = True,
 ) -> tuple[dict[str, Any] | None, list[tuple[str, Path]]]:
     values: dict[str, str] = {}
     for env_file in (runtime_dir / "runtime.env", runtime_dir / "runtime.local.env"):
@@ -1781,20 +1783,20 @@ def _observe_running_mongo_storage(
     )
     configured_image = validate_docker_image(values.get("MONGO_IMAGE", MONGO_IMAGE_DEFAULT))
 
-    docker: str | None = None
     docker_inventory: dict[str, Any] | None = None
-    try:
-        docker = docker_ready()
-    except UpgradeTransactionError:
-        pass
-    else:
-        docker_inventory = _docker_container_mongo_inventory(
-            docker,
-            container=container,
-            profile=profile,
-            support=support,
-            explicit_data=explicit_data,
-        )
+    if include_docker:
+        try:
+            docker = docker_ready()
+        except UpgradeTransactionError:
+            pass
+        else:
+            docker_inventory = _docker_container_mongo_inventory(
+                docker,
+                container=container,
+                profile=profile,
+                support=support,
+                explicit_data=explicit_data,
+            )
 
     native_inventory: dict[str, Any] | None = None
     native_pid_paths = (
@@ -2304,6 +2306,8 @@ def _validate_receipt_runtime_binding(
 def record_mongo_engine_identity(
     support: Path,
     runtime_dir: Path,
+    *,
+    include_docker: bool = True,
 ) -> dict[str, Any]:
     support = lexical(support)
     runtime_dir = contained(
@@ -2311,7 +2315,11 @@ def record_mongo_engine_identity(
         support,
         "generated runtime",
     )
-    inventory, _ = _observe_running_mongo_storage(support, runtime_dir)
+    inventory, _ = _observe_running_mongo_storage(
+        support,
+        runtime_dir,
+        include_docker=include_docker,
+    )
     if inventory is None or (
         inventory.get("runtime_engine") == "docker"
         and inventory.get("container_running") is not True
@@ -2598,6 +2606,8 @@ def stop_recorded_native_mongo_engine(
 def seal_mongo_engine_identity(
     support: Path,
     runtime_dir: Path,
+    *,
+    include_docker: bool = True,
 ) -> dict[str, Any]:
     support = lexical(support)
     runtime_dir = contained(
@@ -2613,7 +2623,11 @@ def seal_mongo_engine_identity(
     identity = payload["identity"]
     binding = _runtime_receipt_binding(support, runtime_dir)
     _validate_receipt_runtime_binding(identity, binding)
-    observed, _ = _observe_running_mongo_storage(support, runtime_dir)
+    observed, _ = _observe_running_mongo_storage(
+        support,
+        runtime_dir,
+        include_docker=include_docker,
+    )
     if observed is not None:
         if (
             observed.get("runtime_engine") == "native"

@@ -60,7 +60,8 @@ boundaries; runtime only consumes these explicit structural controls:
 - `{SKIP_VOICE}` on a standalone line suppresses optional audio for that turn while preserving the
   complete text. It is appropriate for read/copy/edit-first artifacts such as emails, code, tables,
   exact wording, and dense reference material. It must not be used merely because conversation is
-  detailed or long, and an explicit request to hear/read/speak takes precedence.
+  detailed or long. An explicit request for text only/no audio requires suppression, while an
+  explicit request to hear/read/speak takes precedence over the default semantic appraisal.
 - `{MSG_BREAK}` on a standalone line separates complete conversational beats. The agent usually
   emits none and may emit at most two, so one logical turn creates at most three semantic bubbles.
   It must not split code, quotations, emails, documents, tables, lists, or tiny fragments.

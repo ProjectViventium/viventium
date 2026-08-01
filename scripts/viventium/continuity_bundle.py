@@ -49,6 +49,56 @@ CONTINUITY_TRANSACTION_OVERHEAD_BYTES = 16 * 1024 * 1024
 MONGO_CAPTURE_ESTIMATE_MULTIPLIER = 4
 MONGO_CLAIM_COLLECTION = "__viventium_restore_claim__"
 
+
+def preserved_other_runtime_uploads_link_is_receipted(
+    *,
+    legacy: Path,
+    app_support: Path,
+) -> bool:
+    try:
+        raw_target = Path(os.readlink(legacy))
+        if not raw_target.is_absolute():
+            return False
+        target = raw_target
+        target = lexical(target)
+        receipt = app_support / "state" / "continuity" / "uploads-migration" / "receipt.json"
+        for directory in (
+            app_support,
+            receipt.parent.parent.parent,
+            receipt.parent.parent,
+            receipt.parent,
+        ):
+            metadata = directory.lstat()
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+            ):
+                return False
+        metadata = receipt.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+            or metadata.st_mode & 0o077
+        ):
+            return False
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        return (
+            isinstance(payload, dict)
+            and payload.get("schemaVersion") == 1
+            and payload.get("legacyCompatibility")
+            == "other_runtime_exact_symlink_preserved"
+            and payload.get("mode") == "isolated_runtime_root"
+            and payload.get("observedLinkTargetSha256")
+            == hashlib.sha256(os.fsencode(str(target))).hexdigest()
+            and payload.get("canonicalStorage") == "app_support_data_uploads"
+        )
+    except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
+        return False
+
+
 MONGO_SAFE_COLLECTIONS = (
     "accessroles",
     "aclentries",
@@ -1354,6 +1404,16 @@ def resolve_uploads_capture_source(repo_root: Path, app_support: Path) -> Path:
                 "Legacy uploads compatibility link is unreadable"
             ) from error
         if target.is_absolute() and lexical(target) == canonical:
+            return canonical
+        if (
+            canonical_metadata is not None
+            and stat.S_ISDIR(canonical_metadata.st_mode)
+            and canonical_metadata.st_uid == os.getuid()
+            and preserved_other_runtime_uploads_link_is_receipted(
+                legacy=legacy,
+                app_support=app_support,
+            )
+        ):
             return canonical
         raise RestoreTransactionError("Legacy uploads root is an unexpected symlink")
     if canonical_metadata is None:

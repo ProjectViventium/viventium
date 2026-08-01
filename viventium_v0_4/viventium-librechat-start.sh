@@ -226,20 +226,127 @@ readonly LIVEKIT_SERVER_VERSION="v1.13.4"
 readonly LIVEKIT_SERVER_SOURCE_COMMIT="0b3fd288e3ef3263ec475ba0d78cf3ad77459981"
 readonly LIVEKIT_SERVER_IMAGE="livekit/livekit-server:v1.13.4@sha256:189f7c81b704a36642bc5c7e2d3e1ae83744627c11978a23a251bf19fbec64e0"
 
+livekit_runtime_owner_id() {
+  local state_root="${1:-}"
+  local digest=""
+
+  [[ -n "$state_root" ]] || return 1
+  if command -v shasum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$state_root" | shasum -a 256 | awk '{print $1}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$state_root" | sha256sum | awk '{print $1}')"
+  elif command -v openssl >/dev/null 2>&1; then
+    digest="$(printf '%s' "$state_root" | openssl dgst -sha256 | awk '{print $NF}')"
+  fi
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$digest"
+}
+
+livekit_container_has_configured_http_port() {
+  local container_id="${1:-}"
+  local binding=""
+
+  [[ -n "$container_id" ]] || return 1
+  while IFS= read -r binding; do
+    if [[ "${binding##*:}" == "$LIVEKIT_HTTP_PORT" ]]; then
+      return 0
+    fi
+  done < <(docker port "$container_id" "${LIVEKIT_HTTP_PORT}/tcp" 2>/dev/null || true)
+  return 1
+}
+
+livekit_runtime_container_ids() {
+  local state="${1:-running}"
+  local owned=""
+  local candidates=""
+  local container_id=""
+  local owner_label=""
+  local stack_label=""
+  local service_label=""
+  local profile_label=""
+  local -a docker_ps_args=(ps -q)
+
+  if [[ "$state" == "exited" ]]; then
+    docker_ps_args=(ps -aq --filter "status=exited")
+  elif [[ "$state" != "running" ]]; then
+    return 2
+  fi
+
+  owned="$(
+    docker "${docker_ps_args[@]}" \
+      --filter "label=viventium.stack=viventium_v0_4" \
+      --filter "label=viventium.service=livekit" \
+      --filter "label=viventium.runtime-owner=${VIVENTIUM_LIVEKIT_RUNTIME_OWNER}" \
+      2>/dev/null || true
+  )"
+  if [[ -n "$owned" ]]; then
+    printf '%s\n' "$owned"
+    return 0
+  fi
+
+  # An alternate App Support runtime may only select its exact owner label.
+  # Legacy profile/port adoption is reserved for canonical migration because
+  # those older containers do not prove which local runtime owns them.
+  [[ "${GLOBAL_DOCKER_CLEANUP_ALLOWED:-true}" == "true" ]] || return 0
+
+  # Exited legacy containers have no trustworthy owner identity. Preserve them
+  # rather than deleting another local runtime's evidence during stale cleanup.
+  [[ "$state" == "running" ]] || return 0
+
+  candidates="$(
+    docker ps -q \
+      --filter "name=^/viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-" \
+      2>/dev/null || true
+  )"
+  if [[ -z "$candidates" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
+    candidates="$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null || true)"
+  fi
+  while IFS= read -r container_id; do
+    [[ -n "$container_id" ]] || continue
+    owner_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.runtime-owner" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    [[ -z "$owner_label" ]] || continue
+    stack_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.stack" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    service_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.service" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    profile_label="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.profile" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    [[ "$stack_label" == "viventium_v0_4" ]] || continue
+    [[ "$service_label" == "livekit" ]] || continue
+    [[ "$profile_label" == "$VIVENTIUM_RUNTIME_PROFILE" ]] || continue
+    if livekit_container_has_configured_http_port "$container_id"; then
+      printf '%s\n' "$container_id"
+    fi
+  done <<<"$candidates"
+}
+
 livekit_managed_container_matches_release() {
   local container_id="$1"
   local configured_image=""
   local image_label=""
   local source_label=""
+  local http_port_label=""
 
   [[ -n "$container_id" ]] || return 1
   configured_image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
   image_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.image" }}' "$container_id" 2>/dev/null || true)"
   source_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.source" }}' "$container_id" 2>/dev/null || true)"
+  http_port_label="$(docker inspect --format '{{ index .Config.Labels "viventium.livekit.http-port" }}' "$container_id" 2>/dev/null || true)"
 
   [[ "$configured_image" == "$LIVEKIT_SERVER_IMAGE" ]] &&
     [[ "$image_label" == "$LIVEKIT_SERVER_IMAGE" ]] &&
-    [[ "$source_label" == "$LIVEKIT_SERVER_SOURCE_COMMIT" ]]
+    [[ "$source_label" == "$LIVEKIT_SERVER_SOURCE_COMMIT" ]] &&
+    [[ "$http_port_label" == "$LIVEKIT_HTTP_PORT" ]] &&
+    livekit_container_has_configured_http_port "$container_id"
 }
 # === VIVENTIUM END ===
 
@@ -1136,6 +1243,11 @@ export VIVENTIUM_LOCAL_MEILI_VOLUME="${VIVENTIUM_LOCAL_MEILI_VOLUME:-${VIVENTIUM
 
 PROFILE_STATE_ROOT_DEFAULT="$VIVENTIUM_BASE_STATE_DIR/runtime/$VIVENTIUM_RUNTIME_PROFILE"
 export VIVENTIUM_STATE_ROOT="${VIVENTIUM_STATE_ROOT:-$PROFILE_STATE_ROOT_DEFAULT}"
+if ! VIVENTIUM_LIVEKIT_RUNTIME_OWNER="$(livekit_runtime_owner_id "$VIVENTIUM_STATE_ROOT")"; then
+  echo -e "${RED}[viventium]${NC} Could not derive the private LiveKit runtime owner identity"
+  exit 1
+fi
+export VIVENTIUM_LIVEKIT_RUNTIME_OWNER
 TELEGRAM_POLLER_STATE_DIR="${VIVENTIUM_TELEGRAM_POLLER_STATE_DIR:-$VIVENTIUM_STATE_ROOT/telegram-poller}"
 TELEGRAM_POLLER_HANDOFF_HELPER="${VIVENTIUM_TELEGRAM_POLLER_HANDOFF_HELPER:-$VIVENTIUM_CORE_DIR/scripts/viventium/telegram_poller_handoff.py}"
 TELEGRAM_LOCAL_BOT_API_STATE_DIR="${TELEGRAM_LOCAL_BOT_API_STATE_DIR:-$VIVENTIUM_STATE_ROOT/telegram-local-bot-api}"
@@ -1198,6 +1310,8 @@ TELEGRAM_BOT_LAUNCHCTL_LABEL="${VIVENTIUM_TELEGRAM_BOT_LAUNCHCTL_LABEL:-ai.viven
 TELEGRAM_BOT_WATCHDOG_PID_FILE="$LOG_ROOT/telegram_bot_watchdog.pid"
 TELEGRAM_CODEX_PID_FILE="$LOG_ROOT/telegram_codex.pid"
 DETACHED_LAUNCH_PGID_FILE="$LOG_ROOT/detached-launch.pgid"
+DETACHED_LAUNCH_MEMBERS_FILE="$LOG_ROOT/detached-launch.members"
+RUNTIME_STOP_AUTHORIZED_PGID=""
 LIBRECHAT_API_WATCHDOG_PID_FILE="$LOG_ROOT/librechat-api-watchdog.pid"
 LIBRECHAT_API_WATCHDOG_LOG_FILE="$LOG_DIR/librechat-api-watchdog.log"
 SCHEDULING_MCP_WATCHDOG_PID_FILE="$LOG_ROOT/scheduling_cortex_mcp_watchdog.pid"
@@ -1225,9 +1339,14 @@ record_mongo_engine_identity() {
     log_error "MongoDB engine identity helper is missing"
     return 1
   fi
+  local identity_scope_args=()
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    identity_scope_args+=(--native-only)
+  fi
   "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" record-mongo-engine \
     --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
     --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
+    "${identity_scope_args[@]}" \
     >/dev/null
 }
 
@@ -1242,7 +1361,9 @@ prepare_mongo_engine_identity_for_stop() {
     return 0
   fi
   local managed_mongo_running=false
-  if port_has_listener "$MONGO_PORT"; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
+    port_has_listener "$MONGO_PORT"
+  then
     managed_mongo_running=true
   elif [[ -f "$MONGO_NATIVE_PID_FILE" ]]; then
     local native_pid
@@ -1254,6 +1375,7 @@ prepare_mongo_engine_identity_for_stop() {
     fi
   fi
   if [[ "$managed_mongo_running" != "true" ]] &&
+    [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
     docker_daemon_ready &&
     [[ "$(docker inspect -f '{{.State.Running}}' "$MONGO_CONTAINER_NAME" 2>/dev/null || true)" == "true" ]]
   then
@@ -1271,9 +1393,14 @@ seal_mongo_engine_identity_after_stop() {
   if [[ "$MONGO_ENGINE_IDENTITY_PREPARED" != "true" ]]; then
     return 0
   fi
+  local identity_scope_args=()
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    identity_scope_args+=(--native-only)
+  fi
   if ! "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" seal-mongo-engine \
     --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
     --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
+    "${identity_scope_args[@]}" \
     >/dev/null
   then
     log_error "MongoDB stopped, but its durable engine receipt could not be sealed"
@@ -2123,6 +2250,7 @@ fi
 # === VIVENTIUM END ===
 
 RESTART_DOCKER_SERVICES="$RESTART_SERVICES"
+GLOBAL_DOCKER_CLEANUP_ALLOWED=true
 if [[ "$SKIP_DOCKER" == "true" ]]; then
   RESTART_DOCKER_SERVICES=false
   # Docker-only sidecars should never be pulled or restarted when the caller
@@ -2472,16 +2600,164 @@ read_detached_launch_process_group() {
   fi
 }
 
+process_start_identity() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+record_detached_launch_process_group_members() {
+  local recorded_pgid=""
+  local member_pid=""
+  local member_start=""
+  local temporary_file="${DETACHED_LAUNCH_MEMBERS_FILE}.tmp.$$"
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  : >"$temporary_file"
+  chmod 600 "$temporary_file" 2>/dev/null || true
+  while read -r member_pid; do
+    [[ "$member_pid" =~ ^[0-9]+$ ]] || continue
+    member_start="$(process_start_identity "$member_pid" || true)"
+    [[ -n "$member_start" ]] || continue
+    printf '%s\t%s\n' "$member_pid" "$member_start" >>"$temporary_file"
+  done < <(
+    ps -Ao pid=,pgid= 2>/dev/null |
+      awk -v target="$recorded_pgid" '$2 == target { print $1 }'
+  )
+
+  if [[ ! -s "$temporary_file" ]]; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  mv -f "$temporary_file" "$DETACHED_LAUNCH_MEMBERS_FILE"
+  chmod 600 "$DETACHED_LAUNCH_MEMBERS_FILE" 2>/dev/null || true
+}
+
+canonical_app_support_root() {
+  printf '%s\n' "$HOME/Library/Application Support/Viventium"
+}
+
+runtime_stop_requires_process_group() {
+  local current_root="${VIVENTIUM_APP_SUPPORT_ROOT%/}"
+  local canonical_root=""
+  canonical_root="$(canonical_app_support_root)"
+  canonical_root="${canonical_root%/}"
+  [[ "$current_root" != "$canonical_root" ]]
+}
+
+protect_noncanonical_runtime_from_global_docker_mutation() {
+  if runtime_stop_requires_process_group && [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]]; then
+    log_warn "Alternate App Support runtime detected; preserving canonical/shared Docker services"
+    GLOBAL_DOCKER_CLEANUP_ALLOWED=false
+    RESTART_DOCKER_SERVICES=false
+    # These launchers use machine-global Compose projects or container names. An alternate
+    # runtime may consume an already-running shared endpoint, but restart must not create,
+    # replace, or later clean up those global services without per-container ownership.
+    START_MS365_MCP=false
+    START_RAG_API=false
+    START_CODE_INTERPRETER=false
+    START_SKYVERN=false
+    START_FIRECRAWL=false
+    START_SEARXNG=false
+  fi
+}
+
+runtime_process_group_receipt_valid() {
+  local recorded_pgid=""
+  local member_pid=""
+  local recorded_start=""
+  local live_start=""
+  local live_pgid=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  if [[ -f "$DETACHED_LAUNCH_MEMBERS_FILE" ]]; then
+    while IFS=$'\t' read -r member_pid recorded_start; do
+      [[ "$member_pid" =~ ^[0-9]+$ && -n "$recorded_start" ]] || continue
+      live_pgid="$(ps -p "$member_pid" -o pgid= 2>/dev/null | tr -d '[:space:]' || true)"
+      [[ "$live_pgid" == "$recorded_pgid" ]] || continue
+      live_start="$(process_start_identity "$member_pid" || true)"
+      if [[ -n "$live_start" && "$live_start" == "$recorded_start" ]]; then
+        return 0
+      fi
+    done <"$DETACHED_LAUNCH_MEMBERS_FILE"
+    return 1
+  fi
+
+  # Existing canonical installs may predate the membership companion file. Alternate roots
+  # have no safe legacy fallback because another runtime can use the same checkout concurrently.
+  ! runtime_stop_requires_process_group
+}
+
+runtime_process_group_pids() {
+  local recorded_pgid=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 0
+  ps -Ao pid=,pgid=,state= 2>/dev/null |
+    awk -v target="$recorded_pgid" '$2 == target && $3 !~ /Z/ { print $1 }' |
+    xargs 2>/dev/null || true
+}
+
+authorize_runtime_process_group_stop() {
+  local recorded_pgid=""
+  local live_pids=""
+  RUNTIME_STOP_AUTHORIZED_PGID=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 0
+
+  live_pids="$(runtime_process_group_pids)"
+  if [[ -z "$live_pids" ]]; then
+    clear_detached_launch_process_group
+    return 0
+  fi
+  if ! runtime_process_group_receipt_valid; then
+    log_error "Refusing to stop an unverified detached runtime process group: $recorded_pgid"
+    return 1
+  fi
+  RUNTIME_STOP_AUTHORIZED_PGID="$recorded_pgid"
+}
+
+pid_matches_recorded_runtime_process_group() {
+  local pid="${1:-}"
+  local recorded_pgid=""
+  local pid_pgid=""
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+  if [[ "${RUNTIME_STOP_AUTHORIZED_PGID:-}" != "$recorded_pgid" ]]; then
+    runtime_process_group_receipt_valid || return 1
+  fi
+  pid_pgid="$(ps -p "$pid" -o pgid= 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$pid_pgid" == "$recorded_pgid" ]]
+}
+
+pid_matches_runtime_stop_identity() {
+  local pid="${1:-}"
+  local recorded_pgid=""
+  recorded_pgid="$(read_detached_launch_process_group)"
+  if [[ "$recorded_pgid" =~ ^[0-9]+$ ]]; then
+    pid_matches_recorded_runtime_process_group "$pid"
+    return
+  fi
+  # Canonical installs retain a legacy scope-only recovery path. Alternate App Support roots
+  # are isolation boundaries and must never select same-checkout processes without a runtime PGID.
+  ! runtime_stop_requires_process_group
+}
+
 record_detached_launch_process_group() {
   local pgid=""
   pgid="$(current_process_group_id)"
   if [[ "$pgid" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$pgid" >"$DETACHED_LAUNCH_PGID_FILE"
+    chmod 600 "$DETACHED_LAUNCH_PGID_FILE" 2>/dev/null || true
+    record_detached_launch_process_group_members
   fi
 }
 
 clear_detached_launch_process_group() {
-  rm -f "$DETACHED_LAUNCH_PGID_FILE"
+  rm -f "$DETACHED_LAUNCH_PGID_FILE" "$DETACHED_LAUNCH_MEMBERS_FILE"
 }
 
 kill_recorded_detached_launch_process_group() {
@@ -2496,12 +2772,24 @@ kill_recorded_detached_launch_process_group() {
   if [[ -n "$current_pgid" && "$recorded_pgid" == "$current_pgid" ]]; then
     return 0
   fi
-  pids="$(ps -Ao pid=,pgid= 2>/dev/null | awk -v target="$recorded_pgid" '$2 == target { print $1 }' | xargs 2>/dev/null || true)"
+  pids="$(runtime_process_group_pids)"
+  if [[ -z "$pids" ]]; then
+    clear_detached_launch_process_group
+    RUNTIME_STOP_AUTHORIZED_PGID=""
+    return 0
+  fi
+  if [[ "${RUNTIME_STOP_AUTHORIZED_PGID:-}" != "$recorded_pgid" ]] &&
+    ! runtime_process_group_receipt_valid
+  then
+    log_error "Refusing to stop an unverified detached runtime process group: $recorded_pgid"
+    return 1
+  fi
   if [[ -n "$pids" ]]; then
     log_warn "Stopping detached launch process group $recorded_pgid"
     kill_pids "$pids"
   fi
   clear_detached_launch_process_group
+  RUNTIME_STOP_AUTHORIZED_PGID=""
 }
 
 is_truthy() {
@@ -2661,13 +2949,13 @@ kill_pids_scoped() {
   local scoped_pids=()
   local pid
   for pid in $pids; do
-    if pid_matches_scope "$pid" "$scope"; then
+    if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       scoped_pids+=("$pid")
-    elif pid_matches_trashed_scope_variant "$pid" "$scope"; then
+    elif pid_matches_trashed_scope_variant "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       log_warn "Stopping stale trashed PID $pid for scope: $scope"
       scoped_pids+=("$pid")
     else
-      log_warn "Skipping PID $pid (outside scope: $scope)"
+      log_warn "Skipping PID $pid (outside runtime identity or scope: $scope)"
     fi
   done
   if [[ "${#scoped_pids[@]}" -gt 0 ]]; then
@@ -3081,7 +3369,9 @@ find_scope_runtime_pids() {
     cmd="${cmd#"${cmd%%[![:space:]]*}"}"
     case "$cmd" in
       "$scope"|"$scope"/*|*" $scope"|*" $scope"/*)
-        collected+=("$pid")
+        if pid_matches_runtime_stop_identity "$pid"; then
+          collected+=("$pid")
+        fi
         ;;
     esac
   done < <(ps -Ao pid=,command= 2>/dev/null || true)
@@ -3102,7 +3392,9 @@ find_scope_pattern_pids() {
   local pid
   while read -r pid; do
     [[ -z "$pid" ]] && continue
-    if pid_matches_scope "$pid" "$scope" || pid_matches_trashed_scope_variant "$pid" "$scope"; then
+    if pid_matches_runtime_stop_identity "$pid" &&
+      { pid_matches_scope "$pid" "$scope" || pid_matches_trashed_scope_variant "$pid" "$scope"; }
+    then
       collected+=("$pid")
     fi
   done < <(pgrep -f "$pattern" 2>/dev/null || true)
@@ -3225,13 +3517,13 @@ kill_port_listeners() {
   local scoped_port_pids=()
   local pid=""
   for pid in $pids; do
-    if pid_matches_scope "$pid" "$scope"; then
+    if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       scoped_port_pids+=("$pid")
-    elif pid_matches_trashed_scope_variant "$pid" "$scope"; then
+    elif pid_matches_trashed_scope_variant "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
       log_warn "Stopping stale trashed PID $pid for scope: $scope"
       scoped_port_pids+=("$pid")
     else
-      log_warn "Skipping PID $pid (outside scope: $scope)"
+      log_warn "Skipping PID $pid (outside runtime identity or scope: $scope)"
     fi
   done
 
@@ -3259,11 +3551,11 @@ stop_pid_file_scoped() {
   pid=$(cat "$pid_file" 2>/dev/null || true)
   if [[ "$pid" =~ ^[0-9]+$ ]]; then
     if ps -p "$pid" >/dev/null 2>&1; then
-      if pid_matches_scope "$pid" "$scope"; then
+      if pid_matches_scope "$pid" "$scope" && pid_matches_runtime_stop_identity "$pid"; then
         log_warn "Stopping process from $pid_file"
         kill_pids "$pid"
       else
-        log_warn "Skipping PID $pid (outside scope: $scope)"
+        log_warn "Skipping PID $pid (outside runtime identity or scope: $scope)"
       fi
     fi
   fi
@@ -5119,6 +5411,10 @@ PY
 }
 
 start_local_mongodb_container() {
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    log_info "Alternate App Support runtime detected; using runtime-local native MongoDB instead of a shared Docker container"
+    return 1
+  fi
   if [[ "$MONGO_IS_LOCAL" == "true" ]] && command -v mongod >/dev/null 2>&1; then
     if [[ -n "${VIVENTIUM_LOCAL_MONGO_DATA_PATH:-}" || "${VIVENTIUM_RUNTIME_PROFILE:-}" == "isolated" ]]; then
       log_info "Native mongod available for the local ${VIVENTIUM_RUNTIME_PROFILE:-isolated} runtime; skipping Docker Mongo bootstrap"
@@ -5557,7 +5853,9 @@ restart_viventium_owned_meilisearch_listener() {
 
   # Preflight every discovered target before stopping either one. A mixed
   # owned/unowned pair must not produce a partial recycle.
-  if command -v docker >/dev/null 2>&1; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&
+    command -v docker >/dev/null 2>&1
+  then
     existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$" 2>/dev/null | head -1 || true)
     if [[ -n "$existing" ]]; then
       stack_label="$(docker inspect -f '{{ index .Config.Labels "viventium.stack" }}' "$existing" 2>/dev/null || true)"
@@ -5774,6 +6072,10 @@ recover_incompatible_local_meili_data() {
 }
 
 start_local_meilisearch_container() {
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    log_info "Alternate App Support runtime detected; using runtime-local native Meilisearch instead of a shared Docker container"
+    return 1
+  fi
   if ! command -v docker >/dev/null 2>&1; then
     log_error "Docker not found (required for local Meilisearch auto-start)"
     return 1
@@ -6643,6 +6945,10 @@ stop_running_services() {
   local scheduling_stop_failed=false
   local stop_excluded_pids=("$$" "${BASHPID:-}" "$PPID")
   log_warn "$reason"
+  protect_noncanonical_runtime_from_global_docker_mutation
+  if ! authorize_runtime_process_group_stop; then
+    return 1
+  fi
   if ! prepare_mongo_engine_identity_for_stop; then
     return 1
   fi
@@ -6803,7 +7109,9 @@ stop_running_services() {
   if [[ -d "$V1_AGENT_DIR" || -n "${MS365_MCP_CALLBACK_PORT:-}" ]]; then
     kill_port_listeners "$MS365_MCP_CALLBACK_PORT" "$VIVENTIUM_CORE_DIR"
   fi
-  if command -v docker >/dev/null 2>&1; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKIP_DOCKER" != "true" ]] &&
+    command -v docker >/dev/null 2>&1
+  then
     if docker_daemon_ready; then
       if [[ -d "$CODE_INTERPRETER_DIR" ]]; then
           local ci_compose_file="$CODE_INTERPRETER_DIR/docker-compose.ghcr.yml"
@@ -6889,21 +7197,16 @@ stop_running_services() {
         fi
       fi
 
-      local livekit_containers
-      livekit_containers=$(
-        docker ps -q \
-          --filter "label=viventium.stack=viventium_v0_4" \
-          --filter "label=viventium.service=livekit" \
-          2>/dev/null || true
-      )
-      if [[ -z "$livekit_containers" ]]; then
-        livekit_containers=$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null || true)
-      fi
-      if [[ -n "$livekit_containers" ]]; then
-        docker rm -f $livekit_containers >/dev/null 2>&1 || true
-      fi
     else
       log_warn "Docker is not running; skipping container cleanup"
+    fi
+  fi
+
+  if [[ "$SKIP_DOCKER" != "true" ]] && docker_daemon_ready; then
+    local livekit_containers
+    livekit_containers="$(livekit_runtime_container_ids running)"
+    if [[ -n "$livekit_containers" ]]; then
+      docker rm -f $livekit_containers >/dev/null 2>&1 || true
     fi
   fi
 
@@ -6930,16 +7233,31 @@ cleanup_stale_containers() {
   if ! docker_daemon_ready; then
     return 0
   fi
-  local stale
-  stale=$(docker ps -aq --filter "label=viventium.stack=viventium_v0_4" --filter "status=exited" 2>/dev/null || true)
+  local livekit_stale
+  livekit_stale="$(livekit_runtime_container_ids exited)"
+  if [[ -n "$livekit_stale" ]]; then
+    docker rm $livekit_stale >/dev/null 2>&1 || true
+  fi
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    return 0
+  fi
+  local stale_candidates
+  local stale=""
+  local stale_id=""
+  local stale_service=""
+  stale_candidates=$(docker ps -aq --filter "label=viventium.stack=viventium_v0_4" --filter "status=exited" 2>/dev/null || true)
+  while IFS= read -r stale_id; do
+    [[ -n "$stale_id" ]] || continue
+    stale_service="$(
+      docker inspect --format '{{ index .Config.Labels "viventium.service" }}' \
+        "$stale_id" 2>/dev/null || true
+    )"
+    [[ "$stale_service" == "livekit" ]] && continue
+    stale="${stale}${stale:+ }${stale_id}"
+  done <<<"$stale_candidates"
   if [[ -n "$stale" ]]; then
     log_warn "Removing stale Viventium containers"
     docker rm $stale >/dev/null 2>&1 || true
-  fi
-  local livekit_stale
-  livekit_stale=$(docker ps -aq --filter "name=^/viventium-livekit-" --filter "status=exited" 2>/dev/null || true)
-  if [[ -n "$livekit_stale" ]]; then
-    docker rm $livekit_stale >/dev/null 2>&1 || true
   fi
   local ms365_stale
   ms365_stale=$(docker ps -aq --filter "name=^/viventium_ms365_mcp$" --filter "status=exited" 2>/dev/null || true)
@@ -6968,6 +7286,8 @@ cleanup_stale_containers() {
   fi
   cleanup_code_interpreter_exec_containers "stale cleanup" "exited"
 }
+
+protect_noncanonical_runtime_from_global_docker_mutation
 
 if [[ "$STOP_ONLY" == "true" ]]; then
   CLEANUP_ENABLED=false
@@ -7755,14 +8075,11 @@ detached_start_requested() {
 }
 
 if detached_start_requested; then
-  record_detached_launch_process_group
   # Detached helper launches must let local child services outlive this shell.
   # Ignoring SIGHUP here propagates to background jobs so user-facing processes
   # (LibreChat, playground, voice, Telegram, MCPs) are not torn down when the
   # detached launcher exits.
   trap '' HUP
-else
-  clear_detached_launch_process_group
 fi
 
 queue_parallel_optional_start() {
@@ -8612,7 +8929,7 @@ cleanup() {
     stop_pid_file_scoped "$GLASSHIVE_UI_PID_FILE" "$GLASSHIVE_UI_DIR"
   fi
   [[ "$MS365_CALLBACK_STARTED_BY_SCRIPT" == "true" && -n "${MS365_MCP_CALLBACK_PID:-}" ]] && kill "${MS365_MCP_CALLBACK_PID}" 2>/dev/null || true
-  if [[ "$SKIP_DOCKER" != "true" ]]; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKIP_DOCKER" != "true" ]]; then
     if [[ "$MS365_STARTED_BY_SCRIPT" == "true" ]]; then
       docker compose -f "$ROOT_DIR/docker/ms365-mcp/docker-compose.yml" down >/dev/null 2>&1 || true
     fi
@@ -8667,9 +8984,9 @@ cleanup() {
         docker rm -f "$mongo_container" >/dev/null 2>&1 || true
       fi
     fi
-    if [[ "$LIVEKIT_STARTED_BY_SCRIPT" == "true" && -n "${LIVEKIT_CONTAINER_ID:-}" ]]; then
-      docker rm -f "${LIVEKIT_CONTAINER_ID}" >/dev/null 2>&1 || true
-    fi
+  fi
+  if [[ "$SKIP_DOCKER" != "true" && "$LIVEKIT_STARTED_BY_SCRIPT" == "true" && -n "${LIVEKIT_CONTAINER_ID:-}" ]]; then
+    docker rm -f "${LIVEKIT_CONTAINER_ID}" >/dev/null 2>&1 || true
   fi
   stop_recorded_native_mongo_engine || return 1
   if [[ "$MEILI_NATIVE_STARTED_BY_SCRIPT" == "true" && -f "$MEILI_NATIVE_PID_FILE" ]]; then
@@ -8682,7 +8999,7 @@ cleanup() {
   fi
   ## === VIVENTIUM START ===
   # Feature: Symmetric cleanup for Skyvern helper script lifecycle
-  if [[ "$SKYVERN_STARTED_BY_SCRIPT" == "true" ]]; then
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKYVERN_STARTED_BY_SCRIPT" == "true" ]]; then
     local skyvern_script="$ROOT_DIR/viventium-skyvern-start.sh"
     if [[ -x "$skyvern_script" ]]; then
       "$skyvern_script" stop >/dev/null 2>&1 || true
@@ -11567,6 +11884,10 @@ if [[ "$RESTART_SERVICES" == "true" ]]; then
   stop_running_services
 fi
 
+# Preserve the predecessor receipt through restart cleanup, then bind the successor group.
+# Both public foreground start and helper/installer detached start own a distinct process group.
+record_detached_launch_process_group
+
 cleanup_stale_containers
 
 # Enable cleanup once we've printed config and are about to start services.
@@ -11666,23 +11987,7 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
         exit 1
       fi
 
-      EXISTING=$(docker ps -q \
-        --filter "label=viventium.stack=viventium_v0_4" \
-        --filter "label=viventium.service=livekit" \
-        --filter "label=viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}" \
-        2>/dev/null | head -1)
-      if [[ -z "$EXISTING" ]]; then
-        EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-${VIVENTIUM_RUNTIME_PROFILE}-" 2>/dev/null | head -1)
-      fi
-      if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
-        EXISTING=$(docker ps -q \
-          --filter "label=viventium.stack=viventium_v0_4" \
-          --filter "label=viventium.service=livekit" \
-          2>/dev/null | head -1)
-      fi
-      if [[ -z "$EXISTING" && "$VIVENTIUM_RUNTIME_PROFILE" == "compat" ]]; then
-        EXISTING=$(docker ps -q --filter "name=^/viventium-livekit-" 2>/dev/null | head -1)
-      fi
+      EXISTING="$(livekit_runtime_container_ids running | head -1)"
 
       if [[ -n "$EXISTING" ]] && ! livekit_managed_container_matches_release "$EXISTING"; then
         log_warn "Replacing stale managed LiveKit container ${EXISTING:0:12} with ${LIVEKIT_SERVER_VERSION}"
@@ -11727,6 +12032,8 @@ if [[ "$SKIP_LIVEKIT" != "true" ]]; then
             --label "viventium.stack=viventium_v0_4"
             --label "viventium.service=livekit"
             --label "viventium.profile=${VIVENTIUM_RUNTIME_PROFILE}"
+            --label "viventium.runtime-owner=${VIVENTIUM_LIVEKIT_RUNTIME_OWNER}"
+            --label "viventium.livekit.http-port=${LIVEKIT_HTTP_PORT}"
             --label "viventium.livekit.image=${LIVEKIT_SERVER_IMAGE}"
             --label "viventium.livekit.source=${LIVEKIT_SERVER_SOURCE_COMMIT}"
             -p "${LIVEKIT_HTTP_PORT}:${LIVEKIT_HTTP_PORT}"
@@ -12774,6 +13081,9 @@ if ! detached_start_requested; then
 fi
 # === VIVENTIUM END ===
 
+# Refresh after service startup so both foreground and detached receipts include durable children.
+# A detached launcher exits below; foreground supervisors remain and then block in wait.
+record_detached_launch_process_group_members
 if [[ "${VIVENTIUM_DETACHED_START:-false}" == "1" || "${VIVENTIUM_DETACHED_START:-false}" == "true" ]]; then
   CLEANUP_ENABLED=false
   log_success "Detached launch submitted; services will keep warming in the background"

@@ -162,6 +162,44 @@ def test_identity_bound_native_stop_then_seal_removes_matching_pid_records(
     assert not legacy_pid.exists()
 
 
+def test_noncanonical_native_identity_ignores_canonical_docker_engine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_transaction_module()
+    support, runtime, data_path = build_bind_fixture(tmp_path)
+    identity = native_inventory(data_path)
+    native_pid = support / "state" / "native" / "mongod.pid"
+    native_pid.parent.mkdir(parents=True)
+    native_pid.write_text("4242\n", encoding="utf-8")
+
+    def forbidden_docker_probe():
+        raise AssertionError("noncanonical native identity must not inspect shared Docker")
+
+    monkeypatch.setattr(module, "docker_ready", forbidden_docker_probe)
+    monkeypatch.setattr(
+        module,
+        "inspect_native_mongo_process",
+        lambda _pid: native_process_view(identity),
+    )
+
+    recorded = module.record_mongo_engine_identity(
+        support,
+        runtime,
+        include_docker=False,
+    )
+    assert recorded["identity"]["runtime_engine"] == "native"
+
+    native_pid.unlink()
+    sealed = module.seal_mongo_engine_identity(
+        support,
+        runtime,
+        include_docker=False,
+    )
+    assert sealed["clean_stopped"] is True
+    assert sealed["identity"]["runtime_engine"] == "native"
+
+
 def test_real_native_prestart_is_identity_stopped_and_sealed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1008,6 +1046,14 @@ def test_runtime_start_and_clean_stop_paths_refresh_and_seal_engine_proof() -> N
         "prepare_mongo_engine_identity_for_stop() {", 1
     )[1].split("\n}", 1)[0]
     assert "record_mongo_engine_identity" in prepare_function
+    record_function = launcher.split(
+        "record_mongo_engine_identity() {", 1
+    )[1].split("\n}", 1)[0]
+    seal_function = launcher.split(
+        "seal_mongo_engine_identity_after_stop() {", 1
+    )[1].split("\n}", 1)[0]
+    assert "--native-only" in record_function
+    assert "--native-only" in seal_function
     assert "port_has_listener" in prepare_function
     assert "port_in_use" not in prepare_function
     assert launcher.index("port_has_listener() {") < stop_only_gate

@@ -471,7 +471,7 @@ drain_failed_install_runtime() {
   done
 
   if [[ -d "$APP_SUPPORT_DIR/state/runtime" ]]; then
-    find "$APP_SUPPORT_DIR/state/runtime" -type f \( -name detached-launch.pgid -o -name mongodb-native.pid \) -delete 2>/dev/null || true
+    find "$APP_SUPPORT_DIR/state/runtime" -type f \( -name detached-launch.pgid -o -name detached-launch.members -o -name mongodb-native.pid \) -delete 2>/dev/null || true
   fi
 }
 
@@ -4265,6 +4265,7 @@ drain_native_stack_before_state_removal() {
   # state is still present for command-line matching.
   prepare_runtime_exports
   if [[ -f "$GENERATED_ENV" ]]; then
+    set -a
     set +u
     # shellcheck disable=SC1090
     source "$GENERATED_ENV"
@@ -4273,6 +4274,7 @@ drain_native_stack_before_state_removal() {
       source "$GENERATED_LOCAL_ENV"
     fi
     set -u
+    set +a
   fi
   if ! "$REPO_ROOT/scripts/viventium/native_stack.sh" stop; then
     echo "Native services did not drain; refusing to remove Viventium state." >&2
@@ -5035,6 +5037,19 @@ pid_matches_repo_scope() {
   return 1
 }
 
+pid_matches_runtime_process_group() {
+  local pid="${1:-}"
+  local recorded_pgid=""
+  local current_pgid=""
+  [[ -n "$pid" ]] || return 1
+
+  recorded_pgid="$(read_detached_launch_process_group)"
+  [[ "$recorded_pgid" =~ ^[0-9]+$ ]] || return 1
+
+  current_pgid="$(ps -p "$pid" -o pgid= 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ "$current_pgid" == "$recorded_pgid" ]]
+}
+
 pattern_running_in_repo() {
   local pattern="${1:-}"
   [[ -n "$pattern" ]] || return 1
@@ -5044,7 +5059,7 @@ pattern_running_in_repo() {
 
   local pid
   for pid in $pids; do
-    if pid_matches_repo_scope "$pid"; then
+    if pid_matches_repo_scope "$pid" && pid_matches_runtime_process_group "$pid"; then
       return 0
     fi
   done
@@ -7981,8 +7996,14 @@ PY
     stop_status=0
     prepare_runtime_exports
     if [[ -f "$GENERATED_ENV" ]]; then
+      set -a
       # shellcheck disable=SC1090
       source "$GENERATED_ENV"
+      if [[ -f "$GENERATED_LOCAL_ENV" ]]; then
+        # shellcheck disable=SC1090
+        source "$GENERATED_LOCAL_ENV"
+      fi
+      set +a
     fi
     write_stack_owner_state "$COMMAND"
     VIVENTIUM_LAUNCHER_INTERNAL=1 \

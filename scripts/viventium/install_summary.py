@@ -1197,6 +1197,8 @@ def scheduler_status_and_detail(
     db_path = scheduler_db_path(config, runtime_env, runtime_dir)
     ledger = scheduler_ledger_summary(db_path)
     ledger_has_issue = scheduler_ledger_has_latest_issue(db_path)
+    if not start_enabled:
+        return "Disabled", f"Not enabled for this runtime | {ledger}"
     if probe_live and url:
         health_url = scheduler_health_url(url)
         healthy, health_reason = scheduler_health_matches(health_url, db_path)

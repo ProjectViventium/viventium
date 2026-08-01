@@ -408,10 +408,11 @@ def test_scheduler_stop_handles_installed_pid_in_pre_bind_gap_without_touching_f
             "-c",
             (
                 "set -euo pipefail\n"
-                "PROCESS=1\n"
-                "ps() { [[ \"$PROCESS\" == 1 ]]; }\n"
-                "pid_matches_scope() { [[ \"$2\" == \"$ACTIVE_SCOPE\" ]]; }\n"
-                "port_has_listener() { return 1; }\n"
+                    "PROCESS=1\n"
+                    "ps() { [[ \"$PROCESS\" == 1 ]]; }\n"
+                    "pid_matches_scope() { [[ \"$2\" == \"$ACTIVE_SCOPE\" ]]; }\n"
+                    "pid_matches_runtime_stop_identity() { return 0; }\n"
+                    "port_has_listener() { return 1; }\n"
                 "log_warn() { printf 'warn:%s\\n' \"$1\"; }\n"
                 "kill_pids() { printf 'signal:%s\\n' \"$1\"; PROCESS=0; }\n"
                 f"{pid_helper}"
@@ -467,14 +468,15 @@ def test_scheduler_stop_handles_real_process_across_activation_scopes(
             pytest.fail("lsof is required for hosted scheduler ownership acceptance")
         pytest.skip("lsof is required for real scheduler ownership acceptance")
 
-    for proxy_variable in (
+    proxy_variables = (
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "http_proxy",
         "https_proxy",
         "ALL_PROXY",
         "all_proxy",
-    ):
+    )
+    for proxy_variable in proxy_variables:
         monkeypatch.setenv(proxy_variable, "http://127.0.0.1:1")
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
@@ -562,6 +564,13 @@ server.serve_forever()
     )
     port_file = tmp_path / "synthetic-scheduler.port"
     stderr_path = tmp_path / "synthetic-scheduler.stderr"
+    server_environment = os.environ.copy()
+    for proxy_variable in proxy_variables:
+        server_environment.pop(proxy_variable, None)
+    assert all(
+        proxy_variable not in server_environment
+        for proxy_variable in proxy_variables
+    )
     stderr_handle = stderr_path.open("wb")
     try:
         process = subprocess.Popen(
@@ -569,6 +578,7 @@ server.serve_forever()
             cwd=process_root,
             stdout=subprocess.DEVNULL,
             stderr=stderr_handle,
+            env=server_environment,
         )
     except BaseException:
         stderr_handle.close()
@@ -595,11 +605,12 @@ server.serve_forever()
             [
                 "bash",
                 "-c",
-                (
-                    "set -euo pipefail\n"
-                    "log_warn() { printf 'warn:%s\\n' \"$1\"; }\n"
-                    f"{functions}"
-                    "stop_scheduling_mcp_for_runtime\n"
+                    (
+                        "set -euo pipefail\n"
+                        "log_warn() { printf 'warn:%s\\n' \"$1\"; }\n"
+                        "pid_matches_runtime_stop_identity() { return 0; }\n"
+                        f"{functions}"
+                        "stop_scheduling_mcp_for_runtime\n"
                 ),
             ],
             check=False,

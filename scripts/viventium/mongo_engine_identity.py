@@ -33,6 +33,15 @@ def build_parser() -> argparse.ArgumentParser:
         child = subparsers.add_parser(command)
         child.add_argument("--app-support-dir", type=Path, required=True)
         child.add_argument("--runtime-dir", type=Path, required=True)
+        if command in {"record-mongo-engine", "seal-mongo-engine"}:
+            child.add_argument(
+                "--native-only",
+                action="store_true",
+                help=(
+                    "Ignore machine-global Docker containers and inspect only "
+                    "this App Support root's native engine receipt."
+                ),
+            )
         if command in {"prune-stale-native-pid", "stop-recorded-native-engine"}:
             child.add_argument("--pid-file", type=Path, action="append", default=[])
         if command == "stop-recorded-native-engine":
@@ -47,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = upgrade_transaction.record_mongo_engine_identity(
                 args.app_support_dir,
                 args.runtime_dir,
+                include_docker=not args.native_only,
             )
         elif args.command == "prune-stale-native-pid":
             if len(args.pid_file) != 1:
@@ -70,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = upgrade_transaction.seal_mongo_engine_identity(
                 args.app_support_dir,
                 args.runtime_dir,
+                include_docker=not args.native_only,
             )
     except upgrade_transaction.UpgradeTransactionError as error:
         print(f"MongoDB engine identity operation failed: {error}", file=sys.stderr)

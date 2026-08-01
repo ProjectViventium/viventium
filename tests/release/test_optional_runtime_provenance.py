@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -55,6 +56,572 @@ def _livekit_startup_block() -> str:
     return launcher.split("# LiveKit server (Docker)", maxsplit=1)[1].split(
         "# Prepare the local LibreChat runtime files", maxsplit=1
     )[0]
+
+
+def _livekit_selector_defs() -> str:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    return "\n".join(
+        (
+            _extract_shell_function(
+                launcher, "livekit_container_has_configured_http_port"
+            ),
+            _extract_shell_function(launcher, "livekit_runtime_container_ids"),
+        )
+    )
+
+
+def _runtime_stop_selector_defs() -> str:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    return "\n".join(
+        _extract_shell_function(launcher, name)
+        for name in (
+            "read_detached_launch_process_group",
+            "process_start_identity",
+            "runtime_process_group_receipt_valid",
+            "pid_matches_recorded_runtime_process_group",
+            "canonical_app_support_root",
+            "runtime_stop_requires_process_group",
+            "pid_matches_runtime_stop_identity",
+            "read_pid_cwd",
+            "normalize_scope_path",
+            "path_is_trashed_checkout",
+            "scope_component_signature",
+            "pid_matches_trashed_scope_variant",
+            "pid_matches_scope",
+            "find_scope_pattern_pids",
+        )
+    )
+
+
+def _runtime_group_stop_defs() -> str:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    return "\n".join(
+        _extract_shell_function(launcher, name)
+        for name in (
+            "kill_pids",
+            "current_process_group_id",
+            "read_detached_launch_process_group",
+            "process_start_identity",
+            "canonical_app_support_root",
+            "runtime_stop_requires_process_group",
+            "runtime_process_group_receipt_valid",
+            "runtime_process_group_pids",
+            "clear_detached_launch_process_group",
+            "authorize_runtime_process_group_stop",
+            "kill_recorded_detached_launch_process_group",
+        )
+    )
+
+
+def test_shared_checkout_stop_selector_is_bound_to_recorded_runtime_group(
+    tmp_path: Path,
+) -> None:
+    shared_checkout = tmp_path / "shared-checkout"
+    shared_checkout.mkdir()
+    runner = shared_checkout / "shared-runtime-probe.sh"
+    runner.write_text("#!/usr/bin/env bash\nsleep 120\n", encoding="utf-8")
+    runner.chmod(0o755)
+
+    runtime_a = tmp_path / "runtime-a"
+    runtime_b = tmp_path / "runtime-b"
+    pgid_file = runtime_a / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+    pgid_file.parent.mkdir(parents=True)
+
+    process_a = subprocess.Popen(
+        [str(runner)],
+        cwd=shared_checkout,
+        start_new_session=True,
+    )
+    process_b = subprocess.Popen(
+        [str(runner)],
+        cwd=shared_checkout,
+        start_new_session=True,
+    )
+    pgid_file.write_text(f"{process_a.pid}\n", encoding="utf-8")
+    members_file = pgid_file.with_name("detached-launch.members")
+    process_start = subprocess.run(
+        ["ps", "-p", str(process_a.pid), "-o", "lstart="],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    members_file.write_text(f"{process_a.pid}\t{process_start}\n", encoding="utf-8")
+
+    try:
+        time.sleep(0.1)
+        script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid_file)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members_file)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(runtime_a)!r}
+HOME={str(tmp_path / "home")!r}
+{_runtime_stop_selector_defs()}
+find_scope_pattern_pids shared-runtime-probe {str(shared_checkout)!r}
+"""
+        completed = subprocess.run(
+            ["bash", "-lc", script],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        assert completed.stdout.strip() == str(process_a.pid)
+        assert process_a.poll() is None
+        assert process_b.poll() is None
+
+        members_file.write_text(
+            f"{process_a.pid}\tstale process start identity\n",
+            encoding="utf-8",
+        )
+        stale_completed = subprocess.run(
+            ["bash", "-lc", script],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert stale_completed.stdout.strip() == ""
+        members_file.write_text(
+            f"{process_a.pid}\t{process_start}\n",
+            encoding="utf-8",
+        )
+
+        stop_script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid_file)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members_file)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(runtime_a)!r}
+HOME={str(tmp_path / "home")!r}
+log_warn() {{ :; }}
+log_error() {{ printf '%s\\n' "$*" >&2; }}
+{_runtime_group_stop_defs()}
+kill_recorded_detached_launch_process_group
+"""
+        subprocess.run(
+            ["bash", "-lc", stop_script],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        process_a.wait(timeout=5)
+        assert process_b.poll() is None
+        assert not pgid_file.exists()
+        assert not members_file.exists()
+    finally:
+        for process in (process_a, process_b):
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+
+
+def test_noncanonical_stop_without_runtime_group_fails_closed(tmp_path: Path) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    functions = "\n".join(
+        _extract_shell_function(launcher, name)
+        for name in (
+            "read_detached_launch_process_group",
+            "process_start_identity",
+            "runtime_process_group_receipt_valid",
+            "pid_matches_recorded_runtime_process_group",
+            "canonical_app_support_root",
+            "runtime_stop_requires_process_group",
+            "pid_matches_runtime_stop_identity",
+        )
+    )
+    app_support = tmp_path / "isolated-app-support"
+    pgid_file = app_support / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                "set -euo pipefail\n"
+                f"DETACHED_LAUNCH_PGID_FILE={str(pgid_file)!r}\n"
+                f"DETACHED_LAUNCH_MEMBERS_FILE={str(pgid_file.with_name('detached-launch.members'))!r}\n"
+                f"VIVENTIUM_APP_SUPPORT_ROOT={str(app_support)!r}\n"
+                f"HOME={str(tmp_path / 'home')!r}\n"
+                f"{functions}"
+                "pid_matches_runtime_stop_identity $$\n"
+            ),
+        ],
+        cwd=ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+
+
+def test_detached_group_receipt_survives_launcher_leader_exit(tmp_path: Path) -> None:
+    app_support = tmp_path / "isolated-app-support"
+    runtime_state = app_support / "state" / "runtime" / "isolated"
+    runtime_state.mkdir(parents=True)
+    pgid_file = runtime_state / "detached-launch.pgid"
+    members_file = runtime_state / "detached-launch.members"
+    child_pid_file = tmp_path / "child.pid"
+    launcher = tmp_path / "short-lived-launcher.sh"
+    launcher.write_text(
+        (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "trap '' HUP\n"
+            "sleep 120 &\n"
+            "child_pid=$!\n"
+            "disown \"$child_pid\" 2>/dev/null || true\n"
+            f"printf '%s\\n' \"$child_pid\" > {str(child_pid_file)!r}\n"
+        ),
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    leader = subprocess.Popen([str(launcher)], start_new_session=True)
+    child_pid = 0
+
+    try:
+        leader.wait(timeout=5)
+        for _ in range(50):
+            if child_pid_file.exists():
+                child_pid = int(child_pid_file.read_text(encoding="utf-8").strip())
+                break
+            time.sleep(0.02)
+        assert child_pid > 0
+        child_pgid = subprocess.run(
+            ["ps", "-p", str(child_pid), "-o", "pgid="],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        assert child_pgid == str(leader.pid)
+        child_start = subprocess.run(
+            ["ps", "-p", str(child_pid), "-o", "lstart="],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        pgid_file.write_text(f"{leader.pid}\n", encoding="utf-8")
+        members_file.write_text(f"{child_pid}\t{child_start}\n", encoding="utf-8")
+
+        stop_script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid_file)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members_file)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(app_support)!r}
+HOME={str(tmp_path / "home")!r}
+log_warn() {{ :; }}
+log_error() {{ printf '%s\\n' "$*" >&2; }}
+{_runtime_group_stop_defs()}
+runtime_process_group_receipt_valid
+kill_recorded_detached_launch_process_group
+"""
+        subprocess.run(
+            ["bash", "-lc", stop_script],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        stopped = subprocess.run(
+            ["ps", "-p", str(child_pid)],
+            check=False,
+            capture_output=True,
+        )
+        assert stopped.returncode != 0
+    finally:
+        if child_pid:
+            subprocess.run(["kill", "-TERM", str(child_pid)], check=False)
+
+
+def test_restart_stops_predecessor_before_recording_successor_group() -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    restart = launcher.index('if [[ "$RESTART_SERVICES" == "true" ]]; then')
+    stop = launcher.index("  stop_running_services", restart)
+    successor = launcher.index(
+        "# Preserve the predecessor receipt through restart cleanup",
+        stop,
+    )
+    record = launcher.index("record_detached_launch_process_group", successor)
+    final_refresh = launcher.rindex("record_detached_launch_process_group_members")
+    detached_exit = launcher.rindex(
+        '  log_success "Detached launch submitted; services will keep warming in the background"'
+    )
+
+    assert restart < stop < successor < record
+    assert final_refresh < detached_exit
+
+
+def test_noncanonical_start_restart_and_stop_preserve_global_docker(
+    tmp_path: Path,
+) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    functions = "\n".join(
+        _extract_shell_function(launcher, name)
+        for name in (
+            "canonical_app_support_root",
+            "runtime_stop_requires_process_group",
+            "protect_noncanonical_runtime_from_global_docker_mutation",
+        )
+    )
+    app_support = tmp_path / "isolated-app-support"
+    script = f"""
+set -euo pipefail
+HOME={str(tmp_path / "home")!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(app_support)!r}
+SKIP_DOCKER=false
+RESTART_DOCKER_SERVICES=true
+GLOBAL_DOCKER_CLEANUP_ALLOWED=true
+START_MS365_MCP=true
+START_RAG_API=true
+START_CODE_INTERPRETER=true
+START_SKYVERN=true
+START_FIRECRAWL=true
+START_SEARXNG=true
+log_warn() {{ :; }}
+{functions}
+protect_noncanonical_runtime_from_global_docker_mutation
+printf '%s\\n' \
+  "$SKIP_DOCKER" \
+  "$RESTART_DOCKER_SERVICES" \
+  "$GLOBAL_DOCKER_CLEANUP_ALLOWED" \
+  "$START_MS365_MCP" \
+  "$START_RAG_API" \
+  "$START_CODE_INTERPRETER" \
+  "$START_SKYVERN" \
+  "$START_FIRECRAWL" \
+  "$START_SEARXNG"
+"""
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    stop_services = launcher[
+        launcher.index("stop_running_services() {") :
+        launcher.index("cleanup_stale_containers() {")
+    ]
+
+    assert completed.stdout.splitlines() == [
+        "false",
+        "false",
+        "false",
+        "false",
+        "false",
+        "false",
+        "false",
+        "false",
+        "false",
+    ]
+    assert "protect_noncanonical_runtime_from_global_docker_mutation" in stop_services
+    assert (
+        'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" && "$SKIP_DOCKER" != "true" ]] &&'
+        in stop_services
+    )
+    protection = launcher.index(
+        "\nprotect_noncanonical_runtime_from_global_docker_mutation\n"
+    )
+    stop_only = launcher.index('if [[ "$STOP_ONLY" == "true" ]]', protection)
+    stale_cleanup = launcher.index("\ncleanup_stale_containers\n", stop_only)
+    assert protection < stop_only < stale_cleanup
+    assert (
+        'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then'
+        in _extract_shell_function(launcher, "cleanup_stale_containers")
+    )
+    for function_name in (
+        "start_local_mongodb_container",
+        "start_local_meilisearch_container",
+    ):
+        container_bootstrap = _extract_shell_function(launcher, function_name)
+        ownership_gate = container_bootstrap.index(
+            'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then'
+        )
+        first_docker_mutation = min(
+            index
+            for needle in ("docker start", "docker run")
+            if (index := container_bootstrap.find(needle)) >= 0
+        )
+        assert ownership_gate < first_docker_mutation
+    meili_recycle = _extract_shell_function(
+        launcher,
+        "restart_viventium_owned_meilisearch_listener",
+    )
+    assert (
+        'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&'
+        in meili_recycle
+    )
+    assert meili_recycle.index(
+        'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true" ]] &&'
+    ) < meili_recycle.index(
+        'existing=$(docker ps -aq --filter "name=^/${MEILI_CONTAINER_NAME}$"'
+    )
+
+
+def test_noncanonical_stop_ignores_unowned_shared_mongo_port(tmp_path: Path) -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    prepare = _extract_shell_function(
+        launcher,
+        "prepare_mongo_engine_identity_for_stop",
+    )
+    native_pid = tmp_path / "alternate-native-mongo.pid"
+    script = f"""
+set -euo pipefail
+GLOBAL_DOCKER_CLEANUP_ALLOWED=false
+MONGO_ENGINE_IDENTITY_PREPARED=false
+MONGO_NATIVE_PID_FILE={str(native_pid)!r}
+MONGO_PORT=27117
+MONGO_CONTAINER_NAME=viventium-mongodb-isolated
+MONGO_IS_LOCAL=true
+resolve_mongo_connection() {{ MONGO_IS_LOCAL=true; }}
+record_mongo_engine_identity() {{ return 1; }}
+port_has_listener() {{ return 0; }}
+docker_daemon_ready() {{
+  printf 'forbidden Docker probe\\n' >&2
+  return 1
+}}
+docker() {{
+  printf 'forbidden Docker mutation\\n' >&2
+  return 1
+}}
+log_error() {{ printf '%s\\n' "$*" >&2; }}
+{prepare}
+prepare_mongo_engine_identity_for_stop
+printf '%s\\n' "$MONGO_ENGINE_IDENTITY_PREPARED"
+"""
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "false"
+    assert "forbidden" not in completed.stderr
+
+
+def test_fully_crashed_runtime_clears_stale_group_receipt(tmp_path: Path) -> None:
+    app_support = tmp_path / "isolated-app-support"
+    runtime_state = app_support / "state" / "runtime" / "isolated"
+    runtime_state.mkdir(parents=True)
+    pgid_file = runtime_state / "detached-launch.pgid"
+    members_file = runtime_state / "detached-launch.members"
+    pgid_file.write_text("987654\n", encoding="utf-8")
+    members_file.write_text(
+        "987654\tMon Jan  1 00:00:00 2001\n",
+        encoding="utf-8",
+    )
+
+    script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid_file)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members_file)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(app_support)!r}
+HOME={str(tmp_path / "home")!r}
+RUNTIME_STOP_AUTHORIZED_PGID=""
+log_warn() {{ :; }}
+log_error() {{ printf '%s\\n' "$*" >&2; }}
+{_runtime_group_stop_defs()}
+authorize_runtime_process_group_stop
+"""
+    subprocess.run(
+        ["bash", "-lc", script],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert not pgid_file.exists()
+    assert not members_file.exists()
+
+
+def test_authorized_stop_survives_last_recorded_member_exit(tmp_path: Path) -> None:
+    app_support = tmp_path / "isolated-app-support"
+    runtime_state = app_support / "state" / "runtime" / "isolated"
+    runtime_state.mkdir(parents=True)
+    pgid_file = runtime_state / "detached-launch.pgid"
+    members_file = runtime_state / "detached-launch.members"
+    child_pid_file = tmp_path / "child.pid"
+    launcher = tmp_path / "runtime-leader.sh"
+    launcher.write_text(
+        (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "trap '' HUP\n"
+            "sleep 120 &\n"
+            "child_pid=$!\n"
+            f"printf '%s\\n' \"$child_pid\" > {str(child_pid_file)!r}\n"
+            "wait \"$child_pid\"\n"
+        ),
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    leader = subprocess.Popen([str(launcher)], start_new_session=True)
+    child_pid = 0
+
+    try:
+        for _ in range(50):
+            if child_pid_file.exists():
+                child_pid = int(child_pid_file.read_text(encoding="utf-8").strip())
+                break
+            time.sleep(0.02)
+        assert child_pid > 0
+        leader_start = subprocess.run(
+            ["ps", "-p", str(leader.pid), "-o", "lstart="],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        pgid_file.write_text(f"{leader.pid}\n", encoding="utf-8")
+        members_file.write_text(
+            f"{leader.pid}\t{leader_start}\n",
+            encoding="utf-8",
+        )
+
+        stop_script = f"""
+set -euo pipefail
+DETACHED_LAUNCH_PGID_FILE={str(pgid_file)!r}
+DETACHED_LAUNCH_MEMBERS_FILE={str(members_file)!r}
+VIVENTIUM_APP_SUPPORT_ROOT={str(app_support)!r}
+HOME={str(tmp_path / "home")!r}
+RUNTIME_STOP_AUTHORIZED_PGID=""
+log_warn() {{ :; }}
+log_error() {{ printf '%s\\n' "$*" >&2; }}
+{_runtime_group_stop_defs()}
+authorize_runtime_process_group_stop
+kill -TERM {leader.pid}
+for _attempt in $(seq 1 50); do
+  leader_state="$(ps -p {leader.pid} -o state= 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ -z "$leader_state" || "$leader_state" == Z* ]] && break
+  sleep 0.02
+done
+kill_recorded_detached_launch_process_group
+"""
+        subprocess.run(
+            ["bash", "-lc", stop_script],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        leader.wait(timeout=5)
+        stopped = subprocess.run(
+            ["ps", "-p", str(child_pid)],
+            check=False,
+            capture_output=True,
+        )
+        assert stopped.returncode != 0
+        assert not pgid_file.exists()
+        assert not members_file.exists()
+    finally:
+        if leader.poll() is None:
+            leader.terminate()
+            leader.wait(timeout=5)
+        if child_pid:
+            subprocess.run(["kill", "-TERM", str(child_pid)], check=False)
 
 
 def test_openclaw_reviewed_runtime_lock_is_exact() -> None:
@@ -469,6 +1036,7 @@ LIVEKIT_API_HOST={livekit_api_host!r}
 LIVEKIT_API_HOST_WAS_CONFIGURED=true
 VIVENTIUM_RUNTIME_PROFILE=isolated
 VIVENTIUM_STATE_ROOT='{state_root}'
+VIVENTIUM_LIVEKIT_RUNTIME_OWNER=synthetic-owner
 LIVEKIT_NODE_IP=127.0.0.1
 LIVEKIT_SERVER_VERSION=v1.13.4
 LIVEKIT_SERVER_SOURCE_COMMIT='{LIVEKIT_SOURCE_COMMIT}'
@@ -500,6 +1068,7 @@ log_success() {{ printf '%s\\n' "$*"; }}
 log_warn() {{ printf '%s\\n' "$*"; }}
 request_docker_desktop_launch() {{ :; }}
 {ownership_def}
+{_livekit_selector_defs()}
 if livekit_api_host_is_managed_local "$LIVEKIT_API_HOST"; then
   LIVEKIT_API_HOST_WAS_CONFIGURED=false
 fi
@@ -570,6 +1139,7 @@ SKIP_DOCKER=false
 LIVEKIT_API_HOST_WAS_CONFIGURED=false
 LIVEKIT_API_HOST=http://127.0.0.1:17880
 VIVENTIUM_RUNTIME_PROFILE=isolated
+VIVENTIUM_LIVEKIT_RUNTIME_OWNER=synthetic-owner
 LIVEKIT_HTTP_PORT=17880
 require_cmd() {{ :; }}
 docker_daemon_ready() {{ return 0; }}
@@ -578,6 +1148,7 @@ port_in_use() {{ return 0; }}
 log_error() {{ printf '%s\n' "$*"; }}
 log_success() {{ printf '%s\n' "$*"; }}
 log_warn() {{ printf '%s\n' "$*"; }}
+{_livekit_selector_defs()}
 {_livekit_startup_block()}
 """
     completed = subprocess.run(
@@ -610,15 +1181,19 @@ def test_livekit_release_identity_requires_image_and_source_labels() -> None:
 set -euo pipefail
 LIVEKIT_SERVER_IMAGE='{LIVEKIT_IMAGE}'
 LIVEKIT_SERVER_SOURCE_COMMIT='{LIVEKIT_SOURCE_COMMIT}'
+LIVEKIT_HTTP_PORT=17880
 MOCK_SOURCE='{LIVEKIT_SOURCE_COMMIT}'
+MOCK_HTTP_PORT="$LIVEKIT_HTTP_PORT"
 docker() {{
   case "$3" in
     *Config.Image*) printf '%s\\n' "$LIVEKIT_SERVER_IMAGE" ;;
     *viventium.livekit.image*) printf '%s\\n' "$LIVEKIT_SERVER_IMAGE" ;;
     *viventium.livekit.source*) printf '%s\\n' "$MOCK_SOURCE" ;;
+    *viventium.livekit.http-port*) printf '%s\\n' "$MOCK_HTTP_PORT" ;;
     *) return 1 ;;
   esac
 }}
+livekit_container_has_configured_http_port() {{ return 0; }}
 {function_def}
 livekit_managed_container_matches_release exact && printf 'exact\\n'
 MOCK_SOURCE='stale-source'
@@ -626,6 +1201,13 @@ if livekit_managed_container_matches_release stale; then
   printf 'unsafe-reuse\\n'
 else
   printf 'rejected\\n'
+fi
+MOCK_SOURCE='{LIVEKIT_SOURCE_COMMIT}'
+MOCK_HTTP_PORT=27880
+if livekit_managed_container_matches_release stale-port; then
+  printf 'unsafe-port-reuse\\n'
+else
+  printf 'port-rejected\\n'
 fi
 """
     completed = subprocess.run(
@@ -636,7 +1218,157 @@ fi
         capture_output=True,
     )
 
-    assert completed.stdout.splitlines() == ["exact", "rejected"]
+    assert completed.stdout.splitlines() == ["exact", "rejected", "port-rejected"]
+
+
+def test_livekit_runtime_owner_identity_is_stable_and_path_private() -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    function_def = _extract_shell_function(launcher, "livekit_runtime_owner_id")
+    script = f"""
+set -euo pipefail
+{function_def}
+first="$(livekit_runtime_owner_id /tmp/viventium-a/state)"
+repeat="$(livekit_runtime_owner_id /tmp/viventium-a/state)"
+second="$(livekit_runtime_owner_id /tmp/viventium-b/state)"
+printf '%s\\n%s\\n%s\\n' "$first" "$repeat" "$second"
+"""
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    first, repeat, second = completed.stdout.splitlines()
+    assert first == repeat
+    assert first != second
+    assert len(first) == 64
+    assert all(character in "0123456789abcdef" for character in first)
+    assert "/tmp/" not in completed.stdout
+
+
+def test_livekit_runtime_selector_never_adopts_another_runtime_owner() -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    selector_defs = _livekit_selector_defs()
+    script = f"""
+set -euo pipefail
+VIVENTIUM_RUNTIME_PROFILE=isolated
+VIVENTIUM_LIVEKIT_RUNTIME_OWNER=owner-a
+LIVEKIT_HTTP_PORT=17880
+GLOBAL_DOCKER_CLEANUP_ALLOWED=true
+docker() {{
+  if [[ "$1" == "ps" ]]; then
+    case "$*" in
+      *"label=viventium.runtime-owner=owner-a"*) printf 'owned-a\\n' ;;
+      *"label=viventium.runtime-owner=owner-c"*) : ;;
+      *"name=^/viventium-livekit-isolated-"*)
+        printf 'foreign-b\\nunrelated-matching\\nlegacy-matching\\nlegacy-other-port\\n'
+        ;;
+      *) : ;;
+    esac
+    return 0
+  fi
+  if [[ "$1" == "inspect" ]]; then
+    case "$*" in
+      *viventium.runtime-owner*foreign-b) printf 'owner-b\\n' ;;
+      *viventium.runtime-owner*) printf '\\n' ;;
+      *viventium.stack*legacy-matching|*viventium.stack*legacy-other-port)
+        printf 'viventium_v0_4\\n'
+        ;;
+      *viventium.service*legacy-matching|*viventium.service*legacy-other-port)
+        printf 'livekit\\n'
+        ;;
+      *viventium.profile*legacy-matching|*viventium.profile*legacy-other-port)
+        printf 'isolated\\n'
+        ;;
+      *) printf '\\n' ;;
+    esac
+    return 0
+  fi
+  if [[ "$1" == "port" ]]; then
+    case "$2" in
+      unrelated-matching) printf '0.0.0.0:17880\\n' ;;
+      legacy-matching) printf '0.0.0.0:17880\\n' ;;
+      legacy-other-port) printf '0.0.0.0:27880\\n' ;;
+      *) return 1 ;;
+    esac
+    return 0
+  fi
+  return 1
+}}
+{selector_defs}
+printf 'owner-a:\\n'
+livekit_runtime_container_ids running
+printf 'owner-c-legacy:\\n'
+VIVENTIUM_LIVEKIT_RUNTIME_OWNER=owner-c
+livekit_runtime_container_ids running
+printf 'owner-c-noncanonical:\\n'
+GLOBAL_DOCKER_CLEANUP_ALLOWED=false
+livekit_runtime_container_ids running
+"""
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "owner-a:",
+        "owned-a",
+        "owner-c-legacy:",
+        "legacy-matching",
+        "owner-c-noncanonical:",
+    ]
+
+
+def test_livekit_stop_and_stale_cleanup_are_runtime_owner_scoped() -> None:
+    launcher = _read("viventium_v0_4/viventium-librechat-start.sh")
+    stop_services = launcher[
+        launcher.index("stop_running_services() {") :
+        launcher.index("cleanup_stale_containers() {")
+    ]
+    stale_cleanup = _extract_shell_function(launcher, "cleanup_stale_containers")
+    startup = _livekit_startup_block()
+
+    assert "livekit_runtime_container_ids running" in stop_services
+    assert "livekit_runtime_container_ids exited" in stale_cleanup
+    assert "livekit_runtime_container_ids running" in startup
+    assert '--label "viventium.runtime-owner=${VIVENTIUM_LIVEKIT_RUNTIME_OWNER}"' in startup
+    assert (
+        'livekit_containers="$(livekit_runtime_container_ids running)"'
+        in stop_services
+    )
+    global_stop_guard = stop_services.index(
+        'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true"'
+    )
+    exact_owner_stop = stop_services.index(
+        'livekit_containers="$(livekit_runtime_container_ids running)"'
+    )
+    native_stop = stop_services.index("stop_recorded_native_mongo_engine")
+    assert global_stop_guard < exact_owner_stop < native_stop
+
+    exact_owner_stale = stale_cleanup.index(
+        'livekit_stale="$(livekit_runtime_container_ids exited)"'
+    )
+    global_stale_return = stale_cleanup.index(
+        'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then'
+    )
+    assert exact_owner_stale < global_stale_return
+
+    failure_cleanup = _extract_shell_function(launcher, "cleanup")
+    global_failure_guard = failure_cleanup.index(
+        'if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" == "true"'
+    )
+    exact_owner_failure = failure_cleanup.index(
+        'if [[ "$SKIP_DOCKER" != "true" && "$LIVEKIT_STARTED_BY_SCRIPT" == "true"'
+    )
+    native_failure_cleanup = failure_cleanup.index(
+        "stop_recorded_native_mongo_engine"
+    )
+    assert global_failure_guard < exact_owner_failure < native_failure_cleanup
 
 
 def test_optional_launchers_reference_existing_owning_docs() -> None:

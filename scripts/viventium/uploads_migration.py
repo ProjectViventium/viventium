@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Move source-install uploads into canonical Viventium App Support storage.
 
-The source LibreChat fork still resolves ``uploads`` relative to its checkout.
-This helper owns the one-time predecessor migration and leaves only an exact
-compatibility symlink at that legacy location. It never merges trees or follows
-links, and it journals every activation step so an interrupted launch can
+The Viventium LibreChat fork resolves uploads from the compiler-owned App
+Support environment path. This helper still owns the one-time predecessor
+migration and its checkout-local compatibility link. Concurrent runtimes may
+share a checkout: a receipted link belonging to another App Support root is
+preserved without following it while the current canonical root is initialized.
+The helper never merges trees and journals activation so interrupted launch can
 recover before LibreChat is allowed to start.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -18,6 +22,8 @@ import shutil
 import stat
 import sys
 import tempfile
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +39,10 @@ MAX_PATH_BYTES = 1024
 MAX_PATH_DEPTH = 32
 COPY_BUFFER_BYTES = 1024 * 1024
 MIN_FREE_AFTER_MIGRATION_BYTES = 64 * 1024 * 1024
+SHARED_LINK_SETTLE_SECONDS = 5.0
+SHARED_LINK_POLL_SECONDS = 0.05
+_MIGRATION_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_MIGRATION_THREAD_LOCKS_GUARD = threading.Lock()
 
 
 class MigrationError(RuntimeError):
@@ -41,6 +51,38 @@ class MigrationError(RuntimeError):
 
 class InjectedCrash(BaseException):
     """Test-only abrupt interruption that intentionally bypasses rollback."""
+
+
+@contextlib.contextmanager
+def uploads_migration_lock(state_dir: Path):
+    """Serialize one App Support migration across threads and processes."""
+
+    lock_path = state_dir / "migration.lock"
+    lock_key = str(lexical(lock_path))
+    with _MIGRATION_THREAD_LOCKS_GUARD:
+        thread_lock = _MIGRATION_THREAD_LOCKS.setdefault(lock_key, threading.Lock())
+    with thread_lock:
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+        except OSError as error:
+            raise MigrationError("Uploads migration lock could not be opened safely") from error
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or metadata.st_nlink != 1
+                or metadata.st_mode & 0o077
+            ):
+                raise MigrationError("Uploads migration lock is unsafe")
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
 
 def iso_now() -> str:
@@ -91,7 +133,10 @@ def ensure_private_directory(path: Path, *, bounded_by: Path) -> None:
         current = current / part
         metadata = lstat_optional(current)
         if metadata is None:
-            current.mkdir(mode=0o700)
+            try:
+                current.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
             metadata = current.lstat()
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
             raise MigrationError("Private storage path contains a non-directory or symlink")
@@ -376,6 +421,121 @@ def exact_link_to(path: Path, target: Path) -> bool:
         return False
 
 
+def resolved_link_target(path: Path) -> Path:
+    try:
+        raw_target = Path(os.readlink(path))
+    except OSError as error:
+        raise MigrationError("Legacy uploads compatibility link is unreadable") from error
+    if not raw_target.is_absolute():
+        raw_target = path.parent / raw_target
+    return lexical(raw_target)
+
+
+def hash_path_identity(path: Path) -> str:
+    return hashlib.sha256(os.fsencode(str(lexical(path)))).hexdigest()
+
+
+def is_preserved_link_receipt(payload: dict[str, Any]) -> bool:
+    target_digest = payload.get("observedLinkTargetSha256")
+    return (
+        payload.get("schemaVersion") == SCHEMA_VERSION
+        and payload.get("legacyCompatibility")
+        == "other_runtime_exact_symlink_preserved"
+        and payload.get("mode") == "isolated_runtime_root"
+        and payload.get("canonicalStorage") == "app_support_data_uploads"
+        and isinstance(target_digest, str)
+        and len(target_digest) == 64
+        and all(character in "0123456789abcdef" for character in target_digest)
+    )
+
+
+def preserved_link_receipt_matches(payload: dict[str, Any], target: Path) -> bool:
+    return is_preserved_link_receipt(payload) and payload.get(
+        "observedLinkTargetSha256"
+    ) == hash_path_identity(target)
+
+
+def is_plausible_other_runtime_link(*, legacy: Path, canonical: Path) -> bool:
+    """Validate another runtime's storage shape without reading its uploads."""
+
+    try:
+        if not Path(os.readlink(legacy)).is_absolute():
+            return False
+        target = resolved_link_target(legacy)
+        if target == canonical or target.name != "uploads" or target.parent.name != "data":
+            return False
+        other_app_support = target.parent.parent
+        if other_app_support == canonical.parent.parent:
+            return False
+        for path, label in (
+            (other_app_support, "Other Viventium App Support"),
+            (target.parent, "Other Viventium data root"),
+            (target, "Other Viventium uploads root"),
+            (other_app_support / "state", "Other Viventium state root"),
+            (other_app_support / "state" / "continuity", "Other Viventium continuity root"),
+            (
+                other_app_support / "state" / "continuity" / "uploads-migration",
+                "Other Viventium uploads migration root",
+            ),
+        ):
+            validate_owned_directory(path, label)
+        return True
+    except MigrationError:
+        return False
+
+
+def is_recognized_other_runtime_link(*, legacy: Path, canonical: Path) -> bool:
+    """Validate another Viventium runtime's receipted compatibility link."""
+
+    try:
+        if not is_plausible_other_runtime_link(legacy=legacy, canonical=canonical):
+            return False
+        target = resolved_link_target(legacy)
+        other_app_support = target.parent.parent
+        receipt = read_private_json(
+            other_app_support
+            / "state"
+            / "continuity"
+            / "uploads-migration"
+            / "receipt.json"
+        )
+        transaction_id = receipt.get("transactionId")
+        return (
+            receipt.get("schemaVersion") == SCHEMA_VERSION
+            and receipt.get("legacyCompatibility") == "exact_symlink"
+            and receipt.get("canonicalStorage") == "app_support_data_uploads"
+            and receipt.get("mode") in {"migrate", "adopt", "create"}
+            and isinstance(transaction_id, str)
+            and len(transaction_id) == 32
+            and all(character in "0123456789abcdef" for character in transaction_id)
+        )
+    except MigrationError:
+        return False
+
+
+def wait_for_recognized_other_runtime_link(*, legacy: Path, canonical: Path) -> Path:
+    """Resolve a concurrent runtime's winning link after its receipt is durable."""
+
+    deadline = time.monotonic() + SHARED_LINK_SETTLE_SECONDS
+    while True:
+        metadata = lstat_optional(legacy)
+        if metadata is not None and not stat.S_ISLNK(metadata.st_mode):
+            raise MigrationError(
+                "Concurrent uploads compatibility path is not a symlink"
+            )
+        if metadata is not None:
+            target = resolved_link_target(legacy)
+            if target == canonical:
+                return target
+            if is_recognized_other_runtime_link(legacy=legacy, canonical=canonical):
+                return target
+        if time.monotonic() >= deadline:
+            raise MigrationError(
+                "Concurrent uploads compatibility link did not become receipted"
+            )
+        time.sleep(SHARED_LINK_POLL_SECONDS)
+
+
 def defer_populated_legacy_tree_during_active_outer_upgrade(
     *,
     app_support: Path,
@@ -627,7 +787,43 @@ def _commit_transaction(
             fsync_directory(librechat)
             state["sourceBackedUp"] = True
             write_json_atomic(journal, state)
-        os.symlink(str(canonical), legacy, target_is_directory=True)
+        try:
+            os.symlink(str(canonical), legacy, target_is_directory=True)
+        except FileExistsError as error:
+            if mode != "create" or source_present or target_empty_present:
+                raise MigrationError(
+                    "Concurrent uploads compatibility activation conflicted with existing state"
+                ) from error
+            winning_target = wait_for_recognized_other_runtime_link(
+                legacy=legacy,
+                canonical=canonical,
+            )
+            if winning_target != canonical:
+                verified = fingerprint_tree(canonical)
+                if verified != fingerprint:
+                    raise MigrationError(
+                        "Canonical uploads changed during concurrent activation"
+                    )
+                journal.unlink()
+                fsync_directory(journal.parent)
+                write_json_atomic(
+                    receipt,
+                    {
+                        "schemaVersion": SCHEMA_VERSION,
+                        "completedAt": iso_now(),
+                        "mode": "isolated_runtime_root",
+                        "fingerprint": fingerprint,
+                        "legacyCompatibility": "other_runtime_exact_symlink_preserved",
+                        "observedLinkTargetSha256": hash_path_identity(winning_target),
+                        "canonicalStorage": "app_support_data_uploads",
+                    },
+                )
+                return {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "other_runtime_compatibility_preserved",
+                    "mode": "isolated_runtime_root",
+                    "fingerprint": fingerprint,
+                }
         fsync_directory(librechat)
         state["linkActivated"] = True
         state["phase"] = "link_activated"
@@ -679,7 +875,7 @@ def _commit_transaction(
         raise
 
 
-def migrate_uploads(
+def _migrate_uploads_unlocked(
     *,
     app_support_dir: Path,
     librechat_dir: Path,
@@ -722,7 +918,44 @@ def migrate_uploads(
     legacy_metadata = lstat_optional(legacy)
     if legacy_metadata is not None and stat.S_ISLNK(legacy_metadata.st_mode):
         if not exact_link_to(legacy, canonical):
-            raise MigrationError("Legacy uploads root is an unexpected symlink")
+            if not is_recognized_other_runtime_link(legacy=legacy, canonical=canonical):
+                if not is_plausible_other_runtime_link(
+                    legacy=legacy,
+                    canonical=canonical,
+                ):
+                    raise MigrationError("Legacy uploads root is an unexpected symlink")
+                wait_for_recognized_other_runtime_link(
+                    legacy=legacy,
+                    canonical=canonical,
+                )
+            ensure_private_directory(canonical, bounded_by=app_support)
+            target = resolved_link_target(legacy)
+            fingerprint = fingerprint_tree(canonical)
+            receipt_metadata = lstat_optional(receipt)
+            if receipt_metadata is not None:
+                if not preserved_link_receipt_matches(read_private_json(receipt), target):
+                    raise MigrationError(
+                        "Legacy uploads compatibility receipt conflicts with the shared checkout"
+                    )
+            else:
+                write_json_atomic(
+                    receipt,
+                    {
+                        "schemaVersion": SCHEMA_VERSION,
+                        "completedAt": iso_now(),
+                        "mode": "isolated_runtime_root",
+                        "fingerprint": fingerprint,
+                        "legacyCompatibility": "other_runtime_exact_symlink_preserved",
+                        "observedLinkTargetSha256": hash_path_identity(target),
+                        "canonicalStorage": "app_support_data_uploads",
+                    },
+                )
+            return {
+                "schemaVersion": SCHEMA_VERSION,
+                "status": "other_runtime_compatibility_preserved",
+                "mode": "isolated_runtime_root",
+                "fingerprint": fingerprint,
+            }
         receipt_payload = read_private_json(receipt)
         if (
             receipt_payload.get("schemaVersion") != SCHEMA_VERSION
@@ -736,6 +969,16 @@ def migrate_uploads(
             "mode": receipt_payload.get("mode"),
             "fingerprint": fingerprint,
         }
+    receipt_metadata = lstat_optional(receipt)
+    if receipt_metadata is not None:
+        receipt_payload = read_private_json(receipt)
+        if receipt_payload.get("legacyCompatibility") == (
+            "other_runtime_exact_symlink_preserved"
+        ):
+            if not is_preserved_link_receipt(receipt_payload):
+                raise MigrationError("Shared-checkout uploads compatibility receipt is invalid")
+            receipt.unlink()
+            fsync_directory(receipt.parent)
     if legacy_metadata is not None:
         validate_owned_directory(legacy, "Legacy uploads root")
         legacy_fingerprint = fingerprint_tree(legacy)
@@ -807,6 +1050,39 @@ def migrate_uploads(
         target_empty_present=canonical_metadata is not None,
         fault_after=fault_after,
     )
+
+
+def migrate_uploads(
+    *,
+    app_support_dir: Path,
+    librechat_dir: Path,
+    canonical_root: Path | None = None,
+    fault_after: str | None = None,
+) -> dict[str, Any]:
+    app_support = lexical(app_support_dir)
+    librechat = lexical(librechat_dir)
+    canonical = lexical(canonical_root or app_support / "data" / "uploads")
+    if canonical != app_support / "data" / "uploads":
+        raise MigrationError("Canonical uploads root must be App Support data/uploads")
+    validate_owned_directory(app_support, "Viventium App Support")
+    validate_owned_directory(librechat, "LibreChat checkout")
+    deferred = defer_populated_legacy_tree_during_active_outer_upgrade(
+        app_support=app_support,
+        librechat=librechat,
+        legacy=librechat / "uploads",
+        canonical=canonical,
+    )
+    if deferred is not None:
+        return deferred
+    state_dir = app_support / "state" / "continuity" / "uploads-migration"
+    ensure_private_directory(state_dir, bounded_by=app_support)
+    with uploads_migration_lock(state_dir):
+        return _migrate_uploads_unlocked(
+            app_support_dir=app_support,
+            librechat_dir=librechat,
+            canonical_root=canonical,
+            fault_after=fault_after,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:

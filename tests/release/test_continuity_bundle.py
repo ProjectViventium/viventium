@@ -1618,6 +1618,49 @@ def test_complete_capture_prefers_canonical_uploads_and_uses_legacy_only_as_fall
     assert bundle.resolve_uploads_capture_source(repo, app_support) == canonical
 
 
+def test_capture_uses_current_runtime_root_when_other_runtime_link_is_receipted(
+    tmp_path: Path,
+) -> None:
+    bundle = load_bundle_module()
+    repo = tmp_path / "repo"
+    legacy = repo / "viventium_v0_4" / "LibreChat" / "uploads"
+    legacy.parent.mkdir(parents=True)
+    current_support = tmp_path / "runtime-b" / "Viventium"
+    current_canonical = current_support / "data" / "uploads"
+    current_canonical.mkdir(parents=True)
+    other_canonical = tmp_path / "runtime-a" / "Viventium" / "data" / "uploads"
+    other_canonical.mkdir(parents=True)
+    legacy.symlink_to(other_canonical, target_is_directory=True)
+    receipt = (
+        current_support / "state" / "continuity" / "uploads-migration" / "receipt.json"
+    )
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "legacyCompatibility": "other_runtime_exact_symlink_preserved",
+                "mode": "isolated_runtime_root",
+                "observedLinkTargetSha256": hashlib.sha256(
+                    os.fsencode(str(other_canonical))
+                ).hexdigest(),
+                "canonicalStorage": "app_support_data_uploads",
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt.chmod(0o600)
+
+    assert bundle.resolve_uploads_capture_source(repo, current_support) == current_canonical
+
+    corrupted = json.loads(receipt.read_text(encoding="utf-8"))
+    corrupted["observedLinkTargetSha256"] = "0" * 64
+    receipt.write_text(json.dumps(corrupted), encoding="utf-8")
+    receipt.chmod(0o600)
+    with pytest.raises(bundle.RestoreTransactionError, match="unexpected symlink"):
+        bundle.resolve_uploads_capture_source(repo, current_support)
+
+
 def test_capture_refuses_low_disk_before_creating_snapshot_or_contacting_mongo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

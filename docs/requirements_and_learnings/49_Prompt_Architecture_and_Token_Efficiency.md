@@ -1167,6 +1167,7 @@ transport limits.
 Acceptance:
 
 - copy-ready text may suppress optional audio without losing text;
+- an explicit request for text only/no audio suppresses optional audio without losing text;
 - ordinary conversation retains audio unless the agent has a semantic reason to suppress it;
 - an explicit request to hear/read/speak never suppresses audio;
 - natural conversation uses no more than two `{MSG_BREAK}` controls;

@@ -1247,6 +1247,63 @@ def test_uploads_audit_uses_predecessor_until_migration_is_proven(
     ]
 
 
+def test_uploads_audit_uses_current_runtime_root_when_other_runtime_link_is_receipted(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    repo = tmp_path / "repo"
+    legacy = repo / "viventium_v0_4" / "LibreChat" / "uploads"
+    legacy.parent.mkdir(parents=True)
+    current_support = tmp_path / "runtime-b" / "Viventium"
+    current_canonical = current_support / "data" / "uploads"
+    current_canonical.mkdir(parents=True)
+    other_canonical = tmp_path / "runtime-a" / "Viventium" / "data" / "uploads"
+    other_canonical.mkdir(parents=True)
+    legacy.symlink_to(other_canonical, target_is_directory=True)
+    receipt = (
+        current_support / "state" / "continuity" / "uploads-migration" / "receipt.json"
+    )
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "legacyCompatibility": "other_runtime_exact_symlink_preserved",
+                "mode": "isolated_runtime_root",
+                "observedLinkTargetSha256": hashlib.sha256(
+                    os.fsencode(str(other_canonical))
+                ).hexdigest(),
+                "canonicalStorage": "app_support_data_uploads",
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt.chmod(0o600)
+
+    selected, warnings = continuity_audit.resolve_uploads_audit_root(
+        repo_root=repo,
+        app_support_dir=current_support,
+        runtime_env={"VIVENTIUM_LIBRECHAT_UPLOADS_ROOT": str(current_canonical)},
+    )
+
+    assert selected == current_canonical
+    assert warnings == []
+
+    corrupted = json.loads(receipt.read_text(encoding="utf-8"))
+    corrupted["observedLinkTargetSha256"] = "0" * 64
+    receipt.write_text(json.dumps(corrupted), encoding="utf-8")
+    receipt.chmod(0o600)
+    selected, warnings = continuity_audit.resolve_uploads_audit_root(
+        repo_root=repo,
+        app_support_dir=current_support,
+        runtime_env={"VIVENTIUM_LIBRECHAT_UPLOADS_ROOT": str(current_canonical)},
+    )
+    assert selected is None
+    assert warnings == [
+        "Uploads semantic fingerprint failed: predecessor root is an unexpected symlink."
+    ]
+
+
 def test_strict_semantic_compare_gates_upload_content_and_unavailable_proof(
     tmp_path: Path,
 ) -> None:

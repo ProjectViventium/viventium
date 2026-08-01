@@ -61,6 +61,17 @@ Viventium has two local modes that can exist on the same Mac:
 Local prod and dev envs must stay separate at the app boundary and shared at the expensive-service
 boundary:
 
+- Process ownership is App-Support-specific even when both runtimes execute from the same checkout.
+  A noncanonical runtime stop requires its recorded process group and a matching surviving-member
+  start identity; repo path, cwd, command pattern, or port alone cannot authorize a signal.
+- Direct component launch with an explicit generated env file reads only that file. Missing values
+  remain missing and visible instead of falling through to canonical local-prod App Support.
+- Start, restart, or stop from an alternate App Support root preserves machine-global/shared Docker
+  services. Container names, compose projects, and a shared checkout are not ownership receipts;
+  until an alternate runtime has exact per-container ownership metadata, machine-global Docker
+  launch and cleanup are disabled while runtime-owned native Mongo and per-runtime LiveKit remain
+  available.
+
 | Surface | Local Prod | Dev Env Default |
 | --- | --- | --- |
 | LibreChat API | canonical installed port | offset port |

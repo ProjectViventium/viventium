@@ -228,9 +228,14 @@ Use stable `CONT-NNN` IDs for continuity ops cases.
   6. Capture with only a predecessor, then with the exact canonical/link contract. Confirm ambiguous
      dual-populated roots refuse. Restore a complete bundle and verify files land under the new
      App Support target rather than the checkout.
+  7. Point two synthetic App Support runtimes at one checkout. Confirm LibreChat resolves each
+     compiler-owned uploads root independently; the second runtime preserves and never enumerates
+     or overwrites the first runtime's receipted compatibility link, initializes its own owner-only
+     root, and uses that root for continuity audit and capture. Remove or corrupt the receipt and
+     confirm startup, audit, and capture fail closed.
 - Expected result: one durable App Support authority, byte/path-equivalent migration, no silent
-  merge or overwrite, restart-gated writer quiescence, deterministic recovery, and semantic
-  continuity proof that discloses no filename, path, or content.
+  merge or overwrite, per-runtime isolation in a shared checkout, restart-gated writer quiescence,
+  deterministic recovery, and semantic continuity proof that discloses no filename, path, or content.
 - Forbidden result: moving while LibreChat writes, following a link, accepting hardlinks/foreign
   ownership, choosing a configured-but-empty canonical root over a populated predecessor, deleting
   committed data during cleanup recovery, publishing private file metadata, or restoring user bytes
@@ -238,10 +243,12 @@ Use stable `CONT-NNN` IDs for continuity ops cases.
 - Evidence to capture: RED/GREEN focused release counts, executable CLI result, before/after aggregate
   digests, journal/receipt modes, generated env values, launcher ordering, snapshot/restore target,
   privacy scan, and any real browser/user path status.
-- Last run: PARTIAL 2026-07-24. Isolated synthetic automation and an executable migration CLI pass;
-  no live App Support, database, conversation, schedule, prompt, or real upload was read or changed.
-  Real supported-upgrade plus browser upload/download/restart persistence remains required before a
-  universal-release completion claim. See
+- Last run: PARTIAL 2026-08-01. Isolated synthetic automation passes the single-runtime migration,
+  simultaneous and sequential two-App-Support shared-checkout isolation, fail-closed receipt,
+  continuity audit/capture, and LibreChat path-selection cases (121 parent checks plus the focused
+  nested path suite). No live App Support, database, conversation, schedule, prompt, or real upload
+  was read or changed. Real supported-upgrade plus browser upload/download/restart persistence
+  remains required before a universal-release completion claim. See
   [`reports/2026-07-24-canonical-source-uploads-migration.md`](reports/2026-07-24-canonical-source-uploads-migration.md).
 
 ## `CONT-010` - Successor-Owned First Upgrade

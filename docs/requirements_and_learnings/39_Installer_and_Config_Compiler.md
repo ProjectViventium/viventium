@@ -241,6 +241,20 @@ Native-stack LiveKit fails before MongoDB/Meilisearch startup and never installs
 `PATH` binary. The v1.13 upgrade lane must explicitly test or migrate TURN credentials that omit
 TTL; port reachability alone does not prove TURN media.
 
+Each launcher-owned LiveKit container also carries a path-private runtime-owner digest derived from
+the selected runtime state root. Start, stop, stale cleanup, and upgrade may select only that exact
+owner. A legacy container without the owner label is eligible for one-time compatibility only when
+its runtime-profile name and published HTTP port match the selected runtime; a container carrying a
+different owner label is never adopted or removed. This prevents a clean install, dev environment,
+or alternate App Support root from stopping another healthy local Viventium Voice runtime.
+
+Stop and destructive pre-upgrade drains must export both generated `runtime.env` and
+`runtime.local.env` to every launcher/native-stack child, preserving local-file precedence. Sourcing
+without export is invalid because a child can otherwise fall back to another runtime profile's
+MongoDB port and either fail closed against the foreign engine or target the wrong dependency.
+Status output must report an explicitly disabled Scheduler as disabled, not as a configured but
+unhealthy endpoint.
+
 ### Storage-Bounded Release QA
 
 Clean-machine proof must not consume unbounded owner-machine storage. Source, unit, compiler, and
@@ -430,7 +444,7 @@ falling back to historical defaults:
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
 The current reviewed LibreChat source is merged commit
-`37a49ccc738eca031022d9d1fa4a95f566dfc183`, pinned by both the parent component lock and Native
+`a1f8782b711f4cfb051ebd1ad98c791738e45bdd`, pinned by both the parent component lock and Native
 payload component manifest. The source/Docker GlassHive runtime is pinned by the parent component
 lock to merged commit `1a407a4e90ceea7cd9febcf56b0759ff46f35af0`; it is intentionally absent
 from the Native payload component manifest. Both manifests deliberately declare `merged`, and the
@@ -1474,8 +1488,13 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
 - The recognized source-install predecessor is only the current checkout's
   `viventium_v0_4/LibreChat/uploads` directory. Before any upload-consuming service starts, a stopped
   source launcher performs one bounded, owner-checked, no-follow migration into App Support and
-  leaves an exact compatibility symlink for LibreChat's existing relative-path contract. The link
-  contains no user bytes and is not a second authority.
+  leaves an exact compatibility symlink for predecessor compatibility. LibreChat itself resolves
+  `paths.uploads` from compiler-owned `VIVENTIUM_LIBRECHAT_UPLOADS_ROOT`, so two runtimes may share
+  one checkout without sharing uploaded bytes. If the checkout link is already the valid,
+  owner-private, receipted link of another Viventium App Support root, startup preserves and never
+  follows or overwrites that link, securely initializes the current runtime's canonical root, and
+  records a current-runtime receipt binding the observed link target by digest. Missing, malformed,
+  or unsafe proof still fails closed. The link contains no user bytes and is not a second authority.
 - The migration rejects foreign ownership, symlinks, hardlinks, special files, path/file/byte bounds,
   source mutation during copy, an unexpected canonical path, and two populated roots. It never
   merges or overwrites. A private transaction journal records staging, target activation,
@@ -1484,9 +1503,10 @@ delta on the disposable MacBook Air. Until those gates pass, release wording rem
   requires a supported restart rather than an in-place move.
 - Pre-upgrade continuity capture fingerprints relative file paths and contents into only aggregate
   file-count, byte-count, and SHA-256 fields. It emits no names, paths, or contents. Before migration,
-  the recognized legacy tree is the predecessor fallback; after the exact link/canonical contract is
-  active, App Support wins. Ambiguous, unsafe, or unavailable trees fail strict semantic comparison
-  when upload continuity cannot be proven.
+  the recognized legacy tree is the predecessor fallback; after the exact current-runtime link or
+  receipted shared-checkout isolation contract is active, that runtime's App Support root wins.
+  Ambiguous, unsafe, or unavailable trees fail strict semantic comparison when upload continuity
+  cannot be proven.
 - Complete capture follows the same authority rule: canonical App Support wins after migration,
   while the nested predecessor is accepted only before migration. Independent restore stages uploads
   inside the new App Support target at `data/uploads`; the source launcher's verified one-time step
@@ -1962,6 +1982,18 @@ config and recompile/restart; they do not patch generated App Support env files.
     background builds continue
   - install/start wait logic must therefore follow the recorded detached launch process group under
     `state/runtime/<profile>/detached-launch.pgid` before declaring early failure
+  - the launcher records start identities for surviving process-group members alongside the PGID;
+    destructive stop selection for a noncanonical App Support root requires at least one exact live
+    member match, and path/pattern/port matches are only corroboration
+  - two runtimes may deliberately share one checkout; stop/restart for one alternate App Support
+    root must never signal the other runtime merely because their process cwd or command paths match
+  - alternate App Support start/stop/restart must also preserve canonical/shared Docker services;
+    global compose names and container names do not prove per-runtime ownership, so noncanonical
+    launch disables machine-global Docker mutation until exact container receipts exist while
+    retaining runtime-owned native Mongo and per-runtime LiveKit startup
+  - an explicit `VIVENTIUM_ENV_FILE` is a complete runtime isolation boundary for direct LibreChat
+    startup and must not be supplemented with canonical production App Support credentials or
+    provider settings
   - otherwise clean first builds can be reported as `stopped during startup` during a valid warm-up
     handoff
 - Re-entrant launch requests during detached startup must be treated as the same in-flight boot:

@@ -501,6 +501,34 @@ def test_destructive_flows_drain_native_stack_before_removing_app_support() -> N
     )
 
 
+def test_stop_children_receive_the_exact_generated_runtime_environment() -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    command_cases = cli_source.rsplit('case "$COMMAND" in', 1)[1]
+    stop_section = command_cases.split("  stop)", 1)[1].split("  snapshot)", 1)[0]
+    drain_function = extract_shell_function(cli_source, "drain_native_stack_before_state_removal")
+
+    for section in (stop_section, drain_function):
+        prepare_index = section.index("prepare_runtime_exports")
+        export_on_index = section.index("set -a", prepare_index)
+        runtime_index = section.index('source "$GENERATED_ENV"', export_on_index)
+        local_runtime_index = section.index(
+            'source "$GENERATED_LOCAL_ENV"', runtime_index
+        )
+        export_off_index = section.index("set +a", local_runtime_index)
+        native_stop_index = section.index(
+            'scripts/viventium/native_stack.sh" stop', export_off_index
+        )
+
+        assert (
+            prepare_index
+            < export_on_index
+            < runtime_index
+            < local_runtime_index
+            < export_off_index
+            < native_stop_index
+        )
+
+
 @pytest.mark.parametrize(
     ("function_name", "expected_error"),
     (
@@ -710,6 +738,8 @@ def test_failed_install_cleanup_drains_recorded_owned_process_group(tmp_path: Pa
     write_executable(owned_runner, "#!/usr/bin/env bash\nsleep 120\n")
     process = subprocess.Popen([str(owned_runner)], cwd=app_support, start_new_session=True)
     (runtime_state / "detached-launch.pgid").write_text(f"{process.pid}\n", encoding="utf-8")
+    members_file = runtime_state / "detached-launch.members"
+    members_file.write_text("123\tsynthetic start identity\n", encoding="utf-8")
 
     try:
         completed = subprocess.run(
@@ -733,6 +763,7 @@ def test_failed_install_cleanup_drains_recorded_owned_process_group(tmp_path: Pa
         assert completed.returncode == 0, completed.stderr
         process.wait(timeout=5)
         assert not (runtime_state / "detached-launch.pgid").exists()
+        assert not members_file.exists()
     finally:
         if process.poll() is None:
             process.terminate()
@@ -2752,6 +2783,70 @@ exit 1
     )
 
     assert completed.returncode == 0
+
+
+def test_repo_process_detection_is_scoped_to_current_runtime_process_group(
+    tmp_path: Path,
+) -> None:
+    cli_source = (REPO_ROOT / "bin" / "viventium").read_text(encoding="utf-8")
+    functions = "".join(
+        extract_shell_function(cli_source, name)
+        for name in (
+            "detached_launch_process_group_file",
+            "read_detached_launch_process_group",
+            "pid_matches_repo_scope",
+            "pid_matches_runtime_process_group",
+            "pattern_running_in_repo",
+        )
+    )
+    shared_repo = tmp_path / "shared-repo"
+    shared_repo.mkdir()
+    runner = shared_repo / "owned-runner.sh"
+    write_executable(runner, "#!/usr/bin/env bash\nsleep 120\n")
+    runtime_a = tmp_path / "runtime-a"
+    runtime_b = tmp_path / "runtime-b"
+    process_a = subprocess.Popen([str(runner)], start_new_session=True)
+    process_b = subprocess.Popen([str(runner)], start_new_session=True)
+    pgid_a = runtime_a / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+    pgid_b = runtime_b / "state" / "runtime" / "isolated" / "detached-launch.pgid"
+    pgid_a.parent.mkdir(parents=True)
+    pgid_b.parent.mkdir(parents=True)
+    pgid_a.write_text(f"{process_a.pid}\n", encoding="utf-8")
+    pgid_b.write_text(f"{process_b.pid}\n", encoding="utf-8")
+
+    def detect(app_support: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                (
+                    "set -euo pipefail\n"
+                    f"APP_SUPPORT_DIR={str(app_support)!r}\n"
+                    f"REPO_ROOT={str(shared_repo)!r}\n"
+                    "VIVENTIUM_RUNTIME_PROFILE=isolated\n"
+                    f"{functions}"
+                    "pattern_running_in_repo owned-runner.sh\n"
+                ),
+            ],
+            cwd=REPO_ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+    try:
+        assert detect(runtime_a).returncode == 0
+        assert detect(runtime_b).returncode == 0
+        process_a.terminate()
+        process_a.wait(timeout=5)
+        assert process_b.poll() is None
+        assert detect(runtime_a).returncode != 0
+        assert detect(runtime_b).returncode == 0
+    finally:
+        for process in (process_a, process_b):
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
 
 
 def test_detached_start_failed_early_prioritizes_explicit_log_failure_over_live_sidecars() -> None:
@@ -5866,6 +5961,10 @@ exit 1
         f"  printf '%s\\n' '{repo_root}/viventium_v0_4/LibreChat npm ci'\n"
         "  exit 0\n"
         "fi\n"
+        "if [[ \"$*\" == *\"-p 5678 -o pgid=\"* ]]; then\n"
+        "  printf '777\\n'\n"
+        "  exit 0\n"
+        "fi\n"
         "exit 1\n",
         encoding="utf-8",
     )
@@ -5884,6 +5983,15 @@ exit 1
         encoding="utf-8",
     )
     (runtime_dir / "runtime.local.env").write_text("", encoding="utf-8")
+    detached_pgid = (
+        config_path.parent
+        / "state"
+        / "runtime"
+        / "isolated"
+        / "detached-launch.pgid"
+    )
+    detached_pgid.parent.mkdir(parents=True, exist_ok=True)
+    detached_pgid.write_text("777\n", encoding="utf-8")
 
     init_git_repo(repo_root)
 
