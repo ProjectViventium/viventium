@@ -1331,6 +1331,20 @@ mkdir -p "$LOG_DIR" "$(dirname "$SCHEDULING_DB_PATH")" "$(dirname "$MONGO_NATIVE
 # Purpose: a stopped WiredTiger directory does not identify whether Docker or
 # native mongod last owned it. Persist only directly observed engine identity
 # while running, then seal the exact stopped storage anchor after shutdown.
+run_mongo_engine_identity_scope_action() {
+  local action="${1:-}"
+  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
+    "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" "$action" \
+      --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+      --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
+      --native-only
+    return
+  fi
+  "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" "$action" \
+    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
+    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}"
+}
+
 record_mongo_engine_identity() {
   if [[ "${MONGO_IS_LOCAL:-false}" != "true" ]]; then
     return 0
@@ -1339,15 +1353,7 @@ record_mongo_engine_identity() {
     log_error "MongoDB engine identity helper is missing"
     return 1
   fi
-  local identity_scope_args=()
-  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
-    identity_scope_args+=(--native-only)
-  fi
-  "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" record-mongo-engine \
-    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
-    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
-    "${identity_scope_args[@]}" \
-    >/dev/null
+  run_mongo_engine_identity_scope_action record-mongo-engine >/dev/null
 }
 
 prepare_mongo_engine_identity_for_stop() {
@@ -1393,15 +1399,7 @@ seal_mongo_engine_identity_after_stop() {
   if [[ "$MONGO_ENGINE_IDENTITY_PREPARED" != "true" ]]; then
     return 0
   fi
-  local identity_scope_args=()
-  if [[ "$GLOBAL_DOCKER_CLEANUP_ALLOWED" != "true" ]]; then
-    identity_scope_args+=(--native-only)
-  fi
-  if ! "$PYTHON_BIN" "$MONGO_ENGINE_IDENTITY_HELPER" seal-mongo-engine \
-    --app-support-dir "$VIVENTIUM_APP_SUPPORT_ROOT" \
-    --runtime-dir "${VIVENTIUM_RUNTIME_DIR:-$VIVENTIUM_APP_SUPPORT_ROOT/runtime}" \
-    "${identity_scope_args[@]}" \
-    >/dev/null
+  if ! run_mongo_engine_identity_scope_action seal-mongo-engine >/dev/null
   then
     log_error "MongoDB stopped, but its durable engine receipt could not be sealed"
     log_error "Restart Viventium and retry a clean stop before upgrading"

@@ -200,6 +200,55 @@ def test_noncanonical_native_identity_ignores_canonical_docker_engine(
     assert sealed["identity"]["runtime_engine"] == "native"
 
 
+def test_scope_action_is_bash3_safe_with_and_without_native_only(
+    tmp_path: Path,
+) -> None:
+    launcher = LAUNCHER.read_text(encoding="utf-8")
+    scope_function = (
+        "run_mongo_engine_identity_scope_action() {"
+        + launcher.split("run_mongo_engine_identity_scope_action() {", 1)[1].split(
+            "\n}",
+            1,
+        )[0]
+        + "\n}\n"
+    )
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text(
+        "#!/bin/bash\nprintf '<%s>\\n' \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                "set -eu\n"
+                f"PYTHON_BIN={str(fake_python)!r}\n"
+                "MONGO_ENGINE_IDENTITY_HELPER=/synthetic/mongo-engine-helper.py\n"
+                f"VIVENTIUM_APP_SUPPORT_ROOT={str(tmp_path / 'support')!r}\n"
+                f"VIVENTIUM_RUNTIME_DIR={str(tmp_path / 'support' / 'runtime')!r}\n"
+                f"{scope_function}"
+                "GLOBAL_DOCKER_CLEANUP_ALLOWED=true\n"
+                "run_mongo_engine_identity_scope_action record-mongo-engine\n"
+                "GLOBAL_DOCKER_CLEANUP_ALLOWED=false\n"
+                "run_mongo_engine_identity_scope_action seal-mongo-engine\n"
+            ),
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    arguments = completed.stdout.splitlines()
+    assert arguments.count("<--native-only>") == 1
+    assert arguments.index("<record-mongo-engine>") < arguments.index(
+        "<seal-mongo-engine>"
+    )
+    assert arguments[-1] == "<--native-only>"
+
+
 def test_real_native_prestart_is_identity_stopped_and_sealed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1046,14 +1095,11 @@ def test_runtime_start_and_clean_stop_paths_refresh_and_seal_engine_proof() -> N
         "prepare_mongo_engine_identity_for_stop() {", 1
     )[1].split("\n}", 1)[0]
     assert "record_mongo_engine_identity" in prepare_function
-    record_function = launcher.split(
-        "record_mongo_engine_identity() {", 1
+    scope_function = launcher.split(
+        "run_mongo_engine_identity_scope_action() {", 1
     )[1].split("\n}", 1)[0]
-    seal_function = launcher.split(
-        "seal_mongo_engine_identity_after_stop() {", 1
-    )[1].split("\n}", 1)[0]
-    assert "--native-only" in record_function
-    assert "--native-only" in seal_function
+    assert "--native-only" in scope_function
+    assert "identity_scope_args" not in launcher
     assert "port_has_listener" in prepare_function
     assert "port_in_use" not in prepare_function
     assert launcher.index("port_has_listener() {") < stop_only_gate
