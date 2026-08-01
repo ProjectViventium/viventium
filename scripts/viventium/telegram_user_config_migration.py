@@ -585,7 +585,11 @@ def _apply_pending(
         payload["next_index"] = index + 1
         _write_json(pending_path, payload, support)
 
-    _assert_no_active_telegram_writer()
+    _assert_no_active_telegram_writer(
+        support=support,
+        source=_lexical(Path(payload["source_root"])),
+        canonical=canonical,
+    )
     _assert_legacy_tree_unchanged(payload)
     generation = payload["run_id"]
     authority = {
@@ -642,7 +646,12 @@ def _tree_digest(rows: list[tuple[Path, Path]]) -> str:
     return digest.hexdigest()
 
 
-def _assert_no_active_telegram_writer() -> None:
+def _assert_no_active_telegram_writer(
+    *,
+    support: Path,
+    source: Path,
+    canonical: Path,
+) -> None:
     completed = subprocess.run(
         ["ps", "-axo", "pid=,uid=,command="],
         check=False,
@@ -681,11 +690,6 @@ def _assert_no_active_telegram_writer() -> None:
         ]
         if not module_launch and not bot_arguments:
             continue
-        explicit_telegram_path = any(
-            candidate.parent.name == "TelegramVivBot"
-            for candidate in bot_arguments
-            if candidate.parent != Path(".")
-        )
         cwd: Path | None = None
         proc_cwd = Path("/proc") / str(pid) / "cwd"
         if proc_cwd.exists() or proc_cwd.is_symlink():
@@ -704,15 +708,34 @@ def _assert_no_active_telegram_writer() -> None:
                 if line.startswith("n") and len(line) > 1:
                     cwd = Path(line[1:])
                     break
-        if (
-            module_launch
-            or explicit_telegram_path
-            or (cwd is not None and cwd.name == "TelegramVivBot")
-        ):
+        scope_roots = (support, source.parent, canonical)
+
+        def in_scope(candidate: Path) -> bool:
+            lexical = _lexical(candidate)
+            return any(
+                lexical == root or lexical.is_relative_to(root)
+                for root in scope_roots
+            )
+
+        process_paths: list[Path] = []
+        if cwd is not None:
+            process_paths.append(cwd)
+        for candidate in bot_arguments:
+            if candidate.is_absolute():
+                process_paths.append(candidate)
+            elif cwd is not None:
+                process_paths.append(cwd / candidate)
+        command_mentions_scope = any(
+            str(root) in command for root in scope_roots
+        )
+        if command_mentions_scope or any(in_scope(path) for path in process_paths):
             raise MigrationError(
                 "Telegram preference writer is still active after shutdown"
             )
-        if cwd is None:
+        has_unresolved_relative_bot = any(
+            not candidate.is_absolute() for candidate in bot_arguments
+        )
+        if cwd is None and (module_launch or has_unresolved_relative_bot):
             raise MigrationError(
                 "Telegram bot.py writer identity could not be disproven"
             )
@@ -867,7 +890,11 @@ def migrate(
     with _lock(state_root, support):
         if canonical.exists() or canonical.is_symlink():
             if writer_stopped:
-                _assert_no_active_telegram_writer()
+                _assert_no_active_telegram_writer(
+                    support=support,
+                    source=source,
+                    canonical=canonical,
+                )
             _harden_canonical_tree(
                 canonical,
                 support,
@@ -905,7 +932,11 @@ def migrate(
                 raise MigrationError(
                     "Telegram preference writer must be stopped before journal recovery"
                 )
-            _assert_no_active_telegram_writer()
+            _assert_no_active_telegram_writer(
+                support=support,
+                source=source,
+                canonical=canonical,
+            )
             pending = _load_json(
                 pending_path, "Telegram preference migration journal"
             )
@@ -965,7 +996,11 @@ def migrate(
                 raise MigrationError(
                     "Telegram preference writer must be stopped before authority handoff"
                 )
-            _assert_no_active_telegram_writer()
+            _assert_no_active_telegram_writer(
+                support=support,
+                source=source,
+                canonical=canonical,
+            )
             source_tree_sha256 = _tree_digest(source_rows)
             run_id = hashlib.sha256(
                 (
@@ -1011,7 +1046,11 @@ def migrate(
             raise MigrationError(
                 "Telegram preference writer must be stopped before authority handoff"
             )
-        _assert_no_active_telegram_writer()
+        _assert_no_active_telegram_writer(
+            support=support,
+            source=source,
+            canonical=canonical,
+        )
 
         # Re-read after the caller's quiescence proof and while holding the migration lock.
         source_rows = list(_legacy_files(source))

@@ -259,10 +259,10 @@ else
       exit 1
     fi
   done
-  node_major="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
-  if [[ "$node_major" != "24" ]]; then
-    echo "[doctor] ERROR: native mode requires the validated node@24 LTS runtime; found $(node -v 2>/dev/null || echo unknown)." >&2
-    echo "[doctor] INFO: Run 'bin/viventium upgrade' to install/use node@24 before starting again." >&2
+  node_version="$(node -v 2>/dev/null || true)"
+  if [[ "$node_version" != "v24.16.0" ]]; then
+    echo "[doctor] ERROR: native mode requires the validated Node 24.16.0 runtime; found ${node_version:-unknown}." >&2
+    echo "[doctor] INFO: Run 'bin/viventium upgrade' to install/use the pinned official runtime before starting again." >&2
     exit 1
   fi
   if [[ "$ENABLE_SKYVERN" == "1" ]]; then

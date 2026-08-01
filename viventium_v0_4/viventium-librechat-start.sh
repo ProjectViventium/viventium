@@ -107,6 +107,12 @@ fi
 if [[ -d "/usr/local/opt/node@24/bin" ]]; then
   export PATH="/usr/local/opt/node@24/bin:${PATH}"
 fi
+VIVENTIUM_NODE_RUNTIME_VERSION="24.16.0"
+VIVENTIUM_NODE_RUNTIME_ARCH="$(uname -m 2>/dev/null || true)"
+VIVENTIUM_NODE_RUNTIME_BIN="${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools/node/${VIVENTIUM_NODE_RUNTIME_VERSION}/${VIVENTIUM_NODE_RUNTIME_ARCH}/bin"
+if [[ -d "$VIVENTIUM_NODE_RUNTIME_BIN" ]]; then
+  export PATH="$VIVENTIUM_NODE_RUNTIME_BIN:${PATH}"
+fi
 # === VIVENTIUM END ===
 
 # Colors
@@ -116,50 +122,40 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-current_node_major_version() {
+current_node_version() {
   if ! command -v node >/dev/null 2>&1; then
     return 1
   fi
 
   local version=""
   version="$(node -v 2>/dev/null || true)"
-  version="${version#v}"
-  version="${version%%.*}"
-  if [[ ! "$version" =~ ^[0-9]+$ ]]; then
+  if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     return 1
   fi
 
   printf '%s\n' "$version"
 }
 
-prepend_node24_to_path() {
-  local node24_prefix=""
-  if command -v brew >/dev/null 2>&1; then
-    node24_prefix="$(brew --prefix node@24 2>/dev/null || true)"
-  fi
-  if [[ -n "$node24_prefix" && -d "$node24_prefix/bin" ]]; then
-    export PATH="$node24_prefix/bin:${PATH}"
+prepend_validated_node_runtime_to_path() {
+  if [[ -d "$VIVENTIUM_NODE_RUNTIME_BIN" ]]; then
+    export PATH="$VIVENTIUM_NODE_RUNTIME_BIN:${PATH}"
     hash -r 2>/dev/null || true
   fi
 }
 
 ensure_validated_node24_runtime() {
-  prepend_node24_to_path
+  prepend_validated_node_runtime_to_path
 
-  local major=""
-  major="$(current_node_major_version || true)"
-  if [[ "$major" == "24" ]] && command -v npm >/dev/null 2>&1; then
+  local version=""
+  local resolved_node=""
+  local resolved_npm=""
+  version="$(current_node_version || true)"
+  resolved_node="$(command -v node 2>/dev/null || true)"
+  resolved_npm="$(command -v npm 2>/dev/null || true)"
+  if [[ "$version" == "v${VIVENTIUM_NODE_RUNTIME_VERSION}" \
+    && "$resolved_node" == "${VIVENTIUM_NODE_RUNTIME_BIN}/node" \
+    && "$resolved_npm" == "${VIVENTIUM_NODE_RUNTIME_BIN}/npm" ]]; then
     return 0
-  fi
-
-  if ! command -v brew >/dev/null 2>&1; then
-    log_error "Validated node@24 runtime required, but Homebrew is unavailable to install it"
-    return 1
-  fi
-
-  if [[ "${VIVENTIUM_AUTO_INSTALL_NODE:-true}" != "true" ]]; then
-    log_error "Validated node@24 runtime required, but automatic node installation is disabled"
-    return 1
   fi
 
   local current_version="missing"
@@ -167,17 +163,8 @@ ensure_validated_node24_runtime() {
     current_version="$(node -v 2>/dev/null || printf 'unknown')"
   fi
 
-  log_warn "Validated node@24 runtime required; found ${current_version}. Installing/activating Homebrew node@24"
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install node@24 >/dev/null 2>&1 || return 1
-  prepend_node24_to_path
-
-  major="$(current_node_major_version || true)"
-  if [[ "$major" != "24" || ! "$(command -v npm || true)" ]]; then
-    log_error "Unable to activate the validated node@24 runtime after Homebrew install"
-    return 1
-  fi
-
-  return 0
+  log_error "Validated Node ${VIVENTIUM_NODE_RUNTIME_VERSION} runtime required at ${VIVENTIUM_NODE_RUNTIME_BIN}; found ${current_version} at ${resolved_node:-missing}. Run 'bin/viventium upgrade' to install the pinned official runtime"
+  return 1
 }
 
 detect_livekit_node_ip() {
@@ -5086,11 +5073,19 @@ PY
   )
 }
 
+run_librechat_npm() {
+  if command -v corepack >/dev/null 2>&1; then
+    corepack npm "$@"
+    return
+  fi
+  npm "$@"
+}
+
 run_librechat_dependency_install() {
   if [[ -f "package-lock.json" ]]; then
-    npm ci
+    run_librechat_npm ci
   else
-    npm install
+    run_librechat_npm install
   fi
 }
 
@@ -12153,12 +12148,12 @@ if [[ "$SKIP_LIBRECHAT" != "true" ]]; then
     echo -e "${RED}[viventium]${NC} LibreChat directory not found: $LIBRECHAT_DIR"
     exit 1
   fi
-  require_cmd node
-  require_cmd npm
   ensure_validated_node24_runtime || {
-    log_error "LibreChat startup requires the validated node@24 runtime"
+    log_error "LibreChat startup requires the validated Node ${VIVENTIUM_NODE_RUNTIME_VERSION} runtime"
     exit 1
   }
+  require_cmd node
+  require_cmd npm
 
   if ! ensure_mongodb_ready; then
     log_error "MongoDB is required for LibreChat startup"

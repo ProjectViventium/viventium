@@ -2763,8 +2763,14 @@ final class HelperController: ObservableObject {
         }
     }
 
-    private nonisolated static func defaultCLIPath(homeDirectory: String, inheritedPath: String?) -> String {
+    private nonisolated static func defaultCLIPath(
+        homeDirectory: String,
+        appSupportDirectory: String,
+        inheritedPath: String?
+    ) -> String {
         let candidates = [
+            "\(appSupportDirectory)/runtime-tools/node/24.16.0/arm64/bin",
+            "\(appSupportDirectory)/runtime-tools/node/24.16.0/x86_64/bin",
             "/opt/homebrew/bin",
             "/opt/homebrew/sbin",
             "/usr/local/bin",
@@ -2801,6 +2807,8 @@ final class HelperController: ObservableObject {
     private nonisolated static func makeCLIEnvironment() -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+        let appSupportDirectory = inherited["VIVENTIUM_APP_SUPPORT_DIR"]
+            ?? "\(homeDirectory)/Library/Application Support/Viventium"
         let userName = inherited["USER"] ?? inherited["LOGNAME"] ?? NSUserName()
         var environment: [String: String] = [
             "HOME": homeDirectory,
@@ -2808,7 +2816,11 @@ final class HelperController: ObservableObject {
             "LOGNAME": inherited["LOGNAME"] ?? userName,
             "SHELL": inherited["SHELL"] ?? "/bin/zsh",
             "TMPDIR": inherited["TMPDIR"] ?? NSTemporaryDirectory(),
-            "PATH": self.defaultCLIPath(homeDirectory: homeDirectory, inheritedPath: inherited["PATH"]),
+            "PATH": self.defaultCLIPath(
+                homeDirectory: homeDirectory,
+                appSupportDirectory: appSupportDirectory,
+                inheritedPath: inherited["PATH"]
+            ),
             "LANG": inherited["LANG"] ?? "C.UTF-8",
             "LC_ALL": inherited["LC_ALL"] ?? inherited["LANG"] ?? "C.UTF-8",
             "LC_CTYPE": inherited["LC_CTYPE"] ?? inherited["LANG"] ?? "C.UTF-8",

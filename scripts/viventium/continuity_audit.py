@@ -984,6 +984,22 @@ def compare_manifests(args: argparse.Namespace) -> dict[str, Any]:
         for domain in ("config", "mongo", "schedules"):
             snapshot_domain = snapshot_semantic.get(domain)
             live_domain = live_semantic.get(domain)
+            if domain == "schedules":
+                snapshot_schedule_surface = (
+                    (snapshot_manifest.get("surfaces") or {}).get("schedules") or {}
+                )
+                live_schedule_surface = (
+                    (live_manifest.get("surfaces") or {}).get("schedules") or {}
+                )
+                if (
+                    isinstance(snapshot_domain, dict)
+                    and isinstance(live_domain, dict)
+                    and snapshot_domain.get("available") is False
+                    and live_domain.get("available") is False
+                    and snapshot_schedule_surface.get("dbPresent") is False
+                    and live_schedule_surface.get("dbPresent") is False
+                ):
+                    continue
             if (
                 not isinstance(snapshot_domain, dict)
                 or not isinstance(live_domain, dict)

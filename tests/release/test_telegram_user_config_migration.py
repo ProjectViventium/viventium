@@ -768,6 +768,60 @@ def test_active_telegram_writer_blocks_before_journal_or_canonical_write(
     assert not (support / "state" / "telegram-user-configs").exists()
 
 
+def test_unrelated_runtime_writer_does_not_block_canonical_authority_recheck(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    support = tmp_path / "app-support"
+    repo.mkdir()
+    canonical = support / "state" / "telegram-user-configs"
+
+    initialized = _run(
+        repo,
+        support,
+        active_config_root=False,
+        writer_stopped=False,
+    )
+    assert initialized.returncode == 0, initialized.stderr
+    canonical.mkdir(parents=True)
+
+    unrelated_bot = (
+        tmp_path
+        / "other-app-support"
+        / "runtime-components"
+        / "telegram-viventium"
+        / "TelegramVivBot"
+        / "bot.py"
+    )
+    unrelated_bot.parent.mkdir(parents=True)
+    unrelated_bot.write_text("# unrelated synthetic writer\n", encoding="utf-8")
+    fake_bin = tmp_path / "unrelated-writer-bin"
+    fake_bin.mkdir()
+    fake_ps = fake_bin / "ps"
+    fake_ps.write_text(
+        (
+            "#!/bin/sh\n"
+            f"printf '%s\\n' '4242 {os.getuid()} "
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(unrelated_bot))}'\n"
+        ),
+        encoding="utf-8",
+    )
+    fake_ps.chmod(0o755)
+
+    checked = _run(
+        repo,
+        support,
+        active_config_root=canonical,
+        observe_real_processes=True,
+        env={
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+    )
+
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout)["status"] == "canonical-authoritative"
+
+
 def test_committed_authority_wins_if_cleanup_was_interrupted(
     tmp_path: Path,
 ) -> None:

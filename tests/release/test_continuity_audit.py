@@ -1085,6 +1085,49 @@ def test_strict_semantic_compare_fails_closed_when_fingerprints_are_unavailable(
     assert any("could not be proven" in error for error in result["errors"])
 
 
+def test_strict_semantic_compare_accepts_schedule_store_absent_on_both_sides(
+    tmp_path: Path,
+) -> None:
+    continuity_audit = load_continuity_audit_module()
+    snapshot_manifest = tmp_path / "snapshot.json"
+    live_manifest = tmp_path / "live.json"
+    payload = {
+        "schemaVersion": 2,
+        "surfaces": {
+            "messages": {"latestTimestamp": None},
+            "savedMemory": {"latestTimestamp": None},
+            "schedules": {"latestTimestamp": None, "dbPresent": False},
+        },
+        "semantic": {
+            "config": {"available": True, "leafDigests": []},
+            "mongo": {"available": True, "collections": {}},
+            "schedules": {
+                "available": False,
+                "configurationCount": None,
+                "configurationSha256": None,
+                "configurationTables": {},
+            },
+        },
+    }
+    snapshot_manifest.write_text(json.dumps(payload), encoding="utf-8")
+    live_manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = continuity_audit.compare_manifests(
+        type(
+            "Args",
+            (),
+            {
+                "snapshot_manifest": str(snapshot_manifest),
+                "live_manifest": str(live_manifest),
+                "strict_semantic": True,
+            },
+        )()
+    )
+
+    assert result["status"] == "ok"
+    assert result["semanticDifferences"] == []
+
+
 def test_config_semantic_fingerprint_allows_new_defaults_but_rejects_changed_personalization(
     tmp_path: Path,
 ) -> None:

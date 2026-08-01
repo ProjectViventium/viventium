@@ -10,7 +10,9 @@ prepend_path_if_dir() {
 
 ensure_brew_paths_on_path() {
   local mongodb_arch=""
+  local node_arch=""
   mongodb_arch="$(uname -m 2>/dev/null || true)"
+  node_arch="$mongodb_arch"
   prepend_path_if_dir "${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools/mongodb/8.0.23/${mongodb_arch}/bin"
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/opt/homebrew/sbin"
@@ -18,6 +20,7 @@ ensure_brew_paths_on_path() {
   prepend_path_if_dir "/usr/local/sbin"
   prepend_path_if_dir "/opt/homebrew/opt/node@24/bin"
   prepend_path_if_dir "/usr/local/opt/node@24/bin"
+  prepend_path_if_dir "${VIVENTIUM_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Viventium}/runtime-tools/node/24.16.0/${node_arch}/bin"
   prepend_path_if_dir "/opt/homebrew/opt/pnpm@10/bin"
   prepend_path_if_dir "/usr/local/opt/pnpm@10/bin"
   prepend_path_if_dir "/opt/homebrew/opt/python@3.12/libexec/bin"

@@ -346,11 +346,15 @@ analytics transport, not zero dependency-network traffic.
   publisher-hosted, digest-verified download is the safer implementation boundary.
 
 The historical source runtime's Node 20 requirement was not a shippable Native artifact decision;
-Node 20 is end-of-life. A July 18, 2026 source-candidate production client/data-provider build
-passes on Node `24.16.0`. Post-review remediation now aligns preflight, shared PATH setup, doctor,
-dependency repair, the LibreChat launcher, the optional Skyvern launcher, and the macOS helper CLI
-PATH on Node 24, with a six-surface regression contract; 90 focused preflight/launcher tests and a
-fresh helper build pass. That is source-candidate evidence, not exact-artifact
+Node 20 is end-of-life. LibreChat declares exact Node `24.16.0`, and the Native component manifest
+pins the official Node.js Foundation arm64/x86_64 archives and digests for that version. A live
+August 1, 2026 compatibility matrix proved the same authenticated fetch and `@librechat/agents`
+run succeed on Node `24.14.0` and `24.16.0` but deterministically fail before HTTP under Homebrew
+Node `24.18.1`. Source install and upgrade therefore provision the manifest-matching official
+`24.16.0` runtime under App Support, verify its digest, Developer ID publisher, and exact version,
+and put it ahead of Homebrew/global Node. Preflight, shared PATH setup, doctor, dependency repair,
+and the LibreChat launcher reject patch drift instead of treating any Node 24 patch as validated.
+That is source-candidate evidence, not exact-artifact
 acceptance. The first packaged candidate must ship one pinned official supported runtime and repeat
 build/start/restart/process-path proof on the exact installed artifact. Node single-executable
 applications remain active-development and are not the first packaging boundary; ship a pinned
@@ -444,7 +448,7 @@ falling back to historical defaults:
 - lab-only OpenClaw is absent from public Easy Install setup and status output.
 
 The current reviewed LibreChat source is merged commit
-`a1f8782b711f4cfb051ebd1ad98c791738e45bdd`, pinned by both the parent component lock and Native
+`8486789e3f46f65ca8b597d98ae4e571200b34f6`, pinned by both the parent component lock and Native
 payload component manifest. The source/Docker GlassHive runtime is pinned by the parent component
 lock to merged commit `1a407a4e90ceea7cd9febcf56b0759ff46f35af0`; it is intentionally absent
 from the Native payload component manifest. Both manifests deliberately declare `merged`, and the
