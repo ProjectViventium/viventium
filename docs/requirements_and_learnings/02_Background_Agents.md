@@ -29,14 +29,16 @@ For the manager-readable handbook, start with:
   - its built-in source-of-truth contract must include `web_search`
   - when its execution family is `openAI / gpt-5.6-sol`, its shipped `model_parameters` must use
     `reasoning_effort: xhigh`, not Anthropic/Google-only thinking fields such as `thinkingBudget`
-  - it must use the Responses API because this is a reasoning-plus-tools workload
+  - on the direct OpenAI execution family it must use the Responses API because this is a
+    reasoning-plus-tools workload; GlassHive executes it through the harness-native endpoint
 - Red Team is a shipped adversarial decision-quality cortex:
   - its built-in source-of-truth contract must include `web_search` so evidence-first checks can
     actually use live evidence when runtime web search is enabled
   - when its execution family is `openAI / gpt-5.6-sol`, its shipped and runtime-normalized
     `model_parameters` must use `reasoning_effort: xhigh`, not Anthropic/Google-only thinking
     fields such as `thinkingBudget`
-  - it must use the Responses API because this is a reasoning-plus-tools workload
+  - on the direct OpenAI execution family it must use the Responses API because this is a
+    reasoning-plus-tools workload; GlassHive executes it through the harness-native endpoint
 - Shipping a specialist background agent does not require the main Viventium agent to auto-activate
   it. In the current local baseline, the main agent keeps `Deep Research`, `MS365`, and `Google`
   background activation disabled. Live web/productivity execution should be handled by the
@@ -105,8 +107,8 @@ browser-only post-connect side effect.
   transport recovery may reattach to the same idempotent request but cannot dispatch a second run.
 
 - The tracked source-of-truth bundle in
-  `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml` is the mixed
-  launch baseline.
+  `viventium_v0_4/LibreChat/viventium/source_of_truth/local.viventium-agents.yaml` is the
+  GlassHive-enabled launch baseline.
 - `scripts/viventium/config_compiler.py` chooses the provider/model mix for the local install.
 - `viventium-agent-runtime-models.js` must then normalize each built-in background agent onto the
   canonical execution bag for that target provider family.
@@ -115,27 +117,27 @@ browser-only post-connect side effect.
 
 Authoritative execution matrix:
 
-| Agent | Shipped Mixed Baseline | OpenAI-only install | Anthropic-only install | OpenAI + Anthropic install |
+| Agent | GlassHive-enabled shipped baseline | GlassHive-disabled OpenAI-only | GlassHive-disabled Anthropic-only | GlassHive-disabled OpenAI + Anthropic |
 | --- | --- | --- | --- | --- |
-| Viventium conscious | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` |
-| Background Analysis | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
-| Confirmation Bias | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
-| Red Team | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
-| Deep Research | `openAI / gpt-5.6-sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
-| MS365 | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
-| Parietal Cortex | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
-| Pattern Recognition | `openAI / gpt-5.6-terra / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
-| Emotional Resonance | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
-| Strategic Planning | `openAI / gpt-5.6-sol / high` | `openAI / gpt-5.6-sol / high` | `anthropic / claude-opus-5 / high` | `openAI / gpt-5.6-sol / high` |
-| Viventium User Help | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
-| Google | `openAI / gpt-5.6-terra / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Viventium conscious | `glasshive-harness / codex-cli:gpt-5.6-sol / medium` | `openAI / gpt-5.6-sol` | `anthropic / claude-opus-5` | `openAI / gpt-5.6-sol` |
+| Background Analysis | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Confirmation Bias | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Red Team | `GlassHive Codex / Sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
+| Deep Research | `GlassHive Codex / Sol / xhigh` | `openAI / gpt-5.6-sol / xhigh` | `anthropic / claude-opus-5 / max` | `openAI / gpt-5.6-sol / xhigh` |
+| MS365 | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Parietal Cortex | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Pattern Recognition | `GlassHive Codex / Sol / medium` | `openAI / gpt-5.6-terra / medium` | `anthropic / claude-opus-5 / medium` | `openAI / gpt-5.6-terra / medium` |
+| Emotional Resonance | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Strategic Planning | `GlassHive Codex / Sol / high` | `openAI / gpt-5.6-sol / high` | `anthropic / claude-opus-5 / high` | `openAI / gpt-5.6-sol / high` |
+| Viventium User Help | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
+| Google | `GlassHive Codex / Sol / low` | `openAI / gpt-5.6-terra / low` | `anthropic / claude-opus-5 / low` | `openAI / gpt-5.6-terra / low` |
 
 Model inventory rule:
 
-- The source-owned Main uses the exact GlassHive harness model `codex-cli:gpt-5.6-sol`. Direct
-  background cortices use only the connected-account-proven explicit `gpt-5.6-sol` and
-  `gpt-5.6-terra` slugs. Do not use an unsupported alias or Luna merely because direct API-key
-  inventory exposes it.
+- The source-owned Main and background cortices use the exact GlassHive harness model
+  `codex-cli:gpt-5.6-sol` when GlassHive is enabled. The compiler restores explicit direct
+  `gpt-5.6-sol` and `gpt-5.6-terra` families only for a GlassHive-disabled install. Do not use an
+  unsupported alias or Luna merely because direct API-key inventory exposes it.
 - Every source-owned conscious/subconscious agent declares `anthropic / claude-opus-5` as its
   text fallback. That route is usable only when Anthropic auth is configured for the user/runtime;
   missing fallback auth must surface honestly rather than causing a silent model downgrade.
@@ -429,13 +431,13 @@ Requirements:
   `topP`, penalties, `n`, `logprobs`, or related sampling fields for OpenAI no-sampling reasoning
   runs such as `gpt-5`, dash-suffixed `gpt-5` reasoning variants, Viventium's configured GPT-5.6
   Sol/Terra runtime family, or `o1`/`o3`.
-- All GPT-5.6 conscious/subconscious bags set `useResponsesApi: true`; OpenAI documents Responses as
+- All direct OpenAI GPT-5.6 conscious/subconscious bags set `useResponsesApi: true`; OpenAI documents Responses as
   the required path for reasoning plus tools, while Chat Completions function tools are compatible
   only at effective reasoning `none`.
-- The explicit effort map is part of the runtime contract: Sol/medium for the conscious agent,
-  Sol/xhigh for Red Team and Deep Research, Sol/high for Strategic Planning, Terra/medium for
-  Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition, and Terra/low
-  for MS365, Google, Emotional Resonance, and Viventium User Help.
+- The explicit effort map is part of the runtime contract: GlassHive Sol/medium for the conscious
+  agent and general analytical cortices, GlassHive Sol/xhigh for Red Team and Deep Research,
+  GlassHive Sol/high for Strategic Planning, and GlassHive Sol/low for MS365, Google, Emotional
+  Resonance, and Viventium User Help. GlassHive-disabled profiles preserve the direct Sol/Terra map.
 
 ## Memory Context Parity
 
@@ -837,8 +839,8 @@ surface cortices via Phase B. This is especially important for voice TTS and for
 LLM routes, where a mid-audio "nevermind" would feel broken.
 
 ### Related model decisions (affect Main Agent / cortex latency)
-- Main Agent text: `gpt-5.6-sol` with `reasoning_effort: medium` and Responses API. Background
-  execution uses the Sol/Terra effort map above. Every text route falls back to
+- Main Agent text: GlassHive Codex `gpt-5.6-sol` with `reasoning_effort: medium`. Background
+  execution uses the same harness with the workload effort map above. Every text route falls back to
   `anthropic / claude-opus-5` when that auth path is available.
 - Voice LLM remains `xai / grok-4.3` with `reasoning_effort: none`. Its latency-preserving voice
   fallback is `openAI / gpt-5.6-terra` with `reasoning_effort: none`; the text fallback policy does

@@ -48,17 +48,16 @@ sarcasm, denial, and recent-context carryover.
   explicitly in the source-of-truth bundle.
 - Deep Research must ship with `web_search` in its built-in tool surface whenever runtime web
   search is enabled.
-- Deep Research on `openAI / gpt-5.6-sol` must ship
-  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must
-  not drift onto Anthropic/Google-only `thinkingBudget`.
+- Deep Research on GlassHive Codex/Sol must ship `model_parameters.reasoning_effort: xhigh`
+  without direct-provider-only `useResponsesApi` or Anthropic-only `thinkingBudget`.
 - Red Team must ship with `web_search` in its built-in tool surface whenever runtime web search is
   enabled.
-- Red Team on `openAI / gpt-5.6-sol` must ship and runtime-normalize to
-  `model_parameters.reasoning_effort: xhigh`, `useResponsesApi: true`, and must not drift onto
-  Anthropic/Google-only `thinkingBudget`.
-- The conscious agent uses Sol/medium; Strategic Planning uses Sol/high; Background Analysis,
-  Confirmation Bias, Parietal Cortex, and Pattern Recognition use Terra/medium; MS365, Google,
-  Emotional Resonance, and Viventium User Help use Terra/low.
+- Red Team on GlassHive Codex/Sol must ship and runtime-normalize to
+  `model_parameters.reasoning_effort: xhigh` without direct-provider-only `useResponsesApi` or
+  Anthropic-only `thinkingBudget`.
+- The conscious agent uses GlassHive Sol/medium; Strategic Planning uses GlassHive Sol/high;
+  Background Analysis, Confirmation Bias, Parietal Cortex, and Pattern Recognition use GlassHive
+  Sol/medium; MS365, Google, Emotional Resonance, and Viventium User Help use GlassHive Sol/low.
 - Every conscious/subconscious text route uses `anthropic / claude-opus-5` as the managed fallback
   for new installs. Explicit existing user-selected Anthropic fallback models remain protected. Voice
   remains `xai / grok-4.3 / none` with a latency-preserving Terra/none voice fallback.

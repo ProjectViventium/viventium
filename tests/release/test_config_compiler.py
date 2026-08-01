@@ -848,6 +848,39 @@ def test_native_agent_bundle_omits_tools_and_handoffs_owned_by_unavailable_servi
     assert direct_servers == []
 
 
+def test_native_agent_bundle_rewrites_main_parameters_for_direct_openai_profile() -> None:
+    config = minimal_compile_config()
+    assignments = config_compiler.build_agent_assignments(config)
+
+    compiled = config_compiler.render_native_agents_bundle(config, assignments, set())
+
+    assert compiled["mainAgent"]["provider"] == "openai"
+    assert compiled["mainAgent"]["model"] == "gpt-5.6-sol"
+    assert compiled["mainAgent"]["model_parameters"] == {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "useResponsesApi": True,
+    }
+    assert "glasshive_options" not in compiled["mainAgent"]
+
+
+def test_native_agent_bundle_rewrites_main_parameters_for_direct_anthropic_profile() -> None:
+    config = minimal_compile_config()
+    config["llm"]["primary"] = {
+        "provider": "anthropic",
+        "auth_mode": "api_key",
+        "secret_value": "anthropic-test",
+    }
+    assignments = config_compiler.build_agent_assignments(config)
+
+    compiled = config_compiler.render_native_agents_bundle(config, assignments, set())
+
+    assert compiled["mainAgent"]["provider"] == "anthropic"
+    assert compiled["mainAgent"]["model"] == "claude-opus-5"
+    assert compiled["mainAgent"]["model_parameters"] == {"model": "claude-opus-5"}
+    assert "glasshive_options" not in compiled["mainAgent"]
+
+
 def test_runtime_env_disables_automatic_mongoose_index_creation() -> None:
     config = minimal_compile_config()
     env = config_compiler.render_runtime_env(
@@ -3021,6 +3054,35 @@ def test_build_agent_assignments_openai_only_uses_gpt56_workload_profile() -> No
     assert assignments["emotional_resonance"] == ("openai", "gpt-5.6-terra")
     assert assignments["strategic_planning"] == ("openai", "gpt-5.6-sol")
     assert assignments["support"] == ("openai", "gpt-5.6-terra")
+    assert assignments["memory"] == ("openai", "gpt-5.4")
+
+
+def test_build_agent_assignments_glasshive_routes_all_conscious_cortex_execution() -> None:
+    config = {
+        "llm": {
+            "primary": {
+                "provider": "openai",
+                "auth_mode": "api_key",
+                "secret_value": "openai-test",
+            },
+            "secondary": {"provider": "none", "auth_mode": "disabled"},
+            "extra_provider_keys": {},
+        },
+        "integrations": {
+            "glasshive": {
+                "enabled": True,
+                "provider": {"enabled": True},
+            }
+        },
+    }
+
+    assignments = config_compiler.build_agent_assignments(config)
+
+    for role in config_compiler.AGENT_ASSIGNMENT_ROLES - {"memory"}:
+        assert assignments[role] == (
+            "glasshive-harness",
+            "codex-cli:gpt-5.6-sol",
+        )
     assert assignments["memory"] == ("openai", "gpt-5.4")
 
 

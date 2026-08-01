@@ -744,13 +744,17 @@ A developer referring to a single document about a respective feature **must per
 #### Model Governance Rule (Launch-Ready Baseline)
 - Out-of-the-box Viventium conscious and subconscious execution must stay within the current
   launch-ready model families unless a newer documented evaluation replaces them:
-  - `openAI / gpt-5.6-sol` for the conscious agent and quality-first reasoning cortices
-  - `openAI / gpt-5.6-terra` for balanced, latency-sensitive, and tool-heavy cortices
+  - `glasshive-harness / codex-cli:gpt-5.6-sol` for the conscious agent and every substantive
+    background cortex when the local GlassHive provider is enabled
+  - the workload-owned effort map remains `low|medium|high|xhigh`; Red Team and Deep Research use
+    `xhigh`, Strategic Planning uses `high`, and lighter cortices retain their lower effort
+  - direct `openAI / gpt-5.6-sol|terra` or `anthropic / claude-opus-5` execution is the explicit
+    GlassHive-disabled install profile, not the default for a GlassHive-enabled install
   - `anthropic / claude-opus-5` as the text-execution fallback
   - voice remains the explicit `xai / grok-4.3` route with `reasoning_effort: none`
-- Memory writers, activation classifiers, helper/title models, and GlassHive workers are separate
-  workloads with their own documented model contracts; do not infer their model from the
-  conscious/subconscious execution matrix.
+- Memory writers, activation classifiers, helper/title models, and autonomous GlassHive mission
+  workers are separate workloads with their own documented model contracts; do not infer their
+  model from the GlassHive conversation-provider matrix.
 - Unattended analytical automations default to OpenAI `gpt-5.6-sol` with `xhigh` reasoning. This
   includes Prompt Workbench/GlassHive scheduled analysis and OpenAI memory hardening. A different
   route must be an explicit, documented operator fallback with visible requested/effective model
@@ -779,7 +783,7 @@ A developer referring to a single document about a respective feature **must per
   slugs after the July 9, 2026 Agent Builder QA pass. The built-in execution matrix therefore uses
   explicit Sol/Terra slugs rather than the alias or Luna so API-key and connected-account installs
   share one proven model surface.
-- GPT-5.6 Agent Builder records default `useResponsesApi: true` when that field is unset because
+- Direct OpenAI GPT-5.6 Agent Builder records default `useResponsesApi: true` when that field is unset because
   reasoning, tool use, and multi-turn agents are the Responses-shaped workload. Preserve an explicit
   user choice. Do not invent a `gpt-5.6-pro` slug: GPT-5.6 Pro is an API reasoning mode, not a model.
 - GPT-5.6 effort is workload-owned:
@@ -797,7 +801,9 @@ A developer referring to a single document about a respective feature **must per
     Scout's July 17, 2026 shutdown superseded its April benchmark
   - Anthropic Haiku-class activation is acceptable as a fallback or alternative only when the
     benchmark for the target environment proves it fits the chosen budget
-  - at least one of `OpenAI` or `Anthropic` must be configured for main/background execution on install
+  - at least one of `OpenAI` or `Anthropic` remains required for auxiliary/direct fallback routes on
+    install; when GlassHive is enabled, conscious and cortex authoring use its authenticated harness
+    endpoint instead of depending on each LibreChat user having direct execution credentials
   - do not treat `x_ai` alone as a sufficient built-in background-agent foundation for launch-ready installs
 - Do **not** silently drift back to older defaults such as `gpt-4o` or `gpt-4o-mini` just because a pull or reset changed stored config.
 - The same rule applies to secondary runtime paths such as deferred/background follow-up generation:

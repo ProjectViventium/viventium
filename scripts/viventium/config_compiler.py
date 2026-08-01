@@ -836,6 +836,32 @@ AGENT_ASSIGNMENT_ROLES = {
     "support",
     "memory",
 }
+BACKGROUND_AGENT_ASSIGNMENT_ROLE_BY_ID = {
+    "agent_viventium_background_analysis_95aeb3": "background_analysis",
+    "agent_viventium_confirmation_bias_95aeb3": "confirmation_bias",
+    "agent_viventium_red_team_95aeb3": "red_team",
+    "agent_viventium_deep_research_95aeb3": "deep_research",
+    "agent_viventium_online_tool_use_95aeb3": "productivity",
+    "agent_viventium_parietal_cortex_95aeb3": "parietal",
+    "agent_viventium_pattern_recognition_95aeb3": "pattern_recognition",
+    "agent_viventium_emotional_resonance_95aeb3": "emotional_resonance",
+    "agent_viventium_strategic_planning_95aeb3": "strategic_planning",
+    "agent_viventium_support_95aeb3": "support",
+    "agent_8Y1d7JNhpubtvzYz3hvEv": "productivity",
+}
+BACKGROUND_AGENT_REASONING_EFFORT_BY_ID = {
+    "agent_viventium_background_analysis_95aeb3": "medium",
+    "agent_viventium_confirmation_bias_95aeb3": "medium",
+    "agent_viventium_red_team_95aeb3": "xhigh",
+    "agent_viventium_deep_research_95aeb3": "xhigh",
+    "agent_viventium_online_tool_use_95aeb3": "low",
+    "agent_viventium_parietal_cortex_95aeb3": "medium",
+    "agent_viventium_pattern_recognition_95aeb3": "medium",
+    "agent_viventium_emotional_resonance_95aeb3": "low",
+    "agent_viventium_strategic_planning_95aeb3": "high",
+    "agent_viventium_support_95aeb3": "low",
+    "agent_8Y1d7JNhpubtvzYz3hvEv": "low",
+}
 MODEL_OVERRIDE_ROLES = AGENT_ASSIGNMENT_ROLES | {
     "glasshive_codex",
     "glasshive_claude",
@@ -2787,10 +2813,19 @@ def build_agent_assignments(config: dict[str, Any]) -> dict[str, tuple[str, str]
         if glasshive_provider["enabled"]
         else choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
     )
-    reflective_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
-    analytical_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
-    emotional_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
-    support_provider = choose_provider(foundation_available, ["openai", "anthropic"], foundation_fallback)
+    cortex_provider = GLASSHIVE_PROVIDER_ID if glasshive_provider["enabled"] else None
+    reflective_provider = cortex_provider or choose_provider(
+        foundation_available, ["openai", "anthropic"], foundation_fallback
+    )
+    analytical_provider = cortex_provider or choose_provider(
+        foundation_available, ["openai", "anthropic"], foundation_fallback
+    )
+    emotional_provider = cortex_provider or choose_provider(
+        foundation_available, ["openai", "anthropic"], foundation_fallback
+    )
+    support_provider = cortex_provider or choose_provider(
+        foundation_available, ["openai", "anthropic"], foundation_fallback
+    )
     # Saved memory follows the configured foundation priority so it does not select a stale fallback
     # merely because that provider is also present.
     memory_provider = foundation_available[0]
@@ -4739,14 +4774,64 @@ def render_native_agents_bundle(
         conscious_provider, conscious_model = assignments["conscious"]
         main_agent["provider"] = conscious_provider
         main_agent["model"] = conscious_model
-        model_parameters = main_agent.get("model_parameters")
-        if not isinstance(model_parameters, dict):
-            model_parameters = {}
-            main_agent["model_parameters"] = model_parameters
-        model_parameters["model"] = conscious_model
-        if conscious_provider != GLASSHIVE_PROVIDER_ID:
+        if conscious_provider == GLASSHIVE_PROVIDER_ID:
+            main_agent["model_parameters"] = {
+                "model": conscious_model,
+                "reasoning_effort": "medium",
+            }
+        elif conscious_provider == "openai":
+            main_agent["model_parameters"] = {
+                "model": conscious_model,
+                "reasoning_effort": "medium",
+                "useResponsesApi": True,
+            }
             main_agent.pop("glasshive_options", None)
-            model_parameters.pop("reasoning_effort", None)
+        elif conscious_provider == "anthropic":
+            main_agent["model_parameters"] = {"model": conscious_model}
+            main_agent.pop("glasshive_options", None)
+
+    background_agents = bundle.get("backgroundAgents")
+    if isinstance(background_agents, list):
+        for agent in background_agents:
+            if not isinstance(agent, dict):
+                continue
+            agent_id = str(agent.get("id") or "").strip()
+            role = BACKGROUND_AGENT_ASSIGNMENT_ROLE_BY_ID.get(agent_id)
+            if not role or role not in assignments:
+                continue
+            provider, model = assignments[role]
+            effort = BACKGROUND_AGENT_REASONING_EFFORT_BY_ID[agent_id]
+            agent["provider"] = provider
+            agent["model"] = model
+            if provider == GLASSHIVE_PROVIDER_ID:
+                agent["model_parameters"] = {
+                    "reasoning_effort": effort,
+                    "model": model,
+                }
+                agent["glasshive_options"] = {
+                    "workspace": {"mode": "life"},
+                    "access": "full",
+                }
+            elif provider == "openai":
+                agent["model_parameters"] = {
+                    "reasoning_effort": effort,
+                    "useResponsesApi": True,
+                    "model": model,
+                }
+                agent.pop("glasshive_options", None)
+            elif provider == "anthropic":
+                parameters: dict[str, Any] = {"model": model}
+                if effort == "xhigh":
+                    parameters["thinkingBudget"] = 4000
+                elif effort == "high":
+                    parameters["thinkingBudget"] = 2000
+                elif agent_id in {
+                    "agent_viventium_confirmation_bias_95aeb3",
+                    "agent_viventium_emotional_resonance_95aeb3",
+                }:
+                    parameters["thinking"] = False
+                agent["model_parameters"] = parameters
+                agent.pop("glasshive_options", None)
 
     def tool_is_available(tool: object) -> bool:
         name = str(tool or "").strip()

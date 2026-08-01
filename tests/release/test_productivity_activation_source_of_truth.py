@@ -473,21 +473,12 @@ def test_productivity_activation_prompts_cover_generic_plural_inbox_sweeps() -> 
     assert "Microsoft-only work is out of scope" in google_prompt
 
 
-def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
+def test_background_agent_execution_models_use_glasshive_conversation_provider() -> None:
     agents_by_id = _load_background_agents_by_id()
 
     expected = {
-        "agent_viventium_background_analysis_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_confirmation_bias_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_red_team_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_deep_research_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_online_tool_use_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_parietal_cortex_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_pattern_recognition_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_emotional_resonance_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_viventium_strategic_planning_95aeb3": ("openAI", "gpt-5.6-sol"),
-        "agent_viventium_support_95aeb3": ("openAI", "gpt-5.6-terra"),
-        "agent_8Y1d7JNhpubtvzYz3hvEv": ("openAI", "gpt-5.6-terra"),
+        agent_id: ("glasshive-harness", "codex-cli:gpt-5.6-sol")
+        for agent_id in agents_by_id
     }
 
     for agent_id, (provider, model) in expected.items():
@@ -495,6 +486,10 @@ def test_background_agent_execution_models_match_launch_bundle_mix() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["model_parameters"]["model"] == model
+        assert agent["glasshive_options"] == {
+            "workspace": {"mode": "life"},
+            "access": "full",
+        }
 
 
 def test_retired_deep_research_keeps_reasoning_config_without_live_web_tool() -> None:
@@ -506,22 +501,20 @@ def test_retired_deep_research_keeps_reasoning_config_without_live_web_tool() ->
     assert "thinkingBudget" not in deep_research["model_parameters"]
 
 
-def test_red_team_ships_with_web_search_and_openai_reasoning_effort() -> None:
+def test_red_team_ships_with_web_search_and_glasshive_xhigh_reasoning_effort() -> None:
     agents_by_id = _load_background_agents_by_id()
     red_team = agents_by_id["agent_viventium_red_team_95aeb3"]
 
     assert "web_search" in red_team["tools"]
     assert red_team["model_parameters"]["reasoning_effort"] == "xhigh"
     assert "thinkingBudget" not in red_team["model_parameters"]
+    assert "useResponsesApi" not in red_team["model_parameters"]
 
 
 def test_background_agent_execution_models_stay_within_launch_ready_families() -> None:
     agents_by_id = _load_background_agents_by_id()
 
-    allowed = {
-        ("openAI", "gpt-5.6-terra"),
-        ("openAI", "gpt-5.6-sol"),
-    }
+    allowed = {("glasshive-harness", "codex-cli:gpt-5.6-sol")}
 
     for agent in agents_by_id.values():
         provider_model = (agent["provider"], agent["model"])

@@ -41,6 +41,7 @@ APPROVED_EXECUTION_FAMILIES = {
     ("anthropic", "claude-opus-5"),
     ("openAI", "gpt-5.6-sol"),
     ("openAI", "gpt-5.6-terra"),
+    ("glasshive-harness", "codex-cli:gpt-5.6-sol"),
 }
 APPROVED_ACTIVATION_FAMILY = ("groq", "qwen/qwen3.6-27b")
 APPROVED_ACTIVATION_OVERRIDE_FAMILY = ("xai", "grok-4.20-non-reasoning")
@@ -231,17 +232,17 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_opus5_fallba
     bundle = _load_source_of_truth()
     expected = {
         "Viventium": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
-        "Background Analysis": ("openAI", "gpt-5.6-terra", "medium"),
-        "Confirmation Bias": ("openAI", "gpt-5.6-terra", "medium"),
-        "Red Team": ("openAI", "gpt-5.6-sol", "xhigh"),
-        "Deep Research": ("openAI", "gpt-5.6-sol", "xhigh"),
-        "MS365": ("openAI", "gpt-5.6-terra", "low"),
-        "Parietal Cortex": ("openAI", "gpt-5.6-terra", "medium"),
-        "Pattern Recognition": ("openAI", "gpt-5.6-terra", "medium"),
-        "Emotional Resonance": ("openAI", "gpt-5.6-terra", "low"),
-        "Strategic Planning": ("openAI", "gpt-5.6-sol", "high"),
-        "Viventium User Help": ("openAI", "gpt-5.6-terra", "low"),
-        "Google": ("openAI", "gpt-5.6-terra", "low"),
+        "Background Analysis": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Confirmation Bias": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Red Team": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "xhigh"),
+        "Deep Research": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "xhigh"),
+        "MS365": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
+        "Parietal Cortex": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Pattern Recognition": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "medium"),
+        "Emotional Resonance": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
+        "Strategic Planning": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "high"),
+        "Viventium User Help": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
+        "Google": ("glasshive-harness", "codex-cli:gpt-5.6-sol", "low"),
     }
 
     agents = {"Viventium": bundle["mainAgent"]}
@@ -266,6 +267,11 @@ def test_conscious_and_subconscious_agents_use_approved_routes_with_opus5_fallba
         elif effort == "high":
             expected_fallback_parameters["thinkingBudget"] = 2000
         assert agent.get("fallback_llm_model_parameters") == expected_fallback_parameters
+        if provider == "glasshive-harness":
+            assert agent.get("glasshive_options") == {
+                "workspace": {"mode": "life"},
+                "access": "full",
+            }
 
     assert bundle["mainAgent"].get("glasshive_options") == {
         "workspace": {"mode": "life"},

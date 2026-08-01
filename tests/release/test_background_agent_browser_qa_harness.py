@@ -280,3 +280,15 @@ const db = {
         assert "VIVENTIUM_QA_OWNER_EMAIL" in source
     latest_source = harnesses[1].read_text(encoding="utf-8")
     assert "waitForExpectedTextAfterReload" in latest_source
+    visible_cards_source = harnesses[0].read_text(encoding="utf-8")
+    for required_contract in (
+        'metadata?.viventium?.type === "cortex_followup"',
+        "cortexFollowUpDecision",
+        "phaseBStructuredFollowUpCount === 1",
+        'phaseBDecisionResult === "persisted"',
+        'phaseBLlmResult === "generated"',
+        "phaseBInitialVisible",
+        "phaseBReloadVisible",
+        "phaseBNovelTokenRatio",
+    ):
+        assert required_contract in visible_cards_source

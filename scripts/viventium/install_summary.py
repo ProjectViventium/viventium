@@ -2062,7 +2062,7 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
     if glasshive_provider_enabled:
         lines.append(
             f"{next_step}. Verify [bold]Codex CLI[/bold] authentication on this Mac so the shipped "
-            "GlassHive-backed Viventium Main can run; authenticate Claude Code too if you select "
+            "GlassHive-backed Viventium Main and background cortices can run; authenticate Claude Code too if you select "
             "the Claude harness model."
         )
         next_step += 1
@@ -2076,7 +2076,7 @@ def build_connected_accounts_notice(config: dict[str, Any], runtime_env: dict[st
         else:
             foundation_label = " and ".join(f"[bold]{label}[/bold]" for label in foundation_labels)
         foundation_scope = (
-            "the shipped direct background cortices and configured fallback routes"
+            "the configured direct fallback and auxiliary routes"
             if glasshive_provider_enabled
             else "the shipped Viventium and background agents"
         )

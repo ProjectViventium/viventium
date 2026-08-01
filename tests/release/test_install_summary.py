@@ -850,7 +850,7 @@ def test_build_connected_accounts_notice_matches_anthropic_only_foundation_contr
     assert "OpenAI" not in notice
 
 
-def test_build_connected_accounts_notice_distinguishes_glasshive_main_from_direct_cortices() -> None:
+def test_build_connected_accounts_notice_distinguishes_glasshive_authoring_from_direct_fallbacks() -> None:
     install_summary = load_install_summary_module()
 
     config = {
@@ -869,8 +869,9 @@ def test_build_connected_accounts_notice_distinguishes_glasshive_main_from_direc
     notice = install_summary.build_connected_accounts_notice(config)
 
     assert "Codex CLI" in notice
-    assert "GlassHive-backed Viventium Main" in notice
-    assert "direct background cortices" in notice
+    assert "GlassHive-backed Viventium Main and background cortices" in notice
+    assert "configured direct fallback and auxiliary routes" in notice
+    assert "direct background cortices" not in notice
     assert "shipped Viventium and background agents" not in notice
 
 
