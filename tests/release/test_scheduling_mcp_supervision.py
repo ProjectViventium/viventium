@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import shutil
-import socket
 import sqlite3
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -20,7 +18,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULING_ROOT = (
     REPO_ROOT / "viventium_v0_4" / "LibreChat" / "viventium" / "MCPs" / "scheduling-cortex"
 )
-LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 if str(SCHEDULING_ROOT) not in sys.path:
     sys.path.insert(0, str(SCHEDULING_ROOT))
 
@@ -38,18 +35,65 @@ def extract_shell_function(source: str, name: str) -> str:
     return "\n".join(collected) + "\n"
 
 
-def wait_for_scheduler_health(port: int, *, timeout: float = 10.0) -> dict[str, object]:
+def wait_for_scheduler_health(
+    port: int,
+    *,
+    timeout: float = 10.0,
+    process: subprocess.Popen[bytes] | None = None,
+    stderr_path: Path | None = None,
+) -> dict[str, object]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            stderr = (
+                stderr_path.read_text(encoding="utf-8", errors="replace")
+                if stderr_path and stderr_path.exists()
+                else ""
+            )
+            raise AssertionError(
+                f"synthetic scheduler exited with {process.returncode}: {stderr.strip()}"
+            )
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=0.5)
         try:
-            with LOOPBACK_OPENER.open(
-                f"http://127.0.0.1:{port}/health",
-                timeout=0.5,
-            ) as response:
+            connection.request("GET", "/health")
+            response = connection.getresponse()
+            if response.status == 200:
                 return json.loads(response.read().decode("utf-8"))
-        except (OSError, urllib.error.URLError, json.JSONDecodeError):
-            time.sleep(0.05)
+        except (OSError, http.client.HTTPException, json.JSONDecodeError):
+            pass
+        finally:
+            connection.close()
+        time.sleep(0.05)
     raise AssertionError("synthetic scheduler did not become healthy")
+
+
+def wait_for_synthetic_server_port(
+    port_file: Path,
+    process: subprocess.Popen[bytes],
+    stderr_path: Path,
+    *,
+    timeout: float = 10.0,
+) -> int:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            stderr = (
+                stderr_path.read_text(encoding="utf-8", errors="replace")
+                if stderr_path.exists()
+                else ""
+            )
+            raise AssertionError(
+                f"synthetic scheduler exited with {process.returncode}: {stderr.strip()}"
+            )
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+        except (FileNotFoundError, ValueError):
+            time.sleep(0.05)
+            continue
+        if 1 <= port <= 65535:
+            return port
+        raise AssertionError(f"synthetic scheduler published invalid port: {port}")
+    raise AssertionError("synthetic scheduler did not publish its bound port")
 
 
 def test_scheduling_mcp_has_health_checked_watchdog_contract() -> None:
@@ -485,9 +529,10 @@ def test_scheduler_stop_handles_real_process_across_activation_scopes(
         """
 import json
 import sys
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-payload = json.dumps({"status": "ok", "db_path_sha256": sys.argv[2]}).encode()
+payload = json.dumps({"status": "ok", "db_path_sha256": sys.argv[1]}).encode()
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -504,22 +549,38 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         return
 
-ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+port_file = Path(sys.argv[2])
+temporary_port_file = port_file.with_suffix(".tmp")
+temporary_port_file.write_text(str(server.server_address[1]), encoding="utf-8")
+temporary_port_file.replace(port_file)
+server.serve_forever()
 """.lstrip(),
         encoding="utf-8",
     )
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = int(probe.getsockname()[1])
-
-    process = subprocess.Popen(
-        [sys.executable, str(server_script), str(port), served_hash],
-        cwd=process_root,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    port_file = tmp_path / "synthetic-scheduler.port"
+    stderr_path = tmp_path / "synthetic-scheduler.stderr"
+    stderr_handle = stderr_path.open("wb")
     try:
-        assert wait_for_scheduler_health(port)["db_path_sha256"] == served_hash
+        process = subprocess.Popen(
+            [sys.executable, str(server_script), served_hash, str(port_file)],
+            cwd=process_root,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_handle,
+        )
+    except BaseException:
+        stderr_handle.close()
+        raise
+    try:
+        port = wait_for_synthetic_server_port(port_file, process, stderr_path)
+        assert (
+            wait_for_scheduler_health(
+                port,
+                process=process,
+                stderr_path=stderr_path,
+            )["db_path_sha256"]
+            == served_hash
+        )
         if scenario == "renamed-installed":
             installed_dir.rename(backup_dir)
             assert not installed_dir.exists()
@@ -570,13 +631,16 @@ ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
         else:
             assert "leaving it running during this runtime stop" in completed.stdout
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        finally:
+            stderr_handle.close()
 
 
 @pytest.mark.parametrize(
